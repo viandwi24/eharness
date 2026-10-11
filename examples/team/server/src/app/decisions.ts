@@ -29,13 +29,15 @@ import {
   programOfProposal,
   reportBody,
 } from '../domain/decisions.ts'
+import { type DeliverableCheck, deliverableLine } from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import {
   normalizeAuthority,
+  type Program,
   type ProgramAuthority,
   parseProgramSession,
 } from '../domain/programs.ts'
-import type { TaskReport } from '../domain/tasks.ts'
+import type { Task, TaskReport } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
 import type { Deps } from './ports.ts'
 import { createProgram, getProgram, runProgramNow, updateProgram } from './programs.ts'
@@ -110,6 +112,13 @@ function proposalBody(program: ProposalPayload['program'], runOnce: boolean): st
     ...(lines.length === 0
       ? ['- nothing beyond finding and planning its own work']
       : lines.map((l) => `- ${l}`)),
+    ...((program.deliverables ?? []).length === 0
+      ? []
+      : [
+          '',
+          '## Deliverables it must leave',
+          ...(program.deliverables ?? []).map((d) => `- ${deliverableLine(d)}`),
+        ]),
   ].join('\n')
 }
 
@@ -230,6 +239,47 @@ export function createReportEscalation(
     sessionId: input.sessionId,
     programId,
     payload: { question: input.report.summary, options: [], source: 'report' },
+    waitId: null,
+    createdAt: deps.clock.now(),
+  })
+  changed(deps, d, 'created')
+  return d
+}
+
+/**
+ * A run's deliverables still failed after the fix-up turn: an escalation, so the client sees which
+ * files are wrong. Not tied to a wait (the run ended): the answer is sent to the session as a new
+ * message. One open decision per session.
+ */
+export function createDeliverablesEscalation(
+  deps: Deps,
+  input: { program: Program; task: Task; checks: readonly DeliverableCheck[] },
+): Decision | undefined {
+  const { program, task } = input
+  if (deps.decisions.list({ sessionId: task.sessionId, status: 'open', limit: 1 }).length > 0) {
+    return undefined
+  }
+  const bad = input.checks.filter((c) => !c.ok)
+  const d = deps.decisions.insert({
+    id: deps.ids.next(),
+    kind: 'escalation',
+    title: checkTitle(`${program.name}: deliverables not met`),
+    body: checkBody(
+      [
+        'The run ended, but these deliverables still fail after one fix-up turn. The run is marked partial.',
+        '',
+        '## What fails',
+        ...bad.flatMap((c) => [`- \`${c.path}\``, ...c.problems.map((p) => `  - ${p}`)]),
+      ].join('\n'),
+    ),
+    agentId: task.agentId,
+    sessionId: task.sessionId,
+    programId: program.id,
+    payload: {
+      question: `${bad.length} deliverable${bad.length === 1 ? '' : 's'} of "${program.name}" still fail. Approve to let the agent try again, or reject to leave it partial.`,
+      options: [],
+      source: 'report',
+    },
     waitId: null,
     createdAt: deps.clock.now(),
   })

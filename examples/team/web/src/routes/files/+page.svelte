@@ -256,7 +256,7 @@
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 	<PageHeader
 		title="Files"
-		description={loaded ? `${all.length} file${all.length === 1 ? '' : 's'}` : undefined}
+		description={loaded ? `Shared files for you and your agents · ${all.length} file${all.length === 1 ? '' : 's'}` : 'Shared files for you and your agents.'}
 		backHref={selected && !desktop.current ? '/files' : '/'}
 	>
 		{#snippet actions()}
@@ -266,6 +266,7 @@
 			<Button size="sm" onclick={openCreate}><FilePlusIcon /><span class="max-sm:sr-only">New file</span></Button>
 		{/snippet}
 	</PageHeader>
+	<!-- Full width on purpose: file list + viewer split. -->
 	<input bind:this={fileInput} type="file" class="hidden" onchange={upload} />
 
 	{#if desktop.current}

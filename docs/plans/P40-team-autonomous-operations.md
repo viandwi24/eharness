@@ -1,6 +1,6 @@
 # P40 — Team example: autonomous operations (manager, programs, decision center, big-data work)
 
-Status: in progress (phases A, B, C, D, E and H done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
+Status: in progress (phases A, B, C, D, E, H, I and K done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -111,9 +111,9 @@ and decided before code (docs over presets: patterns become guides, not wrapper 
 | D | **Big-data toolkit**: collector interface + cursor, manifest helpers, `run_code`, chunked map/reduce with subagents; guide | auditor scenario on a scripted 5 000-message fixture |
 | E | **Heartbeat** + daily digest + program suggestions | |
 | H | **Deliverables contract** (system layer): a program lists required deliverables (path pattern, markdown with required sections or JSON with a schema); the server checks them at run end, gives the agent one fix-up turn with the exact errors (the real *Verify* step), then marks the run `partial` and opens a decision. Style and quality guidance stays in editable skills. | after C, E |
-| I | **Stability pass**: soak test (many program runs, several agents at once, kill/restart mid-run, injected provider errors 429/500/timeouts), end-to-end browser checks of every client flow | after H |
+| I | **Stability pass**: soak test (many program runs, several agents at once, kill/restart mid-run, injected provider errors 429/500/timeouts), end-to-end browser checks of every client flow | after H. **built** (walkthrough section 26) |
 | J | **Evals** (developer tool, a CLI such as `bun run eval <scenario>`, no web page; opt-in, real model, budget-capped, not in CI; generic scenario format: fixture data + program config + deterministic checks + rubric): fixed scenarios scored automatically (auditor recall/precision against the planted incidents, deliverable checks) and by a rubric judge; scores kept per run to compare prompt/skill/model changes. Needs the client's output examples as the answer key. | **built** (framework + 3 illustrative scenarios); real runs await the client's examples and an approved budget |
-| K | **Rehearsal (test run)** for clients, generic for any program: run a program on sample data in a safe mode (writes go to a scratch area, external writes such as company API calls or posts are disabled or simulated), show the deliverables, decisions it would raise and cost before activating; save rehearsals as the program's test cases and re-run them after edits. | after H, J |
+| K | **Rehearsal (test run)** for clients, generic for any program: run a program on sample data in a safe mode (writes go to a scratch area, external writes such as company API calls or posts are disabled or simulated), show the deliverables, decisions it would raise and cost before activating; save rehearsals as the program's test cases and re-run them after edits. | after H, J. **built** (walkthrough section 25) |
 | M | **Chat threads per agent, all equal** (pattern of ChatGPT / Claude Cowork / Devin): "New chat", rename, archive/delete for any thread (`chat:<agentId>:<threadId>`; the existing `dm:<agentId>` becomes the first thread with no special status). System news leaves the chat: the **daily digest becomes a Briefing page** (one entry per day + one bell notification; later deliverable to channels), **urgent heartbeat alerts go to the bell** (later channels), reports of work started from a thread return to that thread, work not started from a chat shows on the board. The lead can read briefings with a tool from any thread. **Following up**: every run is already its own session (open it from the board, a notification or a briefing and use its follow-up box: same session, same context); a briefing or an alert has **"Discuss in chat"**, which creates a new lead thread seeded with that item as context — threads are created on demand, never automatically per event. Continuity across threads comes from memory, not chat history. Generic, example only. | after I, K |
 | F | ~~Telegram source~~ — **deferred**: decided together with the messaging/channels design (data source vs outbound tools vs live chat) | later |
 | G | **Docs only for now** ([docs/examples/integrate-team-to-your-system.md](../examples/integrate-team-to-your-system.md)); no implementation until a client integrates. Original scope: **Company system integration (agent = virtual user)**: a mock internal company API in the repo (OpenAPI 3.1; roles employee / leader / manager; illustrative modules from one client use case — any departments work — e.g. a *Clipper* module: upload video, submit social link, analytics by views and by uploader; *Video production* module: idea → draft → shoot → edit → YouTube upload) and the team agents connected to it as **bot users** — one service account and token per agent (`kind: bot`, least-privilege role, revocable), tools from `openApiSource` (include/exclude per agent, method risk feeding program authority, token injected by `headers()` from the vault, never visible to the model), read-only first. Shows that business logic is written once (the API) and reused by people and agents. | D11 |
@@ -252,6 +252,25 @@ events, not in `TickReport`); the urgent/digest message is an `eh.event` in the 
 recorded by the `turn.end` hook; "similar" is word-overlap clustering (Jaccard 0.5 on crude stems),
 deliberately conservative.
 
+## Phase I checklist (stability pass)
+
+- [x] Heartbeat never parks: `escalate` removed from its tools and gate (urgent goes to the lead DM,
+      patterns to `propose_plan`); the beat prompt, run profile text, tests and walkthrough 22 follow.
+- [x] Team timezone: workspace setting `timezone` (default `TZ` env, else the host timezone; editable
+      in Settings). The heartbeat's active hours (`timezone: null` = follow the team, an own value
+      overrides) and the digest time default to it; changing it retimes the digest routine.
+- [x] Soak test `scripts/soak.ts` (+ `scripts/soak/{brain,server,invariants}.ts`), CI-safe `--quick`
+      variant run by `server/test/soak.test.ts` (checker tested on broken rows too).
+- [x] Bugs found by the soak, each with a regression test: killed heartbeat beats were never
+      recovered (no task row); a killed program run left its routine run `enqueued` forever.
+- [x] End-to-end flows `scripts/e2e-flows.ts` through the HTTP API (no browser automation
+      dependency in the repository): program run, proposal, escalation, work queue Review and send
+      back, heartbeat and digest.
+- [x] Docs: walkthrough section 26 (Operations), scripts README.
+- Not faked: the server clock is not injectable (`deps.clock` is `Date.now`), so the soak uses the
+  shortest real schedule (10 s) and triggers the heartbeat and the digest through the API and a
+  script-only control route.
+
 ## Phase J checklist (evals)
 
 - [x] CLI `bun run eval <scenario> [--model] [--budget] [--repeat]`, `compare`, `list`
@@ -325,6 +344,51 @@ Decided in phase D:
 - Not built: parallel subagents are described in the skill (cap 3) but the tests drive a single
   worker; Python in `run_code` (D8 says later); an `escalate` call in the auditor test (phase B owns
   and tests the tool; the skill tells the agent to call it once after the report).
+
+## Phase K checklist (rehearsal)
+
+- [x] Run profile `rehearsal` (session `rehearsal:<programId>:<ts>`, unattended, the program's
+      authority, no task), migration `0019` (`rehearsals`, `program_tests`).
+- [x] Scratch overlay over the library (`infra/eh/overlay-fs.ts`, registry by session id; file
+      tools, memory and the big-data plugin; fail-closed read-only view for a rehearsal that is
+      not running); the real library is never written.
+- [x] External write tools simulated at the permission gate (`SIMULATED: would call <tool> with
+      <input>`), recorded; `escalate`, `request_authority` and a `needs_decision` report recorded
+      as "would ask"; `create_task`, `update_task`, `complete_task` simulated.
+- [x] Sample data: library paths to copy, attached text files, a sample task for worker programs,
+      `reads: library | sample`; a separate small budget cap (0.5 USD default, 5 at most).
+- [x] Deliverables checked against the overlay (with the fix-up turn); result with report, files,
+      simulated actions, would-ask decisions, tools, cost and the chat.
+- [x] Test cases (sample + expectations: deliverables pass, tools that must not be called, report
+      status), "Run all tests" (one after the other, a result per case), results tied to a program
+      fingerprint (stale after an edit that matters), warning (not a block) when activating a
+      program whose cases fail.
+- [x] API (`/programs/{id}/rehearsals`, `/rehearsals/{id}`, `/programs/{id}/tests`, ...), web
+      (program page with Test run, Tests and Test runs; result page), tests
+      `server/test/rehearsal.test.ts`, web `lib/rehearsal/model.test.ts`; walkthrough section 25.
+
+Decided in phase K:
+
+- **Simulation is a denial text at the gate**, not a faked tool result. It is the one mechanism
+  that covers plugin, MCP and OpenAPI tools alike (AI SDK has no output substitution for an
+  approval decision); the model reads the text as the result and the recorded action list is the
+  client-facing truth. Calls the real run would refuse stay refused the same way.
+- **Reads fall through to the real library** by default (the client's own files, read only);
+  `reads: sample` shows only the sample. Web reads (`web_fetch`) and read tools of connectors run
+  for real: a rehearsal on the open internet is still a read.
+- **Delegation (the Team connector) is simulated** (it is not one of the built-in connectors a
+  rehearsal runs for real): the children it would start run in other sessions that the overlay
+  cannot cover.
+- **The overlay lives in memory** while the rehearsal runs and the produced files are stored in the
+  result (text up to 200 KB per file, 2 MB per rehearsal); a restart fails a running rehearsal
+  instead of resuming it. One rehearsal per program and three in the workspace at a time.
+- **Staleness is a fingerprint, not the program version**: pausing, resuming, the schedule, the
+  report mode and the budget bump `version` but do not change what a run does.
+- The digest cost line leaves rehearsal spend out; the ledger (workspace scope, `rehearsal:` scope)
+  and the logs page still show it, it is real money.
+- Not built: rehearsing an unsaved draft from the editor (the editor offers Test run for the saved
+  program), binary sample uploads (text files only), a live view of the files while it runs (they
+  appear when it ends; simulated actions and would-ask decisions appear as they happen).
 
 ## Acceptance criteria
 

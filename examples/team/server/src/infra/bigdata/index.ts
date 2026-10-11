@@ -3,6 +3,7 @@
  * builds its plugin. `agent-factory.ts` installs the hook, `connector-catalog.ts` lists the connector.
  */
 import type { Database } from 'bun:sqlite'
+import { wrapPlugin } from 'eharness'
 import {
   type BuiltinInput,
   type CapabilityDef,
@@ -11,7 +12,10 @@ import {
 } from 'eharness/connectors'
 import type { ProgramStore } from '../../app/ports.ts'
 import type { Collector } from '../../domain/collectors.ts'
+import { isRehearsalSession } from '../../domain/rehearsal.ts'
 import { type LibraryChange, libraryFs } from '../eh/library-fs.ts'
+import { readOnlyFs } from '../eh/overlay-fs.ts'
+import { rehearsalSessions } from '../eh/rehearsal-registry.ts'
 import { programPathAccess } from './authority.ts'
 import { type CodeRunnerOptions, createCodeRunner } from './code-sandbox.ts'
 import { BIGDATA_TOOLS, bigData } from './plugin.ts'
@@ -37,17 +41,28 @@ export function createBigDataHook(deps: {
 }): BigDataHook {
   const runner = createCodeRunner(deps.config?.runner)
   const access = programPathAccess(deps.programs)
-  return (agentId, input) =>
-    bigData({
-      fs: libraryFs(deps.sqlite, {
-        agentId,
-        ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
-      }),
-      access,
-      collectors: () => deps.config?.collectors ?? [],
-      runner,
-      tools: input.tools,
+  return (agentId, input) => {
+    const library = libraryFs(deps.sqlite, {
+      agentId,
+      ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
     })
+    const build = (fs: typeof library) =>
+      bigData({
+        fs,
+        access,
+        collectors: () => deps.config?.collectors ?? [],
+        runner,
+        tools: input.tools,
+      })
+    // a rehearsal session gets the same tools over its overlay (a read-only view once it ended)
+    return wrapPlugin(build(library), {
+      session: (ctx, next) => {
+        const running = rehearsalSessions.get(ctx.session.id)
+        if (running !== undefined) return next.using(build(running.fs))
+        return isRehearsalSession(ctx.session.id) ? next.using(build(readOnlyFs(library))) : next()
+      },
+    })
+  }
 }
 
 const cap = (

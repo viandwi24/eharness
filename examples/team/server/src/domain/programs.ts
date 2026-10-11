@@ -9,6 +9,12 @@
  * and ends with a structured report. Pure: validation, ids, the rules the engine gets, the text of
  * a run and the outcome of a turn.
  */
+import {
+  checkDeliverables,
+  type Deliverable,
+  deliverablesPromptSection,
+  type TokenContext,
+} from './deliverables.ts'
 import { invalid } from './errors.ts'
 import type { RoutineSpec } from './routines.ts'
 import type { TaskReport, TaskStatus } from './tasks.ts'
@@ -79,6 +85,8 @@ export interface Program {
   report: ProgramReportMode
   /** Set: each run takes queued tasks of the agent (the work queue); null: one run, the brief. */
   worker: WorkerSpec | null
+  /** Files each run must leave in the library; checked at run end (phase H). Empty: none. */
+  deliverables: Deliverable[]
   status: ProgramStatus
   /** `client` (the web / API) or the id of the agent that proposed it. */
   createdBy: string
@@ -100,6 +108,7 @@ export interface ProgramDraft {
   trigger?: ProgramTrigger | undefined
   report?: ProgramReportMode | undefined
   worker?: Partial<WorkerSpec> | null | undefined
+  deliverables?: Deliverable[] | undefined
   status?: ProgramStatus | undefined
 }
 
@@ -160,8 +169,10 @@ export function checkProgramFields(f: {
   report?: string | undefined
   status?: string | undefined
   worker?: Partial<WorkerSpec> | null | undefined
+  deliverables?: Deliverable[] | undefined
 }): void {
   checkWorker(f.worker)
+  checkDeliverables(f.deliverables)
   if (f.name !== undefined && (f.name.trim() === '' || f.name.length > 120)) {
     throw invalid('name must be 1-120 characters', 'INVALID_PROGRAM')
   }
@@ -330,7 +341,7 @@ const bullets = (items: readonly string[], none: string): string =>
   items.length === 0 ? none : items.map((i) => `- ${i}`).join('\n')
 
 /** The text of the turn that starts a run: brief, authority, gates, escalation and the run rule. */
-export function programRunPrompt(program: Program): string {
+export function programRunPrompt(program: Program, run?: TokenContext): string {
   const a = program.authority
   const tools = [
     ...a.tools,
@@ -361,11 +372,17 @@ export function programRunPrompt(program: Program): string {
       ? 'When something looks wrong or unsafe, stop and escalate.'
       : program.escalation.trim(),
     '',
+    ...(run === undefined ? [] : deliverablesPromptSection(program.deliverables ?? [], run)),
     '## How to run',
     'Work in three steps: Execute, Verify, Report.',
     `1. Execute the brief step by step. Keep what you produce in the library paths you may write.`,
     '2. Verify the result against the brief: read back what you wrote, check numbers and links,',
     '   confirm every step happened. If a check fails, retry once with an adjusted approach.',
+    ...((program.deliverables ?? []).length === 0
+      ? []
+      : [
+          '   The server also checks the deliverables above when you end; fix them before you report.',
+        ]),
     `3. Report. At most ${MAX_ATTEMPTS} attempts in total. If it still fails, stop and report the failure with a`,
     '   diagnosis (what you tried, what happened, what you think is wrong). Never fail silently.',
     '',

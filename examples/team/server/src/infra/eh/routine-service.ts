@@ -541,6 +541,13 @@ export function createRoutineService(
                   reason: `report: ${e.reportSummary ?? 'the run reported failure'}`,
                 }
               : { status: 'succeeded' }
+        } else if (e.stop === 'interrupted') {
+          // the process died under the run (closed by the repair pass): not the routine's fault
+          outcome = {
+            status: 'failed',
+            reason: 'interrupted (the server stopped)',
+            countFailure: false,
+          }
         } else if (e.errorCode === 'EH_LOCK_UNAVAILABLE') {
           // the lock service was down, not the routine: the run fails but does not count toward
           // pausing it (the next slot tries again)

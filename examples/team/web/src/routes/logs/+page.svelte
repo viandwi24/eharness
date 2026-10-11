@@ -135,7 +135,7 @@
 	const description = $derived(
 		stats
 			? `${stats.totals.count.toLocaleString()} call${stats.totals.count === 1 ? '' : 's'} · ${formatTokens(stats.totals.inputTokens + stats.totals.outputTokens)} tokens · ${formatUsd(stats.totals.costUsd)}${stats.totals.errors ? ` · ${stats.totals.errors} error${stats.totals.errors === 1 ? '' : 's'}` : ''}`
-			: undefined
+			: 'Every model call your agents make, with tokens and cost.'
 	);
 	const chips = $derived(
 		[
@@ -199,6 +199,7 @@
 		{/snippet}
 	</PageHeader>
 
+	<!-- Full width on purpose: the call table has many columns. Same padding as PageBody size="full"; it keeps its own scroller for the "new calls" banner. -->
 	<div bind:this={scroller} class="relative min-h-0 flex-1 overflow-y-auto">
 		{#if logs.newCount > 0}
 			<div class="pointer-events-none sticky top-2 z-10 flex justify-center">

@@ -16,6 +16,7 @@
  *
  * Tool approvals are not decisions: they stay inline in the chat of the session (decision D2).
  */
+import { type Deliverable, normalizeDeliverables } from './deliverables.ts'
 import { invalid } from './errors.ts'
 import {
   checkProgramFields,
@@ -48,6 +49,8 @@ export interface ProposedProgram {
   budget: ProgramBudget
   trigger: ProgramTrigger
   report: ProgramReportMode
+  /** Files the run must leave (phase H); absent in proposals stored before it. */
+  deliverables?: Deliverable[]
 }
 
 export interface ProposalPayload {
@@ -174,6 +177,7 @@ export interface ProposedProgramInput {
   budget?: Partial<ProgramBudget> | undefined
   trigger?: ProgramTrigger | undefined
   report?: ProgramReportMode | undefined
+  deliverables?: Deliverable[] | undefined
 }
 
 /** Checks (`INVALID_PROGRAM` / `INVALID_DECISION`) and normalizes a proposed program. */
@@ -194,6 +198,7 @@ export function normalizeProposedProgram(input: ProposedProgramInput): ProposedP
     },
     trigger: input.trigger ?? { kind: 'manual' },
     report: input.report ?? 'task',
+    deliverables: normalizeDeliverables(input.deliverables),
   }
 }
 

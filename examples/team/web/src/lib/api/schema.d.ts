@@ -1997,6 +1997,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/deliverables/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the deliverables of a run again
+         * @description Checks the files of the run against its program's deliverables now (no fix-up turn). Use it after the files were repaired: a passing result lets a work item enter Review.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The task with the new result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/approvals": {
         parameters: {
             query?: never;
@@ -5761,6 +5830,745 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/programs/{id}/rehearsals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rehearsals of a program, newest first
+         * @description Without the content of the produced files (read one rehearsal for that).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Rehearsals */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RehearsalList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Test run (rehearsal) of a program
+         * @description Runs the program as it is saved now on sample data, in a safe mode: its own session `rehearsal:<programId>:<ts>` (never a task: not in the run history, the board, the digest or the heartbeat); library writes go to a scratch overlay and the real library is never modified (reads see the real library unless the sample says `reads: sample`); tools of external connectors that write are simulated (`SIMULATED: would call <tool> with <input>`) and recorded; decisions it would raise are recorded as "would ask", none is created; a separate small budget cap. Send `{}` for the defaults. Returns when the run has started: poll `GET /rehearsals/{id}`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RehearsalStart"];
+                };
+            };
+            responses: {
+                /** @description Created: the rehearsal is running */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Rehearsal"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `REHEARSAL_BUSY` or archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rehearsals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A rehearsal with its result */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Rehearsal id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The rehearsal */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Rehearsal"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown rehearsal */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete a finished rehearsal */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Rehearsal id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The deleted rehearsal */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Rehearsal"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown rehearsal */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `REHEARSAL_BUSY`: still running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rehearsals/{id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a file the rehearsal produced
+         * @description The bytes with `Content-Disposition: attachment`. Files over the stored caps have no content (404).
+         */
+        get: {
+            parameters: {
+                query: {
+                    path: string;
+                };
+                header?: never;
+                path: {
+                    /** @description Rehearsal id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown rehearsal or file, or the content was not stored */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rehearsals/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The chat of the rehearsal session (read only) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Rehearsal id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Messages, oldest first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RehearsalMessages"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown rehearsal */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/programs/{id}/tests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Test cases of a program, with a summary
+         * @description The summary says how many pass, fail (at the current program version) or are stale (never run, or not run since the last edit). The web warns when a program with failing tests is activated; it is not a block.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Test cases */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Save a test case
+         * @description Sample inputs plus expectations (deliverables must pass, tools that must not be called, an expected report status). Give `rehearsalId` to save the sample of a rehearsal you just ran.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TestCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestCase"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program or rehearsal */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Too many test cases */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/programs/{id}/tests/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run the test cases
+         * @description Re-runs all cases (or one with `caseId`) one after the other in the background, each as a rehearsal; poll `GET /programs/{id}/tests` for the results.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TestRun"];
+                };
+            };
+            responses: {
+                /** @description Started */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestRunStarted"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program or case */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `TESTS_BUSY` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/program-tests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a test case */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Test case id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The deleted case */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestCase"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown test case */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Edit a test case
+         * @description Changing the sample or the expectations clears the last result.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Test case id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TestPatch"];
+                };
+            };
+            responses: {
+                /** @description The case */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestCase"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown test case */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/decisions": {
         parameters: {
             query?: never;
@@ -6320,7 +7128,7 @@ export interface paths {
         head?: never;
         /**
          * Change the daily digest
-         * @description Once a day at `time` (default 18:00, in `timezone` or the lead heartbeat timezone) the lead DM gets what ran, what waits, what the heartbeat noticed and the cost. A quiet day sends nothing.
+         * @description Once a day at `time` (default 18:00, in `timezone` or the team timezone) the lead DM gets what ran, what waits, what the heartbeat noticed and the cost. A quiet day sends nothing.
          */
         patch: {
             parameters: {
@@ -7144,6 +7952,7 @@ export interface components {
             costUsd: number;
             tokens: number;
             report: components["schemas"]["TaskReport"];
+            deliverables: components["schemas"]["DeliverableResult"];
             /** @description Work queue: what to do, in markdown (send-back notes are appended). null for tasks that did not come from the queue. */
             brief: string | null;
             /** @description Library paths the task starts from. */
@@ -7173,6 +7982,22 @@ export interface components {
             outputs: string[];
             notes?: string;
         } | null;
+        /** @description Deliverable checks of a program run; null when the program lists none. */
+        DeliverableResult: {
+            /** @enum {string} */
+            status: "pass" | "fail";
+            /** @description 1: checked once; 2: checked again after the one fix-up turn. */
+            attempts: number;
+            checkedAt: number;
+            checks: components["schemas"]["DeliverableCheck"][];
+        } | null;
+        DeliverableCheck: {
+            pattern: string;
+            /** @description The path after the tokens were resolved. */
+            path: string;
+            ok: boolean;
+            problems: string[];
+        };
         /** @enum {string} */
         TaskPriority: "low" | "normal" | "high" | "urgent";
         TaskDetail: {
@@ -7481,6 +8306,8 @@ export interface components {
             defaultModel: string | null;
             /** @description Provider profile of agents without their own pick; null = the server default (the env profile, else the first enabled one). */
             defaultProfile: string | null;
+            /** @description IANA timezone of the team (default: the `TZ` variable or the host timezone). The default of the heartbeat active hours and of the daily digest time; an agent heartbeat or the digest can override it. */
+            timezone: string;
             /** @description 0 until a person changed something. */
             updatedAt: number;
         };
@@ -7497,6 +8324,8 @@ export interface components {
             /** @description A model id, or the legacy `profile:model` (split when the prefix names a profile). */
             defaultModel?: string | null;
             defaultProfile?: string | null;
+            /** @description IANA timezone. */
+            timezone?: string;
         };
         Providers: {
             providers: components["schemas"]["ProviderDefinition"][];
@@ -8140,6 +8969,8 @@ export interface components {
              */
             report: "digest" | "task" | "silent";
             worker: components["schemas"]["ProgramWorker"];
+            /** @description Files each run must leave in the library; checked when the run ends. */
+            deliverables: components["schemas"]["Deliverable"][];
             /** @enum {string} */
             status: "active" | "paused";
             /** @description `client`, or the id of the proposing agent. */
@@ -8179,6 +9010,23 @@ export interface components {
             /** @description Queued tasks one run takes at most; each runs in a session of its own. */
             maxTasks: number;
         } | null;
+        /** @description A file a program run must leave in the library. Checked by the server when the run ends: exists, kind, headings, JSON schema, length. */
+        Deliverable: {
+            /**
+             * @description Library file the run must leave. Tokens: `{date}` (UTC day of the run), `{slug}` (program name, or task title for a work item), `{runId}` (run timestamp in ms), `{program}` (program id).
+             * @example /library/reports/{slug}/{date}.md
+             */
+            path: string;
+            /** @enum {string} */
+            kind: "markdown" | "json" | "any";
+            /** @description Markdown: headings the file must have (any level, case-insensitive). */
+            requiredSections?: string[];
+            /** @description JSON: a JSON Schema the parsed file must match (zod `fromJSONSchema` subset: type, properties, required, items, enum, const, min/max, pattern, additionalProperties, anyOf/oneOf/allOf, local $ref). */
+            schema?: {
+                [key: string]: unknown;
+            };
+            minChars?: number;
+        };
         /** @description The routine that owns the schedule trigger (it pauses itself after repeated failures). */
         ProgramTriggerState: {
             /** @enum {string} */
@@ -8224,6 +9072,7 @@ export interface components {
                 /** @description Queued tasks one run takes at most; each runs in a session of its own. */
                 maxTasks?: number;
             } | null;
+            deliverables?: components["schemas"]["Deliverable"][];
         };
         ProgramPatch: {
             name?: string;
@@ -8257,6 +9106,7 @@ export interface components {
                 /** @description Queued tasks one run takes at most; each runs in a session of its own. */
                 maxTasks?: number;
             } | null;
+            deliverables?: components["schemas"]["Deliverable"][];
             /** @description The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`. */
             version?: number;
         };
@@ -8275,6 +9125,200 @@ export interface components {
         ProgramRuns: {
             /** @description Task sessions of the program, newest first. */
             runs: components["schemas"]["Task"][];
+        };
+        /** @description A test run of a program on sample data: library writes went to a scratch overlay, external writes were simulated, decisions are recorded as "would ask". */
+        Rehearsal: {
+            id: string;
+            programId: string;
+            /** @description The program version it ran against. */
+            programVersion: number;
+            /** @description What the program was when it ran (brief, authority, deliverables, ...): an edit that matters changes it. */
+            programFingerprint: string;
+            /** @example rehearsal:0198…:1760000000000 */
+            sessionId: string;
+            testId: string | null;
+            /** @enum {string} */
+            status: "running" | "done" | "failed";
+            stop: string | null;
+            error: string | null;
+            sample: components["schemas"]["RehearsalSample"];
+            budgetUsd: number;
+            startedAt: number;
+            endedAt: number | null;
+            report: components["schemas"]["TaskReport"] & unknown;
+            deliverables: components["schemas"]["DeliverableResult"] & unknown;
+            simulated: components["schemas"]["SimulatedAction"][];
+            wouldAsk: components["schemas"]["WouldAsk"][];
+            toolsCalled: string[];
+            /** @description Files the run produced (new or changed against the sample), from the overlay. The list endpoint leaves their content out. */
+            files: components["schemas"]["RehearsalFile"][];
+            deleted: string[];
+            costUsd: number;
+        };
+        RehearsalSample: {
+            /** @description Library files or directories (`/library/data/`, `/library/data/**`) copied into the scratch overlay. */
+            copy: string[];
+            /** @description Text files the client attached: written into the overlay. */
+            files: {
+                /** @example /library/inputs/sample.md */
+                path: string;
+                content: string;
+            }[];
+            /** @description Worker programs: the sample work item the rehearsal works on (a draft; the real board is not touched). */
+            task: {
+                title: string;
+                brief: string;
+                inputs: string[];
+            } | null;
+            /**
+             * @description `library`: reads see the real library under the overlay. `sample`: only the sample files (and the inputs of the sample task) are visible.
+             * @enum {string}
+             */
+            reads: "library" | "sample";
+        };
+        /** @description A call of an external write tool that was not made: the model read `SIMULATED: would call <tool> with <input>`. */
+        SimulatedAction: {
+            tool: string;
+            input?: unknown;
+            at: number;
+        };
+        /** @description A decision the run would have raised in the Decision Center (nothing was created). */
+        WouldAsk: {
+            /** @enum {string} */
+            kind: "escalation" | "amendment" | "proposal" | "report";
+            title: string;
+            question: string;
+            details?: string;
+            options?: string[];
+            at: number;
+        };
+        RehearsalFile: {
+            path: string;
+            size: number;
+            mediaType: string | null;
+            /** @description Text of a text file; null for binary or over the caps. */
+            text: string | null;
+            base64: string | null;
+            /** @description The content is not stored (over the caps). */
+            truncated: boolean;
+        };
+        RehearsalStart: {
+            sample?: components["schemas"]["RehearsalSampleInput"];
+            /** @description Spend cap of this rehearsal (default 0.5, at most 5). A separate ledger scope. */
+            budgetUsd?: number;
+        };
+        RehearsalSampleInput: {
+            /** @description Library files or directories (`/library/data/`, `/library/data/**`) copied into the scratch overlay. */
+            copy?: string[];
+            /** @description Text files the client attached: written into the overlay. */
+            files?: {
+                /** @example /library/inputs/sample.md */
+                path: string;
+                content: string;
+            }[];
+            /** @description Worker programs: the sample work item the rehearsal works on (a draft; the real board is not touched). */
+            task?: {
+                title: string;
+                brief: string;
+                inputs: string[];
+            } | null;
+            /**
+             * @description `library`: reads see the real library under the overlay. `sample`: only the sample files (and the inputs of the sample task) are visible.
+             * @enum {string}
+             */
+            reads?: "library" | "sample";
+        };
+        RehearsalList: {
+            rehearsals: components["schemas"]["Rehearsal"][];
+        };
+        RehearsalMessages: {
+            messages: (components["schemas"]["UiMessage"] & unknown)[];
+        };
+        TestList: {
+            cases: components["schemas"]["TestCaseView"][];
+            summary: components["schemas"]["TestSummary"];
+        };
+        TestCaseView: components["schemas"]["TestCase"] & {
+            /** @description The last result is older than an edit that matters: run the test again. */
+            stale: boolean;
+        };
+        TestExpect: {
+            /** @description Every deliverable of the program must pass (vacuous when it lists none). */
+            deliverablesPass: boolean;
+            /** @description Tool names the run must not call; a trailing `*` is a prefix. */
+            mustNotCall: string[];
+            /**
+             * @description The report must say this; null = any.
+             * @enum {string|null}
+             */
+            reportStatus: "done" | "partial" | "failed" | "needs_decision" | null;
+        };
+        TestResult: {
+            /** @enum {string} */
+            status: "running" | "pass" | "fail" | "error";
+            rehearsalId: string | null;
+            /** @description The program as it was when this ran. An edit that changes what a run does (not pausing, the schedule or the budget) makes the result stale. */
+            programFingerprint: string;
+            failures: string[];
+            at: number;
+        } | null;
+        TestCase: {
+            id: string;
+            programId: string;
+            name: string;
+            sample: components["schemas"]["RehearsalSample"];
+            expect: components["schemas"]["TestExpect"];
+            lastResult: components["schemas"]["TestResult"];
+            createdAt: number;
+            updatedAt: number;
+        };
+        TestSummary: {
+            total: number;
+            passing: number;
+            /** @description Failed or errored at the current program version. */
+            failing: number;
+            /** @description Never run, or not run since the last edit of the program. */
+            stale: number;
+            running: number;
+        };
+        TestCreate: {
+            name: string;
+            /** @description Take the sample of this rehearsal; the case is judged against that run at once. */
+            rehearsalId?: string;
+            sample?: components["schemas"]["RehearsalSampleInput"];
+            expect?: {
+                /** @description Every deliverable of the program must pass (vacuous when it lists none). */
+                deliverablesPass?: boolean;
+                /** @description Tool names the run must not call; a trailing `*` is a prefix. */
+                mustNotCall?: string[];
+                /**
+                 * @description The report must say this; null = any.
+                 * @enum {string|null}
+                 */
+                reportStatus?: "done" | "partial" | "failed" | "needs_decision" | null;
+            };
+        };
+        TestRunStarted: {
+            started: number;
+        };
+        TestRun: {
+            /** @description One case; absent: all of them. */
+            caseId?: string;
+        };
+        TestPatch: {
+            name?: string;
+            sample?: components["schemas"]["RehearsalSampleInput"];
+            expect?: {
+                /** @description Every deliverable of the program must pass (vacuous when it lists none). */
+                deliverablesPass?: boolean;
+                /** @description Tool names the run must not call; a trailing `*` is a prefix. */
+                mustNotCall?: string[];
+                /**
+                 * @description The report must say this; null = any.
+                 * @enum {string|null}
+                 */
+                reportStatus?: "done" | "partial" | "failed" | "needs_decision" | null;
+            };
         };
         DecisionList: {
             decisions: components["schemas"]["Decision"][];
@@ -8372,6 +9416,7 @@ export interface components {
             trigger: components["schemas"]["ProgramTrigger"];
             /** @enum {string} */
             report: "digest" | "task" | "silent";
+            deliverables?: components["schemas"]["Deliverable"][];
         };
         EscalationPayload: {
             question: string;
@@ -8437,6 +9482,7 @@ export interface components {
             trigger?: components["schemas"]["ProgramTrigger"];
             /** @enum {string} */
             report?: "digest" | "task" | "silent";
+            deliverables?: components["schemas"]["Deliverable"][];
         };
         DecisionReject: {
             note?: string;
@@ -8444,6 +9490,8 @@ export interface components {
         Heartbeat: {
             agentId: string;
             config: components["schemas"]["HeartbeatConfig"];
+            /** @description The timezone of the active hours in effect: its own, else the team timezone. */
+            effectiveTimezone: string;
             /** @description false while nothing was ever set: the config is the default of the role. */
             stored: boolean;
             checklist: {
@@ -8470,8 +9518,8 @@ export interface components {
             activeFrom: string;
             /** @description End of the active hours (exclusive); a window may wrap midnight. */
             activeTo: string;
-            /** @description IANA timezone. */
-            timezone: string;
+            /** @description IANA timezone; null = the team timezone (workspace setting). */
+            timezone: string | null;
         };
         BeatRecord: {
             /** @description The routine slot of the beat. */
@@ -8507,7 +9555,7 @@ export interface components {
         DigestConfig: {
             enabled: boolean;
             time: string;
-            /** @description IANA timezone; null = the timezone of the lead heartbeat. */
+            /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone: string | null;
         };
         HeartbeatPatch: {
@@ -8517,8 +9565,8 @@ export interface components {
             activeFrom?: string;
             /** @description End of the active hours (exclusive); a window may wrap midnight. */
             activeTo?: string;
-            /** @description IANA timezone. */
-            timezone?: string;
+            /** @description IANA timezone; null = the team timezone (workspace setting). */
+            timezone?: string | null;
             /** @description Create `HEARTBEAT.md` with a template when the agent has none yet. */
             createChecklist?: boolean;
         };
@@ -8530,7 +9578,7 @@ export interface components {
         DigestPatch: {
             enabled?: boolean;
             time?: string;
-            /** @description IANA timezone; null = the timezone of the lead heartbeat. */
+            /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
         };
         ModelCallList: {

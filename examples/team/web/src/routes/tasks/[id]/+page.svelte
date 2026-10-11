@@ -8,7 +8,7 @@
 </script>
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-	<PageHeader title={task?.title ?? 'Task'} breadcrumb={[{ label: 'Tasks', href: '/tasks' }]} backHref="/tasks" />
+	<PageHeader title={task?.title ?? 'Task'} description="The live session behind this task." breadcrumb={[{ label: 'Tasks', href: '/tasks' }]} backHref="/tasks" />
 	{#key page.params.id}
 		<SessionView taskId={page.params.id ?? ''} />
 	{/key}

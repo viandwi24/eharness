@@ -5,6 +5,7 @@
 	import DecisionCard from '#lib/components/app/DecisionCard.svelte';
 	import DecisionEditDialog from '#lib/components/app/DecisionEditDialog.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
@@ -43,7 +44,7 @@
 	const groups = $derived(view === 'open' ? groupDecisions(list ?? []) : []);
 </script>
 
-<div class="flex min-w-0 flex-1 flex-col overflow-y-auto">
+<div class="flex min-h-0 min-w-0 flex-1 flex-col">
 	<PageHeader title="Decisions" description="Plans to approve, questions from running work and requests for more authority.">
 		<NativeSelect bind:value={agentFilter} aria-label="Filter by agent" class="w-40">
 			<NativeSelectOption value="">All agents</NativeSelectOption>
@@ -59,7 +60,7 @@
 		</div>
 	</PageHeader>
 
-	<div class="mx-auto flex w-full max-w-3xl flex-col gap-6 p-3 sm:p-4">
+	<PageBody size="narrow" class="gap-6">
 		{#if error}
 			<p class="text-sm text-destructive-text" role="alert">{error} <button class="underline underline-offset-4" onclick={() => void load()}>Retry</button></p>
 		{:else if !list}
@@ -91,7 +92,7 @@
 				{#each list as d (d.id)}<DecisionCard decision={d} />{/each}
 			</div>
 		{/if}
-	</div>
+	</PageBody>
 </div>
 
 <DecisionEditDialog bind:decision={editing} />

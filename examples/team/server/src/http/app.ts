@@ -21,6 +21,7 @@ import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
 import { programRoutes } from './routes/programs.ts'
 import { providerRoutes } from './routes/providers.ts'
+import { rehearsalRoutes } from './routes/rehearsals.ts'
 import { routineRoutes } from './routes/routines.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { taskRoutes } from './routes/tasks.ts'
@@ -71,6 +72,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
     {
       name: 'routines',
       description: 'Scheduled prompts per agent (multi-instance safe, on the durable inbox).',
+    },
+    {
+      name: 'rehearsals',
+      description:
+        'Test runs of a program on sample data in a safe mode (scratch files, simulated external writes, decisions recorded as "would ask") and the program test cases that re-run them after an edit.',
     },
     {
       name: 'programs',
@@ -248,6 +254,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', connectorRoutes(options.deps))
   app.route('/', routineRoutes(options.deps))
   app.route('/', programRoutes(options.deps))
+  app.route('/', rehearsalRoutes(options.deps))
   app.route('/', decisionRoutes(options.deps))
   app.route('/', heartbeatRoutes(options.deps))
   app.route('/', logRoutes(options.deps))

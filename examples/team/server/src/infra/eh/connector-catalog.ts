@@ -32,6 +32,7 @@ import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
+import { sessionFileSystem } from './rehearsal-registry.ts'
 import { WORK_QUEUE_TOOLS } from './work-queue-plugin.ts'
 
 /** Memory tools are file writes by definition: the agent owns its memory, so they never ask. */
@@ -374,10 +375,13 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
       plugin: ({ tools }, ctx) => {
         const def = defOf(ctx.agent.id)
         return filesystem({
-          fs: libraryFs(sqlite, {
-            agentId: def.id,
-            ...(options.onFileChange ? { onChange: options.onFileChange } : {}),
-          }),
+          // a rehearsal session sees an overlay over the library (`rehearsal-registry.ts`)
+          fs: sessionFileSystem(
+            libraryFs(sqlite, {
+              agentId: def.id,
+              ...(options.onFileChange ? { onChange: options.onFileChange } : {}),
+            }),
+          ),
           tools: tools as FileToolName[],
           hiddenPrefixes: ['/memories'],
           ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),

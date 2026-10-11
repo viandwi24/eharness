@@ -1,0 +1,26 @@
+{
+  "name": "Audit summary quality",
+  "passThreshold": 0.7,
+  "criteria": [
+    {
+      "id": "clarity",
+      "description": "A busy community owner can read the summary in a minute and know what happened and who is involved.",
+      "weight": 2
+    },
+    {
+      "id": "evidence",
+      "description": "Each incident states concrete evidence (authors, channels, times, example messages), not vague claims.",
+      "weight": 2
+    },
+    {
+      "id": "actionable",
+      "description": "The summary recommends proportionate next steps (ban, review, warn) per incident.",
+      "weight": 1
+    },
+    {
+      "id": "no-fabrication",
+      "description": "Nothing is claimed that the evidence could not support; uncertainty is stated.",
+      "weight": 2
+    }
+  ]
+}

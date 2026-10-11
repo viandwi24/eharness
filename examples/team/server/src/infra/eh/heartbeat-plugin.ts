@@ -7,7 +7,7 @@
  *                   routines, connectors that need sign-in, the budget, and repeated requests that
  *                   may deserve a program. Findings already reported inside their window are left
  *                   out, so the model reads only what is new.
- *  - `turn.end`     a beat's turn (including the continuation after an `escalate`) ended: record the
+ *  - `turn.end`     a beat's turn ended: record the
  *                   structured result, queue what is new for the digest, interrupt for urgent items.
  */
 import { tool } from 'ai'

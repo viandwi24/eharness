@@ -8,13 +8,15 @@
 import { matchRule } from 'eharness/permissions'
 import type { ProgramStore } from '../../app/ports.ts'
 import { parseProgramSession, programRules } from '../../domain/programs.ts'
+import { parseRehearsalSession } from '../../domain/rehearsal.ts'
 import type { PathAccess } from './plugin.ts'
 
 const MATCH = { roots: [{ virtual: '/', real: '/' }] }
 
 export function programPathAccess(programs: Pick<ProgramStore, 'get'>) {
   return (sessionId: string): PathAccess | undefined => {
-    const parsed = parseProgramSession(sessionId)
+    // a rehearsal runs under the authority of its program
+    const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
     if (parsed === undefined) return undefined
     const check = (toolName: 'read_file' | 'write_file', path: string): boolean => {
       const program = programs.get(parsed.programId)

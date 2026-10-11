@@ -25,6 +25,7 @@ import type {
   DecisionOutcome,
   DecisionStatus,
 } from '../domain/decisions.ts'
+import type { DeliverableResult } from '../domain/deliverables.ts'
 import type { NewEvent } from '../domain/events.ts'
 import type {
   DigestConfig,
@@ -50,6 +51,7 @@ import type {
   ProviderDefinitionView,
   TestResultView,
 } from '../domain/providers.ts'
+import type { Rehearsal, RehearsalSample, TestCase, TestResult } from '../domain/rehearsal.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
@@ -259,6 +261,16 @@ export interface TaskStore {
   queued(agentId: string): Task[]
   /** `complete_task`: the outputs and summary of the work item running in `sessionId`. */
   complete(sessionId: string, report: TaskReport, now: number): Task | undefined
+  /**
+   * Store the deliverable checks of a run; `override` also replaces the report (a failed check
+   * makes the run partial). undefined when the session has no row.
+   */
+  recordDeliverables(
+    sessionId: string,
+    result: DeliverableResult,
+    override: { report: TaskReport; summary: string } | null,
+    now: number,
+  ): Task | undefined
 }
 
 /** A program to store; the store sets the timestamps and the version. */
@@ -288,6 +300,52 @@ export interface ProgramRunner {
     program: Program,
     options: { runAt: number },
   ): Promise<{ sessionId: string; started: boolean; idle?: boolean }>
+}
+
+/** Rehearsals (test runs) of programs (`infra/db/rehearsal-repo.ts`, `domain/rehearsal.ts`). */
+export interface RehearsalStore {
+  /** Insert or replace by id. */
+  save(rehearsal: Rehearsal): void
+  get(id: string): Rehearsal | undefined
+  getBySession(sessionId: string): Rehearsal | undefined
+  /** Newest first; the produced files keep names and sizes, not their content. */
+  list(programId: string, limit: number): Rehearsal[]
+  delete(id: string): boolean
+  deleteByProgram(programId: string): void
+  /** Delete all but the newest `keep` finished rehearsals of a program. */
+  prune(programId: string, keep: number): void
+  running(): Rehearsal[]
+  /** USD the rehearsals started in a time window spent (the digest leaves it out of its cost line). */
+  spentBetween(from: number, to: number): number
+  /** Mark the rehearsals that were running as failed (the process that ran them is gone). */
+  failRunning(reason: string, now: number): number
+}
+
+/** Saved test cases of programs. */
+export interface ProgramTestStore {
+  list(programId: string): TestCase[]
+  get(id: string): TestCase | undefined
+  /** Insert or replace by id. */
+  save(testCase: TestCase): void
+  /** Store the last result without changing `updatedAt`. */
+  setResult(id: string, result: TestResult | null): void
+  delete(id: string): boolean
+  deleteByProgram(programId: string): void
+}
+
+/** Starts rehearsals (`infra/eh/rehearsal-service.ts`). */
+export interface RehearsalRunner {
+  /** Create the rehearsal row and start its session; returns while it runs. */
+  start(
+    program: Program,
+    options: { sample: RehearsalSample; budgetUsd: number; testId?: string | null },
+  ): Promise<Rehearsal>
+  /** Run the cases one after the other in the background; each stores its result. */
+  runCases(program: Program, cases: TestCase[]): void
+  /** Rehearsals that are running in this process. */
+  runningCount(): number
+  /** The chat of a rehearsal session (UI messages, oldest first). */
+  messages(sessionId: string): Promise<unknown[]>
 }
 
 /** Heartbeat configuration, beat history and the digest buffer (`infra/db/heartbeat-repo.ts`). */
@@ -606,6 +664,9 @@ export interface Deps {
   routineEngine: RoutineEngine
   programs: ProgramStore
   programRunner: ProgramRunner
+  rehearsals: RehearsalStore
+  programTests: ProgramTestStore
+  rehearsalRunner: RehearsalRunner
   decisions: DecisionStore
   decisionResolver: DecisionResolver
   heartbeat: HeartbeatPorts

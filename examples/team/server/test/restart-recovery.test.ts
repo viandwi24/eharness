@@ -77,16 +77,38 @@ describe('the lock of a restarted instance', () => {
     const release = await first.acquire('s', { signal })
     // a sibling object of the same process (same owner prefix) must not take it
     const sibling = sqliteLock(db, { owner: 'srv', takeOver: true, leaseMs: 60_000 })
-    expect(sibling.acquire('s', { signal })).resolves.toBeDefined()
+    const siblingRelease = await sibling.acquire('s', { signal })
+    expect(siblingRelease).toBeDefined()
     await release()
+    await siblingRelease()
     db.run("INSERT OR REPLACE INTO eh_locks VALUES ('t', 'srv:old-run', ?)", [Date.now() + 60_000])
     // the restarted instance (fresh lock object, same owner) takes over what its previous run held
     const restarted = sqliteLock(db, { owner: 'srv', takeOver: true, leaseMs: 60_000 })
-    expect(await restarted.acquire('t', { signal })).toBeDefined()
+    const releaseRestarted = await restarted.acquire('t', { signal })
+    expect(releaseRestarted).toBeDefined()
     // another instance cannot
     db.run("INSERT OR REPLACE INTO eh_locks VALUES ('u', 'other:run', ?)", [Date.now() + 60_000])
     expect(restarted.acquire('u', { signal })).rejects.toThrow('locked elsewhere')
+    // every lease is released before the database closes: each holds a renewal timer on it
+    await releaseRestarted()
     db.close()
+  })
+})
+
+describe('a released lease', () => {
+  // regression: a lease nobody released kept its renewal timer, which fired on a closed database
+  // later and failed an unrelated test ("Cannot use a closed database", unhandled between tests)
+  test('stops renewing: closing the database right after the release leaves no timer behind', async () => {
+    const db = new Database(':memory:')
+    db.run(
+      'CREATE TABLE eh_locks (session_id TEXT PRIMARY KEY, owner TEXT NOT NULL, until INTEGER NOT NULL)',
+    )
+    const lock = sqliteLock(db, { leaseMs: 30 })
+    const release = await lock.acquire('s', { signal: new AbortController().signal })
+    await release()
+    db.close()
+    // the renewal interval is 10 ms: an uncleared timer would throw an unhandled error here
+    await sleep(60)
   })
 })
 
@@ -152,5 +174,131 @@ describe('boot repair of a dead turn', () => {
     )
     expect(next.status).toBe(200)
     expect(await next.text()).toContain('back again')
+  })
+})
+
+describe('boot repair of a heartbeat beat', () => {
+  // found by the soak test (scripts/soak.ts): the rolling session `heartbeat:<agentId>` has no task
+  // row, so a killed beat kept its active turn and a `running` record for good
+  test('a beat the dead process left running is closed with its turn', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'team-restart-hb-'))
+    dirs.push(dir)
+    const a = instance(
+      dir,
+      [{ toolCalls: [{ toolName: 'team_status', input: {} }], delayMs: 1500 }],
+      true,
+    )
+    const lead = a.deps.agents.getBySlug('lead')
+    if (lead === undefined) throw new Error('seed missing')
+    await a.app.request(`/agents/${lead.id}/heartbeat`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ activeFrom: '00:00', activeTo: '00:00' }),
+    })
+    await a.deps.library.writeText(
+      `/memories/agents/${lead.id}/HEARTBEAT.md`,
+      '- look at the board\n',
+    )
+    const started = await a.heartbeats.heartbeat(lead.id, { slot: Date.now() })
+    expect(started.started).toBe(true)
+    const stats = async (s: Server) =>
+      (await (await s.app.request(`/agents/${lead.id}/stats`)).json()) as {
+        activeTurn: unknown | null
+      }
+    await until('the beat session has an active turn', async () => {
+      const row = a.conn.sqlite
+        .query('SELECT state FROM eh_state WHERE session_id = ?')
+        .get(`heartbeat:${lead.id}`) as { state: string } | null
+      return row?.state.includes('"activeTurn"') === true
+    })
+    // the owner is gone
+    const sqlite = new Database(join(dir, 'team.db'))
+    sqlite.run(
+      "UPDATE eh_state SET state = json_set(state, '$.core.activeTurn.heartbeatAt', 0) WHERE json_extract(state, '$.core.activeTurn') IS NOT NULL",
+    )
+    sqlite.run('UPDATE eh_locks SET until = 0')
+    sqlite.close()
+
+    const b = instance(dir, [{ text: 'unused' }])
+    await b.ready
+    await until('the beat record is closed', async () => {
+      const view = (await (await b.app.request(`/agents/${lead.id}/heartbeat`)).json()) as {
+        beats: Array<{ status: string; reason: string | null }>
+      }
+      return view.beats[0]?.status === 'failed'
+    })
+    const view = (await (await b.app.request(`/agents/${lead.id}/heartbeat`)).json()) as {
+      beats: Array<{ status: string; reason: string | null }>
+    }
+    expect(view.beats[0]?.reason).toContain('interrupted')
+    void stats
+  })
+})
+
+describe('boot repair of a scheduled program run', () => {
+  // found by the soak test (scripts/soak.ts): the run's turn was closed as interrupted, but its
+  // routine run row stayed `enqueued` for good (nothing reported the end to the routine)
+  test('the routine run of a killed program run ends too', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'team-restart-run-'))
+    dirs.push(dir)
+    const a = instance(
+      dir,
+      [
+        {
+          toolCalls: [
+            { toolName: 'write_file', input: { path: '/library/reports/r.md', content: 'x' } },
+          ],
+          delayMs: 1500,
+        },
+      ],
+      true,
+    )
+    const res = await a.app.request('/programs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        agentId: 'researcher',
+        name: 'Nightly',
+        brief: 'Write the report.',
+        authority: { read: ['/library/**'], write: ['/library/reports/**'] },
+        gates: [],
+        escalation: '',
+        forbidden: [],
+        budget: { perRunUsd: null, perDayUsd: null },
+        trigger: { kind: 'schedule', spec: { kind: 'every', everyMs: 3_600_000 } },
+      }),
+    })
+    expect(res.status).toBe(201)
+    const program = (await res.json()) as { id: string }
+    const owned = a.deps.routines.getByProgram(program.id)
+    const now = Date.now()
+    a.conn.sqlite
+      .query('UPDATE routines SET next_fire_at = ? WHERE id = ?')
+      .run(now - 1000, owned?.id as string)
+    await a.routines.tick(now)
+    await until('the run is on its model call', async () => {
+      const row = a.conn.sqlite
+        .query("SELECT state FROM eh_state WHERE session_id LIKE 'program:%'")
+        .get() as { state: string } | null
+      return row?.state.includes('"activeTurn"') === true
+    })
+    const sqlite = new Database(join(dir, 'team.db'))
+    sqlite.run(
+      "UPDATE eh_state SET state = json_set(state, '$.core.activeTurn.heartbeatAt', 0) WHERE json_extract(state, '$.core.activeTurn') IS NOT NULL",
+    )
+    sqlite.run('UPDATE eh_locks SET until = 0')
+    sqlite.close()
+
+    const b = instance(dir, [{ text: 'unused' }])
+    await b.ready
+    const state = () =>
+      b.conn.sqlite
+        .query(
+          'SELECT r.status AS run, t.state AS task FROM routine_runs r JOIN tasks t ON t.session_id = r.session_id',
+        )
+        .get() as { run: string; task: string } | null
+    await until('the task is interrupted', async () => state()?.task === 'interrupted')
+    await until('the routine run ends with it', async () => state()?.run !== 'enqueued', 4000)
+    expect(state()?.run).toBe('failed')
   })
 })

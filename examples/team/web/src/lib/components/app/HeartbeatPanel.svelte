@@ -178,7 +178,7 @@
 					<div class="font-medium">Heartbeat</div>
 					<p class="text-xs text-muted-foreground">
 						A quiet check-in{hb.trigger?.nextFireAt && form.enabled ? `, next at ${formatTime(hb.trigger.nextFireAt)}` : ''}. It reads what the server found and your checklist,
-						and says nothing unless something needs you. {form.enabled ? scheduleSummary(hb.config) : 'Off.'}
+						and says nothing unless something needs you. {form.enabled ? scheduleSummary(hb.config, hb.effectiveTimezone) : 'Off.'}
 					</p>
 				</div>
 				<Switch checked={form.enabled} onCheckedChange={(v) => void toggle(v)} aria-label="Heartbeat on" disabled={saving} />
@@ -199,7 +199,7 @@
 				</label>
 				<label class="flex flex-col gap-1">
 					<span class="text-xs font-medium">Timezone</span>
-					<Input bind:value={form.timezone} list="heartbeat-zones" placeholder="UTC" aria-invalid={!!errors.timezone} />
+					<Input bind:value={form.timezone} list="heartbeat-zones" placeholder={`Team timezone (${hb.effectiveTimezone})`} aria-invalid={!!errors.timezone} />
 				</label>
 			</div>
 			<datalist id="heartbeat-zones">

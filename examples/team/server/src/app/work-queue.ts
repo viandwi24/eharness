@@ -122,7 +122,9 @@ export function cancelQueuedTask(deps: Deps, id: string): Task {
 /** Accept finished work: it leaves Review. */
 export function acceptTask(deps: Deps, id: string): Task {
   const current = taskOrThrow(deps, id)
-  const next = deps.tasks.accept(id, deps.clock.now())
+  // failing deliverables keep a work item out of Review: fix them (or decide) first
+  const next =
+    current.deliverables?.status === 'fail' ? undefined : deps.tasks.accept(id, deps.clock.now())
   if (next === undefined) {
     throw conflict('only finished work in Review can be accepted', 'TASK_NOT_IN_REVIEW', {
       status: current.status,

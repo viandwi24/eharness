@@ -257,7 +257,11 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
   async function recoverOrphans(): Promise<ReconcileReport['recovered']> {
     const out: ReconcileReport['recovered'] = []
     const candidates = new Map<string, AgentDef>()
-    for (const def of allAgents()) candidates.set(dmSessionId(def.id), def)
+    for (const def of allAgents()) {
+      candidates.set(dmSessionId(def.id), def)
+      // the rolling session of a heartbeat has no task row: it is recovered like a chat
+      candidates.set(`heartbeat:${def.id}`, def)
+    }
     for (const task of deps.tasks.active()) {
       const def = defById(task.agentId)
       if (def !== undefined) candidates.set(task.sessionId, def)

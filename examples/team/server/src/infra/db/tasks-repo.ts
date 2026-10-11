@@ -7,6 +7,7 @@
 import type { Database } from 'bun:sqlite'
 import { uuidv7 } from 'eharness'
 import type { AgentActivity, TaskStore } from '../../app/ports.ts'
+import { parseDeliverableResult } from '../../domain/deliverables.ts'
 import { parseReport } from '../../domain/programs.ts'
 import type {
   PendingKind,
@@ -39,6 +40,7 @@ interface TaskRow {
   cost_usd: number
   tokens: number
   report: string | null
+  deliverables: string | null
   brief: string | null
   inputs: string
   priority: string
@@ -79,6 +81,7 @@ const toTask = (r: TaskRow): Task => ({
   costUsd: r.cost_usd,
   tokens: r.tokens,
   report: parseReport(parseJson(r.report)) ?? null,
+  deliverables: parseDeliverableResult(parseJson(r.deliverables)) ?? null,
   brief: r.brief,
   inputs: strings(r.inputs),
   priority: r.priority as TaskPriority,
@@ -352,7 +355,7 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
             .query(
               `UPDATE tasks SET state = 'running', session_id = ?, history = ?, started_at = ?,
                       ended_at = NULL, last_activity_at = ?, summary = NULL, report = NULL,
-                      pending_kind = NULL, accepted_at = NULL
+                      deliverables = NULL, pending_kind = NULL, accepted_at = NULL
                 WHERE id = ? AND state = 'queued'`,
             )
             .run(sessionId, JSON.stringify(history), now, now, row.id)
@@ -386,7 +389,7 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
           const round = task.round + 1
           const res = sqlite
             .query(
-              `UPDATE tasks SET state = 'queued', brief = ?, round = ?, report = NULL, summary = NULL,
+              `UPDATE tasks SET state = 'queued', brief = ?, round = ?, report = NULL, deliverables = NULL, summary = NULL,
                       ended_at = NULL, pending_kind = NULL, last_activity_at = ?
                 WHERE id = ? AND state = ? AND accepted_at IS NULL`,
             )
@@ -413,6 +416,24 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
         )
         .run(JSON.stringify(report), report.summary.slice(0, 500), now, sessionId)
       if (res.changes === 0) return undefined
+      const row = taskBySession.get(sessionId)
+      return row === null ? undefined : toTask(row)
+    },
+
+    recordDeliverables(sessionId, result, override, now) {
+      sqlite
+        .query(
+          `UPDATE tasks SET deliverables = ?, last_activity_at = ?,
+                  report = COALESCE(?, report), summary = COALESCE(?, summary)
+            WHERE session_id = ?`,
+        )
+        .run(
+          JSON.stringify(result),
+          now,
+          override === null ? null : JSON.stringify(override.report),
+          override === null ? null : override.summary,
+          sessionId,
+        )
       const row = taskBySession.get(sessionId)
       return row === null ? undefined : toTask(row)
     },

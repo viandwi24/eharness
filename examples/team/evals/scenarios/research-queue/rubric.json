@@ -1,0 +1,21 @@
+{
+  "name": "Research report quality",
+  "passThreshold": 0.7,
+  "criteria": [
+    {
+      "id": "answers-question",
+      "description": "The report answers the research question asked in the queue item.",
+      "weight": 3
+    },
+    {
+      "id": "grounded",
+      "description": "Findings follow from the cited sources; no claims beyond them.",
+      "weight": 3
+    },
+    {
+      "id": "concise",
+      "description": "The summary is short and the findings are easy to scan.",
+      "weight": 1
+    }
+  ]
+}

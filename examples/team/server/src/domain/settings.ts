@@ -28,6 +28,21 @@ export interface WorkspaceSettings {
   defaultModel: string | null
   /** Provider profile of agents without their own; null = the server's default profile. */
   defaultProfile: string | null
+  /** IANA timezone of the team: default of the heartbeat's active hours and the digest time. */
+  timezone: string
+}
+
+/** The host's timezone (the `TZ` variable, else what the runtime reports), `UTC` as the last resort. */
+export function hostTimezone(env: { TZ?: string | undefined } = {}): string {
+  const candidates = [env.TZ, Intl.DateTimeFormat().resolvedOptions().timeZone]
+  for (const tz of candidates) {
+    if (tz === undefined || tz === '') continue
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: tz })
+      return tz
+    } catch {}
+  }
+  return 'UTC'
 }
 
 export const SPAWN_CAP_MAX = 32
@@ -38,6 +53,13 @@ export type SettingsPatch = Partial<Omit<WorkspaceSettings, 'defaultPermissionMo
 }
 
 export function checkSettingsPatch(patch: SettingsPatch): void {
+  if (patch.timezone !== undefined) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: patch.timezone })
+    } catch {
+      throw invalid(`unknown timezone: ${patch.timezone}`, 'INVALID_SETTINGS')
+    }
+  }
   if (patch.toolAccess !== undefined && !TOOL_ACCESS.includes(patch.toolAccess)) {
     throw invalid(`toolAccess must be one of ${TOOL_ACCESS.join(', ')}`, 'INVALID_SETTINGS')
   }

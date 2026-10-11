@@ -14,6 +14,7 @@
 	import ConnectorDetail from '#lib/components/app/ConnectorDetail.svelte';
 	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
@@ -221,14 +222,13 @@
 {/snippet}
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-	<PageHeader title="Connectors" description="Connect tools and services your agents can use">
+	<PageHeader title="Connectors" description="Connect the tools and services your agents can use.">
 		{#snippet actions()}
 			<Button size="sm" variant="outline" onclick={() => (addOpen = true)}><PlusIcon class="size-4" /><span class="hidden sm:inline">Add custom connector</span><span class="sm:hidden">Add</span></Button>
 		{/snippet}
 	</PageHeader>
 
-	<div class="min-h-0 flex-1 overflow-y-auto">
-		<div class="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 md:p-6">
+	<PageBody size="wide" class="gap-6">
 			<div role="tablist" aria-label="View" class="inline-flex w-fit rounded-lg border border-border p-0.5">
 				{#each [['connectors', 'Connectors'], ['agents', 'By agent']] as const as [v, label] (v)}
 					<button type="button" role="tab" aria-selected={view === v} onclick={() => (view = v)} class={cn('h-7 rounded-md px-3 text-xs font-medium transition-colors outline-none focus-visible:outline-2 focus-visible:outline-ring', view === v ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}>{label}</button>
@@ -294,8 +294,7 @@
 				{@render group('Included', 'Built in, nothing to connect', sections.included)}
 			{/if}
 			{/if}
-		</div>
-	</div>
+	</PageBody>
 </div>
 
 <ConnectorDetail bind:open={detailOpen} connectorId={selectedId} connectionId={selectedConnectionId} />

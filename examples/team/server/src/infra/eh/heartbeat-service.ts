@@ -5,8 +5,7 @@
  *
  * A beat is one turn of the rolling session `heartbeat:<agentId>` (compaction keeps it small), a
  * `send` with a structured-output spec like a program run. Its end is recorded by the `turn.end`
- * hook of `heartbeat-plugin.ts`, not by awaiting the run here: a beat that parked on `escalate`
- * and continued after the client decided (maybe on another instance) is recorded the same way.
+ * hook of `heartbeat-plugin.ts`, not by awaiting the run here (the heartbeat never parks: urgent things go to the lead DM).
  *
  * The DM message of an urgent finding or of the digest is an `eh.event` injected into the lead's
  * DM (`session.inject`): stored at once, no model call, and the lead reads it as context at its

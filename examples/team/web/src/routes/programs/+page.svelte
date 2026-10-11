@@ -1,7 +1,9 @@
 <script lang="ts">
 	import Surface from '#lib/components/app/Surface.svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
+	import FlaskIcon from 'phosphor-svelte/lib/Flask';
 	import LightningIcon from 'phosphor-svelte/lib/Lightning';
 	import PauseIcon from 'phosphor-svelte/lib/Pause';
 	import PlayIcon from 'phosphor-svelte/lib/Play';
@@ -9,7 +11,9 @@
 	import StrategyIcon from 'phosphor-svelte/lib/Strategy';
 	import { api } from '#lib/api/index.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
+	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
@@ -18,7 +22,7 @@
 	import * as Table from '#lib/components/ui/table/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { authoritySummary, budgetSummary, programBadge, type Program } from '#lib/programs/form.js';
-	import { programAction } from '#lib/programs/actions.js';
+	import { activationText, programAction } from '#lib/programs/actions.js';
 	import { describeSpec, relativeTime } from '#lib/routines/schedule.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openEditProgram, openNewProgram } from '#lib/stores/dialogs.svelte.js';
@@ -53,8 +57,21 @@
 		void load();
 	});
 
+	// activating a program whose test cases fail asks first (a warning, never a block)
+	let activating = $state<{ program: Program; text: string } | null>(null);
+	let confirmActivate = $state(false);
+
 	async function act(p: Program, action: 'pause' | 'resume' | 'run'): Promise<void> {
 		busy = p.id;
+		if (action === 'resume') {
+			const text = await activationText(p);
+			if (text !== null) {
+				activating = { program: p, text };
+				confirmActivate = true;
+				busy = null;
+				return;
+			}
+		}
 		await programAction(p, action);
 		busy = null;
 	}
@@ -74,9 +91,22 @@
 	</Tooltip.Root>
 {/snippet}
 
+{#if activating}
+	<ConfirmDialog
+		bind:open={confirmActivate}
+		title="Activate {activating.program.name}?"
+		description={activating.text}
+		confirmLabel="Activate anyway"
+		confirmVariant="default"
+		onConfirm={async () => {
+			if (activating) await programAction(activating.program, 'resume');
+		}}
+	/>
+{/if}
+
 <Tooltip.Provider>
-	<div class="flex min-w-0 flex-1 flex-col overflow-y-auto">
-		<PageHeader title="Programs">
+	<div class="flex min-h-0 min-w-0 flex-1 flex-col">
+		<PageHeader title="Programs" description="Standing orders your agents carry out on their own, within the authority you grant.">
 			<NativeSelect bind:value={agentFilter} aria-label="Filter by agent" class="w-40">
 				<NativeSelectOption value="">All agents</NativeSelectOption>
 				{#each agentsStore.state.agents as a (a.id)}
@@ -86,7 +116,7 @@
 			<Button size="sm" onclick={() => openNewProgram(agentFilter || null)}><PlusIcon class="size-4" /> New program</Button>
 		</PageHeader>
 
-		<div class="p-3 sm:p-4">
+		<PageBody size="wide">
 			{#if error}
 				<p class="text-sm text-destructive-text" role="alert">{error} <button class="underline underline-offset-4" onclick={() => void load()}>Retry</button></p>
 			{:else if !programs}
@@ -116,7 +146,7 @@
 								<Table.Head class="hidden lg:table-cell">Authority</Table.Head>
 								<Table.Head class="hidden lg:table-cell">Budget</Table.Head>
 								<Table.Head>Status</Table.Head>
-								<Table.Head class="w-24 text-right"><span class="sr-only">Actions</span></Table.Head>
+								<Table.Head class="w-32 text-right"><span class="sr-only">Actions</span></Table.Head>
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
@@ -153,6 +183,7 @@
 												{@render iconAction('Resume', busy === p.id, () => void act(p, 'resume'), PlayIcon)}
 											{/if}
 											{@render iconAction('Run now', busy === p.id, () => void act(p, 'run'), LightningIcon)}
+											{@render iconAction('Tests and test run', false, () => void goto(`/programs/${p.id}`), FlaskIcon)}
 										</div>
 									</Table.Cell>
 								</Table.Row>
@@ -161,6 +192,6 @@
 					</Table.Root>
 				</Surface>
 			{/if}
-		</div>
+		</PageBody>
 	</div>
 </Tooltip.Provider>

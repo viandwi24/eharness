@@ -143,8 +143,9 @@ interface HeartbeatView {
     everyMinutes: number
     activeFrom: string
     activeTo: string
-    timezone: string
+    timezone: string | null
   }
+  effectiveTimezone: string
   stored: boolean
   checklist: { path: string; exists: boolean; empty: boolean }
   trigger: { status: string; nextFireAt: number | null } | null
@@ -598,7 +599,7 @@ describe('configuration', () => {
     expect((await i.app.request('/agents/nobody/heartbeat')).status).toBe(404)
   })
 
-  test('the digest: default 18:00 in the lead timezone, its routine follows', async () => {
+  test('the digest: default 18:00 in the team timezone, its routine follows', async () => {
     const i = instance({})
     const d = (await (await i.app.request('/digest')).json()) as {
       time: string
@@ -610,14 +611,20 @@ describe('configuration', () => {
       enabled: true,
       time: '18:00',
       timezone: null,
-      effectiveTimezone: 'UTC',
+      effectiveTimezone: i.server.deps.settings.get().timezone,
     })
-    await configure(i.app, i.leadId, { timezone: 'Asia/Jakarta' })
+    // the team timezone is a workspace setting; the digest follows it
+    const set = await i.app.request('/settings', json('PATCH', { timezone: 'Asia/Jakarta' }))
+    expect(set.status).toBe(200)
+    expect(((await set.json()) as { timezone: string }).timezone).toBe('Asia/Jakarta')
     expect(i.server.deps.routines.getByProgram('sys:digest')?.schedule).toEqual({
       kind: 'cron',
       expr: '0 18 * * *',
       tz: 'Asia/Jakarta',
     })
+    expect(
+      (await i.app.request('/settings', json('PATCH', { timezone: 'Mars/Base' }))).status,
+    ).toBe(400)
     const res = await i.app.request('/digest', json('PATCH', { time: '07:30', timezone: 'UTC' }))
     expect(res.status).toBe(200)
     expect(i.server.deps.routines.getByProgram('sys:digest')?.schedule).toEqual({
@@ -628,6 +635,30 @@ describe('configuration', () => {
     expect((await i.app.request('/digest', json('PATCH', { time: '25:00' }))).status).toBe(400)
     await i.app.request('/digest', json('PATCH', { enabled: false }))
     expect(i.server.deps.routines.getByProgram('sys:digest')?.status).toBe('paused')
+  })
+})
+
+describe('team timezone', () => {
+  test('active hours default to the team timezone; a per-agent timezone overrides it', async () => {
+    const i = instance({})
+    const set = (tz: string) => i.app.request('/settings', json('PATCH', { timezone: tz }))
+    const at = Date.UTC(2026, 9, 12, 2, 0) // 02:00 UTC = 09:00 in Jakarta
+    const reason = async (n: number) =>
+      (await i.server.heartbeats.heartbeat(i.leadId, { slot: at + n })).reason
+    expect((await view(i.app, i.leadId)).config.timezone).toBeNull()
+    await set('Asia/Jakarta')
+    // inside 08:00-20:00 there, so the beat gets as far as the (missing) checklist
+    expect(await reason(0)).toBe('empty checklist')
+    await set('UTC')
+    expect(await reason(1)).toBe('outside active hours')
+    // an own timezone wins over the team's
+    const own = await configure(i.app, i.leadId, { timezone: 'Asia/Jakarta' })
+    expect(own).toMatchObject({ effectiveTimezone: 'Asia/Jakarta' })
+    expect(await reason(2)).toBe('empty checklist')
+    // null goes back to following the team
+    const back = await configure(i.app, i.leadId, { timezone: null })
+    expect(back).toMatchObject({ effectiveTimezone: 'UTC' })
+    expect(await reason(3)).toBe('outside active hours')
   })
 })
 
@@ -687,7 +718,9 @@ describe('a beat', () => {
     )
     expect(names).toContain('team_status')
     expect(names).toContain('propose_plan')
-    expect(names).toContain('escalate')
+    // the heartbeat never parks: urgent items go to the lead DM, a pattern goes to propose_plan
+    expect(names).not.toContain('escalate')
+    expect(HEARTBEAT_ALLOWED).not.toContain('escalate')
   })
 
   test('attention: new items go to the digest buffer, urgent ones to the DM, once', async () => {
@@ -741,12 +774,10 @@ describe('a beat', () => {
     expect(await dmEvents(i)).toHaveLength(1)
   })
 
-  test('overlap: a running beat is not started twice, a parked one waits for its decision', async () => {
+  test('overlap: a running beat is not started twice', async () => {
     const i = instance({
       lead: [
         { toolCalls: [{ toolName: 'team_status', input: {}, toolCallId: 'a-slow' }], delayMs: 250 },
-        beatResult('ok'),
-        call('escalate', { title: 'Pause the audit?', question: 'It failed twice. Pause it?' }),
         beatResult('ok'),
       ],
     })
@@ -760,40 +791,11 @@ describe('a beat', () => {
     })
     await beatEnds(i, 2)
     expect((await view(i.app, i.leadId)).beats.map((b) => b.status)).toEqual(['skipped', 'ok'])
-
-    // a beat that escalates parks; the next beats are skipped until the client decides
-    await fire(i)
-    const decision = await (async () => {
-      let found: { id: string; kind: string; programId: string | null } | undefined
-      await until('the escalation', async () => {
-        const res = (await (await i.app.request('/decisions?status=open')).json()) as {
-          decisions: Array<{ id: string; kind: string; programId: string | null }>
-        }
-        found = res.decisions[0]
-        return found !== undefined
-      })
-      return found as { id: string; kind: string; programId: string | null }
-    })()
-    expect(decision).toMatchObject({ kind: 'escalation', programId: null })
-    await until(
-      'the beat parks',
-      async () => (await i.server.factory.peek(`heartbeat:${i.leadId}`).pending()) !== null,
-    )
-    expect(await fire(i)).toMatchObject({
-      started: false,
-      reason: 'the previous beat waits for a decision',
-    })
-    // the answer resumes the same session; the beat ends with its typed result
-    const approved = await i.app.request(`/decisions/${decision.id}/approve`, { method: 'POST' })
-    expect(approved.status).toBe(200)
-    await until('the beat ends', async () => {
-      const beats = (await view(i.app, i.leadId)).beats
-      return (
-        beats.some((b) => b.status === 'ok' && b.reason === null) &&
-        beats.every((b) => b.status !== 'running')
-      )
-    })
-    expect(callsOf(i)).toBe(4)
+    // nothing parked and no decision was opened
+    const open = (await (await i.app.request('/decisions?status=open')).json()) as {
+      decisions: unknown[]
+    }
+    expect(open.decisions).toEqual([])
   })
 
   test('a failing model call is a failed beat, not a crash, and the next beat runs', async () => {

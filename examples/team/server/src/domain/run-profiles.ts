@@ -13,10 +13,11 @@
  *   routine:<routineId>:<slot>         a scheduled prompt (task mode)
  *   program:<programId>:<runAt>        a run of a program (a standing order, `domain/programs.ts`)
  *   heartbeat:<agentId>                the ambient monitor of an agent (P40 phase E, `domain/heartbeat.ts`)
+ *   rehearsal:<programId>:<ts>         a test run of a program on sample data (P40 phase K, `domain/rehearsal.ts`)
  */
 import type { TaskOrigin } from './tasks.ts'
 
-export const RUN_ORIGINS = ['dm', 'lead', 'routine', 'program', 'heartbeat'] as const
+export const RUN_ORIGINS = ['dm', 'lead', 'routine', 'program', 'heartbeat', 'rehearsal'] as const
 export type RunOrigin = (typeof RUN_ORIGINS)[number]
 
 /** Where the tool permission decisions of a session come from. */
@@ -98,6 +99,18 @@ export const RUN_PROFILES: Record<RunOrigin, RunProfile> = {
     task: null,
     budget: 'workspace',
   },
+  // the authority of the program, in a scratch overlay with simulated external writes: not a task,
+  // not in the run history, the digest or the program's own budget (it has a small cap of its own)
+  rehearsal: {
+    origin: 'rehearsal',
+    startedBy: 'person',
+    permissions: 'program-authority',
+    unattended: true,
+    feedsMemory: false,
+    resultTo: 'none',
+    task: null,
+    budget: 'workspace',
+  },
 }
 
 /** The origin of a session from its id; `hasParent` marks a child session of the lead. */
@@ -105,6 +118,7 @@ export function originOfSession(sessionId: string, hasParent = false): RunOrigin
   if (sessionId.startsWith('routine:')) return 'routine'
   if (sessionId.startsWith('program:')) return 'program'
   if (sessionId.startsWith('heartbeat:')) return 'heartbeat'
+  if (sessionId.startsWith('rehearsal:')) return 'rehearsal'
   if (hasParent || /^dm:[^:]+:/.test(sessionId)) return 'lead'
   return 'dm'
 }

@@ -32,6 +32,8 @@ export interface DecisionServiceDeps {
   agents: AgentRepo
   /** How long a busy session (a turn ending right now) is retried before giving up (ms). */
   busyRetryMs?: number
+  /** Called when a continued session ends (the deliverable re-check of a decided run). */
+  afterRun?: (sessionId: string) => Promise<void>
   log?: { warn(message: string): void }
 }
 
@@ -47,10 +49,12 @@ export function createDecisionService(
   const busyRetryMs = deps.busyRetryMs ?? 3000
   const inflight = new Set<Promise<unknown>>()
   const track = (run: { result: Promise<unknown> }, sessionId: string): void => {
-    const watched = run.result.then(
-      () => undefined,
-      (error: unknown) => log.warn(`resumed session ${sessionId} failed: ${errorText(error)}`),
-    )
+    const watched = run.result
+      .then(() => deps.afterRun?.(sessionId))
+      .then(
+        () => undefined,
+        (error: unknown) => log.warn(`resumed session ${sessionId} failed: ${errorText(error)}`),
+      )
     inflight.add(watched)
     void watched.finally(() => inflight.delete(watched))
   }

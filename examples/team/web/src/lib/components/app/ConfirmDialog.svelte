@@ -7,8 +7,9 @@
 		title,
 		description,
 		confirmLabel = 'Delete',
+		confirmVariant = 'destructive',
 		onConfirm
-	}: { open?: boolean; title: string; description: string; confirmLabel?: string; onConfirm: () => void | Promise<void> } = $props();
+	}: { open?: boolean; title: string; description: string; confirmLabel?: string; confirmVariant?: 'destructive' | 'default'; onConfirm: () => void | Promise<void> } = $props();
 </script>
 
 <AlertDialog.Root bind:open>
@@ -19,7 +20,7 @@
 		</AlertDialog.Header>
 		<AlertDialog.Footer>
 			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-			<AlertDialog.Action variant="destructive" onclick={() => void onConfirm()}>{confirmLabel}</AlertDialog.Action>
+			<AlertDialog.Action variant={confirmVariant} onclick={() => { open = false; void onConfirm(); }}>{confirmLabel}</AlertDialog.Action>
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>

@@ -1,5 +1,14 @@
-export type GeneralInput = { budget: string; spawnCap: string };
-export type GeneralParsed = { budgetUsd: number | null; spawnCap: number };
+export type GeneralInput = { budget: string; spawnCap: string; timezone?: string };
+export type GeneralParsed = { budgetUsd: number | null; spawnCap: number; timezone?: string };
+
+function isTimezone(tz: string): boolean {
+	try {
+		new Intl.DateTimeFormat('en-US', { timeZone: tz });
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 /** Validate the General form's text inputs. Errors are keyed by the API field name. */
 export function validateGeneral(input: GeneralInput): { ok: true; value: GeneralParsed } | { ok: false; errors: Record<string, string> } {
@@ -14,5 +23,7 @@ export function validateGeneral(input: GeneralInput): { ok: true; value: General
 	if (c === '' || !Number.isInteger(spawnCap) || spawnCap < 1 || spawnCap > 32) {
 		errors.spawnCap = 'Enter a whole number from 1 to 32';
 	}
-	return Object.keys(errors).length ? { ok: false, errors } : { ok: true, value: { budgetUsd, spawnCap } };
+	const tz = input.timezone?.trim();
+	if (tz !== undefined && (tz === '' || !isTimezone(tz))) errors.timezone = 'Not a timezone (try Europe/Berlin or UTC)';
+	return Object.keys(errors).length ? { ok: false, errors } : { ok: true, value: { budgetUsd, spawnCap, ...(tz === undefined ? {} : { timezone: tz }) } };
 }

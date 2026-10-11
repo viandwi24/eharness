@@ -8,11 +8,12 @@ export type Board = Record<Column, Task[]>;
 /** Sessions that wait on an open decision of the Decision Center (a parked run still shows `running`). */
 export type WaitingSessions = ReadonlySet<string>;
 
-type ColumnInput = Pick<Task, 'status' | 'sessionId' | 'createdBy' | 'acceptedAt' | 'report'>;
+type ColumnInput = Pick<Task, 'status' | 'sessionId' | 'createdBy' | 'acceptedAt' | 'report'> & Partial<Pick<Task, 'deliverables'>>;
 
 /** Finished work of the queue that the client has not accepted yet. */
-export const inReview = (t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'>): boolean =>
-	t.status === 'done' && t.createdBy !== null && t.acceptedAt === null && (t.report?.status === 'done' || t.report?.status === 'partial');
+/** Failing deliverables keep a work item out of Review until they are fixed or decided. */
+export const inReview = (t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'> & Partial<Pick<Task, 'deliverables'>>): boolean =>
+	t.status === 'done' && t.deliverables?.status !== 'fail' && t.createdBy !== null && t.acceptedAt === null && (t.report?.status === 'done' || t.report?.status === 'partial');
 
 /**
  * Where a task shows. Waiting for you: an approval or question waits, or the run is parked on an open
@@ -22,6 +23,7 @@ export function columnOf(t: ColumnInput, waiting: WaitingSessions = new Set()): 
 	if (t.status === 'queued') return 'queued';
 	if (t.status === 'needs_action' || (t.status === 'running' && waiting.has(t.sessionId))) return 'waiting';
 	if (t.status === 'running') return 'running';
+	if (t.deliverables?.status === 'fail' && waiting.has(t.sessionId)) return 'waiting';
 	return inReview(t) ? 'review' : 'done';
 }
 

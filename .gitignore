@@ -40,3 +40,6 @@ docs/tmp/
 
 # local SQLite database of the team example (WAL files too)
 examples/team/server/data/
+
+# eval run reports (examples/team/evals)
+examples/team/evals/results/

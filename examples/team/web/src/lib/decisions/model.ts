@@ -87,8 +87,8 @@ export function outcomeLine(d: Decision): string {
 
 /** The body of "Edit & approve": what the client changed in the program form (the agent stays). */
 export function editBody(form: ProgramForm, runOnce: boolean): NonNullable<ApproveBody['edit']> {
-	const { name, brief, authority, gates, forbidden, escalation, budget, trigger, report } = bodyFromForm(form);
-	return { program: { name, brief, authority, gates, forbidden, escalation, budget, trigger, report }, runOnce };
+	const { name, brief, authority, gates, forbidden, escalation, budget, trigger, report, deliverables } = bodyFromForm(form);
+	return { program: { name, brief, authority, gates, forbidden, escalation, budget, trigger, report, deliverables }, runOnce };
 }
 
 /** The decision a refresh returned in place of `id`, or the list without it: used after an answer. */

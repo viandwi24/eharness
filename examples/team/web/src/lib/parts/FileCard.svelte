@@ -9,7 +9,7 @@
 	import type { WrittenFile } from './activity.js';
 
 	/** A file the agent wrote, as a card that opens it in Files (like Claude's artifact card). */
-	let { file }: { file: WrittenFile } = $props();
+	let { file, scratch = false }: { file: WrittenFile; scratch?: boolean } = $props();
 
 	const kind = $derived(fileKind({ path: file.path, mediaType: null, binary: false }));
 	const label: Record<string, string> = { markdown: 'Markdown', code: 'Code', text: 'Text', image: 'Image', pdf: 'PDF', other: 'File' };
@@ -20,8 +20,8 @@
 </script>
 
 <Surface
-	as="a"
-	{href}
+	as={scratch ? 'div' : 'a'}
+	href={scratch ? undefined : href}
 	class="group flex w-full max-w-lg items-center gap-3 p-2.5 pr-3 text-[13.5px] transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
 	data-testid="file-card"
 >
@@ -34,5 +34,10 @@
 			{label[kind]} · {file.action === 'created' ? 'Created' : 'Edited'} in {parentOf(file.path)}
 		</span>
 	</span>
-	<span class="shrink-0 rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground transition-colors group-hover:bg-accent">Open</span>
+	{#if scratch}
+		<!-- a file of a test run exists only in its scratch area: there is nothing to open in Files -->
+		<span class="shrink-0 rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">Test run only</span>
+	{:else}
+		<span class="shrink-0 rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground transition-colors group-hover:bg-accent">Open</span>
+	{/if}
 </Surface>

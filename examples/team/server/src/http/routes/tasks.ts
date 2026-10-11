@@ -1,4 +1,5 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
+import { recheckTask } from '../../app/deliverables.ts'
 import { markAgentRead } from '../../app/events.ts'
 import type { Deps } from '../../app/ports.ts'
 import {
@@ -161,6 +162,22 @@ const sendBackRoute = createRoute({
   },
 })
 
+const checkDeliverablesRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/deliverables/check',
+  tags: ['tasks'],
+  summary: 'Check the deliverables of a run again',
+  description:
+    "Checks the files of the run against its program's deliverables now (no fix-up turn). Use it after the files were repaired: a passing result lets a work item enter Review.",
+  security,
+  request: { params: TaskIdParam },
+  responses: {
+    200: { description: 'The task with the new result', content: json(TaskSchema) },
+    404: jsonError('Unknown task'),
+    ...errorResponses,
+  },
+})
+
 const approvalsRoute = createRoute({
   method: 'get',
   path: '/approvals',
@@ -274,6 +291,9 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
     )
     .openapi(sendBackRoute, (c) =>
       c.json(sendBackTask(deps, c.req.valid('param').id, c.req.valid('json').note) as never, 200),
+    )
+    .openapi(checkDeliverablesRoute, async (c) =>
+      c.json((await recheckTask(deps, c.req.valid('param').id)) as never, 200),
     )
     .openapi(approvalsRoute, async (c) => c.json({ approvals: await listApprovals(deps) }, 200))
     .openapi(sessionsRoute, async (c) =>

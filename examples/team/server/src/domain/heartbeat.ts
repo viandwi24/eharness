@@ -28,8 +28,8 @@ export interface HeartbeatConfig {
   /** Active hours, `HH:MM` in `timezone`; a window that wraps midnight is fine. */
   activeFrom: string
   activeTo: string
-  /** IANA timezone of the active hours. */
-  timezone: string
+  /** IANA timezone of the active hours; null = the team timezone (the workspace setting). */
+  timezone: string | null
 }
 
 export const DEFAULT_EVERY_MINUTES = 30
@@ -40,7 +40,7 @@ export const DEFAULT_HEARTBEAT: Omit<HeartbeatConfig, 'enabled'> = {
   everyMinutes: DEFAULT_EVERY_MINUTES,
   activeFrom: '08:00',
   activeTo: '20:00',
-  timezone: 'UTC',
+  timezone: null,
 }
 
 /** On by default for the lead (the manager) only. */
@@ -53,7 +53,7 @@ export interface DigestConfig {
   enabled: boolean
   /** `HH:MM` in `timezone`. */
   time: string
-  /** IANA timezone; null = the timezone of the lead's heartbeat. */
+  /** IANA timezone; null = the team timezone (the workspace setting). */
   timezone: string | null
 }
 
@@ -93,7 +93,7 @@ export function checkHeartbeatFields(f: Partial<HeartbeatConfig>): void {
       throw invalid(`${name} must be HH:MM (24 hours)`, 'INVALID_HEARTBEAT')
     }
   }
-  if (f.timezone !== undefined && !isTimezone(f.timezone)) {
+  if (f.timezone != null && !isTimezone(f.timezone)) {
     throw invalid(`unknown timezone: ${f.timezone}`, 'INVALID_HEARTBEAT')
   }
 }
@@ -139,7 +139,7 @@ const minutesOf = (clock: string): number => {
 /** Whether `at` is inside the active hours (`from` inclusive, `to` exclusive; equal = always). */
 export function inActiveHours(
   at: number,
-  c: Pick<HeartbeatConfig, 'activeFrom' | 'activeTo' | 'timezone'>,
+  c: Pick<HeartbeatConfig, 'activeFrom' | 'activeTo'> & { timezone: string },
 ): boolean {
   const from = minutesOf(c.activeFrom)
   const to = minutesOf(c.activeTo)
@@ -663,7 +663,7 @@ export function beatPrompt(input: {
     `Heartbeat of ${input.agentName}: ${new Date(input.now).toISOString()} (${input.timezone}).`,
     '',
     'You are the quiet monitor of this team. Nobody is watching this turn and you are read-only:',
-    'you may read the library and call team_status, propose_plan and escalate, nothing else.',
+    'you may read the library and call team_status, list_tasks and propose_plan, nothing else.',
     'The client does not want noise: report only what needs their attention.',
     '',
     '## How to run',
@@ -672,7 +672,8 @@ export function beatPrompt(input: {
     '3. Decide what deserves the client attention. A finding that is just information, or that you',
     '   cannot act on, still goes in the result as an item; routine and healthy things do not.',
     '4. Mark an item urgent only when waiting for the daily digest would cost something (a program',
-    '   paused itself, a limit is about to stop all work, data may be lost).',
+    '   paused itself, a limit is about to stop all work, data may be lost). Urgent items reach',
+    '   the lead DM at once; you never wait for an answer, so do not ask questions.',
     '5. A finding of kind program.suggestion may become one propose_plan call (a standing program',
     '   with the least authority that works). Never more than one proposal per beat, and never',
     '   anything for a finding of another kind.',
@@ -702,14 +703,13 @@ export const HEARTBEAT_ALLOWED = [
   // the board (phase C): read only
   'list_tasks',
   'propose_plan',
-  'escalate',
   'Read(/library/**)',
 ] as const
 
 export function heartbeatRefusal(toolName: string): string {
   return (
     `Not available in a heartbeat: ${toolName}. A heartbeat is read-only: it reads the library, ` +
-    'calls team_status, and asks the client through propose_plan or escalate. Report what you ' +
+    'calls team_status, and asks the client through propose_plan. Report what you ' +
     'found as an item of the final answer instead.'
   )
 }

@@ -24,6 +24,51 @@ export const TaskReportSchema = z
     description: 'The structured final report a program run ends with (`SendOptions.output`).',
   })
 
+export const DeliverableSchema = z
+  .object({
+    path: z.string().min(1).max(500).openapi({
+      description:
+        'Library file the run must leave. Tokens: `{date}` (UTC day of the run), `{slug}` (program name, or task title for a work item), `{runId}` (run timestamp in ms), `{program}` (program id).',
+      example: '/library/reports/{slug}/{date}.md',
+    }),
+    kind: z.enum(['markdown', 'json', 'any']),
+    requiredSections: z.array(z.string().min(1).max(200)).max(30).optional().openapi({
+      description: 'Markdown: headings the file must have (any level, case-insensitive).',
+    }),
+    schema: z.record(z.string(), z.unknown()).optional().openapi({
+      description:
+        'JSON: a JSON Schema the parsed file must match (zod `fromJSONSchema` subset: type, properties, required, items, enum, const, min/max, pattern, additionalProperties, anyOf/oneOf/allOf, local $ref).',
+    }),
+    minChars: z.number().int().min(1).optional(),
+  })
+  .openapi('Deliverable', {
+    description:
+      'A file a program run must leave in the library. Checked by the server when the run ends: exists, kind, headings, JSON schema, length.',
+  })
+
+export const DeliverableCheckSchema = z
+  .object({
+    pattern: z.string(),
+    path: z.string().openapi({ description: 'The path after the tokens were resolved.' }),
+    ok: z.boolean(),
+    problems: z.array(z.string()),
+  })
+  .openapi('DeliverableCheck')
+
+export const DeliverableResultSchema = z
+  .object({
+    status: z.enum(['pass', 'fail']),
+    attempts: z.number().int().openapi({
+      description: '1: checked once; 2: checked again after the one fix-up turn.',
+    }),
+    checkedAt: z.number().int(),
+    checks: z.array(DeliverableCheckSchema),
+  })
+  .openapi('DeliverableResult', {
+    description:
+      'The deliverable checks of a run. `fail`: the run is partial, a decision is open, and a work item stays out of Review.',
+  })
+
 export const TaskSchema = z
   .object({
     id: z.string(),
@@ -45,6 +90,9 @@ export const TaskSchema = z
     tokens: z.number().int(),
     report: TaskReportSchema.nullable().openapi({
       description: 'The final report of a program run; null for other tasks and while it runs.',
+    }),
+    deliverables: DeliverableResultSchema.nullable().openapi({
+      description: 'Deliverable checks of a program run; null when the program lists none.',
     }),
     brief: z.string().nullable().openapi({
       description:

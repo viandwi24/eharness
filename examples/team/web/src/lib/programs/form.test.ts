@@ -8,6 +8,9 @@ import {
 	parseUsd,
 	programBadge,
 	splitLines,
+	deliverableFromRow,
+	emptyDeliverableRow,
+	validateDeliverables,
 	validateProgramForm,
 	type Program
 } from './form';
@@ -25,6 +28,7 @@ const program: Program = {
 	trigger: { kind: 'schedule', spec: { kind: 'cron', expr: '0 9 * * 1-5', tz: 'UTC' } },
 	report: 'digest',
 	worker: null,
+	deliverables: [{ path: '/library/reports/{slug}/{date}.md', kind: 'markdown', requiredSections: ['Summary', 'Findings'], minChars: 200 }],
 	status: 'active',
 	createdBy: 'client',
 	createdAt: 0,
@@ -57,6 +61,24 @@ describe('program form', () => {
 		expect(body.forbidden).toEqual(['Bash(rm *)']);
 		expect(body.budget).toEqual({ perRunUsd: 2, perDayUsd: null });
 		expect(body.trigger).toEqual({ kind: 'schedule', spec: { kind: 'cron', expr: '0 9 * * 1-5', tz: 'UTC' } });
+		expect(body.deliverables).toEqual(program.deliverables);
+	});
+
+	test('deliverables: rows round-trip, schema text is parsed, problems are found per row', () => {
+		const rows = formFromProgram(program, 'UTC').deliverables;
+		expect(rows[0]).toMatchObject({ kind: 'markdown', sections: 'Summary\nFindings', minChars: '200' });
+		const json = { ...emptyDeliverableRow(), path: '/library/data-{date}.json', kind: 'json' as const, schema: '{ "type": "object" }' };
+		expect(deliverableFromRow(json)).toEqual({ path: '/library/data-{date}.json', kind: 'json', schema: { type: 'object' } });
+		// headings do not belong to a json row
+		expect(deliverableFromRow({ ...json, sections: 'A' })).not.toHaveProperty('requiredSections');
+		expect(validateDeliverables([json, ...rows])).toEqual({});
+		expect(validateDeliverables([emptyDeliverableRow()])['deliverables.0']).toContain('path');
+		expect(validateDeliverables([{ ...json, path: 'library/x' }])['deliverables.0']).toContain('starting with /');
+		expect(validateDeliverables([{ ...json, path: '/library/{when}.json' }])['deliverables.0']).toContain('Unknown token {when}');
+		expect(validateDeliverables([{ ...json, schema: '[1]' }])['deliverables.0']).toContain('JSON object');
+		expect(validateDeliverables([{ ...json, minChars: '0' }])['deliverables.0']).toContain('whole number');
+		// the form blocks saving a bad row
+		expect(Object.keys(validateProgramForm({ ...emptyProgramForm(), name: 'n', brief: 'b', deliverables: [emptyDeliverableRow()] }))).toEqual(['deliverables.0']);
 	});
 
 	test('a manual program sends a manual trigger', () => {

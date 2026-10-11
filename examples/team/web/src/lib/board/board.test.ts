@@ -74,6 +74,14 @@ describe('work queue columns', () => {
 		expect(badgeOf({ ...item({ acceptedAt: 10 }), summary: null }).label).toBe('accepted');
 	});
 
+	test('failing deliverables keep a work item out of Review (waiting while a decision is open)', () => {
+		const fail = { status: 'fail' as const, attempts: 2, checkedAt: 1, checks: [] };
+		const item = t('w', 'done', { createdBy: 'client', report: report('partial'), deliverables: fail, sessionId: 'program:x:1' });
+		expect(columnOf(item)).toBe('done');
+		expect(columnOf(item, new Set(['program:x:1']))).toBe('waiting');
+		expect(columnOf({ ...item, deliverables: { ...fail, status: 'pass' } })).toBe('review');
+	});
+
 	test('the queue is shown in the order a worker takes it', () => {
 		const q = [
 			t('old', 'queued'),

@@ -30,7 +30,8 @@
 		showHeader = true,
 		onApproval,
 		canAnswer,
-		onOpenSession
+		onOpenSession,
+		scratch = false
 	}: {
 		message: UIMessage;
 		/** Author of an assistant message (multi-agent header). `id` seeds the avatar. */
@@ -41,6 +42,8 @@
 		/** Whether an inline approval is still waiting on the server (see ApprovalPart). */
 		canAnswer?: (approvalId: string) => boolean;
 		onOpenSession?: (sessionId: string) => void;
+		/** The message is from a test run: its files live in a scratch area, not in the library. */
+		scratch?: boolean;
 	} = $props();
 
 	const views = $derived(viewModel(message));
@@ -122,7 +125,7 @@
 					<SourcePart views={b.views} />
 				{:else if b.type === 'tools'}
 					{#if b.views.length === 1}<ToolPart view={b.views[0]} />{:else}<ToolGroup views={b.views} />{/if}
-					{#each fileCards.get(i) ?? [] as f (f.path)}<FileCard file={f} />{/each}
+					{#each fileCards.get(i) ?? [] as f (f.path)}<FileCard file={f} {scratch} />{/each}
 				{:else}
 					{@render part(b.view)}
 				{/if}

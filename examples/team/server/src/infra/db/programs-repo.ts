@@ -1,6 +1,7 @@
 /** Programs on SQLite (drizzle, like the agents). A schedule trigger is owned by one routine row. */
 import { desc, eq, sql } from 'drizzle-orm'
 import type { NewProgram, ProgramPatch, ProgramStore } from '../../app/ports.ts'
+import { parseDeliverables } from '../../domain/deliverables.ts'
 import type { Program, ProgramReportMode, ProgramStatus } from '../../domain/programs.ts'
 import type { RoutineSpec } from '../../domain/routines.ts'
 import type { Db } from './client.ts'
@@ -24,6 +25,7 @@ const toProgram = (row: Row): Program => ({
       : { kind: 'manual' },
   report: row.report as ProgramReportMode,
   worker: row.worker,
+  deliverables: parseDeliverables(row.deliverables),
   status: row.status as ProgramStatus,
   createdBy: row.createdBy,
   createdAt: row.createdAt,

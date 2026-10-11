@@ -8,6 +8,7 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { CONFLICT_TEXT, isVersionConflict } from '#lib/conflict.js';
 	import { bodyFromForm, emptyProgramForm, formFromProgram, REPORT_OPTIONS, validateProgramForm, type Program, type ProgramForm, type ProgramShape } from '#lib/programs/form.js';
+	import DeliverablesFields from './DeliverablesFields.svelte';
 	import ScheduleFields from './ScheduleFields.svelte';
 
 	let {
@@ -130,6 +131,8 @@
 			<Textarea bind:value={form.escalation} rows={2} placeholder="Stop and report when a title looks harmful or the source is missing." />
 		</label>
 	</fieldset>
+
+	<DeliverablesFields bind:rows={form.deliverables} {errors} />
 
 	<fieldset class="flex flex-col gap-2 rounded-lg border border-border p-3">
 		<legend class="px-1 font-medium">Work queue</legend>

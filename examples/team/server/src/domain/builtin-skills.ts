@@ -90,6 +90,9 @@ findings (group by actor and kind, count, keep the highest severity), and writes
 Write /library/reports/<program>/<date>.md from the merged result: a short summary (counts), the
 findings by severity with evidence ids, who needs attention, what you did not check (failed chunks)
 and how many items were scanned. Facts and ids only; no speculation about people.
+If the program lists deliverables (the run prompt names the files, with their headings or JSON
+schema), write them to exactly those paths: the server checks them when you finish and gives you one
+turn to fix what fails. How good the report reads is your judgement; its structure is checked.
 
 ## 6. Escalate what is severe
 

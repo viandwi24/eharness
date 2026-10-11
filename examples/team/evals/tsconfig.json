@@ -1,0 +1,6 @@
+{
+  // Same as the server: `eharness` resolves to the library source through the root `paths`.
+  "extends": "../../tsconfig.json",
+  "include": ["src", "scenarios", "test"],
+  "exclude": []
+}

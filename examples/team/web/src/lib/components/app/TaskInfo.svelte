@@ -9,7 +9,7 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { inReview } from '#lib/board/board.js';
 	import { REPORT_LABELS } from '#lib/programs/form.js';
-	import { acceptTask, cancelTask, sendBackTask, setPriority } from '#lib/tasks/actions.js';
+	import { acceptTask, cancelTask, recheckDeliverables, sendBackTask, setPriority } from '#lib/tasks/actions.js';
 	import { dueLabel, PRIORITIES, priorityLabel, type Priority } from '#lib/tasks/queue.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 
@@ -22,7 +22,7 @@
 	const retry = $derived(task.createdBy !== null && ['failed', 'stopped', 'interrupted', 'timed_out'].includes(task.status));
 	const due = $derived(dueLabel(task.dueAt));
 	const creator = $derived(task.createdBy === null ? '' : task.createdBy === 'client' ? 'you' : (agentsStore.find(task.createdBy)?.name ?? task.createdBy));
-	const hasBody = $derived(task.createdBy !== null || task.report !== null);
+	const hasBody = $derived(task.createdBy !== null || task.report !== null || task.deliverables !== null);
 
 	let sendingBack = $state(false);
 	let note = $state('');
@@ -31,6 +31,11 @@
 	async function accept(): Promise<void> {
 		busy = true;
 		await acceptTask(task.id);
+		busy = false;
+	}
+	async function recheck(): Promise<void> {
+		busy = true;
+		await recheckDeliverables(task.id);
 		busy = false;
 	}
 	async function sendBack(): Promise<void> {
@@ -77,6 +82,29 @@
 					{#if task.report.outputs.length}
 						<ul class="flex flex-wrap gap-1.5" aria-label="Outputs">{#each task.report.outputs as path (path)}<li class="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{path}</li>{/each}</ul>
 					{/if}
+				</div>
+			{/if}
+
+			{#if task.deliverables}
+				<div class="flex flex-col gap-1.5" data-testid="task-deliverables">
+					<div class="flex flex-wrap items-center gap-2">
+						<span class="text-xs font-medium text-muted-foreground">Deliverables</span>
+						<Badge variant={task.deliverables.status === 'pass' ? 'success' : 'destructive'}>{task.deliverables.status === 'pass' ? 'all met' : 'not met'}</Badge>
+						{#if task.deliverables.attempts > 1}<span class="text-xs text-muted-foreground">after a fix-up turn</span>{/if}
+						{#if task.deliverables.status === 'fail'}
+							<Button size="sm" variant="outline" class="ml-auto" disabled={busy} onclick={() => void recheck()}>Check again</Button>
+						{/if}
+					</div>
+					<ul class="flex flex-col gap-1">
+						{#each task.deliverables.checks as check (check.path)}
+							<li class="text-xs" data-ok={check.ok}>
+								<span class="mr-1.5 font-medium {check.ok ? 'text-success-text' : 'text-destructive-text'}">{check.ok ? 'Pass' : 'Fail'}</span><span class="font-mono">{check.path}</span>
+								{#if !check.ok}
+									<ul class="ml-4 list-disc text-muted-foreground">{#each check.problems as problem (problem)}<li>{problem}</li>{/each}</ul>
+								{/if}
+							</li>
+						{/each}
+					</ul>
 				</div>
 			{/if}
 

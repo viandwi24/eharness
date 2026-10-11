@@ -10,6 +10,7 @@
 	import { api } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -76,8 +77,8 @@
 {/snippet}
 
 <Tooltip.Provider>
-	<div class="flex min-w-0 flex-1 flex-col overflow-y-auto">
-		<PageHeader title="Routines">
+	<div class="flex min-h-0 min-w-0 flex-1 flex-col">
+		<PageHeader title="Routines" description="Scheduled prompts that run an agent at set times.">
 			<NativeSelect bind:value={agentFilter} aria-label="Filter by agent" class="w-40">
 				<NativeSelectOption value="">All agents</NativeSelectOption>
 				{#each agentsStore.state.agents as a (a.id)}
@@ -87,7 +88,7 @@
 			<Button size="sm" onclick={() => openNewRoutine(agentFilter || null)}><PlusIcon class="size-4" /> New routine</Button>
 		</PageHeader>
 
-		<div class="p-3 sm:p-4">
+		<PageBody size="wide">
 			{#if error}
 				<p class="text-sm text-destructive-text" role="alert">{error} <button class="underline underline-offset-4" onclick={() => void load()}>Retry</button></p>
 			{:else if !routines}
@@ -155,6 +156,6 @@
 					</Table.Root>
 				</Surface>
 			{/if}
-		</div>
+		</PageBody>
 	</div>
 </Tooltip.Provider>

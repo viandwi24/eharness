@@ -1,0 +1,26 @@
+{
+  "name": "Script draft quality",
+  "passThreshold": 0.7,
+  "criteria": [
+    {
+      "id": "hook",
+      "description": "The hook makes a viewer want to keep watching within the first lines.",
+      "weight": 2
+    },
+    {
+      "id": "on-title",
+      "description": "The script delivers on the promise of the title.",
+      "weight": 2
+    },
+    {
+      "id": "voice",
+      "description": "Conversational, concrete, no filler; reads aloud well.",
+      "weight": 1
+    },
+    {
+      "id": "cta",
+      "description": "The call to action is specific and fits the content.",
+      "weight": 1
+    }
+  ]
+}

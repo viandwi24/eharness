@@ -1,5 +1,6 @@
 import { z } from '@hono/zod-openapi'
 import { ProgramAuthoritySchema, ProgramBudgetSchema, ProgramTriggerSchema } from './programs.ts'
+import { DeliverableSchema } from './tasks.ts'
 
 const KINDS = ['proposal', 'escalation', 'amendment'] as const
 const STATUSES = ['open', 'approved', 'rejected', 'expired'] as const
@@ -22,6 +23,7 @@ export const ProposedProgramSchema = z
     budget: ProgramBudgetSchema,
     trigger: ProgramTriggerSchema,
     report: ReportSchema,
+    deliverables: z.array(DeliverableSchema).optional(),
   })
   .openapi('ProposedProgram')
 
@@ -131,6 +133,7 @@ export const ProposalEditSchema = z
     budget: ProgramBudgetSchema.partial().optional(),
     trigger: ProgramTriggerSchema.optional(),
     report: ReportSchema.optional(),
+    deliverables: z.array(DeliverableSchema).max(20).optional(),
   })
   .openapi('ProposalEdit')
 

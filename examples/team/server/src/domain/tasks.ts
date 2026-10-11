@@ -1,4 +1,6 @@
 /** Tasks and the board: status is derived from session facts (plan §6.4). Pure. */
+import type { DeliverableResult } from './deliverables.ts'
+
 export const TASK_STATUSES = [
   'queued',
   'needs_action',
@@ -42,6 +44,8 @@ export interface Task {
   tokens: number
   /** The structured final report of a program run (`domain/programs.ts`); null for other tasks. */
   report: TaskReport | null
+  /** The deliverable checks of a program run (`domain/deliverables.ts`); null when it had none. */
+  deliverables: DeliverableResult | null
   /**
    * The work queue (P40 D6). A task made through the queue (the client or an agent made it before
    * its session exists) has a `createdBy`; tasks that just happened (delegations, routine runs,
@@ -70,9 +74,14 @@ export type BoardColumn = (typeof BOARD_COLUMNS)[number]
 export const isWorkItem = (t: Pick<Task, 'createdBy'>): boolean => t.createdBy !== null
 
 /** A finished work item whose report says the work is there and that the client has not accepted yet. */
-export function inReview(t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'>): boolean {
+export function inReview(
+  t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'> &
+    Partial<Pick<Task, 'deliverables'>>,
+): boolean {
   return (
     t.status === 'done' &&
+    // failing deliverables keep the item out of Review until they are fixed or decided (phase H)
+    t.deliverables?.status !== 'fail' &&
     isWorkItem(t) &&
     t.acceptedAt === null &&
     (t.report?.status === 'done' || t.report?.status === 'partial')
@@ -85,12 +94,15 @@ export function inReview(t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | '
  * `running`, the decision is what tells it is the client's turn).
  */
 export function boardColumn(
-  t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'>,
+  t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'> &
+    Partial<Pick<Task, 'deliverables'>>,
   openDecision: boolean,
 ): BoardColumn {
   if (t.status === 'queued') return 'queued'
   if (t.status === 'needs_action' || (t.status === 'running' && openDecision)) return 'waiting'
   if (t.status === 'running') return 'running'
+  // a finished run whose deliverables failed and that waits on a decision is the client's turn
+  if (t.deliverables?.status === 'fail' && openDecision) return 'waiting'
   return inReview(t) ? 'review' : 'done'
 }
 export const isTerminal = (status: TaskStatus): boolean =>

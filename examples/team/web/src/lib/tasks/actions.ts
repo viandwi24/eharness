@@ -22,6 +22,10 @@ export const acceptTask = (id: string): Promise<boolean> => run('accept the task
 export const sendBackTask = (id: string, note: string): Promise<boolean> =>
 	run('send the task back', () => api.post('/tasks/{id}/send-back', { params: { id }, body: { note } }), 'Sent back: it is queued again');
 
+/** Check the deliverables of a finished run again (after the files were repaired). */
+export const recheckDeliverables = (id: string): Promise<boolean> =>
+	run('check the deliverables', () => api.post('/tasks/{id}/deliverables/check', { params: { id } }), 'Checked again');
+
 /** Cancel a task that has not started. */
 export const cancelTask = (id: string): Promise<boolean> => run('cancel the task', () => api.post('/tasks/{id}/cancel', { params: { id } }), 'Task cancelled');
 

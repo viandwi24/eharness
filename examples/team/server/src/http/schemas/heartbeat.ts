@@ -11,7 +11,9 @@ export const HeartbeatConfigSchema = z
     activeTo: clock.openapi({
       description: 'End of the active hours (exclusive); a window may wrap midnight.',
     }),
-    timezone: z.string().min(1).max(64).openapi({ description: 'IANA timezone.' }),
+    timezone: z.string().min(1).max(64).nullable().openapi({
+      description: 'IANA timezone; null = the team timezone (workspace setting).',
+    }),
   })
   .openapi('HeartbeatConfig')
 
@@ -55,7 +57,7 @@ export const DigestConfigSchema = z
     enabled: z.boolean(),
     time: clock,
     timezone: z.string().nullable().openapi({
-      description: 'IANA timezone; null = the timezone of the lead heartbeat.',
+      description: 'IANA timezone; null = the team timezone (workspace setting).',
     }),
   })
   .openapi('DigestConfig')
@@ -72,6 +74,9 @@ export const HeartbeatSchema = z
   .object({
     agentId: z.string(),
     config: HeartbeatConfigSchema,
+    effectiveTimezone: z.string().openapi({
+      description: 'The timezone of the active hours in effect: its own, else the team timezone.',
+    }),
     stored: z.boolean().openapi({
       description: 'false while nothing was ever set: the config is the default of the role.',
     }),

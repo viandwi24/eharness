@@ -25,6 +25,10 @@ export const SettingsSchema = z
       description:
         'Provider profile of agents without their own pick; null = the server default (the env profile, else the first enabled one).',
     }),
+    timezone: z.string().openapi({
+      description:
+        'IANA timezone of the team (default: the `TZ` variable or the host timezone). The default of the heartbeat active hours and of the daily digest time; an agent heartbeat or the digest can override it.',
+    }),
     updatedAt: z.number().int().openapi({ description: '0 until a person changed something.' }),
   })
   .openapi('Settings')
@@ -43,5 +47,6 @@ export const SettingsPatchSchema = z
         'A model id, or the legacy `profile:model` (split when the prefix names a profile).',
     }),
     defaultProfile: z.string().min(1).max(64).nullable().optional(),
+    timezone: z.string().min(1).max(64).optional().openapi({ description: 'IANA timezone.' }),
   })
   .openapi('SettingsPatch')

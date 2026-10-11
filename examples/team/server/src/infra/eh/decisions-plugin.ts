@@ -4,7 +4,7 @@
  *
  *  - `propose_plan`      DM chats and the heartbeat. An ordinary tool: it stores a proposal and
  *                        returns its id; the session is not parked.
- *  - `escalate`          every unattended or task session (program runs, routine runs, heartbeat).
+ *  - `escalate`          program runs and routine runs (the heartbeat never parks).
  *                        An `externalTool()`: the turn parks on the external wait `w_<toolCallId>`
  *                        (spec 11 §4.2), `start` stores the decision (idempotent by wait id), and
  *                        deciding it calls `session.resolveWait(waitId, { output })` in whichever
@@ -39,8 +39,10 @@ import {
   REQUEST_AUTHORITY_DESCRIPTION,
 } from '../../domain/decisions.ts'
 import { MAX_BRIEF_CHARS, parseProgramSession, parseReport } from '../../domain/programs.ts'
+import { SIMULATED_ESCALATION_TEXT } from '../../domain/rehearsal.ts'
 import { profileOfSession } from '../../domain/run-profiles.ts'
 import type { TaskReport } from '../../domain/tasks.ts'
+import { rehearsalSessions } from './rehearsal-registry.ts'
 
 export const PROPOSE_PLAN_TOOL = 'propose_plan'
 export const ESCALATE_TOOL = 'escalate'
@@ -127,6 +129,34 @@ const proposeSchema = z.object({
     .optional()
     .describe('Standing programs only: when it runs. Absent: runs only when the client says.'),
   report: z.enum(['digest', 'task', 'silent']).optional(),
+  deliverables: z
+    .array(
+      z.object({
+        path: z
+          .string()
+          .min(1)
+          .max(500)
+          .describe(
+            'Library file the run must leave. Tokens: {date}, {slug}, {runId}, {program}. Example: /library/reports/{slug}/{date}.md',
+          ),
+        kind: z.enum(['markdown', 'json', 'any']),
+        requiredSections: z
+          .array(z.string().min(1).max(200))
+          .max(30)
+          .optional()
+          .describe('Markdown only: headings the file must have.'),
+        schema: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('JSON only: a JSON Schema the file must match.'),
+        minChars: z.number().int().min(1).optional(),
+      }),
+    )
+    .max(20)
+    .optional()
+    .describe(
+      'Files each run must leave in the library. The server checks them when the run ends (exists, headings, JSON schema) and gives the agent one turn to fix what fails.',
+    ),
   runOnce: z
     .boolean()
     .optional()
@@ -206,6 +236,7 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
                   forbidden: input.forbidden,
                   budget: input.budget,
                   report: input.report,
+                  deliverables: input.deliverables,
                   ...(input.schedule === undefined
                     ? {}
                     : {
@@ -233,7 +264,47 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
           },
         })
       }
-      if (origin === 'program' || origin === 'routine' || origin === 'heartbeat') {
+      if (origin === 'rehearsal') {
+        // a rehearsal never parks and never writes to the Decision Center: what the run would ask
+        // is recorded ("would ask") and the model carries on (`domain/rehearsal.ts`)
+        const wouldAsk = rehearsalSessions.get(sessionId)?.recorder.wouldAsk
+        tools[ESCALATE_TOOL] = tool({
+          description: ESCALATE_DESCRIPTION,
+          inputSchema: escalateSchema,
+          metadata: { risk: 'write', idempotent: true },
+          execute: (input): string => {
+            wouldAsk?.({
+              kind: 'escalation',
+              title: input.title,
+              question: input.question,
+              details: input.details,
+              options: input.options,
+            })
+            return SIMULATED_ESCALATION_TEXT
+          },
+        })
+        tools[REQUEST_AUTHORITY_TOOL] = tool({
+          description: REQUEST_AUTHORITY_DESCRIPTION,
+          inputSchema: authoritySchemaAsk,
+          metadata: { risk: 'write', idempotent: true },
+          execute: (input): string => {
+            const asked = [
+              ...(input.tools ?? []),
+              ...(input.connectors ?? []).map((c) => `connector ${c}`),
+              ...(input.read ?? []).map((g) => `read ${g}`),
+              ...(input.write ?? []).map((g) => `write ${g}`),
+            ]
+            wouldAsk?.({
+              kind: 'amendment',
+              title: 'More authority',
+              question: input.why,
+              details: asked.map((a) => `- ${a}`).join('\n'),
+            })
+            return SIMULATED_ESCALATION_TEXT
+          },
+        })
+      }
+      if (origin === 'program' || origin === 'routine') {
         tools[ESCALATE_TOOL] = externalTool({
           description: ESCALATE_DESCRIPTION,
           inputSchema: escalateSchema,
@@ -282,9 +353,20 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
         hooks: {
           // a program run that ends `needs_decision` without having escalated: make it a decision
           'turn.end': (hookCtx: HarnessContext, e: { stop: string; output?: unknown }): void => {
-            if (parseProgramSession(sessionId) === undefined || e.stop !== 'complete') return
+            if (e.stop !== 'complete') return
             const report = parseReport(e.output)
             if (report?.status !== 'needs_decision') return
+            if (origin === 'rehearsal') {
+              // would ask: the report itself is the decision the client would get
+              rehearsalSessions.get(sessionId)?.recorder.wouldAsk({
+                kind: 'report',
+                title: 'The run ended needing a decision',
+                question: report.summary,
+                details: report.notes,
+              })
+              return
+            }
+            if (parseProgramSession(sessionId) === undefined) return
             try {
               intake().reportNeedsDecision({ agentId: self().id, sessionId, report })
             } catch (error) {

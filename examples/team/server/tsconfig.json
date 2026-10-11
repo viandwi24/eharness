@@ -2,7 +2,7 @@
   // Extends examples/tsconfig.json → the root tsconfig, whose `paths` map `eharness` and
   // `eharness/*` to `src/`: the server always runs against the library source, no build step.
   "extends": "../../tsconfig.json",
-  "include": ["src", "test", "scripts", "drizzle.config.ts"],
+  "include": ["src", "test", "scripts", "drizzle.config.ts", "../evals"],
   // do not inherit examples/tsconfig.json's `exclude: ["coder", "team"]`
   "exclude": []
 }

@@ -32,6 +32,16 @@ export interface SessionGate {
    * authority (a program that was widened while the session was parked or running).
    */
   sync?(engine: PermissionEngine): Promise<void>
+  /**
+   * A rehearsal (`domain/rehearsal.ts`): for a call the authority and the engine would approve,
+   * the text the model reads INSTEAD of the call being made (it is recorded by the gate); undefined
+   * = let the call run.
+   */
+  simulate?(call: {
+    toolName: string
+    input: unknown
+    risk?: string | undefined
+  }): string | undefined
 }
 
 export interface SessionPermissionsOptions<G extends SessionGate = SessionGate> {
@@ -95,7 +105,7 @@ type Verdict =
   | undefined
 type ApproveHook = (
   ctx: HarnessContext,
-  e: { toolName: string; input: unknown },
+  e: { toolName: string; input: unknown; risk?: string },
 ) => Promise<Verdict> | Verdict
 
 /**
@@ -114,11 +124,15 @@ function gatedApprove(
     const refusal = gate.refuse({ toolName: e.toolName, input: e.input })
     if (refusal !== undefined) return { type: 'denied', reason: refusal }
     const verdict = await engineHook(ctx, e)
-    if (verdict === undefined || verdict.type === 'approved') return verdict
-    // `dontAsk` turns an ask into a denial with the generic text: say what the run can do about it
-    if (verdict.type === 'user-approval' || verdict.reason === DONT_ASK_REASON) {
-      return { type: 'denied', reason: gate.askedReason(e.toolName) }
+    if (verdict !== undefined && verdict.type !== 'approved') {
+      // `dontAsk` turns an ask into a denial with the generic text: say what the run can do about it
+      if (verdict.type === 'user-approval' || verdict.reason === DONT_ASK_REASON) {
+        return { type: 'denied', reason: gate.askedReason(e.toolName) }
+      }
+      return verdict
     }
-    return verdict
+    // approved (or no objection): a rehearsal still does not make the call of an external write
+    const simulated = gate.simulate?.({ toolName: e.toolName, input: e.input, risk: e.risk })
+    return simulated === undefined ? verdict : { type: 'denied', reason: simulated }
   }
 }

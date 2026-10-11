@@ -147,6 +147,8 @@ export const tasks = sqliteTable(
     tokens: integer('tokens').notNull().default(0),
     /** The structured final report of a program run (`{ status, summary, outputs, notes? }`); null otherwise. */
     report: json<{ status: string; summary: string; outputs: string[]; notes?: string }>('report'),
+    /** The deliverable checks of a program run (P40 phase H); null = none to check. */
+    deliverables: json<unknown>('deliverables'),
     /** The work queue (P40 D6): the task as the client or the manager wrote it; null for tasks that just happened. */
     brief: text('brief'),
     inputs: json<string[]>('inputs').notNull().default([]),
@@ -314,6 +316,8 @@ export const programs = sqliteTable(
     report: text('report').notNull().default('task'),
     /** Worker program: `{ maxTasks }` queued tasks per run (P40 D6); null = an ordinary program. */
     worker: json<{ maxTasks: number }>('worker'),
+    /** Files a run must leave in the library, checked at run end (P40 phase H); `[]` = none. */
+    deliverables: json<unknown[]>('deliverables').notNull().default([]),
     /** `active` | `paused` */
     status: text('status').notNull().default('active'),
     /** `client`, or the id of the agent that proposed it. */
@@ -323,6 +327,44 @@ export const programs = sqliteTable(
     version: integer('version').notNull().default(1),
   },
   (t) => [index('programs_agent').on(t.agentId)],
+)
+
+/**
+ * Rehearsals (test runs) of a program (P40 phase K): one row per run with the whole result as JSON
+ * (`domain/rehearsal.ts` `Rehearsal`). They are never tasks: not in the run history, the board or
+ * the digest. `program_tests` holds the saved test cases of a program (sample inputs, expectations
+ * and the last result).
+ */
+export const rehearsals = sqliteTable(
+  'rehearsals',
+  {
+    id: text('id').primaryKey(),
+    programId: text('program_id').notNull(),
+    sessionId: text('session_id').notNull(),
+    testId: text('test_id'),
+    /** `running` | `done` | `failed` */
+    status: text('status').notNull(),
+    startedAt: integer('started_at').notNull(),
+    data: json<Record<string, unknown>>('data').notNull(),
+  },
+  (t) => [
+    index('rehearsals_program').on(t.programId, t.startedAt),
+    uniqueIndex('rehearsals_session').on(t.sessionId),
+  ],
+)
+
+export const programTests = sqliteTable(
+  'program_tests',
+  {
+    id: text('id').primaryKey(),
+    programId: text('program_id').notNull(),
+    name: text('name').notNull(),
+    /** `{ sample, expect, lastResult }` (`domain/rehearsal.ts` `TestCase`). */
+    data: json<Record<string, unknown>>('data').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('program_tests_program').on(t.programId, t.createdAt)],
 )
 
 /**

@@ -100,6 +100,10 @@
 				<dt class="text-muted-foreground">Still asks you</dt>
 				<dd>{decision.payload.program.gates.join('; ')}</dd>
 			{/if}
+			{#if decision.payload.program.deliverables?.length}
+				<dt class="text-muted-foreground">Must leave</dt>
+				<dd class="font-mono text-xs" data-testid="proposal-deliverables">{decision.payload.program.deliverables.map((d) => `${d.path} (${d.kind})`).join(', ')}</dd>
+			{/if}
 			{#if decision.payload.program.forbidden.length}
 				<dt class="text-muted-foreground">Forbidden</dt>
 				<dd class="font-mono text-xs">{decision.payload.program.forbidden.join(', ')}</dd>

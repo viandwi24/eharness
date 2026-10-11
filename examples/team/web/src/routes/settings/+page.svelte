@@ -11,6 +11,7 @@
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import MemoryEditor from '#lib/components/app/MemoryEditor.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import PageBody from '#lib/components/app/PageBody.svelte';
 	import * as AllocationBar from '#lib/components/ui/allocation-bar/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
@@ -28,6 +29,7 @@
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
 	import { sumUsage, type Usage } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
+	import { timezoneOptions } from '#lib/heartbeat/model.js';
 	import { AUTO_THRESHOLD } from '#lib/connectors/tool-access.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -52,6 +54,7 @@
 	let mode = $state<Settings['defaultPermissionMode']>('default');
 	let budget = $state('');
 	let spawnCap = $state('4');
+	let timezone = $state('UTC');
 	let toolAccess = $state<Settings['toolAccess']>('auto');
 	let model = $state<string | null>(null);
 	let profile = $state<string | null>(null);
@@ -65,6 +68,7 @@
 				toolAccess !== settings.toolAccess ||
 				budget.trim() !== (settings.budgetUsd === null ? '' : String(settings.budgetUsd)) ||
 				spawnCap.trim() !== String(settings.spawnCap) ||
+				timezone.trim() !== settings.timezone ||
 				model !== settings.defaultModel ||
 				profile !== settings.defaultProfile)
 	);
@@ -74,6 +78,7 @@
 		mode = settingsModeOf(s.defaultPermissionMode);
 		budget = s.budgetUsd === null ? '' : String(s.budgetUsd);
 		spawnCap = String(s.spawnCap);
+		timezone = s.timezone;
 		toolAccess = s.toolAccess;
 		model = s.defaultModel;
 		profile = s.defaultProfile;
@@ -100,7 +105,7 @@
 	async function save(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
 		formError = '';
-		const v = validateGeneral({ budget, spawnCap });
+		const v = validateGeneral({ budget, spawnCap, timezone });
 		if (!v.ok) {
 			errors = v.errors;
 			return;
@@ -108,7 +113,7 @@
 		errors = {};
 		saving = true;
 		try {
-			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, toolAccess, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, defaultModel: model || null, defaultProfile: profile || null } }));
+			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, toolAccess, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, timezone: v.value.timezone, defaultModel: model || null, defaultProfile: profile || null } }));
 			toast.success('Settings saved');
 		} catch (err) {
 			errors = fieldErrors(err);
@@ -180,7 +185,7 @@
 </script>
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-	<PageHeader title="Settings" description="Workspace-wide defaults for every agent" />
+	<PageHeader title="Settings" description="Workspace-wide defaults for every agent." />
 
 	<div class="flex min-h-0 flex-1 flex-col md:flex-row">
 		<nav aria-label="Settings sections" class="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2 md:w-52 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:p-3">
@@ -195,8 +200,7 @@
 			{/each}
 		</nav>
 
-		<div class="min-h-0 min-w-0 flex-1 overflow-y-auto">
-			<div class="mx-auto flex w-full flex-col gap-4 p-4 md:p-6 {section === 'providers' ? 'max-w-5xl' : 'max-w-3xl'}">
+		<PageBody size={section === 'providers' ? 'wide' : 'narrow'}>
 				{#if section === 'providers'}
 					<ProvidersSettings />
 				{:else if section === 'general'}
@@ -252,6 +256,15 @@
 										<Input id="s-cap" type="number" min="1" max="32" step="1" inputmode="numeric" bind:value={spawnCap} disabled={!settings} aria-invalid={!!errors.spawnCap} class="max-w-32" />
 										<Field.Description>How many delegated tasks the lead runs at once (1 to 32).</Field.Description>
 										{#if errors.spawnCap}<Field.Error>{errors.spawnCap}</Field.Error>{/if}
+									</Field.Field>
+									<Field.Field data-invalid={!!errors.timezone}>
+										<Field.Label for="s-tz">Team timezone</Field.Label>
+										<Input id="s-tz" bind:value={timezone} list="settings-zones" placeholder="UTC" disabled={!settings} aria-invalid={!!errors.timezone} class="max-w-sm" />
+										<datalist id="settings-zones">
+											{#each timezoneOptions() as z (z)}<option value={z}></option>{/each}
+										</datalist>
+										<Field.Description>The default timezone of the heartbeat's active hours and of the daily digest time. The server's own timezone until you set one; a heartbeat or the digest can use its own.</Field.Description>
+										{#if errors.timezone}<Field.Error>{errors.timezone}</Field.Error>{/if}
 									</Field.Field>
 								</Field.Group>
 								{#if formError && !Object.keys(errors).length}<p class="mt-4 text-sm text-destructive-text" role="alert">{formError}</p>{/if}
@@ -359,7 +372,6 @@
 						</Card.Root>
 					</form>
 				{/if}
-			</div>
-		</div>
+		</PageBody>
 	</div>
 </div>

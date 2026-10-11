@@ -4,6 +4,7 @@
  * keeps the overlap, recovery and failure rules, and starts the run through the program runner.
  * Every run is a task session, so the run history is the tasks of the program.
  */
+import { normalizeDeliverables } from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import {
   checkProgramFields,
@@ -123,6 +124,7 @@ export function createProgram(
     trigger,
     report: draft.report ?? 'task',
     worker: normalizeWorker(draft.worker),
+    deliverables: normalizeDeliverables(draft.deliverables),
     status: draft.status ?? 'active',
     createdBy: draft.createdBy ?? 'client',
     now,
@@ -158,6 +160,9 @@ export function updateProgram(deps: Deps, id: string, update: ProgramUpdate): Pr
     ...(update.trigger === undefined ? {} : { trigger: update.trigger }),
     ...(update.report === undefined ? {} : { report: update.report }),
     ...(update.worker === undefined ? {} : { worker: normalizeWorker(update.worker) }),
+    ...(update.deliverables === undefined
+      ? {}
+      : { deliverables: normalizeDeliverables(update.deliverables) }),
   }
   if (update.status !== undefined && update.status !== current.status) {
     throw invalid('use pause and resume to change the status', 'INVALID_PROGRAM')
@@ -190,6 +195,9 @@ export function deleteProgram(deps: Deps, id: string): Program {
   const routine = routineOf(deps, id)
   if (routine !== undefined) deleteRoutine(deps, routine.id)
   deps.programs.delete(id)
+  // its rehearsals and test cases go with it
+  deps.rehearsals.deleteByProgram(id)
+  deps.programTests.deleteByProgram(id)
   changed(deps, program, 'deleted')
   return program
 }

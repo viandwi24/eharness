@@ -23,6 +23,7 @@ New here? Read [getting started](getting-started.md); unfamiliar terms are in th
 | [Writing a plugin](writing-a-plugin.md) | `definePlugin`: tools, services, hooks, state, data parts |
 | [Structured output](structured-output.md) | typed final answers: `output: { schema }`, tool vs native mode, retries, `'output-invalid'`, storage |
 | [Rendering data parts](rendering-data-parts.md) | custom UI data: persistent vs transient, kinds, typed rendering |
+| [Evals](evals.md) | scoring an agent against a fixed scenario: deterministic checks, rubric judge, budget cap, comparing runs |
 | [Testing](testing.md) | `scriptedModel`, asserting on prompts and results, conformance suites |
 
 ## Sessions, storage and scale

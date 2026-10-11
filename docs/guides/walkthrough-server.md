@@ -408,6 +408,14 @@ The hooks, in the order a request meets them:
    client-chosen http URLs, which would be SSRF), and never reads `actor`, `runtime`, `model` or
    `maxSteps` from the body. *Do not undo that.* Trusting client messages is how a user forges an
    assistant message or approval.
+   **Attachments in practice** (checked with a real vision model): PNG, PDF and CSV reach the
+   model as bytes (`inputFiles.resolve` turns the stored `library:` reference into data at
+   projection time) and a reload shows the same file parts; the web fetches the bytes with the
+   token for the thumbnail (`<img>` cannot send the bearer header). Limits: 10 MB and the media
+   type allowlist, with a readable `400`. A model without vision is not detected up front: the
+   provider's own error comes back as the turn's notice. Attachments belong to the chat message
+   only: a delegation (`agent` tool) carries a text prompt, so a child never sees them, and the
+   model is not told the upload path (open question: expose the path to the model).
 5. **`session` and `peek`** map a session id to the agent that runs it.
    `peek` is a pure read with no `session.start` hooks, and must go through the agent that runs the
    session so `busy()` can tell a turn of this process from another instance's. *If reads open real
@@ -581,7 +589,7 @@ a 3 a.m. run parks on an approval nobody answers.
 | Kind | Who creates it | Parks the session | Approving does |
 |---|---|---|---|
 | `proposal` | `propose_plan` (DM chats, heartbeat) | no | creates the program with exactly the proposed authority (the client may edit it first); a one-off (`runOnce`) is created with a manual trigger and run once |
-| `escalation` | `escalate` (program and routine runs, heartbeat) | yes | resumes the same session with `{ decision, note }` as the tool output (`decision` is `approved`, `rejected` or the option picked) |
+| `escalation` | `escalate` (program and routine runs; never the heartbeat) | yes | resumes the same session with `{ decision, note }` as the tool output (`decision` is `approved`, `rejected` or the option picked) |
 | `amendment` | `request_authority` (program runs) | yes | adds the authority to the program, then resumes the run like an escalation |
 
 Tool approvals are **not** decisions: they stay inline in the chat of their session (P40 D2).
@@ -769,7 +777,7 @@ short message a day. Code: [`domain/heartbeat.ts`](../../examples/team/server/sr
 
 **One session, one profile.** A beat is a turn of the rolling session `heartbeat:<agentId>` (the run
 profile row that already existed). Compaction keeps it small. It is unattended and read-only: the
-permission gate has one fixed authority (base tools, `team_status`, `propose_plan`, `escalate`,
+permission gate has one fixed authority (base tools, `team_status`, `propose_plan`,
 `list_tasks`, `Read(/library/**)`); anything else is refused with a reason the model reads. It does
 not feed memory and it is not a task on the board.
 
@@ -785,8 +793,10 @@ beat history, fingerprints and the digest buffer are JSON rows in the existing `
 (identical skips collapse into one history row): the agent's heartbeat is off, outside the active
 hours (HH:MM window in an IANA timezone, may wrap midnight), the checklist
 `/memories/agents/<id>/HEARTBEAT.md` is empty (only headings, comments, bare list markers), the
-previous beat still runs, or it parked on an `escalate` and waits for the client. Default: on for
-the lead only, every 30 minutes, 08:00-20:00 UTC.
+previous beat still runs. The heartbeat never parks (it has no `escalate`): urgent things go to the
+lead's DM at once, a pattern becomes a proposal through `propose_plan`. Default: on for the lead
+only, every 30 minutes, 08:00-20:00 in the **team timezone** (a workspace setting, `Settings`;
+default the `TZ` variable or the host timezone; a heartbeat may set its own, `null` follows the team).
 
 **The server observes, the model judges.** `team_status` returns what `observe()` computes
 deterministically: stuck, failed and long-waiting tasks, open decisions older than a day, programs
@@ -799,15 +809,13 @@ covers it. Only then may the model call `propose_plan`; nothing is created witho
 
 **Silent by default.** The beat ends with a structured result
 `{ status: 'ok' | 'attention', items: [{ kind, title, detail, links, urgent, fingerprint }] }`
-(`SendOptions.output`). It is recorded by the `turn.end` hook, not by awaiting the run, so a beat
-that parked on `escalate` and continued after the decision (in any instance) is recorded the same
-way (the decision service passes the same output spec when it resumes a `heartbeat:` session). `ok`:
+(`SendOptions.output`). It is recorded by the `turn.end` hook, not by awaiting the run. `ok`:
 nothing is shown. New items go to the digest buffer; urgent ones also go to the lead's DM at once as
 one short message. That message is an `eh.event` injected into `dm:<leadId>` (`session.inject`, no
 model call; the lead reads it as context next turn, so the client can ask "tell me more").
 
 **The digest** (`runDigest`) is built from data, once a day at a configurable time (default 18:00 in
-the lead's heartbeat timezone): program runs since the last digest (`report: 'digest'` programs with
+the team timezone, or the digest's own): program runs since the last digest (`report: 'digest'` programs with
 summary and outputs, `task` programs as a count, `silent` none), open decisions, tasks waiting for
 you or in Review, the heartbeat items of the day, and the cost from the model call log (with the
 heartbeat's share). Idempotent per local day; a quiet day sends nothing.
@@ -824,6 +832,212 @@ a claimed fire is recovered once, a beat the server died in is closed.
 
 *Without the checklist rule:* a heartbeat on every agent pays a model call every half hour to say
 nothing. *Without fingerprints:* the same stuck task is reported every beat.
+
+## 23. Evals (developer tool)
+
+`examples/team/evals` is a CLI that runs a fixed scenario against a real model and scores it
+(`bun run eval community-audit --model <id> --budget 0.5`): deterministic checks (for example the
+recall and precision of the planted incidents against the fixture's `truth()`) plus rubric files
+graded by a judge model, a hard USD cap, a report per run and `bun run eval compare`. It is
+separate from the server and the web app, refuses to run in CI, and its tests use scripted models
+only. See [Evals](evals.md). The shipped scenarios are illustrative; real runs wait for the
+client's own examples and an approved budget.
+
+## 24. Deliverables: files a run must leave
+
+*Verify* in the run contract used to be the model's own promise. A program can now list the files
+a run must leave, and the **server** checks them (P40 phase H). Structure is enforced; style and
+quality stay in skills the client can edit.
+
+```ts
+// domain/deliverables.ts
+{ path: '/library/reports/{slug}/{date}.md', kind: 'markdown',
+  requiredSections: ['Summary', 'Findings'], minChars: 200 }
+{ path: '/library/data/{slug}-{date}.json', kind: 'json', schema: { type: 'object', required: ['findings'] } }
+```
+
+- **Where**: `programs.deliverables` (a list; empty = none), edited in the program editor and in
+  Edit and approve of a proposal (`propose_plan` takes `deliverables` too). Work-queue items use
+  the deliverables of their worker program; `{slug}` is then the task title.
+- **Tokens** (resolved per run): `{date}` UTC day of the run, `{slug}` program name (task title for
+  a work item), `{runId}` the run's millisecond timestamp, `{program}` the program id. The run
+  prompt lists the resolved paths, so the agent writes exactly there.
+- **The check** (`evaluateDeliverables`, pure; the library is read through an injected function):
+  the file exists, is not binary unless `any`, has at least `minChars`, has every required
+  markdown heading (any level, case-insensitive, code fences ignored), parses as JSON and matches
+  the schema. JSON Schema is validated with zod 4's `z.fromJSONSchema`, installed into the domain by
+  `infra/json-schema.ts`; keywords zod does not know are ignored, and a `required` key without a
+  `properties` entry is handled (zod would skip it). A schema zod cannot convert is refused when the
+  program is saved.
+- **The flow** (`infra/eh/program-service.ts` `runChecked`, `app/deliverables.ts`): the turn ends
+  with its structured report; if the report says `done` or `partial` the files are checked. All
+  pass: the report stands and the task stores the checks. Otherwise ONE fix-up turn in the same
+  session with the exact failures ("Verify: ... `/library/..` the file does not exist"), then a
+  re-check. Still failing: the report becomes `partial` with the failures in its summary, the task
+  keeps the per-file result, and an escalation is opened in the Decision Center. A report of
+  `failed` or `needs_decision` is not checked (it already asks for attention).
+- **Work queue**: a work item with failing deliverables is not in Review (it shows in Waiting for
+  you while its decision is open, else in Done with the failure) and `accept` is refused until the
+  files pass. Approving the decision lets the agent try again; when that turn ends the files are
+  checked again. `POST /tasks/{id}/deliverables/check` checks again without a turn (after the client
+  repaired a file by hand); a pass puts the item in Review.
+- **Web**: the program editor has a Deliverables section (path, kind, headings or schema, minimum
+  length); the task view lists each file as Pass or Fail with its problems and a "Check again"
+  button; the run history shows a deliverables badge; proposal cards list the files.
+- **Storage**: `programs.deliverables` and `tasks.deliverables` (migration `0018`).
+
+Tests (`test/deliverables.test.ts`, scripted models): passing files; a missing file fixed by the
+fix-up turn (the turn names the file); sections missing twice gives partial and an open decision
+after exactly one fix-up; a JSON file that does not match its schema; tokens resolve; a failing
+work item stays out of Review, cannot be accepted and enters Review after a re-check; approving the
+decision re-checks when the run ends; the editing API and proposals.
+
+*Without the server check:* "I verified it" is the same model grading its own work. *Without the
+single fix-up:* an agent can loop on a file forever; one turn with exact errors fixes the usual
+cases and the rest goes to a person.
+
+## 25. Rehearsal: a test run before a program is activated
+
+A client who is about to activate a program wants to see what it does first, without it touching
+anything real. A **rehearsal** (P40 phase K) runs the program as saved on sample data in a safe
+mode; it works for any program, nothing in it is specific to a client.
+
+```
+POST /programs/{id}/rehearsals { sample: { copy, files, task, reads }, budgetUsd }   -> 201, runs
+GET  /rehearsals/{id}              result (report, deliverable checks, files, simulated, would ask, cost)
+GET  /rehearsals/{id}/messages     the chat of the run, read only
+```
+
+- **A session of its own**: `rehearsal:<programId>:<ts>` (a run profile, `domain/run-profiles.ts`:
+  unattended, the program's authority, no task). It is never a task, so it is not in the run
+  history, the board, the Review column or the heartbeat, and a worker program does not claim a
+  queued task. The digest leaves its spend out of its cost line (`RehearsalStore.spentBetween`).
+- **Files go to an overlay**: `infra/eh/overlay-fs.ts` is a `FileSystem` over a scratch
+  `inMemoryFs` and the real library. Writes, deletes and moves land in the scratch; reads see the
+  scratch first and then the library (the real one is only read, never written, and sends no file
+  events); `ifVersion` is checked against what the overlay shows. The overlay reaches the
+  agent three ways, all keyed by session id through `infra/eh/rehearsal-registry.ts`: the file tools
+  and the memory plugin take `fs` as a function of the session (`sessionFileSystem`), and the
+  big-data plugin is wrapped with `wrapPlugin` so its tools use the overlay in a rehearsal
+  session. **Fail closed**: a rehearsal session id that is not running (the server restarted, the
+  rehearsal ended) gets a read-only view, never the writable library.
+- **External writes are simulated**: the program gate (`gateOf` in `agent-factory.ts`) has an
+  extra step for a rehearsal. After the authority and the engine approved a call, a tool of a
+  connector that is not built in (MCP, OpenAPI, third party; the built-ins are `files`, `memory`,
+  `planning`, `web`, `ask`, `bigdata`) whose risk is not `read` (unknown counts as a write) is
+  refused with `SIMULATED: would call <tool> with <input>. This is a rehearsal: ...`, recorded, and
+  the agent carries on. Calls the real run would refuse (outside the authority, a pinned ask) are
+  refused the same way as in a real run, so the rehearsal does not promise more than the real run
+  does. (A denial text rather than a faked tool output is the one AI SDK mechanism that covers every
+  tool kind; the model reads it as the result.)
+- **Decisions are recorded, not raised**: in a rehearsal `escalate` and `request_authority` are
+  plain tools (`decisions-plugin.ts`) that record a "would ask" entry and tell the agent to assume
+  the safest answer; a report of `needs_decision` is recorded the same way. Nothing reaches the
+  Decision Center and the run never parks. `create_task` and `update_task` are simulated,
+  `complete_task` checks the outputs in the overlay and is simulated (a worker program is rehearsed
+  on a **sample task**, a draft that is never queued).
+- **Budget**: its own ledger scope `rehearsal:<session>` with a small cap (default 0.5 USD, at most
+  5; `cost-cap` fails the rehearsal). The program's own scopes (per run, per day) are not touched.
+- **Sample data** (`domain/rehearsal.ts` `RehearsalSample`): library paths to copy into the
+  overlay (files or `/dir/`), text files the client attached or pasted, the sample task for a
+  worker program, and `reads`: `library` (the default: the run can read the rest of the real
+  library, it still cannot change it) or `sample` (the run sees only the sample).
+- **Deliverables** are checked against the overlay files with the same function and the same one
+  fix-up turn as a real run (`rehearsal-service.ts`); a failure is shown, no decision or partial
+  task is made.
+- **Result**: `report`, `deliverables`, `files` (produced files, with their text up to caps),
+  `deleted` (library files it deleted in the overlay), `simulated`, `wouldAsk`, `toolsCalled`, cost
+  and the chat. A row per rehearsal (`rehearsals`, the whole result as JSON; the last 50 per
+  program are kept). A rehearsal that was running when the server stopped is marked failed at boot.
+
+**Test cases** turn a good rehearsal into a regression test: a case is a sample plus expectations
+(`deliverablesPass`, `mustNotCall` tools, an expected `reportStatus`), stored in `program_tests`
+with its last result. `POST /programs/{id}/tests/run` re-runs the cases one after the other (each a
+rehearsal linked to its case) and stores pass, fail (with the reasons) or error. A result is tied to
+a **fingerprint** of what makes a program behave (agent, name, brief, authority, gates,
+escalation, forbidden, worker, deliverables): an edit that matters makes it *stale*, pausing, the
+schedule and the budget do not. `GET /programs/{id}/tests` returns the cases and a summary; the
+web warns before activating a program with failing cases ("Activate anyway": a warning, not a
+block).
+
+**Web**: the Programs list has a Tests and test run action and the editor a Test run button; both
+open the program page (`/programs/{id}`, `PageHeader` and `PageBody`) with the Test run dialog and
+the Tests and Test runs tabs; a run lands on its result page
+(`/programs/{id}/rehearsals/{rid}`), which polls while it runs and offers Save as test case and Run
+again.
+
+Tests (`test/rehearsal.test.ts`, scripted models, an in-process fake MCP server): the overlay
+unit (conditional writes, deletes, moves, read-only fallback); a rehearsal writes only into the
+overlay and the real library is unchanged; sample files and `reads: sample`; a write tool of an
+external connector is simulated and recorded while the same call in a real run is made; would-ask
+decisions with an empty Decision Center; deliverables against overlay files including the fix-up;
+a worker program on a sample task; the budget cap; no run history, no digest line, cleanup with the
+program; a saved case passes, then fails after an edit that breaks it, is stale in between and
+survives a pause.
+
+*Without the overlay:* "try it" writes into the client's library. *Without simulating at the gate:*
+a rehearsal posts to the real company system. *Without the fingerprint:* pausing a program makes a
+failing test look stale and the warning disappears.
+
+## 26. Operations: soak test, end-to-end flows, what the invariants mean
+
+Two scripts in [`examples/team/scripts`](../../examples/team/scripts) check the server the way it
+is run, with real processes, a scripted model and no paid calls. They are written for the
+stability pass of P40 (phase I); run them before a release and after a change to runs, routines,
+decisions or recovery.
+
+```bash
+bun examples/team/scripts/soak.ts                  # 90 s soak: load, faults, SIGKILL, restart
+bun examples/team/scripts/soak.ts --quick          # the 30 s variant (also run by `bun test`, server/test/soak.test.ts)
+bun examples/team/scripts/soak.ts --seconds 120 --seed 7 --fault-rate 0.3   # harsher, reproducible-ish
+bun examples/team/scripts/e2e-flows.ts --port 4700 # the five client flows through the HTTP API
+```
+
+**The soak** (`soak.ts`, helpers in `scripts/soak/`). Two server processes (A and B) on free
+ports share one SQLite file. Five programs run at once: three scheduled (the shortest schedule the
+product allows, 10 s, with the routine ticker at 500 ms), one manual, one worker with a queue of
+tasks the script keeps adding. The script also fires the heartbeat, asks the digest to run (a
+script-only control route, `/__soak/digest`: its own slot is a day apart), answers every decision
+(approve with a choice, or reject), accepts work in Review and sends some back. The model is a
+scripted "brain" (`soak/brain.ts`) that decides each step from what the call looks like, so any
+number of agents can share it; from a seeded random generator it injects `429`, `500`, a thrown
+connection error, a timeout, a stream error and slow streams. Along the way A is `SIGKILL`ed and
+restarted with the same instance id, then B (only ever by PID). When the load stops, the programs
+are paused, every decision is answered and the queue is run dry; then both processes are stopped
+cleanly and `soak/invariants.ts` reads the database. Time is not faked: the clock of the server
+is not injectable, so schedules are real (short) and the heartbeat and digest are triggered
+through the API. Exit code 1 and a list of violations if any invariant fails; `KEEP_DIR=1` keeps
+the database and the logs.
+
+| Invariant | What a violation means |
+|---|---|
+| `no-stuck-task` | A task is still `running`, `queued` or waiting after recovery and the drain, or a session still has an active turn: a killed turn was not repaired. |
+| `queue-lost`, `queue-twice` | A task the client queued has no row, or ran twice (round and history disagree with the number of sends back, one session for two tasks). |
+| `run-has-task` | A routine run is not final (`claimed`, `enqueued`), a scheduled run has no task row, or a succeeded run's task is not `done`. |
+| `decisions` | A decision is still open at the end, a decided one has no `decided_at`, or a session still waits (`pending`) with no decision to answer. |
+| `budget` | The workspace ledger differs from the sum of the logged model calls (cost is recorded once per step, also for a step that failed after streaming), or a reservation stayed open past its expiry (a killed process legitimately holds one until it expires). |
+| `digest-once` | The same digest was stored twice, or two digests share a day. |
+| `heartbeat` | A beat is still `running`, ends before it starts, repeats an id, or an `ok` beat has items. |
+| `orphans` | A run session has no task row or names a deleted program, a task has a missing parent session, or an undelivered inbox item is left on a run or heartbeat session. |
+
+**Bugs it found** (each has a regression test):
+
+- A heartbeat beat killed mid-turn kept its active turn and a `running` record for good: the boot
+  repair recovered chats and task sessions only, and the rolling session `heartbeat:<agentId>` has
+  no task row. It is recovered now and its record closes as failed ("interrupted"). Test:
+  `restart-recovery.test.ts`, "a beat the dead process left running is closed with its turn".
+- A scheduled program run killed mid-turn left its routine run `enqueued` forever (the repair
+  closed the turn, nothing told the routine). It ends as `failed` now, without counting toward
+  pausing the schedule. Test: "the routine run of a killed program run ends too".
+
+**The end-to-end flows** (`e2e-flows.ts`). One server process on a port you choose (4700 by
+default) with `TEAM_SCRIPTED_MODEL`, and the requests the web makes, one flow after the other so
+the single scripted model is consumed in a known order: create a program, Run now and see the
+report on the board; a proposal in the lead's chat, Approve, the program exists; an escalation
+parks a run, Decide, the same run resumes; a queued task goes to Review, Send back with a note,
+the revision comes back; the heartbeat finds something and the digest (set to the next minute in
+the team timezone, so this flow takes about a minute) carries it. There is no browser
+automation dependency in the repository, so this is the API the pages call, not their DOM.
 
 ## What to change when you copy it
 

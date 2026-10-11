@@ -14,6 +14,7 @@
 	import type { Task } from '#lib/api/client.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import PageBody from '#lib/components/app/PageBody.svelte';
 	import TaskCard from '#lib/components/app/TaskCard.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -115,7 +116,7 @@
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 	<PageHeader
 		title="Tasks"
-		description={loaded ? `${board.queued.length} queued · ${board.running.length} running · ${needsCount} waiting for you · ${board.review.length} to review` : undefined}
+		description={loaded ? `${board.queued.length} queued · ${board.running.length} running · ${needsCount} waiting for you · ${board.review.length} to review` : 'Work your agents have queued, are running or need you to review.'}
 	>
 		{#snippet actions()}{@render filters('hidden md:flex')}<Button size="sm" onclick={() => openNewTask()}><PlusIcon /> New task</Button>{/snippet}
 	</PageHeader>
@@ -124,7 +125,8 @@
 		<Button size="icon-sm" aria-label="New task" onclick={() => openNewTask()}><PlusIcon /></Button>
 	</div>
 
-	<div class="min-h-0 flex-1 overflow-y-auto p-3 md:p-4 {view === 'board' ? 'lg:overflow-hidden' : ''}">
+	<!-- Full width on purpose: the kanban board needs every column visible. -->
+	<PageBody size="full" class="h-full gap-0" scrollClass={view === 'board' ? 'lg:overflow-hidden' : ''}>
 		{#if loaded && filtering && total === 0}
 			<Empty.Root class="h-full border">
 				<Empty.Header>
@@ -225,5 +227,5 @@
 				{/if}
 			</div>
 		{/if}
-	</div>
+	</PageBody>
 </div>

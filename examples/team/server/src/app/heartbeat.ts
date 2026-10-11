@@ -60,6 +60,8 @@ const lead = (deps: Deps) => deps.agents.list().find((a) => a.role === 'lead')
 export interface HeartbeatView {
   agentId: string
   config: HeartbeatConfig
+  /** The timezone of the active hours in effect (the agent's own, else the team timezone). */
+  effectiveTimezone: string
   /** False while nothing was ever set: the config is the default of the agent's role. */
   stored: boolean
   checklist: { path: string; exists: boolean; empty: boolean }
@@ -71,12 +73,16 @@ export interface HeartbeatView {
   } | null
   /** Newest first. */
   beats: BeatRecord[]
-  /** `timezone` as stored (null = follow the lead heartbeat), `effectiveTimezone` as used. */
+  /** `timezone` as stored (null = the team timezone), `effectiveTimezone` as used. */
   digest: DigestConfig & { effectiveTimezone: string; buffered: number; lastSentAt: number | null }
 }
 
 export const effectiveConfig = (deps: Deps, agent: { id: string; role: string }): HeartbeatConfig =>
   deps.heartbeat.store.config(agent.id) ?? defaultHeartbeat(agent)
+
+/** The timezone in effect for an agent's active hours: its own, else the team's. */
+export const heartbeatTimezone = (deps: Deps, config: HeartbeatConfig): string =>
+  config.timezone ?? deps.settings.get().timezone
 
 export async function getHeartbeat(deps: Deps, idOrSlug: string): Promise<HeartbeatView> {
   const agent = getAgent(deps, idOrSlug)
@@ -85,6 +91,7 @@ export async function getHeartbeat(deps: Deps, idOrSlug: string): Promise<Heartb
   return {
     agentId: agent.id,
     config: effectiveConfig(deps, agent),
+    effectiveTimezone: heartbeatTimezone(deps, effectiveConfig(deps, agent)),
     stored: deps.heartbeat.store.config(agent.id) !== undefined,
     checklist: {
       path: checklistPath(agent.id),
@@ -116,9 +123,7 @@ export function digestView(deps: Deps): HeartbeatView['digest'] {
 }
 
 function digestTimezone(deps: Deps, config: DigestConfig): string {
-  if (config.timezone !== null) return config.timezone
-  const l = lead(deps)
-  return l === undefined ? 'UTC' : effectiveConfig(deps, l).timezone
+  return config.timezone ?? deps.settings.get().timezone
 }
 
 const changed = (deps: Deps, agentId: string | null, change: string): void =>
@@ -146,8 +151,6 @@ export async function setHeartbeat(
     await deps.library.writeText(checklistPath(agent.id), CHECKLIST_TEMPLATE, null)
   }
   syncHeartbeatRoutine(deps, agent.id)
-  // the digest follows the lead's timezone unless it has its own
-  if (agent.role === 'lead') syncDigestRoutine(deps)
   changed(deps, agent.id, 'config')
   return getHeartbeat(deps, agent.id)
 }
@@ -394,7 +397,8 @@ export async function beginBeat(
   // a recovered fire of the same slot is the same beat
   if (state.beats.some((b) => b.id === input.id)) return { run: false, reason: 'duplicate' }
   if (!config.enabled || agent.archivedAt !== null) return skip('the heartbeat is off')
-  if (!inActiveHours(at, config)) return skip('outside active hours')
+  const timezone = heartbeatTimezone(deps, config)
+  if (!inActiveHours(at, { ...config, timezone })) return skip('outside active hours')
   const file = await deps.library.read(checklistPath(agent.id))
   if (checklistIsEmpty(file?.text)) return skip('empty checklist')
   if (input.session.waiting) return skip('the previous beat waits for a decision')
@@ -435,7 +439,7 @@ export async function beginBeat(
     run: true,
     prompt: beatPrompt({
       now: at,
-      timezone: config.timezone,
+      timezone,
       checklist: file?.text ?? '',
       agentName: agent.name,
     }),
@@ -458,8 +462,6 @@ export interface BeatEnd {
 
 /** The turn of a beat ended: record it, queue what is new for the digest, interrupt for urgent. */
 export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord | undefined> {
-  // parked on `escalate`: the beat continues when the client decides
-  if (end.stop === 'tool-pending') return undefined
   const { agentId, at } = end
   const parsed = end.stop === 'complete' ? parseBeatResult(end.output) : undefined
   let fresh: BeatItem[] = []
@@ -586,7 +588,8 @@ export async function runDigest(deps: Deps, at = deps.clock.now()): Promise<Dige
     decisions: deps.decisions.list({ status: 'open', limit: 50 }),
     waiting,
     items: state.buffer.filter((e) => e.at <= at),
-    costUsd: cost(),
+    // test runs (rehearsals) are not part of the day's work
+    costUsd: Math.max(0, cost() - deps.rehearsals.spentBetween(since, at)),
     heartbeatCostUsd: deps.agents.list().reduce((sum, a) => sum + cost(`heartbeat:${a.id}`), 0),
   })
   if (!digest.empty && l !== undefined) {

@@ -188,6 +188,7 @@ describe('program domain', () => {
     },
     trigger: { kind: 'manual' },
     report: 'task',
+    deliverables: [],
     status: 'active',
     createdBy: 'client',
     createdAt: 0,

@@ -12,3 +12,12 @@ test('validateGeneral reports field errors', () => {
 	if (!r.ok) expect(Object.keys(r.errors).sort()).toEqual(['budgetUsd', 'spawnCap']);
 	expect(validateGeneral({ budget: 'abc', spawnCap: '2.5' }).ok).toBe(false);
 });
+
+test('validateGeneral checks the team timezone only when given', () => {
+	expect(validateGeneral({ budget: '', spawnCap: '4', timezone: ' Asia/Jakarta ' })).toEqual({ ok: true, value: { budgetUsd: null, spawnCap: 4, timezone: 'Asia/Jakarta' } });
+	for (const timezone of ['Mars/Base', '']) {
+		const r = validateGeneral({ budget: '', spawnCap: '4', timezone });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(Object.keys(r.errors)).toEqual(['timezone']);
+	}
+});

@@ -22,8 +22,10 @@
  */
 import { errorText } from 'eharness'
 import { z } from 'zod'
-import type { AgentRepo, EventAppender, ProgramRunner } from '../../app/ports.ts'
+import { checkRun, finishRun } from '../../app/deliverables.ts'
+import type { AgentRepo, Deps, EventAppender, ProgramRunner } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
+import { allPass, fixUpPrompt } from '../../domain/deliverables.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import {
   PROGRAM_RUN_MAX_STEPS,
@@ -58,6 +60,8 @@ export interface ProgramServiceDeps {
   agents: AgentRepo
   tasks: SqliteTaskStore
   events: EventAppender
+  /** Late-bound app deps: the deliverable checks read the library and open decisions. */
+  app?: () => Deps | undefined
   now?: () => number
   log?: { warn(message: string): void }
 }
@@ -113,6 +117,45 @@ export function createProgramService(
     )
   }
 
+  /**
+   * One run of a program: the turn, then the deliverable checks (phase H). Failing files get ONE
+   * fix-up turn in the same session with the exact problems (the real Verify step); still failing:
+   * the run is partial and a decision is open (`app/deliverables.ts`). A run whose report says
+   * failed or needs_decision is not checked: that report already asks for attention.
+   */
+  async function runChecked(
+    program: Program,
+    def: AgentDef,
+    sessionId: string,
+    prompt: string,
+  ): Promise<string | undefined> {
+    const stop = await send(def, sessionId, prompt)
+    const app = deps.app?.()
+    if (program.deliverables.length === 0 || app === undefined || stop !== 'complete') return stop
+    const reported = (): boolean => {
+      const status = deps.tasks.getBySession(sessionId)?.report?.status
+      return status === 'done' || status === 'partial'
+    }
+    try {
+      if (!reported()) return stop
+      let task = deps.tasks.getBySession(sessionId) as Task
+      let checks = await checkRun(app, program, task)
+      if (allPass(checks)) {
+        finishRun(app, program, task, checks, 1)
+        return stop
+      }
+      const second = await send(def, sessionId, fixUpPrompt(checks))
+      if (second !== 'complete' || !reported()) return second
+      task = deps.tasks.getBySession(sessionId) as Task
+      checks = await checkRun(app, program, task)
+      finishRun(app, program, task, checks, 2)
+      return second
+    } catch (error) {
+      log.warn(`deliverable checks of ${sessionId} failed: ${errorText(error)}`)
+      return stop
+    }
+  }
+
   /** A session of this id has run, or is running. */
   async function exists(sessionId: string): Promise<boolean> {
     const peek = factory.peek(sessionId)
@@ -127,6 +170,12 @@ export function createProgramService(
     const maxTasks = program.worker?.maxTasks ?? 1
     const first = programSessionId(program.id, runAt)
     const base = programRunPrompt(program)
+    const promptOf = (task: Task, at: number): string =>
+      workItemPrompt(program, task, base, {
+        title: task.title,
+        programId: program.id,
+        runAt: at,
+      })
     // a recovered fire: its first task is claimed (and may have started)
     const claimed = deps.tasks.getBySession(first)
     if (claimed !== undefined && (await exists(first))) return { sessionId: first, started: false }
@@ -134,7 +183,7 @@ export function createProgramService(
     if (row === undefined) return { sessionId: first, started: false, idle: true }
     announce(def, first, row, claimed === undefined)
 
-    const firstEnd = send(def, first, workItemPrompt(program, row, base))
+    const firstEnd = runChecked(program, def, first, promptOf(row, runAt))
     track(
       (async () => {
         let stop = await firstEnd
@@ -143,12 +192,15 @@ export function createProgramService(
         while (done < maxTasks && (stop === 'complete' || stop === 'tool-pending')) {
           // the next task is claimed only now, so a run that stops early holds nothing back
           let sessionId: string
-          do sessionId = programSessionId(program.id, runAt + ++offset)
-          while (deps.tasks.getBySession(sessionId) !== undefined || (await exists(sessionId)))
+          let at: number
+          do {
+            at = runAt + ++offset
+            sessionId = programSessionId(program.id, at)
+          } while (deps.tasks.getBySession(sessionId) !== undefined || (await exists(sessionId)))
           const next = deps.tasks.claimNext(def.id, sessionId, clock())
           if (next === undefined) break
           announce(def, sessionId, next, true)
-          stop = await send(def, sessionId, workItemPrompt(program, next, base))
+          stop = await runChecked(program, def, sessionId, promptOf(next, at))
           done++
         }
       })().catch((error: unknown) =>
@@ -171,7 +223,11 @@ export function createProgramService(
       if (await exists(sessionId)) return { sessionId, started: false }
 
       const t = clock()
-      const prompt = programRunPrompt(program)
+      const prompt = programRunPrompt(program, {
+        title: program.name,
+        programId: program.id,
+        runAt,
+      })
       const before = deps.tasks.getBySession(sessionId)
       const row = deps.tasks.ensure({
         agentId: def.id,
@@ -182,7 +238,7 @@ export function createProgramService(
         startedAt: t,
       })
       if (before === undefined) announce(def, sessionId, row, true)
-      track(send(def, sessionId, prompt))
+      track(runChecked(program, def, sessionId, prompt))
       return { sessionId, started: true }
     },
 

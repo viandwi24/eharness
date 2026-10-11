@@ -1,6 +1,6 @@
 import { z } from '@hono/zod-openapi'
 import { RoutineSpecSchema } from './routines.ts'
-import { TaskSchema } from './tasks.ts'
+import { DeliverableSchema, TaskSchema } from './tasks.ts'
 
 const list = (max: number) => z.array(z.string().min(1).max(500)).max(max)
 
@@ -97,6 +97,9 @@ export const ProgramSchema = z
     trigger: ProgramTriggerSchema,
     report: ReportSchema,
     worker: ProgramWorkerSchema.nullable(),
+    deliverables: z.array(DeliverableSchema).openapi({
+      description: 'Files each run must leave in the library; checked when the run ends.',
+    }),
     status: z.enum(['active', 'paused']),
     createdBy: z.string().openapi({ description: '`client`, or the id of the proposing agent.' }),
     createdAt: z.number().int(),
@@ -130,6 +133,7 @@ export const ProgramCreateSchema = z
     trigger: ProgramTriggerSchema.optional(),
     report: ReportSchema.optional(),
     worker: ProgramWorkerSchema.partial().nullable().optional(),
+    deliverables: z.array(DeliverableSchema).max(20).optional(),
   })
   .openapi('ProgramCreate')
 
@@ -145,6 +149,7 @@ export const ProgramPatchSchema = z
     trigger: ProgramTriggerSchema.optional(),
     report: ReportSchema.optional(),
     worker: ProgramWorkerSchema.partial().nullable().optional(),
+    deliverables: z.array(DeliverableSchema).max(20).optional(),
     version: z
       .number()
       .int()

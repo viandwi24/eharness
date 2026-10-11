@@ -7,6 +7,7 @@ import {
   toSettingsMode,
   type WorkspaceSettings,
 } from '../domain/settings.ts'
+import { syncDigestRoutine } from './heartbeat.ts'
 import type { Deps } from './ports.ts'
 
 export const getSettings = (deps: Deps): WorkspaceSettings & { updatedAt: number } =>
@@ -38,6 +39,8 @@ export function patchSettings(
     clean.defaultPermissionMode = toSettingsMode(clean.defaultPermissionMode)
   }
   const next = deps.settings.patch(clean, deps.clock.now())
+  // the digest time follows the team timezone unless it has its own
+  if (clean.timezone !== undefined) syncDigestRoutine(deps)
   deps.events.append({ type: 'settings-changed', payload: { keys: Object.keys(clean) } })
   return next
 }

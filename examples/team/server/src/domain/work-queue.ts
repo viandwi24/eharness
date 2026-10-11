@@ -8,6 +8,7 @@
  * to Review, where the client accepts it or sends it back with a note (the task is queued again
  * with the note appended to its brief).
  */
+import { deliverablesPromptSection, type TokenContext } from './deliverables.ts'
 import { invalid } from './errors.ts'
 import { MAX_ATTEMPTS, MAX_BRIEF_CHARS, type Program } from './programs.ts'
 import { previewOf, TASK_PRIORITIES, type Task, type TaskPriority } from './tasks.ts'
@@ -102,7 +103,12 @@ export const taskLine = (t: Task, column: string): string =>
  * The run prompt of a worker program for one claimed task: the program's standing order (brief,
  * authority, gates, escalation, Execute -> Verify -> Report) and the task on top of it.
  */
-export function workItemPrompt(program: Program, task: Task, basePrompt: string): string {
+export function workItemPrompt(
+  program: Program,
+  task: Task,
+  basePrompt: string,
+  run?: TokenContext,
+): string {
   return [
     basePrompt,
     '',
@@ -112,6 +118,7 @@ export function workItemPrompt(program: Program, task: Task, basePrompt: string)
     '',
     describeTask(task),
     '',
+    ...(run === undefined ? [] : deliverablesPromptSection(program.deliverables, run)),
     ...(task.round > 1
       ? [
           'The client sent this task back: the feedback at the end of the brief says what to change.',

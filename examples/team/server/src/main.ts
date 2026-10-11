@@ -20,6 +20,7 @@
  *   TEAM_DEMO_COLLECTOR   1 = register the fixture community source (`ingest_source` of the Data work connector; 5 000 deterministic messages)
  *   TEAM_DEBUG_INVARIANTS   1 = debug.invariants on every agent (tests set it; a broken session invariant fails the turn)
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
+ *   TZ                the team timezone default (active hours, digest time; else the host timezone)
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
  *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
@@ -43,7 +44,8 @@ import {
   createProposal,
   createReportEscalation,
 } from './app/decisions.ts'
-import { ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
+import { recheckTask } from './app/deliverables.ts'
+import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
 import {
@@ -55,6 +57,8 @@ import {
 } from './app/work-queue.ts'
 import { areaOf } from './domain/library.ts'
 import { parseProgramSession } from './domain/programs.ts'
+import { parseRehearsalSession } from './domain/rehearsal.ts'
+import { hostTimezone } from './domain/settings.ts'
 import { createApp } from './http/app.ts'
 import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
@@ -69,6 +73,7 @@ import { sqliteHeartbeatStore } from './infra/db/heartbeat-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
+import { sqliteProgramTestStore, sqliteRehearsalStore } from './infra/db/rehearsal-repo.ts'
 import { pruneTables, type TableRetention } from './infra/db/retention.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
@@ -92,7 +97,7 @@ import { createEventAppender } from './infra/eh/event-appender.ts'
 import { createTeamHttp } from './infra/eh/harness-http.ts'
 import type { HeartbeatIntake } from './infra/eh/heartbeat-plugin.ts'
 import { createHeartbeatService, type HeartbeatService } from './infra/eh/heartbeat-service.ts'
-import type { LibraryChange } from './infra/eh/library-fs.ts'
+import { type LibraryChange, libraryFs } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
 import { createObserver } from './infra/eh/observe.ts'
@@ -104,6 +109,7 @@ import {
   scriptedModelConfigFromEnv,
 } from './infra/eh/provider.ts'
 import { createProviderService, PROVIDER_KIND, type ProviderService } from './infra/eh/providers.ts'
+import { createRehearsalService, type RehearsalService } from './infra/eh/rehearsal-service.ts'
 import {
   createRoutineService,
   type RoutineEngineConfig,
@@ -119,6 +125,7 @@ import {
 import { sqliteUploadStore } from './infra/eh/upload-store.ts'
 import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
 import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
+import { installJsonSchemaValidator } from './infra/json-schema.ts'
 import { croneSchedule } from './infra/schedule.ts'
 
 export interface ServerConfig {
@@ -192,6 +199,8 @@ export interface Server {
   routines: RoutineService
   /** Program runs (`infra/eh/program-service.ts`). */
   programs: ProgramService
+  /** Rehearsals (test runs) and program test cases (`infra/eh/rehearsal-service.ts`). */
+  rehearsals: RehearsalService
   /** Resumes the sessions parked on a decision (`infra/eh/decision-service.ts`). */
   decisions: DecisionService
   /** Heartbeat beats and the daily digest (`infra/eh/heartbeat-service.ts`). */
@@ -218,6 +227,7 @@ export interface Server {
 export const WORKSPACE_ID = 'default'
 
 export function compose(config: ServerConfig): Server {
+  installJsonSchemaValidator()
   const conn = openDatabase(config.dbFile)
   const agents = drizzleAgentRepo(conn.db)
 
@@ -343,6 +353,7 @@ export function compose(config: ServerConfig): Server {
       spawnCap: config.limits?.spawnCap ?? 4,
       defaultModel: null,
       defaultProfile: null,
+      timezone: hostTimezone(process.env),
     },
     // the limit is a row of the shared ledger: apply it now; other instances read the row
     onChange: (s) => setBudgetLimit(conn.sqlite, `workspace:${WORKSPACE_ID}`, s.budgetUsd),
@@ -461,10 +472,30 @@ export function compose(config: ServerConfig): Server {
     agents,
     tasks,
     events,
+    app: () => deps,
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
+  const rehearsalStore = sqliteRehearsalStore(conn.sqlite)
+  const programTestStore = sqliteProgramTestStore(conn.sqlite)
+  // a rehearsal that was running when the process stopped cannot be continued
+  rehearsalStore.failRunning('the server restarted while it ran', Date.now())
+  const rehearsalService = createRehearsalService(factory, {
+    agents,
+    rehearsals: rehearsalStore,
+    tests: programTestStore,
+    programs: programStore,
+    // the real library, read through the overlay and never written (no `onChange`: no events)
+    library: libraryFs(conn.sqlite),
+    ids: () => uuidv7(),
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const decisionService = createDecisionService(factory, {
     agents,
+    // a run the client let continue after failed deliverables is checked again when it ends
+    afterRun: async (sessionId) => {
+      const task = tasks.getBySession(sessionId)
+      if (task?.deliverables?.status === 'fail') await recheckTask(deps, task.id)
+    },
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const heartbeatStore = sqliteHeartbeatStore(conn.sqlite)
@@ -518,6 +549,9 @@ export function compose(config: ServerConfig): Server {
     routineEngine: routines,
     programs: programStore,
     programRunner,
+    rehearsals: rehearsalStore,
+    programTests: programTestStore,
+    rehearsalRunner: rehearsalService,
     decisions: decisionStore,
     decisionResolver: decisionService,
     heartbeat: heartbeats.ports,
@@ -539,7 +573,7 @@ export function compose(config: ServerConfig): Server {
     update: (id, patch) => updateQueuedTask(deps, id, patch),
     cancel: (id) => cancelQueuedTask(deps, id),
     authorizes: (sessionId, toolName) => {
-      const parsed = parseProgramSession(sessionId)
+      const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
       const program = parsed === undefined ? undefined : programStore.get(parsed.programId)
       // a worker program is given its work: reporting a task done is part of it
       if (toolName === 'complete_task' && program?.worker != null) return true
@@ -560,9 +594,28 @@ export function compose(config: ServerConfig): Server {
   // one repair pass at a time per instance; safe to run on several instances at once
   let repairing: Promise<ReconcileReport> | undefined
   const reconcile = (): Promise<ReconcileReport> => {
-    repairing ??= team.reconcile().finally(() => {
-      repairing = undefined
-    })
+    repairing ??= team
+      .reconcile()
+      .then((report) => {
+        // a beat whose turn the repair closed will not end by itself: close its record too
+        for (const { sessionId } of report.recovered) {
+          const agentId = /^heartbeat:(.+)$/.exec(sessionId)?.[1]
+          if (agentId !== undefined) {
+            abandonBeat(deps, agentId, 'interrupted (the server stopped)', Date.now())
+          }
+        }
+        // ... and a routine or program run whose turn the repair closed must end its run row
+        return Promise.all(
+          report.recovered
+            .filter(({ sessionId }) => /^(program|routine):/.test(sessionId))
+            .map(({ sessionId }) =>
+              routines?.outcomes.turnEnded({ sessionId, stop: 'interrupted', needsPerson: false }),
+            ),
+        ).then(() => report)
+      })
+      .finally(() => {
+        repairing = undefined
+      })
     return repairing
   }
   const quiet = (): Promise<void> =>
@@ -626,6 +679,7 @@ export function compose(config: ServerConfig): Server {
     team,
     routines,
     programs: programRunner,
+    rehearsals: rehearsalService,
     decisions: decisionService,
     heartbeats,
     activityLog,

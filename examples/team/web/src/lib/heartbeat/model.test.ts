@@ -33,6 +33,16 @@ describe('heartbeat form', () => {
 		expect(patchOf(config, { ...formOf(config), enabled: false, everyMinutes: 60 })).toEqual({ enabled: false, everyMinutes: 60 });
 	});
 
+	test('an empty timezone follows the team timezone', () => {
+		const team = { ...config, timezone: null };
+		expect(formOf(team).timezone).toBe('');
+		expect(formErrors(formOf(team))).toEqual({});
+		expect(patchOf(team, formOf(team))).toEqual({});
+		expect(patchOf(config, { ...formOf(config), timezone: '' })).toEqual({ timezone: null });
+		expect(patchOf(team, { ...formOf(team), timezone: 'Asia/Jakarta' })).toEqual({ timezone: 'Asia/Jakarta' });
+		expect(scheduleSummary(team, 'Asia/Jakarta')).toBe('every 30 min, 08:00-20:00 Asia/Jakarta');
+	});
+
 	test('the schedule reads like a sentence', () => {
 		expect(scheduleSummary(config)).toBe('every 30 min, 08:00-20:00 UTC');
 		expect(scheduleSummary({ ...config, everyMinutes: 120, activeTo: '08:00' })).toBe('every 2 h, around the clock');

@@ -537,6 +537,107 @@ describe('chat: requests and uploads', () => {
     expect((await libraryFs(a.server.conn.sqlite).read(file.path))?.content).toBe('a,b\n1,2\n')
   })
 
+  test('image, pdf and csv uploads reach the model as bytes, persist as references and survive a reload', async () => {
+    const a = single([{ text: 'seen' }])
+    const { app, model } = a
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+    const pdf = new TextEncoder().encode('%PDF-1.4\n%%EOF')
+    const files = [
+      { name: 'circle.png', type: 'image/png', content: png as BlobPart },
+      { name: 'doc.pdf', type: 'application/pdf', content: pdf as BlobPart },
+      { name: 'sales.csv', type: 'text/csv', content: 'a,b\n1,2\n' },
+    ]
+    const parts: unknown[] = [{ type: 'text', text: 'look at these' }]
+    for (const f of files) {
+      const res = await upload(app, f.name, f.type, f.content)
+      expect(res.status).toBe(201)
+      const body = (await res.json()) as { url: string; mediaType: string }
+      expect(body.mediaType).toBe(f.type)
+      parts.push({ type: 'file', mediaType: f.type, filename: f.name, url: body.url })
+    }
+    const chat = await app.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, { messages: [{ role: 'user', parts }] }),
+    )
+    expect(chat.status).toBe(200)
+    await chat.text()
+
+    // the model wire: one file part per attachment, with the media type and the resolved bytes
+    const wire = model.prompts[0] as Array<{ role: string; content: unknown }>
+    const filesOnWire = wire
+      .filter((m) => m.role === 'user')
+      .flatMap((m) => m.content as Array<Record<string, unknown>>)
+      .filter((c) => c.type === 'file') as Array<{
+      mediaType: string
+      filename: string
+      data: { type: string; data: string }
+    }>
+    expect(filesOnWire.map((c) => [c.filename, c.mediaType])).toEqual([
+      ['circle.png', 'image/png'],
+      ['doc.pdf', 'application/pdf'],
+      ['sales.csv', 'text/csv'],
+    ])
+    const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64')
+    expect(filesOnWire.map((c) => c.data)).toEqual([
+      { type: 'data', data: b64(png) },
+      { type: 'data', data: b64(pdf) },
+      { type: 'data', data: b64(new TextEncoder().encode('a,b\n1,2\n')) },
+    ])
+
+    // a reload reads the same file parts back, still as references (no base64 in storage)
+    const user = (await stored(app)).find((m) => m.role === 'user')
+    const kept = user?.parts.filter((p) => p.type === 'file') as Array<{
+      url: string
+      mediaType: string
+      filename: string
+    }>
+    expect(kept.map((f) => [f.filename, f.mediaType])).toEqual([
+      ['circle.png', 'image/png'],
+      ['doc.pdf', 'application/pdf'],
+      ['sales.csv', 'text/csv'],
+    ])
+    for (const f of kept) expect(f.url.startsWith('library:///uploads/')).toBe(true)
+
+    // the web shows the stored reference by fetching the bytes with the token
+    const raw = await app.request(
+      `/library/file?path=${encodeURIComponent(new URL(kept[0]?.url ?? '').pathname)}&inline=true`,
+    )
+    expect(raw.status).toBe(200)
+    expect(raw.headers.get('content-type')).toContain('image/png')
+    expect(new Uint8Array(await raw.arrayBuffer())).toEqual(png)
+  })
+
+  test('an oversize data: attachment and a remote url are rejected with a readable error', async () => {
+    const a = single([])
+    const app = a.app
+    const big = `data:image/png;base64,${'A'.repeat(15_000_000)}`
+    const res = await app.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, {
+        messages: [{ role: 'user', parts: [{ type: 'file', mediaType: 'image/png', url: big }] }],
+      }),
+    )
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('EH_INVALID_INPUT')
+    expect(body.error.message).toContain('limit')
+
+    const remote = await app.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, {
+        messages: [
+          {
+            role: 'user',
+            parts: [{ type: 'file', mediaType: 'image/png', url: 'https://example.test/a.png' }],
+          },
+        ],
+      }),
+    )
+    expect(remote.status).toBe(400)
+    // nothing was stored by the failed sends
+    expect((await stored(app)).filter((m) => m.role === 'user')).toHaveLength(0)
+  })
+
   test('upload and file-reference limits', async () => {
     const a = single([])
     const app = a.app

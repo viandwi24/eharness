@@ -24,7 +24,8 @@ export const formOf = (c: HeartbeatConfig): HeartbeatForm => ({
 	everyMinutes: c.everyMinutes,
 	activeFrom: c.activeFrom,
 	activeTo: c.activeTo,
-	timezone: c.timezone
+	// empty = follow the team timezone (Settings)
+	timezone: c.timezone ?? ''
 });
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -46,16 +47,18 @@ export function formErrors(f: HeartbeatForm): Record<string, string> {
 	}
 	if (!CLOCK.test(f.activeFrom)) out.activeFrom = 'Use HH:MM (24 hours)';
 	if (!CLOCK.test(f.activeTo)) out.activeTo = 'Use HH:MM (24 hours)';
-	if (!isTimezone(f.timezone)) out.timezone = 'Not a timezone (try Europe/Berlin or UTC)';
+	if (f.timezone.trim() !== '' && !isTimezone(f.timezone.trim())) out.timezone = 'Not a timezone (try Europe/Berlin or UTC)';
 	return out;
 }
 
 /** The fields that changed, as the PATCH body. */
-export function patchOf(saved: HeartbeatConfig, f: HeartbeatForm): Partial<HeartbeatForm> {
-	const out: Partial<HeartbeatForm> = {};
-	for (const k of Object.keys(f) as (keyof HeartbeatForm)[]) {
-		if (f[k] !== saved[k]) (out as Record<string, unknown>)[k] = f[k];
+export function patchOf(saved: HeartbeatConfig, f: HeartbeatForm): Partial<Omit<HeartbeatForm, 'timezone'>> & { timezone?: string | null } {
+	const out: Record<string, unknown> = {};
+	for (const k of ['enabled', 'everyMinutes', 'activeFrom', 'activeTo'] as const) {
+		if (f[k] !== saved[k]) out[k] = f[k];
 	}
+	// an empty timezone goes back to following the team timezone
+	if (f.timezone.trim() !== (saved.timezone ?? '')) out.timezone = f.timezone.trim() === '' ? null : f.timezone.trim();
 	return out;
 }
 
@@ -83,10 +86,10 @@ export function beatDetail(b: BeatRecord): string {
 	return 'In progress';
 }
 
-/** `every 30 min, 08:00-20:00 Europe/Berlin` */
-export function scheduleSummary(c: HeartbeatConfig): string {
+/** `every 30 min, 08:00-20:00 Europe/Berlin` (`effectiveTimezone`: the agent's own, else the team's) */
+export function scheduleSummary(c: HeartbeatConfig, effectiveTimezone: string = c.timezone ?? 'UTC'): string {
 	const every = c.everyMinutes % 60 === 0 ? `${c.everyMinutes / 60} h` : `${c.everyMinutes} min`;
-	const hours = c.activeFrom === c.activeTo ? 'around the clock' : `${c.activeFrom}-${c.activeTo} ${c.timezone}`;
+	const hours = c.activeFrom === c.activeTo ? 'around the clock' : `${c.activeFrom}-${c.activeTo} ${effectiveTimezone}`;
 	return `every ${every}, ${hours}`;
 }
 

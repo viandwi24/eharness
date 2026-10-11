@@ -73,6 +73,7 @@ import {
   programRunScope,
 } from '../../domain/programs.ts'
 import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
+import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
@@ -88,6 +89,7 @@ import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import type { ModelConfig } from './provider.ts'
+import { rehearsalSessions, sessionFileSystem } from './rehearsal-registry.ts'
 import { routineOutcomes } from './routine-plugin.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
 import {
@@ -272,6 +274,9 @@ export interface SessionModes {
 /** Ledger scope of the workspace: every model call of every agent reserves against it. */
 export const workspaceScope = (workspaceId: string): string => `workspace:${workspaceId}`
 
+/** Ledger scope of one rehearsal (its own small cap, `domain/rehearsal.ts`). */
+export const rehearsalScope = (sessionId: string): string => `rehearsal:${sessionId}`
+
 function createStorage(sqlite: Database) {
   return {
     messages: sqliteMessages(sqlite),
@@ -363,6 +368,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
    * every turn, so an edit applies to the next turn.
    */
   const programScopes = (sessionId: string): string[] => {
+    // a rehearsal spends from a small cap of its own, never from the program's scopes
+    const rehearsal = rehearsalSessions.get(sessionId)
+    if (rehearsal !== undefined) {
+      const scope = rehearsalScope(sessionId)
+      setBudgetLimit(sqlite, scope, rehearsal.budgetUsd)
+      return [scope]
+    }
     if (profileOfSession(sessionId).budget !== 'program') return []
     const parsed = parseProgramSession(sessionId)
     const program = parsed === undefined ? undefined : deps.programs?.get(parsed.programId)
@@ -604,7 +616,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           askedReason: heartbeatRefusal,
         }
       }
-      const parsed = parseProgramSession(sessionId)
+      const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
       if (parsed === undefined) return undefined
       const tools = Object.entries(out.toolNameMap).map(([name, origin]) => ({
         name,
@@ -638,6 +650,22 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           return granted ? undefined : outsideAuthorityReason(name, call.toolName)
         },
         askedReason: (toolName) => outsideAuthorityReason(current().name, toolName),
+        // a rehearsal does not call external systems that would change something: the call is
+        // recorded and the model reads what it would have done (`domain/rehearsal.ts`)
+        ...(originOfSession(sessionId) !== 'rehearsal'
+          ? {}
+          : {
+              simulate(call: { toolName: string; input: unknown; risk?: string | undefined }) {
+                const origin = out.toolNameMap[call.toolName]
+                if (!isSimulatedCall({ connectorId: origin?.connectorId, risk: call.risk })) {
+                  return undefined
+                }
+                rehearsalSessions
+                  .get(sessionId)
+                  ?.recorder.simulated({ tool: call.toolName, input: call.input })
+                return simulatedText(call.toolName, call.input)
+              },
+            }),
         // the engine learns rules the program gained since the session opened (session scope)
         async sync(engine) {
           const { rules } = current()
@@ -652,10 +680,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...(pluginNames.has('memory') && !pluginNames.has('filesystem')
         ? [
             filesystem({
-              fs: libraryFs(sqlite, {
-                agentId: def.id,
-                ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
-              }),
+              fs: sessionFileSystem(
+                libraryFs(sqlite, {
+                  agentId: def.id,
+                  ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
+                }),
+              ),
               tools: [],
               hiddenPrefixes: ['/memories'],
               ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
