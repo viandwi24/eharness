@@ -11,6 +11,9 @@
  *    `POST /tasks/{id}/messages` (the inbox), not through the chat route;
  *  - question answers (`ask_user_question`) are turned into the tool output with `answerOutput`;
  *  - `DomainError` keeps its status and code (`onError`).
+ *
+ * The order a request meets the hooks (authorize, validate, session/peek, attention hooks) and
+ * why each exists: docs/guides/walkthrough-server.md section 14.
  */
 import { HarnessError } from 'eharness'
 import type { ActivityStore, AttentionAnswer } from 'eharness/activity'

@@ -16,6 +16,12 @@ Using eharness (not contributing)? Start with the [README](../README.md), the [g
 (for production: [production patterns](guides/production-patterns.md)) and the runnable
 [examples](../examples); the [changelog](../CHANGELOG.md) has migration notes.
 
+Building a real harness? Read the two walkthroughs of the benchmark apps, in this order:
+[multi-user server](guides/walkthrough-server.md) (`examples/team`) or
+[single-process CLI](guides/walkthrough-cli.md) (`examples/coder`), then review your work against the
+[production checklist](guides/production-checklist.md). They explain what each piece does, why it
+is needed and what breaks without it, pointing at real code.
+
 ## Specs index
 
 | # | Spec | Covers |

@@ -10,6 +10,9 @@
  * `kill_shell` on the main agent), `agent`, the `filesystem()` tools, `todo_write`, `web_fetch`,
  * `web_search`, `ask_user_question` (main only), MCP tools (source tools, after the static ones)
  * and the permissions plugin's `exit_plan_mode` among the session tools.
+ *
+ * Walkthrough: docs/guides/walkthrough-cli.md explains each plugin below, why only the main agent
+ * has some of them, and what breaks without them (sections 1, 4-12).
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'

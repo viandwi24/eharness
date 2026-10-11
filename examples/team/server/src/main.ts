@@ -20,6 +20,10 @@
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
  *   TEAM_EVENTS_RETENTION_HOURS / TEAM_EVENTS_MAX_ROWS   events feed retention (default 72 h, 100000 rows; 0 hours = by count only)
+ *
+ * New to this file? docs/guides/walkthrough-server.md follows a request through it: the boot
+ * order (providers, connectors, then the reconcile pass of section 6-7), the activity feed and its
+ * retention (13), `createTeamHttp` (14) and `Bun.serve` with `idleTimeout: 0` (16).
  */
 import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'

@@ -10,6 +10,12 @@ the web is only a UI, the server runs everything, survives `SIGKILL`, and can ru
 instances over one database. It is an example: it is never published, and its SQLite adapters live
 here, not in the library. Plan and decisions: [P32](../../docs/plans/P32-team-example.md).
 
+**Read the walkthrough:** [Building a multi-user agent server](../../docs/guides/walkthrough-server.md)
+follows one request through this code, piece by piece (storage, lock, stream log, inbox, recovery,
+background children, approvals, activity feed, `eharness/http`, `eharness/client`), with why each
+exists and what breaks without it. The short review list is the
+[production checklist](../../docs/guides/production-checklist.md).
+
 ```
 server/   Hono + @hono/zod-openapi + Drizzle on bun:sqlite (the whole backend)
 web/      SvelteKit 3 + Svelte 5 + Tailwind 4 + edmi-ui (UI only; talks to /api)

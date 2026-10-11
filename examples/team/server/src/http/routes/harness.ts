@@ -245,7 +245,7 @@ export function harnessRoutes(harness: HarnessFetch): OpenAPIHono {
     tags: ['events'],
     summary: 'Live event feed (SSE)',
     description:
-      '`eharness/http` (`handleActivityStream`): every instance tails the shared events log (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head. Frames: `retry` + `: connected` + `event: boot` at once; `resync` when the cursor is behind the retention mark or ahead of the head; `: keep-alive` every 15 s.',
+      '`eharness/http` (`handleActivityStream`): every instance tails the shared events log (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head. Frames: `retry` + `: connected` + `event: boot` at once; `resync` when the cursor is behind the retention mark or ahead of the head; `: keep-alive` every 8 s.',
     security,
     request: {
       query: z.object({

@@ -195,5 +195,8 @@ Nothing limits spending unless you set `budget` (with `models` pricing) or
 - **Track cost and set budgets:** [models and cost](models-and-cost.md).
 - **Plan multi-step work visibly:** the [todos plugin](todos.md).
 - **Ask before risky tools run:** [approvals and interaction](approvals-and-interaction.md).
+- **Build a real harness:** read the [server walkthrough](walkthrough-server.md) (multi-user, several
+  instances, restarts) or the [CLI walkthrough](walkthrough-cli.md), then the
+  [production checklist](production-checklist.md).
 - **Everything at a glance:** the [reference](reference.md) lists every option and default.
 - **Shut down:** `await agent.close()` closes sessions (MCP clients, plugin resources).

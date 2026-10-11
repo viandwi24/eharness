@@ -37,6 +37,9 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Subagents](subagents.md) | the `subagents()` plugin: child sessions, approvals inline / parked / by policy, background children, the manual pattern |
 | [Lead and role agents](lead-and-role-agents.md) | a lead that hands work to role agents: roster from definitions, delegation briefs, park vs inline, follow-ups, limits, budgets, cost, when not to use it |
 | [Testing](testing.md) | `scriptedModel`, asserting on prompts and results, conformance suites |
+| [Walkthrough: multi-user server](walkthrough-server.md) | `examples/team` read in the order you would build it: storage, lock, stream log, inbox, recovery, background children, approvals, activity feed, `eharness/http`, `eharness/client`; why each exists and what breaks without it |
+| [Walkthrough: single-process CLI](walkthrough-cli.md) | `examples/coder` the same way: workspace, shell, interactive permissions, compaction, todos, subagents, skills, MCP, resume and crash recovery, Ink |
+| [Production checklist](production-checklist.md) | one page to review before shipping: correctness, restarts and instances, streaming, security, cost, observability |
 | [Coding agent example](../../examples/coder/README.md) | a terminal coding agent built only on the public API: virtual workspace, permission rules, subagents, Ink UI |
 | [Team app example](../../examples/team/README.md) | a web + server team of agents: agents as data, lead and role agents, board and approvals, routines, several instances, SQLite adapters |
 | [Upgrading to 0.7](upgrading.md) | what changes for 0.6 users, with migration snippets, and the known gaps |

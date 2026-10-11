@@ -8,7 +8,8 @@
  * Connectors decide the tools (`activateConnectors`, spec 24): the built-ins in their fixed order
  * (files, memory, planning, web, ask, team), then the other connectors by id; the plugin order is
  * identical for every session of an agent (prompt-cache prefix, `toolOrder`):
- * connectors -> permissions -> child side of subagents -> routine outcomes -> taskIndex -> activityLog (hook only).
+ * connectors -> chatTools -> permissions -> child side of subagents -> routine outcomes -> taskIndex ->
+ * activity (session events) -> activityLog (hook only).
  * Activation is asynchronous: `prepare` runs it, `agentFor` (synchronous) uses its result. Static instructions come first; the volatile parts (date, roster)
  * live in the turn reminder, never in `instructions` (spec 02 §5).
  *
@@ -17,6 +18,11 @@
  * (`parentAgent` = the lead, `selfAgent` = itself) so it can `send_message` to `main` and reports
  * of resumed turns find their way back. All instances build the same plugin set, which waits
  * and reconcile need.
+ *
+ * Read with the walkthrough (docs/guides/walkthrough-server.md): sections 1 (definition, model,
+ * prompt-cache order), 3 and 6 (`lock` with `takeOver`, `recovery.instanceId`), 7 (park +
+ * background delegation), 8 (per-session permission engines), 11 (compaction, tool output) and
+ * 12 (the shared budget ledger) explain what each block below is for and what breaks without it.
  */
 
 import type { Database } from 'bun:sqlite'

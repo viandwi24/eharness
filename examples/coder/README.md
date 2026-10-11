@@ -8,6 +8,12 @@ shipped modules (`eharness/filesystem`, `filesystem/node`, `shell`, `permissions
 [ADR-0034](../../docs/decisions/0034-deployment-profiles.md): one interactive process, approvals
 answered in process.
 
+**Read the walkthrough:** [Building a single-process CLI agent](../../docs/guides/walkthrough-cli.md)
+maps every piece (workspace, shell, permissions and the approval loop, compaction, todos, subagents,
+skills, MCP, resume and crash recovery, Ink rendering) to the code that wires it, with why it exists
+and what breaks without it. For a server, see the
+[server walkthrough](../../docs/guides/walkthrough-server.md).
+
 ## Built on the library
 
 The point of the example is to prove the library: everything that is not product or UI policy is a
