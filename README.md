@@ -6,14 +6,6 @@
 [![CI](https://github.com/viandwi24/eharness/actions/workflows/ci.yml/badge.svg)](https://github.com/viandwi24/eharness/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/eharness)](https://www.npmjs.com/package/eharness)
 
-<!-- remove at 0.8 release -->
-> **This README follows `main`.** The latest npm release is 0.7.0 (tag `v0.7.0`). The 0.8 modules
-> (`eharness/providers`, `eharness/connectors`, `eharness/activity`, `eharness/http`,
-> `eharness/client`, `eharness/client/react`) and the features marked *Draft (0.8)* are
-> **unreleased** until the 0.8 release: `import 'eharness/http'` fails on 0.7.0. 0.8 also renames
-> and removes public names: see [Upgrading](docs/guides/upgrading.md#upgrading-to-08).
-<!-- end remove at 0.8 release -->
-
 Every agent built on AI SDK ends up writing the same harness around `streamText`: a step loop,
 prompt assembly, skills, MCP, history that survives restarts, compaction, approvals, a UI stream.
 **eharness** is that skeleton as a library. You keep your server, auth, database and domain logic;
