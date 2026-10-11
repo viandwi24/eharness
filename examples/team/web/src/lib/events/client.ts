@@ -1,5 +1,6 @@
 // Events client (spec §5.3): one fetch-based SSE reader per tab with reconnect + Last-Event-ID,
 // and a polling fallback (`GET /events?after=`) while the stream is down.
+import { backoffDelay, BACKOFF_MS, createLiveness, GRACE_MS, KEEP_ALIVE_MS } from './liveness';
 import { createSseParser } from './sse';
 
 export type TeamEvent = {
@@ -21,12 +22,21 @@ export type EventsClientOptions = {
 	/** The stream (re)connected, or a poll round succeeded after a gap: stores should refetch to resync. */
 	onResync?: () => void;
 	onStatus?: (s: Connection) => void;
-	/** Reconnect delays in ms; the last one repeats. */
+	/** Reconnect delays in ms (jittered, the last one repeats). Default 250 ms up to 5 s. */
 	backoff?: number[];
+	/** `GET /health` (cheap, no auth): resolves with the server's boot id. Rejects when the server is down. */
+	health?: (signal: AbortSignal) => Promise<{ boot?: string }>;
+	/** True while a chat or a task is running: the client then pings `health` about every 5 s. */
+	isBusy?: () => boolean;
+	/** Clock and randomness, injectable for tests. */
+	now?: () => number;
+	random?: () => number;
+	/** Period of the internal health tick (ms). 0 disables it (tests). Default 1000. */
+	tickMs?: number;
 	sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 	/**
 	 * No bytes (not even the server's keep-alive comment, every 15 s) for this long: the connection
-	 * is dead without an error (a killed server behind a proxy): drop it and reconnect. Default 45 s.
+	 * is dead without an error (a killed server behind a proxy): drop it and reconnect. Default 20 s.
 	 */
 	idleMs?: number;
 };
@@ -55,14 +65,24 @@ export function parseEvent(data: string): TeamEvent | undefined {
 export function createEventsClient(o: EventsClientOptions): {
 	start(): void;
 	stop(): void;
+	/** Ping `health` now (tab focus, network back): a failure or a new boot id reconnects at once. */
+	check(): Promise<void>;
 	readonly lastSeq: number | null;
 } {
 	const base = o.baseUrl.replace(/\/+$/, '');
-	const backoff = o.backoff?.length ? o.backoff : [1000, 2000, 5000, 10000];
+	const steps = o.backoff?.length ? o.backoff : BACKOFF_MS;
+	const random = o.random ?? Math.random;
+	const now = o.now ?? Date.now;
+	const liveness = createLiveness();
+	let kick: (() => void) | undefined; // drop the current stream and reconnect now
+	let wake: (() => void) | undefined; // cut a backoff sleep short
+	let pinging = false;
 	const sleep = o.sleep ?? defaultSleep;
 	let ctrl: AbortController | undefined;
 	let lastSeq: number | null = null;
 	let status: Connection = 'idle';
+	let kicked = false;
+	let tick: ReturnType<typeof setInterval> | undefined;
 
 	const setStatus = (s: Connection): void => {
 		if (s === status) return;
@@ -94,7 +114,8 @@ export function createEventsClient(o: EventsClientOptions): {
 		const inner = new AbortController();
 		const onOuterAbort = (): void => inner.abort();
 		signal.addEventListener('abort', onOuterAbort, { once: true });
-		const idleMs = o.idleMs ?? 45_000;
+		const idleMs = o.idleMs ?? KEEP_ALIVE_MS + GRACE_MS;
+		kick = () => inner.abort();
 		let idle: ReturnType<typeof setTimeout> | undefined;
 		const arm = (): void => {
 			clearTimeout(idle);
@@ -105,6 +126,8 @@ export function createEventsClient(o: EventsClientOptions): {
 			await readStream(url, h, inner.signal, arm);
 		} finally {
 			clearTimeout(idle);
+			kick = undefined;
+			liveness.closed();
 			signal.removeEventListener('abort', onOuterAbort);
 		}
 	}
@@ -113,9 +136,19 @@ export function createEventsClient(o: EventsClientOptions): {
 		const res = await doFetch(url, { headers: h, signal });
 		if (!res.ok || !res.body) throw new Error(`events stream ${res.status}`);
 		arm();
+		liveness.opened(now());
 		setStatus('live');
 		o.onResync?.();
 		const parser = createSseParser((m) => {
+			if (m.event === 'boot') {
+				try {
+					const id = (JSON.parse(m.data) as { boot?: unknown }).boot;
+					if (typeof id === 'string') liveness.noteBoot(id); // a new boot: onResync above already ran
+				} catch {
+					// malformed hint
+				}
+				return;
+			}
 			if (m.event === 'resync') {
 				// the server pruned events newer than our cursor: refetch state, continue from its mark
 				const seq = (JSON.parse(m.data) as { seq?: unknown }).seq;
@@ -133,6 +166,7 @@ export function createEventsClient(o: EventsClientOptions): {
 				const { done, value } = await reader.read();
 				if (done) break;
 				arm();
+				liveness.byte(now());
 				parser.push(decoder.decode(value, { stream: true }));
 			}
 		} finally {
@@ -175,15 +209,29 @@ export function createEventsClient(o: EventsClientOptions): {
 
 	async function run(signal: AbortSignal): Promise<void> {
 		let failures = 0;
+		const pause = (ms: number): Promise<void> => {
+			const w = new Promise<void>((r) => (wake = r));
+			return Promise.race([sleep(ms, signal), w]).finally(() => (wake = undefined));
+		};
 		while (!signal.aborted) {
 			setStatus(failures === 0 ? 'connecting' : status);
 			try {
 				await stream(signal);
 				failures = 0; // clean close: reconnect right away (after a short pause)
-				await sleep(backoff[0] ?? 1000, signal);
+				if (kicked) {
+					kicked = false;
+					continue;
+				}
+				await pause(backoffDelay(1, steps, random));
 				continue;
 			} catch {
 				if (signal.aborted) break;
+				if (kicked) {
+					// we dropped it on purpose (new boot, failed ping, stale): reconnect without waiting
+					kicked = false;
+					failures = 0;
+					continue;
+				}
 			}
 			failures++;
 			setStatus('polling');
@@ -192,7 +240,33 @@ export function createEventsClient(o: EventsClientOptions): {
 			} catch {
 				// still down; keep going
 			}
-			await sleep(backoff[Math.min(failures - 1, backoff.length - 1)] ?? 1000, signal);
+			await pause(backoffDelay(failures, steps, random));
+		}
+	}
+
+	const reconnectNow = (): void => {
+		if (kick) {
+			kicked = true;
+			kick();
+		} else wake?.(); // already down: do not wait out the backoff
+	};
+
+	async function check(): Promise<void> {
+		if (!o.health || pinging || !ctrl || ctrl.signal.aborted) return;
+		pinging = true;
+		liveness.pinged(now());
+		const t = new AbortController();
+		const timer = setTimeout(() => t.abort(), 4000);
+		try {
+			const h = await o.health(t.signal);
+			if (ctrl.signal.aborted) return;
+			if (typeof h.boot === 'string' && liveness.noteBoot(h.boot) === 'changed') return reconnectNow();
+			if (liveness.health(now()) !== 'connected') reconnectNow(); // it answers but the stream is stale or down
+		} catch {
+			if (!ctrl.signal.aborted && status === 'live') reconnectNow(); // up on paper, dead in fact
+		} finally {
+			clearTimeout(timer);
+			pinging = false;
 		}
 	}
 
@@ -201,8 +275,16 @@ export function createEventsClient(o: EventsClientOptions): {
 			if (ctrl && !ctrl.signal.aborted) return;
 			ctrl = new AbortController();
 			void run(ctrl.signal);
+			const every = o.tickMs ?? 1000;
+			if (every > 0 && o.health) {
+				tick = setInterval(() => {
+					if (liveness.shouldPing(now(), o.isBusy?.() ?? false)) void check();
+				}, every);
+			}
 		},
+		check,
 		stop(): void {
+			clearInterval(tick);
 			ctrl?.abort();
 			setStatus('stopped');
 		},

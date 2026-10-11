@@ -5049,6 +5049,8 @@ export interface components {
             ok: true;
             /** @example eharness-team-server */
             name: string;
+            /** @description Id of this server process; it changes on every restart. */
+            boot: string;
             /** @description Server time, ms since epoch. */
             time: number;
         };

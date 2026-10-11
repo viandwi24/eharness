@@ -332,6 +332,11 @@ export class AgentChat {
 		if (this.chat.status === 'error') this.chat.clearError();
 	}
 
+	/** A turn is running or being followed in this chat. */
+	get busy(): boolean {
+		return this.#busy();
+	}
+
 	#busy(): boolean {
 		const s = this.chat.status;
 		return this.following || s === 'submitted' || s === 'streaming';

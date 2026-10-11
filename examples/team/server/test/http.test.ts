@@ -117,7 +117,9 @@ describe('agents API', () => {
 describe('system routes', () => {
   test('health, openapi 3.1 document and docs page', async () => {
     const { app } = boot()
-    expect((await app.request('/health')).status).toBe(200)
+    const health = await app.request('/health')
+    expect(health.status).toBe(200)
+    expect(typeof ((await health.json()) as { boot: string }).boot).toBe('string')
     const doc = (await (await app.request('/openapi.json')).json()) as {
       openapi: string
       paths: Record<string, unknown>

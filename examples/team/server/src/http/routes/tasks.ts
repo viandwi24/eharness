@@ -12,6 +12,7 @@ import {
   messageTask,
   resumeTask,
 } from '../../app/tasks.ts'
+import { BOOT_ID } from '../boot.ts'
 import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
 import {
   AgentContextSchema,
@@ -356,7 +357,9 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
           try {
             // Flush the response at once (proxies and fetch() resolve only on the first bytes):
             // a reconnect delay hint plus a comment, before the first poll.
-            await stream.write('retry: 3000\n: connected\n\n')
+            await stream.write(
+              `retry: 3000\n: connected\nevent: boot\ndata: ${JSON.stringify({ boot: BOOT_ID })}\n\n`,
+            )
             // a cursor below the retention mark missed events: tell the client to refetch, then
             // continue from the mark (the events after it are replayed below)
             const prunedThrough = deps.tasks.prunedThrough()

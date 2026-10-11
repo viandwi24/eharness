@@ -77,6 +77,10 @@
             "type": "string",
             "example": "eharness-team-server"
           },
+          "boot": {
+            "type": "string",
+            "description": "Id of this server process; it changes on every restart."
+          },
           "time": {
             "type": "integer",
             "description": "Server time, ms since epoch."
@@ -85,6 +89,7 @@
         "required": [
           "ok",
           "name",
+          "boot",
           "time"
         ]
       },

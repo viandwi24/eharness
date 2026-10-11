@@ -11,6 +11,7 @@
 	import AppRail from '#lib/components/app/AppRail.svelte';
 	import { hasSubSidebar } from '#lib/nav/sections.js';
 	import RoutineDialog from '#lib/components/app/RoutineDialog.svelte';
+	import ReconnectingBar from '#lib/components/app/ReconnectingBar.svelte';
 	import TaskDrawer from '#lib/components/app/TaskDrawer.svelte';
 	import { startLive } from '#lib/stores/live.svelte.js';
 	import { onMount } from 'svelte';
@@ -63,6 +64,7 @@
 		</div>
 		{#if barShown}<div class="md:hidden"><AppRail bar /></div>{/if}
 	</Sidebar.Provider>
+	<ReconnectingBar />
 	<TaskDrawer />
 	<AgentDialog />
 	<RoutineDialog />

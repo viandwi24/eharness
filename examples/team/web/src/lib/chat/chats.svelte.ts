@@ -20,6 +20,13 @@ live.onChatEvent((e) => {
 	}
 });
 
+// After a reconnect (server restart, network): a turn may have run, ended or been recovered while the
+// stream was down. Follow it if it still runs, else show what was stored.
+live.onResync(() => {
+	for (const c of new Set(chats.values())) if (c.loaded) void c.followServerTurn();
+});
+live.addBusyProbe(() => [...chats.values()].some((c) => c.busy));
+
 export function agentChat(agentId: string): AgentChat {
 	let c = chats.get(agentId);
 	if (!c) {

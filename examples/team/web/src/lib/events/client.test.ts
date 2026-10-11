@@ -130,3 +130,72 @@ describe('idle watchdog', () => {
 		expect(resyncs).toBeGreaterThanOrEqual(2);
 	});
 });
+
+describe('events client: restart detection', () => {
+	/** An SSE response that stays open until its signal aborts. */
+	const open = (signal: AbortSignal, head = ': connected\n\n'): Response => {
+		const enc = new TextEncoder();
+		return new Response(
+			new ReadableStream({
+				start(c) {
+					c.enqueue(enc.encode(head));
+					signal.addEventListener('abort', () => c.error(new DOMException('aborted', 'AbortError')), { once: true });
+				}
+			}),
+			{ status: 200 }
+		);
+	};
+	const until = async (f: () => boolean): Promise<void> => {
+		for (let i = 0; i < 300 && !f(); i++) await new Promise((r) => setTimeout(r, 2));
+	};
+
+	function make(health: () => Promise<{ boot?: string }>) {
+		let streams = 0;
+		let resyncs = 0;
+		const status: Connection[] = [];
+		const client = createEventsClient({
+			baseUrl: '/api',
+			fetch: (async (_u: RequestInfo | URL, init?: RequestInit) => {
+				streams++;
+				return open(init!.signal!);
+			}) as typeof fetch,
+			onEvent: () => {},
+			onResync: () => resyncs++,
+			onStatus: (s) => status.push(s),
+			health,
+			tickMs: 0,
+			sleep: () => new Promise(() => {}) // only a wake ends a backoff
+		});
+		return { client, streams: () => streams, resyncs: () => resyncs, status };
+	}
+
+	test('a changed boot id reconnects at once and resyncs; the same id does nothing', async () => {
+		let boot = 'a';
+		const t = make(async () => ({ boot }));
+		t.client.start();
+		await until(() => t.streams() === 1);
+		await t.client.check();
+		expect(t.streams()).toBe(1);
+		boot = 'b';
+		await t.client.check();
+		await until(() => t.streams() === 2);
+		expect(t.streams()).toBe(2);
+		expect(t.resyncs()).toBe(2);
+		t.client.stop();
+	});
+
+	test('a failed ping drops a live stream and reconnects', async () => {
+		let down = false;
+		const t = make(async () => {
+			if (down) throw new Error('down');
+			return { boot: 'a' };
+		});
+		t.client.start();
+		await until(() => t.streams() === 1);
+		down = true;
+		await t.client.check();
+		await until(() => t.streams() === 2);
+		expect(t.streams()).toBe(2);
+		t.client.stop();
+	});
+});

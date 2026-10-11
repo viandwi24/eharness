@@ -11,6 +11,8 @@ export type LiveState = {
 	tasks: Task[];
 	tasksLoaded: boolean;
 	connection: Connection;
+	/** The events stream dropped and is being re-established (a server restart, the network). */
+	reconnecting: boolean;
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
 	/** Counters bumped (debounced) by file / routine / settings / mode / message events; screens refetch when one moves. */
@@ -23,6 +25,7 @@ export const emptyLiveState = (): LiveState => ({
 	tasks: [],
 	tasksLoaded: false,
 	connection: 'idle',
+	reconnecting: false,
 	viewing: null,
 	revs: { files: 0, routines: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0 }
 });
@@ -82,6 +85,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 
 	const chatListeners = new Set<(e: TeamEvent) => void>();
 	const modelCallListeners = new Set<(e: TeamEvent) => void>();
+	const resyncListeners = new Set<() => void>();
+	const busyProbes = new Set<() => boolean>();
 
 	const core = {
 		state,
@@ -106,7 +111,33 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			return fetchList('tasks', async () => (await api.get('/tasks', { query: { limit: 200 } })).tasks, () => (state.tasksLoaded = true));
 		},
 
+		/** Something runs that should show up live: a task, or a chat probe (`addBusyProbe`). Drives the restart pings. */
+		isBusy(): boolean {
+			if (state.tasks.some((t) => t.status === 'running')) return true;
+			for (const p of busyProbes) if (p()) return true;
+			return false;
+		},
+
+		addBusyProbe(fn: () => boolean): () => void {
+			busyProbes.add(fn);
+			return () => busyProbes.delete(fn);
+		},
+
+		/** The stream (re)connected or the cursor was pruned: open chats, panels and lists refetch too. */
+		onResync(fn: () => void): () => void {
+			resyncListeners.add(fn);
+			return () => resyncListeners.delete(fn);
+		},
+
 		async resync(): Promise<void> {
+			for (const k of Object.keys(state.revs) as (keyof LiveState['revs'])[]) state.revs[k]++; // files, routines, settings, modes, chat, providers, connectors
+			for (const fn of resyncListeners) {
+				try {
+					fn();
+				} catch (error) {
+					report(error);
+				}
+			}
 			await Promise.all([core.loadApprovals(), core.loadTasks(), agents.load()]);
 		},
 

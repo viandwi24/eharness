@@ -1,4 +1,5 @@
 import { createRoute, OpenAPIHono } from '@hono/zod-openapi'
+import { BOOT_ID } from '../boot.ts'
 import { HealthSchema } from '../schemas/health.ts'
 
 const route = createRoute({
@@ -16,6 +17,6 @@ const route = createRoute({
 
 export function healthRoutes(now: () => number): OpenAPIHono {
   return new OpenAPIHono().openapi(route, (c) =>
-    c.json({ ok: true as const, name: 'eharness-team-server', time: now() }, 200),
+    c.json({ ok: true as const, name: 'eharness-team-server', time: now(), boot: BOOT_ID }, 200),
   )
 }
