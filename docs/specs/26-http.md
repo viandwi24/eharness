@@ -126,7 +126,7 @@ Errors are values (`{ ok: false, code, message, details? }`). Rules:
 
 1. The body is an object whose `id` equals the path id (`EH_HTTP_INVALID_BODY`).
 2. `trigger` is absent, `submit-message` or `regenerate-message`; `messageId` a non-empty string.
-3. Only the **last** message is kept (a regenerate may have none).
+3. Only the **last** message is kept. A `regenerate-message` body is decided by `messageId` alone: its messages are not read and the result has none (the message before the reply may be a stored kind message, such as a subagent event, that is not client input).
 4. A **user** message keeps `{ id, role, parts }`; parts are `text` (at most `maxTextBytes`, default
    64 KiB) and `file` (`url`, `mediaType`, `filename?`; the `url` must be a `data:` URL unless `chat.allowFileUrls` is `true` (http/https) or a predicate accepts it, `details.reason: 'file-url'`: a provider or the AI SDK may download other URLs server-side), at most `maxParts` (default 32); any other
    part type, or a violation, is `400 EH_INVALID_INPUT` (`details.reason`). Its `metadata` is dropped.

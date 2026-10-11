@@ -113,7 +113,7 @@ function fileUrlAllowed(raw: string, allow: SanitizeCaps['allowFileUrls']): bool
 /**
  * Validate and reduce a parsed `useChat` request body (spec 26 §5.2).
  *
- * - Only the last message is kept. A user message keeps `{ id, role, parts }` with `text` and
+ * - Only the last message is kept (none for `regenerate-message`: decided by `messageId`). A user message keeps `{ id, role, parts }` with `text` and
  *   `file` parts only (any other part type is `EH_INVALID_INPUT`); its metadata is dropped. An
  *   assistant message (a `respond`) keeps only the tool parts that carry a decision.
  * - `trigger` must be `submit-message` or `regenerate-message`; `messageId` a non-empty string.
@@ -150,12 +150,12 @@ export function sanitizeChatBody(raw: unknown, caps: SanitizeCaps = {}): Sanitiz
     ...(messageId === undefined ? {} : { messageId }),
   }
 
+  // a regenerate is decided by `messageId` alone: the messages are not read (the one before the
+  // reply may be a stored kind message such as an event, which is not client input)
+  if (trigger === 'regenerate-message')
+    return { ok: true, body: { messages: [], ...head, ...extra } }
   const last: unknown = raw.messages.at(-1)
-  if (last === undefined) {
-    if (trigger === 'regenerate-message')
-      return { ok: true, body: { messages: [], ...head, ...extra } }
-    return bad('messages must not be empty.', { reason: 'messages' })
-  }
+  if (last === undefined) return bad('messages must not be empty.', { reason: 'messages' })
   if (!isRecord(last)) return bad('A message must be an object.', { reason: 'message' })
   const id = typeof last.id === 'string' && last.id !== '' ? last.id : undefined
   const parts: unknown[] = Array.isArray(last.parts) ? last.parts : []

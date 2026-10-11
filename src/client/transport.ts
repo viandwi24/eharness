@@ -81,8 +81,10 @@ export function createHarnessTransport<UI extends UIMessage = UIMessage>(
     fetch: fetcher as typeof fetch,
     ...(options.body === undefined ? {} : { body: options.body }),
     prepareSendMessagesRequest: ({ id, messages, trigger, messageId, body }) => {
-      // the server reads only the last message and decides everything else itself
-      const last = messages.at(-1)
+      // the server reads only the last message and decides everything else itself; a regenerate
+      // is decided by `messageId` alone, and the message before the reply may be a stored kind
+      // message (an event, a notice) that is not client input: send none, and no idempotency key
+      const last = trigger === 'regenerate-message' ? undefined : messages.at(-1)
       return {
         api: chatUrl(id),
         headers: (last !== undefined && KEY.test(last.id)

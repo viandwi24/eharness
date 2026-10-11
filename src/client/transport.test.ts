@@ -108,6 +108,9 @@ describe('harness transport: send', () => {
       }),
     )
     expect(calls[0]?.body).toMatchObject({ trigger: 'regenerate-message', messageId: 'a9' })
+    // decided by the message id alone: no message (it may be a stored event) and no idempotency key
+    expect(calls[0]?.body?.messages).toEqual([])
+    expect(calls[0]?.headers?.['idempotency-key']).toBeUndefined()
   })
 
   test('202 becomes onQueued and a valid empty UI message stream', async () => {

@@ -217,6 +217,23 @@ describe('sanitizeChatBody', () => {
     expect(r.ok && classifyChatBody(r.body)).toBe('regenerate')
   })
 
+  test('regenerate does not read the messages (the one before the reply may be a kind message)', () => {
+    const event = {
+      id: 'e1',
+      role: 'user',
+      parts: [{ type: 'data-eh.event', data: { name: 'subagent', text: 'done' } }],
+    }
+    const r = sanitizeChatBody({
+      id: 's1',
+      messages: [event],
+      trigger: 'regenerate-message',
+      messageId: 'a',
+    })
+    expect(r.ok).toBe(true)
+    expect(r.ok && r.body.messages).toEqual([])
+    expect(r.ok && classifyChatBody(r.body)).toBe('regenerate')
+  })
+
   test('classifyChatBody follows the dispatch of handleChatRequest', () => {
     const user = sanitizeChatBody(body())
     expect(user.ok && classifyChatBody(user.body)).toBe('send')
