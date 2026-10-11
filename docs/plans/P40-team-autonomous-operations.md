@@ -74,6 +74,22 @@ one context. The client sees outputs (reports, drafts, findings) and a short lis
   the company backend (layer 1); program authority in eharness narrows it further (layer 2).
   Start on staging and read-only; write authority opens per program. Delegation "on behalf of a
   person" is out of scope until needed; company events (webhooks) as program triggers come later.
+  - **Single source of truth:** the bot's roles and permissions are set only in the company
+    system (its user / department pages). eharness stores no copy, so a change applies on the next
+    request.
+  - **Self-knowledge:** the company API exposes `GET /me` (roles, departments, permissions; shape
+    compatible with the OpenID AuthZEN search API) and marks each operation with the permission it
+    needs (`x-permission`). The agent's tool source is rebuilt every turn (`refresh: 'turn'`) and
+    filtered by `GET /me` (short cache, invalidated by a company "role changed" webhook): the
+    model only sees what it may do now. A `my_permissions` tool lets it re-check.
+  - **Denials:** a structured 403 `{ code: 'forbidden', requiredPermission, message }` becomes a
+    readable tool result; the agent adapts its plan or escalates in the Decision Center ("needs
+    `x` to do `y`"); an admin changes the role in the company system and the run resumes.
+  - **Effective authority** = company RBAC (layer 1, owned by the company admin) ∩ program
+    authority (layer 2, approved by the client in the Decision Center).
+  - **Safety:** the bot never gets RBAC admin endpoints (no self-escalation); the long-lived
+    secret stays in the server vault and is never visible to the model; every request carries
+    `X-Agent-Id` / `X-Agent-Run` so company logs trace back to the agent run.
 - **Deferred:** memory consolidation ("dreaming"), skill evolution / auto-heal, voice, chat
   channels (Telegram/Slack as a UI). The Telegram *data source* comes through an MCP connector.
 
