@@ -19,6 +19,7 @@
  * @see docs/decisions/0024-durable-inbox-port.md
  * @see docs/decisions/0026-inbox-retries-and-dead-letter.md
  */
+
 import type {
   ActiveTurn,
   CollectOptions,
@@ -31,6 +32,7 @@ import type {
 import type { InboxRetryOptions } from '../../agent/types.ts'
 import { HarnessError, type HarnessWarning } from '../../errors.ts'
 import type { NormalizedInput } from '../input.ts'
+import { runsElsewhereHere } from '../local-turns.ts'
 import type { SessionRuntime } from '../runtime.ts'
 import { collectDue, mergeInputs, resolveCollect } from './collect.ts'
 import { inboxIdsIn } from './dedupe.ts'
@@ -139,9 +141,13 @@ export function liveForeignTurn(
   stored: SessionStateSnapshot | null,
   owner: string,
   staleMs: number | false,
+  self?: object,
 ): ActiveTurn | undefined {
   const active = stored?.core?.activeTurn
-  if (active === undefined || active.owner === owner) return undefined
+  if (active === undefined) return undefined
+  // same owner id: ours, unless another handle of this process runs it (stable instanceId)
+  if (active.owner === owner)
+    return self !== undefined && runsElsewhereHere(active, self) ? active : undefined
   if (staleMs !== false && Date.now() - active.heartbeatAt > staleMs) return undefined
   return active
 }
@@ -496,7 +502,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     let stored: SessionStateSnapshot | null
     try {
       stored = await peek()
-      const foreign = liveForeignTurn(stored, rt.owner, host.staleMs)
+      const foreign = liveForeignTurn(stored, rt.owner, host.staleMs, rt)
       if (foreign !== undefined) {
         foreignTurn = foreign.turnId
         await release(all)
@@ -689,7 +695,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     if (turn === undefined) {
       if (!host.free()) return // a turn is starting or compact() runs: drained when it ends
       if (foreignTurn !== undefined) {
-        const foreign = liveForeignTurn(await peek(), rt.owner, host.staleMs)
+        const foreign = liveForeignTurn(await peek(), rt.owner, host.staleMs, rt)
         if (foreign !== undefined) {
           foreignTurn = foreign.turnId
           return

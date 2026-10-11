@@ -33,6 +33,7 @@ import {
   type TurnResult,
   WAIT_CANCELLED_NEW_INPUT,
 } from '../index.ts'
+import { reconcileBackgroundChildren } from './background.ts'
 import {
   type AddUsage,
   AGENT_MESSAGE_INSTRUCTIONS,
@@ -55,6 +56,16 @@ import {
   type SubagentMessageLimits,
   throttle,
 } from './messaging.ts'
+import {
+  deliverReport,
+  errText,
+  type MessageLike,
+  reportKey,
+  reportOf,
+  statusOfStop,
+  stoppedText,
+  textOf,
+} from './report.ts'
 import {
   createSubagentTaskRegistry,
   type SubagentTaskRegistry,
@@ -222,7 +233,25 @@ export interface SubagentsOptions {
    *   `parent`) gets the field. Enable it only when your child sessions stay open (spec 20 §2.2).
    *   Default `false`.
    */
-  background?: boolean | { default?: boolean; inChildren?: boolean }
+  background?:
+    | boolean
+    | {
+        default?: boolean
+        inChildren?: boolean
+        /**
+         * `'park'` + `selfAgent`: a running background child older than this gets one
+         * "timed out" report (spec 20 §3.6). Default: none.
+         */
+        timeoutMs?: number
+        /** Also stop the child that timed out. Default false. */
+        stopOnTimeout?: boolean
+        /** A child without a turn this long after its start is reported "failed to start". Default 90 000. */
+        startGraceMs?: number
+        /** One reminder when a child waits for a person this long (0 = never). Default 900 000. */
+        waitingReminderMs?: number
+        /** Run `reconcileBackgroundChildren` every this many ms while the session is open. Default: only at open. */
+        reconcileEveryMs?: number
+      }
   /**
    * How the child's approvals and client tool calls are answered: `'inline'` (the `answer`
    * callback, in process), `'park'` (the parent parks as an external wait, ADR-0035) or
@@ -381,29 +410,6 @@ function createSemaphore(max: number): Semaphore {
   }
 }
 
-type PartLike = {
-  type: string
-  text?: string
-  toolName?: string
-  input?: unknown
-  toolCallId?: string
-}
-type MessageLike = { id: string; role: string; parts: PartLike[] }
-
-/** Text of a message, from the last `step-start` when `afterLastStep`. */
-function textOf(message: MessageLike | undefined, afterLastStep: boolean): string {
-  if (message === undefined) return ''
-  let parts = message.parts
-  if (afterLastStep) {
-    const i = parts.map((p) => p.type).lastIndexOf('step-start')
-    if (i >= 0) parts = parts.slice(i)
-  }
-  return parts
-    .map((p) => (p.type === 'text' ? (p.text ?? '') : ''))
-    .join('')
-    .trim()
-}
-
 /** Final text of a turn result: the assistant message the turn wrote. */
 function finalText(result: Pick<TurnResult, 'messages' | 'messageId'>): string {
   const messages = result.messages as unknown as MessageLike[]
@@ -439,19 +445,8 @@ function inspect(message: MessageLike): { steps: number; lastTool?: string } {
   return { steps: Math.max(steps, lastTool === undefined ? 0 : 1), lastTool }
 }
 
-const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
-
-function reportOf(text: string, max: number, hint?: string): string {
-  return text.length > max
-    ? `${text.slice(0, max)}\n… [report cut at ${max} of ${text.length} characters${hint === undefined ? '' : `; ${hint}`}]`
-    : text
-}
-
 /** Start of the result of a foreground subagent the user moved to the background. */
 const SUBAGENT_BACKGROUNDED_PREFIX = 'Subagent moved to the background as task'
-
-/** Text the parent model reads for a child that did not complete. */
-const stoppedText = (stop: string, text: string): string => `[subagent stopped: ${stop}] ${text}`
 
 /** Resolve the catalog once. */
 function resolveCatalog(catalog: SubagentCatalog): Record<string, SubagentDefinition> {
@@ -826,20 +821,20 @@ function createParkHook(options: {
     const who = `${ctx.session.id}${identity?.name === undefined ? '' : ` "${identity.name}"`}`
     const what = `(${agent}${identity?.description === undefined ? '' : `: ${identity.description}`})`
     const waiting = e.stop === 'tool-pending'
-    const status = waiting
-      ? 'waiting'
-      : e.stop === 'aborted'
-        ? 'stopped'
-        : e.stop === 'complete'
-          ? 'completed'
-          : 'failed'
+    const status = waiting ? 'waiting' : statusOfStop(e.stop)
     const text = finalText(e)
     const body =
       e.stop === 'complete' ? text : stoppedText(e.stop, text || (e.error?.message ?? ''))
     const head = waiting
       ? `Background subagent ${who} ${what} is waiting for the user to answer a permission request or a question. It continues once that is answered; its report arrives when it finishes.`
       : `Background subagent ${who} ${what} ${
-          status === 'completed' ? 'finished' : status === 'stopped' ? 'was stopped' : 'failed'
+          status === 'completed'
+            ? 'finished'
+            : status === 'stopped'
+              ? 'was stopped'
+              : status === 'interrupted'
+                ? 'was interrupted'
+                : 'failed'
         }${cancelled ? ' after its call was cancelled' : ''}.\n\n${
           reportOf(
             neutralizeTags(body, ['agent-message']),
@@ -849,31 +844,25 @@ function createParkHook(options: {
               : `read the full report with ${options.outputToolName}({ id: "${ctx.session.id}" })`,
           ) || '(no report)'
         }`
-    try {
-      await (
-        options
-          .parentAgent()
-          .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession
-      ).inject(
-        'eh.event',
-        {
-          name: 'subagent',
-          text: head,
-          data: {
-            sessionId: ctx.session.id,
-            agent,
-            status,
-            taskId: ctx.session.id,
-            ...(identity?.name === undefined ? {} : { name: identity.name }),
-          },
+    await deliverReport(
+      options
+        .parentAgent()
+        .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession,
+      {
+        text: head,
+        data: {
+          sessionId: ctx.session.id,
+          agent,
+          status,
+          taskId: ctx.session.id,
+          turnId: e.turnId,
+          ...(identity?.name === undefined ? {} : { name: identity.name }),
         },
-        { deliver: 'next-step', wake: !waiting },
-      )
-    } catch (error) {
-      ctx.log.warn('subagent: could not deliver the report of a background agent', {
-        error: errText(error),
-      })
-    }
+        key: reportKey(ctx.session.id, waiting ? `waiting:${e.turnId}` : e.turnId),
+        wake: !waiting,
+      },
+      ctx.log,
+    )
   }
   /**
    * A turn that a launcher's `send_message` started (a framed `to="…"` user message, ADR-0041):
@@ -894,29 +883,23 @@ function createParkHook(options: {
       e.stop === 'complete' ? text : stoppedText(e.stop, text || (e.error?.message ?? ''))
     const label = frame.to === ctx.session.id ? undefined : frame.to
     const who = label === undefined ? ctx.session.id : `"${label}"`
-    try {
-      await (
-        options
-          .parentAgent()
-          .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession
-      ).inject(
-        'eh.event',
-        {
-          name: 'subagent',
-          text: `Resumed subagent ${who} ${status === 'completed' ? 'finished' : 'failed'}.\n\n${reportOf(neutralizeTags(body, ['agent-message']), AGENT_REPORT_MAX_CHARS) || '(no report)'}`,
-          data: {
-            sessionId: ctx.session.id,
-            status,
-            ...(label === undefined ? {} : { name: label }),
-          },
+    await deliverReport(
+      options
+        .parentAgent()
+        .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession,
+      {
+        text: `Resumed subagent ${who} ${status === 'completed' ? 'finished' : 'failed'}.\n\n${reportOf(neutralizeTags(body, ['agent-message']), AGENT_REPORT_MAX_CHARS) || '(no report)'}`,
+        data: {
+          sessionId: ctx.session.id,
+          status,
+          turnId: e.turnId,
+          ...(label === undefined ? {} : { name: label }),
         },
-        { deliver: 'next-step', wake: true },
-      )
-    } catch (error) {
-      ctx.log.warn('subagent: could not deliver the report of a resumed agent', {
-        error: errText(error),
-      })
-    }
+        key: reportKey(ctx.session.id, e.turnId),
+        wake: true,
+      },
+      ctx.log,
+    )
   }
   const end = async (ctx: HarnessContext, e: TurnResult): Promise<void> => {
     const parent = ctx.session.parent
@@ -1411,6 +1394,52 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
               ...(options.onParentRun === undefined ? {} : { onParentRun: options.onParentRun }),
               log: ctx.log,
             })
+            if (backgroundOn && isRoot) {
+              const bg = typeof options.background === 'object' ? options.background : {}
+              const runBackground = async (): Promise<void> => {
+                if (ctx.signal.aborted) return
+                await reconcileBackgroundChildren(parentSession, {
+                  openChild: (id, info) => {
+                    const key =
+                      info.agent !== undefined && catalog[info.agent] !== undefined
+                        ? info.agent
+                        : (Object.keys(catalog)[0] as string)
+                    return (catalog[key] as SubagentDefinition).agent.session(
+                      id,
+                      childOptions({
+                        parentSessionId: ctx.session.id,
+                        agent: key,
+                        depth: depth + 1,
+                      }),
+                    ) as AnySession
+                  },
+                  ...(bg.timeoutMs === undefined ? {} : { timeoutMs: bg.timeoutMs }),
+                  ...(bg.stopOnTimeout === undefined ? {} : { stopOnTimeout: bg.stopOnTimeout }),
+                  ...(bg.startGraceMs === undefined ? {} : { startGraceMs: bg.startGraceMs }),
+                  ...(bg.waitingReminderMs === undefined
+                    ? {}
+                    : { waitingReminderMs: bg.waitingReminderMs }),
+                  ...(options.maxReportChars === undefined
+                    ? {}
+                    : { maxReportChars: options.maxReportChars }),
+                  ...(outputEnabled ? { outputToolName } : {}),
+                  ...(messaging ? { messageToolName } : {}),
+                  log: ctx.log,
+                })
+              }
+              await runBackground()
+              if (bg.reconcileEveryMs !== undefined && bg.reconcileEveryMs > 0) {
+                const timer = setInterval(() => {
+                  runBackground().catch((error) =>
+                    ctx.log.warn('subagent: background reconcile failed', {
+                      error: errText(error),
+                    }),
+                  )
+                }, bg.reconcileEveryMs)
+                ;(timer as { unref?: () => void }).unref?.()
+                ctx.signal.addEventListener('abort', () => clearInterval(timer), { once: true })
+              }
+            }
           })().catch((error) =>
             ctx.log.warn('subagent: reconcile on open failed', { error: errText(error) }),
           )

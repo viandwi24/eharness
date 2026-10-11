@@ -159,6 +159,8 @@ export interface CreateKindMessageOptions {
   deliveredIn?: string
   /** Id of the single data part (optional). */
   partId?: string
+  /** Dedupe key (`session.inject` `key`), stored as `metadata.eharness.key`. */
+  key?: string
 }
 
 /**
@@ -189,6 +191,7 @@ export function createKindMessage(
   if (options.turnId !== undefined) eharness.turnId = options.turnId
   if (options.parentId !== undefined) eharness.parentId = options.parentId
   if (options.deliveredIn !== undefined) eharness.deliveredIn = options.deliveredIn
+  if (options.key !== undefined) eharness.key = options.key
   const part = { type: `data-${kind}`, data } as HarnessUIMessage['parts'][number]
   if (options.partId !== undefined) (part as { id?: string }).id = options.partId
   return { id: options.id ?? uuidv7(), role, metadata: { eharness }, parts: [part] }

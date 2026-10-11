@@ -93,6 +93,8 @@ import {
   validateExternalAnswers,
 } from './interaction/waits.ts'
 import { hiddenByRewind } from './load-context.ts'
+import { localTurns, runsElsewhereHere } from './local-turns.ts'
+import { recoverInterruptedTurn } from './recover.ts'
 import { type AbortPoll, createAbortPoll, DEFAULT_ABORT_POLL_MS } from './remote-abort.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
 import type { StateCheckpoint } from './state.ts'
@@ -761,7 +763,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     const active = rt.state.core().activeTurn
     if (recovery && active !== undefined && active.turnId !== turnId) {
       const isStale =
-        active.owner === rt.owner ||
+        (active.owner === rt.owner && !runsElsewhereHere(active, rt)) ||
         releaseLock !== undefined ||
         Date.now() - active.heartbeatAt > staleMs
       if (!isStale) {
@@ -1221,6 +1223,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     }
     if (recovery && assistantId !== undefined) {
       const now = Date.now()
+      localTurns.set(turnId, rt)
       core.activeTurn = withoutUndefined({
         turnId,
         kind: op.kind,
@@ -1309,39 +1312,12 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     // crash recovery of a stale turn (spec 05 §9)
     const stale = prep.stale
     if (stale !== undefined) {
-      const message = rt.view?.find((m) => m.id === stale.messageId)
-      if (message !== undefined) {
-        const patched = answerDanglingToolParts(structuredClone(message), INTERRUPTED_CRASH)
-        const eharness = patched.metadata?.eharness
-        if (eharness?.stop === undefined) {
-          patched.metadata = {
-            ...(patched.metadata ?? {}),
-            eharness: { ...(eharness ?? { v: 1, createdAt: startedAt }), stop: 'interrupted' },
-          }
-        }
-        await host.persist([patched])
-      }
-      const notice = createKindMessage(
-        'eh.notice',
-        {
-          level: 'warning',
-          code: 'EH_TURN_INTERRUPTED',
-          message: 'The previous turn was interrupted: its process stopped before it finished.',
-        },
-        {
-          id: prep.recoveryNoticeId ?? rt.nextId(),
-          turnId: stale.turnId,
-          createdAt: Date.now(),
-          parentId: stale.messageId,
-        },
+      created.push(
+        ...(await recoverInterruptedTurn(rt, host.persist, stale, {
+          ...(prep.recoveryNoticeId === undefined ? {} : { noticeId: prep.recoveryNoticeId }),
+          startedAt,
+        })),
       )
-      created.push(...(await host.persist([notice])))
-      rt.events.emit({
-        type: 'turn-end',
-        turnId: stale.turnId,
-        messageId: stale.messageId,
-        stop: 'interrupted',
-      })
     }
     await healOrphanPending()
     // the pending message: patched for the continuation (respond) or denied (new input)
@@ -2118,6 +2094,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         rt.log.warn('eharness: releasing the session lock failed', { error: lockError })
       }
     }
+    localTurns.delete(turnId)
     if (rt.turn === turnState) rt.turn = undefined
     rt.running = false
     rt.events.emit({ type: 'status', running: false })

@@ -317,3 +317,162 @@ describe('scenario 7 (P2 part): guard sanitize and overflow stop', () => {
     expect(model.calls).toHaveLength(0)
   })
 })
+
+describe('session.recover() and recovery.instanceId (spec 05 §9.2)', () => {
+  test('a restarted instance with the same instanceId recovers at once, without waiting for staleMs', async () => {
+    const { messages, state, assistantId, turnId } = await crashedStorage(Date.now())
+    // the dead owner is now "us": rewrite the owner to the stable id
+    const stored = (await state.get('s1')) as unknown as {
+      core: { activeTurn: Record<string, unknown> }
+    }
+    stored.core.activeTurn.owner = 'srv'
+    await state.set('s1', stored as never)
+    const agent = defineHarnessAgent({
+      model: scriptedModel([{ text: 'unused' }]),
+      contextWindow: 100_000,
+      tools: {},
+      storage: { messages, state },
+      recovery: { instanceId: 'srv' },
+      logger: silent,
+    })
+    const session = agent.session('s1')
+    expect(await session.busy()).toBeNull()
+    expect(await session.recover()).toEqual({ recovered: true, turnId, messageId: assistantId })
+    const after = (await messages.load({ sessionId: 's1' })) as HarnessUIMessage[]
+    const message = after.find((m) => m.id === assistantId) as HarnessUIMessage
+    expect(message.metadata?.eharness?.stop).toBe('interrupted')
+    const part = message.parts.find((p) => p.type === 'tool-charge') as {
+      state: string
+      errorText: string
+    }
+    expect(part.state).toBe('output-error')
+    expect(part.errorText).toBe(INTERRUPTED_CRASH)
+    expect(after.some((m) => m.metadata?.eharness?.kind === 'eh.notice')).toBe(true)
+    expect((await session.stats()).activeTurn).toBeNull()
+    // idempotent
+    expect(await session.recover()).toEqual({ recovered: false, reason: 'idle' })
+    await agent.close()
+  })
+
+  test('a live foreign turn is left alone; a stale one is recovered', async () => {
+    const live = await crashedStorage(Date.now())
+    const agent = defineHarnessAgent({
+      model: scriptedModel([]),
+      contextWindow: 100_000,
+      storage: { messages: live.messages, state: live.state },
+      recovery: { staleMs: 60_000 },
+      logger: silent,
+    })
+    expect(await agent.session('s1').recover()).toEqual({ recovered: false, reason: 'live' })
+    await agent.close()
+    const old = await crashedStorage(Date.now() - 120_000)
+    const agent2 = defineHarnessAgent({
+      model: scriptedModel([]),
+      contextWindow: 100_000,
+      storage: { messages: old.messages, state: old.state },
+      recovery: { staleMs: 60_000 },
+      logger: silent,
+    })
+    expect((await agent2.session('s1').recover()).recovered).toBe(true)
+    await agent2.close()
+  })
+
+  test('inject({ key }) is idempotent', async () => {
+    const agent = defineHarnessAgent({
+      model: scriptedModel([]),
+      contextWindow: 100_000,
+      logger: silent,
+    })
+    const s = agent.session('k')
+    await s.inject('eh.event', { name: 'x', text: 'one' }, { key: 'k1' })
+    await s.inject('eh.event', { name: 'x', text: 'two' }, { key: 'k1' })
+    await s.inject('eh.event', { name: 'x', text: 'three' }, { key: 'k2' })
+    expect((await s.messages()).length).toBe(2)
+    await agent.close()
+  })
+
+  test('a sibling agent object with the same instanceId does not recover a turn that runs in this process', async () => {
+    const messages = spyMessages()
+    const state = spyState()
+    let release!: () => void
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    const slow = tool({
+      inputSchema: z.object({}),
+      execute: async () => {
+        await held
+        return 'ok'
+      },
+    })
+    const make = (steps: Parameters<typeof scriptedModel>[0]) =>
+      defineHarnessAgent({
+        model: scriptedModel(steps),
+        contextWindow: 100_000,
+        tools: { slow },
+        storage: { messages, state },
+        recovery: { instanceId: 'srv' },
+        logger: silent,
+      })
+    const a = make([
+      { toolCalls: [{ toolName: 'slow', toolCallId: 't1', input: {} }] },
+      { text: 'done' },
+    ])
+    const b = make([{ text: 'x' }])
+    const run = a.session('s').send('go')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(await b.session('s').recover()).toEqual({ recovered: false, reason: 'live' })
+    expect((await b.session('s').busy())?.scope).toBe('remote')
+    release()
+    expect((await run.result).stop).toBe('complete')
+    await a.close()
+    await b.close()
+  })
+
+  test('a crash before the first step was saved leaves a placeholder reply that can be regenerated', async () => {
+    const messages = spyMessages()
+    const state = spyState()
+    const userId = uuidv7()
+    const assistantId = uuidv7()
+    const turnId = uuidv7()
+    await messages.save('s2', [
+      {
+        id: userId,
+        role: 'user',
+        metadata: { eharness: { v: 1, createdAt: 1, turnId } },
+        parts: [{ type: 'text', text: 'Hello' }],
+      } as HarnessUIMessage,
+    ])
+    await state.set('s2', {
+      v: 1,
+      rev: 1,
+      core: {
+        activeTurn: {
+          turnId,
+          kind: 'send',
+          messageId: assistantId,
+          userMessageId: userId,
+          owner: 'srv',
+          startedAt: 1,
+          heartbeatAt: Date.now(),
+        },
+      },
+      plugins: {},
+    } as never)
+    const agent = defineHarnessAgent({
+      model: scriptedModel([{ text: 'second try' }]),
+      contextWindow: 100_000,
+      storage: { messages, state },
+      recovery: { instanceId: 'srv' },
+      logger: silent,
+    })
+    const session = agent.session('s2')
+    expect((await session.recover()).recovered).toBe(true)
+    const stored = (await messages.load({ sessionId: 's2' })) as HarnessUIMessage[]
+    const stub = stored.find((m) => m.id === assistantId) as HarnessUIMessage
+    expect(stub.metadata?.eharness?.stop).toBe('interrupted')
+    const result = await session.regenerate().result
+    expect(result.stop).toBe('complete')
+    await agent.close()
+  })
+})

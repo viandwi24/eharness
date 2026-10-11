@@ -118,6 +118,17 @@ export interface SessionUsage {
 }
 
 /**
+ * Outcome of `session.recover()`: the interrupted turn that was repaired, or why nothing was
+ * (`idle`: no stored active turn; `live`: a live turn of another instance; `locked`: the session
+ * lock is held elsewhere; `disabled`: `recovery: false`).
+ *
+ * @see docs/specs/05-session-and-storage.md#92-recover-now
+ */
+export type RecoverResult =
+  | { recovered: true; turnId: string; messageId: string }
+  | { recovered: false; reason: 'idle' | 'live' | 'locked' | 'disabled' }
+
+/**
  * A running turn as reported by `session.busy()`.
  *
  * @see docs/specs/05-session-and-storage.md#2-session-api
@@ -692,6 +703,13 @@ export type SendOptionsWithOutput<S extends FlexibleSchema> = SendOptions & {
 export interface InjectOptions {
   deliver?: 'next-turn' | 'next-step'
   wake?: boolean
+  /**
+   * Idempotency key (max 200 characters). When one of the newest 200 stored messages of the
+   * session already carries this key the call saves, delivers and wakes nothing and returns that
+   * message. Read from storage, so it holds across instances and retries; two instances racing
+   * within the same few milliseconds can still both save (best effort, spec 11 §6.3).
+   */
+  key?: string
 }
 
 /**
@@ -954,6 +972,14 @@ export interface HarnessSession<
    * call only. Rejects `EH_INVALID_INPUT` for an invalid option.
    */
   compact(options?: CompactOptions): Promise<M | null>
+  /**
+   * Repair an interrupted turn now (spec 05 §9.2), without waiting for the next operation: a
+   * stored `activeTurn` that is stale (see `recovery`) is closed the way the commit point of the
+   * next turn would close it: dangling tool calls answered `Interrupted:` (ADR-0014), the message
+   * marked `stop: 'interrupted'`, an `eh.notice`, `activeTurn` cleared. Idempotent. Throws
+   * `EH_SESSION_BUSY` only when a turn of this process runs.
+   */
+  recover(): Promise<RecoverResult>
   /** Forget session approval grants. */
   clearGrants(): Promise<void>
   /**

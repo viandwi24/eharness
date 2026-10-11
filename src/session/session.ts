@@ -72,6 +72,8 @@ import { RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
 import { createDeferredRun, type DeferredRun, type QueuedTurn } from './interaction/queue.ts'
 import { createWaitOps } from './interaction/resolve.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
+import { runsElsewhereHere } from './local-turns.ts'
+import { recoverInterruptedTurn } from './recover.ts'
 import { DEFAULT_STALE_MS, requestRemoteAbort } from './remote-abort.ts'
 
 /** How long `attachRemote` waits for the owner's first flush after the turn's commit point. */
@@ -1047,7 +1049,7 @@ export function createSessionHandle(args: {
           cause: error,
         })
       }
-      const active = liveForeignTurn(stored, rt.owner, staleMs)
+      const active = liveForeignTurn(stored, rt.owner, staleMs, rt)
       if (active === undefined) return { target: 'idle' }
       try {
         const inboxId = await inbox.enqueue(id, {
@@ -1132,7 +1134,7 @@ export function createSessionHandle(args: {
     } catch {
       return undefined // the drain decides (it releases what a busy session cannot take)
     }
-    return liveForeignTurn(stored, rt.owner, staleMs)?.turnId
+    return liveForeignTurn(stored, rt.owner, staleMs, rt)?.turnId
   }
 
   function stateAbort(reason: string | undefined) {
@@ -1447,6 +1449,9 @@ export function createSessionHandle(args: {
         const stored = await args.state.get(id)
         const active = stored?.core?.activeTurn
         if (active === undefined) return undefined
+        // a turn this instance id owns but does not run: left by a previous process (stable
+        // `recovery.instanceId`), nothing will ever write to its log (spec 05 §9.2)
+        if (active.owner === rt.owner && !runsElsewhereHere(active, rt)) return undefined
         if (staleMs !== undefined && Date.now() - active.heartbeatAt > staleMs) return undefined
         return active
       }
@@ -1556,8 +1561,26 @@ export function createSessionHandle(args: {
         }
         value = result.value
       }
+      const key = options.key
+      if (key !== undefined && (typeof key !== 'string' || key === '' || key.length > 200)) {
+        throw new HarnessError(
+          'EH_INVALID_INPUT',
+          'inject({ key }) must be a non-empty string of at most 200 characters.',
+        )
+      }
       touch()
       await ensureOpen()
+      if (key !== undefined) {
+        // stored messages, not the hot cache: another instance may have saved it
+        let recent: HarnessUIMessage[] = []
+        try {
+          recent = (await rt.messages.load({ sessionId: id, limit: 200 })) as HarnessUIMessage[]
+        } catch (error) {
+          throw storageError('load', error)
+        }
+        const existing = recent.find((m) => m.metadata?.eharness?.key === key)
+        if (existing !== undefined) return { message: structuredClone(existing) as never }
+      }
       if (rt.view === undefined) await ensureContext()
       const message = createKindMessage(kind, value, {
         id: rt.nextId(),
@@ -1565,6 +1588,7 @@ export function createSessionHandle(args: {
         createdAt: Date.now(),
         parentId: rt.view?.at(-1)?.id ?? null,
         ...(rt.turn === undefined ? {} : { turnId: rt.turn.info.id }),
+        ...(key === undefined ? {} : { key }),
       })
       const [saved] = await persist([message])
       const out = saved ?? message
@@ -1735,6 +1759,64 @@ export function createSessionHandle(args: {
         checkIdle()
       }
     },
+    async recover() {
+      assertOpen()
+      if (config.recovery === false) return { recovered: false, reason: 'disabled' }
+      if (rt.running) throw busyError(id)
+      // exclusive like a turn (spec 05 §8)
+      rt.running = true
+      touch()
+      let release: (() => Promise<void>) | undefined
+      try {
+        await ensureOpen()
+        const lock = rt.options.lock
+        if (lock !== undefined) {
+          try {
+            release = await lock.acquire(id, { signal: closeController.signal })
+          } catch {
+            return { recovered: false, reason: 'locked' }
+          }
+        }
+        await ensureContext(true)
+        await rt.state.load()
+        const active = rt.state.core().activeTurn
+        if (active === undefined) return { recovered: false, reason: 'idle' }
+        const staleMs = config.recovery?.staleMs ?? DEFAULT_STALE_MS
+        const stale =
+          (active.owner === rt.owner && !runsElsewhereHere(active, rt)) ||
+          release !== undefined ||
+          Date.now() - active.heartbeatAt > staleMs
+        if (!stale) return { recovered: false, reason: 'live' }
+        await recoverInterruptedTurn(rt, persist, active, { startedAt: Date.now() })
+        const core = rt.state.core()
+        delete core.activeTurn
+        delete core.abortRequest
+        rt.state.markDirty()
+        const ok = await rt.state.write({ cas: true })
+        if (!ok) {
+          rt.view = undefined
+          throw new HarnessError(
+            'EH_SESSION_BUSY',
+            'The session state was changed by another instance.',
+          )
+        }
+        return { recovered: true, turnId: active.turnId, messageId: active.messageId }
+      } finally {
+        if (release !== undefined) {
+          try {
+            await release()
+          } catch (error) {
+            log.warn('eharness: releasing the session lock failed', { error })
+          }
+        }
+        rt.running = false
+        startNext()
+        checkCollect()
+        drain?.drain()
+        touch()
+        checkIdle()
+      }
+    },
     async enqueue(input, options = {}) {
       assertOpen()
       const mode = options.mode ?? 'queue'
@@ -1872,7 +1954,7 @@ export function createSessionHandle(args: {
       if (rt.state.loaded) await rt.state.writeIfDirty()
       const stored = await rt.state.peek()
       if (rt.running) throw busyError(id)
-      if (liveForeignTurn(stored, rt.owner, staleForDrain) !== undefined) throw busyError(id)
+      if (liveForeignTurn(stored, rt.owner, staleForDrain, rt) !== undefined) throw busyError(id)
       const included = (messageId: string): boolean =>
         beforeMessageId === undefined || messageId < beforeMessageId
       const unfinished = stored?.core.activeTurn
@@ -2092,7 +2174,7 @@ export function createSessionHandle(args: {
       } catch (error) {
         throw new HarnessError('EH_STORAGE', 'State storage failed (busy).', { cause: error })
       }
-      const active = liveForeignTurn(stored, rt.owner, staleMs)
+      const active = liveForeignTurn(stored, rt.owner, staleMs, rt)
       if (active === undefined) return null
       return {
         scope: 'remote',

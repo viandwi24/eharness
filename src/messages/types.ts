@@ -234,6 +234,11 @@ export interface HarnessMessageMeta {
    * one. Lets a hook match the turn to the producer's own key without waiting for `enqueue()`.
    */
   inboxKey?: string
+  /**
+   * Kind messages saved with `session.inject(…, { key })`: the caller's dedupe key. A second
+   * inject of the same key (any instance) finds the stored message and saves nothing.
+   */
+  key?: string
   /** User messages merged from `collect` inputs: one entry per input, in arrival order. */
   collected?: Array<{ inboxId?: string; clientId?: string; inboxKey?: string }>
   /** Assistant messages: model id used by the turn. */

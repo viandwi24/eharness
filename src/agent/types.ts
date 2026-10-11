@@ -534,9 +534,12 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * Crash recovery of turns interrupted by a dead process, and cross-process abort (spec 05 §9).
    * Default `{ staleMs: 120_000, abortPollMs: 2_000 }`. `abortPollMs`: how often a running turn
    * reads the state for an abort request of another instance (`0` = never; needs
-   * `StateAdapter.setIf`).
+   * `StateAdapter.setIf`). `instanceId`: a **stable** id of this instance (default: random per
+   * process). With a stable id a restarted process owns the turns its previous run left active:
+   * they are recovered at once (next operation, or `session.recover()` at boot) instead of after
+   * `staleMs`. Must be unique among the live instances of one storage (spec 05 §9.2).
    */
-  recovery?: { staleMs?: number; abortPollMs?: number } | false
+  recovery?: { staleMs?: number; abortPollMs?: number; instanceId?: string } | false
   telemetry?: TelemetryOptions
   /** Throw `EH_CONFIG_INVALID` instead of warning on API misuse. Default false. */
   strict?: boolean

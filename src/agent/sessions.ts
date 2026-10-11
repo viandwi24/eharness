@@ -37,7 +37,9 @@ function sameJson(a: unknown, b: unknown): boolean {
 /** Create the session cache of one agent. */
 export function createAgentSessions(internals: AgentInternals): AgentSessions {
   /** Random id of this agent instance (crash-recovery owner, spec 05 §9). */
-  const owner = uuidv7()
+  const owner =
+    (internals.config.recovery === false ? undefined : internals.config.recovery?.instanceId) ??
+    uuidv7()
   let defaults: { messages: MessageAdapter; state: StateAdapter } | undefined
   const sessions = new Map<string, SessionHandle>()
   /** Closes of handles that were replaced in `sessions` while closing (awaited by `close()`). */

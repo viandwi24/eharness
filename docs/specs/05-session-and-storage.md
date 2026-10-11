@@ -863,6 +863,28 @@ recovery?: {
 } | false
 ```
 
+### 9.2 Recover now, stable instance id (ADR-0056)
+
+- `recovery.instanceId` replaces the random per-process `owner`. A process that restarts with the
+  same id treats an `activeTurn` it owns but does not run as stale at once (rule 1 of §9): the next
+  operation recovers it, `busy()` / `liveForeignTurn` do not count it, and `attachRemote` does not
+  follow its (never closing) log. The id must be unique among the live instances of one storage.
+- `session.recover(): Promise<RecoverResult>` runs the recovery of §9 without a turn: lock (if any),
+  stale check (owner is this instance, a lock was acquired, or heartbeat older than `staleMs`), then
+  the same repair as the commit point (dangling calls `INTERRUPTED_CRASH`, `streaming` text and
+  reasoning parts closed, `stop: 'interrupted'`, `eh.notice`, `turn-end`), and a compare-and-set
+  state write clearing `activeTurn`. `{ recovered: false, reason }` for `idle`, `live`, `locked`,
+  `disabled`. Throws `EH_SESSION_BUSY` only when a turn of this process runs.
+- A turn is also never recovered while **another handle of this process** runs it (a rebuilt agent
+  object shares the instance id): the process keeps a registry of running turn ids, so "owned by
+  this instance" means "left by a previous process".
+- When the process died before the first step of the turn was saved there is no assistant message:
+  recovery saves a placeholder reply (`parts: [step-start]`, `stop: 'interrupted'`, the id the turn
+  had reserved) so histories show the interruption and `regenerate()` has a target; it projects to
+  nothing for the model. Open `text` / `reasoning` parts of a recovered message are closed
+  (`state: 'done'`).
+- `inject({ key })` (spec 11 §6.3) stores `metadata.eharness.key`; a repeated key is a no-op.
+
 ### 9.1 Cross-process abort (0.4.0)
 
 A Stop request that reaches any instance stops the turn running in another instance, ending it

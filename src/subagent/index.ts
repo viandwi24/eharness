@@ -4,6 +4,12 @@
  *
  * @see docs/specs/20-subagent-plugin.md
  */
+
+export {
+  type BackgroundReconcileEntry,
+  type ReconcileBackgroundOptions,
+  reconcileBackgroundChildren,
+} from './background.ts'
 export {
   AGENT_MESSAGE_INSTRUCTIONS,
   AGENT_MESSAGE_MAX_CHARS,

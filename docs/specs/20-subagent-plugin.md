@@ -381,6 +381,33 @@ finished after its call was cancelled.`, and it sets the background flag in its 
 `tool-pending` stop sends the `waiting` status event and later turns report too. A wait that was
 resolved normally (or by `reconcileSubagentWaits`) does not report again.
 
+### 3.6 Reconciling background children (ADR-0056)
+
+```ts
+reconcileBackgroundChildren(parentSession, {
+  openChild: (childSessionId, info: ChildSessionInfo) => HarnessSession,
+  startGraceMs?: number         // default 90 000: "failed to start"
+  timeoutMs?: number            // default none: "timed out" (once)
+  stopOnTimeout?: boolean       // default false
+  waitingReminderMs?: number    // default 900 000, 0 = never: one reminder
+  lookbackMs?: number           // default 24 h
+  maxReportChars?, outputToolName?, messageToolName?, now?, log?
+}): Promise<Array<{ sessionId; outcome: 'reported'|'running'|'waiting'|'skipped'; status?; recovered? }>>
+```
+
+For every child of the parent that is a background child (`data-subagent.run` with `background`,
+an orphaned foreground call, or a launcher resume): a turn left active by a dead owner is repaired
+with `child.recover()` (spec 05 §9.2); then the missing report is delivered with
+`inject('eh.event', …, { key, wake: true })`. Keys: `subagent-report:<child>:<turnId>` (ended turn,
+also written by the `turn.end` hook, which retries three times), `…:start`, `…:timeout`,
+`…:waiting-long:<turnId>`. A report counts as delivered when the key is stored or a `subagent` event
+newer than the child's turn exists. New `data.status` values: `interrupted` (text offers
+`send_message`), `timed_out`, `not_started`; `data.turnId` is set; reminders carry `reminder: true`.
+Runs at `session.start` of a root `park` session with `selfAgent` and optionally every
+`background.reconcileEveryMs`; apps also call it at boot and on a timer (any instance, idempotent).
+`SubagentsOptions.background` gains `timeoutMs`, `stopOnTimeout`, `startGraceMs`,
+`waitingReminderMs`, `reconcileEveryMs`.
+
 ## 4. Multi-instance and restarts
 
 Everything the strategy needs is stored: the parent's pending wait, the child's pending state, the
