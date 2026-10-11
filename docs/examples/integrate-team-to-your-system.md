@@ -43,6 +43,10 @@ keeps no copy, so there is nothing to sync and no drift.
 
 ## 3. What your backend should expose
 
+> The names in this guide (a *Clipper* department, `clipper.link.create`, a *Video production*
+> pipeline) are **illustrative**, taken from one client use case. Use your own departments,
+> resources and permission names; the pattern does not depend on them.
+
 Three small additions make the agent aware of its own permissions:
 
 1. **`GET /me`** — the caller's roles, departments and permissions, e.g.
@@ -192,17 +196,20 @@ const harness = createHarnessHttp(agent, {
 app.all('/agents/*', (c) => harness.fetch(c.req.raw))
 ```
 
-## 7. Mapping the team example to your departments
+## 7. Mapping the team example to your departments (illustrative)
+
+The rows below are generic; the departments in the example after the table are only one possible
+use case.
 
 | Your system | Team example |
 |---|---|
-| Department (Clipper, Video production) | an agent per repetitive function, with a role in your system |
+| Department (e.g. a clipping team, a video production team) | an agent per repetitive function, with a role in your system |
 | Manager / leader views (all tasks, analytics) | the manager agent: reads all tasks, proposes plans, creates tasks |
 | Routine work ("submit links of new clips", "draft scripts for new ideas") | a **program** with a schedule and an authority |
 | Decisions ("publish this?", "ban this member?") | the **decision center** |
 | Large data (community chats, analytics exports) | **chunked work**: collector → manifest → `run_code` pre-filter → findings per chunk → merged report |
 
-Example: a *Clipper* agent (bot role `clipper`) runs a daily program "record the links of clips
+Illustrative example (one client's departments; yours will differ): a *Clipper* agent (bot role `clipper`) runs a daily program "record the links of clips
 published yesterday": authority = `listVideos`, `createSocialLink`; forbidden = delete; budget
 $1/day; report = digest. A *Production* agent (role `production`) moves items from *idea* to
 *draft* by writing script drafts, but publishing to YouTube stays a gate (a decision).
