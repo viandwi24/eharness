@@ -8,9 +8,9 @@
 	import type { PartView, SubagentProgress, SubagentRun, SubagentStatus } from './map.js';
 	import { canContinue, cardStatus, childSessionOf, STATUS_LABEL, taskOfCall } from './subagent.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { api } from '#lib/api/index.js';
+	import { api, harness } from '#lib/api/index.js';
 	import { toast } from 'svelte-sonner';
-	import { CONTINUE_TEXT } from '#lib/chat/interrupted.js';
+	import { CONTINUE_TEXT } from 'eharness/client';
 
 	// Accepts either the merged `agent` tool view or a standalone `data-subagent.run` view.
 	let {
@@ -67,7 +67,7 @@
 				await api.post('/tasks/{id}/messages', { params: { id: task.id }, body: { text: CONTINUE_TEXT } });
 				toast.success('Continuing the task');
 			} else {
-				const r = await api.post('/tasks/{id}/abort', { params: { id: task.id } });
+				const r = await harness.sessions.interrupt(task.sessionId);
 				toast.success(r.target === 'idle' ? 'Nothing was running' : 'Stopping the task');
 			}
 		} catch (e) {

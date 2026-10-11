@@ -16,6 +16,8 @@ import type { Task } from '../src/domain/tasks.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
+import { attn } from './support/attention.ts'
+import { postAs, userMessage } from './support/http.ts'
 
 const servers: Server[] = []
 const dirs: string[] = []
@@ -99,15 +101,6 @@ const tmp = (): string => {
   return dir
 }
 
-const post = (body: unknown): RequestInit => ({
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(body),
-})
-const userMessage = (text: string) => ({
-  messages: [{ id: 'c', role: 'user', parts: [{ type: 'text', text }] }],
-})
-
 const delegate = (name: string, toolCallId: string, prompt = 'Remove /library/old.md') => ({
   toolName: 'agent',
   toolCallId,
@@ -155,19 +148,22 @@ interface FeedEvent {
   payload: Record<string, unknown>
 }
 async function events(app: Server['app'], after = 0): Promise<FeedEvent[]> {
-  const res = await app.request(`/events?after=${after}&limit=500`)
+  const res = await app.request(`/activity?after=${after}&limit=500`)
   expect(res.status).toBe(200)
   return ((await res.json()) as { events: FeedEvent[] }).events
 }
 async function dmText(app: Server['app'], agent = 'lead'): Promise<string> {
-  const res = await app.request(`/agents/${agent}/messages?limit=100`)
+  const res = await app.request(`/sessions/dm:${agent}/messages?limit=100`)
   return JSON.stringify(((await res.json()) as { messages: unknown[] }).messages)
 }
 
 /** Instance A parks the lead on a researcher that waits for approval of `delete_file`. */
 async function parkLead(a: Instance): Promise<void> {
   await libraryFs(a.server.conn.sqlite).write('/library/old.md', 'old\n')
-  const res = await a.app.request('/agents/lead/chat', post(userMessage('Clean up the library')))
+  const res = await a.app.request(
+    '/sessions/dm:lead/chat',
+    postAs(`dm:lead`, userMessage('Clean up the library')),
+  )
   if (res.status !== 200) throw new Error(await res.clone().text())
   expect(res.status).toBe(200)
   await res.text()
@@ -229,11 +225,8 @@ describe('delegation with park', () => {
     expect(detail.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
     expect(detail.approvals.map((x) => x.id)).toEqual([item.id])
 
-    const answered = await b.app.request(
-      `/approvals/${item.id}`,
-      post({ approved: true, note: 'go ahead, but be quick' }),
-    )
-    expect(answered.status).toBe(202)
+    const answered = await attn(b.app, item, { approved: true, note: 'go ahead, but be quick' })
+    expect(answered.status).toBe(200)
 
     // child finishes on B, the lead's wait resolves and the lead's turn continues by itself
     await until('lead finished', async () =>
@@ -249,8 +242,9 @@ describe('delegation with park', () => {
     expect(JSON.stringify(b.models.researcher?.prompts)).toContain('go ahead, but be quick')
 
     // the same item is gone now
-    const again = await b.app.request(`/approvals/${item.id}`, post({ approved: true }))
-    expect(again.status).toBe(404)
+    const again = await attn(b.app, item, { approved: true })
+    expect(again.status).toBe(200)
+    expect(await again.json()).toMatchObject({ status: 'already-answered' })
     // wrong kind of body
     const feed = await events(b.app)
     const types = feed.map((e) => e.type)
@@ -303,7 +297,10 @@ describe('delegation with park', () => {
       { first: true },
     )
     await libraryFs(a.server.conn.sqlite).write('/library/old.md', 'old\n')
-    const res = await a.app.request('/agents/lead/chat', post(userMessage('Clean up the library')))
+    const res = await a.app.request(
+      '/sessions/dm:lead/chat',
+      postAs(`dm:lead`, userMessage('Clean up the library')),
+    )
     expect(res.status).toBe(200)
     await res.text()
     await until('delegated', async () => (await dmText(a.app)).includes('Delegated.'))
@@ -314,7 +311,10 @@ describe('delegation with park', () => {
       'task waiting',
       async () => (await tasks(a.app, '?status=needs_action')).length === 1,
     )
-    const chat = await a.app.request('/agents/lead/chat', post(userMessage('How is it going?')))
+    const chat = await a.app.request(
+      '/sessions/dm:lead/chat',
+      postAs(`dm:lead`, userMessage('How is it going?')),
+    )
     expect(chat.status).toBe(200)
     await chat.text()
     await until('lead answered', async () => (await dmText(a.app)).includes('Still working on it.'))
@@ -331,11 +331,8 @@ describe('delegation with park', () => {
     await b.server.ready
     const pending = await approvals(b.app)
     expect(pending).toHaveLength(1)
-    const answered = await b.app.request(
-      `/approvals/${(pending[0] as ApprovalItem).id}`,
-      post({ approved: true }),
-    )
-    expect(answered.status).toBe(202)
+    const answered = await attn(b.app, pending[0] as ApprovalItem, { approved: true })
+    expect(answered.status).toBe(200)
     await until('task done', async () => (await tasks(b.app, '?status=done')).length === 1)
     await until('lead woke with the report', async () =>
       (await dmText(b.app)).includes('Report received.'),
@@ -357,7 +354,9 @@ describe('delegation with park', () => {
       preview: null,
       unread: 0,
     })
-    await (await a.app.request('/agents/lead/chat', post(userMessage('hi')))).text()
+    await (
+      await a.app.request('/sessions/dm:lead/chat', postAs(`dm:lead`, userMessage('hi')))
+    ).text()
     const after = (await (await a.app.request('/agents')).json()) as typeof before
     const lead = after.agents.find((x) => x.slug === 'lead')
     expect(lead?.lastActivity.preview).toBe('Hello from the lead')
@@ -397,7 +396,12 @@ describe('delegation with park', () => {
       },
       { first: true },
     )
-    await (await a.app.request('/agents/lead/chat', post(userMessage('Check the library')))).text()
+    await (
+      await a.app.request(
+        '/sessions/dm:lead/chat',
+        postAs(`dm:lead`, userMessage('Check the library')),
+      )
+    ).text()
     await until('first report', async () =>
       (await dmText(a.app)).includes('First report received.'),
     )
@@ -406,7 +410,10 @@ describe('delegation with park', () => {
     const doneAt = task?.endedAt
 
     await (
-      await a.app.request('/agents/lead/chat', post(userMessage('Ask for a count too')))
+      await a.app.request(
+        '/sessions/dm:lead/chat',
+        postAs(`dm:lead`, userMessage('Ask for a count too')),
+      )
     ).text()
     // the child ran a second turn on the SAME session; its report woke the lead
     await until('lead saw the report', async () =>
@@ -471,9 +478,7 @@ describe('delegation with park', () => {
     expect(report.drift).toEqual([])
     const [item] = await approvals(b.app)
     expect(item?.toolName).toBe('delete_file')
-    expect((await b.app.request(`/approvals/${item?.id}`, post({ approved: true }))).status).toBe(
-      202,
-    )
+    expect((await attn(b.app, item, { approved: true })).status).toBe(200)
     await until('lead finished after restart', async () =>
       (await dmText(b.app)).includes('Cleanup complete after the restart.'),
     )
@@ -507,9 +512,10 @@ describe('delegation with park', () => {
     )
     const [item] = (needed?.payload.waiting ?? []) as Array<{ id: string; toolName: string }>
     expect(item?.toolName).toBe('delete_file')
-    await raw.app.request(
-      `/approvals/${item?.id}`,
-      post({ approved: true, sessionId: waiting?.sessionId }),
+    await attn(
+      raw.app,
+      item === undefined ? undefined : { id: item.id, sessionId: waiting?.sessionId as string },
+      { approved: true },
     )
     await until('child done', async () => (await tasks(raw.app))[0]?.status === 'done')
     await sleep(100)
@@ -545,7 +551,9 @@ describe('delegation with park', () => {
       },
       { first: true },
     )
-    await (await a.app.request('/agents/lead/chat', post(userMessage('go')))).text()
+    await (
+      await a.app.request('/sessions/dm:lead/chat', postAs(`dm:lead`, userMessage('go')))
+    ).text()
     await until('done', async () => (await tasks(a.app))[0]?.status === 'done')
     a.server.conn.sqlite.run("UPDATE tasks SET state = 'running', ended_at = NULL")
     expect((await tasks(a.app))[0]?.status).toBe('running')
@@ -568,11 +576,8 @@ describe('delegation with park', () => {
     )
     await parkLead(a)
     const [item] = await approvals(a.app)
-    const res = await a.app.request(
-      `/approvals/${item?.id}`,
-      post({ approved: false, reason: 'Keep old.md' }),
-    )
-    expect(res.status).toBe(202)
+    const res = await attn(a.app, item, { approved: false, reason: 'Keep old.md' })
+    expect(res.status).toBe(200)
     await until('lead finished', async () => (await dmText(a.app)).includes('It was not deleted.'))
     expect(JSON.stringify(a.models.researcher?.prompts)).toContain('Keep old.md')
     const denied = (await events(a.app)).find(
@@ -612,21 +617,21 @@ describe('delegation with park', () => {
       {},
     )
     await b.server.ready
-    const first = await a.app.request(`/approvals/${pending[0]?.id}`, post({ approved: true }))
-    expect(first.status).toBe(202)
+    const first = await attn(a.app, pending[0], { approved: true })
+    expect(first.status).toBe(200)
     expect(await first.json()).toMatchObject({ status: 'recorded', remaining: 1 })
     // the answered one is hidden, the other shows how many wait for it
     const rest = (await approvals(b.app)) as Array<ApprovalItem & { answeredWaiting: number }>
     expect(rest.map((x) => x.id)).toEqual([pending[1]?.id as string])
     expect(rest[0]?.answeredWaiting).toBe(1)
-    // answering the same one again is a no-op for the library but the item is gone from the list
-    expect(
-      (await b.app.request(`/approvals/${pending[0]?.id}`, post({ approved: true }))).status,
-    ).toBe(404)
+    // answering the same one again is a no-op for the library: `already-answered`
+    const repeat = await attn(b.app, pending[0], { approved: true })
+    expect(repeat.status).toBe(200)
+    expect(await repeat.json()).toMatchObject({ status: 'already-answered' })
 
-    const second = await b.app.request(`/approvals/${pending[1]?.id}`, post({ approved: false }))
-    expect(second.status).toBe(202)
-    expect(await second.json()).toMatchObject({ status: 'resumed', remaining: 0 })
+    const second = await attn(b.app, pending[1], { approved: false })
+    expect(second.status).toBe(200)
+    expect(await second.json()).toMatchObject({ status: 'resumed' })
     await until('lead finished', async () => (await dmText(b.app)).includes('Both handled.'))
     expect(await approvals(b.app)).toEqual([])
   })
@@ -649,16 +654,14 @@ describe('delegation with park', () => {
     )
     await parkLead(a)
     const [item] = await approvals(a.app)
-    const res = await a.app.request(
-      `/approvals/${item?.id}`,
-      post({ approved: true, remember: 'session' }),
-    )
-    expect(res.status).toBe(202)
+    const res = await attn(a.app, item, { approved: true, remember: 'session' })
+    expect(res.status).toBe(200)
     await until('lead finished', async () => (await dmText(a.app)).includes('Grant used.'))
     expect(await approvals(a.app)).toEqual([])
     // a bad scope is rejected
     expect(
-      (await a.app.request('/approvals/x', post({ approved: true, remember: 'forever' }))).status,
+      (await attn(a.app, { id: 'x', sessionId: 'dm:x' }, { approved: true, remember: 'forever' }))
+        .status,
     ).toBe(400)
   })
 
@@ -673,14 +676,13 @@ describe('delegation with park', () => {
       { first: true },
     )
     await parkLead(a)
-    expect((await a.app.request('/approvals/nope', post({ approved: true }))).status).toBe(404)
-    const [item] = await approvals(a.app)
-    const wrong = await a.app.request(`/approvals/${item?.id}`, post({ answers: null }))
-    expect(wrong.status).toBe(400)
-    const tooLong = await a.app.request(
-      `/approvals/${item?.id}`,
-      post({ approved: true, note: 'x'.repeat(4001) }),
+    expect((await attn(a.app, { id: 'nope', sessionId: 'dm:x' }, { approved: true })).status).toBe(
+      404,
     )
+    const [item] = await approvals(a.app)
+    const wrong = await attn(a.app, item, { answers: null })
+    expect(wrong.status).toBe(400)
+    const tooLong = await attn(a.app, item, { approved: true, note: 'x'.repeat(4001) })
     expect(tooLong.status).toBe(400)
     expect((await a.app.request('/tasks/nope')).status).toBe(404)
     expect((await a.app.request('/tasks?status=bogus')).status).toBe(400)
@@ -716,7 +718,12 @@ describe('questions', () => {
       },
       { first: true },
     )
-    await (await a.app.request('/agents/lead/chat', post(userMessage('Write the report')))).text()
+    await (
+      await a.app.request(
+        '/sessions/dm:lead/chat',
+        postAs(`dm:lead`, userMessage('Write the report')),
+      )
+    ).text()
     const [item] = await approvals(a.app)
     expect(item).toMatchObject({
       kind: 'question',
@@ -726,14 +733,9 @@ describe('questions', () => {
     const lead = a.server.deps.agents.getBySlug('lead')
     expect(item?.sessionId).toBe(`dm:${lead?.id}`)
     // an approval body does not fit a question
-    expect((await a.app.request(`/approvals/${item?.id}`, post({ approved: true }))).status).toBe(
-      400,
-    )
-    const res = await a.app.request(
-      `/approvals/${item?.id}`,
-      post({ answers: [{ selected: ['Markdown'] }] }),
-    )
-    expect(res.status).toBe(202)
+    expect((await attn(a.app, item, { approved: true })).status).toBe(400)
+    const res = await attn(a.app, item, { answers: [{ selected: ['Markdown'] }] })
+    expect(res.status).toBe(200)
     await until('lead continued', async () =>
       (await dmText(a.app)).includes('Going with Markdown.'),
     )
@@ -749,7 +751,7 @@ describe('events feed', () => {
     const b = instance(dir, {}, {})
     await b.server.ready
 
-    const res = await b.app.request('/events/stream')
+    const res = await b.app.request('/activity/stream')
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/event-stream')
     const reader = (res.body as ReadableStream<Uint8Array>).getReader()
@@ -762,7 +764,9 @@ describe('events feed', () => {
         if (chunk !== undefined && !chunk.done) text += decoder.decode(chunk.value)
       }
     }
-    await (await a.app.request('/agents/lead/chat', post(userMessage('hello')))).text()
+    await (
+      await a.app.request('/sessions/dm:lead/chat', postAs(`dm:lead`, userMessage('hello')))
+    ).text()
     await read((t) => t.includes('Streamed hello'))
     await reader.cancel()
     expect(text.startsWith('retry: 3000\n: connected\nevent: boot\n')).toBe(true)

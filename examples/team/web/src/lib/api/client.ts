@@ -151,7 +151,9 @@ export type TaskStatus = components['schemas']['TaskStatus'];
 export type TaskDetail = components['schemas']['TaskDetail'];
 export type Approval = components['schemas']['Approval'];
 export type AgentSessions = components['schemas']['AgentSessions'];
-export type ApprovalBody = components['schemas']['ApprovalAnswer'];
+/** What a person answers (`POST /attention/{id}/answer` without the `kind` the store adds). */
+type AttentionAnswer = components['schemas']['AttentionAnswer']['answer'];
+export type ApprovalBody = AttentionAnswer extends infer A ? (A extends { kind: string } ? Omit<A, 'kind'> : never) : never;
 
 export type ModelCallSummary = components['schemas']['ModelCallSummary'];
 export type ModelCallDetail = components['schemas']['ModelCallDetail'];

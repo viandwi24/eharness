@@ -1,4 +1,4 @@
-import type { TeamEvent } from '../events/client';
+import type { ActivityRecord } from 'eharness/client';
 import type { AgentActivity } from './agents-core';
 
 export type ActivityEffect = { markRead?: string };
@@ -10,7 +10,7 @@ export type ActivityEffect = { markRead?: string };
  */
 export function applyActivity(
 	activity: Record<string, AgentActivity>,
-	e: TeamEvent,
+	e: ActivityRecord,
 	viewing: string | null
 ): ActivityEffect {
 	if (e.type !== 'message-added' || !e.agentId) return {};

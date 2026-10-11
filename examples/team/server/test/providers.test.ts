@@ -844,9 +844,10 @@ describe('catalog cache and the change feed', () => {
     expect(b.providers.profileIds()).toEqual(['shared'])
     expect(b.providers.rev()).toBeGreaterThan(revision) // agents rebuild on B
     expect(() => b.providers.manager.resolve('shared:anthropic/claude-x')).not.toThrow()
-    const events = (await a.deps.feed.page({ after: 0, limit: 100 })).events.filter(
-      (e) => e.type === 'providers-changed',
-    )
+    const feed = (await (await a.app.request('/activity?after=0&limit=100')).json()) as {
+      events: Array<{ type: string }>
+    }
+    const events = feed.events.filter((e) => e.type === 'providers-changed')
     expect(events.length).toBeGreaterThan(0)
     expect(JSON.stringify(events)).not.toContain('SUPERSECRET')
   })

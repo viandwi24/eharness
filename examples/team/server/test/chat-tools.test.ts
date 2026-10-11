@@ -108,11 +108,12 @@ describe('a switched-off connector is not offered to the model', () => {
     const model = scriptedModel([{ text: 'one' }, { text: 'two' }])
     const a = app(model)
     const send = async (text: string) => {
-      const res = await a.request('/agents/researcher/chat', {
+      const res = await a.request('/sessions/dm:researcher/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          messages: [{ id: 'x', role: 'user', parts: [{ type: 'text', text }] }],
+          id: 'dm:researcher',
+          messages: [{ id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text }] }],
         }),
       })
       expect(res.status).toBe(200)

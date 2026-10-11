@@ -1,6 +1,6 @@
 /** Ports the use cases depend on; `infra/` implements them. */
 import type { AgentDef } from '../domain/agents.ts'
-import type { ApprovalAnswer, ApprovalOutcome, ApprovalView } from '../domain/approvals.ts'
+import type { ApprovalView } from '../domain/approvals.ts'
 import type {
   AgentConnectors,
   AgentConnectorView,
@@ -18,7 +18,7 @@ import type {
   FlowResult,
   FlowStartInput,
 } from '../domain/connectors.ts'
-import type { NewEvent, TeamEvent } from '../domain/events.ts'
+import type { NewEvent } from '../domain/events.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
 import type {
   ModelCallDetail,
@@ -68,20 +68,7 @@ export interface ChatMessage {
   metadata?: unknown
 }
 
-/** A `useChat` request, already validated and cut down to what the server reads. */
-export interface ChatInput {
-  /** Exactly the last message of the client (the server never reads the client history). */
-  messages: ChatMessage[]
-  trigger?: 'submit-message' | 'regenerate-message'
-  messageId?: string
-}
-
 export type Actor = { id: string; name?: string }
-
-/** What a chat request produced: a UI message stream, or an input handed to another instance. */
-export type ChatOutcome =
-  | { kind: 'stream'; response: Response }
-  | { kind: 'queued'; inboxId: string; target: 'local' | 'remote' }
 
 export interface ChatStats {
   running: boolean
@@ -137,26 +124,6 @@ export interface ChatStats {
 
 /** The DM chat of an agent, on eharness sessions (implemented in `infra/eh/chat-service.ts`). */
 export interface ChatPort {
-  /**
-   * `ifBusy: 'steer'` hands the message to the running turn (this instance, or another one
-   * through the durable inbox); `'reject'` answers 409 `EH_SESSION_BUSY`.
-   */
-  chat(
-    agent: AgentDef,
-    input: ChatInput,
-    options: { actor: Actor; ifBusy: 'steer' | 'reject' },
-  ): Promise<ChatOutcome>
-  /** `204` when nothing streams; else the UI message stream of the active turn (any instance). */
-  resume(agent: AgentDef, request: Request): Promise<Response>
-  abort(
-    agent: AgentDef,
-    reason?: string,
-  ): Promise<{ target: 'local' | 'remote' | 'idle' | 'unsupported' }>
-  /** Newest `limit` messages before `before`, chronological. */
-  messages(
-    agent: AgentDef,
-    query: { before?: string; limit: number },
-  ): Promise<{ messages: ChatMessage[]; nextBefore: string | null }>
   /** `message` is the summary kind message, or null when there was nothing to compact. */
   compact(agent: AgentDef): Promise<{ compacted: boolean; message: ChatMessage | null }>
   stats(agent: AgentDef): Promise<ChatStats>
@@ -236,28 +203,12 @@ export interface TaskStore {
   markRead(agentId: string): number
 }
 
-/** Cross-session reads and answers on eharness sessions (implemented in `infra/eh/team-service.ts`). */
+/** Cross-session reads on eharness sessions (answers are the library's `attention` routes) (implemented in `infra/eh/team-service.ts`). */
 export interface TeamPort {
   /** Stored messages of a task session (newest `limit`, chronological). */
   taskMessages(task: Task, limit: number): Promise<ChatMessage[]>
-  /** Resume the running turn of a task session (stream log replay + follow); 204 when none runs. */
-  resumeTask(task: Task, request: Request): Promise<Response>
-  /**
-   * Everything waiting for a person, across DM chats and task sessions, on any instance. With
-   * `sessionId` only that session is read (cheap: used when answering).
-   */
-  approvals(only?: { sessionId?: string }): Promise<ApprovalView[]>
-  /**
-   * Answer one item with `respond()` on its session. Parallel approvals are answered one by one:
-   * the answer is recorded (`recorded`, with the number still waiting) and the last one resumes
-   * the session on this instance (`resumed`). A rejected answer (stale, conflicting) throws.
-   */
-  answer(view: ApprovalView, answer: ApprovalAnswer, actor: Actor): Promise<ApprovalOutcome>
-  /** `requestAbort()` on the task session, from any instance. */
-  abortTask(
-    task: Task,
-    reason?: string,
-  ): Promise<{ target: 'local' | 'remote' | 'idle' | 'unsupported' }>
+  /** Everything waiting for a person, across DM chats and task sessions, on any instance. */
+  approvals(): Promise<ApprovalView[]>
   /**
    * A message from the user into the task session through the durable inbox: `steer` joins the
    * running turn at its next step boundary, `queue` runs after it (both start a turn when idle).
@@ -305,19 +256,6 @@ export interface ModelCallStore {
 /** Appends app events to the feed from use cases (routines, settings). Never throws. */
 export interface EventAppender {
   append(event: NewEvent): void
-}
-
-/**
- * The event feed as the HTTP layer reads it (implemented on `eharness/activity`,
- * `infra/eh/activity-feed.ts`): an SSE response and the JSON twin for polling clients.
- */
-export interface ActivityFeedPort {
-  /** SSE stream; the cursor comes from `?after=` or `Last-Event-ID`, none = the current head. */
-  stream(request: Request): Response
-  page(query: {
-    after: number
-    limit: number
-  }): Promise<{ events: TeamEvent[]; lastSeq: number; resync?: true }>
 }
 
 /** Outcome of a conditional file change (`ifVersion`). */
@@ -493,7 +431,6 @@ export interface Deps {
   schedule: ScheduleCalc
   routineEngine: RoutineEngine
   events: EventAppender
-  feed: ActivityFeedPort
   modelCalls: ModelCallStore
   clock: Clock
   ids: IdGenerator

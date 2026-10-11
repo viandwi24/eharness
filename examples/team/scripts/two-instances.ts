@@ -3,6 +3,7 @@
  * Run: bun examples/team/scripts/two-instances.ts
  */
 import {
+  answerItem,
   approvals,
   check,
   delegate,
@@ -13,6 +14,7 @@ import {
   messages,
   parseSse,
   post,
+  postAs,
   type Step,
   scenario,
   sleep,
@@ -47,13 +49,16 @@ async function withPair(
 
 await scenario('resume the running stream from B', () =>
   withPair([{ text: 'a slow answer', delayMs: 250 }], [], async (a, b) => {
-    const idle = await fetch(`${b.url}/agents/researcher/chat/stream`)
+    const idle = await fetch(`${b.url}/sessions/dm:researcher/chat/stream`)
     check(idle.status === 204, `idle resume expected 204, got ${idle.status}`)
-    const first = await fetch(`${a.url}/agents/researcher/chat`, post(userMessage('go')))
+    const first = await fetch(
+      `${a.url}/sessions/dm:researcher/chat`,
+      postAs('dm:researcher', userMessage('go')),
+    )
     check(first.status === 200, `chat on A: ${first.status}`)
     const local = first.text()
     await sleep(500)
-    const res = await fetch(`${b.url}/agents/researcher/chat/stream`)
+    const res = await fetch(`${b.url}/sessions/dm:researcher/chat/stream`)
     check(res.status === 200, `resume on B expected 200, got ${res.status}`)
     const remote = parseSse(await res.text())
     const own = parseSse(await local)
@@ -62,7 +67,7 @@ await scenario('resume the running stream from B', () =>
       JSON.stringify(remote.chunks) === JSON.stringify(own.chunks),
       `chunk sequences differ: A=${own.chunks.length} B=${remote.chunks.length}`,
     )
-    const tail = await fetch(`${b.url}/agents/researcher/chat/stream`)
+    const tail = await fetch(`${b.url}/sessions/dm:researcher/chat/stream`)
     check(tail.status === 204, `after the turn expected 204, got ${tail.status}`)
     return `${own.chunks.length} chunks identical`
   }),
@@ -70,10 +75,13 @@ await scenario('resume the running stream from B', () =>
 
 await scenario('abort a running turn from B', () =>
   withPair([{ text: 'a very slow answer', delayMs: 500 }], [], async (a, b) => {
-    const first = await fetch(`${a.url}/agents/researcher/chat`, post(userMessage('go')))
+    const first = await fetch(
+      `${a.url}/sessions/dm:researcher/chat`,
+      postAs('dm:researcher', userMessage('go')),
+    )
     const local = first.text()
     await sleep(400)
-    const abort = await fetch(`${b.url}/agents/researcher/chat/abort`, post({ reason: 'stop' }))
+    const abort = await fetch(`${b.url}/sessions/dm:researcher/interrupt`, post({ reason: 'stop' }))
     check(abort.status === 200, `abort status ${abort.status}`)
     const body = await json<{ target: string }>(abort)
     check(body.target === 'remote', `expected target remote, got ${body.target}`)
@@ -99,12 +107,15 @@ await scenario('message on B during a turn on A is steered (202) and appears', (
     ],
     [],
     async (a, b) => {
-      const first = await fetch(`${a.url}/agents/researcher/chat`, post(userMessage('start')))
+      const first = await fetch(
+        `${a.url}/sessions/dm:researcher/chat`,
+        postAs('dm:researcher', userMessage('start')),
+      )
       const local = first.text()
       await sleep(250)
       const steer = await fetch(
-        `${b.url}/agents/researcher/chat`,
-        post(userMessage('also steer-me')),
+        `${b.url}/sessions/dm:researcher/chat`,
+        postAs('dm:researcher', userMessage('also steer-me')),
       )
       check(steer.status === 202, `expected 202, got ${steer.status}`)
       const q = await json<{ delivered: string; inboxId: string }>(steer)
@@ -135,7 +146,7 @@ await scenario(
         const ctl = new AbortController()
         const sse = (async () => {
           try {
-            const res = await fetch(`${b.url}/events/stream`, { signal: ctl.signal })
+            const res = await fetch(`${b.url}/activity/stream`, { signal: ctl.signal })
             const reader = res.body?.getReader()
             const dec = new TextDecoder()
             let buf = ''
@@ -157,16 +168,16 @@ await scenario(
         await sleep(300) // the feed starts at the head
 
         const res = await fetch(
-          `${a.url}/agents/lead/chat`,
-          post(userMessage('Clean up the library')),
+          `${a.url}/sessions/dm:lead/chat`,
+          postAs('dm:lead', userMessage('Clean up the library')),
         )
         check(res.status === 200, `lead chat on A: ${res.status}`)
         await res.text()
         await until('approval visible on B', async () => (await approvals(b)).length === 1)
         const item = (await approvals(b))[0]
         check(item?.toolName === 'delete_file', `approval tool ${item?.toolName}`)
-        const answer = await fetch(`${b.url}/approvals/${item.id}`, post({ approved: true }))
-        check(answer.status === 202, `answer status ${answer.status}`)
+        const answer = await answerItem(b, item, { approved: true })
+        check(answer.status === 200, `answer status ${answer.status}`)
         await until('lead reply stored', async () =>
           JSON.stringify(await messages(b, 'lead')).includes('The researcher cleaned up.'),
         )
@@ -185,10 +196,10 @@ await scenario(
         ctl.abort()
         await sse
         const types = events.map((e) => e.type)
-        for (const t of ['approval-needed', 'approval-decided', 'task-changed', 'message-added']) {
+        for (const t of ['pending-changed', 'approval-decided', 'task-changed', 'message-added']) {
           check(
             types.includes(t),
-            `B /events/stream lacks "${t}" (got ${[...new Set(types)].join(',')})`,
+            `B /activity/stream lacks "${t}" (got ${[...new Set(types)].join(',')})`,
           )
         }
         return `${events.length} events on B's stream`

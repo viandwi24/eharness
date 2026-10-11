@@ -10,6 +10,7 @@ import { Database } from 'bun:sqlite'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
+  answerItem,
   approvals,
   check,
   delegate,
@@ -18,7 +19,7 @@ import {
   type Instance,
   json,
   messages,
-  post,
+  postAs,
   type Step,
   scenario,
   sleep,
@@ -33,12 +34,17 @@ const A_PORT = 4101
 const B_PORT = 4102
 const WAIT_STALE = process.argv.includes('--wait-stale')
 
-async function park(work: Workdir): Promise<{ b: Instance; itemId: string }> {
+async function park(
+  work: Workdir,
+): Promise<{ b: Instance; item: { id: string; sessionId: string } }> {
   const a = await startInstance('A', A_PORT, work, [
     { toolCalls: [delegate('cleaner', 'call-1')] }, // lead
     { toolCalls: [deleteOld] }, // researcher: waits for approval
   ])
-  const res = await fetch(`${a.url}/agents/lead/chat`, post(userMessage('Clean up the library')))
+  const res = await fetch(
+    `${a.url}/sessions/dm:lead/chat`,
+    postAs('dm:lead', userMessage('Clean up the library')),
+  )
   check(res.status === 200, `lead chat on A: ${res.status}`)
   await res.text()
   await until('approval pending', async () => (await approvals(a)).length === 1)
@@ -49,7 +55,7 @@ async function park(work: Workdir): Promise<{ b: Instance; itemId: string }> {
   ])
   const list = await approvals(b)
   check(list.length === 1, `B lists ${list.length} approvals after A was killed`)
-  return { b, itemId: (list[0] as { id: string }).id }
+  return { b, item: list[0] as { id: string; sessionId: string } }
 }
 
 await scenario(
@@ -62,8 +68,8 @@ await scenario(
       b = parked.b
       const waiting = await tasks(b, '?status=needs_action')
       check(waiting.length === 1, `expected one needs_action task, got ${waiting.length}`)
-      const answer = await fetch(`${b.url}/approvals/${parked.itemId}`, post({ approved: true }))
-      check(answer.status === 202, `answer status ${answer.status}`)
+      const answer = await answerItem(b, parked.item, { approved: true })
+      check(answer.status === 200, `answer status ${answer.status}`)
       await until('lead reply stored', async () =>
         JSON.stringify(await messages(b as Instance, 'lead')).includes(
           'The researcher cleaned up.',
@@ -109,7 +115,10 @@ await scenario(
         },
       ]
       const a = await startInstance('A', A_PORT, work, steps)
-      const res = await fetch(`${a.url}/agents/researcher/chat`, post(userMessage('start')))
+      const res = await fetch(
+        `${a.url}/sessions/dm:researcher/chat`,
+        postAs('dm:researcher', userMessage('start')),
+      )
       check(res.status === 200, `chat on A: ${res.status}`)
       void res.text().catch(() => undefined)
       await sleep(450) // mid-turn: text streamed, the tool call is still to come
@@ -120,7 +129,10 @@ await scenario(
         await fetch(`${b.url}/agents/researcher/stats`),
       )
       let note = `activeTurn on B right after the kill: ${stats.activeTurn === null ? 'none' : 'present (remote, heartbeat fresh)'}`
-      const early = await fetch(`${b.url}/agents/researcher/chat`, post(userMessage('too early?')))
+      const early = await fetch(
+        `${b.url}/sessions/dm:researcher/chat`,
+        postAs('dm:researcher', userMessage('too early?')),
+      )
       await early.text()
       note += `; immediate chat on B -> ${early.status}`
       if (WAIT_STALE) {
@@ -130,8 +142,8 @@ await scenario(
         note += `; aged ${n} heartbeat/lock row(s) by SQL instead of waiting 120 s`
       }
       const next = await fetch(
-        `${b.url}/agents/researcher/chat`,
-        post(userMessage('are you there?')),
+        `${b.url}/sessions/dm:researcher/chat`,
+        postAs('dm:researcher', userMessage('are you there?')),
       )
       const text = await next.text()
       check(next.status === 200, `chat on B after the kill: ${next.status} ${text.slice(0, 200)}`)
@@ -184,7 +196,10 @@ await scenario(
         },
       ]
       const a = await startInstance('A', A_PORT, work, steps, env)
-      const res = await fetch(`${a.url}/agents/researcher/chat`, post(userMessage('start')))
+      const res = await fetch(
+        `${a.url}/sessions/dm:researcher/chat`,
+        postAs('dm:researcher', userMessage('start')),
+      )
       check(res.status === 200, `chat on A: ${res.status}`)
       void res.text().catch(() => undefined)
       await sleep(450)
@@ -217,8 +232,8 @@ await scenario(
         .filter((p) => String(p.type).startsWith('tool-') && p.state === 'input-available')
       check(bad.length === 0, 'a tool part without a result remained')
       const next = await fetch(
-        `${b.url}/agents/researcher/chat`,
-        post(userMessage('Continue where you left off.')),
+        `${b.url}/sessions/dm:researcher/chat`,
+        postAs('dm:researcher', userMessage('Continue where you left off.')),
       )
       const text = await next.text()
       check(
@@ -228,8 +243,8 @@ await scenario(
       const after = await messages(b, 'researcher')
       const last = after.findLast((m) => m.role === 'assistant')
       const retry = await fetch(
-        `${b.url}/agents/researcher/chat`,
-        post({
+        `${b.url}/sessions/dm:researcher/chat`,
+        postAs('dm:researcher', {
           messages: [{ id: last?.id ?? 'x', role: 'assistant', parts: [] }],
           trigger: 'regenerate-message',
           messageId: last?.id,
@@ -274,8 +289,8 @@ await scenario(
         env,
       )
       const res = await fetch(
-        `${a.url}/agents/lead/chat`,
-        post(userMessage('Research this in the background')),
+        `${a.url}/sessions/dm:lead/chat`,
+        postAs('dm:lead', userMessage('Research this in the background')),
       )
       check(res.status === 200, `lead chat on A: ${res.status}`)
       void res.text().catch(() => undefined)

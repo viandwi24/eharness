@@ -11,6 +11,7 @@ import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
 import { scriptedModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
+import { postAs, userMessage } from './support/http.ts'
 
 const servers: Server[] = []
 const dirs: string[] = []
@@ -43,14 +44,6 @@ const single = (steps: ScriptedStepInput[]) => instances(steps)[0] as Instance
 const pair = (one: ScriptedStepInput[], two: ScriptedStepInput[]) =>
   instances(one, two) as [Instance, Instance]
 
-const post = (body: unknown): RequestInit => ({
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(body),
-})
-const userMessage = (text: string) => ({
-  messages: [{ id: 'client-id', role: 'user', parts: [{ type: 'text', text }] }],
-})
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 type Chunk = { type: string; [key: string]: unknown }
@@ -77,7 +70,7 @@ async function stored(
   agent = 'researcher',
   query = '',
 ): Promise<StoredMessage[]> {
-  const res = await app.request(`/agents/${agent}/messages${query}`)
+  const res = await app.request(`/sessions/dm:${agent}/messages${query}`)
   expect(res.status).toBe(200)
   return ((await res.json()) as { messages: StoredMessage[] }).messages
 }
@@ -85,7 +78,8 @@ async function stored(
 describe('chat: text and tool turns', () => {
   test('a text turn streams, is stored, and shows in stats', async () => {
     const a = single([{ text: 'Hello there' }])
-    const res = await a.app.request('/agents/researcher/chat', post(userMessage('hi')))
+    const sent = userMessage('hi')
+    const res = await a.app.request('/sessions/dm:researcher/chat', postAs(`dm:researcher`, sent))
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/event-stream')
     expect(res.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1')
@@ -98,7 +92,7 @@ describe('chat: text and tool turns', () => {
     const messages = await stored(a.app)
     expect(messages.map((m) => m.role)).toEqual(['user', 'assistant'])
     // the client id is never trusted: ids are server generated
-    expect(messages[0]?.id).not.toBe('client-id')
+    expect(messages[0]?.id).not.toBe(sent.messages[0]?.id)
     expect(messages[1]?.parts.some((p) => p.type === 'text' && p.text === 'Hello there')).toBe(true)
     expect(messages[1]?.metadata?.eharness?.stop).toBe('complete')
 
@@ -124,7 +118,10 @@ describe('chat: text and tool turns', () => {
       { text: 'Saved.' },
     ])
     const app = a.app
-    const res = await app.request('/agents/researcher/chat', post(userMessage('save a note')))
+    const res = await app.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('save a note')),
+    )
     const { chunks } = sseChunks(await res.text())
     expect(
       chunks.some((c) => c.type === 'tool-input-available' || c.type === 'tool-output-available'),
@@ -140,20 +137,26 @@ describe('chat: text and tool turns', () => {
   test('messages are paginated, newest page first', async () => {
     const a = single([{ text: 'one' }, { text: 'two' }])
     const app = a.app
-    await (await app.request('/agents/researcher/chat', post(userMessage('1')))).text()
-    await (await app.request('/agents/researcher/chat', post(userMessage('2')))).text()
-    const first = (await (await app.request('/agents/researcher/messages?limit=3')).json()) as {
+    await (
+      await app.request('/sessions/dm:researcher/chat', postAs(`dm:researcher`, userMessage('1')))
+    ).text()
+    await (
+      await app.request('/sessions/dm:researcher/chat', postAs(`dm:researcher`, userMessage('2')))
+    ).text()
+    const first = (await (
+      await app.request('/sessions/dm:researcher/messages?limit=3')
+    ).json()) as {
       messages: StoredMessage[]
-      nextBefore: string | null
+      nextBefore?: string
     }
     expect(first.messages).toHaveLength(3)
     expect(first.nextBefore).toBe(first.messages[0]?.id as string)
     const older = (await (
-      await app.request(`/agents/researcher/messages?limit=3&before=${first.nextBefore}`)
-    ).json()) as { messages: StoredMessage[]; nextBefore: string | null }
+      await app.request(`/sessions/dm:researcher/messages?limit=3&before=${first.nextBefore}`)
+    ).json()) as { messages: StoredMessage[]; nextBefore?: string }
     expect(older.messages).toHaveLength(1)
-    expect(older.nextBefore).toBeNull()
-    expect((await app.request('/agents/researcher/messages?limit=0')).status).toBe(400)
+    expect(older.nextBefore).toBeUndefined()
+    expect((await app.request('/sessions/dm:researcher/messages?limit=0')).status).toBe(400)
   })
 })
 
@@ -169,8 +172,8 @@ describe('chat: approvals', () => {
     await fs.write('/library/old.txt', 'old')
 
     const first = await app.request(
-      '/agents/researcher/chat',
-      post(userMessage('delete the old file')),
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('delete the old file')),
     )
     const firstChunks = sseChunks(await first.text()).chunks
     const request = firstChunks.find((c) => c.type === 'tool-approval-request')
@@ -212,7 +215,10 @@ describe('chat: approvals', () => {
         },
       ],
     }
-    const second = await app.request('/agents/researcher/chat', post(answer))
+    const second = await app.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, answer),
+    )
     expect(second.status).toBe(200)
     const secondChunks = sseChunks(await second.text()).chunks
     // the continuation streams into the same message
@@ -246,14 +252,14 @@ describe('chat: approvals', () => {
   test('answering twice is not applied twice (consume-once)', async () => {
     const { app, waiting } = await pendingTurn(true)
     const replay = await app.request(
-      '/agents/researcher/chat',
-      post({ messages: [{ ...waiting, parts: waiting.parts }] }),
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, { messages: [{ ...waiting, parts: waiting.parts }] }),
     )
     // the stale answer never authorizes anything: nothing waits any more, so the route answers
-    // 409 ALREADY_ANSWERED before a turn starts (the web refreshes quietly)
+    // 409 EH_HTTP_ALREADY_ANSWERED before a turn starts (the web refreshes quietly)
     expect(replay.status).toBe(409)
     expect(((await replay.json()) as { error: { code: string } }).error.code).toBe(
-      'ALREADY_ANSWERED',
+      'EH_HTTP_ALREADY_ANSWERED',
     )
     expect((await stored(app)).filter((m) => m.role === 'assistant')).toHaveLength(1)
   })
@@ -266,13 +272,16 @@ describe('chat: two instances', () => {
     const [a, b] = pair([slow], [])
     const A = a.app
     const B = b.app
-    const idle = await B.request('/agents/researcher/chat/stream')
+    const idle = await B.request('/sessions/dm:researcher/chat/stream')
     expect(idle.status).toBe(204)
 
-    const first = await A.request('/agents/researcher/chat', post(userMessage('go')))
+    const first = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('go')),
+    )
     const local = first.text()
     await sleep(350) // mid-turn: the drainer has flushed the head to the log
-    const res = await B.request('/agents/researcher/chat/stream')
+    const res = await B.request('/sessions/dm:researcher/chat/stream')
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/event-stream')
     const remote = sseChunks(await res.text())
@@ -282,18 +291,21 @@ describe('chat: two instances', () => {
     expect(remote.chunks.at(-1)?.type).toBe('finish')
 
     // from a cursor: the head is skipped
-    expect((await B.request('/agents/researcher/chat/stream?from=2')).status).toBe(204) // turn is over
-    expect((await B.request('/agents/researcher/chat/stream?from=abc')).status).toBe(400)
+    expect((await B.request('/sessions/dm:researcher/chat/stream?from=2')).status).toBe(204) // turn is over
+    expect((await B.request('/sessions/dm:researcher/chat/stream?from=abc')).status).toBe(400)
   })
 
   test('resume from a cursor mid-turn', async () => {
     const [a, b] = pair([slow], [])
     const A = a.app
     const B = b.app
-    const first = await A.request('/agents/researcher/chat', post(userMessage('go')))
+    const first = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('go')),
+    )
     const local = first.text()
     await sleep(350)
-    const res = await B.request('/agents/researcher/chat/stream?from=2')
+    const res = await B.request('/sessions/dm:researcher/chat/stream?from=2')
     expect(res.status).toBe(200)
     const remote = sseChunks(await res.text())
     const all = sseChunks(await local).chunks
@@ -304,7 +316,10 @@ describe('chat: two instances', () => {
     const [a, b] = pair([{ text: 'a very slow answer', delayMs: 400 }], [])
     const A = a.app
     const B = b.app
-    const first = await A.request('/agents/researcher/chat', post(userMessage('go')))
+    const first = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('go')),
+    )
     const local = first.text()
     await sleep(300)
     const stats = (await (await B.request('/agents/researcher/stats')).json()) as {
@@ -313,13 +328,16 @@ describe('chat: two instances', () => {
     }
     expect(stats.activeTurn).not.toBeNull()
     expect(stats.running).toBe(false) // B does not run it
-    const abort = await B.request('/agents/researcher/chat/abort', post({ reason: 'stop it' }))
+    const abort = await B.request(
+      '/sessions/dm:researcher/interrupt',
+      postAs(`dm:researcher`, { reason: 'stop it' }),
+    )
     expect(abort.status).toBe(200)
     expect(((await abort.json()) as { target: string }).target).toBe('remote')
     await local // A's stream ends once the turn aborted
     const last = (await stored(B)).at(-1)
     expect(last?.metadata?.eharness?.stop).toBe('aborted')
-    const idle = await B.request('/agents/researcher/chat/abort', post({}))
+    const idle = await B.request('/sessions/dm:researcher/interrupt', postAs(`dm:researcher`, {}))
     expect(((await idle.json()) as { target: string }).target).toBe('idle')
   })
 
@@ -334,10 +352,16 @@ describe('chat: two instances', () => {
   test('a message while a turn runs here is steered into it', async () => {
     const a = single(twoSteps())
     const A = a.app
-    const first = await A.request('/agents/researcher/chat', post(userMessage('start')))
+    const first = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('start')),
+    )
     const firstText = first.text()
     await sleep(100)
-    const steer = await A.request('/agents/researcher/chat', post(userMessage('also do this')))
+    const steer = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('also do this')),
+    )
     expect(steer.status).toBe(200)
     await steer.text()
     await firstText
@@ -349,10 +373,16 @@ describe('chat: two instances', () => {
     const [a, b] = pair(twoSteps(), [])
     const A = a.app
     const B = b.app
-    const first = await A.request('/agents/researcher/chat', post(userMessage('start')))
+    const first = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('start')),
+    )
     const firstText = first.text()
     await sleep(100)
-    const steer = await B.request('/agents/researcher/chat', post(userMessage('also do this')))
+    const steer = await B.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('also do this')),
+    )
     expect(steer.status).toBe(202)
     const queued = (await steer.json()) as { inboxId: string; delivered: string; target: string }
     expect(queued.delivered).toBe('steer')
@@ -368,13 +398,16 @@ describe('chat: two instances', () => {
     const [a, b] = pair(twoSteps(), [])
     const A = a.app
     const B = b.app
-    const first = await A.request('/agents/researcher/chat', post(userMessage('start')))
+    const first = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('start')),
+    )
     const firstText = first.text()
     await sleep(100)
     for (const app of [A, B]) {
       const busy = await app.request(
-        '/agents/researcher/chat?ifBusy=reject',
-        post(userMessage('again')),
+        '/sessions/dm:researcher/chat?ifBusy=reject',
+        postAs(`dm:researcher`, userMessage('again')),
       )
       expect(busy.status).toBe(409)
       expect(((await busy.json()) as { error: { code: string } }).error.code).toBe(
@@ -385,8 +418,8 @@ describe('chat: two instances', () => {
     const compact = await A.request('/agents/researcher/compact', { method: 'POST' })
     expect(compact.status).toBe(409)
     const regen = await B.request(
-      '/agents/researcher/chat',
-      post({ trigger: 'regenerate-message', messages: [] }),
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, { trigger: 'regenerate-message', messages: [] }),
     )
     expect(regen.status).toBe(409)
     await firstText
@@ -397,17 +430,25 @@ describe('chat: requests and uploads', () => {
   test('invalid requests are 400, unknown agents 404, archived agents 409', async () => {
     const a = single([{ text: 'x' }])
     const A = a.app
-    const empty = await A.request('/agents/researcher/chat', post({ messages: [] }))
+    const empty = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, { messages: [] }),
+    )
     expect(empty.status).toBe(400)
     expect(((await empty.json()) as { error: { code: string } }).error.code).toBe(
-      'INVALID_MESSAGES',
+      'EH_HTTP_INVALID_BODY',
     )
-    const shape = await A.request('/agents/researcher/chat', post({ messages: [{ role: 'user' }] }))
+    const shape = await A.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, { messages: [{ role: 'user' }] }),
+    )
     expect(shape.status).toBe(400)
-    expect((await A.request('/agents/nope/chat', post(userMessage('x')))).status).toBe(404)
+    expect(
+      (await A.request('/sessions/dm:nope/chat', postAs(`dm:nope`, userMessage('x')))).status,
+    ).toBe(404)
     const bad = await A.request(
-      '/agents/researcher/chat',
-      post({
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, {
         messages: [
           {
             role: 'user',
@@ -432,12 +473,15 @@ describe('chat: requests and uploads', () => {
     }
     const analyst = agents.agents.find((x) => x.slug === 'analyst') as { id: string }
     await A.request(`/agents/${analyst.id}`, { method: 'DELETE' })
-    const archived = await A.request(`/agents/${analyst.id}/chat`, post(userMessage('x')))
+    const archived = await A.request(
+      `/sessions/dm:${analyst.id}/chat`,
+      postAs(`dm:${analyst.id}`, userMessage('x')),
+    )
     expect(archived.status).toBe(409)
     expect(((await archived.json()) as { error: { code: string } }).error.code).toBe(
       'AGENT_ARCHIVED',
     )
-    expect((await A.request(`/agents/${analyst.id}/messages`)).status).toBe(200) // history stays readable
+    expect((await A.request(`/sessions/dm:${analyst.id}/messages`)).status).toBe(200) // history stays readable
   })
 
   async function upload(app: Server['app'], name: string, type: string, content: BlobPart) {
@@ -466,8 +510,8 @@ describe('chat: requests and uploads', () => {
     expect(file.size).toBe(8)
 
     const chat = await app.request(
-      '/agents/researcher/chat',
-      post({
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, {
         messages: [
           {
             role: 'user',
@@ -515,8 +559,8 @@ describe('chat: requests and uploads', () => {
       'library:///uploads/missing.txt',
     ]) {
       const res = await app.request(
-        '/agents/researcher/chat',
-        post({
+        '/sessions/dm:researcher/chat',
+        postAs(`dm:researcher`, {
           messages: [{ role: 'user', parts: [{ type: 'file', mediaType: 'text/plain', url }] }],
         }),
       )
@@ -530,7 +574,9 @@ describe('chat: requests and uploads', () => {
   test('compact answers when idle', async () => {
     const a = single([{ text: 'hello' }])
     const app = a.app
-    await (await app.request('/agents/researcher/chat', post(userMessage('hi')))).text()
+    await (
+      await app.request('/sessions/dm:researcher/chat', postAs(`dm:researcher`, userMessage('hi')))
+    ).text()
     const res = await app.request('/agents/researcher/compact', { method: 'POST' })
     expect(res.status).toBe(200)
     const body = (await res.json()) as { compacted: boolean; message: unknown }
@@ -547,19 +593,23 @@ describe('chat: requests and uploads', () => {
     }
     expect(Object.keys(doc.paths)).toEqual(
       expect.arrayContaining([
-        '/agents/{id}/chat',
-        '/agents/{id}/chat/stream',
-        '/agents/{id}/chat/abort',
-        '/agents/{id}/messages',
+        '/sessions/{id}',
+        '/sessions/{id}/chat',
+        '/sessions/{id}/chat/stream',
+        '/sessions/{id}/interrupt',
+        '/sessions/{id}/messages',
+        '/attention/{id}/answer',
+        '/activity',
+        '/activity/stream',
         '/agents/{id}/compact',
         '/agents/{id}/stats',
         '/library/files',
       ]),
     )
     expect(
-      Object.keys(doc.paths['/agents/{id}/chat']?.post?.responses['200']?.content ?? {}),
+      Object.keys(doc.paths['/sessions/{id}/chat']?.post?.responses['200']?.content ?? {}),
     ).toEqual(['text/event-stream'])
-    expect(doc.paths['/agents/{id}/chat/stream']?.get?.responses['204']).toBeDefined()
-    expect(doc.paths['/agents/{id}/chat']?.post?.responses['409']).toBeDefined()
+    expect(doc.paths['/sessions/{id}/chat/stream']?.get?.responses['204']).toBeDefined()
+    expect(doc.paths['/sessions/{id}/chat']?.post?.responses['409']).toBeDefined()
   })
 })

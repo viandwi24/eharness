@@ -25,11 +25,13 @@ import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { ModelCatalog } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
+import { checkChatBody } from './app/chat.ts'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
 import { newId } from './domain/ids.ts'
 import { areaOf } from './domain/library.ts'
 import { createApp } from './http/app.ts'
+import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
 import { sqliteActivityStore } from './infra/db/activity-store.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
@@ -40,7 +42,6 @@ import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
-import { createActivityFeed, createEventAppender } from './infra/eh/activity-feed.ts'
 import { type ActivityLog, createActivityLog } from './infra/eh/activity-log.ts'
 import {
   type AgentFactory,
@@ -54,6 +55,8 @@ import { createChatToolsService } from './infra/eh/chat-tools-service.ts'
 import type { CatalogOptions } from './infra/eh/connector-catalog.ts'
 import { type ConnectorsRuntime, createConnectors, SEALED_KINDS } from './infra/eh/connectors.ts'
 import { backfillCustomSlugs, migrateLegacyAgents } from './infra/eh/connectors-migration.ts'
+import { createEventAppender } from './infra/eh/event-appender.ts'
+import { createTeamHttp } from './infra/eh/harness-http.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
@@ -167,15 +170,10 @@ export function compose(config: ServerConfig): Server {
 
   const tasks = sqliteTaskStore(conn.sqlite)
   // the shared feed on eharness/activity: session events come from its `activity()` plugin, the
-  // app appends its own types (providers-changed, settings-changed, ...) through `events`
+  // app appends its own types (providers-changed, settings-changed, ...) through `events`; the
+  // routes that read it are the `activity` option of eharness/http (below)
   const activityStore = sqliteActivityStore(conn.sqlite)
   const events = createEventAppender(activityStore)
-  const feed = createActivityFeed({
-    store: activityStore,
-    bootId: BOOT_ID,
-    ...(config.eventsPollMs === undefined ? {} : { pollMs: config.eventsPollMs }),
-    warn: (message) => console.warn(`team: ${message}`),
-  })
   // ONE vault, ONE profile table and ONE sealing path: provider profiles, connections, their
   // credentials and OAuth app credentials all go through `sealedProfileStore`. Rows written by
   // earlier versions (legacy `v1:` blobs) open through the vault's legacy reader and are
@@ -406,7 +404,6 @@ export function compose(config: ServerConfig): Server {
     schedule,
     routineEngine: routines,
     events,
-    feed,
     modelCalls,
     clock: { now: () => Date.now() },
     ids: { next: () => newId() },
@@ -452,7 +449,20 @@ export function compose(config: ServerConfig): Server {
   const timer = everyMs > 0 ? setInterval(() => void quiet(), everyMs) : undefined
   timer?.unref()
 
-  const app = createApp({ deps, token: config.token })
+  // chat, sessions, attention answers and the activity feed: the library's HTTP module
+  const harness = createTeamHttp({
+    factory,
+    agents,
+    tasks,
+    team,
+    activity: activityStore,
+    token: config.token,
+    bootId: BOOT_ID,
+    ...(config.eventsPollMs === undefined ? {} : { pollMs: config.eventsPollMs }),
+    maxBodyBytes: MAX_REQUEST_BYTES,
+    checkChatBody: (body) => checkChatBody(deps, body),
+  })
+  const app = createApp({ deps, token: config.token, harness })
   routines.start()
   return {
     app,

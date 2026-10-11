@@ -16,7 +16,7 @@
     },
     {
       "name": "chats",
-      "description": "The DM chat of an agent: streaming, approvals, resume, history."
+      "description": "Sessions (`eharness/http`): the DM chat `dm:<agentId>` and task sessions: stream, resume, interrupt, history. Plus compact, stats and the tools menu of an agent."
     },
     {
       "name": "library",
@@ -44,7 +44,7 @@
     },
     {
       "name": "approvals",
-      "description": "Approvals and questions waiting for a person, across sessions."
+      "description": "Approvals and questions waiting for a person, across sessions: the list and `POST /attention/{id}/answer`."
     },
     {
       "name": "logs",
@@ -52,7 +52,7 @@
     },
     {
       "name": "events",
-      "description": "The feed of changes: JSON and SSE."
+      "description": "The feed of changes (`eharness/http` activity): JSON and SSE."
     }
   ],
   "components": {
@@ -710,67 +710,26 @@
           "mode"
         ]
       },
-      "ChatQueued": {
+      "CompactResult": {
         "type": "object",
         "properties": {
-          "inboxId": {
-            "type": "string"
+          "compacted": {
+            "type": "boolean"
           },
-          "delivered": {
-            "type": "string",
-            "enum": [
-              "steer"
-            ]
-          },
-          "target": {
-            "type": "string",
-            "enum": [
-              "local",
-              "remote"
-            ]
+          "message": {
+            "$ref": "#/components/schemas/UiMessage"
           }
         },
         "required": [
-          "inboxId",
-          "delivered",
-          "target"
-        ],
-        "description": "A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /agents/{id}/chat/stream`."
-      },
-      "ChatRequest": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Chat id of `useChat`; ignored (the chat is the agent DM)."
-          },
-          "messages": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/UiMessage"
-            },
-            "maxItems": 1000,
-            "description": "Only the **last** message is read: a user message (send), or the assistant message with `approval-responded` / `output-available` tool parts (answers a pending approval; the continuation streams into the same message). Ids, metadata and history of the client are never trusted."
-          },
-          "trigger": {
-            "type": "string",
-            "enum": [
-              "submit-message",
-              "regenerate-message"
-            ]
-          },
-          "messageId": {
-            "type": "string",
-            "description": "With a user message: replace that message and answer it (edit)."
-          }
-        },
-        "required": [
-          "messages"
-        ],
-        "description": "The `useChat` request body (`DefaultChatTransport`)."
+          "compacted",
+          "message"
+        ]
       },
       "UiMessage": {
-        "type": "object",
+        "type": [
+          "object",
+          "null"
+        ],
         "properties": {
           "id": {
             "type": "string"
@@ -805,83 +764,7 @@
           "parts"
         ],
         "additionalProperties": {},
-        "description": "An AI SDK `UIMessage`. Stored messages carry `metadata.eharness` (turn id, stop reason, usage, pending approvals)."
-      },
-      "AbortResult": {
-        "type": "object",
-        "properties": {
-          "target": {
-            "type": "string",
-            "enum": [
-              "local",
-              "remote",
-              "idle",
-              "unsupported"
-            ],
-            "description": "`local`: a turn of this instance was aborted; `remote`: the request was written for the instance running it; `idle`: nothing runs."
-          }
-        },
-        "required": [
-          "target"
-        ]
-      },
-      "AbortRequest": {
-        "type": "object",
-        "properties": {
-          "reason": {
-            "type": "string",
-            "maxLength": 500
-          }
-        }
-      },
-      "MessagesPage": {
-        "type": "object",
-        "properties": {
-          "messages": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/UiMessage"
-            },
-            "description": "Chronological (oldest first)."
-          },
-          "nextBefore": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Pass as `before` to load older messages; null = no more."
-          }
-        },
-        "required": [
-          "messages",
-          "nextBefore"
-        ]
-      },
-      "CompactResult": {
-        "type": "object",
-        "properties": {
-          "compacted": {
-            "type": "boolean"
-          },
-          "message": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/UiMessage"
-              },
-              {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "description": "The summary (kind) message; null when there was nothing to compact."
-              }
-            ]
-          }
-        },
-        "required": [
-          "compacted",
-          "message"
-        ]
+        "description": "The summary (kind) message; null when there was nothing to compact."
       },
       "ChatTools": {
         "type": "object",
@@ -1205,6 +1088,657 @@
           "usage"
         ]
       },
+      "SessionSnapshot": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean",
+            "description": "A turn runs, on any instance."
+          },
+          "busy": {
+            "$ref": "#/components/schemas/SessionBusy"
+          },
+          "activeTurn": {
+            "$ref": "#/components/schemas/ActiveTurn"
+          },
+          "pending": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "approvals": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "approvalId": {
+                      "type": "string"
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolName": {
+                      "type": "string"
+                    },
+                    "input": {},
+                    "answered": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "approvalId",
+                    "toolCallId",
+                    "toolName",
+                    "answered"
+                  ]
+                }
+              },
+              "clientTools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolName": {
+                      "type": "string"
+                    },
+                    "input": {},
+                    "timeoutAt": {
+                      "type": "number"
+                    },
+                    "answered": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "toolCallId",
+                    "toolName",
+                    "answered"
+                  ]
+                }
+              },
+              "externals": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "waitId": {
+                      "type": "string"
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolName": {
+                      "type": "string"
+                    },
+                    "timeoutAt": {
+                      "type": "number"
+                    },
+                    "resolved": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "waitId",
+                    "toolCallId",
+                    "toolName",
+                    "resolved"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "messageId",
+              "approvals",
+              "clientTools",
+              "externals"
+            ]
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "inputTokens": {
+                "type": "number"
+              },
+              "outputTokens": {
+                "type": "number"
+              },
+              "turns": {
+                "type": "number"
+              },
+              "costUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "inputTokens",
+              "outputTokens",
+              "turns"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "running",
+          "busy",
+          "activeTurn",
+          "pending",
+          "usage"
+        ],
+        "description": "The stored state of a session (`eharness/http`)."
+      },
+      "SessionBusy": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ]
+          },
+          "turnId": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "heartbeatAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "scope",
+          "turnId"
+        ]
+      },
+      "ActiveTurn": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "turnId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "userMessageId": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "number"
+          },
+          "heartbeatAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "turnId",
+          "kind",
+          "messageId",
+          "owner",
+          "startedAt",
+          "heartbeatAt"
+        ]
+      },
+      "SessionMessagesPage": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/UiMessage"
+                },
+                {
+                  "description": "An AI SDK `UIMessage`. Stored messages carry `metadata.eharness` (turn id, stop reason, usage, pending approvals)."
+                }
+              ]
+            },
+            "description": "Oldest first."
+          },
+          "nextBefore": {
+            "type": "string",
+            "description": "Pass as `before` to read older messages; absent = the start."
+          }
+        },
+        "required": [
+          "messages"
+        ]
+      },
+      "ChatQueued": {
+        "type": "object",
+        "properties": {
+          "inboxId": {
+            "type": "string"
+          },
+          "delivered": {
+            "type": "string",
+            "enum": [
+              "steer"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ]
+          },
+          "duplicate": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "The same `Idempotency-Key` was delivered before: nothing was added."
+          }
+        },
+        "required": [
+          "inboxId",
+          "delivered",
+          "target"
+        ],
+        "description": "A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /sessions/{id}/chat/stream`."
+      },
+      "ChatRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Chat id of `useChat`; ignored (the chat is the agent DM)."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/UiMessage"
+                },
+                {
+                  "description": "An AI SDK `UIMessage`. Stored messages carry `metadata.eharness` (turn id, stop reason, usage, pending approvals)."
+                }
+              ]
+            },
+            "maxItems": 1000,
+            "description": "Only the **last** message is read: a user message (send), or the assistant message with `approval-responded` / `output-available` tool parts (answers a pending approval; the continuation streams into the same message). Ids, metadata and history of the client are never trusted."
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "submit-message",
+              "regenerate-message"
+            ]
+          },
+          "messageId": {
+            "type": "string",
+            "description": "With a user message: replace that message and answer it (edit)."
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "description": "The `useChat` request body (`DefaultChatTransport`)."
+      },
+      "InterruptResult": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote",
+              "idle",
+              "unsupported"
+            ],
+            "description": "`local`: a turn of this instance was aborted; `remote`: the request was written for the instance running it; `idle`: nothing runs."
+          }
+        },
+        "required": [
+          "target"
+        ]
+      },
+      "InterruptRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      },
+      "AttentionList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "description": "The library queue, without the app fields of `GET /approvals` (agent name, task, question texts)."
+      },
+      "AttentionItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "`approvalId`, `toolCallId` (client tool, e.g. a question) or `waitId`: the `{id}` of `POST /attention/{id}/answer`."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "approval",
+              "client-tool",
+              "wait"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "parentSessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rootSessionId": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string",
+            "description": "Slug of the agent that runs the session."
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "input": {},
+          "risk": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "read",
+              "write",
+              "external",
+              "unknown",
+              null
+            ]
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "answeredWaiting": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "sessionId",
+          "parentSessionId",
+          "rootSessionId",
+          "toolCallId",
+          "toolName",
+          "risk",
+          "messageId",
+          "createdAt",
+          "answeredWaiting"
+        ]
+      },
+      "AttentionAnswered": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "resumed",
+              "recorded",
+              "already-answered"
+            ],
+            "description": "`recorded`: stored, others of the batch still wait (`remaining`). `resumed`: it was the last one and the session continues server side. `already-answered`: answered elsewhere first (refresh quietly)."
+          },
+          "id": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "approval",
+              "client-tool",
+              "wait"
+            ]
+          },
+          "remaining": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "id",
+          "sessionId"
+        ]
+      },
+      "AttentionAnswer": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "The `sessionId` of the item."
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "approval"
+                    ]
+                  },
+                  "approved": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "description": "Shown to the model when denied."
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 4000,
+                    "description": "A free-text note about this call: the model reads it right after the result (approved) or as part of the reason (denied)."
+                  },
+                  "remember": {
+                    "type": "string",
+                    "enum": [
+                      "session"
+                    ],
+                    "description": "With `approved: true`: also allow this tool without asking for the rest of the session. With `approved: false`: never allow it in this session."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "approved"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "question"
+                    ]
+                  },
+                  "answers": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "selected": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "other": {
+                          "type": "string"
+                        },
+                        "notes": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "description": "One answer per question, in order; null dismisses the questions."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "answers"
+                ]
+              }
+            ],
+            "description": "An approval decision, or the answer of an `ask_user_question`."
+          }
+        },
+        "required": [
+          "sessionId",
+          "answer"
+        ]
+      },
+      "EventList": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamEvent"
+            }
+          },
+          "lastSeq": {
+            "type": "integer",
+            "description": "Cursor for the next call: the `seq` of the last event, else the current head."
+          },
+          "resync": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "Present when `after` is older than the events kept by retention: some events were missed, refetch the state (agents, tasks, chats) and continue from `lastSeq`."
+          }
+        },
+        "required": [
+          "events",
+          "lastSeq"
+        ]
+      },
+      "TeamEvent": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "message-added",
+              "task-changed",
+              "agent-message",
+              "file-changed",
+              "agent-changed",
+              "routine-fired",
+              "routine-changed",
+              "settings-changed",
+              "mode-changed",
+              "model-call",
+              "providers-changed",
+              "connectors-changed",
+              "turn-started",
+              "pending-changed",
+              "approval-decided",
+              "attention-answered",
+              "session-recovered",
+              "child-reported"
+            ]
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "createdAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "type",
+          "agentId",
+          "sessionId",
+          "payload",
+          "createdAt"
+        ],
+        "description": "App events: `message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page) and the change events. Session events come from `eharness/activity` (spec 25): `turn-started` (turnId, kind, source; every turn of every session, also server-started ones), `pending-changed` (a snapshot: `waiting` = approvals / questions that wait for a person, `[]` when nothing does), `approval-decided` (id, approved, by), `attention-answered`, `session-recovered`, `child-reported`."
+      },
       "Upload": {
         "type": "object",
         "properties": {
@@ -1364,7 +1898,14 @@
           "messages": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/UiMessage"
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/UiMessage"
+                },
+                {
+                  "description": "An AI SDK `UIMessage`. Stored messages carry `metadata.eharness` (turn id, stop reason, usage, pending approvals)."
+                }
+              ]
             },
             "description": "The stored messages of the task session (newest 200)."
           },
@@ -1387,7 +1928,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "The approval id, or the tool call id of a question: the `{id}` of `POST /approvals/{id}`."
+            "description": "The approval id, or the tool call id of a question: the `{id}` of `POST /attention/{id}/answer`."
           },
           "kind": {
             "type": "string",
@@ -1517,220 +2058,6 @@
           "approvals"
         ]
       },
-      "ApprovalAccepted": {
-        "type": "object",
-        "properties": {
-          "accepted": {
-            "type": "boolean",
-            "enum": [
-              true
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "recorded",
-              "resumed"
-            ],
-            "description": "`recorded`: the answer is stored and other items of the same batch still wait (`remaining`). `resumed`: it was the last one and the session continues."
-          },
-          "remaining": {
-            "type": "integer",
-            "description": "Items still unanswered (0 when resumed)."
-          },
-          "id": {
-            "type": "string"
-          },
-          "sessionId": {
-            "type": "string"
-          },
-          "agentId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "accepted",
-          "status",
-          "remaining",
-          "id",
-          "sessionId",
-          "agentId"
-        ],
-        "description": "The answer is recorded. When it was the last of its batch the session continues in the background (follow it with the events feed); else the others still wait."
-      },
-      "ApprovalAnswer": {
-        "anyOf": [
-          {
-            "$ref": "#/components/schemas/ApprovalDecision"
-          },
-          {
-            "$ref": "#/components/schemas/QuestionAnswer"
-          }
-        ]
-      },
-      "ApprovalDecision": {
-        "type": "object",
-        "properties": {
-          "approved": {
-            "type": "boolean"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 2000,
-            "description": "Shown to the model when denied."
-          },
-          "note": {
-            "type": "string",
-            "maxLength": 4000,
-            "description": "A free-text note of the person about this call: the model reads it right after the result (approved) or as part of the reason (denied)."
-          },
-          "remember": {
-            "type": "string",
-            "enum": [
-              "session"
-            ],
-            "description": "With `approved: true`: also allow this tool without asking for the rest of the session (a library grant, spec 11 §3.1; it applies from the step after the continuation starts). With `approved: false`: never allow it in this session."
-          },
-          "endTurn": {
-            "type": "string",
-            "enum": [
-              "after-answers",
-              "if-denied"
-            ],
-            "description": "End the turn after the answer without calling the model again (spec 11): always, or only when denied."
-          },
-          "sessionId": {
-            "type": "string",
-            "description": "Session of the item; only needed when two sessions carry the same id."
-          }
-        },
-        "required": [
-          "approved"
-        ],
-        "description": "Answer of a tool approval."
-      },
-      "QuestionAnswer": {
-        "type": "object",
-        "properties": {
-          "answers": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "object",
-              "properties": {
-                "selected": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "other": {
-                  "type": "string"
-                },
-                "notes": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "One answer per question, in order; null dismisses the questions."
-          },
-          "sessionId": {
-            "type": "string",
-            "description": "Session of the item; only needed when two sessions carry the same id."
-          }
-        },
-        "required": [
-          "answers"
-        ],
-        "description": "Answer of an `ask_user_question` question."
-      },
-      "EventList": {
-        "type": "object",
-        "properties": {
-          "events": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TeamEvent"
-            }
-          },
-          "lastSeq": {
-            "type": "integer",
-            "description": "Cursor for the next call: the `seq` of the last event, else the current head."
-          },
-          "resync": {
-            "type": "boolean",
-            "enum": [
-              true
-            ],
-            "description": "Present when `after` is older than the events kept by retention: some events were missed, refetch the state (agents, tasks, chats) and continue from `lastSeq`."
-          }
-        },
-        "required": [
-          "events",
-          "lastSeq"
-        ]
-      },
-      "TeamEvent": {
-        "type": "object",
-        "properties": {
-          "seq": {
-            "type": "integer"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "message-added",
-              "task-changed",
-              "agent-message",
-              "file-changed",
-              "agent-changed",
-              "routine-fired",
-              "routine-changed",
-              "settings-changed",
-              "mode-changed",
-              "model-call",
-              "providers-changed",
-              "connectors-changed",
-              "turn-started",
-              "pending-changed",
-              "approval-decided",
-              "attention-answered",
-              "session-recovered",
-              "child-reported"
-            ]
-          },
-          "agentId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "sessionId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "payload": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "createdAt": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "seq",
-          "type",
-          "agentId",
-          "sessionId",
-          "payload",
-          "createdAt"
-        ],
-        "description": "App events: `message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page) and the change events. Session events come from `eharness/activity` (spec 25): `turn-started` (turnId, kind, source; every turn of every session, also server-started ones), `pending-changed` (a snapshot: `waiting` = approvals / questions that wait for a person, `[]` when nothing does), `approval-decided` (id, approved, by), `attention-answered`, `session-recovered`, `child-reported`."
-      },
       "AgentSessions": {
         "type": "object",
         "properties": {
@@ -1788,37 +2115,6 @@
           "tasks",
           "delegated"
         ]
-      },
-      "TaskAbortResult": {
-        "type": "object",
-        "properties": {
-          "taskId": {
-            "type": "string"
-          },
-          "target": {
-            "type": "string",
-            "enum": [
-              "local",
-              "remote",
-              "idle",
-              "unsupported"
-            ],
-            "description": "`local`/`remote`: the turn was told to stop (here or on another instance). `idle`: nothing was running."
-          }
-        },
-        "required": [
-          "taskId",
-          "target"
-        ]
-      },
-      "TaskAbortBody": {
-        "type": "object",
-        "properties": {
-          "reason": {
-            "type": "string",
-            "maxLength": 500
-          }
-        }
       },
       "TaskMessageResult": {
         "type": "object",
@@ -5862,400 +6158,6 @@
         }
       }
     },
-    "/agents/{id}/chat": {
-      "post": {
-        "tags": [
-          "chats"
-        ],
-        "summary": "Send a message, answer an approval or regenerate (useChat)",
-        "description": "The body is an AI SDK `useChat` request; the response is the UI message stream (`text/event-stream`).\n\n- **Send**: the last message is a user message. Attachments are `file` parts (`data:` / `https:` URLs, or the `library:///uploads/…` url returned by `POST /library/files`).\n- **Approvals**: a client that posts the assistant message back with the part in `approval-responded` (`addToolApprovalResponse` + `sendAutomaticallyWhen`) continues into the **same** message id. The web app answers through `POST /approvals` instead. A posted message none of whose answers is waiting any more (answered in another tab, by Auto mode, double click) is `409 ALREADY_ANSWERED`: nothing runs, refresh quietly.\n- **Regenerate / edit**: `trigger: \"regenerate-message\"`, or a user message with `messageId`.\n\nBusy policy: while a turn of this chat runs, a new user message is **steered** into it (`ifBusy=steer`, default): on this instance the response follows the running turn; when another instance runs it the message goes through the durable inbox and the route answers `202`. `ifBusy=reject` answers `409 EH_SESSION_BUSY` instead. Approvals, regenerate and edit never steer: `409`.\n\nErrors after the turn started (model failure, stale approval answer) arrive as an `error` chunk inside the stream, not as an HTTP status.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "0198f0a2-0000-7000-8000-000000000000",
-              "description": "Agent id or slug."
-            },
-            "required": true,
-            "description": "Agent id or slug.",
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "enum": [
-                "steer",
-                "reject"
-              ],
-              "description": "What a user message does while a turn runs. Default `steer`."
-            },
-            "required": false,
-            "description": "What a user message does while a turn runs. Default `steer`.",
-            "name": "ifBusy",
-            "in": "query"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChatRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The UI message stream of the turn",
-            "headers": {
-              "x-vercel-ai-ui-message-stream": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "v1"
-                  ]
-                },
-                "required": true
-              }
-            },
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string",
-                  "description": "Server-sent events: AI SDK UI message stream chunks, ending with `data: [DONE]`.",
-                  "example": "data: {\"type\":\"start\",\"messageId\":\"…\"}\n\ndata: [DONE]\n\n"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Steered into a turn running on another instance",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChatQueued"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "`EH_SESSION_BUSY`, `EH_SESSION_CLOSED`, `ALREADY_ANSWERED` or archived agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Request body too large",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/agents/{id}/chat/stream": {
-      "get": {
-        "tags": [
-          "chats"
-        ],
-        "summary": "Resume the running turn (useChat resume)",
-        "description": "Replays the chunks of the active turn from `from` and follows it until it ends, also when another instance runs it (stream log, ADR-0039). `204` when nothing streams: use the stored messages. A continuation turn after an approval replays only the continuation: refetch the message at the end.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "0198f0a2-0000-7000-8000-000000000000",
-              "description": "Agent id or slug."
-            },
-            "required": true,
-            "description": "Agent id or slug.",
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "pattern": "^\\d{1,15}$",
-              "description": "Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0."
-            },
-            "required": false,
-            "description": "Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0.",
-            "name": "from",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The UI message stream from the cursor",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string",
-                  "description": "Server-sent events: AI SDK UI message stream chunks, ending with `data: [DONE]`.",
-                  "example": "data: {\"type\":\"start\",\"messageId\":\"…\"}\n\ndata: [DONE]\n\n"
-                }
-              }
-            }
-          },
-          "204": {
-            "description": "No turn is streaming"
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/agents/{id}/chat/abort": {
-      "post": {
-        "tags": [
-          "chats"
-        ],
-        "summary": "Stop the running turn (any instance)",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "0198f0a2-0000-7000-8000-000000000000",
-              "description": "Agent id or slug."
-            },
-            "required": true,
-            "description": "Agent id or slug.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AbortRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Where the abort went",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AbortResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/agents/{id}/messages": {
-      "get": {
-        "tags": [
-          "chats"
-        ],
-        "summary": "Stored messages of the chat (paginated, newest page first)",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "0198f0a2-0000-7000-8000-000000000000",
-              "description": "Agent id or slug."
-            },
-            "required": true,
-            "description": "Agent id or slug.",
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Message id: only older messages."
-            },
-            "required": false,
-            "description": "Message id: only older messages.",
-            "name": "before",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200,
-              "default": 50,
-              "description": "Page size (1-200)."
-            },
-            "required": false,
-            "description": "Page size (1-200).",
-            "name": "limit",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A page, chronological",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessagesPage"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/agents/{id}/compact": {
       "post": {
         "tags": [
@@ -6562,6 +6464,727 @@
         }
       }
     },
+    "/sessions/{id}": {
+      "get": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Stored state of a session (running, active turn, pending items, usage)",
+        "description": "`eharness/http`. A session that does not exist reads as an empty snapshot. `running` is true when a turn runs on any instance.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dm:0198f0a2-0000-7000-8000-000000000000",
+              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+            },
+            "required": true,
+            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{id}/messages": {
+      "get": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Stored messages of a session (paginated, oldest first within the page)",
+        "description": "`eharness/http`. The newest page first: pass `nextBefore` as `before` for older ones.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dm:0198f0a2-0000-7000-8000-000000000000",
+              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+            },
+            "required": true,
+            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Message id: only older messages."
+            },
+            "required": false,
+            "description": "Message id: only older messages.",
+            "name": "before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "description": "Page size (1-200)."
+            },
+            "required": false,
+            "description": "Page size (1-200).",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMessagesPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{id}/chat": {
+      "post": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Send a message, answer an approval or regenerate (useChat)",
+        "description": "`eharness/http` (spec 26 §5). The body is an AI SDK `useChat` request; the response is the UI message stream (`text/event-stream`).\n\n- **Send**: the last message is a user message. Attachments are `file` parts (`data:` / `https:` URLs, or the `library:///uploads/…` url returned by `POST /library/files`; media type and reference are checked here).\n- **Approvals**: a client that posts the assistant message back with the part in `approval-responded` continues into the **same** message id (the web app answers through `POST /attention/{id}/answer` instead). A message none of whose answers is waiting any more is `409 EH_HTTP_ALREADY_ANSWERED`.\n- **Regenerate / edit**: `trigger: \"regenerate-message\"`, or a user message with `messageId`.\n- **Idempotency**: the `Idempotency-Key` header, else the user message id; a repeat is `409 EH_HTTP_DUPLICATE_REQUEST` (with `details.active` and the turn).\n\nBusy policy (`?ifBusy=`, default `steer`): while a turn of this chat runs, a new user message is **steered** into it: on this instance the response follows the running turn; when another instance runs it the message goes through the durable inbox and the route answers `202`. `reject` answers `409 EH_SESSION_BUSY`. Approvals, regenerate and edit never steer: `409`.\n\nOnly DM sessions take chat (a task takes messages through `POST /tasks/{id}/messages`: `409 TASK_SESSION`); an archived agent answers `409 AGENT_ARCHIVED`. Errors after the turn started arrive as an `error` chunk inside the stream.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dm:0198f0a2-0000-7000-8000-000000000000",
+              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+            },
+            "required": true,
+            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "steer",
+                "reject"
+              ],
+              "description": "What a user message does while a turn runs. Default `steer`."
+            },
+            "required": false,
+            "description": "What a user message does while a turn runs. Default `steer`.",
+            "name": "ifBusy",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The UI message stream of the turn (headers `x-eharness-turn-id`, `x-eharness-session-id`)",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events: AI SDK UI message stream chunks, ending with `data: [DONE]`.",
+                  "example": "data: {\"type\":\"start\",\"messageId\":\"…\"}\n\ndata: [DONE]\n\n"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Steered into a turn running on another instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatQueued"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`EH_SESSION_BUSY`, `EH_SESSION_CLOSED`, `EH_HTTP_ALREADY_ANSWERED`, `EH_HTTP_DUPLICATE_REQUEST`, `AGENT_ARCHIVED`, `TASK_SESSION`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{id}/chat/stream": {
+      "get": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Resume the running turn (useChat resume)",
+        "description": "`eharness/http`. Replays the chunks of the active turn from `from` (also `Last-Event-ID`) and follows it until it ends, also when another instance runs it. `204` when nothing streams. Works for task sessions too.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dm:0198f0a2-0000-7000-8000-000000000000",
+              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+            },
+            "required": true,
+            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,15}$",
+              "description": "Chunk cursor (0-based). Default 0."
+            },
+            "required": false,
+            "description": "Chunk cursor (0-based). Default 0.",
+            "name": "from",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The UI message stream from the cursor",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events: AI SDK UI message stream chunks, ending with `data: [DONE]`.",
+                  "example": "data: {\"type\":\"start\",\"messageId\":\"…\"}\n\ndata: [DONE]\n\n"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No turn is streaming"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{id}/interrupt": {
+      "post": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Stop the running turn (any instance)",
+        "description": "`eharness/http`. Works for task sessions too.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dm:0198f0a2-0000-7000-8000-000000000000",
+              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+            },
+            "required": true,
+            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterruptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Where the interrupt went",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterruptResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/attention": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "The library attention queue (approvals and questions of every session)",
+        "description": "`eharness/http`. The raw `listAttention` items. The web reads `GET /approvals` instead, which adds the agent, the task and the question texts.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/attention/{id}/answer": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Answer an approval or a question",
+        "description": "`eharness/http`. `respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: \"recorded\"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: \"resumed\"`). Nothing streams: the continuation runs server side and shows in the activity feed.\n\n- Approval: `{ kind: \"approval\", approved, reason?, note?, remember? }`. `remember: \"session\"` grants the tool for the rest of the session. `note` is shown to the model after the result.\n- Question: `{ kind: \"question\", answers }` (one per question, `null` dismisses).\n\nAn item that is gone is `404`; answered elsewhere first is `200 already-answered`; a running turn is `409`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The `id` of an item of `GET /approvals`."
+            },
+            "required": true,
+            "description": "The `id` of an item of `GET /approvals`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttentionAnswer"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded, resumed or already answered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionAnswered"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A turn of the session is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/activity": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Events after a cursor (JSON)",
+        "description": "`eharness/http` (`readActivityPage`). Every event of the app and of the sessions, in `seq` order.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,15}$",
+              "description": "Return events with a higher `seq`. Default 0."
+            },
+            "required": false,
+            "description": "Return events with a higher `seq`. Default 0.",
+            "name": "after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/activity/stream": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Live event feed (SSE)",
+        "description": "`eharness/http` (`handleActivityStream`): every instance tails the shared events log (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head. Frames: `retry` + `: connected` + `event: boot` at once; `resync` when the cursor is behind the retention mark or ahead of the head; `: keep-alive` every 15 s.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,15}$",
+              "description": "Replay events with a higher `seq`."
+            },
+            "required": false,
+            "description": "Replay events with a higher `seq`.",
+            "name": "after",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent events",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events: AI SDK UI message stream chunks, ending with `data: [DONE]`.",
+                  "example": "data: {\"type\":\"start\",\"messageId\":\"…\"}\n\ndata: [DONE]\n\n"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/library/files": {
       "post": {
         "tags": [
@@ -6802,99 +7425,13 @@
         }
       }
     },
-    "/tasks/{id}/stream": {
-      "get": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Follow the running turn of a task (UI message stream)",
-        "description": "Replays the chunks of the active turn of the task session from `from` and follows it until it ends, also when another instance runs it (stream log, ADR-0039). `204` when nothing streams: use `GET /tasks/{id}`. A continuation turn after an approval replays only the continuation.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "0198f0a2-0000-7000-8000-000000000000",
-              "description": "Task id."
-            },
-            "required": true,
-            "description": "Task id.",
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "pattern": "^\\d{1,15}$",
-              "description": "Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0."
-            },
-            "required": false,
-            "description": "Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0.",
-            "name": "from",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The UI message stream from the cursor",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string",
-                  "description": "Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open. When the requested cursor is older than the events kept (`TEAM_EVENTS_RETENTION_HOURS`), the stream first sends `event: resync` (data `{ \"seq\": <kept cursor> }`): refetch the state, then keep reading.",
-                  "example": "id: 12\nevent: task-changed\ndata: {\"seq\":12,\"type\":\"task-changed\",…}\n\n"
-                }
-              }
-            }
-          },
-          "204": {
-            "description": "No turn is streaming"
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown task",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/approvals": {
       "get": {
         "tags": [
           "approvals"
         ],
         "summary": "Everything that waits for a person, across all sessions",
-        "description": "Pending tool approvals and `ask_user_question` questions of every DM chat and every delegated task, read from the stored session state (any instance).",
+        "description": "Pending tool approvals and `ask_user_question` questions of every DM chat and every delegated task, read from the stored session state (any instance), with the agent, the task and the question texts. Answer with `POST /attention/{id}/answer` (`eharness/http`). `id` and `sessionId` of an item go into that route.",
         "security": [
           {
             "Bearer": []
@@ -6907,225 +7444,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApprovalList"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/approvals/{id}": {
-      "post": {
-        "tags": [
-          "approvals"
-        ],
-        "summary": "Answer an approval or a question",
-        "description": "`respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: \"recorded\"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: \"resumed\"`). Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.\n\n- Approval: `{ approved, reason?, note?, remember?, endTurn? }`. `remember: \"session\"` grants the tool for the rest of the session. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).\n- Question: `{ answers }` (one per question, `null` dismisses).\n\nAn item that is gone (answered elsewhere) is `404`; a stale answer or a running turn is `409`.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "The `id` of an item of `GET /approvals`."
-            },
-            "required": true,
-            "description": "The `id` of an item of `GET /approvals`.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApprovalAnswer"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Recorded (`recorded`) or recorded and resumed (`resumed`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApprovalAccepted"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No such pending item",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Stale answer, ambiguous id, or a turn of the session is running",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/events": {
-      "get": {
-        "tags": [
-          "events"
-        ],
-        "summary": "Events after a cursor (JSON)",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "pattern": "^\\d{1,15}$",
-              "description": "Return events with a higher `seq`. Default 0."
-            },
-            "required": false,
-            "description": "Return events with a higher `seq`. Default 0.",
-            "name": "after",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 500,
-              "default": 200
-            },
-            "required": false,
-            "name": "limit",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Events, oldest first",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EventList"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/events/stream": {
-      "get": {
-        "tags": [
-          "events"
-        ],
-        "summary": "Live event feed (SSE)",
-        "description": "The `eharness/activity` stream: every instance tails the shared events log (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head (new events only). Frames: `retry` + `: connected` + `event: boot` at once; `resync` when the cursor is behind the retention mark or ahead of the head; `: keep-alive` every 15 s.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "pattern": "^\\d{1,15}$",
-              "description": "Replay events with a higher `seq`."
-            },
-            "required": false,
-            "description": "Replay events with a higher `seq`.",
-            "name": "after",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Server-sent events",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string",
-                  "description": "Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open. When the requested cursor is older than the events kept (`TEAM_EVENTS_RETENTION_HOURS`), the stream first sends `event: resync` (data `{ \"seq\": <kept cursor> }`): refetch the state, then keep reading.",
-                  "example": "id: 12\nevent: task-changed\ndata: {\"seq\":12,\"type\":\"task-changed\",…}\n\n"
                 }
               }
             }
@@ -7211,86 +7529,6 @@
           },
           "404": {
             "description": "Unknown agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/tasks/{id}/abort": {
-      "post": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Stop the running turn of a task (any instance)",
-        "description": "`requestAbort()` on the task session: the instance that runs the turn stops it within one poll. A task that waits for an approval has no running turn (`target: idle`): answer or deny the approval instead.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "0198f0a2-0000-7000-8000-000000000000",
-              "description": "Task id."
-            },
-            "required": true,
-            "description": "Task id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TaskAbortBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Where the abort went",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskAbortResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown task",
             "content": {
               "application/json": {
                 "schema": {

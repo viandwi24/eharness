@@ -1,7 +1,7 @@
 // Logs page state: the list (cursor paged), the histogram stats, live updates from `model-call`
 // events and the open call. Framework-free so it is testable; the page wraps `state` in `$state`.
 import type { ApiClient, ModelCallDetail, ModelCallStats, ModelCallSummary } from '../api/client';
-import type { TeamEvent } from '../events/client';
+import type { ActivityRecord } from 'eharness/client';
 import { type LogFilters, emptyFilters, matchesFilters, queryOf } from './logs';
 
 export type LogsState = {
@@ -133,7 +133,7 @@ export function createLogsCore(api: ApiClient, state: LogsState, deps: LogsDeps 
 		},
 
 		/** A `model-call` event: prepend when the viewer is at the top, else count it. */
-		onEvent(e: TeamEvent, atTop: boolean): void {
+		onEvent(e: ActivityRecord, atTop: boolean): void {
 			if (e.type !== 'model-call' || !matchesFilters(state.filters, e)) return;
 			if (atTop) {
 				if (topPending) return;

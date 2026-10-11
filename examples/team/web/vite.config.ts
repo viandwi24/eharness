@@ -1,6 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-auto';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv } from 'vite';
 
 // Env comes from examples/team/.env (shared with the server; see ../.env.example).
@@ -13,11 +14,15 @@ export default defineConfig(({ mode }) => {
 	const apiTarget = process.env.TEAM_API_PROXY ?? env.TEAM_API_PROXY ?? 'http://localhost:4000';
 	return {
 	envDir,
+	// `eharness/client` resolves to the library source (no build step), like the server (also
+	// `paths` in tsconfig.json). Its only runtime import is `ai`.
+	resolve: { alias: { 'eharness/client': fileURLToPath(new URL('../../../src/client/index.ts', import.meta.url)) } },
 	define: {
 		__PUBLIC_API_URL__: JSON.stringify(env.PUBLIC_API_URL ?? ''),
 		__PUBLIC_TEAM_TOKEN__: JSON.stringify(env.PUBLIC_TEAM_TOKEN ?? '')
 	},
 	server: {
+		// `/api/*` (every route: /sessions, /attention, /activity, /agents, ...) goes to the team server.
 		proxy: { '/api': { target: apiTarget, changeOrigin: true, rewrite: (p) => p.replace(/^\/api/, '') } }
 	},
 	plugins: [

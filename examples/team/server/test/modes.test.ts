@@ -10,6 +10,8 @@ import { updateAgent } from '../src/app/agents.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
 import { type ModelConfig, scriptedModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
+import { attn } from './support/attention.ts'
+import { postAs, userMessage } from './support/http.ts'
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -75,9 +77,6 @@ const json = (method: string, body?: unknown): RequestInit => ({
   headers: { 'content-type': 'application/json' },
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 })
-const userMessage = (text: string) => ({
-  messages: [{ id: 'c', role: 'user', parts: [{ type: 'text', text }] }],
-})
 
 interface ModeBody {
   mode: string
@@ -102,7 +101,7 @@ const approvals = async (s: Server): Promise<Approval[]> =>
   ((await (await s.app.request('/approvals')).json()) as { approvals: Approval[] }).approvals
 const events = async (s: Server) =>
   (
-    (await (await s.app.request('/events?after=0&limit=500')).json()) as {
+    (await (await s.app.request('/activity?after=0&limit=500')).json()) as {
       events: Array<{ type: string; agentId: string | null; payload: Record<string, unknown> }>
     }
   ).events
@@ -127,7 +126,10 @@ const delegate = {
 }
 
 async function chat(s: Server, agent: string, text: string): Promise<void> {
-  const res = await s.app.request(`/agents/${agent}/chat`, json('POST', userMessage(text)))
+  const res = await s.app.request(
+    `/sessions/dm:${agent}/chat`,
+    postAs(`dm:${agent}`, userMessage(text)),
+  )
   expect(res.status).toBe(200)
   await res.text()
 }
@@ -215,14 +217,11 @@ describe('mode switch', () => {
     const pending = await approvals(s)
     expect(pending.map((a) => a.toolName)).toEqual(['delete_file'])
     expect(await exists(s, '/library/old.md')).toBe(true)
-    const denied = await s.app.request(
-      `/approvals/${pending[0]?.id}`,
-      json('POST', { approved: false }),
-    )
-    expect(denied.status).toBe(202)
+    const denied = await attn(s.app, pending[0], { approved: false })
+    expect(denied.status).toBe(200)
     await until('turn finished', async () => (await approvals(s)).length === 0)
     await until('denied turn ended', async () => {
-      const res = await s.app.request('/agents/researcher/messages?limit=50')
+      const res = await s.app.request('/sessions/dm:researcher/messages?limit=50')
       return JSON.stringify(await res.json()).includes('Denied, fine.')
     })
 
@@ -340,11 +339,8 @@ describe('auto mode', () => {
     expect(await getMode(s, 'writer')).toMatchObject({ auto: { paused: false } })
 
     // a person approves: Auto resumes
-    const answered = await s.app.request(
-      `/approvals/${pending[0]?.id}`,
-      json('POST', { approved: true }),
-    )
-    expect(answered.status).toBe(202)
+    const answered = await attn(s.app, pending[0], { approved: true })
+    expect(answered.status).toBe(200)
     await until('auto resumed', async () => !(await getMode(s, 'researcher')).auto.paused)
   })
 })

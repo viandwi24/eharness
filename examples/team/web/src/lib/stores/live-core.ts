@@ -1,7 +1,12 @@
+import {
+	type ActivityRecord,
+	type AttentionItem,
+	createAttentionList,
+	type FeedStatus,
+	type HarnessClient
+} from 'eharness/client';
 import type { Approval, ApiClient, ApprovalBody, Task } from '../api/client';
 import { upsertTask } from '../board/board';
-import type { Connection, TeamEvent } from '../events/client';
-import { isAlreadyAnswered } from '../approval/outcome';
 import { applyActivity } from './activity';
 import type { AgentsStore } from './agents-core';
 
@@ -10,7 +15,7 @@ export type LiveState = {
 	approvalsLoaded: boolean;
 	tasks: Task[];
 	tasksLoaded: boolean;
-	connection: Connection;
+	connection: FeedStatus;
 	/** The events stream dropped and is being re-established (a server restart, the network). */
 	reconnecting: boolean;
 	/** Agent id (or slug) of the open chat; null elsewhere. */
@@ -31,6 +36,8 @@ export const emptyLiveState = (): LiveState => ({
 });
 
 export type LiveDeps = {
+	/** The `eharness/http` client: attention answers. */
+	client: HarnessClient;
 	isVisible?: () => boolean;
 	/** Debounce for refetches triggered by events (ms). */
 	debounceMs?: number;
@@ -39,7 +46,7 @@ export type LiveDeps = {
 };
 
 /** Live store logic: approvals inbox, task board and sidebar activity, driven by the events feed. */
-export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveState, deps: LiveDeps = {}) {
+export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveState, deps: LiveDeps) {
 	const visible = deps.isVisible ?? (() => true);
 	const debounce = deps.debounceMs ?? 250;
 	const timer = deps.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
@@ -60,20 +67,42 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		return agents.find(state.viewing)?.id ?? state.viewing;
 	};
 
-	// A list fetched while a newer event arrived is stale: it must not overwrite what that event
-	// applied. `gen` counts events per list; a fetch that saw a later event refetches, and only the
-	// newest request may write.
-	const gen = { tasks: 0, approvals: 0 };
-	const req = { tasks: 0, approvals: 0 };
-	async function fetchList<K extends 'tasks' | 'approvals'>(key: K, load: () => Promise<LiveState[K]>, done: () => void): Promise<void> {
-		const atGen = gen[key];
-		const mine = ++req[key];
+	// The approvals inbox is the library's attention list (optimistic answers, generation guard,
+	// debounced refetch). The team reads `GET /approvals` (the enriched view: agent name, task,
+	// question texts) instead of `GET /attention`; the rows keep every `AttentionItem` key the list
+	// uses (`id`, `sessionId`) and add the app's fields.
+	const approvalsClient: HarnessClient = {
+		...deps.client,
+		attention: {
+			...deps.client.attention,
+			list: async () => ({ items: (await api.get('/approvals')).approvals as unknown as AttentionItem[] })
+		}
+	};
+	const attention = createAttentionList({
+		client: approvalsClient,
+		debounceMs: debounce,
+		clock: { setTimeout: (fn, ms) => timer(fn, ms) },
+		onError: report
+	});
+	attention.subscribe((s) => {
+		state.approvals = [...s.items] as unknown as Approval[];
+		state.approvalsLoaded = s.loaded;
+	});
+
+	// A task list fetched while a newer event arrived is stale: it must not overwrite what that event
+	// applied. `gen` counts events; a fetch that saw a later event refetches, and only the newest
+	// request may write.
+	let tasksGen = 0;
+	let tasksReq = 0;
+	async function fetchTasks(): Promise<void> {
+		const atGen = tasksGen;
+		const mine = ++tasksReq;
 		try {
-			const list = await load();
-			if (mine !== req[key]) return; // a newer request writes
-			state[key] = list;
-			done();
-			if (atGen !== gen[key]) later(key, key === 'tasks' ? core.loadTasks : core.loadApprovals);
+			const list = (await api.get('/tasks', { query: { limit: 200 } })).tasks;
+			if (mine !== tasksReq) return; // a newer request writes
+			state.tasks = list;
+			state.tasksLoaded = true;
+			if (atGen !== tasksGen) later('tasks', core.loadTasks);
 		} catch (e) {
 			report(e);
 		}
@@ -83,8 +112,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		state.revs[k]++;
 	};
 
-	const chatListeners = new Set<(e: TeamEvent) => void>();
-	const modelCallListeners = new Set<(e: TeamEvent) => void>();
+	const chatListeners = new Set<(e: ActivityRecord) => void>();
+	const modelCallListeners = new Set<(e: ActivityRecord) => void>();
 	const resyncListeners = new Set<() => void>();
 	const busyProbes = new Set<() => boolean>();
 
@@ -92,24 +121,20 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		state,
 
 		/** Chat activity of DM sessions (`turn-started`, `message-added`): open chats follow server turns. */
-		onChatEvent(fn: (e: TeamEvent) => void): () => void {
+		onChatEvent(fn: (e: ActivityRecord) => void): () => void {
 			chatListeners.add(fn);
 			return () => chatListeners.delete(fn);
 		},
 
 		/** `model-call` events (one per logged provider call): the Logs page prepends rows. */
-		onModelCallEvent(fn: (e: TeamEvent) => void): () => void {
+		onModelCallEvent(fn: (e: ActivityRecord) => void): () => void {
 			modelCallListeners.add(fn);
 			return () => modelCallListeners.delete(fn);
 		},
 
-		loadApprovals(): Promise<void> {
-			return fetchList('approvals', async () => (await api.get('/approvals')).approvals, () => (state.approvalsLoaded = true));
-		},
+		loadApprovals: (): Promise<void> => attention.refresh(),
 
-		loadTasks(): Promise<void> {
-			return fetchList('tasks', async () => (await api.get('/tasks', { query: { limit: 200 } })).tasks, () => (state.tasksLoaded = true));
-		},
+		loadTasks: fetchTasks,
 
 		/** Something runs that should show up live: a task, or a chat probe (`addBusyProbe`). Drives the restart pings. */
 		isBusy(): boolean {
@@ -141,7 +166,7 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			await Promise.all([core.loadApprovals(), core.loadTasks(), agents.load()]);
 		},
 
-		handleEvent(e: TeamEvent): void {
+		handleEvent(e: ActivityRecord): void {
 			if (e.type === 'model-call') {
 				for (const fn of modelCallListeners) {
 					try {
@@ -166,10 +191,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			const p = e.payload;
 			// a stored message (turn step or end): context size and usage of the open chat moved
 			if (e.type === 'message-added') later('chat', bump('chat'));
-			if (e.type === 'task-changed' || e.type === 'pending-changed' || e.type === 'approval-decided') {
-				gen.tasks++;
-				gen.approvals++;
-			}
+			attention.handleActivity(e); // pending-changed, approval-decided, turn-ended, ...: the list refetches
+			if (e.type === 'task-changed' || e.type === 'pending-changed' || e.type === 'approval-decided') tasksGen++;
 			if (e.type === 'task-changed') {
 				const id = typeof p.taskId === 'string' ? p.taskId : undefined;
 				const known = id ? state.tasks.find((t) => t.id === id) : undefined;
@@ -185,13 +208,6 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 				later('tasks', core.loadTasks); // new task, or summary / cost changed
 				later('approvals', core.loadApprovals);
 			} else if (e.type === 'pending-changed' || e.type === 'approval-decided') {
-				// decided (by a person in any tab, the Auto classifier, a remembered grant): the
-				// card goes at once, never offered again; the refetch below confirms
-				if (e.type === 'approval-decided' && typeof p.id === 'string') {
-					const id = p.id;
-					state.approvals = state.approvals.filter((a) => !(a.id === id && (!e.sessionId || a.sessionId === e.sessionId)));
-				}
-				later('approvals', core.loadApprovals);
 				later('tasks', core.loadTasks);
 			} else if (e.type === 'file-changed') {
 				later('files', bump('files'));
@@ -232,20 +248,13 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			}
 		},
 
-		/** Answer an approval or question. Optimistic: the item leaves the list at once and returns on failure. */
+		/**
+		 * Answer an approval or question. Optimistic (the library list): the item leaves at once and
+		 * returns on failure, except when it was answered elsewhere. Rejects with the `HarnessHttpError`.
+		 */
 		async answer(a: Approval, body: ApprovalBody): Promise<void> {
-			const before = state.approvals;
-			state.approvals = before.filter((x) => !(x.id === a.id && x.sessionId === a.sessionId));
-			try {
-				await api.post('/approvals/{id}', { params: { id: a.id }, body: { ...body, sessionId: a.sessionId } as ApprovalBody });
-			} catch (e) {
-				// Answered elsewhere (404 / 409 ALREADY_ANSWERED): the item stays gone. Any other
-				// failure puts it back. Either way the server is the truth: refetch.
-				state.approvals = isAlreadyAnswered(e) ? state.approvals : before;
-				later('approvals', core.loadApprovals);
-				throw e;
-			}
-			later('approvals', core.loadApprovals);
+			const wire = ('answers' in body ? { kind: 'question', answers: body.answers } : { kind: 'approval', ...body }) as unknown as Parameters<typeof attention.answer>[1];
+			await attention.answer(a as unknown as AttentionItem, wire);
 			later('tasks', core.loadTasks);
 		},
 

@@ -30,10 +30,11 @@ describe('catalog in chats', () => {
       catalog: { scripted: { contextWindow: 123_456, pricing: { input: 1000, output: 2000 } } },
     })
     servers.push(server)
-    const res = await server.app.request('/agents/researcher/chat', {
+    const res = await server.app.request('/sessions/dm:researcher/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        id: 'dm:researcher',
         messages: [{ id: 'c', role: 'user', parts: [{ type: 'text', text: 'hi' }] }],
       }),
     })

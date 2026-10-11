@@ -7,11 +7,12 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
+  answerItem,
   approvals,
   json,
   messages,
   parseSse,
-  post,
+  postAs,
   type StoredMessage,
   sleep,
   startInstance,
@@ -45,7 +46,10 @@ try {
     'Ask the researcher to find out, in two sentences, what the AI SDK `streamText` function does ' +
     'and to save the answer to /library/research/streamtext.md. Then tell me what they found.'
   console.log(`> ${prompt}`)
-  const res = await fetch(`${server.url}/agents/lead/chat`, post(userMessage(prompt)))
+  const res = await fetch(
+    `${server.url}/sessions/dm:lead/chat`,
+    postAs('dm:lead', userMessage(prompt)),
+  )
   if (res.status !== 200) throw new Error(`chat ${res.status}: ${await res.text()}`)
   const first = parseSse(await res.text())
   console.log(`lead turn 1: ${first.chunks.length} chunks`)
@@ -60,7 +64,7 @@ try {
         throw new Error(`approval ${item.id} is listed again after it was answered`)
       answered.add(item.id)
       console.log(`approving ${item.toolName} of ${item.agentName} (smoke run: auto-approve)`)
-      const answer = await fetch(`${server.url}/approvals/${item.id}`, post({ approved: true }))
+      const answer = await answerItem(server, item, { approved: true })
       const body = await answer.text()
       if (answer.status !== 202) throw new Error(`approval ${item.id}: ${answer.status} ${body}`)
       console.log(`  -> ${body}`)

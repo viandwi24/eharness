@@ -13,6 +13,11 @@ is complete and is the reference. This page covers what the document cannot say 
 Tags: `system`, `agents`, `chats`, `library`, `memory`, `settings`, `routines`, `tasks`,
 `approvals`, `events`.
 
+Chat, session reads, the attention answers and the event feed are **`eharness/http`** (spec 26,
+[guide](../../../docs/guides/http-server.md)), mounted on this app in `http/routes/harness.ts`
+(`createHarnessHttp` in `infra/eh/harness-http.ts`). Their OpenAPI entries are documentation only
+(hand-written in `http/schemas/harness.ts`); the library validates and answers those routes.
+
 ## Auth
 
 If `TEAM_TOKEN` is set, every route except `GET /health`, `/docs` and `/openapi.json` needs
@@ -28,7 +33,9 @@ One shape for every failure, including request validation:
 { "error": { "code": "VERSION_CONFLICT", "message": "...", "details": { "currentVersion": 7 } } }
 ```
 
-`details` is optional. Domain errors map `invalid` 400, `not_found` 404, `conflict` 409,
+`details` is optional. The library routes use the same shape with `EH_*` / `EH_HTTP_*` codes
+(`EH_HTTP_INVALID_BODY`, `EH_HTTP_ALREADY_ANSWERED`, `EH_HTTP_DUPLICATE_REQUEST`, `EH_SESSION_BUSY`,
+...; spec 26 §3); `DomainError` thrown inside their hooks keeps its status and code. Domain errors map `invalid` 400, `not_found` 404, `conflict` 409,
 `forbidden` 403. eharness errors keep their code: `EH_SESSION_BUSY` / `EH_SESSION_CLOSED` /
 `EH_PENDING_RESPONSE` 409, `EH_INVALID_INPUT` 400, `EH_STORAGE` 503. Bodies over the limit are 413.
 
@@ -60,28 +67,41 @@ secret either; a form value comes back as `{ set, hint }`.
 The chunk shapes belong to the AI SDK (UI message stream protocol, header
 `x-vercel-ai-ui-message-stream: v1`), not to this app.
 
+A **session id** is `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` is accepted) or the
+`sessionId` of a task row (`GET /tasks`). URL-encode the colon or leave it: both work.
+
 | Endpoint | Use |
 |---|---|
-| `POST /agents/{id}/chat` | send, answer an approval, regenerate or edit. Body is a `useChat` request. `200` streams the turn; `202` means the message was steered into a turn on another instance; `409` busy (`ifBusy=reject`) |
-| `GET /agents/{id}/chat/stream?from=` | resume the running turn from chunk `from` (also `Last-Event-ID`); `204` when idle. Works across instances |
-| `POST /agents/{id}/chat/abort` | stop the turn on any instance; says `local`, `remote` or `idle` |
-| `GET /events/stream?after=` | SSE feed of changes (`message-added`, `task-changed`, `pending-changed`, `approval-decided`, `routine-fired`, `file-changed`, ...; session events come from `eharness/activity`) with `seq` as the event id; JSON variant `GET /events?after=` |
+| `POST /sessions/{id}/chat?ifBusy=` | send, answer an approval, regenerate or edit (DM sessions only). Body is a `useChat` request whose `id` is the session id. `200` streams the turn; `202` means the message was steered into a turn on another instance; `409` busy (`ifBusy=reject`, or approve / regenerate / edit while busy); `409 EH_HTTP_ALREADY_ANSWERED` for a stale approval answer; `409 EH_HTTP_DUPLICATE_REQUEST` for a repeated message id / `Idempotency-Key`. `ifBusy` is `steer` (default) or `reject` |
+| `GET /sessions/{id}/chat/stream?from=` | resume the running turn from chunk `from` (also `Last-Event-ID`); `204` when idle. Works across instances and for task sessions |
+| `POST /sessions/{id}/interrupt` | stop the turn on any instance; says `local`, `remote`, `idle` or `unsupported`. Works for task sessions |
+| `GET /sessions/{id}` | stored state: `running`, `busy`, `activeTurn`, `pending`, `usage` |
+| `GET /sessions/{id}/messages?before&limit` | stored messages, newest page first (`nextBefore` absent at the start) |
+| `GET /approvals` | **app route**: everything waiting for a person with agent name, task and question texts |
+| `GET /attention` | the library queue (`listAttention`, no app fields) |
+| `POST /attention/{id}/answer` | answer an approval or a question: `{ sessionId, answer }`; `answer` is `{ kind: 'approval', approved, reason?, note?, remember? }` or `{ kind: 'question', answers }`. `200 { status: 'recorded' \| 'resumed' \| 'already-answered', remaining? }`; `404` item gone; `409` a turn of the session runs |
+| `GET /activity/stream?after=` | SSE feed of changes (`message-added`, `task-changed`, `pending-changed`, `approval-decided`, `routine-fired`, `file-changed`, ...; session events come from `eharness/activity`) with `seq` as the event id; JSON variant `GET /activity?after=&limit=` |
+
+Chat on a task session is `409 TASK_SESSION` (a person talks to a task through `POST
+/tasks/{id}/messages`, the durable inbox); an archived agent's DM is `409 AGENT_ARCHIVED` for chat
+and still readable. `GET /health` is the team's own route (it carries `name` and `time` next to
+`boot`; the library `/health` is not mounted).
 
 ### AI SDK client contract
 
 The web uses the `Chat` class of `@ai-sdk/svelte` (the `useChat` contract) with `DefaultChatTransport`:
 
-- `api: /api/agents/{id}/chat`; send only the last message (`prepareSendMessagesRequest`): the
+- `api: /api/sessions/dm:{agentId}/chat` (body `id` = the session id); send only the last message (`prepareSendMessagesRequest`): the
   server never rebuilds from client history and ignores everything but `text` / `file` parts.
 - Approvals: `addToolApprovalResponse` plus `sendAutomaticallyWhen` re-post the assistant message
   to the same endpoint; the continuation streams **into the same message id**.
-- Reload: the Svelte `Chat` has no `resume` option, so the app calls `chat.resumeStream()` (with `prepareReconnectToStreamRequest` pointing at `GET .../chat/stream`); on `204` read `GET /agents/{id}/messages`.
+- Reload: the Svelte `Chat` has no `resume` option, so the app calls `chat.resumeStream()` (with `prepareReconnectToStreamRequest` pointing at `GET .../chat/stream`); on `204` read `GET /sessions/{id}/messages`.
   A continuation after an approval replays only the continuation, so refetch the message at the end.
 - Errors after the stream started (model failure, stale answer) arrive as an `error` chunk, not a
   status. Statuses are only for failures before the turn commits.
 - Approvals of **other** sessions (a role agent's task, a routine run) are not in a chat stream:
-  list them with `GET /approvals` and answer with `POST /approvals/{id}`; the continuation runs
-  server side and shows up in the events feed.
+  list them with `GET /approvals` and answer with `POST /attention/{id}/answer`; the continuation
+  runs server side and shows up in the activity feed.
 
 A non-browser client works the same way: POST the body, read the SSE stream, remember the index of
 the last chunk, and resume with `from`.

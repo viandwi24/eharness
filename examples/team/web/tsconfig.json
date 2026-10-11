@@ -1,7 +1,9 @@
 {
 	"extends": "$app/tsconfig",
 	"compilerOptions": {
-		"strict": true
+		"strict": true,
+		"lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+		"paths": { "eharness/client": ["../../../src/client/index.ts"] }
 	},
 	"include": ["src", "vite.config.ts"]
 }

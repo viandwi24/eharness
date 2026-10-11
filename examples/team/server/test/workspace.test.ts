@@ -146,7 +146,7 @@ describe('library', () => {
       ).status,
     ).toBe(404)
 
-    const feed = (await (await app.request('/events?limit=200')).json()) as {
+    const feed = (await (await app.request('/activity?limit=200')).json()) as {
       events: Array<{
         type: string
         agentId: string | null
@@ -340,7 +340,7 @@ describe('settings', () => {
       send('PATCH', { budgetUsd: null, defaultModel: null }),
     )
     expect(await cleared.json()).toMatchObject({ budgetUsd: null, defaultModel: null, spawnCap: 2 })
-    const feed = (await (await app.request('/events?limit=50')).json()) as {
+    const feed = (await (await app.request('/activity?limit=50')).json()) as {
       events: Array<{ type: string }>
     }
     expect(feed.events.filter((e) => e.type === 'settings-changed')).toHaveLength(2)
@@ -364,9 +364,12 @@ describe('tasks: abort, messages, agent context', () => {
   test('a message goes into the task session through the inbox; abort of an idle task is idle', async () => {
     const s = boot()
     const t = task(s, 'researcher', 'routine:r:1')
-    const abort = await s.app.request(`/tasks/${t.id}/abort`, send('POST', { reason: 'enough' }))
+    const abort = await s.app.request(
+      '/sessions/routine:r:1/interrupt',
+      send('POST', { reason: 'enough' }),
+    )
     expect(abort.status).toBe(200)
-    expect(await abort.json()).toEqual({ taskId: t.id, target: 'idle' })
+    expect(await abort.json()).toEqual({ target: 'idle' })
 
     const sent = await s.app.request(
       `/tasks/${t.id}/messages`,
@@ -387,7 +390,7 @@ describe('tasks: abort, messages, agent context', () => {
     const detail = (await (await s.app.request(`/tasks/${t.id}`)).json()) as { messages: unknown[] }
     expect(detail.messages.length).toBe(2)
 
-    expect((await s.app.request('/tasks/nope/abort', { method: 'POST' })).status).toBe(404)
+    expect((await s.app.request('/sessions/nope/interrupt', { method: 'POST' })).status).toBe(404)
     expect(
       (await s.app.request(`/tasks/${t.id}/messages`, send('POST', { text: '   ' }))).status,
     ).toBe(400)
@@ -450,7 +453,7 @@ describe('tasks: abort, messages, agent context', () => {
         '/memory',
         '/memory/file',
         '/settings',
-        '/tasks/{id}/abort',
+        '/sessions/{id}/interrupt',
         '/tasks/{id}/messages',
         '/agents/{id}/context',
         '/routines',

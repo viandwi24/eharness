@@ -66,10 +66,13 @@ export const ChatQueuedSchema = z
     inboxId: z.string(),
     delivered: z.literal('steer'),
     target: z.enum(['local', 'remote']),
+    duplicate: z.literal(true).optional().openapi({
+      description: 'The same `Idempotency-Key` was delivered before: nothing was added.',
+    }),
   })
   .openapi('ChatQueued', {
     description:
-      'A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /agents/{id}/chat/stream`.',
+      'A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /sessions/{id}/chat/stream`.',
   })
 
 /** The documented body of an SSE response: the chunks are the AI SDK UI message stream protocol. */
@@ -77,29 +80,6 @@ export const EventStreamSchema = z.string().openapi({
   description: 'Server-sent events: AI SDK UI message stream chunks, ending with `data: [DONE]`.',
   example: 'data: {"type":"start","messageId":"…"}\n\ndata: [DONE]\n\n',
 })
-
-export const MessagesPageSchema = z
-  .object({
-    messages: z.array(UiMessageSchema).openapi({ description: 'Chronological (oldest first).' }),
-    nextBefore: z
-      .string()
-      .nullable()
-      .openapi({ description: 'Pass as `before` to load older messages; null = no more.' }),
-  })
-  .openapi('MessagesPage')
-
-export const AbortResultSchema = z
-  .object({
-    target: z.enum(['local', 'remote', 'idle', 'unsupported']).openapi({
-      description:
-        '`local`: a turn of this instance was aborted; `remote`: the request was written for the instance running it; `idle`: nothing runs.',
-    }),
-  })
-  .openapi('AbortResult')
-
-export const AbortRequestSchema = z
-  .object({ reason: z.string().max(500).optional() })
-  .openapi('AbortRequest')
 
 export const CompactResultSchema = z
   .object({

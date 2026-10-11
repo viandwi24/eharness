@@ -1,28 +1,13 @@
-// Per-agent chat on top of `@ai-sdk/svelte` `Chat` for eharness (P32 §7.2).
-// Verified against @ai-sdk/svelte 5.0.137 / ai 7.0.x: `Chat` extends `AbstractChat` and takes `ChatInit`
-// (id, messages, transport, sendAutomaticallyWhen, onError, ...). There is NO `resume` option on the
-// Svelte class (that is a React `useChat` option), so resuming is an explicit `chat.resumeStream()`.
+// Per-agent chat: `@ai-sdk/svelte` `Chat` plus `createChatSession` of `eharness/client` (history
+// paging, re-attach to a running turn, steering, recovery), mirrored into Svelte state. The
+// library owns the logic; this class adds reactivity and the library uploads.
+// `Chat` has no `resume` option (that is React's `useChat`), so resuming is `session.follow()`.
 import { Chat } from '@ai-sdk/svelte';
-import { DefaultChatTransport, type FileUIPart, type UIMessage } from 'ai';
-import { getToken } from '../api/index';
-import { chatPaths, UPLOAD_MAX_BYTES } from './constants.js';
-import { CONTINUE_TEXT, interruptedTurn } from './interrupted.js';
-import { type ChatProblem, describeChatError, isNetworkError } from './errors.js';
-import {
-	buildChatRequest,
-	ChatBusyError,
-	ChatStaleError,
-	classifyChatResponse,
-	emptyStreamResponse,
-	type MessagesPage,
-	mergeOlder,
-	replaceTail,
-	shouldResume,
-	type StatsLike,
-	uploadErrorText
-} from './http.js';
-
-type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+import type { FileUIPart, UIMessage } from 'ai';
+import { type ChatSession, type ChatSessionState, createChatSession, interruptedTurn } from 'eharness/client';
+import { harness } from '../api/index';
+import { UPLOAD_MAX_BYTES } from './constants.js';
+import { uploadErrorText } from './http.js';
 
 export type Notify = (level: 'info' | 'error', text: string) => void;
 
@@ -30,357 +15,87 @@ export type CreateAgentChatOptions = {
 	agentId: string;
 	/** Initial messages, when the caller already has them. Otherwise `init()` loads them. */
 	messages?: UIMessage[];
-	/** Override endpoints (defaults to `chatPaths`). */
-	paths?: Partial<typeof chatPaths>;
-	fetch?: FetchFn;
 	/** Toasts. */
 	notify?: Notify;
-	/** Page size of `GET /messages`. */
+	/** Page size of `GET /sessions/{id}/messages`. */
 	pageSize?: number;
 };
 
-const PAGE = 50;
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const INITIAL: ChatSessionState = { loaded: false, hasOlder: false, loadingOlder: false, following: false, notice: null, problem: null, activity: null, busy: false };
 
 export class AgentChat {
 	readonly chat: Chat<UIMessage>;
+	readonly session: ChatSession<UIMessage>;
 	readonly agentId: string;
-	/** History loaded (first page). */
-	loaded = $state(false);
-	/** Older pages exist (`nextBefore` from the server). */
-	hasOlder = $state(false);
-	loadingOlder = $state(false);
-	/** Transient banner, e.g. "Sent to the running turn". */
-	notice = $state<string | null>(null);
-	/** Reattached to a running turn / following a steered one. */
-	following = $state(false);
-	/** A failure of a turn this tab follows but did not start: shown inline, with Retry when it helps. */
-	problem = $state<ChatProblem | null>(null);
-	/** Live state of the streamed turn (`data-eh.status`, transient): e.g. `compacting`. */
-	activity = $state<'thinking' | 'tool' | 'compacting' | null>(null);
-
-	/** The reply this chat ended on was cut short by a dead process: Continue / Retry are offered. */
-	get interrupted(): boolean {
-		return interruptedTurn(this.chat.messages as UIMessage[]) !== undefined;
-	}
-
-	#nextBefore: string | null = null;
-	/** A dropped connection seen while following (retried by `follow`, shown when retries ran out). */
-	#netError: Error | null = null;
-	#paths: typeof chatPaths;
-	#fetch: FetchFn;
-	#notify: Notify;
-	#pageSize: number;
-	#initPromise: Promise<void> | undefined;
+	#s = $state.raw<ChatSessionState>(INITIAL);
 
 	constructor(options: CreateAgentChatOptions) {
 		this.agentId = options.agentId;
-		this.#paths = { ...chatPaths, ...options.paths };
-		this.#fetch = options.fetch ?? ((input, init) => fetch(input, init));
-		this.#notify = options.notify ?? (() => {});
-		this.#pageSize = options.pageSize ?? PAGE;
-		const agentId = options.agentId;
-
-		const transport = new DefaultChatTransport<UIMessage>({
-			api: this.#paths.chat(agentId),
-			fetch: ((input: RequestInfo | URL, init?: RequestInit) => this.#chatFetch(input, init)) as typeof fetch,
-			// Spec 11 §7: the server reads only the last message (plus trigger / messageId); never ship history.
-			prepareSendMessagesRequest: ({ id, messages, trigger, messageId }) =>
-				buildChatRequest({ id, messages, trigger, messageId }),
-			prepareReconnectToStreamRequest: () => ({ api: this.#paths.stream(agentId) })
+		this.session = createChatSession<UIMessage>({
+			client: harness,
+			sessionId: `dm:${options.agentId}`, // the DM session of the agent
+			...(options.messages ? { messages: options.messages } : {}),
+			...(options.pageSize ? { pageSize: options.pageSize } : {}),
+			transportOptions: { ifBusy: 'steer' }, // a message sent while a turn runs joins it
+			...(options.notify ? { notify: options.notify } : {})
 		});
-
-		this.chat = new Chat<UIMessage>({
-			id: agentId,
-			messages: options.messages,
-			transport,
-			// No `sendAutomaticallyWhen`: every approval and question is answered through
-			// `POST /approvals` (the server records it, partial answers included, and runs the
-			// continuation), never by posting the assistant message back from here. One answer
-			// path means a decided item can never be answered twice from the chat.
-			onError: (e) => this.#onError(e),
-			onData: (part) => {
-				if (part.type !== 'data-eh.status') return;
-				const state = (part.data as { state?: string } | undefined)?.state;
-				this.activity = state === 'thinking' || state === 'tool' || state === 'compacting' ? state : null;
-			},
-			// After a respond() continuation ends the stored message is the truth: refetch it.
-			onFinish: ({ message, isAbort, isError }) => {
-				this.activity = null;
-				if (!this.following) this.notice = null;
-				if (isAbort || isError) return;
-				if (message.role === 'assistant' && message.parts.some((p) => 'approval' in p)) void this.refetch();
-			}
-		});
-		if (options.messages) this.loaded = true;
+		// Every approval and question is answered through `POST /attention/{id}/answer` (see the live
+		// store), never by posting the assistant message back: no `sendAutomaticallyWhen`.
+		this.chat = new Chat<UIMessage>({ ...this.session.chatInit });
+		this.session.bind(this.chat);
+		this.session.subscribe((s) => (this.#s = s));
 	}
 
-	/** Auth header on every request; the chat POST also gets the 202 / 409 handling. */
-	#authed(init: RequestInit | undefined): RequestInit {
-		const headers = new Headers(init?.headers);
-		const token = getToken();
-		if (token && !headers.has('authorization')) headers.set('authorization', `Bearer ${token}`);
-		return { ...init, headers };
+	/** History loaded (first page). */
+	get loaded(): boolean {
+		return this.#s.loaded;
 	}
-
-	async #chatFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-		const res = await this.#fetch(input, this.#authed(init));
-		if (res.ok && res.status !== 202) return res;
-		const body: unknown = await res.json().catch(() => undefined);
-		const outcome = classifyChatResponse(res.status, body);
-		if (outcome.kind === 'steered') {
-			this.notice = 'Sent to the running turn';
-			this.#steered = true;
-			return emptyStreamResponse();
-		}
-		if (outcome.kind === 'busy') throw new ChatBusyError(outcome.message, outcome.code);
-		if (outcome.kind === 'stale') throw new ChatStaleError(outcome.message);
-		throw new Error(outcome.kind === 'error' ? outcome.message : 'Request failed');
+	/** Older pages exist. */
+	get hasOlder(): boolean {
+		return this.#s.hasOlder;
 	}
-	#steered = false;
-
-	#onError(e: Error): void {
-		if (e instanceof ChatStaleError) {
-			// The item was answered elsewhere: show what is stored, nothing else.
-			this.chat.clearError();
-			void this.refetch();
-			return;
-		}
-		if (e instanceof ChatBusyError) {
-			// The optimistic user message was never accepted: drop it and restore the stored view.
-			const last = this.chat.messages.at(-1);
-			if (last?.role === 'user') this.chat.messages = this.chat.messages.slice(0, -1);
-			this.chat.clearError();
-			this.#notify('error', e.message);
-			return;
-		}
-		if (isNetworkError(e)) {
-			if (this.following) {
-				// `follow` retries quietly and shows the banner when it gives up
-				this.#netError = e;
-				this.chat.clearError();
-				return;
-			}
-			// The connection of a turn this tab started broke after the reply began: the turn runs on
-			// the server, so re-attach (full replay) instead of leaving a half reply and an error.
-			if (this.chat.messages.at(-1)?.role === 'assistant') {
-				this.chat.clearError();
-				void this.follow();
-				return;
-			}
-		}
-		const problem = describeChatError(e, this.following);
-		if (problem === null) {
-			this.chat.clearError();
-			void this.refetch();
-		} else if (this.following) {
-			// A turn the server started (a report, a routine, another tab): an inline banner.
-			this.problem = problem;
-			this.chat.clearError();
-		} else {
-			this.#notify('error', problem.message);
-		}
+	get loadingOlder(): boolean {
+		return this.#s.loadingOlder;
 	}
-
-	/** Dismiss the inline banner. */
-	dismissProblem(): void {
-		this.problem = null;
+	/** Transient banner, e.g. "Sent to the running turn". */
+	get notice(): string | null {
+		return this.#s.notice;
 	}
-
-	/** The banner's Retry: attach to the server turn again, then align with storage. */
-	async retry(): Promise<void> {
-		const retry = this.problem?.retry;
-		this.problem = null;
-		if (retry === 'follow') await this.follow();
-		else await this.refetch();
+	/** Reattached to a running turn / following a steered one. */
+	get following(): boolean {
+		return this.#s.following;
 	}
-
-	async #getJson<T>(url: string): Promise<T | undefined> {
-		try {
-			const res = await this.#fetch(url, this.#authed(undefined));
-			if (!res.ok) return undefined;
-			return (await res.json()) as T;
-		} catch {
-			return undefined;
-		}
+	/** A failure of a turn this tab follows but did not start: shown inline, with Retry when it helps. */
+	get problem(): ChatSessionState['problem'] {
+		return this.#s.problem;
 	}
-
-	async #page(before?: string): Promise<MessagesPage | undefined> {
-		const q = new URLSearchParams({ limit: String(this.#pageSize) });
-		if (before) q.set('before', before);
-		return this.#getJson<MessagesPage>(`${this.#paths.messages(this.agentId)}?${q}`);
+	/** Live state of the streamed turn (`data-eh.status`, transient): e.g. `compacting`. */
+	get activity(): ChatSessionState['activity'] {
+		return this.#s.activity;
 	}
-
-	/** Load history, then reattach when a turn runs (here or on another instance). Idempotent. */
-	init(): Promise<void> {
-		this.#initPromise ??= this.#init();
-		return this.#initPromise;
+	/** The reply this chat ended on was cut short by a dead process: Continue / Retry are offered. */
+	get interrupted(): boolean {
+		return interruptedTurn(this.chat.messages) !== undefined;
 	}
-
-	async #init(): Promise<void> {
-		if (!this.loaded) {
-			const page = await this.#page();
-			if (page) {
-				this.chat.messages = replaceTail(this.chat.messages, page.messages);
-				this.#nextBefore = page.nextBefore;
-				this.hasOlder = page.nextBefore !== null;
-			} else {
-				this.#notify('error', 'Could not load the conversation');
-			}
-			this.loaded = true;
-		}
-		const stats = await this.#getJson<StatsLike>(this.#paths.stats(this.agentId));
-		if (shouldResume(stats)) await this.follow();
-	}
-
-	/**
-	 * Attach to the running turn (replay then follow), then align with storage. A dropped
-	 * connection is retried (the replay always starts at chunk 0, so nothing is lost or doubled).
-	 */
-	async follow(): Promise<void> {
-		if (this.following) return;
-		this.following = true;
-		this.problem = null;
-		try {
-			for (let attempt = 0; ; attempt++) {
-				this.#netError = null;
-				try {
-					await this.chat.resumeStream();
-				} catch (e) {
-					this.#onError(e as Error);
-				}
-				if (this.#netError === null || attempt >= 3) break;
-				await sleep(400 * (attempt + 1));
-			}
-			if (this.#netError !== null) {
-				this.problem = describeChatError(this.#netError, true);
-				this.#netError = null;
-			}
-		} finally {
-			this.following = false;
-		}
-		await this.refetch();
-		// A failed resume leaves the chat in `error`: storage is the truth now, so go back to ready.
-		if (this.chat.status === 'error') this.chat.clearError();
-	}
-
-	/** Continue an interrupted turn: a normal message; the agent sees what was cut short. */
-	async continueTurn(): Promise<void> {
-		await this.send(CONTINUE_TEXT);
-	}
-
-	/** Retry the interrupted reply: regenerate the last assistant message. */
-	async retryTurn(): Promise<void> {
-		// the interrupted reply itself (not the recovery notice, which is a kind message of the same role)
-		const last = interruptedTurn(this.chat.messages as UIMessage[]);
-		if (!last || this.#busy()) return;
-		this.#steered = false;
-		await this.chat.regenerate({ messageId: last.id });
-		if (this.#steered) {
-			this.#steered = false;
-			await this.follow();
-		}
-	}
-
-	/**
-	 * A turn this tab did not start (a subagent report woke the agent, a routine, another agent's
-	 * message, another tab): attach to its stream. The event can arrive a moment before the turn's
-	 * stream is readable, so check a few times.
-	 */
-	async followServerTurn(): Promise<void> {
-		if (!this.loaded || this.#busy()) return;
-		for (let i = 0; i < 4; i++) {
-			const stats = await this.#getJson<StatsLike>(this.#paths.stats(this.agentId));
-			if (this.#busy()) return;
-			if (shouldResume(stats)) return this.follow();
-			await new Promise((r) => setTimeout(r, 250 * (i + 1)));
-		}
-		await this.refetch(); // it already ended: show what was stored
-	}
-
-	/** A message was stored in this chat by a turn this tab is not streaming: show it. */
-	async storedElsewhere(): Promise<void> {
-		if (!this.loaded || this.#busy()) return;
-		await this.refetch();
-	}
-
-	#idlePolls = 0;
-
-	/**
-	 * Called every few seconds while this chat shows a running turn. A connection that went silent
-	 * without an error (the server was killed behind a proxy, the network dropped) leaves the chat
-	 * "streaming" for ever: when the server says it runs no turn for two polls in a row, the local
-	 * reader is dropped and the stored messages are shown (a crashed turn appears as interrupted).
-	 */
-	async checkStalled(): Promise<void> {
-		if (!this.#busy()) {
-			this.#idlePolls = 0;
-			return;
-		}
-		const stats = await this.#getJson<StatsLike>(this.#paths.stats(this.agentId));
-		if (!stats) return; // the server is unreachable: keep waiting
-		if (shouldResume(stats) || !this.#busy()) {
-			this.#idlePolls = 0;
-			return;
-		}
-		if (++this.#idlePolls < 2) return;
-		this.#idlePolls = 0;
-		await this.chat.stop();
-		this.following = false;
-		await this.refetch();
-		if (this.chat.status === 'error') this.chat.clearError();
-	}
-
 	/** A turn is running or being followed in this chat. */
 	get busy(): boolean {
-		return this.#busy();
+		return this.#s.following || this.chat.status === 'submitted' || this.chat.status === 'streaming';
 	}
 
-	#busy(): boolean {
-		const s = this.chat.status;
-		return this.following || s === 'submitted' || s === 'streaming';
-	}
-
-	/** Load the next older page (scroll-up pagination). Returns the number of messages added. */
-	async loadOlder(): Promise<number> {
-		if (this.loadingOlder || this.#nextBefore === null) return 0;
-		this.loadingOlder = true;
-		try {
-			const page = await this.#page(this.#nextBefore);
-			if (!page) {
-				this.#notify('error', 'Could not load older messages');
-				return 0;
-			}
-			const before = this.chat.messages.length;
-			this.chat.messages = mergeOlder(this.chat.messages, page.messages);
-			this.#nextBefore = page.nextBefore;
-			this.hasOlder = page.nextBefore !== null;
-			return this.chat.messages.length - before;
-		} finally {
-			this.loadingOlder = false;
-		}
-	}
-
-	/** Reload the newest page (after a continuation or a steered turn); older pages stay. */
-	async refetch(): Promise<void> {
-		const page = await this.#page();
-		if (!page) return;
-		this.chat.messages = replaceTail(this.chat.messages, page.messages);
-		if (this.#nextBefore === null && !this.hasOlder) this.hasOlder = page.nextBefore !== null;
-		if (this.#nextBefore === null) this.#nextBefore = page.nextBefore;
-		this.notice = null;
-	}
-
-	/** Abort the server-side turn (separate endpoint), then stop reading locally. */
-	async stop(): Promise<void> {
-		try {
-			await this.#fetch(this.#paths.abort(this.agentId), this.#authed({ method: 'POST' }));
-		} catch {
-			// network failure: still stop reading
-		}
-		await this.chat.stop();
-	}
+	init = (): Promise<void> => this.session.init();
+	follow = (): Promise<void> => this.session.follow();
+	followServerTurn = (): Promise<void> => this.session.followServerTurn();
+	storedElsewhere = (): Promise<void> => this.session.storedElsewhere();
+	checkStalled = (): Promise<void> => this.session.checkStalled();
+	loadOlder = (): Promise<number> => this.session.loadOlder();
+	refetch = (): Promise<void> => this.session.refetch();
+	stop = (): Promise<void> => this.session.stop();
+	continueTurn = (): Promise<void> => this.session.continueTurn();
+	retryTurn = (): Promise<void> => this.session.retryTurn();
+	retry = (): Promise<void> => this.session.retry();
+	dismissProblem = (): void => this.session.dismissProblem();
+	/** Send a user message (with already uploaded file parts). While a turn runs it is steered into it. */
+	send = (text: string, files: FileUIPart[] = []): Promise<void> => this.session.send(text, files);
 
 	/** Upload one file to the library and return the file part for the message. */
 	async upload(file: { url: string; mediaType: string; filename?: string }): Promise<FileUIPart> {
@@ -391,7 +106,7 @@ export class AgentChat {
 		form.set('file', new File([blob], name, { type: file.mediaType || blob.type }));
 		let res: Response;
 		try {
-			res = await this.#fetch(this.#paths.upload(), this.#authed({ method: 'POST', body: form }));
+			res = await harness.request(harness.url('/library/files'), { method: 'POST', body: form });
 		} catch {
 			throw new Error(`Could not upload ${name}: cannot reach the server`);
 		}
@@ -399,48 +114,6 @@ export class AgentChat {
 		if (!res.ok) throw new Error(uploadErrorText(res.status, body, name));
 		const r = body as { url: string; mediaType: string; name: string };
 		return { type: 'file', url: r.url, mediaType: r.mediaType || file.mediaType, filename: r.name || name };
-	}
-
-	/** Message while a turn runs here: the server steers it into the turn (the open stream shows it). */
-	async #steer(text: string, files: FileUIPart[]): Promise<void> {
-		const message = { id: crypto.randomUUID(), role: 'user', parts: [...files, { type: 'text', text }] };
-		let res: Response;
-		try {
-			res = await this.#fetch(
-				`${this.#paths.chat(this.agentId)}?ifBusy=steer`,
-				this.#authed({
-					method: 'POST',
-					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify(buildChatRequest({ id: this.agentId, messages: [message as UIMessage] }).body)
-				})
-			);
-		} catch {
-			this.#notify('error', 'Cannot reach the server');
-			return;
-		}
-		if (res.ok && res.status !== 202) {
-			// 200: the server streams the running turn to this request as well; ours is already open.
-			void res.body?.cancel().catch(() => {});
-			this.notice = 'Sent to the running turn';
-			return;
-		}
-		const body: unknown = await res.json().catch(() => undefined);
-		const outcome = classifyChatResponse(res.status, body);
-		if (outcome.kind === 'steered') this.notice = 'Sent to the running turn';
-		else this.#notify('error', outcome.kind === 'busy' || outcome.kind === 'error' ? outcome.message : 'Request failed');
-	}
-
-	/** Send a user message (with already uploaded file parts). While a turn runs it is steered into it. */
-	async send(text: string, files: FileUIPart[] = []): Promise<void> {
-		const status = this.chat.status;
-		if (status === 'submitted' || status === 'streaming') return this.#steer(text, files);
-		this.#steered = false;
-		await this.chat.sendMessage(files.length ? { text, files } : { text });
-		if (this.#steered) {
-			this.#steered = false;
-			// The turn runs on another instance: follow its stream, then refetch the stored messages.
-			await this.follow();
-		}
 	}
 }
 

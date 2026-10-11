@@ -16,6 +16,7 @@ import { sqliteRoutineStore } from '../src/infra/db/routines-repo.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
+import { attn } from './support/attention.ts'
 
 const servers: Server[] = []
 const dirs: string[] = []
@@ -208,7 +209,7 @@ describe('routine API', () => {
     const gone = await app.request(`/routines/${r.id}`, { method: 'DELETE' })
     expect(gone.status).toBe(200)
     expect((await app.request(`/routines/${r.id}`)).status).toBe(404)
-    const types = (await (await app.request('/events?limit=200')).json()) as {
+    const types = (await (await app.request('/activity?limit=200')).json()) as {
       events: Array<{ type: string; payload: { change?: string } }>
     }
     expect(
@@ -248,7 +249,7 @@ describe('ticker', () => {
       tasks: Array<{ origin: string; sessionId: string }>
     }
     expect(board.tasks.find((t) => t.sessionId === run?.sessionId)?.origin).toBe('routine')
-    const feed = (await (await a.app.request('/events?limit=200')).json()) as {
+    const feed = (await (await a.app.request('/activity?limit=200')).json()) as {
       events: Array<{ type: string }>
     }
     expect(feed.events.filter((e) => e.type === 'routine-fired').length).toBeGreaterThanOrEqual(2)
@@ -508,7 +509,7 @@ describe('ticker', () => {
     const after = await routine(a.app, r.id)
     expect(after).toMatchObject({ status: 'paused', pausedReason: 'max-failures', failures: 2 })
     expect(after.lastStatus).toStartWith('failed')
-    const feed = (await (await a.app.request('/events?limit=300')).json()) as {
+    const feed = (await (await a.app.request('/activity?limit=300')).json()) as {
       events: Array<{ type: string; payload: { reason?: string } }>
     }
     expect(
@@ -564,11 +565,8 @@ describe('unattended runs', () => {
     const second = await a.server.routines.tick(Date.now())
     expect(second.skipped[0]?.reason).toStartWith('overlap')
 
-    const answered = await a.app.request(
-      `/approvals/${pending[0]?.id}`,
-      json('POST', { approved: true }),
-    )
-    expect(answered.status).toBe(202)
+    const answered = await attn(a.app, pending[0], { approved: true })
+    expect(answered.status).toBe(200)
     await until('run succeeded', async () =>
       (await runs(a.app, r.id)).some((x) => x.status === 'succeeded'),
     )
@@ -600,7 +598,7 @@ describe('unattended runs', () => {
       'outcome recorded',
       async () => (await runs(a.app, r.id))[0]?.status === 'succeeded',
     )
-    const dm = (await (await a.app.request('/agents/researcher/messages')).json()) as {
+    const dm = (await (await a.app.request('/sessions/dm:researcher/messages')).json()) as {
       messages: Array<{ role: string; parts: Array<{ text?: string }> }>
     }
     expect(dm.messages.map((m) => m.role)).toEqual(['user', 'assistant'])

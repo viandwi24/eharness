@@ -1,3 +1,4 @@
+import { createHarnessClient } from 'eharness/client';
 import { createClient, toApiError } from './client';
 
 export * from './client';
@@ -33,6 +34,20 @@ export function setToken(token: string): void {
 export const api = createClient({ baseUrl: __PUBLIC_API_URL__ || '/api', getToken });
 
 export const apiBase: string = __PUBLIC_API_URL__ || '/api';
+
+/**
+ * The `eharness/http` routes (chat, session reads, attention answers, activity feed): typed client
+ * of the library. The token feeds its headers on every request; `/health` is never cached (it is
+ * the restart probe).
+ */
+export const harness = createHarnessClient({
+	baseUrl: apiBase,
+	headers: (): Record<string, string> => {
+		const token = getToken();
+		return token ? { authorization: `Bearer ${token}` } : {};
+	},
+	fetch: ((input, init) => fetch(input, String(input).endsWith('/health') ? { ...init, cache: 'no-store' } : init)) as typeof fetch
+});
 
 /**
  * Fetch a library file's bytes with the token (an `<img>` / `<iframe>` cannot send the bearer

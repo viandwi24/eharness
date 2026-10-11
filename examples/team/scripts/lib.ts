@@ -100,8 +100,24 @@ export const post = (body: unknown): RequestInit => ({
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify(body),
 })
+/** A chat body whose `id` is the session id of the path (`eharness/http`). */
+export const postAs = (sessionId: string, body: Record<string, unknown>): RequestInit =>
+  post({ id: sessionId, ...body })
+/** Answer an item of the attention queue (`POST /attention/{id}/answer`). */
+export const answerItem = (
+  i: Instance,
+  item: { id: string; sessionId: string },
+  answer: Record<string, unknown>,
+): Promise<Response> =>
+  fetch(
+    `${i.url}/attention/${encodeURIComponent(item.id)}/answer`,
+    post({
+      sessionId: item.sessionId,
+      answer: { kind: 'answers' in answer ? 'question' : 'approval', ...answer },
+    }),
+  )
 export const userMessage = (text: string): { messages: unknown[] } => ({
-  messages: [{ id: 'c', role: 'user', parts: [{ type: 'text', text }] }],
+  messages: [{ id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text }] }],
 })
 
 export function parseSse(text: string): { chunks: Chunk[]; done: boolean } {
@@ -149,7 +165,7 @@ export const tasks = async (i: Instance, query = ''): Promise<TaskItem[]> =>
 export const messages = async (i: Instance, agent: string): Promise<StoredMessage[]> =>
   (
     await json<{ messages: StoredMessage[] }>(
-      await fetch(`${i.url}/agents/${agent}/messages?limit=100`),
+      await fetch(`${i.url}/sessions/dm:${agent}/messages?limit=100`),
     )
   ).messages
 

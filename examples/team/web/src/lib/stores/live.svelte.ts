@@ -1,49 +1,45 @@
-import { api, getToken } from '../api/index';
-import { createEventsClient } from '../events/client';
+import { type ActivityFeed, createActivityFeed } from 'eharness/client';
+import { api, harness } from '../api/index';
 import { agentsStore } from './agents.svelte.js';
 import { createLiveCore, emptyLiveState } from './live-core';
 
-declare const __PUBLIC_API_URL__: string;
-
 const state = $state(emptyLiveState());
 export const live = createLiveCore(api, agentsStore, state, {
+	client: harness,
 	isVisible: () => typeof document === 'undefined' || document.visibilityState === 'visible'
 });
 
-let client: ReturnType<typeof createEventsClient> | undefined;
+let feed: ActivityFeed | undefined;
 
 /** Start the tab's single events connection (idempotent). Returns a stop function. */
 export function startLive(): () => void {
-	if (!client) {
-		client = createEventsClient({
-			baseUrl: __PUBLIC_API_URL__ || '/api',
-			getToken,
+	if (!feed) {
+		const f = createActivityFeed({
+			client: harness,
 			onEvent: (e) => live.handleEvent(e),
+			// (re)connected, a restarted server (new boot id), a pruned cursor: refetch everything
 			onResync: () => void live.resync(),
-			health: async (signal) => {
-				const res = await fetch(`${__PUBLIC_API_URL__ || '/api'}/health`, { signal, cache: 'no-store' });
-				if (!res.ok) throw new Error(`health ${res.status}`);
-				return (await res.json()) as { boot?: string };
-			},
-			isBusy: () => live.isBusy(),
-			onStatus: (s) => {
-				state.connection = s;
-				if (s === 'live') state.reconnecting = false;
-				else if (s === 'polling') state.reconnecting = true; // the stream failed: server down or unreachable
-			}
+			// ping /health while something runs: a killed server behind the proxy is noticed at once
+			isBusy: () => live.isBusy()
 		});
+		f.subscribe((s) => {
+			state.connection = s.status;
+			if (s.status === 'live') state.reconnecting = false;
+			else if (s.status === 'polling') state.reconnecting = true; // the stream failed: server down or unreachable
+		});
+		feed = f;
 		// Load what the page shows right away; the stream's resync (on connect) only refreshes it.
 		void live.resync();
 		if (typeof document !== 'undefined') {
 			document.addEventListener('visibilitychange', () => {
 				if (document.visibilityState !== 'visible') return;
-				void client?.check(); // a sleeping tab may have missed a restart
+				void feed?.check(); // a sleeping tab may have missed a restart
 				if (state.viewing) void live.markRead(state.viewing);
 			});
-			window.addEventListener('online', () => void client?.check());
-			window.addEventListener('focus', () => void client?.check());
+			window.addEventListener('online', () => void feed?.check());
+			window.addEventListener('focus', () => void feed?.check());
 		}
 	}
-	client.start();
-	return () => client?.stop();
+	feed.start();
+	return () => feed?.stop();
 }

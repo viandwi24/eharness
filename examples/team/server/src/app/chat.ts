@@ -1,4 +1,4 @@
-/** Chat use cases: validate the request, resolve attachments, hand over to the chat port. */
+/** Chat use cases around `eharness/http`: attachment checks, compact, stats, tools menu, uploads. */
 import {
   dmSessionId,
   isAllowedMediaType,
@@ -9,15 +9,7 @@ import {
 } from '../domain/chat.ts'
 import { conflict, invalid } from '../domain/errors.ts'
 import { getAgent } from './agents.ts'
-import type {
-  Actor,
-  ChatInput,
-  ChatMessage,
-  ChatOutcome,
-  ChatStats,
-  Deps,
-  StoredUpload,
-} from './ports.ts'
+import type { Actor, ChatMessage, ChatStats, Deps, StoredUpload } from './ports.ts'
 
 /** The single user of v1 (plan §6.7). */
 export const OWNER: Actor = { id: 'owner' }
@@ -75,47 +67,19 @@ async function checkFiles(deps: Deps, message: ChatMessage): Promise<ChatMessage
   return { ...message, parts }
 }
 
-export interface ChatRequest {
-  messages: ChatMessage[]
-  trigger?: 'submit-message' | 'regenerate-message'
-  messageId?: string
-}
-
-export async function chat(
-  deps: Deps,
-  agentId: string,
-  body: ChatRequest,
-  options: { ifBusy?: 'steer' | 'reject' } = {},
-): Promise<ChatOutcome> {
-  const agent = liveAgent(deps, agentId)
-  const last = body.messages.at(-1)
-  if (body.trigger !== 'regenerate-message' && last === undefined) {
-    throw invalid('messages must contain at least one message', 'INVALID_MESSAGES')
-  }
-  // only the last message is read (spec 11 §7); history, ids and metadata of the client are not
-  const input: ChatInput = {
-    messages:
-      last === undefined ? [] : [last.role === 'user' ? await checkFiles(deps, last) : last],
-    ...(body.trigger === undefined ? {} : { trigger: body.trigger }),
-    ...(body.messageId === undefined ? {} : { messageId: body.messageId }),
-  }
-  return deps.chat.chat(agent, input, { actor: OWNER, ifBusy: options.ifBusy ?? 'steer' })
-}
-
-export function resumeChat(deps: Deps, agentId: string, request: Request): Promise<Response> {
-  return deps.chat.resume(anyAgent(deps, agentId), request)
-}
-
-export function abortChat(deps: Deps, agentId: string, reason?: string) {
-  return deps.chat.abort(anyAgent(deps, agentId), reason)
-}
-
-export function chatMessages(
-  deps: Deps,
-  agentId: string,
-  query: { before?: string; limit: number },
-) {
-  return deps.chat.messages(anyAgent(deps, agentId), query)
+/**
+ * The body of `POST /sessions/{id}/chat` with its file parts checked (`checkFiles`), before the
+ * library reads it. Anything that is not a user message with files passes unchanged: the library
+ * whitelists and validates the rest. Throws `DomainError` for a bad attachment.
+ */
+export async function checkChatBody(deps: Deps, body: unknown): Promise<unknown> {
+  if (typeof body !== 'object' || body === null) return body
+  const messages = (body as { messages?: unknown }).messages
+  if (!Array.isArray(messages)) return body
+  const last = messages.at(-1) as ChatMessage | undefined
+  if (last?.role !== 'user' || !Array.isArray(last.parts)) return body
+  if (!last.parts.some((p) => p?.type === 'file')) return body
+  return { ...body, messages: [...messages.slice(0, -1), await checkFiles(deps, last)] }
 }
 
 export function compactChat(deps: Deps, agentId: string) {

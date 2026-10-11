@@ -18,6 +18,8 @@ import type { Task } from '../src/domain/tasks.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
+import { attn } from './support/attention.ts'
+import { postAs, userMessage } from './support/http.ts'
 
 const servers: Server[] = []
 const dirs: string[] = []
@@ -84,14 +86,6 @@ const tmp = (): string => {
   dirs.push(dir)
   return dir
 }
-const post = (body: unknown): RequestInit => ({
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(body),
-})
-const userMessage = (text: string) => ({
-  messages: [{ id: 'c', role: 'user', parts: [{ type: 'text', text }] }],
-})
 const delegateBg = (name: string, toolCallId: string) => ({
   toolName: 'agent',
   toolCallId,
@@ -153,7 +147,7 @@ async function tasks(app: Server['app'], query = ''): Promise<Task[]> {
   return ((await res.json()) as { tasks: Task[] }).tasks
 }
 async function messages(app: Server['app']): Promise<Array<Record<string, unknown>>> {
-  const res = await app.request('/agents/lead/messages?limit=100')
+  const res = await app.request('/sessions/dm:lead/messages?limit=100')
   return ((await res.json()) as { messages: Array<Record<string, unknown>> }).messages
 }
 const dm = async (app: Server['app']): Promise<string> => JSON.stringify(await messages(app))
@@ -164,7 +158,7 @@ interface FeedEvent {
   payload: Record<string, unknown>
 }
 async function events(app: Server['app']): Promise<FeedEvent[]> {
-  const res = await app.request('/events?after=0&limit=500')
+  const res = await app.request('/activity?after=0&limit=500')
   return ((await res.json()) as { events: FeedEvent[] }).events
 }
 const count = (text: string, needle: string): number => text.split(needle).length - 1
@@ -180,11 +174,16 @@ async function setup(dir: string, second: boolean) {
     { first: true },
   )
   await libraryFs(a.server.conn.sqlite).write('/library/old.md', 'old\n')
-  await (await a.app.request('/agents/lead/chat', post(userMessage('Clean up')))).text()
+  await (
+    await a.app.request('/sessions/dm:lead/chat', postAs(`dm:lead`, userMessage('Clean up')))
+  ).text()
   await until('delegated', async () => (await dm(a.app)).includes('Started background subagent'))
   await until('child waits', async () => (await tasks(a.app, '?status=needs_action')).length === 1)
   await (
-    await a.app.request('/agents/lead/chat', post(userMessage('Now ask me a question')))
+    await a.app.request(
+      '/sessions/dm:lead/chat',
+      postAs(`dm:lead`, userMessage('Now ask me a question')),
+    )
   ).text()
   await until('question listed', async () =>
     (await approvals(a.app)).some((x) => x.kind === 'question'),
@@ -209,17 +208,14 @@ describe('question pending while a background child reports', () => {
         const answerChild = async () => {
           const item = (await approvals(b.app)).find((x) => x.kind === 'approval')
           expect(item).toBeDefined()
-          const res = await b.app.request(`/approvals/${item?.id}`, post({ approved: true }))
-          expect(res.status).toBe(202)
+          const res = await attn(b.app, item, { approved: true })
+          expect(res.status).toBe(200)
         }
         const answerQuestion = async () => {
           const item = (await approvals(b.app)).find((x) => x.kind === 'question')
           expect(item).toBeDefined()
-          const res = await b.app.request(
-            `/approvals/${item?.id}`,
-            post({ answers: [{ selected: ['Markdown'] }] }),
-          )
-          expect(res.status).toBe(202)
+          const res = await attn(b.app, item, { answers: [{ selected: ['Markdown'] }] })
+          expect(res.status).toBe(200)
         }
         if (order === 'child-first') {
           await answerChild()
@@ -300,7 +296,9 @@ describe('a broken state: reports stored after a pending question, no wake was e
   test('answering works, the stranded report wakes the lead once', async () => {
     const dir = tmp()
     const a = instance(dir, askOnly(), { first: true })
-    await (await a.app.request('/agents/lead/chat', post(userMessage('Ask me')))).text()
+    await (
+      await a.app.request('/sessions/dm:lead/chat', postAs(`dm:lead`, userMessage('Ask me')))
+    ).text()
     await until('question listed', async () =>
       (await approvals(a.app)).some((x) => x.kind === 'question'),
     )
@@ -325,11 +323,8 @@ describe('a broken state: reports stored after a pending question, no wake was e
     await b.server.ready
     const [item] = await approvals(b.app)
     expect(item?.kind).toBe('question')
-    const res = await b.app.request(
-      `/approvals/${item?.id}`,
-      post({ answers: [{ selected: ['Markdown'] }] }),
-    )
-    expect(res.status).toBe(202)
+    const res = await attn(b.app, item, { answers: [{ selected: ['Markdown'] }] })
+    expect(res.status).toBe(200)
     await until('continued and woken', async () =>
       (await dm(b.app)).includes('after answer; report:seen'),
     )
@@ -345,23 +340,26 @@ describe('a broken state: reports stored after a pending question, no wake was e
 })
 
 describe('answers that arrive after the item was answered', () => {
-  test('a second POST /approvals is 404; a stale chat answer is 409 ALREADY_ANSWERED, never a failing turn', async () => {
+  test('a second answer is already-answered; a stale chat answer is 409 EH_HTTP_ALREADY_ANSWERED, never a failing turn', async () => {
     const dir = tmp()
     const a = instance(dir, askOnly(), { first: true })
-    await (await a.app.request('/agents/lead/chat', post(userMessage('Ask me')))).text()
+    await (
+      await a.app.request('/sessions/dm:lead/chat', postAs(`dm:lead`, userMessage('Ask me')))
+    ).text()
     await until('question listed', async () =>
       (await approvals(a.app)).some((x) => x.kind === 'question'),
     )
     const [item] = await approvals(a.app)
-    const body = post({ answers: [{ selected: ['Markdown'] }] })
-    expect((await a.app.request(`/approvals/${item?.id}`, body)).status).toBe(202)
+    const answer = { answers: [{ selected: ['Markdown'] }] }
+    expect((await attn(a.app, item, answer)).status).toBe(200)
     await until('continued', async () => (await dm(a.app)).includes('after answer'))
-    const again = await a.app.request(`/approvals/${item?.id}`, body)
-    expect(again.status).toBe(404)
+    const again = await attn(a.app, item, answer)
+    expect(again.status).toBe(200)
+    expect(await again.json()).toMatchObject({ status: 'already-answered' })
     // an old tab posts the assistant message back (useChat auto-send) with the answered call
     const stale = await a.app.request(
-      '/agents/lead/chat',
-      post({
+      '/sessions/dm:lead/chat',
+      postAs(`dm:lead`, {
         messages: [
           {
             id: 'm1',
@@ -381,36 +379,37 @@ describe('answers that arrive after the item was answered', () => {
     )
     expect(stale.status).toBe(409)
     expect(((await stale.json()) as { error: { code: string } }).error.code).toBe(
-      'ALREADY_ANSWERED',
+      'EH_HTTP_ALREADY_ANSWERED',
     )
     // and one that answers nothing at all
     const empty = await a.app.request(
-      '/agents/lead/chat',
-      post({ messages: [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] }] }),
+      '/sessions/dm:lead/chat',
+      postAs(`dm:lead`, {
+        messages: [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] }],
+      }),
     )
-    expect(empty.status).toBe(409)
+    expect(empty.status).toBe(400) // the library: an assistant message must carry decisions
     expect(await dm(a.app)).not.toContain('still unanswered')
   }, 20_000)
 })
 
 describe('the same approval answered twice at once (two tabs, two instances)', () => {
   for (const second of [false, true]) {
-    test(`${second ? 'two instances' : 'one instance'}: one continuation, the loser is a quiet 404 / 409 ALREADY_ANSWERED`, async () => {
+    test(`${second ? 'two instances' : 'one instance'}: one continuation, the loser is a quiet already-answered / 404 / 409`, async () => {
       const dir = tmp()
       const { a, b } = await setup(dir, second)
       const item = (await approvals(a.app)).find((x) => x.kind === 'approval')
       expect(item).toBeDefined()
-      const send = (app: Server['app']) =>
-        app.request(`/approvals/${item?.id}`, post({ approved: true }))
+      const send = (app: Server['app']) => attn(app, item, { approved: true })
       const [x, y] = await Promise.all([send(a.app), send(b.app)])
       const codes = [x.status, y.status].sort()
       // never a 400 / 500: the loser is "already answered" (or both are the same idempotent record)
-      for (const status of codes) expect([202, 404, 409]).toContain(status)
-      expect(codes).toContain(202)
+      for (const status of codes) expect([200, 404, 409]).toContain(status)
+      expect(codes).toContain(200)
       for (const res of [x, y]) {
         if (res.status === 409) {
-          expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
-            'ALREADY_ANSWERED',
+          expect(['EH_SESSION_BUSY', 'EH_HTTP_ALREADY_ANSWERED']).toContain(
+            ((await res.json()) as { error: { code: string } }).error.code,
           )
         }
       }

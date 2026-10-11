@@ -21,11 +21,12 @@ imports eharness only through public subpaths, never `src/`.
 
 ## Request flow (a chat message)
 
-1. `POST /agents/{id}/chat` with the AI SDK `useChat` body. The route resolves the agent
-   definition and opens `dm:<agentId>` through the factory (shared lock and runtime
-   `{ workspaceId, agentId }`).
-2. `handleChatRequest` validates the body (only `text` / `file` parts, server-made ids; the client
-   history is never trusted) and starts the turn. If the session is busy here it steers; if a turn
+1. `POST /sessions/dm:{agentId}/chat?ifBusy=steer` with the AI SDK `useChat` body, served by
+   `eharness/http` (`infra/eh/harness-http.ts`). Its `session` hook resolves the agent definition
+   and opens `dm:<agentId>` through the factory (shared lock and runtime `{ workspaceId, agentId }`).
+2. `eharness/http` sanitises the body (only `text` / `file` parts, server-made ids; the client
+   history is never trusted), runs the team's attachment check (`chat.validate`) and starts the
+   turn through `handleChatRequest`. If the session is busy here it steers; if a turn
    runs on another instance the message goes through the durable inbox (`202`).
 3. The turn streams as a UI message stream. Chunks are also appended to the **stream log** in
    SQLite in batches, so another instance can resume it.
@@ -67,7 +68,7 @@ follows the task row. `run_in_background: false` gives the foreground park below
 
 **Park delegation.** The lead uses `subagents({ approvals: 'park' })`. When a role agent needs an
 approval, the lead's turn ends parked and the child waits in storage. The user answers on the
-board (`POST /approvals/{id}`) on any instance; the child continues and, when it ends, the lead
+board (`POST /attention/{id}/answer`) on any instance; the child continues and, when it ends, the lead
 resumes with the report. Nothing lives in process memory, which is why it survives restarts
 ([ADR-0035](../../../docs/decisions/0035-nested-approvals-park-the-parent.md)). `send_message`
 works in park mode over the inbox ([ADR-0041](../../../docs/decisions/0041-park-mode-messaging.md)),
@@ -83,14 +84,27 @@ which has no `session.start` hooks and resumes nothing
 (`turn-started`, `pending-changed`, `approval-decided`, `attention-answered`, `session-recovered`,
 `child-reported`) come from the `activity()` plugin; the app appends its own types
 (`message-added`, `task-changed`, `providers-changed`, ...) through the same store.
-`GET /events/stream` is `handleActivityStream` (poll, 500 ms; boot event, keep-alive, resync) and
-`GET /events` is `readActivityPage`. It is pruned by age and count (`TEAM_EVENTS_RETENTION_HOURS`, `TEAM_EVENTS_MAX_ROWS`; the head and the latest message of each agent stay). The high-water mark of pruned `seq` lives in the `settings` row `events-pruned-through`: a client whose cursor is below it receives `event: resync` (SSE) or `resync: true` (`GET /events`) and refetches its state.
+`GET /activity/stream` is `handleActivityStream` (poll, 500 ms; boot event, keep-alive, resync) and
+`GET /activity` is `readActivityPage`; both are the `activity` option of `eharness/http` (store =
+this SQLite store, `bootId` = `http/boot.ts`, filter `'all'`: one owner). It is pruned by age and count (`TEAM_EVENTS_RETENTION_HOURS`, `TEAM_EVENTS_MAX_ROWS`; the head and the latest message of each agent stay). The high-water mark of pruned `seq` lives in the `settings` row `events-pruned-through`: a client whose cursor is below it receives `event: resync` (SSE) or `resync: true` (`GET /activity`) and refetches its state.
 
 **Attention queue.** `GET /approvals` is `listAttention` (the DM session of every agent that can hold
 something, the lead's children through the child index, the task rows still `needs_action` as a
-safety net) and `POST /approvals/{id}` is `answerAttention` on the session that owns the item
-(`infra/eh/team-service.ts` only maps the results: `already-answered` is `409 ALREADY_ANSWERED`,
-`not-found` is `404`, `recorded` / `resumed` are `202`).
+safety net), enriched with agent name, task id and the question texts (a thin app route:
+`AttentionItem` has none of those). Answers are the `attention` option of `eharness/http`:
+`POST /attention/{id}/answer` is `answerAttention` on the session that owns the item.
+`infra/eh/harness-http.ts` supplies `roots` (the same list as `GET /approvals`), `open` (the session
+on the agent that runs it; after a lead's own answer it wakes stranded reports), `canAnswer` (always,
+one owner) and `parseAnswer` (approval decisions and `ask_user_question` answers through `answerOutput`).
+`already-answered` is a `200` status, `not-found` a `404`, `recorded` / `resumed` a `200`.
+
+**Chat on `eharness/http`.** `POST /sessions/{id}/chat`, the resume stream, interrupt, session reads
+and the stale-answer / idempotency / busy-policy pipeline are the library's (spec 26). The app gives
+it: the session and peek hooks (`dm:<agentId>` or a task row resolve to the agent that runs the
+session, `factory.openSession` / `agentFor(def).peek`), `chat.ifBusy: ['reject', 'steer']` with
+`steer` as default, `authorizeKind` (archived agent, task sessions refuse chat, a turn on another
+instance answers `409` for everything but a steer), the single `owner` principal and bearer
+`authorize`, and the check of attachments (`checkChatBody`, before the library reads the body).
 
 ### Migration notes (activity feed and attention queue)
 
@@ -100,7 +114,7 @@ The team example had hand-built versions of both; they now use `eharness/activit
   `pruneEvents`, `appendEvent`), `listEvents`' retention logic, the SSE poll loop of the route,
   the `turn-started` / `approval-needed` / `approval-decided` writers of `taskIndex`,
   `viewsOf` / `waitsStill` / the settle-and-map code of `answer()` in `team-service.ts`.
-- Added: `infra/db/activity-store.ts` (SQLite `ActivityStore`), `infra/eh/activity-feed.ts` (the port
+- Added: `infra/db/activity-store.ts` (SQLite `ActivityStore`), `infra/eh/activity-feed.ts` (since renamed `event-appender.ts`; the port
   the HTTP layer calls, and the app-event appender), `activity()` on every agent
   (`types: SESSION_EVENT_TYPES`, no `message-saved` rows).
 - Kept (app domain): `tasks` rows, `message-added` previews and unread counts (read straight from
@@ -109,8 +123,26 @@ The team example had hand-built versions of both; they now use `eharness/activit
   (`payload.waiting: [{ kind, id, toolCallId, toolName }]`, empty = nothing waits) and is emitted for
   every session. `turn-started` is emitted for every session (the web filters DM chats by session
   id) and has `source`. New: `attention-answered`, `session-recovered`, `child-reported`. A stream
-  cursor ahead of the head (a reset database) now gets `resync` too. HTTP bodies of `/events`,
-  `/approvals` are unchanged. The web treats `pending-changed` like the old `approval-needed`.
+  cursor ahead of the head (a reset database) now gets `resync` too. The web treats
+  `pending-changed` like the old `approval-needed`.
+
+### Migration notes (`eharness/http`)
+
+The chat, events and answer routes moved onto the library module (ADR-0059):
+
+- Deleted: `/agents/{id}/chat`, `/chat/stream`, `/chat/abort`, `/messages`, `/tasks/{id}/stream`,
+  `/tasks/{id}/abort`, `POST /approvals/{id}`, `/events`, `/events/stream`; `app/approvals.ts`,
+  `answeredIds` / `waitingIds` / the remote-steer and stale-answer code of `chat-service.ts`, the
+  `answer()` / `resumeTask` / `abortTask` of `team-service.ts`, the `ActivityFeedPort`.
+- Added: `infra/eh/harness-http.ts`, `http/routes/harness.ts` (mount, attachment check and the
+  documentation-only OpenAPI entries), `infra/eh/event-appender.ts` (the app-event appender, the
+  rest of `activity-feed.ts`).
+- Wire changes: paths (`/agents/{id}/chat` is `/sessions/dm:{agentId}/chat`, `/events` is
+  `/activity`, `POST /approvals/{id}` is `POST /attention/{id}/answer`), the chat body must carry
+  `id` = the session id, `messages[].id` is the idempotency key (reuse is `409
+  EH_HTTP_DUPLICATE_REQUEST`), the answer body is `{ sessionId, answer: { kind, ... } }` and
+  `already-answered` is `200`, the `EH_HTTP_ALREADY_ANSWERED` code replaces `ALREADY_ANSWERED` on
+  chat, `endTurn` is no longer accepted, `nextBefore` is absent (not `null`) at the start.
 
 **Model call log (Logs page).** The `activityLog` plugin (`infra/eh/activity-log.ts`) is registered on
 every agent and persists each `model.call` event
@@ -123,7 +155,7 @@ cheaply while writing (`TEAM_LOG_MAX_ROWS`, `TEAM_LOG_RETENTION_DAYS`). Each cal
 
 **Stream log.** `eh_stream_log` / `eh_stream_chunks` implement the `StreamLogAdapter` port
 ([ADR-0039](../../../docs/decisions/0039-resumable-streams-stream-log.md)): cursor = chunk index,
-retention 10 min, readers poll. `GET /agents/{id}/chat/stream?from=` resumes a turn running on
+retention 10 min, readers poll. `GET /sessions/{id}/chat/stream?from=` resumes a turn running on
 another instance; a reload on the same instance replays the in-memory buffer.
 
 **Routines on the inbox.** There is no scheduler in the library

@@ -172,10 +172,11 @@ describe('activity log plugin and routes', () => {
       dbFile: ':memory:',
       models: scriptedModelConfig(scriptedModel([{ text: 'Hello there' }]) as never),
     })
-    const res = await server.app.request('/agents/researcher/chat', {
+    const res = await server.app.request('/sessions/dm:researcher/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        id: 'dm:researcher',
         messages: [{ id: 'x', role: 'user', parts: [{ type: 'text', text: 'hi' }] }],
       }),
     })
@@ -213,7 +214,7 @@ describe('activity log plugin and routes', () => {
     expect(stats.totals.count).toBe(1)
     expect(stats.buckets.length).toBeGreaterThan(0)
 
-    const events = (await (await server.app.request('/events?after=0')).json()) as {
+    const events = (await (await server.app.request('/activity?after=0')).json()) as {
       events: Array<{ type: string; sessionId: string; payload: { id: string; status: string } }>
     }
     const ev = events.events.find((e) => e.type === 'model-call')

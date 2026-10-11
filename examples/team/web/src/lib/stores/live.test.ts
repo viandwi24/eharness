@@ -1,15 +1,21 @@
 import { describe, expect, test } from 'bun:test';
-import { ApiError, type Approval, type ApiClient, type Task } from '../api/client';
-import type { TeamEvent } from '../events/client';
+import { type ActivityRecord, type HarnessClient, HarnessHttpError } from 'eharness/client';
+import type { Approval, ApiClient, Task } from '../api/client';
 import { createAgentsCore, emptyAgentsState } from './agents-core';
 import { createLiveCore, emptyLiveState } from './live-core';
 
-const ev = (type: string, agentId: string, payload: Record<string, unknown> = {}, seq = 1): TeamEvent => ({
+const ev = (type: string, agentId: string, payload: Record<string, unknown> = {}, seq = 1): ActivityRecord => ({
 	seq, type, agentId, sessionId: null, payload, createdAt: 1000 + seq
 });
 
+type Answered = { id: string; sessionId: string; answer: unknown };
+/** The `eharness/http` client: only the attention answer is used by the live store. */
+const clientOf = (answer: (id: string, body: Answered) => Promise<unknown> = async () => ({ status: 'recorded' })): HarnessClient =>
+	({ attention: { list: async () => ({ items: [] }), answer: (id: string, body: { sessionId: string; answer: unknown }) => answer(id, { id, ...body }) } }) as unknown as HarnessClient;
+
 function setup(visible = true) {
 	const posts: string[] = [];
+	const answers: Answered[] = [];
 	let approvals: Approval[] = [];
 	const api = {
 		get: async (path: string) => {
@@ -26,8 +32,9 @@ function setup(visible = true) {
 	const agents = createAgentsCore(api, emptyAgentsState());
 	agents.state.agents = [{ id: 'lead-id', slug: 'lead', name: 'Lead' } as never];
 	agents.state.activity['lead-id'] = { preview: null, lastMessageAt: null, unread: 0 };
-	const live = createLiveCore(api, agents, emptyLiveState(), { isVisible: () => visible, setTimeout: (fn) => fn() });
-	return { live, agents, posts, setApprovals: (a: Approval[]) => (approvals = a) };
+	const client = clientOf(async (_id, body) => (answers.push(body), { status: 'recorded' }));
+	const live = createLiveCore(api, agents, emptyLiveState(), { client, isVisible: () => visible, setTimeout: (fn) => fn() });
+	return { live, agents, posts, answers, setApprovals: (a: Approval[]) => (approvals = a) };
 }
 
 const appr = (id: string, parent: string | null): Approval =>
@@ -59,14 +66,18 @@ describe('live store', () => {
 	});
 
 	test('answer removes optimistically, restores on failure, hints for child approvals', async () => {
-		const { live, setApprovals } = setup();
+		const { live, setApprovals, answers } = setup();
 		const a = appr('1', 'dm:lead-id');
 		setApprovals([a, appr('2', null)]);
 		await live.loadApprovals();
 		expect(live.childApprovals('lead').map((x) => x.id)).toEqual(['1']);
 		setApprovals([appr('2', null)]); // the server no longer lists it after the answer
-		await live.answer(a, { approved: true });
+		await live.answer(a, { approved: true, remember: 'session' });
 		expect(live.state.approvals.some((x) => x.id === '1')).toBe(false);
+		// the wire answer carries the kind and the session of the item
+		expect(answers).toEqual([{ id: '1', sessionId: 's-1', answer: { kind: 'approval', approved: true, remember: 'session' } }]);
+		await live.answer(appr('3', null), { answers: [{ selected: ['A'] }] });
+		expect(answers[1]?.answer).toEqual({ kind: 'question', answers: [{ selected: ['A'] }] });
 	});
 
 	test('file, routine and settings events bump their revision counters', () => {
@@ -102,7 +113,7 @@ describe('live store: stale task lists', () => {
 			post: async () => ({})
 		} as unknown as ApiClient;
 		const agents = createAgentsCore(api, emptyAgentsState());
-		const live = createLiveCore(api, agents, emptyLiveState(), { setTimeout: (fn) => fn() });
+		const live = createLiveCore(api, agents, emptyLiveState(), { client: clientOf(), setTimeout: (fn) => fn() });
 		live.state.tasks = [task('needs_action')];
 
 		const first = live.loadTasks(); // snapshot: needs_action
@@ -172,37 +183,39 @@ describe('live store: approvals that were decided elsewhere', () => {
 	});
 
 	test('answering an item that is already answered keeps it gone and refetches; other failures put it back', async () => {
-		let fail: Error = new ApiError(404, 'NOT_FOUND', 'gone');
-		let server: Approval[] = [appr('2', null)];
+		let fail: Error = new HarnessHttpError(404, 'EH_HTTP_NOT_FOUND', 'gone');
+		let server: Approval[] = [];
 		const api = {
 			get: async (path: string) => (path === '/approvals' ? { approvals: server } : path === '/tasks' ? { tasks: [] } : { agents: [] }),
-			post: async () => {
-				throw fail;
-			}
+			post: async () => ({})
 		} as unknown as ApiClient;
+		const client = clientOf(async () => {
+			throw fail;
+		});
 		const agents = createAgentsCore(api, emptyAgentsState());
-		const live = createLiveCore(api, agents, emptyLiveState(), { setTimeout: (fn) => fn() });
+		const live = createLiveCore(api, agents, emptyLiveState(), { client, setTimeout: (fn) => fn() });
 		const a = appr('1', null);
-		live.state.approvals = [a, appr('2', null)];
+		server = [a, appr('2', null)];
+		await live.loadApprovals();
+		server = [appr('2', null)]; // answered elsewhere: the server no longer lists it
 		await expect(live.answer(a, { approved: true })).rejects.toBe(fail);
 		expect(live.state.approvals.map((x) => x.id)).toEqual(['2']);
 
-		live.state.approvals = [a];
 		server = [];
-		fail = new ApiError(409, 'ALREADY_ANSWERED', 'x');
+		fail = new HarnessHttpError(409, 'EH_HTTP_ALREADY_ANSWERED', 'x');
+		server = [a];
+		await live.loadApprovals();
+		server = [];
 		await expect(live.answer(a, { approved: true })).rejects.toBe(fail);
 		expect(live.state.approvals).toEqual([]);
 
 		// a real failure: the card returns (the refetch below then shows the server's truth)
-		fail = new ApiError(500, 'INTERNAL', 'boom');
-		live.state.approvals = [a];
-		let restored: string[] = [];
-		const api2 = { ...api, get: async () => ({ approvals: [a] }) } as unknown as ApiClient;
-		const live2 = createLiveCore(api2, agents, emptyLiveState(), { setTimeout: () => undefined });
-		live2.state.approvals = [a];
-		await expect(live2.answer(a, { approved: true })).rejects.toBeDefined();
-		restored = live2.state.approvals.map((x) => x.id);
-		expect(restored).toEqual(['1']);
+		fail = new HarnessHttpError(500, 'INTERNAL', 'boom');
+		server = [a];
+		await live.loadApprovals();
+		expect(live.state.approvals.map((x) => x.id)).toEqual(['1']);
+		await expect(live.answer(a, { approved: true })).rejects.toBe(fail);
+		expect(live.state.approvals.map((x) => x.id)).toEqual(['1']);
 	});
 });
 

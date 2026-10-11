@@ -35,22 +35,4 @@ export interface ApprovalView {
   answeredWaiting: number
 }
 
-export type ApprovalAnswer =
-  | {
-      kind: 'approval'
-      approved: boolean
-      reason?: string
-      note?: string
-      endTurn?: 'after-answers' | 'if-denied'
-      /** `session`: also allow this tool without asking for the rest of the session (library grant). */
-      remember?: 'session'
-    }
-  | {
-      kind: 'question'
-      answers: Array<{ selected?: string[]; other?: string; notes?: string }> | null
-    }
-
-/** What an answer did: stored for later, or it was the last one and the session continues. */
-export type ApprovalOutcome = { status: 'recorded'; remaining: number } | { status: 'resumed' }
-
 export const MAX_NOTE_CHARS = 4000

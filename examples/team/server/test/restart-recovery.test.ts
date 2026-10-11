@@ -15,6 +15,7 @@ import { deriveTaskStatus, statusFromStop } from '../src/domain/tasks.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { sqliteLock } from '../src/infra/eh/storage.ts'
 import { compose, type Server } from '../src/main.ts'
+import { postAs, userMessage } from './support/http.ts'
 
 const servers: Server[] = []
 const dirs: string[] = []
@@ -49,14 +50,6 @@ function instance(dir: string, steps: ScriptedStepInput[], first = false): Serve
   servers.push(server)
   return server
 }
-const post = (body: unknown): RequestInit => ({
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(body),
-})
-const userMessage = (text: string) => ({
-  messages: [{ id: 'c', role: 'user', parts: [{ type: 'text', text }] }],
-})
 
 describe('task status of interrupted work', () => {
   test('a stopped-by-crash turn is interrupted, not failed', () => {
@@ -118,7 +111,10 @@ describe('boot repair of a dead turn', () => {
       if (def === undefined) throw new Error('seed missing')
       updateAgent(a.deps, def.id, { model: 'm' })
     }
-    const res = await a.app.request('/agents/researcher/chat', post(userMessage('start')))
+    const res = await a.app.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('start')),
+    )
     expect(res.status).toBe(200)
     void res.text().catch(() => undefined)
     const stats = async (s: Server) =>
@@ -137,7 +133,7 @@ describe('boot repair of a dead turn', () => {
     const b = instance(dir, [{ text: 'back again' }])
     await b.ready
     await until('recovered by the repair pass', async () => (await stats(b)).activeTurn === null)
-    const stored = (await (await b.app.request('/agents/researcher/messages')).json()) as {
+    const stored = (await (await b.app.request('/sessions/dm:researcher/messages')).json()) as {
       messages: Array<{
         role: string
         metadata?: { eharness?: { stop?: string; kind?: string } }
@@ -150,7 +146,10 @@ describe('boot repair of a dead turn', () => {
       .flatMap((m) => m.parts)
       .filter((p) => p.type.startsWith('tool-') && p.state === 'input-available')
     expect(dangling).toHaveLength(0)
-    const next = await b.app.request('/agents/researcher/chat', post(userMessage('Continue')))
+    const next = await b.app.request(
+      '/sessions/dm:researcher/chat',
+      postAs(`dm:researcher`, userMessage('Continue')),
+    )
     expect(next.status).toBe(200)
     expect(await next.text()).toContain('back again')
   })

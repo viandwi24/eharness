@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { ApiClient, ModelCallSummary } from '../api/client';
-import type { TeamEvent } from '../events/client';
+import type { ActivityRecord } from 'eharness/client';
 import { createLogsCore, emptyLogsState } from './core';
 import { emptyFilters } from './logs';
 
 const row = (id: string, startedAt: number): ModelCallSummary => ({ id, startedAt, kind: 'step', status: 'ok', modelId: 'm', provider: 'p', durationMs: 1 }) as ModelCallSummary;
-const ev = (over: Partial<TeamEvent['payload']> = {}, agentId = 'a1'): TeamEvent => ({
+const ev = (over: Partial<ActivityRecord['payload']> = {}, agentId = 'a1'): ActivityRecord => ({
 	seq: 1, type: 'model-call', agentId, sessionId: 'dm:a1', payload: { id: 'x', kind: 'step', status: 'ok', model: 'm', ...over }, createdAt: 1
 });
 

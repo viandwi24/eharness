@@ -90,21 +90,21 @@ describe('resync signal', () => {
     const s = boot()
     const store = await seed(s)
     const head = await store.lastSeq()
-    const before = (await (await s.app.request(`/events?after=${head - 1}`)).json()) as {
+    const before = (await (await s.app.request(`/activity?after=${head - 1}`)).json()) as {
       resync?: boolean
     }
     expect(before.resync).toBeUndefined()
     await store.prune({ olderThan: NOW - 72 * HOUR })
-    const stale = (await (await s.app.request('/events?after=2')).json()) as {
+    const stale = (await (await s.app.request('/activity?after=2')).json()) as {
       resync?: boolean
       events: Array<{ seq: number }>
     }
     expect(stale.resync).toBe(true)
-    const fresh = (await (await s.app.request(`/events?after=${head}`)).json()) as {
+    const fresh = (await (await s.app.request(`/activity?after=${head}`)).json()) as {
       resync?: boolean
     }
     expect(fresh.resync).toBeUndefined()
-    const zero = (await (await s.app.request('/events?after=0')).json()) as { resync?: boolean }
+    const zero = (await (await s.app.request('/activity?after=0')).json()) as { resync?: boolean }
     expect(zero.resync).toBeUndefined()
   })
 
@@ -112,7 +112,7 @@ describe('resync signal', () => {
     const s = boot()
     const store = await seed(s)
     await store.prune({ olderThan: NOW - 72 * HOUR })
-    const res = await s.app.request('/events/stream?after=2')
+    const res = await s.app.request('/activity/stream?after=2')
     const reader = (res.body as ReadableStream<Uint8Array>).getReader()
     const decoder = new TextDecoder()
     let text = ''
@@ -129,7 +129,7 @@ describe('resync signal', () => {
     expect(text).toContain('"seq":6')
     expect(text.indexOf('event: resync')).toBeLessThan(text.indexOf('event: model-call'))
     // a current cursor gets no resync
-    const ok = await s.app.request(`/events/stream?after=${await store.lastSeq()}`)
+    const ok = await s.app.request(`/activity/stream?after=${await store.lastSeq()}`)
     const r2 = (ok.body as ReadableStream<Uint8Array>).getReader()
     const first = await r2.read()
     await r2.cancel()

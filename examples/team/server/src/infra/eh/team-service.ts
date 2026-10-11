@@ -6,22 +6,17 @@
  *    the library's `listAttention` (eharness/activity) over the DM session of every agent that can
  *    hold something (it walks the lead's children through the child index, storage only, so it
  *    works on any instance) and the task rows still marked `needs_action` (drift safety net).
- *  - `answer()`: the library's idempotent `answerAttention` on the session that owns the item, from
- *    whichever instance got the request (the "already answered" mapping lives in the library). A
+ *  - `attentionRoots()` / `afterLeadAnswer()`: the hooks of the library's `attention` routes
+ *    (`infra/eh/harness-http.ts`). Answers are the library's idempotent `answerAttention`; a
  *    child's answer continues the child here; when its turn ends the `subagents` hook resolves the
  *    lead's parked wait and the lead continues, in whichever instance that is.
  *  - `reconcile()`: boot / periodic repair: `reconcileSubagentWaits` for every parent that can
  *    hold a parked wait (a crash between "child finished" and "wait resolved"), then a drift pass
  *    comparing the task rows with the session state.
  */
-import { type HarnessSession, handleResumeRequest, isHarnessError } from 'eharness'
-import {
-  type ActivityStore,
-  type AttentionAnswer,
-  answerAttention,
-  listAttention,
-} from 'eharness/activity'
-import { ASK_TOOL, answerOutput, pendingQuestions } from 'eharness/ask'
+import { type HarnessSession, isHarnessError } from 'eharness'
+import { type ActivityStore, type AttentionItem, listAttention } from 'eharness/activity'
+import { ASK_TOOL, pendingQuestions } from 'eharness/ask'
 import {
   type BackgroundReconcileEntry,
   reconcileBackgroundChildren,
@@ -29,9 +24,9 @@ import {
 } from 'eharness/subagent'
 import type { AgentRepo, ChatMessage, EventAppender, TeamPort } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import type { ApprovalOutcome, ApprovalRisk, ApprovalView } from '../../domain/approvals.ts'
+import type { ApprovalRisk, ApprovalView, QuestionView } from '../../domain/approvals.ts'
 import { dmSessionId } from '../../domain/chat.ts'
-import { ALREADY_ANSWERED, conflict, invalid, notFound } from '../../domain/errors.ts'
+import { notFound } from '../../domain/errors.ts'
 import { deriveTaskStatus, type Task } from '../../domain/tasks.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
@@ -57,20 +52,36 @@ export interface ReconcileReport {
 
 export interface TeamService extends TeamPort {
   reconcile(): Promise<ReconcileReport>
+  /** The sessions the attention queue starts from (every lead / active DM, tasks needing action). */
+  attentionRoots(): Array<{ sessionId: string; agent: string }>
+  /**
+   * After the continuation of an answer ended: reports that arrived meanwhile and have no held
+   * wake (stored before a restart) wake the lead now. No-op for any other session.
+   */
+  afterLeadAnswer(sessionId: string): Promise<void>
+  /** `attention.decorate` of the library's HTTP module (see `AttentionExtra`). */
+  decorateAttention(item: AttentionItem): Promise<AttentionExtra | null>
+}
+
+/** What `GET /attention` carries as `extra` for the team (and what `GET /approvals` is built from). */
+export type AttentionExtra = {
+  agentId: string
+  agentName: string
+  taskId: string | null
+  /** `approval` or `question` (the web's name of a client-tool question). */
+  view: 'approval' | 'question'
+  questions: import('ai').JSONValue
 }
 
 export interface TeamServiceDeps {
   agents: AgentRepo
   tasks: SqliteTaskStore
   events: EventAppender
-  /** The shared feed (`attention-answered` events). */
+  /** The shared feed. */
   activity: ActivityStore
   now?: () => number
   log?: { warn(message: string, data?: Record<string, unknown>): void }
 }
-
-const alreadyAnswered = (): Error =>
-  conflict('This request was already answered or is no longer waiting.', ALREADY_ANSWERED)
 
 export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps): TeamService {
   const now = deps.now ?? (() => Date.now())
@@ -105,67 +116,74 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return task === undefined ? dmOwner(item.sessionId) : defById(task.agentId)
   }
 
-  /** Everything waiting for a person: the library's attention queue, in the shape the web reads. */
-  async function approvals(only: { sessionId?: string } = {}): Promise<ApprovalView[]> {
-    let roots: Array<{ sessionId: string; agent?: string }>
-    if (only.sessionId !== undefined) {
-      const owner = ownerOf({ sessionId: only.sessionId })
-      if (owner === undefined) return []
-      roots = [{ sessionId: only.sessionId, agent: owner.slug }]
-    } else {
-      // an agent without any DM message cannot have a pending approval there (the lead may have
-      // children to walk before its first message was indexed, so it is always read)
-      const active = deps.tasks.activity()
-      roots = allAgents()
-        .filter((def) => def.role === 'lead' || active.has(def.id))
-        .map((def) => ({ sessionId: dmSessionId(def.id), agent: def.slug }))
-      // the index is a safety net for sessions the walk above does not reach (routine runs)
-      for (const task of deps.tasks.list({ status: 'needs_action', limit: 500 })) {
-        const def = defById(task.agentId)
-        if (def !== undefined) roots.push({ sessionId: task.sessionId, agent: def.slug })
+  /** The sessions the attention queue starts from. */
+  function attentionRoots(): Array<{ sessionId: string; agent: string }> {
+    // an agent without any DM message cannot have a pending approval there (the lead may have
+    // children to walk before its first message was indexed, so it is always read)
+    const active = deps.tasks.activity()
+    const roots = allAgents()
+      .filter((def) => def.role === 'lead' || active.has(def.id))
+      .map((def) => ({ sessionId: dmSessionId(def.id), agent: def.slug }))
+    // the index is a safety net for sessions the walk above does not reach (routine runs)
+    for (const task of deps.tasks.list({ status: 'needs_action', limit: 500 })) {
+      const def = defById(task.agentId)
+      if (def !== undefined) roots.push({ sessionId: task.sessionId, agent: def.slug })
+    }
+    return roots
+  }
+
+  /**
+   * What the team adds to an item of the library's attention queue (`attention.decorate` of
+   * `eharness/http`, so `GET /attention` carries it as `extra`): the agent, the task and the
+   * question texts. `null` hides an item the team cannot place (no owner, a client tool that is
+   * not a readable question).
+   */
+  async function decorateAttention(item: AttentionItem): Promise<AttentionExtra | null> {
+    const owner = ownerOf(item)
+    if (owner === undefined) return null
+    const base = {
+      agentId: owner.id,
+      agentName: owner.name,
+      taskId: deps.tasks.getBySession(item.sessionId)?.id ?? null,
+    }
+    if (item.kind === 'approval') return { ...base, view: 'approval', questions: null }
+    if (item.kind === 'client-tool' && item.toolName === ASK_TOOL) {
+      // reads go through `peek`: nothing resumes
+      const found = pendingQuestions(await factory.peek(item.sessionId).pending())
+      const q = found.find((x) => x.toolCallId === item.id)
+      if (q !== undefined) {
+        return { ...base, view: 'question', questions: (q.questions ?? []) as never }
       }
     }
+    return null
+  }
+
+  /** Everything waiting for a person: the library's attention queue, in the shape of `GET /approvals`. */
+  async function approvals(): Promise<ApprovalView[]> {
     // reads go through `peek`: listing never runs session.start hooks or resumes a parked lead
     const items = await listAttention({
-      roots,
+      roots: attentionRoots(),
       peek: (sessionId) => factory.peek(sessionId),
-      ...(only.sessionId === undefined ? {} : { maxDepth: 0 }),
     })
-    const questions = new Map<string, ReturnType<typeof pendingQuestions>>()
     const out: ApprovalView[] = []
     for (const item of items) {
-      const owner = ownerOf(item)
-      if (owner === undefined) continue
-      const base = {
+      const extra = await decorateAttention(item)
+      if (extra === null) continue
+      out.push({
+        id: item.id,
+        kind: extra.view,
         sessionId: item.sessionId,
         parentSessionId: item.parentSessionId,
-        agentId: owner.id,
-        agentName: owner.name,
-        taskId: deps.tasks.getBySession(item.sessionId)?.id ?? null,
-        id: item.id,
+        agentId: extra.agentId,
+        agentName: extra.agentName,
+        taskId: extra.taskId,
         toolCallId: item.toolCallId,
         toolName: item.toolName,
         input: item.input,
+        risk: extra.view === 'approval' ? ((item.risk as ApprovalRisk | null) ?? null) : null,
+        questions: extra.questions as QuestionView[] | null,
         answeredWaiting: item.answeredWaiting,
-      }
-      if (item.kind === 'approval') {
-        out.push({
-          ...base,
-          kind: 'approval',
-          risk: (item.risk as ApprovalRisk | null) ?? null,
-          questions: null,
-        })
-      } else if (item.kind === 'client-tool' && item.toolName === ASK_TOOL) {
-        let found = questions.get(item.sessionId)
-        if (found === undefined) {
-          found = pendingQuestions(await factory.peek(item.sessionId).pending())
-          questions.set(item.sessionId, found)
-        }
-        const q = found.find((x) => x.toolCallId === item.id)
-        if (q !== undefined) {
-          out.push({ ...base, kind: 'question', risk: null, questions: q.questions ?? [] })
-        }
-      }
+      })
     }
     return out
   }
@@ -174,79 +192,14 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return (await factory.peek(task.sessionId).messages({ limit })) as unknown as ChatMessage[]
   }
 
-  async function answer(
-    view: ApprovalView,
-    body: Parameters<TeamPort['answer']>[1],
-    actor: Parameters<TeamPort['answer']>[2],
-  ): Promise<ApprovalOutcome> {
-    const def = defById(view.agentId)
-    if (def === undefined) throw notFound('agent', view.agentId)
-    await factory.prepare(def)
-    let answer: AttentionAnswer
-    if (body.kind === 'approval') {
-      answer = {
-        kind: 'approval',
-        approved: body.approved,
-        ...(body.reason === undefined ? {} : { reason: body.reason }),
-        ...(body.note === undefined ? {} : { note: body.note }),
-        ...(body.remember === undefined ? {} : { remember: body.remember }),
-        ...(body.endTurn === undefined ? {} : { endTurn: body.endTurn }),
-      }
-    } else {
-      // the question was answered (or its message moved on) before this request got here
-      const pending = await factory.peek(view.sessionId).pending()
-      const question = pendingQuestions(pending).find((q) => q.toolCallId === view.id)
-      if (question === undefined) throw alreadyAnswered()
-      const output = answerOutput(
-        question,
-        body.answers === null ? null : { answers: body.answers },
-      )
-      answer = {
-        kind: 'client-tool',
-        ...('output' in output ? { output: output.output } : { errorText: output.errorText }),
-      }
-    }
-    let result: Awaited<ReturnType<typeof answerAttention>>
+  async function afterLeadAnswer(sessionId: string): Promise<void> {
+    const def = dmOwner(sessionId)
+    if (def?.role !== 'lead' || sessionId !== dmSessionId(def.id)) return
     try {
-      result = await answerAttention(view.id, {
-        sessionId: view.sessionId,
-        answer,
-        open: (sessionId) => factory.openSession(def, sessionId),
-        peek: (sessionId) => factory.peek(sessionId),
-        actor: { id: actor.id, ...(actor.name === undefined ? {} : { name: actor.name }) },
-        store: deps.activity,
-        agentId: def.id,
-        log,
-      })
+      await wakeStranded(def, sessionId)
     } catch (error) {
-      if (isHarnessError(error, 'EH_INVALID_INPUT')) throw invalid(error.message, error.code)
-      if (
-        isHarnessError(error) &&
-        error.code !== 'EH_SESSION_BUSY' &&
-        error.code !== 'EH_SESSION_CLOSED' &&
-        error.code !== 'EH_STORAGE'
-      ) {
-        throw conflict(error.message, error.code)
-      }
-      throw error
+      log.warn(`waking stranded reports of ${sessionId} failed: ${String(error)}`)
     }
-    if (result.status === 'already-answered') throw alreadyAnswered()
-    if (result.status === 'not-found') throw notFound('approval', view.id)
-    if (result.status === 'recorded')
-      return { status: 'recorded', remaining: result.remaining ?? 0 }
-    // the continuation of a lead's own question / approval ended: reports that arrived meanwhile
-    // (and have no held wake, e.g. stored before a restart) wake it now
-    if (def.role === 'lead' && view.sessionId === dmSessionId(def.id)) {
-      void result.done?.then(async (r) => {
-        if (r?.stop !== 'complete') return
-        try {
-          await wakeStranded(def, view.sessionId)
-        } catch (error) {
-          log.warn(`waking stranded reports of ${view.sessionId} failed: ${String(error)}`)
-        }
-      })
-    }
-    return { status: 'resumed' }
   }
 
   async function reconcileWaits(): Promise<ReconcileReport['waits']> {
@@ -503,12 +456,6 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return out
   }
 
-  async function abortTask(task: Task, reason?: string) {
-    const session = await sessionOfTask(task)
-    if (session === undefined) throw notFound('agent', task.agentId)
-    return session.requestAbort(reason)
-  }
-
   async function messageTask(task: Task, text: string, mode: 'steer' | 'queue') {
     const session = await sessionOfTask(task)
     if (session === undefined) throw notFound('agent', task.agentId)
@@ -516,17 +463,11 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return { inboxId: queued.inboxId, target: queued.target }
   }
 
-  async function resumeTask(task: Task, request: Request): Promise<Response> {
-    const session = await sessionOfTask(task)
-    if (session === undefined) throw notFound('agent', task.agentId)
-    return handleResumeRequest(session, request)
-  }
-
   return {
     approvals,
-    answer,
-    resumeTask,
-    abortTask,
+    decorateAttention,
+    attentionRoots,
+    afterLeadAnswer,
     messageTask,
     taskMessages,
     async reconcile() {

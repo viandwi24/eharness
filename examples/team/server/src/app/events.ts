@@ -1,14 +1,6 @@
-/** Event feed and sidebar markers. */
-import type { TeamEvent } from '../domain/events.ts'
+/** Sidebar read markers (the feed itself is `eharness/http`'s `activity` routes). */
 import { getAgent } from './agents.ts'
 import type { Deps } from './ports.ts'
-
-export function listEvents(
-  deps: Deps,
-  query: { after: number; limit: number },
-): Promise<{ events: TeamEvent[]; lastSeq: number; resync?: true }> {
-  return deps.feed.page(query)
-}
 
 export function markAgentRead(
   deps: Deps,

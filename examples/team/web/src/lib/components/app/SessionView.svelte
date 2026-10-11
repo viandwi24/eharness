@@ -11,7 +11,7 @@
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { startsAuthorRun } from '#lib/parts/map.js';
 	import type { Approval, TaskDetail } from '#lib/api/client.js';
-	import { api, apiBase, getToken } from '#lib/api/index.js';
+	import { api, harness } from '#lib/api/index.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -32,13 +32,13 @@
 	} from '#lib/components/ai/conversation/index.js';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import ChatComposer from './ChatComposer.svelte';
-	import { CONTINUE_TEXT } from '#lib/chat/interrupted.js';
+	import { CONTINUE_TEXT } from 'eharness/client';
 	import PendingCard from './PendingCard.svelte';
 
 	/**
 	 * Watch (and steer) the session of a delegated task, like the coder's agent page: the full
 	 * transcript with the same parts as the chat, live while a turn runs (the task's UI message
-	 * stream, `GET /tasks/{id}/stream`), a message box and Stop.
+	 * stream, `GET /sessions/{sessionId}/chat/stream`), a message box and Stop.
 	 */
 	let { taskId, onClose }: { taskId: string; onClose?: () => void } = $props();
 
@@ -109,15 +109,16 @@
 	$effect(() => {
 		const id = taskId;
 		if (!running || loopId === id) return;
+		const sessionId = untrack(() => detail?.task.sessionId);
+		if (!sessionId) return; // the task row is not loaded yet; the effect runs again with it
 		loopId = id;
 		const ctl = new AbortController();
 		void (async () => {
 			try {
 				while (!ctl.signal.aborted) {
 					const result = await followTaskStream({
-						url: `${apiBase}/tasks/${id}/stream`,
-						fetch: (url, init) => fetch(url, init),
-						headers: getToken() ? { authorization: `Bearer ${getToken()}` } : {},
+						url: harness.url(`/sessions/${encodeURIComponent(sessionId)}/chat/stream`),
+						fetch: (url, init) => harness.request(url, init),
 						signal: ctl.signal,
 						onMessage: (m) => {
 							streaming = true;
@@ -146,7 +147,7 @@
 		if (!task) return;
 		aborting = true;
 		try {
-			const r = await api.post('/tasks/{id}/abort', { params: { id: task.id } });
+			const r = await harness.sessions.interrupt(task.sessionId);
 			toast.success(r.target === 'idle' ? 'Nothing was running' : 'Stopping the task');
 			void load(task.id);
 		} catch (e) {

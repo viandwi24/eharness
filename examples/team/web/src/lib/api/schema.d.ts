@@ -468,338 +468,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/agents/{id}/chat": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Send a message, answer an approval or regenerate (useChat)
-         * @description The body is an AI SDK `useChat` request; the response is the UI message stream (`text/event-stream`).
-         *
-         *     - **Send**: the last message is a user message. Attachments are `file` parts (`data:` / `https:` URLs, or the `library:///uploads/…` url returned by `POST /library/files`).
-         *     - **Approvals**: a client that posts the assistant message back with the part in `approval-responded` (`addToolApprovalResponse` + `sendAutomaticallyWhen`) continues into the **same** message id. The web app answers through `POST /approvals` instead. A posted message none of whose answers is waiting any more (answered in another tab, by Auto mode, double click) is `409 ALREADY_ANSWERED`: nothing runs, refresh quietly.
-         *     - **Regenerate / edit**: `trigger: "regenerate-message"`, or a user message with `messageId`.
-         *
-         *     Busy policy: while a turn of this chat runs, a new user message is **steered** into it (`ifBusy=steer`, default): on this instance the response follows the running turn; when another instance runs it the message goes through the durable inbox and the route answers `202`. `ifBusy=reject` answers `409 EH_SESSION_BUSY` instead. Approvals, regenerate and edit never steer: `409`.
-         *
-         *     Errors after the turn started (model failure, stale approval answer) arrive as an `error` chunk inside the stream, not as an HTTP status.
-         */
-        post: {
-            parameters: {
-                query?: {
-                    /** @description What a user message does while a turn runs. Default `steer`. */
-                    ifBusy?: "steer" | "reject";
-                };
-                header?: never;
-                path: {
-                    /** @description Agent id or slug. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ChatRequest"];
-                };
-            };
-            responses: {
-                /** @description The UI message stream of the turn */
-                200: {
-                    headers: {
-                        "x-vercel-ai-ui-message-stream": "v1";
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "text/event-stream": string;
-                    };
-                };
-                /** @description Steered into a turn running on another instance */
-                202: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ChatQueued"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Unknown agent */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description `EH_SESSION_BUSY`, `EH_SESSION_CLOSED`, `ALREADY_ANSWERED` or archived agent */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Request body too large */
-                413: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/{id}/chat/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Resume the running turn (useChat resume)
-         * @description Replays the chunks of the active turn from `from` and follows it until it ends, also when another instance runs it (stream log, ADR-0039). `204` when nothing streams: use the stored messages. A continuation turn after an approval replays only the continuation: refetch the message at the end.
-         */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0. */
-                    from?: string;
-                };
-                header?: never;
-                path: {
-                    /** @description Agent id or slug. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The UI message stream from the cursor */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "text/event-stream": string;
-                    };
-                };
-                /** @description No turn is streaming */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Unknown agent */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/{id}/chat/abort": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Stop the running turn (any instance) */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Agent id or slug. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": components["schemas"]["AbortRequest"];
-                };
-            };
-            responses: {
-                /** @description Where the abort went */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["AbortResult"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Unknown agent */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/agents/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Stored messages of the chat (paginated, newest page first) */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Message id: only older messages. */
-                    before?: string;
-                    /** @description Page size (1-200). */
-                    limit?: number;
-                };
-                header?: never;
-                path: {
-                    /** @description Agent id or slug. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description A page, chronological */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["MessagesPage"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Unknown agent */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/agents/{id}/compact": {
         parameters: {
             query?: never;
@@ -1076,6 +744,678 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stored state of a session (running, active turn, pending items, usage)
+         * @description `eharness/http`. A session that does not exist reads as an empty snapshot. `running` is true when a turn runs on any instance.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The snapshot */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SessionSnapshot"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stored messages of a session (paginated, oldest first within the page)
+         * @description `eharness/http`. The newest page first: pass `nextBefore` as `before` for older ones.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Message id: only older messages. */
+                    before?: string;
+                    /** @description Page size (1-200). */
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SessionMessagesPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a message, answer an approval or regenerate (useChat)
+         * @description `eharness/http` (spec 26 §5). The body is an AI SDK `useChat` request; the response is the UI message stream (`text/event-stream`).
+         *
+         *     - **Send**: the last message is a user message. Attachments are `file` parts (`data:` / `https:` URLs, or the `library:///uploads/…` url returned by `POST /library/files`; media type and reference are checked here).
+         *     - **Approvals**: a client that posts the assistant message back with the part in `approval-responded` continues into the **same** message id (the web app answers through `POST /attention/{id}/answer` instead). A message none of whose answers is waiting any more is `409 EH_HTTP_ALREADY_ANSWERED`.
+         *     - **Regenerate / edit**: `trigger: "regenerate-message"`, or a user message with `messageId`.
+         *     - **Idempotency**: the `Idempotency-Key` header, else the user message id; a repeat is `409 EH_HTTP_DUPLICATE_REQUEST` (with `details.active` and the turn).
+         *
+         *     Busy policy (`?ifBusy=`, default `steer`): while a turn of this chat runs, a new user message is **steered** into it: on this instance the response follows the running turn; when another instance runs it the message goes through the durable inbox and the route answers `202`. `reject` answers `409 EH_SESSION_BUSY`. Approvals, regenerate and edit never steer: `409`.
+         *
+         *     Only DM sessions take chat (a task takes messages through `POST /tasks/{id}/messages`: `409 TASK_SESSION`); an archived agent answers `409 AGENT_ARCHIVED`. Errors after the turn started arrive as an `error` chunk inside the stream.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    /** @description What a user message does while a turn runs. Default `steer`. */
+                    ifBusy?: "steer" | "reject";
+                };
+                header?: never;
+                path: {
+                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChatRequest"];
+                };
+            };
+            responses: {
+                /** @description The UI message stream of the turn (headers `x-eharness-turn-id`, `x-eharness-session-id`) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description Steered into a turn running on another instance */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatQueued"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `EH_SESSION_BUSY`, `EH_SESSION_CLOSED`, `EH_HTTP_ALREADY_ANSWERED`, `EH_HTTP_DUPLICATE_REQUEST`, `AGENT_ARCHIVED`, `TASK_SESSION` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Request body too large */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/chat/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resume the running turn (useChat resume)
+         * @description `eharness/http`. Replays the chunks of the active turn from `from` (also `Last-Event-ID`) and follows it until it ends, also when another instance runs it. `204` when nothing streams. Works for task sessions too.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Chunk cursor (0-based). Default 0. */
+                    from?: string;
+                };
+                header?: never;
+                path: {
+                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The UI message stream from the cursor */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description No turn is streaming */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/interrupt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop the running turn (any instance)
+         * @description `eharness/http`. Works for task sessions too.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["InterruptRequest"];
+                };
+            };
+            responses: {
+                /** @description Where the interrupt went */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InterruptResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The library attention queue (approvals and questions of every session)
+         * @description `eharness/http`. The raw `listAttention` items. The web reads `GET /approvals` instead, which adds the agent, the task and the question texts.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Pending items */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AttentionList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention/{id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer an approval or a question
+         * @description `eharness/http`. `respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: "recorded"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: "resumed"`). Nothing streams: the continuation runs server side and shows in the activity feed.
+         *
+         *     - Approval: `{ kind: "approval", approved, reason?, note?, remember? }`. `remember: "session"` grants the tool for the rest of the session. `note` is shown to the model after the result.
+         *     - Question: `{ kind: "question", answers }` (one per question, `null` dismisses).
+         *
+         *     An item that is gone is `404`; answered elsewhere first is `200 already-answered`; a running turn is `409`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description The `id` of an item of `GET /approvals`. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AttentionAnswer"];
+                };
+            };
+            responses: {
+                /** @description Recorded, resumed or already answered */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AttentionAnswered"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such pending item */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description A turn of the session is running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Events after a cursor (JSON)
+         * @description `eharness/http` (`readActivityPage`). Every event of the app and of the sessions, in `seq` order.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Return events with a higher `seq`. Default 0. */
+                    after?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Events, oldest first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EventList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/activity/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live event feed (SSE)
+         * @description `eharness/http` (`handleActivityStream`): every instance tails the shared events log (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head. Frames: `retry` + `: connected` + `event: boot` at once; `resync` when the cursor is behind the retention mark or ahead of the head; `: keep-alive` every 15 s.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Replay events with a higher `seq`. */
+                    after?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Server-sent events */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/library/files": {
         parameters: {
             query?: never;
@@ -1290,85 +1630,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/tasks/{id}/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Follow the running turn of a task (UI message stream)
-         * @description Replays the chunks of the active turn of the task session from `from` and follows it until it ends, also when another instance runs it (stream log, ADR-0039). `204` when nothing streams: use `GET /tasks/{id}`. A continuation turn after an approval replays only the continuation.
-         */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0. */
-                    from?: string;
-                };
-                header?: never;
-                path: {
-                    /** @description Task id. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The UI message stream from the cursor */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "text/event-stream": string;
-                    };
-                };
-                /** @description No turn is streaming */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Unknown task */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/approvals": {
         parameters: {
             query?: never;
@@ -1378,7 +1639,7 @@ export interface paths {
         };
         /**
          * Everything that waits for a person, across all sessions
-         * @description Pending tool approvals and `ask_user_question` questions of every DM chat and every delegated task, read from the stored session state (any instance).
+         * @description Pending tool approvals and `ask_user_question` questions of every DM chat and every delegated task, read from the stored session state (any instance), with the agent, the task and the question texts. Answer with `POST /attention/{id}/answer` (`eharness/http`). `id` and `sessionId` of an item go into that route.
          */
         get: {
             parameters: {
@@ -1396,211 +1657,6 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ApprovalList"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/approvals/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Answer an approval or a question
-         * @description `respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: "recorded"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: "resumed"`). Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.
-         *
-         *     - Approval: `{ approved, reason?, note?, remember?, endTurn? }`. `remember: "session"` grants the tool for the rest of the session. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).
-         *     - Question: `{ answers }` (one per question, `null` dismisses).
-         *
-         *     An item that is gone (answered elsewhere) is `404`; a stale answer or a running turn is `409`.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description The `id` of an item of `GET /approvals`. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ApprovalAnswer"];
-                };
-            };
-            responses: {
-                /** @description Recorded (`recorded`) or recorded and resumed (`resumed`) */
-                202: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApprovalAccepted"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description No such pending item */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Stale answer, ambiguous id, or a turn of the session is running */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Events after a cursor (JSON) */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Return events with a higher `seq`. Default 0. */
-                    after?: string;
-                    limit?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Events, oldest first */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EventList"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/events/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Live event feed (SSE)
-         * @description The `eharness/activity` stream: every instance tails the shared events log (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head (new events only). Frames: `retry` + `: connected` + `event: boot` at once; `resync` when the cursor is behind the retention mark or ahead of the head; `: keep-alive` every 15 s.
-         */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description Replay events with a higher `seq`. */
-                    after?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Server-sent events */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "text/event-stream": string;
                     };
                 };
                 /** @description Invalid request */
@@ -1691,79 +1747,6 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tasks/{id}/abort": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Stop the running turn of a task (any instance)
-         * @description `requestAbort()` on the task session: the instance that runs the turn stops it within one poll. A task that waits for an approval has no running turn (`target: idle`): answer or deny the approval instead.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Task id. */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": components["schemas"]["TaskAbortBody"];
-                };
-            };
-            responses: {
-                /** @description Where the abort went */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["TaskAbortResult"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Unknown task */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
         delete?: never;
         options?: never;
         head?: never;
@@ -5251,27 +5234,12 @@ export interface components {
             /** @enum {string} */
             mode: "manual" | "auto" | "bypass";
         };
-        /** @description A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /agents/{id}/chat/stream`. */
-        ChatQueued: {
-            inboxId: string;
-            /** @enum {string} */
-            delivered: "steer";
-            /** @enum {string} */
-            target: "local" | "remote";
+        CompactResult: {
+            compacted: boolean;
+            message: components["schemas"]["UiMessage"];
         };
-        /** @description The `useChat` request body (`DefaultChatTransport`). */
-        ChatRequest: {
-            /** @description Chat id of `useChat`; ignored (the chat is the agent DM). */
-            id?: string;
-            /** @description Only the **last** message is read: a user message (send), or the assistant message with `approval-responded` / `output-available` tool parts (answers a pending approval; the continuation streams into the same message). Ids, metadata and history of the client are never trusted. */
-            messages: components["schemas"]["UiMessage"][];
-            /** @enum {string} */
-            trigger?: "submit-message" | "regenerate-message";
-            /** @description With a user message: replace that message and answer it (edit). */
-            messageId?: string;
-        };
-        /** @description An AI SDK `UIMessage`. Stored messages carry `metadata.eharness` (turn id, stop reason, usage, pending approvals). */
-        UiMessage: {
+        /** @description The summary (kind) message; null when there was nothing to compact. */
+        UiMessage: ({
             id?: string;
             /** @enum {string} */
             role: "user" | "assistant" | "system";
@@ -5283,27 +5251,7 @@ export interface components {
             metadata?: unknown;
         } & {
             [key: string]: unknown;
-        };
-        AbortResult: {
-            /**
-             * @description `local`: a turn of this instance was aborted; `remote`: the request was written for the instance running it; `idle`: nothing runs.
-             * @enum {string}
-             */
-            target: "local" | "remote" | "idle" | "unsupported";
-        };
-        AbortRequest: {
-            reason?: string;
-        };
-        MessagesPage: {
-            /** @description Chronological (oldest first). */
-            messages: components["schemas"]["UiMessage"][];
-            /** @description Pass as `before` to load older messages; null = no more. */
-            nextBefore: string | null;
-        };
-        CompactResult: {
-            compacted: boolean;
-            message: components["schemas"]["UiMessage"] & (Record<string, never> | null);
-        };
+        }) | null;
         ChatTools: {
             connectors: {
                 connectionId: string;
@@ -5393,6 +5341,187 @@ export interface components {
                 turns: number;
             };
         };
+        /** @description The stored state of a session (`eharness/http`). */
+        SessionSnapshot: {
+            id: string;
+            /** @description A turn runs, on any instance. */
+            running: boolean;
+            busy: components["schemas"]["SessionBusy"];
+            activeTurn: components["schemas"]["ActiveTurn"];
+            pending: {
+                messageId: string;
+                approvals: {
+                    approvalId: string;
+                    toolCallId: string;
+                    toolName: string;
+                    input?: unknown;
+                    answered: boolean;
+                }[];
+                clientTools: {
+                    toolCallId: string;
+                    toolName: string;
+                    input?: unknown;
+                    timeoutAt?: number;
+                    answered: boolean;
+                }[];
+                externals: {
+                    waitId: string;
+                    toolCallId: string;
+                    toolName: string;
+                    timeoutAt?: number;
+                    resolved: boolean;
+                }[];
+            } | null;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+                turns: number;
+                costUsd?: number;
+            };
+        };
+        SessionBusy: {
+            /** @enum {string} */
+            scope: "local" | "remote";
+            turnId: string;
+            owner?: string;
+            heartbeatAt?: number;
+        } | null;
+        ActiveTurn: {
+            turnId: string;
+            kind: string;
+            messageId: string;
+            userMessageId?: string;
+            owner: string;
+            startedAt: number;
+            heartbeatAt: number;
+        } | null;
+        SessionMessagesPage: {
+            /** @description Oldest first. */
+            messages: (components["schemas"]["UiMessage"] & unknown)[];
+            /** @description Pass as `before` to read older messages; absent = the start. */
+            nextBefore?: string;
+        };
+        /** @description A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /sessions/{id}/chat/stream`. */
+        ChatQueued: {
+            inboxId: string;
+            /** @enum {string} */
+            delivered: "steer";
+            /** @enum {string} */
+            target: "local" | "remote";
+            /**
+             * @description The same `Idempotency-Key` was delivered before: nothing was added.
+             * @enum {boolean}
+             */
+            duplicate?: true;
+        };
+        /** @description The `useChat` request body (`DefaultChatTransport`). */
+        ChatRequest: {
+            /** @description Chat id of `useChat`; ignored (the chat is the agent DM). */
+            id?: string;
+            /** @description Only the **last** message is read: a user message (send), or the assistant message with `approval-responded` / `output-available` tool parts (answers a pending approval; the continuation streams into the same message). Ids, metadata and history of the client are never trusted. */
+            messages: (components["schemas"]["UiMessage"] & unknown)[];
+            /** @enum {string} */
+            trigger?: "submit-message" | "regenerate-message";
+            /** @description With a user message: replace that message and answer it (edit). */
+            messageId?: string;
+        };
+        InterruptResult: {
+            /**
+             * @description `local`: a turn of this instance was aborted; `remote`: the request was written for the instance running it; `idle`: nothing runs.
+             * @enum {string}
+             */
+            target: "local" | "remote" | "idle" | "unsupported";
+        };
+        InterruptRequest: {
+            reason?: string;
+        };
+        /** @description The library queue, without the app fields of `GET /approvals` (agent name, task, question texts). */
+        AttentionList: {
+            items: components["schemas"]["AttentionItem"][];
+        };
+        AttentionItem: {
+            /** @description `approvalId`, `toolCallId` (client tool, e.g. a question) or `waitId`: the `{id}` of `POST /attention/{id}/answer`. */
+            id: string;
+            /** @enum {string} */
+            kind: "approval" | "client-tool" | "wait";
+            sessionId: string;
+            parentSessionId: string | null;
+            rootSessionId: string;
+            /** @description Slug of the agent that runs the session. */
+            agent?: string;
+            name?: string;
+            description?: string;
+            toolCallId: string;
+            toolName: string;
+            input?: unknown;
+            /** @enum {string|null} */
+            risk: "read" | "write" | "external" | "unknown" | null;
+            messageId: string;
+            createdAt: number | null;
+            answeredWaiting: number;
+        };
+        AttentionAnswered: {
+            /**
+             * @description `recorded`: stored, others of the batch still wait (`remaining`). `resumed`: it was the last one and the session continues server side. `already-answered`: answered elsewhere first (refresh quietly).
+             * @enum {string}
+             */
+            status: "resumed" | "recorded" | "already-answered";
+            id: string;
+            sessionId: string;
+            /** @enum {string} */
+            kind?: "approval" | "client-tool" | "wait";
+            remaining?: number;
+        };
+        AttentionAnswer: {
+            /** @description The `sessionId` of the item. */
+            sessionId: string;
+            /** @description An approval decision, or the answer of an `ask_user_question`. */
+            answer: {
+                /** @enum {string} */
+                kind: "approval";
+                approved: boolean;
+                /** @description Shown to the model when denied. */
+                reason?: string;
+                /** @description A free-text note about this call: the model reads it right after the result (approved) or as part of the reason (denied). */
+                note?: string;
+                /**
+                 * @description With `approved: true`: also allow this tool without asking for the rest of the session. With `approved: false`: never allow it in this session.
+                 * @enum {string}
+                 */
+                remember?: "session";
+            } | {
+                /** @enum {string} */
+                kind: "question";
+                /** @description One answer per question, in order; null dismisses the questions. */
+                answers: {
+                    selected?: string[];
+                    other?: string;
+                    notes?: string;
+                }[] | null;
+            };
+        };
+        EventList: {
+            events: components["schemas"]["TeamEvent"][];
+            /** @description Cursor for the next call: the `seq` of the last event, else the current head. */
+            lastSeq: number;
+            /**
+             * @description Present when `after` is older than the events kept by retention: some events were missed, refetch the state (agents, tasks, chats) and continue from `lastSeq`.
+             * @enum {boolean}
+             */
+            resync?: true;
+        };
+        /** @description App events: `message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page) and the change events. Session events come from `eharness/activity` (spec 25): `turn-started` (turnId, kind, source; every turn of every session, also server-started ones), `pending-changed` (a snapshot: `waiting` = approvals / questions that wait for a person, `[]` when nothing does), `approval-decided` (id, approved, by), `attention-answered`, `session-recovered`, `child-reported`. */
+        TeamEvent: {
+            seq: number;
+            /** @enum {string} */
+            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
+            agentId: string | null;
+            sessionId: string | null;
+            payload: {
+                [key: string]: unknown;
+            };
+            createdAt: number;
+        };
         Upload: {
             /** @example /uploads/2026-10-10/0198f0a2-report.pdf */
             path: string;
@@ -5439,12 +5568,12 @@ export interface components {
         TaskDetail: {
             task: components["schemas"]["Task"];
             /** @description The stored messages of the task session (newest 200). */
-            messages: components["schemas"]["UiMessage"][];
+            messages: (components["schemas"]["UiMessage"] & unknown)[];
             /** @description What the task waits for. */
             approvals: components["schemas"]["Approval"][];
         };
         Approval: {
-            /** @description The approval id, or the tool call id of a question: the `{id}` of `POST /approvals/{id}`. */
+            /** @description The approval id, or the tool call id of a question: the `{id}` of `POST /attention/{id}/answer`. */
             id: string;
             /** @enum {string} */
             kind: "approval" | "question";
@@ -5474,75 +5603,6 @@ export interface components {
         ApprovalList: {
             approvals: components["schemas"]["Approval"][];
         };
-        /** @description The answer is recorded. When it was the last of its batch the session continues in the background (follow it with the events feed); else the others still wait. */
-        ApprovalAccepted: {
-            /** @enum {boolean} */
-            accepted: true;
-            /**
-             * @description `recorded`: the answer is stored and other items of the same batch still wait (`remaining`). `resumed`: it was the last one and the session continues.
-             * @enum {string}
-             */
-            status: "recorded" | "resumed";
-            /** @description Items still unanswered (0 when resumed). */
-            remaining: number;
-            id: string;
-            sessionId: string;
-            agentId: string;
-        };
-        ApprovalAnswer: components["schemas"]["ApprovalDecision"] | components["schemas"]["QuestionAnswer"];
-        /** @description Answer of a tool approval. */
-        ApprovalDecision: {
-            approved: boolean;
-            /** @description Shown to the model when denied. */
-            reason?: string;
-            /** @description A free-text note of the person about this call: the model reads it right after the result (approved) or as part of the reason (denied). */
-            note?: string;
-            /**
-             * @description With `approved: true`: also allow this tool without asking for the rest of the session (a library grant, spec 11 §3.1; it applies from the step after the continuation starts). With `approved: false`: never allow it in this session.
-             * @enum {string}
-             */
-            remember?: "session";
-            /**
-             * @description End the turn after the answer without calling the model again (spec 11): always, or only when denied.
-             * @enum {string}
-             */
-            endTurn?: "after-answers" | "if-denied";
-            /** @description Session of the item; only needed when two sessions carry the same id. */
-            sessionId?: string;
-        };
-        /** @description Answer of an `ask_user_question` question. */
-        QuestionAnswer: {
-            /** @description One answer per question, in order; null dismisses the questions. */
-            answers: {
-                selected?: string[];
-                other?: string;
-                notes?: string;
-            }[] | null;
-            /** @description Session of the item; only needed when two sessions carry the same id. */
-            sessionId?: string;
-        };
-        EventList: {
-            events: components["schemas"]["TeamEvent"][];
-            /** @description Cursor for the next call: the `seq` of the last event, else the current head. */
-            lastSeq: number;
-            /**
-             * @description Present when `after` is older than the events kept by retention: some events were missed, refetch the state (agents, tasks, chats) and continue from `lastSeq`.
-             * @enum {boolean}
-             */
-            resync?: true;
-        };
-        /** @description App events: `message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page) and the change events. Session events come from `eharness/activity` (spec 25): `turn-started` (turnId, kind, source; every turn of every session, also server-started ones), `pending-changed` (a snapshot: `waiting` = approvals / questions that wait for a person, `[]` when nothing does), `approval-decided` (id, approved, by), `attention-answered`, `session-recovered`, `child-reported`. */
-        TeamEvent: {
-            seq: number;
-            /** @enum {string} */
-            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
-            agentId: string | null;
-            sessionId: string | null;
-            payload: {
-                [key: string]: unknown;
-            };
-            createdAt: number;
-        };
         AgentSessions: {
             dm: {
                 sessionId: string;
@@ -5556,17 +5616,6 @@ export interface components {
             tasks: components["schemas"]["Task"][];
             /** @description Tasks this agent handed to others. */
             delegated: components["schemas"]["Task"][];
-        };
-        TaskAbortResult: {
-            taskId: string;
-            /**
-             * @description `local`/`remote`: the turn was told to stop (here or on another instance). `idle`: nothing was running.
-             * @enum {string}
-             */
-            target: "local" | "remote" | "idle" | "unsupported";
-        };
-        TaskAbortBody: {
-            reason?: string;
         };
         TaskMessageResult: {
             taskId: string;
