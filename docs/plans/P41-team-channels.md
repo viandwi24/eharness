@@ -1,0 +1,139 @@
+# P41 — Team example: channels (chat platforms as sessions of an agent)
+
+Status: todo · Owner: maintainer · Branch: `main` (batched, see release workflow)
+
+## Goal
+
+Agents of the team example live in chat platforms the way employees do. A **channel connection**
+(one platform identity: a Telegram bot, a Telegram user account, later a Discord or Slack app) is
+bound to an agent. Messages from allowlisted chats either **wake** the agent (mention, reply, DM)
+or are only **observed** (stored as context, no model call). The agent answers in place, posts to
+channels, contacts mapped employees, and reads history through a small set of channel tools.
+Collectors feed observed chats into the library, where the chunked-audit work of P40 phase D
+processes them. Telegram is the first platform with two transports: Bot API (grammY) and MTProto
+user account (mtcute).
+
+The gateway lives in **examples/team** for now, written platform-neutral (adapters below a
+gateway that never names a platform), so it can move into the library later if it proves generic.
+
+## Use cases (acceptance matrix)
+
+Every design choice is checked against these three; each needs an end-to-end scripted flow and one
+manual check with a real test bot and test account before the phase is done.
+
+| | Use case | Must work |
+|---|---|---|
+| U1 | **Community audit** — thousands of messages a day in groups and channels the team does not control (a bot cannot be added) | MTProto login, admin picks chats, backfill window, live ingest, edits and deletions (ids) plus admin log polling, observe-only (never wakes, never replies), library JSONL → chunked-audit program → report or decision; survives restarts (cursors), `FLOOD_WAIT`, session revocation (`needs-auth` + bell) |
+| U2 | **Channel publishing** — scheduled and approved posts | post text, photo, album; edit, pin, delete; schedule through programs/routines (and Telegram native scheduled messages on MTProto); publish gated by the decision center; 4096 / 1024 length limits handled; outbound queue per chat |
+| U3 | **Internal group and employees** | employees mention or reply to the agent → it wakes with recent group context and answers in the same topic/reply chain; the agent DMs mapped employees; photos and files reach the agent (multimodal); several agents in one group without bot loops |
+
+## Design
+
+### Layers
+
+| Layer | Role |
+|---|---|
+| Connector | credentials, setup flow, status — `eharness/connectors` |
+| Adapter (transport) | one per platform transport; normalizes inbound events (raw kept, never projected), outbound operations, `capabilities`, optional operations (history, admin log, members), native action catalog |
+| Gateway | allowlist → drop self/bots → identity → wake test → `session.enqueue(…, { mode: 'collect', id: <platform message id> })`, or observe (channel log only); outbound queue and rate limits; session keys |
+| Tools | `channel_read` (risk `read`), `channel_send` (`external`), `channel_manage` (`destructive`) share one implementation; `channel_describe` (`read`) lists native actions. Native platform actions are deferred tools found through `tool_search`, each with a static risk |
+| Collectors | backfill and audit ingest into library JSONL (P40 phase D collector interface) |
+
+One static risk per tool (spec 11) is why the gateway tool is split by risk instead of one
+`channel(action)` tool: permissions, program authority and pinned asks keep working unchanged.
+
+### Binding, wake and replies
+
+- A connection is one identity bound to one agent; a group or topic may override `agentId`.
+  Several agents in one group = one bot per agent (each has its own native @mention).
+- Group policy: allowlist (default) · per group/topic `wake: 'mention' | 'always' | 'never'`
+  (`never` = observe-only for audit chats). Implicit wakes: reply to the agent, alias patterns, the
+  agent's own topic. Ignore a message that mentions others but not the agent (default on).
+- DMs: only employees mapped through a one-time `/start <token>` deep link; unmapped senders never
+  wake an agent and are context only in groups.
+- Delivery: `final_text` (default; the final answer quotes the trigger and stays in its topic) or
+  `message_tool` (only `channel_send` posts; for `wake: 'always'` rooms and program-originated
+  posts). `NO_REPLY` is honoured only when `wake: 'always'`.
+- Ack reaction 👀 on group mentions, typing indicator on, no streaming in v1 (final message split
+  at platform limits).
+- Bots: other bots ignored by default; loop guard 20 events / 300 s → 600 s cooldown.
+
+### Sessions
+
+- Shared session per group (turns prefixed with the sender), own session per forum topic, DM
+  session per (connection, peer); a DM is never merged with a group. A DM that needs group facts
+  uses `channel_read` under normal permissions.
+- No automatic reset (compaction handles growth); `/new` is owner-only in groups.
+- Unmentioned observed messages are buffered; at wake the last 50 are injected as a turn reminder
+  ("messages since your last reply"), never into `instructions`.
+- Channel sessions appear in the agent's thread list (P40 phase M) with a source badge.
+
+### Telegram transports
+
+| | Bot API (grammY) | User account (MTProto, mtcute) |
+|---|---|---|
+| Inbound | long polling + runner, ordered per chat | updates loop with catch-up, per-chat dedupe |
+| Sees in groups | mentions/replies (privacy mode) or everything as admin | everything the account can see |
+| History / backfill | none (Telegram Desktop export import as fallback) | yes, per-chat cursor |
+| Deletions / admin log | no | ids; admin log as admin (short retention, poll often) |
+| DMs | only users who started the bot | known contacts only, queued and capped |
+| Files | download ≤ 20 MB | chunked, no cap |
+
+The MTProto transport exposes the full API. Safety comes from our side: an outbound queue per chat
+and per account below Telegram limits, a daily cap on DMs, `FLOOD_WAIT` parking (never tight
+retries), a circuit breaker with a bell alert on ban-like errors, destructive actions through
+approvals, no joining by invite link without a human, no member sweeps, no presence tricks
+(`readHistory`, typing on the user account), and one live client per session (a lease; a second
+client kills the session with `AUTH_KEY_DUPLICATED`).
+
+### Credentials
+
+- Bot token: `apiKey` connector; `test()` calls `getMe` and reports whether the bot can read all
+  group messages (privacy mode), with a UI warning when observe needs admin rights.
+- MTProto: custom flow (api id/hash from workspace `clientConfig`, phone → code → 2FA password or
+  QR → choose chats), bound to the admin principal who started it.
+- Library additions (spec 24 + changeset): an opaque sealed `credentials.session` slot that never
+  appears in public views; a `qr` flow view; a `resend` action; a server-side credentials read for
+  long-lived runtimes. `needs-auth` is set on `AUTH_KEY_UNREGISTERED`, `SESSION_REVOKED`, a revoked
+  bot token, and stops all jobs of the connection until reconnect.
+
+### Data and platform terms
+
+Telegram's API terms (§1.5) and bot developer terms (§4) restrict AI use of platform data and
+large-scale collection, and require a privacy policy, consent for user-submitted data, deletion of
+unneeded data and encryption at rest with a separate key. The example therefore: ingests only chats
+an admin chose; never trains or fine-tunes on them; encrypts stored channel messages at rest with
+the secret vault; keeps a retention period per chat with a purge job; ships a privacy-notice
+template; stores only what a task needs. Operators must review these terms for their own use
+(especially U1) before real use.
+
+## Phases
+
+- **L1 — gateway core (team):** contract types, gateway, channel log (encrypted), tools, mock
+  adapter, wake/observe/session tests.
+- **L2 — library connectors:** session slot, `qr` view, `resend`, server-side credentials read;
+  spec 24, changeset.
+- **L3 — Telegram bot transport + Channels UI:** connection setup, bindings, per-chat policy,
+  employee mapping, outbound queue; U2 and U3 flows.
+- **L4 — Telegram user transport:** login flow, chat picker, live ingest, backfill, deletions,
+  admin log, collectors into the library; U1 flow.
+- Later: Discord and Slack adapters (no gateway change expected).
+
+## Checklist
+
+- [ ] L1
+- [ ] L2
+- [ ] L3
+- [ ] L4
+- [ ] U1, U2, U3 scripted flows green; manual checks with a real test bot and test account
+
+## Open questions
+
+- grammY long polling under Bun needs a soak check; webhook through `Bun.serve` is the fallback.
+- Whether a plain `@botname` text mention reaches a bot in privacy mode (docs list commands and
+  replies only) — test with a real bot.
+- Admin log retention (believed about 48 h) — verify with a real account.
+
+## Requests to other phases
+
+- P40 phase M: threads carry an optional `source` and display label for channel sessions.
