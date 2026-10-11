@@ -1,0 +1,497 @@
+/**
+ * `createChatSession`: the framework-neutral logic around an AI SDK chat of one eharness session:
+ * history paging, re-attaching to a running turn (here or on another instance), retries, steering
+ * while busy, stalled-connection detection, interrupted turns, error wording. It drives a
+ * {@link ChatBridge} that `@ai-sdk/svelte` `Chat` satisfies structurally and `@ai-sdk/react`
+ * `useChat` satisfies through `chatBridgeOf` (`eharness/client/react`).
+ *
+ * @see docs/specs/27-client.md#5-chat-session
+ */
+import type {
+  ChatOnDataCallback,
+  ChatOnErrorCallback,
+  ChatOnFinishCallback,
+  ChatStatus,
+  ChatTransport,
+  FileUIPart,
+  UIMessage,
+} from 'ai'
+import type { MessagesPage } from '../http/index.ts'
+import {
+  type ChatProblem,
+  CONTINUE_TEXT,
+  describeChatError,
+  interruptedTurn,
+  mergeOlder,
+  replaceTail,
+} from './chat-helpers.ts'
+import { type HarnessClient, isHarnessHttpError, isNetworkError } from './http-client.ts'
+import { createStore, type Store } from './store.ts'
+import { createHarnessTransport, type HarnessTransportOptions } from './transport.ts'
+
+/** What the session needs from the chat object (`Chat` of `@ai-sdk/svelte` satisfies it). */
+export interface ChatBridge<UI extends UIMessage = UIMessage> {
+  /** Readable and writable (the session replaces the history with what is stored). */
+  messages: UI[]
+  readonly status: ChatStatus
+  sendMessage(message: { text: string; files?: FileUIPart[] }): Promise<void>
+  regenerate(options?: { messageId?: string }): Promise<void>
+  resumeStream(): Promise<void>
+  stop(): Promise<void>
+  clearError(): void
+}
+
+/** Live state of the streamed turn (`data-eh.status`, transient). */
+export type ChatActivity = 'thinking' | 'tool' | 'compacting' | null
+
+/** The observable state of a {@link ChatSession}. */
+export interface ChatSessionState {
+  /** The first page of history was loaded. */
+  loaded: boolean
+  /** Older pages exist. */
+  hasOlder: boolean
+  loadingOlder: boolean
+  /** Reattached to a running turn / following a steered one. */
+  following: boolean
+  /** Transient banner, e.g. "Sent to the running turn". */
+  notice: string | null
+  /** A failure of a turn this tab follows but did not start: show it inline (Retry when it helps). */
+  problem: ChatProblem | null
+  activity: ChatActivity
+  /** A turn runs or is being followed in this chat. */
+  busy: boolean
+}
+
+/** Options of {@link createChatSession}. */
+export interface ChatSessionOptions<UI extends UIMessage = UIMessage> {
+  client: HarnessClient
+  sessionId: string
+  /** Initial messages, when the caller already has them (`init()` then skips the first page). */
+  messages?: UI[]
+  /** Page size of the history reads. Default 50. */
+  pageSize?: number
+  /** Extra options of the default transport (`ifBusy`, `body`). Ignored when `transport` is given. */
+  transportOptions?: Pick<HarnessTransportOptions, 'ifBusy' | 'body'>
+  /** Your own transport (then a `202` is not noticed; prefer `transportOptions`). */
+  transport?: ChatTransport<UI>
+  /** Toasts. */
+  notify?: (level: 'info' | 'error', text: string) => void
+  /** Delay between `follow` retries (injectable for tests). */
+  sleep?: (ms: number) => Promise<void>
+}
+
+/** What to spread into `new Chat({ ... })` / `useChat({ ... })`. */
+export interface ChatInit<UI extends UIMessage = UIMessage> {
+  id: string
+  messages?: UI[]
+  transport: ChatTransport<UI>
+  onError: ChatOnErrorCallback
+  onData: ChatOnDataCallback<UI>
+  onFinish: ChatOnFinishCallback<UI>
+}
+
+/** The session logic around one chat. */
+export interface ChatSession<UI extends UIMessage = UIMessage> extends Store<ChatSessionState> {
+  readonly sessionId: string
+  readonly chatInit: ChatInit<UI>
+  /** Connect the chat object. Pass `undefined` to disconnect (unmount). */
+  bind(chat: ChatBridge<UI> | undefined): void
+  /** Load history, then reattach when a turn runs (here or on another instance). Idempotent. */
+  init(): Promise<void>
+  /** Attach to the running turn (replay then follow), then align with storage. */
+  follow(): Promise<void>
+  /** A turn this tab did not start: attach to its stream (checks a few times). */
+  followServerTurn(): Promise<void>
+  /** A message was stored by a turn this tab is not streaming: show it. */
+  storedElsewhere(): Promise<void>
+  /** Call every few seconds while the chat shows a running turn: drops a silently dead reader. */
+  checkStalled(): Promise<void>
+  /** Load the next older page; returns the number of messages added. */
+  loadOlder(): Promise<number>
+  /** Reload the newest page; older pages stay. */
+  refetch(): Promise<void>
+  /** Send a user message; while a turn runs it is steered into it. */
+  send(text: string, files?: FileUIPart[]): Promise<void>
+  /** Interrupt the server turn, then stop reading locally. */
+  stop(): Promise<void>
+  /** Send {@link CONTINUE_TEXT} after an interrupted turn. */
+  continueTurn(): Promise<void>
+  /** Regenerate the interrupted reply. */
+  retryTurn(): Promise<void>
+  /** The banner's Retry. */
+  retry(): Promise<void>
+  dismissProblem(): void
+  /** The reply this chat ended on was cut short by a dead process. */
+  interrupted(): boolean
+  /** Recompute `busy` from the chat status (call when the chat status changed outside the session). */
+  refreshBusy(): void
+}
+
+const NOTICE_STEERED = 'Sent to the running turn'
+const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Create the session logic of one eharness session. */
+export function createChatSession<UI extends UIMessage = UIMessage>(
+  options: ChatSessionOptions<UI>,
+): ChatSession<UI> {
+  const { client, sessionId } = options
+  const pageSize = options.pageSize ?? 50
+  const notify = options.notify ?? (() => {})
+  const sleep = options.sleep ?? defaultSleep
+
+  const store = createStore<ChatSessionState>({
+    loaded: options.messages !== undefined,
+    hasOlder: false,
+    loadingOlder: false,
+    following: false,
+    notice: null,
+    problem: null,
+    activity: null,
+    busy: false,
+  })
+
+  let chat: ChatBridge<UI> | undefined
+  let nextBefore: string | undefined
+  let netError: Error | null = null
+  const lastNetError = (): Error | null => netError
+  let queued = false
+  let sending = false
+  let initPromise: Promise<void> | undefined
+  let idlePolls = 0
+
+  const running = (): boolean => {
+    const s = chat?.status
+    return s === 'submitted' || s === 'streaming'
+  }
+  const busyNow = (): boolean => store.get().following || sending || running()
+  const patch = (changes: Partial<ChatSessionState>): void => {
+    const next = { ...store.get(), ...changes }
+    next.busy = next.following || sending || running()
+    if (shallowEqual(next, store.get())) return
+    store.set(next)
+  }
+  const refreshBusy = (): void => patch({})
+
+  const transport =
+    options.transport ??
+    createHarnessTransport<UI>({
+      client,
+      sessionId: () => sessionId,
+      ...(options.transportOptions ?? {}),
+      onQueued: () => {
+        queued = true
+        patch({ notice: NOTICE_STEERED })
+      },
+    })
+
+  const page = async (before?: string): Promise<MessagesPage | undefined> => {
+    try {
+      return await client.sessions.messages(sessionId, {
+        limit: pageSize,
+        ...(before === undefined ? {} : { before }),
+      })
+    } catch {
+      return undefined
+    }
+  }
+  const snapshot = async (): Promise<{ running: boolean } | undefined> => {
+    try {
+      const s = await client.sessions.get(sessionId)
+      return { running: s.running || (s.activeTurn !== null && s.activeTurn !== undefined) }
+    } catch {
+      return undefined
+    }
+  }
+
+  const refetch = async (): Promise<void> => {
+    const first = await page()
+    if (first === undefined || chat === undefined) return
+    chat.messages = replaceTail(chat.messages, first.messages as UI[])
+    const state = store.get()
+    if (nextBefore === undefined && !state.hasOlder) {
+      nextBefore = first.nextBefore
+      patch({ hasOlder: first.nextBefore !== undefined, notice: null })
+    } else patch({ notice: null })
+  }
+
+  const clearChatError = (): void => {
+    if (chat !== undefined && chat.status === 'error') chat.clearError()
+  }
+
+  const follow = async (): Promise<void> => {
+    if (store.get().following || chat === undefined) return
+    patch({ following: true, problem: null })
+    try {
+      for (let attempt = 0; ; attempt++) {
+        netError = null
+        try {
+          await chat.resumeStream()
+        } catch (e) {
+          onError(e as Error)
+        }
+        if (lastNetError() === null || attempt >= 3) break
+        await sleep(400 * (attempt + 1))
+      }
+      const gaveUp = lastNetError()
+      if (gaveUp !== null) {
+        patch({ problem: describeChatError(gaveUp, true) })
+        netError = null
+      }
+    } finally {
+      patch({ following: false })
+    }
+    await refetch()
+    // a failed resume leaves the chat in `error`: storage is the truth now, so go back to ready
+    clearChatError()
+    refreshBusy()
+  }
+
+  function onError(e: Error): void {
+    const c = chat
+    if (c === undefined) return
+    if (isHarnessHttpError(e) && (e.isAlreadyAnswered || e.isDuplicate)) {
+      // answered elsewhere, or the message was stored already: show what is stored, nothing else
+      c.clearError()
+      void refetch()
+      return
+    }
+    if (isHarnessHttpError(e) && e.isBusy) {
+      // the optimistic user message was never accepted: drop it and restore the stored view
+      if (c.messages.at(-1)?.role === 'user') c.messages = c.messages.slice(0, -1)
+      c.clearError()
+      notify('error', describeChatError(e, false)?.message ?? e.message)
+      return
+    }
+    if (isNetworkError(e)) {
+      if (store.get().following) {
+        // `follow` retries quietly and shows the banner when it gives up
+        netError = e
+        c.clearError()
+        return
+      }
+      // the connection of a turn this tab started broke after the reply began: the turn runs on
+      // the server, so re-attach (full replay) instead of leaving a half reply and an error
+      if (c.messages.at(-1)?.role === 'assistant') {
+        c.clearError()
+        void follow()
+        return
+      }
+    }
+    const problem = describeChatError(e, store.get().following)
+    if (problem === null) {
+      c.clearError()
+      void refetch()
+    } else if (store.get().following) {
+      // a turn the server started (a report, a routine, another tab): an inline banner
+      patch({ problem })
+      c.clearError()
+    } else {
+      notify('error', problem.message)
+    }
+    refreshBusy()
+  }
+
+  const chatInit: ChatInit<UI> = {
+    id: sessionId,
+    ...(options.messages === undefined ? {} : { messages: options.messages }),
+    transport,
+    onError: (e) => onError(e),
+    onData: (part) => {
+      if (part.type !== 'data-eh.status') return
+      const state = (part.data as { state?: string } | undefined)?.state
+      patch({
+        activity: state === 'thinking' || state === 'tool' || state === 'compacting' ? state : null,
+      })
+    },
+    // after a respond() continuation ends, the stored message is the truth: refetch it
+    onFinish: ({ message, isAbort, isError }) => {
+      patch({ activity: null, ...(store.get().following ? {} : { notice: null }) })
+      if (isAbort || isError) return
+      if (message.role === 'assistant' && message.parts.some((p) => 'approval' in p)) {
+        void refetch()
+      }
+    },
+  }
+
+  const steer = async (text: string, files: FileUIPart[]): Promise<void> => {
+    const message = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      parts: [...files, { type: 'text', text }],
+    } as UI
+    try {
+      const result = await client.sessions.send(sessionId, message, { ifBusy: 'steer' })
+      if (result.kind === 'stream') {
+        // 200: the server streams the running turn to this request as well; ours is already open
+        void result.response.body?.cancel().catch(() => {})
+      }
+      patch({ notice: NOTICE_STEERED })
+    } catch (e) {
+      if (isNetworkError(e)) notify('error', 'Cannot reach the server')
+      else notify('error', describeChatError(e, false)?.message ?? 'Request failed')
+    }
+  }
+
+  const session: ChatSession<UI> = {
+    sessionId,
+    chatInit,
+    subscribe: store.subscribe,
+    get: store.get,
+    refreshBusy,
+
+    bind(next) {
+      chat = next
+      refreshBusy()
+    },
+
+    init() {
+      initPromise ??= (async () => {
+        if (!store.get().loaded) {
+          const first = await page()
+          if (first !== undefined && chat !== undefined) {
+            chat.messages = replaceTail(chat.messages, first.messages as UI[])
+            nextBefore = first.nextBefore
+            patch({ hasOlder: first.nextBefore !== undefined })
+          } else if (first === undefined) notify('error', 'Could not load the conversation')
+          patch({ loaded: true })
+        }
+        const snap = await snapshot()
+        if (snap?.running === true) await follow()
+      })()
+      return initPromise
+    },
+
+    follow,
+    refetch,
+
+    async followServerTurn() {
+      if (!store.get().loaded || busyNow()) return
+      for (let i = 0; i < 4; i++) {
+        const snap = await snapshot()
+        if (busyNow()) return
+        if (snap?.running === true) return follow()
+        await sleep(250 * (i + 1))
+      }
+      await refetch() // it already ended: show what was stored
+    },
+
+    async storedElsewhere() {
+      if (!store.get().loaded || busyNow()) return
+      await refetch()
+    },
+
+    async checkStalled() {
+      if (!busyNow()) {
+        idlePolls = 0
+        return
+      }
+      const snap = await snapshot()
+      if (snap === undefined) return // the server is unreachable: keep waiting
+      if (snap.running || !busyNow()) {
+        idlePolls = 0
+        return
+      }
+      if (++idlePolls < 2) return
+      idlePolls = 0
+      await chat?.stop()
+      patch({ following: false })
+      await refetch()
+      clearChatError()
+      refreshBusy()
+    },
+
+    async loadOlder() {
+      const state = store.get()
+      if (state.loadingOlder || nextBefore === undefined || chat === undefined) return 0
+      patch({ loadingOlder: true })
+      try {
+        const older = await page(nextBefore)
+        if (older === undefined) {
+          notify('error', 'Could not load older messages')
+          return 0
+        }
+        const before = chat.messages.length
+        chat.messages = mergeOlder(chat.messages, older.messages as UI[])
+        nextBefore = older.nextBefore
+        patch({ hasOlder: older.nextBefore !== undefined })
+        return chat.messages.length - before
+      } finally {
+        patch({ loadingOlder: false })
+      }
+    },
+
+    async send(text, files = []) {
+      if (chat === undefined) return
+      if (running()) return steer(text, files)
+      queued = false
+      sending = true
+      refreshBusy()
+      try {
+        await chat.sendMessage(files.length > 0 ? { text, files } : { text })
+      } finally {
+        sending = false
+        refreshBusy()
+      }
+      if (queued) {
+        queued = false
+        // the turn runs on another instance: follow its stream, then refetch the stored messages
+        await follow()
+      }
+    },
+
+    async stop() {
+      try {
+        await client.sessions.interrupt(sessionId)
+      } catch {
+        // network failure: still stop reading
+      }
+      await chat?.stop()
+      refreshBusy()
+    },
+
+    continueTurn: () => session.send(CONTINUE_TEXT),
+
+    async retryTurn() {
+      if (chat === undefined) return
+      // the interrupted reply itself (not the recovery notice, which is a kind message of the same role)
+      const last = interruptedTurn(chat.messages)
+      if (last === undefined || busyNow()) return
+      queued = false
+      sending = true
+      refreshBusy()
+      try {
+        await chat.regenerate({ messageId: last.id })
+      } finally {
+        sending = false
+        refreshBusy()
+      }
+      if (queued) {
+        queued = false
+        await follow()
+      }
+    },
+
+    async retry() {
+      const retry = store.get().problem?.retry
+      patch({ problem: null })
+      if (retry === 'follow') await follow()
+      else await refetch()
+    },
+
+    dismissProblem() {
+      patch({ problem: null })
+    },
+
+    interrupted() {
+      return chat !== undefined && interruptedTurn(chat.messages) !== undefined
+    },
+  }
+  return session
+}
+
+function shallowEqual(a: ChatSessionState, b: ChatSessionState): boolean {
+  for (const key of Object.keys(a) as (keyof ChatSessionState)[]) {
+    if (!Object.is(a[key], b[key])) return false
+  }
+  return true
+}

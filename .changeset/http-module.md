@@ -1,0 +1,5 @@
+---
+"eharness": minor
+---
+
+New subpath `eharness/http` (spec 26, ADR-0059), lifted from the team example: `createHarnessHttp(agent, { authorize, ... })` returns a `fetch(Request): Promise<Response>` handler (Web APIs only) with the routes every harness server rewrites. **Chat** (`POST /sessions/:id/chat`: a `useChat` endpoint on `handleChatRequest` with a strict body whitelist, idempotency by message id or `Idempotency-Key`, stale-answer `409`, busy policies `reject` / `wait` / `steer` with `202` for a turn of another instance; `GET /sessions/:id/chat/stream` resume; `POST /sessions/:id/interrupt`), **sessions** (snapshot, paged messages, optional list), the **attention** queue (`GET /attention`, `POST /attention/:id/answer` with ownership checks), and the **activity** feed (SSE and paged, filtered per principal). One required `authorize` hook runs before any body is read or session opened; every error has the shape `{ error: { code, message, details? } }` with a documented status table. Also exports the wire types, `sanitizeChatBody`, `httpError` and `openAccess` (development only), and `httpConformance` in `eharness/testing`.

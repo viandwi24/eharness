@@ -1,11 +1,18 @@
 /**
  * Import rules for `src/` (ADR-0008, ADR-0010, docs/engineering/conventions.md):
  *
- * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|activity|permissions|providers|connectors|shell|subagent|web`) import core only through the relative
+ * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|activity|permissions|providers|connectors|shell|subagent|web|http|client`) import core only through the relative
  *    path to `src/index.ts`, never through other core files or the `eharness` self-reference.
  *    Non-test files never import another subpath; test files of a subpath may (e.g. a filesystem
  *    test running `fileSystemConformance` from `src/testing`), but still never core internals.
  *    Exception: the pairs in `allowedImports` (ADR-0049; `testing` may import the types of `activity`, ADR-0058).
+
+ *    `eharness/client` (ADR-0059) is stricter: a non-test file under `src/client` may import at
+ *    runtime only from `ai` and from files inside `src/client`. Every import that leaves
+ *    `src/client` (core, `http`, `activity`) must be a statement-level `import type` /
+ *    `export type` (an inline `{ type X }` still leaves a side-effect import under
+ *    `verbatimModuleSyntax`), and `import()` is not allowed. `scripts/check-client-bundle.ts`
+ *    verifies the built output.
  * 2. Non-test files under `src/` never use `Bun.` or import `node:` built-ins, except the Node-only
  *    modules listed in `nodeOnly` (ADR-0036): they may import `node:` built-ins (never `Bun.`).
  *
@@ -35,6 +42,8 @@ const subpaths = [
   'shell',
   'subagent',
   'web',
+  'http',
+  'client',
 ]
 /**
  * Documented exceptions (ADR-0049): `eharness/connectors` reuses the generic configuration
@@ -42,7 +51,9 @@ const subpaths = [
  */
 const allowedImports: Record<string, string[]> = {
   connectors: ['providers'],
-  testing: ['activity'],
+  http: ['activity'],
+  client: ['http', 'activity'],
+  testing: ['activity', 'http'],
 }
 /** Node-only modules (ADR-0036): `node:` built-ins allowed. */
 const nodeOnly = ['filesystem/node.ts', 'filesystem/node/', 'shell/']
@@ -54,6 +65,33 @@ const testFile = /\.(?:int\.)?test(?:-d)?\.ts$/
 
 const violations: string[] = []
 
+/** Statement-level imports/exports with their `type` flag (for the client rule). */
+const statementPattern =
+  /(?:^|[\n;])\s*(import|export)\s+(type\s+)?(?:[^'"`;]*?\sfrom\s*)?['"]([^'"]+)['"]/g
+
+function checkClientFile(file: string, shown: string, text: string): void {
+  const path = join(src, file)
+  for (const match of text.matchAll(statementPattern)) {
+    const isType = match[2] !== undefined
+    const specifier = match[3] as string
+    if (specifier.startsWith('.')) {
+      const target = resolve(dirname(path), specifier)
+      if (!target.startsWith(`${join(src, 'client')}/`) && !isType) {
+        violations.push(
+          `${shown}: runtime import of '${specifier}' leaves src/client; use \`import type\` (ADR-0059)`,
+        )
+      }
+    } else if (specifier !== 'ai' && !isType) {
+      violations.push(
+        `${shown}: runtime import of '${specifier}'; src/client may import only 'ai' (ADR-0059)`,
+      )
+    }
+  }
+  if (/(?:^|[^\w.])import\s*\(/.test(text)) {
+    violations.push(`${shown}: dynamic import() is not allowed in src/client (ADR-0059)`)
+  }
+}
+
 for await (const file of new Glob('**/*.{ts,mts,cts,js,mjs}').scan({ cwd: src })) {
   const path = join(src, file)
   const shown = relative(root, path)
@@ -62,6 +100,7 @@ for await (const file of new Glob('**/*.{ts,mts,cts,js,mjs}').scan({ cwd: src })
   const subpath = subpaths.find((name) => file.startsWith(`${name}/`))
 
   if (!isTest && /\bBun\./.test(text)) violations.push(`${shown}: uses the Bun global`)
+  if (!isTest && file.startsWith('client/')) checkClientFile(file, shown, text)
 
   for (const match of text.matchAll(specifierPattern)) {
     const specifier = match[1] ?? match[2] ?? match[3]

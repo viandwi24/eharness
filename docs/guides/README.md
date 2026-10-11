@@ -22,6 +22,8 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [External waits](external-waits.md) | `externalTool()`: park a turn on a webhook / job / person, `resolveWait()` from any instance, timeouts, `expireWaits()` |
 | [Structured output](structured-output.md) | typed final answers: `output: { schema }`, tool vs native mode, retries, `'output-invalid'`, storage |
 | [Long-running turns](long-running-turns.md) | step budget, wrap-up, progress guard (`'stuck'`), continuations, stop reasons |
+| [HTTP server](http-server.md) | `createHarnessHttp`: mount the chat, session, attention and activity routes on Hono, `Bun.serve` or Node; `authorize`; CORS headers |
+| [Web client](web-client.md) | `eharness/client`: typed client, chat transport and session for Svelte and React, activity feed with restart detection, attention list |
 | [Debugging and activity logs](debugging-and-activity-logs.md) | the `model.call` hook: a log of every LLM call with raw request/response, tokens, cost, latency; retention |
 | [Models and cost](models-and-cost.md) | model catalog, models.dev, `costUsd`, nested usage, USD budgets, [budgets across sessions](models-and-cost.md#budgets-across-sessions) (`budget.ledger`) |
 | [Providers and profiles](providers-and-profiles.md) | `eharness/providers`: several providers and saved profiles, dynamic model lists, prices into the agent, a settings form, secrets, encrypted stores |

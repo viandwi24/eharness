@@ -55,7 +55,7 @@ describe('postgres MessageAdapter', () => {
 
 Suites: `messageAdapterConformance`, `stateAdapterConformance`, `fileSystemConformance`,
 `skillSourceConformance`, `idGeneratorConformance`, `inboxAdapterConformance` (0.4.0),
-`multiInstanceConformance` (a whole storage backend shared by several agent instances, see below), `budgetLedgerConformance` (0.5.0; the factory receives the case's static limits), `profileStoreConformance` (`eharness/providers` stores), `connectionStoreConformance`, `credentialStoreConformance`, `enablementStoreConformance`, `flowStoreConformance` (`eharness/connectors` stores), `activityStoreConformance` (`eharness/activity` stores; the factory returns `{ store, peer? }`, a second handle on the same log). `scriptedProvider` is a provider definition with scripted models.
+`multiInstanceConformance` (a whole storage backend shared by several agent instances, see below), `budgetLedgerConformance` (0.5.0; the factory receives the case's static limits), `profileStoreConformance` (`eharness/providers` stores), `connectionStoreConformance`, `credentialStoreConformance`, `enablementStoreConformance`, `flowStoreConformance` (`eharness/connectors` stores), `activityStoreConformance` (`eharness/activity` stores; the factory returns `{ store, peer? }`, a second handle on the same log), `httpConformance` (`eharness/http` handlers; the factory returns `{ fetch, baseUrl? }`, the agent behind it streams a slow reply). `scriptedProvider` is a provider definition with scripted models.
 
 ### Multi-instance conformance
 

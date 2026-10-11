@@ -44,6 +44,8 @@ Using eharness (not contributing)? Start with the [README](../README.md), the [g
 | 22 | [web-plugin](specs/22-web-plugin.md) | `eharness/web`: `web_fetch` (SSRF guards, Markdown, framing) and `web_search` (provider-agnostic) |
 | 24 | [connectors](specs/24-connectors.md) | `eharness/connectors`: connector definitions, connections and enablement, setup flow engine, OAuth helpers, activation into plugins, sources and permission rules, built-in connectors |
 | 25 | [activity](specs/25-activity.md) | `eharness/activity`: `activity()` plugin, `ActivityStore` port, SSE helpers, attention queue (`listAttention`, `answerAttention`) |
+| 26 | [http](specs/26-http.md) | `eharness/http`: `createHarnessHttp` (chat with resume, steering and interrupt, session reads, attention, activity), one `authorize` hook, wire types, `httpConformance` |
+| 27 | [client](specs/27-client.md) | `eharness/client`: typed fetch client, chat transport, chat session (history, follow, steer, recovery), activity feed (SSE, restart detection), attention list, `Store<T>`; `eharness/client/react` |
 | 23 | [providers](specs/23-providers.md) | `eharness/providers`: provider definitions, profiles and store, manager (`resolve`, models, `catalog()`), form spec, secret redaction, cached catalog loader |
 
 ## Status vocabulary

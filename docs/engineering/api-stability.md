@@ -20,6 +20,9 @@ Everything a user can observe without reading our source:
    | `eharness/providers` | Draft (0.8) |
    | `eharness/connectors` | Draft (0.8) |
    | `eharness/activity` | Draft (0.8) |
+   | `eharness/http` | Draft (0.8) |
+   | `eharness/client` | Draft (0.8) |
+   | `eharness/client/react` | Draft (0.8) |
    | `eharness/testing` | |
 2. **Persisted formats:** `metadata.eharness`, core data part types and payloads (`eh.*`),
    core message kinds and payloads, `SessionStateSnapshot`, plugin data parts of shipped plugins.

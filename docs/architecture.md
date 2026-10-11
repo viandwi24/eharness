@@ -75,6 +75,9 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness/providers` | `src/providers/index.ts` | `createProviderManager()`, `defineProvider()`, `openRouterProvider()` / `gatewayProvider()` / `openAIProvider()` / `anthropicProvider()` / `openAICompatibleProvider()`, `formSpec()`, `redactSettings()`, `mergeSecretPatch()`, `memoryProfileStore()`, `fromEnv()`, `loadCachedJson()` (spec 23) |
 | `eharness/connectors` | `src/connectors/index.ts` | `createConnectorService()`, `defineConnector()`, `activateConnectors()`, `startFlow()` / `advanceFlow()` / `completeOAuth()`, OAuth helpers, `builtinConnectors()`, `remoteMcpConnector()`, `memoryConnectionStore()` (spec 24) |
 | `eharness/activity` | `src/activity/index.ts` | `activity()`, `memoryActivityStore()`, `handleActivityStream()`, `activityStream()`, `readActivityPage()`, `listAttention()`, `answerAttention()` (spec 25) |
+| `eharness/http` | `src/http/index.ts` | `createHarnessHttp()`, `openAccess`, `sanitizeChatBody()`, `classifyChatBody()`, `httpError()`, `statusOfCode()`, wire types (spec 26, ADR-0059) |
+| `eharness/client` | `src/client/index.ts` | `createHarnessClient()`, `createHarnessTransport()`, `createChatSession()`, `createActivityFeed()`, `createAttentionList()`, `createStore()`, `HarnessHttpError` (spec 27, ADR-0059); runtime imports only `ai` |
+| `eharness/client/react` | `src/client/react.ts` | `createReactBindings(React)`, `chatBridgeOf()` (no import of `react`) |
 | `eharness/web` | `src/web/index.ts` | `webFetch()`, `webSearch()`, `htmlToText()`, `isPrivateHost()`, `matchHost()` (spec 22) |
 | `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |

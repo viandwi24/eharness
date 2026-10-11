@@ -31,6 +31,11 @@ export {
   fileSystemConformance,
 } from './file-system.conformance.ts'
 export {
+  type HttpConformanceOptions,
+  type HttpUnderTest,
+  httpConformance,
+} from './http.conformance.ts'
+export {
   type IdGeneratorConformanceOptions,
   idGeneratorConformance,
 } from './id-generator.conformance.ts'
