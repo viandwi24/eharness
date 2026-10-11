@@ -13,6 +13,7 @@
  *   TEAM_<CONNECTOR>_CLIENT_ID / _CLIENT_SECRET   OAuth app of a curated connector (e.g. TEAM_GITHUB_CLIENT_ID); or save it in the web app
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
  *   TEAM_SEARCH_MODEL   model of web_search, same format
+ *   TEAM_INSTANCE_ID  stable id of this instance (default team-<PORT>): a restarted instance recovers its own interrupted turns at boot
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
  *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
@@ -88,6 +89,11 @@ export interface ServerConfig {
   env?: Record<string, string | undefined>
   /** The secret vault (default: `TEAM_SECRET_KEY`, else a dev key file next to the DB). */
   vault?: SecretVault
+  /**
+   * Stable id of this instance (default `TEAM_INSTANCE_ID`, else `team-<port>` when started as a
+   * server): a restarted instance recovers its own orphaned turns at once.
+   */
+  instanceId?: string
   /** Never fetch the public model catalogs (default: `TEAM_OFFLINE=1`). */
   offline?: boolean
   /** The fetch of model lists, connection tests and catalogs (default: global). */
@@ -345,6 +351,7 @@ export function compose(config: ServerConfig): Server {
       console.warn(`eharness warning ${w.code}: ${w.message}`)
     },
     ...(config.tuning === undefined ? {} : { tuning: config.tuning }),
+    ...(config.instanceId === undefined ? {} : { instanceId: config.instanceId }),
   })
   const team = createTeamService(factory, {
     agents,
@@ -472,8 +479,10 @@ if (import.meta.main) {
   const eventHours = Number(process.env.TEAM_EVENTS_RETENTION_HOURS)
   const eventRows = Number(process.env.TEAM_EVENTS_MAX_ROWS)
   const dbFile = process.env.TEAM_DB ?? './data/team.db'
+  const listenPort = Number(process.env.PORT ?? 4000)
   const server = compose({
     dbFile,
+    instanceId: process.env.TEAM_INSTANCE_ID ?? `team-${listenPort}`,
     token,
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
     ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { limits: { spawnCap } } : {}),

@@ -1,5 +1,13 @@
 /** Tasks and the board: status is derived from session facts (plan §6.4). Pure. */
-export const TASK_STATUSES = ['needs_action', 'running', 'done', 'failed', 'stopped'] as const
+export const TASK_STATUSES = [
+  'needs_action',
+  'running',
+  'done',
+  'failed',
+  'stopped',
+  'interrupted',
+  'timed_out',
+] as const
 export type TaskStatus = (typeof TASK_STATUSES)[number]
 export type TaskOrigin = 'user' | 'lead' | 'routine'
 export type PendingKind = 'approval' | 'question'
@@ -23,7 +31,7 @@ export interface Task {
 }
 
 export const isTerminal = (status: TaskStatus): boolean =>
-  status === 'done' || status === 'failed' || status === 'stopped'
+  status === 'done' || status === 'failed' || status === 'stopped' || status === 'interrupted'
 
 /** What a session reports about itself. */
 export interface SessionFacts {
@@ -33,6 +41,8 @@ export interface SessionFacts {
   activeTurn: boolean
   /** A turn is recorded but its heartbeat is stale: the process died. */
   staleTurn: boolean
+  /** The crash-recovery notice of an interrupted turn is stored (the turn left no reply). */
+  interruptedNotice?: boolean
   lastStop: string | null
 }
 
@@ -40,6 +50,7 @@ export interface SessionFacts {
 export function statusFromStop(stop: string): TaskStatus {
   if (stop === 'tool-pending') return 'needs_action'
   if (stop === 'aborted') return 'stopped'
+  if (stop === 'interrupted') return 'interrupted'
   if (stop === 'error' || stop === 'timeout') return 'failed'
   return 'done'
 }
@@ -56,7 +67,9 @@ export function deriveTaskStatus(facts: SessionFacts): {
   }
   if (facts.activeTurn) return { status: 'running', pendingKind: null }
   // a stale heartbeat means the process holding the turn is gone
-  if (facts.staleTurn) return { status: 'failed', pendingKind: null }
+  if (facts.staleTurn) return { status: 'interrupted', pendingKind: null }
+  if (facts.lastStop === null && facts.interruptedNotice === true)
+    return { status: 'interrupted', pendingKind: null }
   if (facts.lastStop === null) return { status: 'running', pendingKind: null }
   // `tool-pending` without pending approvals: waiting on an external wait (a child's own park)
   if (facts.lastStop === 'tool-pending') return { status: 'running', pendingKind: null }

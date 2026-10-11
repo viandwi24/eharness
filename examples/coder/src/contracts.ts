@@ -596,6 +596,16 @@ export interface CoderController {
     hooks: RunHooks,
     opts?: { files?: FileUIPart[] },
   ): Promise<TurnResult<CoderMessage>>
+  /**
+   * Run the last reply again (`/retry`): regenerates the final assistant message, e.g. after a
+   * crash interrupted it. Same approval handling as {@link CoderController.run}.
+   */
+  retry(hooks: RunHooks): Promise<TurnResult<CoderMessage>>
+  /**
+   * Repair a turn a dead process left unfinished (dangling tool calls answered `Interrupted:`) and
+   * tell whether the session ends on such an interrupted reply. Call once after opening.
+   */
+  recoverInterrupted(): Promise<boolean>
   /** Abort the running turn (Esc). */
   abort(): void
   messages(): Promise<CoderMessage[]>

@@ -291,7 +291,11 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
     },
 
     update(sessionId, u) {
-      const finished = u.status === 'done' || u.status === 'failed' || u.status === 'stopped'
+      const finished =
+        u.status === 'done' ||
+        u.status === 'failed' ||
+        u.status === 'stopped' ||
+        u.status === 'interrupted'
       sqlite
         .query(
           `UPDATE tasks SET state = ?, pending_kind = ?, ended_at = ?, last_activity_at = ?,

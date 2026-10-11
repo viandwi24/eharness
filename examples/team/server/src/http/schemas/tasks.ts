@@ -6,7 +6,7 @@ import { RoutineSchema } from './routines.ts'
 
 export const TaskStatusSchema = z.enum(TASK_STATUSES).openapi('TaskStatus', {
   description:
-    '`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted).',
+    '`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).',
 })
 
 export const TaskSchema = z

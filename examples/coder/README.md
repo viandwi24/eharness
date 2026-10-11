@@ -204,6 +204,7 @@ returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctr
 | `/init` | ask the agent to write the project instructions (`AGENTS.md`, or update an existing `CLAUDE.md`) |
 | `/exit` | quit |
 | `/compact [instructions]` | as `/compact`; the optional text tells the summary what to keep |
+| `/retry` | run the last reply again; after a crash `coder --continue` recovers the interrupted turn at once and says so |
 | `/rewind` | restore code and/or conversation to an earlier prompt (also `Esc Esc`) |
 | `/branch [name]` | copy the conversation into a new session and switch to it |
 | `/rename <name>` | name this session |

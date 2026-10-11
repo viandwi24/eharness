@@ -29,13 +29,20 @@ export function upsertTask(tasks: Task[], t: Task): Task[] {
 	return next;
 }
 
-export const badgeFor = (status: Task['status']): { label: string; variant: 'warning' | 'info' | 'success' | 'destructive' | 'outline' } =>
+export const badgeFor = (
+	status: Task['status'],
+	summary?: string | null
+): { label: string; variant: 'warning' | 'info' | 'success' | 'destructive' | 'outline' } =>
 	status === 'needs_action'
-		? { label: 'needs action', variant: 'warning' }
+		? { label: 'waiting for you', variant: 'warning' }
 		: status === 'running'
 			? { label: 'running', variant: 'info' }
 			: status === 'failed'
-				? { label: 'failed', variant: 'destructive' }
+				? { label: summary === 'Failed to start' ? 'failed to start' : 'failed', variant: 'destructive' }
 				: status === 'stopped'
 					? { label: 'stopped', variant: 'outline' }
-					: { label: 'done', variant: 'success' };
+					: status === 'interrupted'
+						? { label: 'interrupted', variant: 'warning' }
+						: status === 'timed_out'
+							? { label: 'timed out', variant: 'warning' }
+							: { label: 'done', variant: 'success' };

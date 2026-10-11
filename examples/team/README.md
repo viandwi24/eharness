@@ -70,6 +70,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | Variable | Default | Meaning |
 |---|---|---|
 | `OPENROUTER_API_KEY` / `AI_GATEWAY_API_KEY` | - | read-only **env profiles** of those providers (more providers and profiles are added in Settings > Providers; `TEAM_PROVIDER`, `TEAM_MODEL` choose the default profile and model) |
+| `TEAM_INSTANCE_ID` | `team-<PORT>` | stable id of this server instance. After a crash or restart the instance owns the turns and locks of its previous run: they are recovered at boot (tool calls answered `Interrupted:`, chat shows Continue / Retry, delegated tasks become `interrupted`, the lead gets a report) instead of after the 120 s stale timeout. Must be unique among live instances on one database (set it explicitly when you run several on one port range or behind a proxy). |
 | `TEAM_SECRET_KEY` | dev key file | 32 bytes, base64 (`openssl rand -base64 32`): encrypts provider secrets saved from the web (AES-GCM). Unset in dev = a key is generated into `data/secret.key` (git-ignored) with a warning; set it for anything shared. `TEAM_SECRET_KEY_PREVIOUS` (comma separated) keeps old keys that can still open rows after a rotation |
 | `TEAM_OFFLINE` | - | `1` = never fetch the public model catalogs (cached in the database, refreshed every 24 h) |
 | `TEAM_CLASSIFIER_MODEL` / `TEAM_SEARCH_MODEL` | - | Auto-mode classifier / `web_search` model: `profile:model` or a plain id on the default profile |

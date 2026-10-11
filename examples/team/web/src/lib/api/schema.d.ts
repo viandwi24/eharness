@@ -5430,10 +5430,10 @@ export interface components {
             tokens: number;
         };
         /**
-         * @description `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted).
+         * @description `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).
          * @enum {string}
          */
-        TaskStatus: "needs_action" | "running" | "done" | "failed" | "stopped";
+        TaskStatus: "needs_action" | "running" | "done" | "failed" | "stopped" | "interrupted" | "timed_out";
         TaskDetail: {
             task: components["schemas"]["Task"];
             /** @description The stored messages of the task session (newest 200). */

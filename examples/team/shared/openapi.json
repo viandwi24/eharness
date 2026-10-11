@@ -1344,9 +1344,11 @@
           "running",
           "done",
           "failed",
-          "stopped"
+          "stopped",
+          "interrupted",
+          "timed_out"
         ],
-        "description": "`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted)."
+        "description": "`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit)."
       },
       "TaskDetail": {
         "type": "object",

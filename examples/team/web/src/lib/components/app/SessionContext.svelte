@@ -282,7 +282,7 @@
 		<SessionSection title="Agents">
 			<ul class="flex flex-col">
 				{#each delegated.slice(0, 6) as t (t.id)}
-					{@const b = badgeFor(t.status)}
+					{@const b = badgeFor(t.status, t.summary)}
 					<li>
 						<button
 							type="button"

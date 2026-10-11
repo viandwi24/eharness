@@ -32,6 +32,7 @@
 	} from '#lib/components/ai/conversation/index.js';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import ChatComposer from './ChatComposer.svelte';
+	import { CONTINUE_TEXT } from '#lib/chat/interrupted.js';
 	import PendingCard from './PendingCard.svelte';
 
 	/**
@@ -155,6 +156,19 @@
 		}
 	}
 
+	/** A task that stopped without finishing its work (its process died, it ran too long, it never started). */
+	const resumable = $derived(task !== undefined && ['interrupted', 'timed_out', 'failed', 'stopped'].includes(task.status));
+	async function continueTask(): Promise<void> {
+		if (!task) return;
+		try {
+			await api.post('/tasks/{id}/messages', { params: { id: task.id }, body: { text: CONTINUE_TEXT } });
+			toast.success('Continuing the task');
+			void load(task.id);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Could not continue the task');
+		}
+	}
+
 	async function sendNote(m: PromptInputMessage): Promise<void> {
 		const text = m.text.trim();
 		if (!task || !text) return;
@@ -194,7 +208,7 @@
 				{agent?.name ?? task?.agentId ?? ''}{task ? ` · ${relativeTime(task.lastActivityAt)}` : ''}{streaming ? ' · live' : ''}
 			</p>
 		</div>
-		{#if task}{@const b = badgeFor(task.status)}<Badge variant={b.variant}>{b.label}</Badge>{/if}
+		{#if task}{@const b = badgeFor(task.status, task.summary)}<Badge variant={b.variant}>{b.label}</Badge>{/if}
 		<div class="flex shrink-0 items-center gap-0.5">
 			{#if running}
 				<Tooltip.Root>
@@ -287,6 +301,13 @@
 				bind:clientHeight={dockHeight}
 			>
 				<div class="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3">
+					{#if resumable && task}
+						<div class="mb-2 flex items-center gap-2 rounded-lg border border-border bg-popover px-3 py-2 text-sm" role="status" data-testid="task-resumable">
+							<WarningCircleIcon class="size-4 shrink-0 text-muted-foreground" />
+							<span class="min-w-0 flex-1">{task.status === 'interrupted' ? 'This task was interrupted before it finished.' : task.status === 'timed_out' ? 'This task ran past its time limit.' : task.summary === 'Failed to start' ? 'This task did not start.' : 'This task stopped before it finished.'}</span>
+							<Button size="xs" variant="outline" onclick={() => void continueTask()}>Continue</Button>
+						</div>
+					{/if}
 					{#if approvals.length}
 						<div class="mb-2 flex flex-col gap-2" role="region" aria-label="Waiting for your answer">
 							{#each approvals as a (a.sessionId + a.id)}

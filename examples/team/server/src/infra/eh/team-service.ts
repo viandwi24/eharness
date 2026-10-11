@@ -15,7 +15,12 @@
  */
 import { type HarnessSession, handleResumeRequest, isHarnessError } from 'eharness'
 import { ASK_TOOL, answerOutput, pendingQuestions } from 'eharness/ask'
-import { pendingSubagentApprovals, reconcileSubagentWaits } from 'eharness/subagent'
+import {
+  type BackgroundReconcileEntry,
+  pendingSubagentApprovals,
+  reconcileBackgroundChildren,
+  reconcileSubagentWaits,
+} from 'eharness/subagent'
 import type { AgentRepo, ChatMessage, TeamPort } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import type { ApprovalOutcome, ApprovalRisk, ApprovalView } from '../../domain/approvals.ts'
@@ -36,6 +41,10 @@ export interface ReconcileReport {
     status: 'resolved' | 'busy' | 'skipped'
   }>
   drift: Array<{ taskId: string; sessionId: string; from: string; to: string }>
+  /** Turns a dead process left active, repaired at once (`session.recover()`). */
+  recovered: Array<{ sessionId: string; turnId: string }>
+  /** Background children: reports delivered / rows updated by `reconcileBackgroundChildren`. */
+  background: Array<BackgroundReconcileEntry & { parentSessionId: string }>
   /** Reports of finished children that no turn of the lead saw and no wake was held for. */
   stranded: Array<{ sessionId: string; messageId: string }>
 }
@@ -358,6 +367,114 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return out
   }
 
+  /** The parent sessions that can hold background children: every lead DM and the task parents. */
+  function parentSessions(): Map<string, AgentDef> {
+    const parents = new Map<string, AgentDef>()
+    for (const def of allAgents()) {
+      if (def.role === 'lead') parents.set(dmSessionId(def.id), def)
+    }
+    for (const task of deps.tasks.active()) {
+      if (task.parentSessionId === null) continue
+      const owner = dmOwner(task.parentSessionId)
+      if (owner !== undefined) parents.set(task.parentSessionId, owner)
+    }
+    return parents
+  }
+
+  /**
+   * Boot / periodic: close the turns a dead process left active (no waiting for the stale
+   * timeout: the instance id is stable, spec 05 §9.2). Tool calls get `Interrupted:` results,
+   * the stored message becomes schema-valid and the chat can continue at once.
+   */
+  async function recoverOrphans(): Promise<ReconcileReport['recovered']> {
+    const out: ReconcileReport['recovered'] = []
+    const candidates = new Map<string, AgentDef>()
+    for (const def of allAgents()) candidates.set(dmSessionId(def.id), def)
+    for (const task of deps.tasks.active()) {
+      const def = defById(task.agentId)
+      if (def !== undefined) candidates.set(task.sessionId, def)
+    }
+    for (const [sessionId, def] of candidates) {
+      try {
+        const stats = await factory.peek(sessionId).stats()
+        if (stats.activeTurn === null) continue
+        await factory.prepare(def)
+        const result = await factory.openSession(def, sessionId).recover()
+        if (result.recovered) out.push({ sessionId, turnId: result.turnId })
+      } catch (error) {
+        // a turn of this process runs (busy) or the session cannot be opened now: next pass
+        if (!isHarnessError(error, 'EH_SESSION_BUSY'))
+          log.warn(`recover of ${sessionId} failed: ${String(error)}`)
+      }
+    }
+    return out
+  }
+
+  async function reconcileBackground(): Promise<ReconcileReport['background']> {
+    const out: ReconcileReport['background'] = []
+    for (const [sessionId, def] of parentSessions()) {
+      try {
+        await factory.prepare(def)
+        const session = factory.openSession(def, sessionId)
+        const entries = await reconcileBackgroundChildren(session as never, {
+          openChild: (childSessionId, info) => {
+            const bySlug = info.agent === undefined ? undefined : defBySlug(info.agent)
+            const task = deps.tasks.getBySession(childSessionId)
+            const child = bySlug ?? (task === undefined ? undefined : defById(task.agentId))
+            if (child === undefined) throw new Error(`no agent for child ${childSessionId}`)
+            return factory.openSession(child, childSessionId) as never
+          },
+          timeoutMs: factory.background.timeoutMs > 0 ? factory.background.timeoutMs : undefined,
+          startGraceMs: factory.background.startGraceMs,
+          waitingReminderMs: factory.background.waitingReminderMs,
+          outputToolName: 'agent_output',
+          messageToolName: 'send_message',
+          now,
+          log,
+        })
+        for (const e of entries) {
+          out.push({ parentSessionId: sessionId, ...e })
+          const task = deps.tasks.getBySession(e.sessionId)
+          if (task === undefined || e.outcome !== 'reported') continue
+          const next =
+            e.status === 'timed_out'
+              ? { status: 'timed_out' as const, summary: 'Timed out' }
+              : e.status === 'not_started'
+                ? { status: 'failed' as const, summary: 'Failed to start' }
+                : undefined
+          if (next === undefined || task.status === next.status) continue
+          if (e.status === 'timed_out' && task.status !== 'running') continue
+          const t = now()
+          const row = deps.tasks.update(task.sessionId, {
+            status: next.status,
+            pendingKind: null,
+            now: t,
+            summary: next.summary,
+          })
+          deps.tasks.appendEvent(
+            {
+              type: 'task-changed',
+              agentId: task.agentId,
+              sessionId: task.sessionId,
+              payload: {
+                taskId: task.id,
+                status: next.status,
+                pendingKind: null,
+                title: row?.title ?? task.title,
+                parentSessionId: task.parentSessionId,
+                reason: 'reconcile',
+              },
+            },
+            t,
+          )
+        }
+      } catch (error) {
+        log.warn(`background reconcile of ${sessionId} failed: ${String(error)}`)
+      }
+    }
+    return out
+  }
+
   /** Compare every unfinished task row with its session and fix what a crash left behind. */
   async function reconcileDrift(): Promise<ReconcileReport['drift']> {
     const out: ReconcileReport['drift'] = []
@@ -371,7 +488,14 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         const history = await session.messages({ limit: 10 })
         const last = history.findLast((m) => m.role === 'assistant')
         const lastStop = last?.metadata?.eharness?.stop ?? null
+        const interruptedNotice = history.some(
+          (m) =>
+            m.metadata?.eharness?.kind === 'eh.notice' &&
+            (m.parts[0] as { data?: { code?: string } } | undefined)?.data?.code ===
+              'EH_TURN_INTERRUPTED',
+        )
         const facts = {
+          interruptedNotice,
           pendingApprovals: stats.pending?.approvals.length ?? 0,
           pendingQuestions:
             stats.pending?.clientTools.filter((c) => c.result === undefined).length ?? 0,
@@ -495,10 +619,12 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     messageTask,
     taskMessages,
     async reconcile() {
+      const recovered = await recoverOrphans()
       const waits = await reconcileWaits()
+      const background = await reconcileBackground()
       const drift = await reconcileDrift()
       const stranded = await reconcileStranded()
-      return { waits, drift, stranded }
+      return { recovered, waits, background, drift, stranded }
     },
   }
 }

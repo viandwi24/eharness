@@ -6,7 +6,8 @@ import { Chat } from '@ai-sdk/svelte';
 import { DefaultChatTransport, type FileUIPart, type UIMessage } from 'ai';
 import { getToken } from '../api/index';
 import { chatPaths, UPLOAD_MAX_BYTES } from './constants.js';
-import { type ChatProblem, describeChatError } from './errors.js';
+import { CONTINUE_TEXT, interruptedTurn } from './interrupted.js';
+import { type ChatProblem, describeChatError, isNetworkError } from './errors.js';
 import {
 	buildChatRequest,
 	ChatBusyError,
@@ -40,6 +41,8 @@ export type CreateAgentChatOptions = {
 
 const PAGE = 50;
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 export class AgentChat {
 	readonly chat: Chat<UIMessage>;
 	readonly agentId: string;
@@ -57,7 +60,14 @@ export class AgentChat {
 	/** Live state of the streamed turn (`data-eh.status`, transient): e.g. `compacting`. */
 	activity = $state<'thinking' | 'tool' | 'compacting' | null>(null);
 
+	/** The reply this chat ended on was cut short by a dead process: Continue / Retry are offered. */
+	get interrupted(): boolean {
+		return interruptedTurn(this.chat.messages as UIMessage[]) !== undefined;
+	}
+
 	#nextBefore: string | null = null;
+	/** A dropped connection seen while following (retried by `follow`, shown when retries ran out). */
+	#netError: Error | null = null;
 	#paths: typeof chatPaths;
 	#fetch: FetchFn;
 	#notify: Notify;
@@ -145,6 +155,21 @@ export class AgentChat {
 			this.#notify('error', e.message);
 			return;
 		}
+		if (isNetworkError(e)) {
+			if (this.following) {
+				// `follow` retries quietly and shows the banner when it gives up
+				this.#netError = e;
+				this.chat.clearError();
+				return;
+			}
+			// The connection of a turn this tab started broke after the reply began: the turn runs on
+			// the server, so re-attach (full replay) instead of leaving a half reply and an error.
+			if (this.chat.messages.at(-1)?.role === 'assistant') {
+				this.chat.clearError();
+				void this.follow();
+				return;
+			}
+		}
 		const problem = describeChatError(e, this.following);
 		if (problem === null) {
 			this.chat.clearError();
@@ -209,21 +234,53 @@ export class AgentChat {
 		if (shouldResume(stats)) await this.follow();
 	}
 
-	/** Attach to the running turn (replay then follow), then align with storage. */
+	/**
+	 * Attach to the running turn (replay then follow), then align with storage. A dropped
+	 * connection is retried (the replay always starts at chunk 0, so nothing is lost or doubled).
+	 */
 	async follow(): Promise<void> {
 		if (this.following) return;
 		this.following = true;
 		this.problem = null;
 		try {
-			await this.chat.resumeStream();
-		} catch (e) {
-			this.#onError(e as Error);
+			for (let attempt = 0; ; attempt++) {
+				this.#netError = null;
+				try {
+					await this.chat.resumeStream();
+				} catch (e) {
+					this.#onError(e as Error);
+				}
+				if (this.#netError === null || attempt >= 3) break;
+				await sleep(400 * (attempt + 1));
+			}
+			if (this.#netError !== null) {
+				this.problem = describeChatError(this.#netError, true);
+				this.#netError = null;
+			}
 		} finally {
 			this.following = false;
 		}
 		await this.refetch();
 		// A failed resume leaves the chat in `error`: storage is the truth now, so go back to ready.
 		if (this.chat.status === 'error') this.chat.clearError();
+	}
+
+	/** Continue an interrupted turn: a normal message; the agent sees what was cut short. */
+	async continueTurn(): Promise<void> {
+		await this.send(CONTINUE_TEXT);
+	}
+
+	/** Retry the interrupted reply: regenerate the last assistant message. */
+	async retryTurn(): Promise<void> {
+		// the interrupted reply itself (not the recovery notice, which is a kind message of the same role)
+		const last = interruptedTurn(this.chat.messages as UIMessage[]);
+		if (!last || this.#busy()) return;
+		this.#steered = false;
+		await this.chat.regenerate({ messageId: last.id });
+		if (this.#steered) {
+			this.#steered = false;
+			await this.follow();
+		}
 	}
 
 	/**
@@ -246,6 +303,33 @@ export class AgentChat {
 	async storedElsewhere(): Promise<void> {
 		if (!this.loaded || this.#busy()) return;
 		await this.refetch();
+	}
+
+	#idlePolls = 0;
+
+	/**
+	 * Called every few seconds while this chat shows a running turn. A connection that went silent
+	 * without an error (the server was killed behind a proxy, the network dropped) leaves the chat
+	 * "streaming" for ever: when the server says it runs no turn for two polls in a row, the local
+	 * reader is dropped and the stored messages are shown (a crashed turn appears as interrupted).
+	 */
+	async checkStalled(): Promise<void> {
+		if (!this.#busy()) {
+			this.#idlePolls = 0;
+			return;
+		}
+		const stats = await this.#getJson<StatsLike>(this.#paths.stats(this.agentId));
+		if (!stats) return; // the server is unreachable: keep waiting
+		if (shouldResume(stats) || !this.#busy()) {
+			this.#idlePolls = 0;
+			return;
+		}
+		if (++this.#idlePolls < 2) return;
+		this.#idlePolls = 0;
+		await this.chat.stop();
+		this.following = false;
+		await this.refetch();
+		if (this.chat.status === 'error') this.chat.clearError();
 	}
 
 	#busy(): boolean {

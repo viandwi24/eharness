@@ -225,6 +225,21 @@ export async function runTurn(
   )
 }
 
+/** Run the last reply again (`/retry`). Same display flow as {@link runTurn}. Never rejects. */
+export async function runRetry(
+  controller: CoderController,
+  dispatch: (action: ViewAction) => void,
+  options: DriveOptions = {},
+): Promise<void> {
+  await drive(
+    (hooks) => controller.retry(hooks),
+    dispatch,
+    options,
+    undefined,
+    () => controller.messages(),
+  )
+}
+
 /**
  * Steer a running turn with a queued message. Returns `'step'` when it joined the running turn
  * (its `data-eh.input` part shows up in the live stream), or `'turn'` when no turn was running

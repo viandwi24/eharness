@@ -56,6 +56,7 @@ import { computeDiff } from './diff.ts'
 import { runDoctor } from './doctor.ts'
 import { addHistory, readHistory } from './history.ts'
 import { createHookRunner, hasHooks, hooksPlugin } from './hooks.ts'
+import { claimInstance } from './instance.ts'
 import {
   addDirectory,
   listMemoryFiles,
@@ -332,8 +333,10 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       .then(() => appendFile(warningLog, line))
       .catch(() => {})
   }
+  const instance = await claimInstance(config.projectDataDir)
   const agents: Promise<Agents> = createAgents({
     onWarning,
+    ...(instance.instanceId === undefined ? {} : { instanceId: instance.instanceId }),
     config,
     workspace,
     sandbox,
@@ -594,6 +597,24 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       hooks: RunHooks,
       runOpts?: { files?: FileUIPart[] },
     ): Promise<TurnResult<CoderMessage>> => execute(text, hooks, runOpts?.files),
+
+    retry: (hooks: RunHooks): Promise<TurnResult<CoderMessage>> => {
+      lastHooks = hooks
+      return drive((s, signal) => s.regenerate({ abortSignal: signal }), hooks)
+    },
+
+    async recoverInterrupted(): Promise<boolean> {
+      try {
+        const s = await session()
+        const result = await s.recover()
+        if (result.recovered) return true
+        const stored = await s.messages()
+        const last = stored.findLast((m) => m.metadata?.eharness?.kind === undefined)
+        return last?.role === 'assistant' && last.metadata?.eharness?.stop === 'interrupted'
+      } catch {
+        return false
+      }
+    },
 
     async steer(text: string, hooks: RunHooks): Promise<SteerResult> {
       lastHooks = hooks
@@ -1035,6 +1056,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       await lsp.close().catch(() => {})
       await (await agentsReady).closeAll()
       await saving
+      await instance.release()
     },
   }
   return api

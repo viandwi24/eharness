@@ -215,6 +215,11 @@ const program = new Command()
         })
         for (const warning of config.warnings) process.stderr.write(`coder: warning: ${warning}\n`)
         const shown = config.warnings.length
+        if (await controller.recoverInterrupted()) {
+          process.stderr.write(
+            'coder: the previous reply of this session was interrupted; continuing from there.\n',
+          )
+        }
         activeController = controller
         process.on('SIGINT', onSigint)
         let code = 1

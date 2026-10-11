@@ -169,6 +169,154 @@ await scenario(
   },
 )
 
+await scenario(
+  'SIGKILL mid-turn, restart with the same instance id: recovered at boot, Continue and Retry work at once',
+  async () => {
+    const work = new Workdir()
+    let b: Instance | undefined
+    try {
+      const env = { TEAM_INSTANCE_ID: 'srv' }
+      const steps: Step[] = [
+        {
+          text: 'working on it',
+          toolCalls: [{ toolName: 'write_file', input: { path: '/library/z.md', content: 'z' } }],
+          delayMs: 300,
+        },
+      ]
+      const a = await startInstance('A', A_PORT, work, steps, env)
+      const res = await fetch(`${a.url}/agents/researcher/chat`, post(userMessage('start')))
+      check(res.status === 200, `chat on A: ${res.status}`)
+      void res.text().catch(() => undefined)
+      await sleep(450)
+      await a.kill()
+      const t0 = Date.now()
+      b = await startInstance(
+        'B',
+        A_PORT,
+        work,
+        [{ text: 'continuing' }, { text: 'retried reply' }],
+        env,
+      )
+      // no SQL ageing, no waiting for the stale timeout: the boot repair closes the turn
+      await until(
+        'turn recovered at boot',
+        async () => {
+          const stats = await json<{ activeTurn: unknown | null }>(
+            await fetch(`${b?.url}/agents/researcher/stats`),
+          )
+          return stats.activeTurn === null
+        },
+        15_000,
+      )
+      const recoveredAfter = Date.now() - t0
+      const stored = await messages(b, 'researcher')
+      const interrupted = stored.find((m) => m.metadata?.eharness?.stop === 'interrupted')
+      check(interrupted !== undefined, 'no message with stop=interrupted after the boot repair')
+      const bad = stored
+        .flatMap((m) => m.parts)
+        .filter((p) => String(p.type).startsWith('tool-') && p.state === 'input-available')
+      check(bad.length === 0, 'a tool part without a result remained')
+      const next = await fetch(
+        `${b.url}/agents/researcher/chat`,
+        post(userMessage('Continue where you left off.')),
+      )
+      const text = await next.text()
+      check(
+        next.status === 200 && text.includes('continuing'),
+        `Continue failed: ${next.status} ${text.slice(0, 200)}`,
+      )
+      const after = await messages(b, 'researcher')
+      const last = after.findLast((m) => m.role === 'assistant')
+      const retry = await fetch(
+        `${b.url}/agents/researcher/chat`,
+        post({
+          messages: [{ id: last?.id ?? 'x', role: 'assistant', parts: [] }],
+          trigger: 'regenerate-message',
+          messageId: last?.id,
+        }),
+      )
+      const rtext = await retry.text()
+      check(
+        retry.status === 200 && rtext.includes('retried reply'),
+        `Retry failed: ${retry.status} ${rtext.slice(0, 200)}`,
+      )
+      return `turn recovered ${recoveredAfter} ms after the restart (staleMs is 120000); Continue -> 200, Retry -> 200`
+    } finally {
+      await b?.stop()
+      work.cleanup()
+    }
+  },
+)
+
+await scenario(
+  'SIGKILL while a background child works: after the restart the lead gets an interrupted report and the task is interrupted',
+  async () => {
+    const work = new Workdir()
+    let b: Instance | undefined
+    try {
+      const env = { TEAM_INSTANCE_ID: 'srv' }
+      const bgCall = {
+        toolName: 'agent',
+        toolCallId: 'call-bg',
+        input: {
+          subagent_type: 'researcher',
+          description: 'Research',
+          prompt: 'Look it up',
+          name: 'scout',
+          run_in_background: true,
+        },
+      }
+      const a = await startInstance(
+        'A',
+        A_PORT,
+        work,
+        [{ toolCalls: [bgCall] }, { text: 'busy', delayMs: 4000 }, { text: 'busy', delayMs: 4000 }],
+        env,
+      )
+      const res = await fetch(
+        `${a.url}/agents/lead/chat`,
+        post(userMessage('Research this in the background')),
+      )
+      check(res.status === 200, `lead chat on A: ${res.status}`)
+      void res.text().catch(() => undefined)
+      await until(
+        'child task running',
+        async () => (await tasks(a, '?status=running')).length >= 1,
+        10_000,
+      )
+      await sleep(600)
+      await a.kill()
+      b = await startInstance('B', A_PORT, work, [{ text: 'I saw the interruption report.' }], env)
+      await until(
+        'interrupted report in the lead chat',
+        async () =>
+          JSON.stringify(await messages(b as Instance, 'lead')).includes('"status":"interrupted"'),
+        20_000,
+      )
+      await until(
+        'lead answered the report',
+        async () =>
+          JSON.stringify(await messages(b as Instance, 'lead')).includes(
+            'I saw the interruption report.',
+          ),
+        20_000,
+      )
+      const rows = await tasks(b)
+      check(
+        rows.some((t) => t.status === 'interrupted'),
+        `no interrupted task: ${JSON.stringify(rows.map((t) => t.status))}`,
+      )
+      const events =
+        JSON.stringify(await messages(b, 'lead')).split('"status":"interrupted"').length - 1
+      check(events === 1, `expected one interrupted report, found ${events}`)
+      return 'interrupted report delivered once, lead woke, task row interrupted'
+    } finally {
+      await b?.stop()
+      work.cleanup()
+    }
+  },
+)
+
 await scenario('routine due during downtime is skipped and fires once later', async () => {
   const spec = JSON.parse(
     readFileSync(join(dirname(import.meta.path), '../shared/openapi.json'), 'utf8'),

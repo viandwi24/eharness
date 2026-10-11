@@ -56,6 +56,7 @@ function harness(over: Record<string, unknown> = {}) {
     openPage: (page) => void pages.push(page),
     subagents: () => runs,
     submit: (p) => void calls.push(`submit:${p}`),
+    retry: () => void calls.push('retry'),
     todos: () => [{ id: '1', content: 'do it', status: 'in_progress' }] as never,
     setModelLabel: (m) => void calls.push(`label:${m}`),
     refreshStats: () => void calls.push('refresh'),
@@ -86,7 +87,13 @@ describe('slash parsing', () => {
   })
 
   test('matchSlash by prefix', () => {
-    expect(matchSlash('/re').map((c) => c.name)).toEqual(['resume', 'rewind', 'rename', 'recap'])
+    expect(matchSlash('/re').map((c) => c.name)).toEqual([
+      'resume',
+      'retry',
+      'rewind',
+      'rename',
+      'recap',
+    ])
     expect(matchSlash('/c').map((c) => c.name)).toEqual([
       'clear',
       'compact',
@@ -132,6 +139,7 @@ describe('slash parsing', () => {
       'todos',
       'diff',
       'plan',
+      'retry',
       'rewind',
       'branch',
       'rename',
@@ -157,6 +165,12 @@ describe('slash parsing', () => {
 })
 
 describe('slash effects', () => {
+  test('/retry runs the last reply again', async () => {
+    const h = harness()
+    expect(await runSlash('/retry', h.ctx)).toBe(true)
+    expect(h.calls).toContain('retry')
+  })
+
   test('not a slash command returns false', async () => {
     const h = harness()
     expect(await runSlash('hello', h.ctx)).toBe(false)

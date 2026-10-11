@@ -24,6 +24,11 @@ export type EventsClientOptions = {
 	/** Reconnect delays in ms; the last one repeats. */
 	backoff?: number[];
 	sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+	/**
+	 * No bytes (not even the server's keep-alive comment, every 15 s) for this long: the connection
+	 * is dead without an error (a killed server behind a proxy): drop it and reconnect. Default 45 s.
+	 */
+	idleMs?: number;
 };
 
 const POLL_LIMIT = 200;
@@ -85,8 +90,29 @@ export function createEventsClient(o: EventsClientOptions): {
 			url += `?after=${lastSeq}`;
 			h['last-event-id'] = String(lastSeq);
 		}
+		// a silent connection is dropped by the watchdog below
+		const inner = new AbortController();
+		const onOuterAbort = (): void => inner.abort();
+		signal.addEventListener('abort', onOuterAbort, { once: true });
+		const idleMs = o.idleMs ?? 45_000;
+		let idle: ReturnType<typeof setTimeout> | undefined;
+		const arm = (): void => {
+			clearTimeout(idle);
+			if (idleMs > 0) idle = setTimeout(() => inner.abort(), idleMs);
+		};
+		arm();
+		try {
+			await readStream(url, h, inner.signal, arm);
+		} finally {
+			clearTimeout(idle);
+			signal.removeEventListener('abort', onOuterAbort);
+		}
+	}
+
+	async function readStream(url: string, h: Record<string, string>, signal: AbortSignal, arm: () => void): Promise<void> {
 		const res = await doFetch(url, { headers: h, signal });
 		if (!res.ok || !res.body) throw new Error(`events stream ${res.status}`);
+		arm();
 		setStatus('live');
 		o.onResync?.();
 		const parser = createSseParser((m) => {
@@ -106,6 +132,7 @@ export function createEventsClient(o: EventsClientOptions): {
 			for (;;) {
 				const { done, value } = await reader.read();
 				if (done) break;
+				arm();
 				parser.push(decoder.decode(value, { stream: true }));
 			}
 		} finally {

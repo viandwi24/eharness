@@ -15,6 +15,9 @@ export async function runInteractive(
 ): Promise<void> {
   // `--continue` / `--resume <id>`: the session already has messages, show them from the start
   let initialMessages: CoderMessage[] = []
+  // a crash left a turn unfinished: repair it now (no waiting for the stale timeout) and say so
+  const interrupted =
+    controller.config.resume === true ? false : await controller.recoverInterrupted()
   if (controller.config.resume !== true) {
     try {
       initialMessages = await controller.messages()
@@ -38,6 +41,7 @@ export async function runInteractive(
       controller={controller}
       initialPrompt={opts.initialPrompt}
       initialMessages={initialMessages}
+      {...(interrupted ? { interrupted } : {})}
       {...(version ? { version } : {})}
     />,
     {

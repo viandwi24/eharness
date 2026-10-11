@@ -95,3 +95,38 @@ describe('events client', () => {
 		expect(r.resyncs).toBeGreaterThanOrEqual(2);
 	});
 });
+
+describe('idle watchdog', () => {
+	test('a connection that goes silent is dropped and the client reconnects and resyncs', async () => {
+		const urls: string[] = [];
+		let resyncs = 0;
+		const client = createEventsClient({
+			baseUrl: '/api',
+			idleMs: 30,
+			fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+				urls.push(String(input));
+				if (!String(input).includes('/events/stream')) return json({ events: [], lastSeq: 0 });
+				// connected, then silent for ever (until the client aborts it)
+				return new Response(
+					new ReadableStream({
+						start(c) {
+							c.enqueue(new TextEncoder().encode(': connected\n\n'));
+							init?.signal?.addEventListener('abort', () => c.error(new Error('aborted')), { once: true });
+						}
+					}),
+					{ status: 200 }
+				);
+			}) as typeof fetch,
+			onEvent: () => {},
+			onResync: () => resyncs++,
+			backoff: [5],
+			sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5)))
+		});
+		client.start();
+		const end = Date.now() + 2000;
+		while (urls.filter((u) => u.includes('/events/stream')).length < 2 && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+		client.stop();
+		expect(urls.filter((u) => u.includes('/events/stream')).length).toBeGreaterThanOrEqual(2);
+		expect(resyncs).toBeGreaterThanOrEqual(2);
+	});
+});

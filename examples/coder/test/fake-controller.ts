@@ -431,6 +431,19 @@ export function fakeController(opts: FakeOptions = {}) {
       },
       ...opts.status,
     }),
+    async retry() {
+      calls.push('retry')
+      return {
+        turnId: 't',
+        kind: 'regenerate',
+        stop: 'complete',
+        messages: [],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        steps: 0,
+        durationMs: 0,
+      } as never
+    },
+    recoverInterrupted: async () => false,
     async steer(text, hooks) {
       calls.push(`steer:${text}`)
       if (opts.steerAs !== 'turn') return { delivered: 'step' }

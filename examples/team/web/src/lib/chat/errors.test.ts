@@ -24,3 +24,16 @@ describe('describeChatError', () => {
 		expect(describeChatError(undefined, false)?.message).toBe('Something went wrong while following the agent.');
 	});
 });
+
+describe('isNetworkError', () => {
+	test('a dropped connection is, a stop the person asked for is not', async () => {
+		const { isNetworkError } = await import('./errors.js');
+		expect(isNetworkError(new TypeError('Failed to fetch'))).toBe(true);
+		expect(isNetworkError(new Error('network error'))).toBe(true);
+		expect(isNetworkError(new Error('terminated'))).toBe(true);
+		const abort = new Error('The user aborted a request.');
+		abort.name = 'AbortError';
+		expect(isNetworkError(abort)).toBe(false);
+		expect(isNetworkError(new Error('Something else'))).toBe(false);
+	});
+});

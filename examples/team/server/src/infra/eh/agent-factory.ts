@@ -87,6 +87,12 @@ export interface TeamLimits {
   childMaxTurns?: number
   /** How long the lead stays parked on a task before the wait times out (ms). Default 24 h. */
   parkTimeoutMs?: number
+  /** A background delegation running longer than this gets one "timed out" report. Default 2 h; 0 = never. */
+  backgroundTimeoutMs?: number
+  /** A delegation that did not start within this long is reported as failed to start. Default 90 s. */
+  backgroundStartGraceMs?: number
+  /** One reminder when a delegation waits for a person this long. Default 15 min; 0 = never. */
+  backgroundWaitingReminderMs?: number
 }
 
 export interface AgentFactoryDeps {
@@ -144,6 +150,12 @@ export interface AgentFactoryDeps {
   onWarning?: (warning: HarnessWarning) => void
   /** Lease of the turn lock (ms). */
   lockLeaseMs?: number
+  /**
+   * Stable id of this server instance (survives restarts). A restarted instance owns the turns and
+   * locks of its previous run, so they are recovered at once instead of after the stale timeout.
+   * Must be unique among live instances of one database. Default: random per process.
+   */
+  instanceId?: string
   /** Timers of the stream log and the inbox (ms); tests shorten them. */
   tuning?: { streams?: StreamsTuning; inbox?: { pollMs?: number }; abortPollMs?: number }
 }
@@ -170,6 +182,8 @@ export interface AgentFactory {
   storage: ReturnType<typeof createStorage>
   /** Cross-process turn lock; pass it as `session(id, { lock })`. */
   lock: SessionLock
+  /** Limits of background delegations, for the reconcile pass. */
+  background: { timeoutMs: number; startGraceMs: number; waitingReminderMs: number }
   /** Open a session of a definition's agent with the shared lock and runtime (any instance). */
   openSession(def: AgentDef, sessionId: string): HarnessSession
   /**
@@ -240,6 +254,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   const storage = createStorage(sqlite)
   const lock = sqliteLock(sqlite, {
     ...(deps.lockLeaseMs !== undefined ? { leaseMs: deps.lockLeaseMs } : {}),
+    ...(deps.instanceId !== undefined ? { owner: deps.instanceId, takeOver: true } : {}),
   })
   const workspaceId = deps.workspaceId ?? 'default'
   // an explicit catalog wins (tests); else the one of the provider manager (live profiles)
@@ -249,6 +264,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     childMaxTurns: deps.limits?.childMaxTurns ?? 25,
     parkTimeoutMs: deps.limits?.parkTimeoutMs ?? 24 * 60 * 60 * 1000,
     maxChildren: deps.limits?.maxChildren,
+  }
+  const backgroundTuning = {
+    timeoutMs: deps.limits?.backgroundTimeoutMs ?? 2 * 60 * 60 * 1000,
+    startGraceMs: deps.limits?.backgroundStartGraceMs ?? 90_000,
+    waitingReminderMs: deps.limits?.backgroundWaitingReminderMs ?? 15 * 60_000,
   }
   const currentSettings = () =>
     deps.settings?.() ?? {
@@ -394,7 +414,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       approvals: 'park',
       // durable background delegation (ADR-0046): the lead stays free to chat while the
       // role agents work; their reports arrive as events and wake it
-      background: { default: true },
+      background: {
+        default: true,
+        ...(backgroundTuning.timeoutMs > 0 ? { timeoutMs: backgroundTuning.timeoutMs } : {}),
+        startGraceMs: backgroundTuning.startGraceMs,
+        waitingReminderMs: backgroundTuning.waitingReminderMs,
+      },
       parkTimeoutMs: limits.parkTimeoutMs,
       maxConcurrent: limits.spawnCap,
       ...(limits.maxChildren === undefined ? {} : { maxChildren: limits.maxChildren }),
@@ -569,8 +594,15 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       },
       ...(deps.tuning?.streams ? { streams: deps.tuning.streams } : {}),
       ...(deps.tuning?.inbox ? { inbox: deps.tuning.inbox } : {}),
-      ...(deps.tuning?.abortPollMs !== undefined
-        ? { recovery: { abortPollMs: deps.tuning.abortPollMs } }
+      ...(deps.tuning?.abortPollMs !== undefined || deps.instanceId !== undefined
+        ? {
+            recovery: {
+              ...(deps.tuning?.abortPollMs !== undefined
+                ? { abortPollMs: deps.tuning.abortPollMs }
+                : {}),
+              ...(deps.instanceId !== undefined ? { instanceId: deps.instanceId } : {}),
+            },
+          }
         : {}),
       compaction: { summarizeAt: 0.8, prune: {} },
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
@@ -658,6 +690,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   return {
     storage,
     lock,
+    background: backgroundTuning,
     modes: {
       autoAvailable,
       resolve: (def, sessionId, parentSessionId) =>

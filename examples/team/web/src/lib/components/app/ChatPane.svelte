@@ -168,6 +168,12 @@
 		return out;
 	});
 	const busy = $derived(chat.status === 'submitted' || chat.status === 'streaming');
+	// A turn the server no longer runs (it was killed, the connection went silent): resync.
+	$effect(() => {
+		if (!busy && !ac.following) return;
+		const timer = setInterval(() => void ac.checkStalled(), 4000);
+		return () => clearInterval(timer);
+	});
 </script>
 
 {#snippet panelToggle(triggerProps: Record<string, unknown>)}
@@ -317,6 +323,18 @@
 						{/if}
 						{#if chat.status === 'submitted'}
 							<div class="text-sm text-muted-foreground" role="status">Thinking…</div>
+						{/if}
+						{#if ac.interrupted && !busy}
+							<div class="flex flex-col gap-2 rounded-lg border border-border bg-popover px-3 py-2.5 text-sm" role="status" data-testid="chat-interrupted">
+								<div class="flex items-start gap-2">
+									<WarningCircleIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+									<span class="min-w-0 flex-1">This reply was interrupted: the server stopped before it finished.</span>
+								</div>
+								<div class="flex items-center gap-1.5 pl-6">
+									<Button size="xs" variant="outline" onclick={() => void ac.continueTurn()}>Continue</Button>
+									<Button size="xs" variant="ghost" onclick={() => void ac.retryTurn()}>Retry</Button>
+								</div>
+							</div>
 						{/if}
 						{#if ac.problem}
 							<div class="flex items-start gap-2 rounded-lg border border-border bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert" data-testid="chat-problem">

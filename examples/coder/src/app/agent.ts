@@ -97,6 +97,8 @@ export interface CreateAgentsDeps {
   checkpoints?: CheckpointStore
   /** Cap of concurrent subagents per nesting depth (default 8). */
   maxConcurrentAgents?: number
+  /** Stable `recovery.instanceId` of this process (see `app/instance.ts`); default random. */
+  instanceId?: string
   /**
    * Plugins added to EVERY agent, after the permissions plugin (settings hooks).
    * They must not add tools: tool order is the prompt-cache prefix. Called once per agent built.
@@ -382,6 +384,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       mcp,
       plugins,
       storage: deps.storage,
+      ...(deps.instanceId === undefined ? {} : { recovery: { instanceId: deps.instanceId } }),
       loop: { maxSteps: isMain ? config.maxSteps : (def.maxTurns ?? 50) },
       compaction: { summarizeAt: 0.8, prune: {} },
       toolOutput: { maxChars: 30_000, strategy: 'evict' },

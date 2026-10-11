@@ -19,7 +19,7 @@ import type {
   RewindResult,
   ThinkingLevel,
 } from '../contracts.ts'
-import { runTurn, steerTurn } from './driver.ts'
+import { runRetry, runTurn, steerTurn } from './driver.ts'
 import { Footer, ShortcutsPanel } from './Footer.tsx'
 import { FooterTasks, footerTasks, MAX_FOOTER_ROWS } from './FooterTasks.tsx'
 import { createFileLister } from './mentions.ts'
@@ -74,6 +74,8 @@ export interface AppProps {
   initialPrompt?: string
   /** Stored messages of an already existing session (`--continue`, `--resume <id>`). */
   initialMessages?: CoderMessage[]
+  /** The session ends on a reply a crash cut short: say so, `/retry` runs it again. */
+  interrupted?: boolean
   /** coder version for the welcome box. */
   version?: string
   /** Test seams for the terminal side effects (bell/desktop notification, title, clipboard). */
@@ -150,6 +152,7 @@ function liveTokens(message: CoderMessage | null): number | undefined {
 export function App({
   controller,
   initialPrompt,
+  interrupted,
   initialMessages,
   version,
   io,
@@ -581,6 +584,17 @@ export function App({
           busy.current = false
           startTurn(prompt)
         },
+        retry: () => {
+          busy.current = true
+          turnActive.current = true
+          void runRetry(controller, dispatch, { onToolResult: () => deliverRef.current() }).finally(
+            () => {
+              turnActive.current = false
+              busy.current = false
+              refreshStats()
+            },
+          )
+        },
         todos: () => latestTodos(stateRef.current),
         openRewind: () => {
           if (pendingRef.current === 0) setPicker('rewind')
@@ -680,6 +694,13 @@ export function App({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, on mount
   useEffect(() => {
+    if (interrupted) {
+      dispatch({
+        type: 'system',
+        text: 'The last reply was interrupted: the previous coder process stopped. Send a message to continue, or run /retry to run it again.',
+        tone: 'info',
+      })
+    }
     if (initialPrompt?.trim()) submit(initialPrompt.trim())
   }, [])
 

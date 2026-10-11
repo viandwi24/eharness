@@ -124,7 +124,7 @@ export const chatToolOverrides = sqliteTable('chat_tool_overrides', {
  * Index derived from sessions (request R1); the session stays the truth. One row per task session
  * (a child of the lead, later a routine run): written by the `taskIndex` plugin on whichever
  * instance runs the turn, repaired by the boot / periodic drift pass (`infra/eh/team-service.ts`).
- * The `state` column holds the task status (`needs_action|running|done|failed|stopped`).
+ * The `state` column holds the task status (`needs_action|running|done|failed|stopped|interrupted|timed_out`).
  */
 export const tasks = sqliteTable(
   'tasks',

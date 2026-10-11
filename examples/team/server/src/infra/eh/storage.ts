@@ -165,6 +165,11 @@ export interface SqliteLockOptions {
   leaseMs?: number
   /** Owner string of this instance. Default a random id. */
   owner?: string
+  /**
+   * The owner string is stable across restarts: a lease whose holder carries it (and is not held
+   * by this process) belongs to a previous run of this instance and is taken over at once.
+   */
+  takeOver?: boolean
 }
 
 /**
@@ -174,6 +179,8 @@ export interface SqliteLockOptions {
 export function sqliteLock(sqlite: Sqlite, options: SqliteLockOptions = {}): SessionLock {
   const leaseMs = options.leaseMs ?? 30_000
   const instance = options.owner ?? uuidv7()
+  /** Leases this process holds (a sibling agent object of the process must not be taken over). */
+  const held = new Set<string>()
   return {
     async acquire(sessionId, { signal }) {
       signal.throwIfAborted()
@@ -181,6 +188,14 @@ export function sqliteLock(sqlite: Sqlite, options: SqliteLockOptions = {}): Ses
       const taken = immediate(sqlite, () => {
         const now = Date.now()
         sqlite.query('DELETE FROM eh_locks WHERE session_id = ? AND until <= ?').run(sessionId, now)
+        if (options.takeOver === true) {
+          const row = sqlite
+            .query('SELECT owner FROM eh_locks WHERE session_id = ?')
+            .get(sessionId) as { owner: string } | null
+          if (row?.owner.startsWith(`${instance}:`) && !held.has(row.owner)) {
+            sqlite.query('DELETE FROM eh_locks WHERE session_id = ?').run(sessionId)
+          }
+        }
         const result = sqlite
           .query(
             'INSERT INTO eh_locks (session_id, owner, until) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
@@ -189,6 +204,7 @@ export function sqliteLock(sqlite: Sqlite, options: SqliteLockOptions = {}): Ses
         return result.changes === 1
       })
       if (!taken) throw new Error(`session ${sessionId} is locked elsewhere`)
+      held.add(owner)
       const timer = setInterval(
         () => {
           sqlite
@@ -202,6 +218,7 @@ export function sqliteLock(sqlite: Sqlite, options: SqliteLockOptions = {}): Ses
       return async () => {
         if (released) return
         released = true
+        held.delete(owner)
         clearInterval(timer)
         sqlite
           .query('DELETE FROM eh_locks WHERE session_id = ? AND owner = ?')

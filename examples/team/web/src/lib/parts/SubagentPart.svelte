@@ -5,8 +5,12 @@
 	import { Badge, type BadgeVariant } from '#lib/components/ui/badge/index.js';
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotch';
 	import { live } from '#lib/stores/live.svelte.js';
-	import type { PartView, SubagentProgress, SubagentRun } from './map.js';
-	import { cardStatus, childSessionOf, taskOfCall } from './subagent.js';
+	import type { PartView, SubagentProgress, SubagentRun, SubagentStatus } from './map.js';
+	import { canContinue, cardStatus, childSessionOf, STATUS_LABEL, taskOfCall } from './subagent.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { api } from '#lib/api/index.js';
+	import { toast } from 'svelte-sonner';
+	import { CONTINUE_TEXT } from '#lib/chat/interrupted.js';
 
 	// Accepts either the merged `agent` tool view or a standalone `data-subagent.run` view.
 	let {
@@ -35,7 +39,7 @@
 
 	// The task row is the truth (the child keeps running after a cancelled call, and a failed run can
 	// be followed up); the stored marker and the tool state only cover calls without a task row.
-	const status = $derived.by((): SubagentRun['status'] => {
+	const status = $derived.by((): SubagentStatus => {
 		if (task) return cardStatus('running', task);
 		if (run?.status) return run.status;
 		if (progress?.status) return progress.status;
@@ -43,13 +47,35 @@
 		if (toolState === 'output-available') return 'completed';
 		return 'running';
 	});
-	const variants: Record<SubagentRun['status'], BadgeVariant> = {
+	const variants: Record<SubagentStatus, BadgeVariant> = {
 		running: 'info',
 		waiting: 'warning',
 		completed: 'success',
 		failed: 'destructive',
-		stopped: 'outline'
+		stopped: 'outline',
+		interrupted: 'warning',
+		timed_out: 'warning',
+		not_started: 'destructive'
 	};
+	let acting = $state(false);
+	/** Continue the child where it stopped (a message into its session) or stop it. */
+	async function act(kind: 'continue' | 'stop'): Promise<void> {
+		if (!task || acting) return;
+		acting = true;
+		try {
+			if (kind === 'continue') {
+				await api.post('/tasks/{id}/messages', { params: { id: task.id }, body: { text: CONTINUE_TEXT } });
+				toast.success('Continuing the task');
+			} else {
+				const r = await api.post('/tasks/{id}/abort', { params: { id: task.id } });
+				toast.success(r.target === 'idle' ? 'Nothing was running' : 'Stopping the task');
+			}
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not do that');
+		} finally {
+			acting = false;
+		}
+	}
 	const detail = $derived.by(() => {
 		if (!progress) return undefined;
 		const bits = [`${progress.steps} ${progress.steps === 1 ? 'step' : 'steps'}`];
@@ -65,7 +91,7 @@
 		<div class="flex flex-wrap items-center gap-2">
 			<span class="font-medium">{label}</span>
 			{#if label !== agent}<span class="text-xs text-muted-foreground">{agent}</span>{/if}
-			<Badge shape="pill" variant={variants[status]}>{status}</Badge>
+			<Badge shape="pill" variant={variants[status]}>{STATUS_LABEL[status]}</Badge>
 			{#if status === 'running'}<CircleNotchIcon class="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />{/if}
 			{#if detail}<span class="font-mono text-[11.5px] text-muted-foreground">{detail}</span>{/if}
 		</div>
@@ -75,6 +101,7 @@
 	{#if sessionId && onOpenSession}<ArrowSquareOutIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{/if}
 {/snippet}
 
+<div class="flex w-full max-w-lg flex-col gap-1.5">
 {#if sessionId && onOpenSession}
 	<Surface
 		as="button"
@@ -90,3 +117,13 @@
 		{@render body()}
 	</Surface>
 {/if}
+{#if task && (status === 'running' || canContinue(status))}
+	<div class="flex items-center gap-1.5 px-1" data-testid="subagent-actions">
+		{#if status === 'running'}
+			<Button size="xs" variant="ghost" disabled={acting} onclick={() => void act('stop')}>Stop</Button>
+		{:else if status !== 'completed'}
+			<Button size="xs" variant="outline" disabled={acting} onclick={() => void act('continue')}>Continue</Button>
+		{/if}
+	</div>
+{/if}
+</div>

@@ -24,12 +24,15 @@ export type SubagentProgress = {
 	text: string;
 };
 
+/** Card status words: the stored marker says `running`; the task row says what it is now. */
+export type SubagentStatus = 'running' | 'waiting' | 'completed' | 'failed' | 'stopped' | 'interrupted' | 'timed_out' | 'not_started';
+
 /** Data of `data-subagent.run`. */
 export type SubagentRun = {
 	toolCallId: string;
 	sessionId: string;
 	agent: string;
-	status: 'running' | 'waiting' | 'completed' | 'failed' | 'stopped';
+	status: SubagentStatus;
 	name?: string;
 	taskId?: string;
 };

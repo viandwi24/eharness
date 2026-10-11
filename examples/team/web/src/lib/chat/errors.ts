@@ -34,3 +34,11 @@ export function describeChatError(error: unknown, serverTurn: boolean): ChatProb
 	const message = text.trim() ? clip(text.trim()) : 'Something went wrong while following the agent.';
 	return { message, retry: serverTurn ? 'follow' : null };
 }
+
+/** A dropped connection (not a stop the person asked for): the turn may still run on the server. */
+export function isNetworkError(error: unknown): boolean {
+	if (error instanceof Error && error.name === 'AbortError') return false;
+	const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+	return error instanceof TypeError || /failed to fetch|network|load failed|terminated|connection (reset|closed)|socket/i.test(text);
+}
+

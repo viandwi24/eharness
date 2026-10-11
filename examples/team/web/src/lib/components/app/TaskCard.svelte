@@ -15,7 +15,7 @@
 		if (task.status === 'needs_action') {
 			return { label: task.pendingKind === 'question' ? 'Question' : 'Approval', variant: 'warning' as const };
 		}
-		const b = badgeFor(task.status);
+		const b = badgeFor(task.status, task.summary);
 		return { label: b.label[0].toUpperCase() + b.label.slice(1), variant: b.variant };
 	});
 </script>

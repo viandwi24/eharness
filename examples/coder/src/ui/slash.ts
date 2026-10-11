@@ -46,6 +46,8 @@ export interface SlashContext {
   pickThinking(): void
   /** Start a turn with this prompt. */
   submit(prompt: string): void
+  /** Run the last reply again (`/retry`). */
+  retry(): void
   /** The latest todo list, if any. */
   todos(): Todo[] | null
   setModelLabel(model: string): void
@@ -316,6 +318,11 @@ export const slashCommands: SlashCommand[] = [
       ctx.print('Mode set to plan.')
       if (ctx.args) ctx.submit(ctx.args)
     },
+  },
+  {
+    name: 'retry',
+    description: 'Run the last reply again (after an interruption or a bad answer)',
+    run: (ctx) => ctx.retry(),
   },
   {
     name: 'rewind',

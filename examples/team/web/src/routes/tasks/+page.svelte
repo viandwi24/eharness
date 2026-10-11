@@ -85,7 +85,7 @@
 		query = '';
 	}
 	const statusBadge = (t: Task): { label: string; variant: ReturnType<typeof badgeFor>['variant'] } =>
-		t.status === 'needs_action' ? { label: t.pendingKind === 'question' ? 'question' : 'approval', variant: 'warning' } : badgeFor(t.status);
+		t.status === 'needs_action' ? { label: t.pendingKind === 'question' ? 'question' : 'approval', variant: 'warning' } : badgeFor(t.status, t.summary);
 </script>
 
 {#snippet filters(cls: string)}
