@@ -209,6 +209,7 @@ export function subagent(options: SubagentOptions): HarnessPlugin<'subagent'> {
     reportResumes: env.park,
     maxReportChars: env.reportMax,
     ...(env.outputEnabled ? { outputToolName: env.outputToolName } : {}),
+    ...(options.onPark === undefined ? {} : { onPark: options.onPark }),
   })
 
   return definePlugin({

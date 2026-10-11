@@ -81,6 +81,8 @@ export async function deliverReport(
     data: Record<string, unknown>
     key: string
     wake: boolean
+    /** `'next-step'` (default) also reaches a running parent at its next step; `'next-turn'` only stores it. */
+    deliver?: 'next-step' | 'next-turn'
   },
   log: { warn(message: string, data?: Record<string, unknown>): void },
   delays: readonly number[] = RETRY_DELAYS,
@@ -92,7 +94,7 @@ export async function deliverReport(
       await (parent as AnySession).inject(
         'eh.event',
         { name: 'subagent', text: event.text, data: event.data as never },
-        { deliver: 'next-step', wake: event.wake, key: event.key },
+        { deliver: event.deliver ?? 'next-step', wake: event.wake, key: event.key },
       )
       return true
     } catch (error) {

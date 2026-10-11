@@ -29,6 +29,7 @@ import type {
   AgentEnablement,
   AnyConnectorDefinition,
   CapabilityMode,
+  ConnectionCredentials,
   ConnectionEnablement,
   ConnectionRecord,
   ConnectionStore,
@@ -155,6 +156,22 @@ export interface ConnectorService {
   test(id: string): Promise<ConnectorTestResult>
   /** A fresh access token (server side only; never send it to a browser). */
   accessToken(connectionId: string): Promise<string>
+  /**
+   * The stored credentials of a connection, `session` included: for trusted server code that
+   * runs a long-lived client (a chat runtime holding a user-account session). Returns
+   * `undefined` for an unknown connection or one without credentials. Secrets: never send the
+   * result to a browser, never log it. Tokens are returned as stored (not refreshed): use
+   * `accessToken` for those.
+   */
+  credentials(connectionId: string): Promise<ConnectionCredentials | undefined>
+  /**
+   * Mark a connection `needs-auth` with a message a person sees ("The session was revoked;
+   * sign in again."). For runtimes that learn out of band that a credential no longer works
+   * (revoked session, revoked bot token). A no-op for an unknown connection; activation skips
+   * the connection until a reconnect flow finishes. The stored credentials are kept (the
+   * reconnect replaces them).
+   */
+  markNeedsAuth(connectionId: string, message?: string): Promise<void>
   /** `activateConnectors` over the stored connections and one agent's enablement. */
   activate(
     options: Omit<ActivateOptions, 'definitions' | 'connections' | 'enablement' | 'accessToken'>,
@@ -198,7 +215,8 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
 
   async function toPublic(record: ConnectionRecord): Promise<PublicConnection> {
     const def = defs.get(record.definitionId)
-    const authorized = (await options.credentials.get(record.id))?.tokens !== undefined
+    const stored = await options.credentials.get(record.id)
+    const authorized = stored?.tokens !== undefined || stored?.session !== undefined
     if (def === undefined) {
       const { settings: _drop, ...rest } = structuredClone(record)
       return { ...rest, settings: {}, authorized } as PublicConnection
@@ -466,6 +484,20 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
       return result
     },
     accessToken: (connectionId) => manager.getAccessToken(connectionId),
+    credentials: async (connectionId) => {
+      const stored = await options.credentials.get(connectionId)
+      return stored === undefined ? undefined : structuredClone(stored)
+    },
+    markNeedsAuth: async (connectionId, message) => {
+      const record = await options.connections.get(connectionId)
+      if (record === undefined) return
+      await options.connections.put({
+        ...record,
+        status: 'needs-auth',
+        statusMessage: message ?? 'Reconnect required.',
+        updatedAt: now(),
+      })
+    },
     activate: async (opts) =>
       activateConnectors({
         ...opts,

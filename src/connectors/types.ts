@@ -351,6 +351,23 @@ export interface ConnectionCredentials {
   tokens?: OAuthTokens
   client?: OAuthClient
   endpoints?: OAuthEndpoints
+  /**
+   * An opaque, app-defined session (a Telegram MTProto session string, a cookie jar, ...). The
+   * library never reads `data`: a custom flow step sets it (`ctx.scratch.credentials = { session }`),
+   * the credential store seals it with the other credentials, and trusted server code reads it
+   * through `ConnectorService.credentials`. `format` names how to interpret `data` (for example
+   * `'mtcute-string'`), so a runtime can refuse a session it does not understand. Never part of
+   * a public view, a flow state or a log line.
+   */
+  session?: ConnectionSession
+}
+
+/** The opaque session slot of {@link ConnectionCredentials}. */
+export interface ConnectionSession {
+  /** Names how `data` is encoded, e.g. `'mtcute-string'`. */
+  format: string
+  /** The session itself (a secret). */
+  data: string
 }
 
 /** Health of a connection. Only `connected` connections are activated. */
@@ -447,6 +464,7 @@ export type FlowView =
   | FormView
   | OAuthView
   | DeviceCodeView
+  | QrView
   | ChooseView
   | ConfirmView
   | StatusView
@@ -495,6 +513,21 @@ export interface DeviceCodeView extends ViewBase {
   pollIntervalMs: number
 }
 
+/**
+ * Show `url` as a QR code (the person scans it with another device), then poll. A step may
+ * return a new `url` under the same `viewId` (`{ pending: true }` re-renders without a new id),
+ * so a login token that rotates every few seconds does not invalidate the UI's action.
+ */
+export interface QrView extends ViewBase {
+  type: 'qr'
+  title: string
+  description?: string
+  /** What the QR code encodes (a `tg://login?token=...` link, a URL). Rotates while polling. */
+  url: string
+  expiresAt: number
+  pollIntervalMs: number
+}
+
 /** Choose one or several options. Submit `{ selected: string | string[] }`. */
 export interface ChooseView extends ViewBase {
   type: 'choose'
@@ -539,8 +572,11 @@ export type FlowViewBody = FlowView extends infer V
     : never
   : never
 
-/** What a person can do in a view. */
-export type FlowAction = 'submit' | 'poll' | 'back' | 'cancel' | 'retry'
+/**
+ * What a person can do in a view. `resend` asks a custom step to send a one-time code again (a
+ * `form` view may offer it; default steps ignore it).
+ */
+export type FlowAction = 'submit' | 'poll' | 'back' | 'cancel' | 'retry' | 'resend'
 
 /** Input of `advanceFlow`. */
 export interface FlowInput {

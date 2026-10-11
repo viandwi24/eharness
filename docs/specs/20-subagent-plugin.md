@@ -45,12 +45,13 @@ subagent({
   policy?: 'deny' | 'approve'                  // 'policy': default 'deny'
   childSessionId?: (parentSessionId: string, toolCallId: string) => string   // `${parent}:agent:${toolCallId}`
   parkTimeoutMs?: number                       // 'park': timeout of the parent's wait (default none)
+  onPark?: 'step' | 'notice'                   // 'park' + background: how the "child waits for the user" notice reaches a running parent (§3.5); default 'step'
   parentAgent?: () => HarnessAgent             // see §3.1 (the agent is itself a child of a 'park' parent)
   selfAgent?: () => HarnessAgent               // this agent: 'park' reconciles waits on open (§3.4) and rebuilds its directory from storage (§5.9); other strategies rebuild names / finished agents (§5.6)
   onParentRun?: (run: HarnessRun, parentSessionId: string) => void   // 'park', see §4
 }): HarnessPlugin<'subagent'>
 
-subagentChild({ parent: () => HarnessAgent, parentSession?, onParentRun?, maxReportChars?, outputToolName? }): HarnessPlugin<'subagent-child'>
+subagentChild({ parent: () => HarnessAgent, parentSession?, onParentRun?, maxReportChars?, outputToolName?, onPark? }): HarnessPlugin<'subagent-child'>
 reconcileSubagentWaits(parentSession, { openChild, onParentRun?, log? }): Promise<SubagentReconcileEntry[]>   // §3.4
 pendingSubagentApprovals(session, agentOrOpen): Promise<Array<{ sessionId; parentSessionId; pending: PendingState }>>
 
@@ -372,7 +373,14 @@ the call a **background start**; a call without it stays the foreground external
   stopped` for an aborted turn), then the report capped at `maxReportChars` (cut hint names
   `agent_output`); `data.taskId` is the child session id. A turn that stops `tool-pending` sends the
   same event with `status: 'waiting'` and **no `wake`** (the child waits for a person; the lead
-  reads it at its next turn). A turn the launcher started with a `relation="launcher"` frame
+  reads it at its next turn). `onPark` (default `'step'`) picks how
+  that notice is delivered: `'step'` is `deliver: 'next-step'` (a lead that is running a turn when the child
+  parks reads it at its next step, which costs that turn one extra model call), `'notice'` is
+  `deliver: 'next-turn'` (stored only: visible in the history and to UIs, never an extra model call; the model
+  reads it with the turn the final report wakes). Neither mode wakes an idle lead, and the final report
+  always wakes it (`wake: true`). The option belongs to the plugin of the *child's* agent (`subagent({ parentAgent })`
+  or `subagentChild`), since the child's `turn.end` hook sends the notice; the `waitingReminderMs` reminder
+  is a deliberate wake and is not affected. A turn the launcher started with a `relation="launcher"` frame
   reports as `Resumed subagent …` (§5.9).
 - **Marker.** A `step.end` hook writes `data-subagent.run` `{ toolCallId, sessionId, agent, status:
   'running', name?, background? }` for every `agent` call in park mode (foreground and background),

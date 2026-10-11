@@ -73,6 +73,9 @@ function process_(
     approve?: boolean
     tools?: Record<string, unknown>
     mainOptions?: Partial<SubagentOptions>
+    /** Options of the worker's own (child side) plugin. */
+    workerOptions?: Partial<SubagentOptions>
+    mainTools?: Record<string, unknown>
     /** The worker agent of this process cannot claim inbox items (it "died" before running them). */
     deadWorker?: boolean
   },
@@ -97,6 +100,7 @@ function process_(
         approvals: 'park',
         parentAgent: () => holder.main as Agent,
         selfAgent: () => holder.worker as Agent,
+        ...opts.workerOptions,
       }),
     ] as never,
   }) as Agent
@@ -107,6 +111,7 @@ function process_(
     storage,
     logger: silent,
     inbox: { pollMs: 20 },
+    ...(opts.mainTools === undefined ? {} : { tools: opts.mainTools as never }),
     plugins: [
       subagent({
         agents: { worker: { agent: worker, description: 'does work' } },
@@ -394,5 +399,64 @@ describe('orphaned foreground parks (ADR-0046 amendment)', () => {
     const all = (await a.main.session('p1').messages()) as HarnessUIMessage[]
     expect(partsOf(all, 'data-eh.event')).toHaveLength(0)
     await Promise.all([a.main.close(), a.worker.close()])
+  })
+
+  describe('onPark: the notice that a child waits for the user', () => {
+    /**
+     * The lead is still answering ("delegated", a slow model call) when its child parks on an
+     * approval. The parked notice is stored in both modes; only the default hands it to the
+     * running turn at its next step, which costs one more model call.
+     */
+    async function run(onPark: 'step' | 'notice' | undefined) {
+      const storage = newStorage()
+      const a = process_(storage, {
+        main: [
+          { toolCalls: [spawn('c1')] },
+          { text: 'delegated', delayMs: 400 },
+          // the default delivers the notice to the running turn: one more step before it ends
+          ...(onPark === 'notice' ? [] : [{ text: 'saw the notice' }]),
+          { text: 'I saw the report' },
+        ],
+        worker: [
+          { toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] },
+          { text: 'report' },
+        ],
+        approve: true,
+        ...(onPark === undefined ? {} : { workerOptions: { onPark } }),
+      })
+      const first = a.main.session('p1').send('go')
+      await until('notice stored', async () =>
+        (await dump(a.main, 'p1')).includes('is waiting for the user'),
+      )
+      await first.result
+      await until('turns settled', async () => !a.main.session('p1').running)
+      const found = await pendingSubagentApprovals(a.main.session('p1'), a.worker)
+      const approvalId = found[0]?.pending.approvals[0]?.approvalId as string
+      await a.worker
+        .session('p1:agent:c1')
+        .respond({ approvals: [{ id: approvalId, approved: true }] }).result
+      await until('parent woke on the report', async () =>
+        (await dump(a.main, 'p1')).includes('I saw the report'),
+      )
+      const all = (await a.main.session('p1').messages()) as HarnessUIMessage[]
+      const events = partsOf(all, 'data-eh.event').map((p) => (p.data as { text: string }).text)
+      const calls = a.mainModel.prompts.length
+      await Promise.all([a.main.close(), a.worker.close()])
+      return { calls, events }
+    }
+
+    test("'notice' stores the notice without an extra model call; the report still wakes the parent", async () => {
+      const out = await run('notice')
+      expect(out.events.some((t) => t.includes('is waiting for the user'))).toBe(true)
+      expect(out.events.some((t) => t.includes('finished'))).toBe(true)
+      // delegate, "delegated", then the wake of the report
+      expect(out.calls).toBe(3)
+    })
+
+    test("the default ('step') hands the notice to the running turn: one more model call", async () => {
+      const out = await run(undefined)
+      expect(out.events.some((t) => t.includes('is waiting for the user'))).toBe(true)
+      expect(out.calls).toBe(4)
+    })
   })
 })

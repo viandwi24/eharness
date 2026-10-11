@@ -2,7 +2,7 @@
  * The setup flow engine: server-driven UI as data. A flow is a list of steps; the engine keeps
  * a {@link FlowState} (the current view, a revision and a sealed scratch space) and advances it
  * with `startFlow` / `advanceFlow` / `completeOAuth`. Nothing here renders anything: a UI draws
- * the closed view vocabulary (`form`, `oauth`, `deviceCode`, `choose`, `confirm`, `status`,
+ * the closed view vocabulary (`form`, `oauth`, `deviceCode`, `qr`, `choose`, `confirm`, `status`,
  * `error`) and answers with the `viewId` of the view it drew.
  *
  * @see docs/specs/24-connectors.md#2-setup-flows
@@ -559,6 +559,7 @@ function secretsOf(m: Machine): string[] {
     creds?.tokens?.accessToken,
     creds?.tokens?.refreshToken,
     creds?.client?.clientSecret,
+    creds?.session?.data,
   ]) {
     if (value !== undefined) out.push(value)
   }
@@ -815,9 +816,10 @@ export async function startFlow(params: StartFlowParams, depsInput: FlowDeps): P
 }
 
 const ALLOWED: Record<FlowView['type'], readonly (FlowAction | 'callback')[]> = {
-  form: ['submit', 'back', 'cancel'],
+  form: ['submit', 'back', 'cancel', 'resend'],
   oauth: ['poll', 'cancel', 'callback'],
   deviceCode: ['poll', 'cancel'],
+  qr: ['poll', 'cancel', 'back'],
   choose: ['submit', 'back', 'cancel'],
   confirm: ['submit', 'back', 'cancel'],
   status: ['cancel'],

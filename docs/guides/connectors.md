@@ -115,6 +115,8 @@ The UI keeps `flow` and renders `flow.view` by `type`; every action quotes `flow
   <!-- poll every view.pollIntervalMs: act('poll') -->
 {:else if view.type === 'deviceCode'}
   <code>{view.userCode}</code> <a href={view.verificationUrl}>Open</a>   <!-- poll -->
+{:else if view.type === 'qr'}
+  <QrCode value={view.url} />   <!-- poll every view.pollIntervalMs; view.url may change under the same viewId -->
 {:else if view.type === 'choose'}
   <Choose options={view.options} multiple={view.multiple} selected={view.selected}
           on:submit={(e) => act('submit', { selected: e.detail })} />
@@ -130,7 +132,8 @@ The UI keeps `flow` and renders `flow.view` by `type`; every action quotes `flow
 `act` posts the action; on `ok: false` with `error: 'stale-view'` replace the local flow with the
 returned `flow` and re-render (nothing is lost). On `finished`, use the returned `connection`. The
 OAuth callback tab can show "you can close this tab"; the original tab learns the result by polling.
-The form's field list is a framework-neutral `FormField[]` (`kind`, `widget`, `required`, `secret`,
+A `form` view may also be answered with `act('resend')` when the connector's custom step supports it
+(one-time codes). The form's field list is a framework-neutral `FormField[]` (`kind`, `widget`, `required`, `secret`,
 `showWhen`, `options`, ...): render it with your own components, as for provider profiles.
 
 ## Rendering the enablement UI

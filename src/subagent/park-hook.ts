@@ -202,6 +202,8 @@ export function createParkHook(options: {
   maxReportChars?: number
   /** Name of the `agent_output` tool, named in the hint of a cut report (none: no hint). */
   outputToolName?: string
+  /** How the "waiting for the user" notice of a parked background child is delivered. */
+  onPark?: 'step' | 'notice'
 }): {
   start: (ctx: HarnessContext) => void
   end: (ctx: HarnessContext, e: TurnResult) => Promise<void>
@@ -304,6 +306,8 @@ export function createParkHook(options: {
         },
         key: reportKey(ctx.session.id, waiting ? `waiting:${e.turnId}` : e.turnId),
         wake: !waiting,
+        // a park notice in 'notice' mode is only stored: it never gives a running parent an extra step
+        ...(waiting && options.onPark === 'notice' ? { deliver: 'next-turn' as const } : {}),
       },
       ctx.log,
     )
@@ -428,6 +432,8 @@ export function subagentChild(options: {
   maxReportChars?: number
   /** Name of the `agent_output` tool of the parent, named in the hint of a cut report. */
   outputToolName?: string
+  /** How the notice that this child waits for a person reaches the parent (see `SubagentOptions.onPark`). Default `'step'`. */
+  onPark?: 'step' | 'notice'
 }): HarnessPlugin<'subagent-child'> {
   const hook = createParkHook({
     parentAgent: options.parent,
@@ -436,6 +442,7 @@ export function subagentChild(options: {
     reportResumes: true,
     ...(options.maxReportChars === undefined ? {} : { maxReportChars: options.maxReportChars }),
     ...(options.outputToolName === undefined ? {} : { outputToolName: options.outputToolName }),
+    ...(options.onPark === undefined ? {} : { onPark: options.onPark }),
   })
   return definePlugin({
     name: 'subagent-child',

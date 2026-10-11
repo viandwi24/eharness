@@ -75,9 +75,10 @@ publicFlow(state)              // strips sealed scratch and state hash
 
 | `type` | Fields | Actions |
 |---|---|---|
-| `form` | `title`, `description?`, `fields: FormField[]`, `values` (secrets `{ set, hint? }`), `errors?`, `message?`, `submitLabel` | `submit` (`data` = values; a secret may be `{ keep: true }`), `back`, `cancel` |
+| `form` | `title`, `description?`, `fields: FormField[]`, `values` (secrets `{ set, hint? }`), `errors?`, `message?`, `submitLabel` | `submit` (`data` = values; a secret may be `{ keep: true }`), `back`, `cancel`, `resend` |
 | `oauth` | `title`, `authorizeUrl`, `pollIntervalMs`, `expiresAt` | `poll`, `cancel` |
 | `deviceCode` | `userCode`, `verificationUrl`, `verificationUrlComplete?`, `expiresAt`, `pollIntervalMs` | `poll`, `cancel` |
+| `qr` | `title`, `description?`, `url`, `expiresAt`, `pollIntervalMs` | `poll`, `cancel`, `back` |
 | `choose` | `title`, `options`, `multiple`, `selected`, `min`, `errors?` | `submit` (`{ selected }`), `back`, `cancel` |
 | `confirm` | `title`, `message`, `confirmLabel`, `cancelLabel` | `submit`, `back`, `cancel` |
 | `status` | `state: 'running' \| 'success'`, `message`, `account?` | none (finished) |
@@ -102,9 +103,24 @@ be advanced or completed by a caller that presents the same `principal` (`FlowIn
 consume the `state`. Flows without a principal behave as before. `service.startConnect({ principal })`
 and `service.reconnect(id, { principal })` forward it.
 
+**`qr`** shows `url` as a QR code another device scans (a login token such as `tg://login?token=...`).
+The step answers `poll` with `{ pending: true }` while nothing happened; `pending` re-renders the view
+without a new `viewId`, so the `url` may change under the same id (a token that rotates every few
+seconds) and the UI keeps polling with the id it has.
+
+**`resend`** is a flow action for one-time codes. A `form` view accepts it and the step's
+`advance` receives `{ action: 'resend' }`: it sends the code again (SMS, in-app, call) and answers
+`{ stay: true, message }` (a new `viewId`; the UI shows the message and keeps the form) or `{ error }`.
+The default steps ignore it. Like every action it is subject to `viewId` and principal checks.
+
 Custom steps (`FlowStepDef`): `id`, `skip?`, `auto?`, `enter?`, `view(ctx)`, `advance(ctx, input)`
 returning `{ next } | { goto } | { stay, errors?, message? } | { pending } | { error, retryable? }`.
-`ctx.scratch` is JSON that is sealed between requests. `ctx.label` is the connection's label when known (the OAuth and device-code views are titled `Authorize <label>`, else the connector name).
+`ctx.scratch` is JSON that is sealed between requests. `ctx.deps.clientConfig(definitionId, ctx)`
+works for any definition, not only OAuth ones: a workspace-wide app configuration (for example a
+Telegram `{ apiId, apiHash }` the admin entered once) is supplied by the app's `clientConfig` callback and
+read by a custom step; unlike OAuth clients it is returned unvalidated, so the step validates it. A step
+that finishes a non-OAuth login stores the result in `ctx.scratch.credentials` (for example
+`{ session: { format, data } }`, below); `flowCompletion` returns it and the service saves it. `ctx.label` is the connection's label when known (the OAuth and device-code views are titled `Authorize <label>`, else the connector name).
 
 ## 3. Enablement and precedence
 
@@ -153,6 +169,24 @@ pass a distributed lock for several instances), re-reading credentials inside th
 refresh token (`invalid_grant`) marks the connection `needs-auth` and rejects with
 `details.reason: 'needs-auth'`. Tokens are only in `CredentialStore` rows and in memory; no public
 shape (`PublicConnection`, `PublicFlow`, `ActivatedConnectors`, service results) contains them.
+
+**Session slot.** `ConnectionCredentials.session?: { format: string; data: string }` is an opaque,
+app-defined credential for connectors that are neither OAuth nor an API key (a user-account chat
+session, a cookie jar). The library never interprets `data`; `format` names its encoding
+(`'mtcute-string'`) so a runtime can refuse what it does not understand. It lives in the
+`CredentialStore` row with the tokens (sealed with `kinds: ['connection-credentials']`), in the sealed flow scratch
+while the flow runs, and is scrubbed from error views. It is in no public shape (`PublicConnection`
+has only `authorized: true`, which is also true when a session exists, `PublicFlow`, logs). A reconnect flow that sets
+`scratch.credentials` replaces the stored credentials, session included.
+
+**Long-lived runtimes.** `service.credentials(connectionId)` returns the stored credentials (a copy,
+session included, tokens as stored and not refreshed) for trusted server code, for example a runtime
+holding a chat client open for days; `service.accessToken` remains the way to get a fresh OAuth token.
+`service.markNeedsAuth(connectionId, message?)` is how such a runtime reports out of band that the
+credential stopped working (`AUTH_KEY_UNREGISTERED`, a revoked session or bot token): it sets
+`status: 'needs-auth'` with `statusMessage` (default "Reconnect required."), keeps the credentials and
+is a no-op for an unknown connection. Activation skips the connection until a reconnect flow finishes
+(which sets `connected` again). The credential manager does the same for a rejected OAuth refresh token.
 
 ## 5. Secrets and the vault
 
@@ -270,7 +304,7 @@ before connecting, see ADR-0053). `catalog()`, `list`, `get`, `startConnect`, `r
 secret the patch does not resend, deletes the stored OAuth credentials and sets `needs-auth` for `oauth2` / `deviceCode`
 connectors: spec 23 §2, endpoint-bound secrets), `remove` (connection, credentials,
 every agent's entry), `enablement`, `setEnablement`, `test` (records status, account, discovered
-capabilities; only a missing or rejected credential answers "Reconnect required.", any other failure (provider outage, network, store error) answers "Temporarily unavailable (<reason>)", is reported to `onError` (default `console.warn`) and leaves the stored status untouched), `accessToken` (server side only), `activate`, `sweep`. A finished flow saves the
+capabilities; only a missing or rejected credential answers "Reconnect required.", any other failure (provider outage, network, store error) answers "Temporarily unavailable (<reason>)", is reported to `onError` (default `console.warn`) and leaves the stored status untouched), `accessToken`, `credentials` and `markNeedsAuth` (server side only; §4), `activate`, `sweep`. A finished flow saves the
 connection and credentials, stays for 5 minutes (a polling tab gets `finished` with the
 connection) with its scratch cleared. `defaultEnabled` defaults to the connector's scope default,
 else `false` (agent scope: `true`).

@@ -276,6 +276,22 @@ export interface SubagentOptions {
   /** `'park'`: timeout of the parent's wait in ms. Default none. */
   parkTimeoutMs?: number
   /**
+   * How the notice "this child waits for the user" (a parked durable background child) reaches its
+   * parent. It never wakes an idle parent in either mode; the choice is about a parent that is
+   * *running a turn* when the child parks:
+   *
+   * - `'step'` (default): the notice is delivered at the parent's next step boundary like any
+   *   event, which gives the running turn one more model call that only reads the notice.
+   * - `'notice'`: the notice is only stored (visible in the history and to UIs, `deliver:
+   *   'next-turn'`); the model reads it with its next turn, which the child's final report wakes.
+   *   Use it when an extra model call per approval is not wanted.
+   *
+   * The final report always wakes the parent. Must be set on the plugin of the **child's** agent
+   * (`subagent({ parentAgent })` or {@link subagentChild}), because the child's `turn.end` hook
+   * delivers the notice. Spec 20 §3.5.
+   */
+  onPark?: 'step' | 'notice'
+  /**
    * The agent that owns the parent sessions, for the `turn.end` hook this plugin installs when the
    * agent is itself a child of a `'park'` parent (see {@link subagentChild}). A function, so two
    * agents can reference each other.
