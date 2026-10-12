@@ -46,6 +46,8 @@ export interface WorkQueueIntake {
   }): Array<{ task: Task; column: string }>
   update(id: string, patch: TaskPatch): Task
   cancel(id: string): Task
+  /** Stop a task that already runs (aborts its session, like the web app's Stop). */
+  stop(id: string): Promise<{ task: Task; outcome: 'stopped' | 'waiting' }>
   /** The program of a program run names this tool in its authority. */
   authorizes(sessionId: string, toolName: string): boolean
   complete(
@@ -142,7 +144,7 @@ export const CREATE_TASK_DESCRIPTION =
 export const LIST_TASKS_DESCRIPTION =
   'Read the task board: each task with its column (queued, running, waiting, review, done), owner, priority and what it cost so far (its own session). Filter by column, agent or program; the total cost of the rows is at the end. Use it before queueing work, so you do not queue the same thing twice, and to answer what a run or a program cost.'
 export const UPDATE_TASK_DESCRIPTION =
-  'Change a task that has not started: re-prioritise, reassign, rewrite, set a due date, hold or release it, or cancel it. A task that runs or finished cannot be changed.'
+  'Change a task that has not started: re-prioritise, reassign, rewrite, set a due date, hold or release it, or cancel it. cancel also stops a task that is running (its work stops where it is; what it already wrote stays). A finished task cannot be changed.'
 export const COMPLETE_TASK_DESCRIPTION =
   'Mark the task of this run done: a short summary and the library paths of what you made (they must exist). The client then reviews it. Call it once the work is verified, then give your final report.'
 
@@ -271,7 +273,7 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
           description: UPDATE_TASK_DESCRIPTION,
           inputSchema: updateSchema,
           metadata: { risk: 'write', idempotent: false },
-          execute: (input): string => {
+          execute: async (input): Promise<string> => {
             if (origin === 'rehearsal') {
               return simulateTask(
                 sessionId,
@@ -283,8 +285,18 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
             }
             try {
               if (input.cancel === true) {
-                const task = intake().cancel(input.id)
-                return `Cancelled task ${task.id}: ${task.title}.`
+                try {
+                  const task = intake().cancel(input.id)
+                  return `Cancelled task ${task.id}: ${task.title}.`
+                } catch (error) {
+                  if (!(error instanceof DomainError) || error.code !== 'TASK_NOT_QUEUED')
+                    throw error
+                }
+                // a task that already runs: its session is aborted, like the Stop of the web app
+                const stopped = await intake().stop(input.id)
+                return stopped.outcome === 'stopped'
+                  ? `Stopped task ${stopped.task.id}: ${stopped.task.title}. Its work so far stays in the library; it is not undone.`
+                  : `Task ${stopped.task.id} is waiting for an approval or an answer, so nothing is running to stop. Decline the request (or let it be answered) and it ends.`
               }
               const task = intake().update(input.id, {
                 agentId: input.agent,

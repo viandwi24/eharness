@@ -1,5 +1,6 @@
 /** Channels gateway (docs/plans/P41-team-channels.md, phase L1): platform neutral, no platform names. */
 
+export { delegatedApprovals } from './delegated-approvals.ts'
 export type {
   ApprovalAnswerInput,
   ChannelGateway,

@@ -425,6 +425,8 @@ export interface ApprovalStore {
   setMessage(id: string, messageId: string): void
   /** Open rows of a session. */
   open(sessionId: string): ApprovalRow[]
+  /** Open rows announced in a conversation, whatever session they belong to (a delegated agent's too). */
+  openIn(conversationId: string): ApprovalRow[]
   /** Take an open row (`answered`): the first caller wins. False when it was not open. */
   answer(id: string, by: string, outcome: string, now: number): boolean
   /** The answer could not be recorded: the row is open again. */
@@ -495,6 +497,14 @@ export function sqliteApprovalStore(sqlite: Database): ApprovalStore {
           `SELECT * FROM channel_approvals WHERE session_id = ? AND status = 'open' ORDER BY created_at, id`,
         )
         .all(sessionId)
+        .map(toApproval)
+    },
+    openIn(conversationId) {
+      return sqlite
+        .query<ApprovalDb, [string]>(
+          `SELECT * FROM channel_approvals WHERE conversation_id = ? AND status = 'open' ORDER BY created_at, id`,
+        )
+        .all(conversationId)
         .map(toApproval)
     },
     answer(id, by, outcome, now) {

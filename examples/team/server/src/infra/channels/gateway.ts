@@ -229,6 +229,11 @@ export interface GatewayDeps {
       },
     ): Promise<void>
   }
+  /**
+   * Stops the session of a delegated agent (a child of a channel session): the requester's new
+   * message cancels a foreground delegation instead of waiting for it. Absent = never interrupted.
+   */
+  delegation?: { abort(childSessionId: string, reason: string): Promise<boolean> }
   /** Inbound files become uploads of the library, like a file attached in the web app. */
   attachments: {
     store(file: {
@@ -788,13 +793,41 @@ export interface ChannelGateway {
   reminder(sessionId: string): Promise<string | undefined>
   turnStarted(sessionId: string, keys: readonly string[]): void
   /** `turnStarted` plus the requester of the turn (the hook awaits it: tools run after it). */
-  beginTurn(sessionId: string, keys: readonly string[] | undefined): Promise<void>
+  beginTurn(
+    sessionId: string,
+    keys: readonly string[] | undefined,
+    turn?: { kind: string; id: string },
+  ): Promise<void>
   turnEnded(end: {
     sessionId: string
     stop: string
     messages: ReadonlyArray<{ role: string; parts?: unknown; metadata?: unknown }>
     pending?: PendingView | undefined
   }): Promise<void>
+  /**
+   * A delegated agent (a child of a channel session) ended a turn. When it waits for an approval
+   * or an answer, the request is posted in the conversation that asked for the work (answerable by
+   * the allowed roles); when it is done its announcements are closed.
+   */
+  delegatedTurnEnded(end: {
+    parentSessionId: string
+    childSessionId: string
+    childAgentId: string
+    agentName?: string | undefined
+    stop: string
+    pending?: PendingView | undefined
+  }): Promise<void>
+  /** A delegated agent starts a turn; `foreground` = the launcher's turn waits for it (see `interruptForeground`). */
+  delegatedTurnStarted(start: {
+    parentSessionId: string
+    childSessionId: string
+    foreground: boolean
+  }): void
+  /**
+   * Boot recovery closed the turn of a channel session a restart interrupted: the person who
+   * wrote last is told once to send the request again (never re-run: tools may have partly run).
+   */
+  turnInterrupted(sessionId: string): Promise<boolean>
   /** Delete messages past their retention. Returns the number removed. */
   purge(): number
   /** Place events that arrived without a node (a deletion that named no chat) when their messages are known now. */
@@ -811,6 +844,8 @@ export interface ChannelGateway {
 }
 
 const EVENT_PREFIX = 'ev:'
+/** The idempotency prefix of the reply to the wake turn a finished background delegation starts. */
+const REPORT_PREFIX = 'wake:'
 const MAX_ATTACHMENTS = 4
 const TYPING_EVERY_MS = 4000
 const REPLY_EXCERPT = 200
@@ -820,8 +855,15 @@ const UNKNOWN_REPLY = "Sorry, I can't chat with you here."
 /** Chunk size of a reply queued while its connection is down (under every platform limit we know). */
 const FALLBACK_TEXT_LENGTH = 4000
 
+/** What a chat sees when a restart cut a turn short: asked again, never re-run (tools may have partly run). */
+const INTERRUPTED_NOTICE =
+  'Sorry, I was interrupted while working on this and could not finish. Please send your request again.'
+
 /** What a chat sees when a turn ends without an answer (by stop reason). */
 const FAILURE_NOTICE: Record<string, string> = {
+  // a stop of the server (or of a person in the web app) cut the turn: asked again, never re-run
+  aborted: INTERRUPTED_NOTICE,
+  interrupted: INTERRUPTED_NOTICE,
   error:
     'Sorry, I could not answer that: something went wrong while I was working on it. Please try again; if it keeps happening, ask a teammate to check this conversation in the web app.',
   'cost-cap': 'I cannot answer right now: my spending limit is used up.',
@@ -836,6 +878,15 @@ const kindOfNode = (node: NodeRow): ConversationKind =>
   node.kind === 'direct' ? 'dm' : node.traits.broadcast ? 'channel' : 'group'
 
 /** The text of an assistant message after its last tool call: what the model said last. */
+export function delegatedIn(messages: ReadonlyArray<{ role: string; parts?: unknown }>): boolean {
+  return messages.some(
+    (m) =>
+      m.role === 'assistant' &&
+      Array.isArray(m.parts) &&
+      (m.parts as Array<{ type?: string }>).some((p) => p.type === 'tool-agent'),
+  )
+}
+
 export function finalAssistantText(
   messages: ReadonlyArray<{ role: string; parts?: unknown }>,
 ): string {
@@ -1594,6 +1645,14 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   const requesters = new Map<string, Requester>()
+  /** The chat message a parked turn works for, kept for its continuation (which carries no trigger of its own). */
+  const turnTriggers = new Map<string, string>()
+  /** The chat message that started a delegation: the report that wakes the lead answers to it (P40). */
+  const delegations = new Map<string, string>()
+  /** Sessions whose turn waits for a foreground delegation: the child sessions it waits for. */
+  const parkedChildren = new Map<string, Set<string>>()
+  /** Sessions whose running turn was woken by the report of a background delegation (key of the report). */
+  const wakeTurns = new Map<string, string>()
   /** Sessions whose current turn was started by a chat message nobody could resolve (treated as guest). */
   const unresolvedTurns = new Set<string>()
 
@@ -1624,7 +1683,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return any && allSmall ? { ...marked, smallTalk: true } : marked
   }
 
-  async function beginTurn(sessionId: string, keys: readonly string[] | undefined): Promise<void> {
+  async function beginTurn(
+    sessionId: string,
+    keys: readonly string[] | undefined,
+    turn?: { kind: string; id: string },
+  ): Promise<void> {
     const row = sessions.bySession(sessionId)
     if (row === undefined) return
     if (keys !== undefined) turnStarted(sessionId, keys)
@@ -1633,17 +1696,29 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       .map((k) => k.slice(EVENT_PREFIX.length))
     let r: Requester | undefined
     let chatTriggered = false
+    // a wake turn (no input) is what the report of a finished background delegation starts
+    const reportKey = turn?.kind === 'wake' ? `${REPORT_PREFIX}${turn.id}` : undefined
+    if (reportKey !== undefined) wakeTurns.set(sessionId, reportKey)
+    else if (turn !== undefined && turn.kind !== 'respond') wakeTurns.delete(sessionId)
     if (evKeys.length > 0) {
       chatTriggered = true
       r = await requesterFromKeys(row, evKeys)
     } else {
       // a continuation of a parked turn (an approval answered): still the person who asked
       const parked = approvals.activeTrigger(sessionId)
-      if (parked?.triggerId != null) {
+      const origin =
+        parked?.triggerId ??
+        (reportKey !== undefined
+          ? delegations.get(sessionId)
+          : turn?.kind === 'respond'
+            ? turnTriggers.get(sessionId)
+            : undefined)
+      if (origin != null) {
         chatTriggered = true
-        r = await requesterFromKeys(row, [parked.triggerId])
+        r = await requesterFromKeys(row, [origin])
       }
     }
+    if (evKeys.length > 0) turnTriggers.set(sessionId, evKeys[evKeys.length - 1] as string)
     if (r === undefined) requesters.delete(sessionId)
     else requesters.set(sessionId, r)
     if (chatTriggered && r === undefined) unresolvedTurns.add(sessionId)
@@ -1704,11 +1779,14 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     config: ConnectionConfig
     adapter: ChannelAdapter
     session: NodeSessionRow
+    node: NodeRow
     sender: IdentityRow
     triggerId: string
     text: string
   }): Promise<'none' | 'continued' | 'context' | 'failed'> {
-    const open = approvals.open(input.session.sessionId).filter((a) => a.itemKind === 'approval')
+    const open = openFor(input.session.sessionId, input.node.id).filter(
+      (a) => a.itemKind === 'approval',
+    )
     if (open.length === 0) return 'none'
     const role = resolveIdentityRole(input.config.connectionId, input.sender).role
     const mine = open.filter(
@@ -1727,6 +1805,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (claimed.length === 0) return 'none'
     // the turn that continues now answers the new message, not the old one
     approvals.retrigger(input.session.sessionId, input.triggerId)
+    for (const rec of claimed) {
+      if (rec.sessionId !== input.session.sessionId)
+        approvals.retrigger(rec.sessionId, input.triggerId)
+    }
     let resumed = false
     let failed = false
     for (const [i, rec] of claimed.entries()) {
@@ -1739,7 +1821,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         { id: input.sender.personId ?? input.sender.nativeId, name: who },
         reason,
       )
-      if (outcome === 'resumed') resumed = true
+      // a delegated agent's request resumes that agent, not this turn: the message still goes on
+      if (outcome === 'resumed' && rec.sessionId === input.session.sessionId) resumed = true
       if (outcome === 'failed') {
         failed = true
         approvals.reopen(rec.id)
@@ -2986,7 +3069,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const owner = sessionOwnerOf(node, input.scope)
     const session = sessions.get(config.connectionId, owner.id)
     if (session === undefined) return 'none'
-    const open = approvals.open(session.sessionId)
+    const open = openFor(session.sessionId, node.id)
     const questions = open.filter((a) => a.itemKind === 'question')
     const tell = async (key: string, text: string): Promise<void> => {
       if (explained.has(key)) return
@@ -3072,6 +3155,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     adapter: ChannelAdapter,
     triggerMessage: LogMessage,
     pending: PendingView,
+    who?: string,
   ): Promise<void> {
     const node = nodes.get(triggerMessage.nodeId)
     if (node === undefined) return
@@ -3100,7 +3184,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         itemId: a.approvalId,
         kind: 'approval',
         toolName: a.toolName,
-        text: `I need an approval to use ${a.toolName}${a.risk === undefined ? '' : ` (${a.risk})`}.${summary === '' ? '' : `\n${summary}`}`,
+        text: `${who ?? 'I'} need${who === undefined ? '' : 's'} an approval to use ${a.toolName}${a.risk === undefined ? '' : ` (${a.risk})`}.${summary === '' ? '' : `\n${summary}`}`,
       })
     }
     for (const c of pending.clientTools) {
@@ -3547,6 +3631,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         config,
         adapter,
         session,
+        node,
         sender,
         triggerId: logged.id,
         text: input.text,
@@ -3560,6 +3645,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         return { action: 'wake', reason: 'declined the pending approvals' }
       }
     }
+    // a foreground delegation blocks the turn: the person who asked (or an admin) writing again
+    // stops the agent so this message is read now, not when the agent is done
+    if (event.type === 'message.created') await interruptForeground(session, sender, config)
     // ack (a group message that addressed the agent), best effort and off the hot path
     const caps = capsOf(adapter, node)
     if (
@@ -4432,6 +4520,120 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return lines.join(' ')
   }
 
+  /** The open approvals and questions of a session, and those of its delegated agents in the conversation. */
+  function openFor(sessionId: string, nodeId: string): ApprovalRow[] {
+    const own = approvals.open(sessionId)
+    const seen = new Set(own.map((a) => a.id))
+    return [...own, ...approvals.openIn(nodeId).filter((a) => !seen.has(a.id))]
+  }
+
+  /** A message of the requester (or staff) while the turn waits for a foreground delegation: stop the agent. */
+  async function interruptForeground(
+    session: NodeSessionRow,
+    sender: IdentityRow,
+    config: ConnectionConfig,
+  ): Promise<void> {
+    const kids = parkedChildren.get(session.sessionId)
+    if (kids === undefined || deps.delegation === undefined) return
+    const asker = await requesterOf(session.sessionId)
+    const allowed =
+      isStaff(resolveIdentityRole(config.connectionId, sender).role) ||
+      asker?.identityId === sender.id
+    if (!allowed) return
+    const who = sender.displayName ?? sender.username ?? sender.nativeId
+    for (const child of [...kids]) {
+      try {
+        await deps.delegation.abort(child, `stopped: ${who} wrote a new message`)
+      } catch (error) {
+        warn(`channels: could not stop ${child}: ${errorText(error)}`)
+      }
+    }
+  }
+
+  /** A delegated agent starts a turn; `foreground` = the launcher's turn waits for it. */
+  function delegatedTurnStarted(start: {
+    parentSessionId: string
+    childSessionId: string
+    foreground: boolean
+  }): void {
+    if (!start.foreground || sessions.bySession(start.parentSessionId) === undefined) return
+    const set = parkedChildren.get(start.parentSessionId) ?? new Set<string>()
+    set.add(start.childSessionId)
+    parkedChildren.set(start.parentSessionId, set)
+  }
+
+  async function delegatedTurnEnded(end: {
+    parentSessionId: string
+    childSessionId: string
+    childAgentId: string
+    agentName?: string | undefined
+    stop: string
+    pending?: PendingView | undefined
+  }): Promise<void> {
+    const parent = sessions.bySession(end.parentSessionId)
+    if (parent === undefined) return // not a chat: the web app shows it
+    if (end.stop !== 'tool-pending') {
+      approvals.consume(end.childSessionId)
+      const left = parkedChildren.get(end.parentSessionId)
+      left?.delete(end.childSessionId)
+      if (left?.size === 0) parkedChildren.delete(end.parentSessionId)
+      return
+    }
+    if (end.pending === undefined) return
+    await migrated
+    const adapter = adapters.get(parent.connectionId)
+    if (adapter === undefined) return
+    // the message the delegation came from: the turn that runs, else the one that delegated
+    const key = turnTriggers.get(end.parentSessionId) ?? delegations.get(end.parentSessionId)
+    const trigger = key === undefined ? undefined : await triggerMessage(parent, key)
+    if (trigger === undefined) return
+    await announce(
+      { ...parent, sessionId: end.childSessionId, agentId: end.childAgentId },
+      adapter,
+      trigger,
+      end.pending,
+      end.agentName === undefined ? 'An agent working for me' : `${end.agentName} (working for me)`,
+    )
+  }
+
+  async function turnInterrupted(sessionId: string): Promise<boolean> {
+    await migrated
+    const row = sessions.bySession(sessionId)
+    if (row === undefined) return false
+    const owner = nodes.get(row.nodeId)
+    const config = cache.get(row.connectionId)
+    if (owner === undefined || config === undefined) return false
+    const trigger = await log.lastWoke(sessionNodes(owner).map((n) => n.id))
+    if (trigger === undefined) return false
+    const node = nodes.get(trigger.nodeId)
+    const scope = node === undefined ? undefined : scopeOf(node)
+    if (node === undefined || scope === undefined || scope.delivery !== 'final_text') return false
+    const adapter = adapters.get(row.connectionId)
+    const caps = adapter === undefined ? undefined : capsOf(adapter, node)
+    // the reply of the same trigger is unique: a message that was answered already is left alone
+    const ids = await outbox.enqueue(
+      [
+        {
+          connectionId: row.connectionId,
+          conversationId: node.id,
+          sessionId: row.sessionId,
+          kind: 'reply' as const,
+          triggerId: trigger.id,
+          chunkIndex: 0,
+          chunkCount: 1,
+          text: INTERRUPTED_NOTICE,
+          ...(scope.quote === 'first' && (caps?.quote ?? true)
+            ? { replyTo: trigger.nativeId }
+            : {}),
+        },
+      ],
+      now(),
+    )
+    if (ids.length === 0) return false
+    await flush(row.connectionId)
+    return true
+  }
+
   async function turnEnded(end: {
     sessionId: string
     stop: string
@@ -4450,7 +4652,23 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const triggerKey = ids.at(-1) ?? parked?.triggerId ?? undefined
     const config = cache.get(row.connectionId)
     const adapter = adapters.get(row.connectionId)
-    const trigger = triggerKey === undefined ? undefined : await triggerMessage(row, triggerKey)
+    const wakeKey = wakeTurns.get(end.sessionId)
+    // the turn a delegation's report woke answers the message that asked for the delegation; a
+    // continuation without a trigger of its own (a background start resolved) the one that parked it
+    const replyKey =
+      triggerKey ??
+      (wakeKey === undefined ? turnTriggers.get(end.sessionId) : delegations.get(end.sessionId))
+    const trigger = replyKey === undefined ? undefined : await triggerMessage(row, replyKey)
+    if (end.stop === 'tool-pending') {
+      if (trigger !== undefined && wakeKey === undefined)
+        turnTriggers.set(end.sessionId, trigger.id)
+    } else {
+      turnTriggers.delete(end.sessionId)
+      wakeTurns.delete(end.sessionId)
+      // a turn that delegated: remember who asked, for the report that wakes the lead later
+      if (trigger !== undefined && wakeKey === undefined && delegatedIn(end.messages))
+        delegations.set(end.sessionId, trigger.id)
+    }
     if (end.stop !== 'tool-pending') requesters.delete(end.sessionId)
     if (end.stop !== 'tool-pending') unresolvedTurns.delete(end.sessionId)
     if (end.stop !== 'tool-pending') parkedUnannounced.delete(end.sessionId)
@@ -4477,6 +4695,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (end.stop !== 'complete' && failure === undefined) return
     if (trigger === undefined) return // not a turn the channel started (a person in the web app)
     if (config === undefined) return
+    // a report wake is a second reply to the same message: its own idempotency key
+    const outboxTrigger = wakeKey ?? trigger.id
     const node = nodes.get(trigger.nodeId)
     if (node === undefined) return
     const scope = scopeOf(node)
@@ -4500,7 +4720,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           conversationId: node.id,
           sessionId: row.sessionId,
           kind: 'reply' as const,
-          triggerId: trigger.id,
+          triggerId: outboxTrigger,
           chunkIndex: i,
           chunkCount: chunks.length,
           text: chunk,
@@ -5025,6 +5245,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     turnStarted,
     beginTurn,
     turnEnded,
+    delegatedTurnEnded,
+    delegatedTurnStarted,
+    turnInterrupted,
     purge,
     resolveUnresolved,
     ingest,

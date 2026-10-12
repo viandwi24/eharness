@@ -307,8 +307,6 @@ export const scenarios: Scenario[] = [
         'programming',
         'Tolong riset tiga kompetitor clipper lalu buat ringkasan satu halaman',
       ),
-      press('ceo', 'approve'),
-      press('ceo', 'approve'),
     ],
     timeoutMs: 240_000,
     hard: [
@@ -359,7 +357,7 @@ export const scenarios: Scenario[] = [
     timeoutMs: 120_000,
     hard: [
       C.libraryFile(/research\/k2\.md$/),
-      C.posted('programming', /selesai/i, 'the finished result is posted after the report'),
+      C.posted('programming', /Riset selesai/i, 'the finished result is posted after the report'),
       C.onlyIn('programming'),
     ],
     tags: ['delegation'],

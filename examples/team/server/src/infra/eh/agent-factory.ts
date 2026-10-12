@@ -101,6 +101,7 @@ import {
   CHANNEL_TOOLS,
   type ChannelGateway,
   channels,
+  delegatedApprovals,
   webPersonNote,
   webReminders,
 } from '../channels/index.ts'
@@ -998,6 +999,18 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         : [webReminders({ gateway: deps.channels, agentOf: (slug) => deps.agentBySlug?.(slug) })]),
       // `person_note` of a person's own chat thread, and no communication style in memory
       ...(deps.channels === undefined ? [] : [webPersonNote({ gateway: deps.channels })]),
+      // a delegated agent of a chat waits for approval there too
+      ...(deps.channels === undefined
+        ? []
+        : [
+            delegatedApprovals({
+              gateway: deps.channels,
+              agentOf: (slug) => {
+                const found = deps.agentBySlug?.(slug)
+                return found === undefined ? undefined : { id: found.id, name: found.name }
+              },
+            }),
+          ]),
       sessionPermissions({
         createEngine,
         gate: gateOf,

@@ -693,7 +693,13 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
               ?.keys
             try {
               // the requester of the turn (the person whose role the tools check) is known before any tool runs
-              await gw.beginTurn(sessionId, keys)
+              await gw.beginTurn(
+                sessionId,
+                keys,
+                hookCtx.turn === undefined
+                  ? undefined
+                  : { kind: hookCtx.turn.kind, id: hookCtx.turn.id },
+              )
             } catch (error) {
               hookCtx.log.warn(
                 `channels: could not start the turn of ${sessionId}: ${errorText(error)}`,

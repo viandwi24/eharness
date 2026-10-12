@@ -303,6 +303,29 @@ export function cancelQueuedTask(deps: Deps, id: string): Task {
   return next
 }
 
+/**
+ * Stop a task that is running: its session is aborted, exactly like the Stop of the web app, and the
+ * session's own turn end records it `stopped`. A task that waits on an approval or a question has no
+ * running turn to abort: it says so (answer or decline the request instead).
+ */
+export async function stopRunningTask(
+  deps: Deps,
+  id: string,
+  abort: (task: Task, reason: string) => Promise<'aborted' | 'idle'>,
+): Promise<{ task: Task; outcome: 'stopped' | 'waiting' }> {
+  const current = taskOrThrow(deps, id)
+  if (current.status !== 'running' && current.status !== 'needs_action') {
+    throw conflict('only a queued or running task can be cancelled', 'TASK_NOT_RUNNING', {
+      status: current.status,
+    })
+  }
+  const out = await abort(current, 'cancelled')
+  const next = deps.tasks.get(id) ?? current
+  if (out === 'idle') return { task: next, outcome: 'waiting' }
+  changed(deps, next, 'stopped')
+  return { task: next, outcome: 'stopped' }
+}
+
 /** Accept finished work: it leaves Review. */
 export function acceptTask(deps: Deps, id: string): Task {
   const current = taskOrThrow(deps, id)

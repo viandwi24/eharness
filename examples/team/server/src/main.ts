@@ -76,6 +76,7 @@ import {
   createTask,
   dispatchQueue,
   listBoard,
+  stopRunningTask,
   updateQueuedTask,
 } from './app/work-queue.ts'
 import type { Collector } from './domain/collectors.ts'
@@ -778,6 +779,14 @@ export function compose(config: ServerConfig): Server {
     list: (query) => listBoard(deps, query),
     update: (id, patch) => updateQueuedTask(deps, id, patch),
     cancel: (id) => cancelQueuedTask(deps, id),
+    stop: (id) =>
+      stopRunningTask(deps, id, async (task, reason) => {
+        const def = agents.get(task.agentId)
+        if (def === undefined) return 'idle'
+        await factory.prepare(def)
+        const out = await factory.openSession(def, task.sessionId).abort(reason)
+        return out.target === 'idle' ? 'idle' : 'aborted'
+      }),
     authorizes: (sessionId, toolName) => {
       const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
       const program = parsed === undefined ? undefined : programStore.get(parsed.programId)
@@ -835,6 +844,17 @@ export function compose(config: ServerConfig): Server {
         if (def === undefined) throw new Error(`no such agent: ${agentId}`)
         await factory.prepare(def)
         await factory.openSession(def, sessionId).enqueue(input as never, options)
+      },
+    },
+    delegation: {
+      // a requester's new message stops the foreground agent their turn waits for
+      abort: async (childSessionId, reason) => {
+        const task = tasks.getBySession(childSessionId)
+        const def = task === undefined ? undefined : agents.get(task.agentId)
+        if (def === undefined) return false
+        await factory.prepare(def)
+        const out = await factory.openSession(def, childSessionId).abort(reason)
+        return out.target !== 'idle'
       },
     },
     attachments: {
@@ -1036,6 +1056,14 @@ export function compose(config: ServerConfig): Server {
           const agentId = /^heartbeat:(.+)$/.exec(sessionId)?.[1]
           if (agentId !== undefined) {
             abandonBeat(deps, agentId, 'interrupted (the server stopped)', Date.now())
+          }
+        }
+        // a chat turn a restart cut short: the person is told once to ask again
+        for (const { sessionId } of report.recovered) {
+          if (sessionId.startsWith('channel:')) {
+            void channelGateway?.turnInterrupted(sessionId).catch((error) => {
+              console.warn(`team: interruption notice of ${sessionId} failed: ${String(error)}`)
+            })
           }
         }
         // ... and a routine or program run whose turn the repair closed must end its run row

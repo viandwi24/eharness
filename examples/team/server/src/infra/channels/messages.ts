@@ -156,6 +156,8 @@ export interface ChannelLog {
   ): Promise<{ items: LogMessage[]; more: boolean }>
   /** The newest message of a node, if any. */
   last(nodeId: string): Promise<LogMessage | undefined>
+  /** The newest message of these nodes that woke the agent (a person's), if any. */
+  lastWoke(nodeIds: readonly string[]): Promise<LogMessage | undefined>
   /** How much of these nodes the log holds: the oldest and newest message time and the count (deleted ones not counted). */
   stats(nodeIds: readonly string[]): {
     firstAt: number | undefined
@@ -542,6 +544,16 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
           'SELECT * FROM ch_messages WHERE node_id = ? ORDER BY id DESC LIMIT 1',
         )
         .get(nodeId)
+      return r === null ? undefined : open(r)
+    },
+    async lastWoke(nodeIds) {
+      if (nodeIds.length === 0) return undefined
+      const r = sqlite
+        .query<MessageDb, string[]>(
+          `SELECT * FROM ch_messages WHERE node_id IN (${nodeIds.map(() => '?').join(',')})
+             AND disposition = 'woke' AND direction != 'out' ORDER BY id DESC LIMIT 1`,
+        )
+        .get(...nodeIds)
       return r === null ? undefined : open(r)
     },
     stats(nodeIds) {

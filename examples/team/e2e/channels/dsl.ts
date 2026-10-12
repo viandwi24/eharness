@@ -695,7 +695,12 @@ function busy(w: World, run: RunState): string | undefined {
   const sqlite = w.server.conn.sqlite
   const now = Date.now()
   const lock = all(sqlite, 'SELECT COUNT(*) n FROM eh_locks WHERE until > ?', now)[0]?.n ?? 0
-  const inbox = all(sqlite, 'SELECT COUNT(*) n FROM eh_inbox WHERE dead_at IS NULL')[0]?.n ?? 0
+  const inbox =
+    all(
+      sqlite,
+      'SELECT COUNT(*) n FROM eh_inbox WHERE dead_at IS NULL AND available_at <= ?',
+      now,
+    )[0]?.n ?? 0
   const outbox =
     all(sqlite, `SELECT COUNT(*) n FROM channel_outbox WHERE status = 'pending'`)[0]?.n ?? 0
   const polled = w.fake.calls.some(

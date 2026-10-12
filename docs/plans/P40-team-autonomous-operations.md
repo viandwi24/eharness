@@ -604,6 +604,27 @@ remembers). Plan cards say schedule and authority in words and no longer point t
 `task.queueNote` shows beside the slot label. Reminders also work from web chats (P41 notes, walkthrough 28g), so the
 lead no longer turns "remind me" into a proposal. No library change.
 
+## Channel delegation and recovery fixes (e2e catalog findings 1, 2, 3, 5)
+
+- **Delegation replies reach the chat.** A turn that delegated (background start, then the ack) is a
+  continuation without a chat trigger: the gateway remembers the message a turn works for
+  (`turnTriggers`) and, per session, the message that asked for a delegation (`delegations`). The ack is
+  posted as a reply to it; the wake turn a finished delegation starts posts its reply to the same
+  message (outbox idempotency key `wake:<turnId>`, so it is a second reply, not a duplicate).
+  The wake turn runs with the original requester's role.
+- **Cancel is never a dead end.** Delegations are background by default (`background.default`). If a
+  foreground delegation runs anyway, a message of the requester (or an admin) in that chat aborts the
+  child (`delegation.abort` dep), the child's stopped report resolves the wait and the message is read
+  next. `update_task` with `cancel` also stops a running board task (aborts its session like the web
+  Stop; a task waiting on an approval says so).
+- **Delegated approvals in the chat.** The `delegatedApprovals` plugin (every agent) hands a child's
+  turn ends to the gateway, which posts its approval request with buttons in the conversation that
+  asked for the work (rows keep the child's session id, so a press answers the child). A message
+  while approvals wait follows the existing decline/context rules, children's requests included.
+- **Restart.** A turn cut by a graceful stop ends `aborted`/`interrupted` and now posts one short
+  notice; a turn closed by boot recovery (crash) gets the same notice via `turnInterrupted`. Decision:
+  notify and ask to resend, never auto-continue (tools may have partly run; ADR-0014).
+
 ## Requests to other phases
 
 - Library (optional, not blocking): `createChatSession` of `eharness/client` has `send`, `retryTurn` and

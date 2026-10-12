@@ -147,10 +147,9 @@ export const scenarios: Scenario[] = [
     goal: 'A restart once the turn has really begun: the CEO must still hear back (answer or interruption notice).',
     expectedSafe: 'The CEO gets one answer or notice after the restart.',
     script: {
-      lead: [
-        { text: 'Jawaban lambat sebelum restart', delayMs: 3000 },
-        text('Jawaban setelah restart'),
-      ],
+      // the first step is persisted (the assistant message exists), the second one is slow: the
+      // restart lands while the model is answering
+      lead: [call('channel_status', {}), { text: 'Jawaban lambat sebelum restart', delayMs: 4000 }],
     },
     steps: [
       say('ceo', 'general', 'Tolong jelaskan strategi kuartal ini', { noWait: true }),
@@ -317,6 +316,7 @@ export const scenarios: Scenario[] = [
     steps: [
       say('admin', 'produksi', 'Buat tugas Tertahan di Tracker'),
       say('budi', 'produksi', 'Eh bot, status tugas tadi gimana?'),
+      wait(4000),
     ],
     hard: [
       C.trackerUnchanged(),
