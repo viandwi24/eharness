@@ -102,6 +102,20 @@ describe('build settings', () => {
 		expect(buildSettings(fields, v, undefined, 'create')).toEqual({ ok: true, settings: { mode: 'oauth', 'nested': { flag: false } } });
 	});
 
+	test('a number input holds a number (or null when empty): it is kept, not dropped', () => {
+		const v = initialValues(fields);
+		v.apiKey = 'k';
+		v.retries = 3 as never;
+		const r = buildSettings(fields, v, undefined, 'create');
+		expect(r.ok && r.settings.retries).toBe(3);
+		v.retries = null as never;
+		const r2 = buildSettings(fields, v, undefined, 'create');
+		expect(r2.ok && 'retries' in r2.settings).toBe(false);
+		v.retries = 9 as never;
+		const r3 = buildSettings(fields, v, undefined, 'create');
+		expect(r3.ok === false && r3.errors.retries).toContain('at most 5');
+	});
+
 	test('validation: numbers, duplicates, missing header values', () => {
 		const v = initialValues(fields);
 		v.apiKey = 'k';

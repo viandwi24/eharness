@@ -151,7 +151,8 @@ export function buildSettings(
 			}
 			setPath(settings, f.path, rec);
 		} else {
-			const text = typeof v === 'string' ? v : '';
+			// a `<input type="number">` bound by Svelte holds a number (or null when empty)
+			const text = typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '';
 			if (c === 'password') {
 				if (text === '') {
 					if (!(mode === 'edit' && had(f.path)) && f.required) errors[f.path] = `${f.label} is required`;

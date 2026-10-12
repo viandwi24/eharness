@@ -79,6 +79,18 @@ export const MEMBER_LABEL: Record<string, string> = {
 	unknown: 'Unknown'
 };
 export const memberLabel = (s: string | undefined): string => (s === undefined ? 'Unknown' : (MEMBER_LABEL[s] ?? s));
+/** What the connection is in a chat, named: `Telegram bot "Acme" · Admin in this chat`. */
+export function connectionText(label: string, member: string | undefined): string {
+	if (member === undefined) return label;
+	return member === 'none' ? `${label} · not in this chat` : `${label} · ${memberLabel(member)} in this chat`;
+}
+
+/** The hint under the wake setting: of what is selected in the form, or of what is in force when the form inherits. */
+export const wakeHint = (selected: Wake | '', effective: Wake): string => WAKE_OPTIONS.find((o) => o.value === (selected === '' ? effective : selected))?.hint ?? '';
+
+/** The quiet hours in force on a node (inherited or its own), as `23:00 to 06:30`; undefined when none. */
+export const quietText = (q: { from: string; to: string } | undefined): string | undefined => (q === undefined ? undefined : `${q.from} to ${q.to}`);
+
 /** The connection is not in the chat any more (it cannot read or post). */
 export const botGone = (c: ChannelChat): boolean => c.state === 'left' || c.member === 'none';
 /** The connection can administer the chat (sees everything in it under privacy mode). */
@@ -93,8 +105,8 @@ export interface PolicyForm {
 	allowed: Tri;
 	wake: Inherit<Wake>;
 	delivery: Inherit<Delivery>;
-	/** Days, as typed; empty = inherit. */
-	retention: string;
+	/** Days, as typed; empty = inherit. A number input bound by Svelte holds a number (or null when empty). */
+	retention: string | number | null;
 	observe: Tri;
 	sessionScope: Inherit<SessionScope>;
 	redactOnDelete: Tri;
@@ -103,8 +115,11 @@ export interface PolicyForm {
 	quietFrom: string;
 	quietTo: string;
 	digest: Tri;
-	maxMentions: string;
+	maxMentions: string | number | null;
 }
+
+/** A form field as trimmed text: a text input holds a string, a number input a number or null. */
+export const fieldText = (v: string | number | null | undefined): string => String(v ?? '').trim();
 
 const triOf = (v: boolean | undefined): Tri => (v === undefined ? '' : v ? 'on' : 'off');
 const boolOf = (t: Tri): boolean | null => (t === '' ? null : t === 'on');
@@ -133,13 +148,14 @@ export function proactiveError(f: Pick<PolicyForm, 'quietFrom' | 'quietTo' | 'ma
 	const to = f.quietTo.trim();
 	if ((from === '') !== (to === '')) return 'Quiet hours need both a start and an end';
 	if (from !== '' && (!CLOCK.test(from) || !CLOCK.test(to))) return 'Quiet hours are HH:MM (24 hours)';
-	const m = f.maxMentions.trim();
+	const m = fieldText(f.maxMentions);
 	if (m !== '' && !(Number.isInteger(Number(m)) && Number(m) >= 0 && Number(m) <= 20)) return 'Mention limit: 0 to 20';
 	return undefined;
 }
 
-export function retentionError(text: string): string | undefined {
-	if (text.trim() === '') return undefined;
+export function retentionError(value: string | number | null): string | undefined {
+	const text = fieldText(value);
+	if (text === '') return undefined;
 	const n = Number(text);
 	return Number.isInteger(n) && n >= 1 && n <= 3650 ? undefined : 'Whole days, 1 to 3650';
 }
@@ -150,7 +166,7 @@ export function policyBody(f: PolicyForm): ChannelPolicyBody {
 		enabled: boolOf(f.allowed),
 		wake: f.wake === '' ? null : f.wake,
 		delivery: f.delivery === '' ? null : f.delivery,
-		retentionDays: f.retention.trim() === '' ? null : Number(f.retention),
+		retentionDays: fieldText(f.retention) === '' ? null : Number(fieldText(f.retention)),
 		observe: boolOf(f.observe),
 		sessionScope: f.sessionScope === '' ? null : f.sessionScope,
 		redactOnDelete: boolOf(f.redactOnDelete),
@@ -163,7 +179,7 @@ export function proactiveBody(f: PolicyForm): ChannelPolicyBody['proactive'] {
 	const allowed = boolOf(f.proactive);
 	const digest = boolOf(f.digest);
 	const quiet = f.quietFrom.trim() !== '' && f.quietTo.trim() !== '' ? { from: f.quietFrom.trim(), to: f.quietTo.trim() } : undefined;
-	const max = f.maxMentions.trim() === '' ? undefined : Number(f.maxMentions);
+	const max = fieldText(f.maxMentions) === '' ? undefined : Number(fieldText(f.maxMentions));
 	if (allowed === null && digest === null && quiet === undefined && max === undefined) return null;
 	return {
 		...(allowed === null ? {} : { allowed }),
@@ -177,7 +193,7 @@ export const formChanged = (a: PolicyForm, b: PolicyForm): boolean =>
 	a.allowed !== b.allowed ||
 	a.wake !== b.wake ||
 	a.delivery !== b.delivery ||
-	a.retention.trim() !== b.retention.trim() ||
+	fieldText(a.retention) !== fieldText(b.retention) ||
 	a.observe !== b.observe ||
 	a.sessionScope !== b.sessionScope ||
 	a.redactOnDelete !== b.redactOnDelete ||
@@ -185,7 +201,7 @@ export const formChanged = (a: PolicyForm, b: PolicyForm): boolean =>
 	a.quietFrom.trim() !== b.quietFrom.trim() ||
 	a.quietTo.trim() !== b.quietTo.trim() ||
 	a.digest !== b.digest ||
-	a.maxMentions.trim() !== b.maxMentions.trim();
+	fieldText(a.maxMentions) !== fieldText(b.maxMentions);
 
 /** Where one effective setting comes from, in words ("set here", "inherited from Company"). */
 export function originText(c: ChannelChat, key: keyof ChannelChat['inherited'], titleOf: (nodeId: string) => string): string {
@@ -320,17 +336,18 @@ export function backfillText(c: ChannelChat, now: number): string {
 	return parts.join(' · ');
 }
 
-export const lastWindowDays = (text: string): number | null | undefined => {
-	if (text.trim() === '') return null;
+export const lastWindowDays = (value: string | number | null | undefined): number | null | undefined => {
+	const text = fieldText(value);
+	if (text === '') return null;
 	const n = Number(text);
 	return Number.isInteger(n) && n >= 1 && n <= 3650 ? n : undefined;
 };
 
 /** The limits form as typed (numbers as strings) and its PATCH body; undefined fields are left out. */
 export interface LimitsForm {
-	dmDailyMax: string;
-	dailyMax: string;
-	adminLogHours: string;
+	dmDailyMax: string | number | null;
+	dailyMax: string | number | null;
+	adminLogHours: string | number | null;
 }
 export const limitsFormOf = (l: AccountLimits): LimitsForm => ({
 	dmDailyMax: String(l.dmDailyMax),
@@ -338,16 +355,17 @@ export const limitsFormOf = (l: AccountLimits): LimitsForm => ({
 	adminLogHours: String(Math.round(l.adminLogEveryMs / 360_000) / 10)
 });
 export function limitsBody(f: LimitsForm): { body: { dmDailyMax: number; dailyMax: number; adminLogEveryMs: number } } | { error: string } {
-	const int = (t: string, max: number): number | undefined => {
+	const int = (value: string | number | null, max: number): number | undefined => {
+		const t = fieldText(value);
 		const n = Number(t);
-		return t.trim() !== '' && Number.isInteger(n) && n >= 0 && n <= max ? n : undefined;
+		return t !== '' && Number.isInteger(n) && n >= 0 && n <= max ? n : undefined;
 	};
 	const dm = int(f.dmDailyMax, 1000);
 	const all = int(f.dailyMax, 5000);
-	const hours = Number(f.adminLogHours);
+	const hours = Number(fieldText(f.adminLogHours));
 	if (dm === undefined) return { error: 'Direct messages a day: a whole number, 0 to 1000 (0 = none)' };
 	if (all === undefined) return { error: 'Messages a day: a whole number, 0 to 5000 (0 = none)' };
-	if (!(hours >= 1 / 60) || f.adminLogHours.trim() === '') return { error: 'Admin log interval: hours, at least 1 minute' };
+	if (!(hours >= 1 / 60) || fieldText(f.adminLogHours) === '') return { error: 'Admin log interval: hours, at least 1 minute' };
 	return { body: { dmDailyMax: dm, dailyMax: all, adminLogEveryMs: Math.round(hours * 3_600_000) } };
 }
 
@@ -543,12 +561,12 @@ export function platformAdminText(p: ChannelPerson): string {
 /** The role of an anonymous admin or a bot cannot be changed. */
 export const roleLocked = (p: ChannelPerson): boolean => p.roleSource === 'anonymous' || p.roleSource === 'bot';
 
-/** Suggestions first, then staff, then the most recently seen. */
+/**
+ * A stable order: by name (then id). Nothing that changes while the list is used (a role, a
+ * suggestion, the last time somebody wrote) moves a row under the cursor.
+ */
 export function sortPeople(people: readonly ChannelPerson[]): ChannelPerson[] {
-	const rank: Record<Role, number> = { owner: 0, admin: 1, member: 2, guest: 3 };
-	return [...people].sort(
-		(a, b) => Number(b.suggestion !== undefined) - Number(a.suggestion !== undefined) || rank[a.role] - rank[b.role] || b.lastSeen - a.lastSeen
-	);
+	return [...people].sort((a, b) => personName(a).localeCompare(personName(b), undefined, { sensitivity: 'base' }) || a.peerId.localeCompare(b.peerId));
 }
 
 /** Chats and topics a person can be given as divisions, with the room named for a topic. */

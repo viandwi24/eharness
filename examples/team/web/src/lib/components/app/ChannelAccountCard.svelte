@@ -201,7 +201,7 @@
 					<ul class="flex flex-col gap-2">
 						{#each picked as c (c.id)}
 							<div class="flex flex-col gap-1">
-								<ChannelChatRow connectionId={conn.id} branch={branchOf(c)} {titleOf} onChange={() => { onChange(); void loadDetail(); }} />
+								<ChannelChatRow connectionId={conn.id} connectionLabel={conn.label} branch={branchOf(c)} {titleOf} onChange={() => { onChange(); void loadDetail(); }} />
 								<div class="flex justify-end"><Button size="sm" variant="ghost" onclick={() => void select(c, false)} disabled={busy}>Stop reading</Button></div>
 							</div>
 						{/each}

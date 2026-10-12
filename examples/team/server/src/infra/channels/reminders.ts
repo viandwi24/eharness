@@ -324,3 +324,21 @@ export function readWhen(
     text: `${words} (${zone}), first ${absoluteTime(first, zone)}`,
   }
 }
+
+/** A reminder text that already starts with its own label (`Reminder:`, `⏰ Reminder:`, `Reminder for Ana:`). */
+const LABEL =
+  /^\s*(?:\p{Extended_Pictographic}\uFE0F?\s*)?reminder\b(?:\s+for\b[^:\n]{0,60})?\s*:\s*/iu
+
+/** The text without a label of its own at the start. */
+export const stripReminderLabel = (body: string): string => body.trim().replace(LABEL, '')
+
+/**
+ * What a reminder posts: the requested text verbatim, with the single label `Reminder:` added only
+ * when the text has none. A reminder a member created for themselves is labelled
+ * `Reminder for <name>:` (the name is whatever the caller renders, a mention token or a plain name).
+ */
+export function reminderText(body: string, forName?: string): string {
+  const text = body.trim()
+  if (forName === undefined) return LABEL.test(text) ? text : `Reminder: ${text}`
+  return `Reminder for ${forName}: ${stripReminderLabel(text)}`.trimEnd()
+}

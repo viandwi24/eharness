@@ -24,7 +24,8 @@ import {
   parseMentions,
   plainMentions,
 } from '../src/infra/channels/mentions.ts'
-import { readWhen } from '../src/infra/channels/reminders.ts'
+import { answerFromText, renderQuestions } from '../src/infra/channels/questions.ts'
+import { readWhen, reminderText } from '../src/infra/channels/reminders.ts'
 import { decideTool, resolveRole } from '../src/infra/channels/roles.ts'
 import { inQuietHours, resolveWindow, zonedToEpoch } from '../src/infra/channels/time.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
@@ -148,6 +149,29 @@ const call = (toolName: string, input: Record<string, unknown>, id = 't1'): Scri
   toolCalls: [{ toolName, input, toolCallId: id }],
 })
 const text = (t: string): ScriptedStepInput => ({ text: t })
+
+describe('questions in a chat (pure)', () => {
+  const single = {
+    question: 'Which?',
+    header: 'Pick',
+    multiSelect: false,
+    options: [{ label: 'beta' }, { label: 'stable' }],
+  }
+  const multi = { ...single, multiSelect: true }
+  test('a reply maps to options by number or label, anything else is the Other text', () => {
+    expect(answerFromText(single, '2')).toEqual({ selected: ['stable'] })
+    expect(answerFromText(single, 'Beta.')).toEqual({ selected: ['beta'] })
+    expect(answerFromText(single, 'neither, ship it')).toEqual({ other: 'neither, ship it' })
+    expect(answerFromText(multi, '1, stable')).toEqual({ selected: ['beta', 'stable'] })
+    expect(answerFromText(multi, 'beta and something')).toEqual({ other: 'beta and something' })
+  })
+  test('the announcement never carries a link unless one is given', () => {
+    expect(renderQuestions([single], { buttons: true })).not.toContain('http')
+    expect(renderQuestions([single], { buttons: true, webLink: 'https://x.test/a' })).toContain(
+      'https://x.test/a',
+    )
+  })
+})
 
 describe('roles and policy (pure)', () => {
   test('a role comes from the directory, the link or the default, never from the platform or the username', () => {
@@ -590,7 +614,17 @@ describe('reminders', () => {
         { action: 'create', text: 'stand-up', inMinutes: 30, mention: [eve.id] },
         'm1',
       ),
-      call('reminder', { action: 'create', text: 'my own', inMinutes: 30 }, 'm2'),
+      call('reminder', { action: 'create', text: 'to everybody', inMinutes: 30 }, 'm2'),
+      call(
+        'reminder',
+        {
+          action: 'create',
+          text: '⏰ Reminder: call the vendor',
+          inMinutes: 30,
+          mention: [budi.id],
+        },
+        'm4',
+      ),
       call('reminder', { action: 'list' }, 'm3'),
       text('done'),
       call('reminder', { action: 'create', text: 'x', inMinutes: 5 }, 'g1'),
@@ -608,6 +642,52 @@ describe('reminders', () => {
     await until('guest done', () => mock.sent.some((s) => s.message.text === 'guest done'))
     expect(wire(i.lead)).toContain('Not allowed: Eve has the role')
     expect(i.gw.reminders.list('c1')).toHaveLength(1)
+    // D2: a member's reminder is not free text for the group: no mention, no reminder
+    expect(w).toContain('not for the whole chat')
+    // and it is delivered as theirs, with their own mention and one label (D3: text verbatim)
+    const [rem] = i.gw.reminders.list('c1')
+    expect(rem?.body).toBe('⏰ Reminder: call the vendor')
+    await i.gw.reminders.fire(rem?.id as string, { slot: Date.now() })
+    await until('delivered', () =>
+      mock.sent.some((s) => s.message.text.includes('call the vendor')),
+    )
+    const out = mock.sent.find((s) => s.message.text.includes('call the vendor')) as NonNullable<
+      (typeof mock.sent)[number]
+    >
+    expect(plainMentions(out.message.text)).toBe('Reminder for Budi: call the vendor')
+    expect(parseMentions(out.message.text)).toMatchObject([{ id: budi.id }])
+  })
+
+  test('the requested text is delivered verbatim with a single Reminder label', () => {
+    expect(reminderText('send the report')).toBe('Reminder: send the report')
+    expect(reminderText('Reminder: send the report')).toBe('Reminder: send the report')
+    expect(reminderText('⏰ Reminder: send the report')).toBe('⏰ Reminder: send the report')
+    expect(reminderText('  weekly report is due  ')).toBe('Reminder: weekly report is due')
+    expect(reminderText('Reminder for the team: send it', 'Budi')).toBe(
+      'Reminder for Budi: send it',
+    )
+    expect(reminderText('call the vendor', 'Budi')).toBe('Reminder for Budi: call the vendor')
+  })
+
+  test('an admin reminder whose text already says Reminder: does not get a second label', async () => {
+    const { i, mock } = await setup([
+      call(
+        'reminder',
+        { action: 'create', text: '⏰ Reminder: send the report', inMinutes: 5 },
+        'd1',
+      ),
+      text('ok'),
+    ])
+    await askIn(mock, ceo, 'd0')
+    await until('ok', () => mock.sent.some((s) => s.message.text === 'ok'))
+    const [rem] = i.gw.reminders.list('c1')
+    expect(rem?.body).toBe('⏰ Reminder: send the report')
+    await i.gw.reminders.fire(rem?.id as string, { slot: Date.now() })
+    await until('posted', () => mock.sent.some((s) => s.message.text.includes('send the report')))
+    const out = mock.sent.find((s) => s.message.text.includes('send the report')) as NonNullable<
+      (typeof mock.sent)[number]
+    >
+    expect(out.message.text).toBe('⏰ Reminder: send the report')
   })
 
   test('a reminder to a closed topic falls back to the room', async () => {

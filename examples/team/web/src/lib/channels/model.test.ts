@@ -30,6 +30,12 @@ import {
 	policyBody,
 	privacyWarning,
 	retentionError,
+	fieldText,
+	connectionText,
+	wakeHint,
+	quietText,
+	limitsBody,
+	lastWindowDays,
 	sortChats,
 	sortConnections,
 	stateHint,
@@ -305,13 +311,17 @@ describe('proactive policy and the people directory', () => {
 		lastSeen: 1,
 		...over
 	});
-	test('suggestions come first, then staff; anonymous admins and bots are locked; admin status reads as the platform says', () => {
+	test('the order is stable: a role change or a suggestion never moves a row; anonymous admins and bots are locked; admin status reads as the platform says', () => {
 		const people = [
-			person({ peerId: 'a', lastSeen: 9 }),
-			person({ peerId: 'b', role: 'owner', explicit: true, roleSource: 'directory', lastSeen: 1 }),
-			person({ peerId: 'c', suggestion: { role: 'admin', reason: 'admin in TEAMKU' }, lastSeen: 2 })
+			person({ peerId: 'a', name: 'Gina', lastSeen: 9 }),
+			person({ peerId: 'b', name: 'Budi', role: 'owner', explicit: true, roleSource: 'directory', lastSeen: 1 }),
+			person({ peerId: 'c', name: 'Ana', suggestion: { role: 'admin', reason: 'admin in TEAMKU' }, lastSeen: 2 })
 		];
-		expect(sortPeople(people).map((p) => p.peerId)).toEqual(['c', 'b', 'a']);
+		const before = sortPeople(people).map((p) => p.peerId);
+		expect(before).toEqual(['c', 'b', 'a']);
+		// Gina becomes an admin and was seen again: still after Budi
+		const changed = people.map((p) => (p.peerId === 'a' ? { ...p, role: 'admin' as const, lastSeen: 99 } : p));
+		expect(sortPeople(changed).map((p) => p.peerId)).toEqual(before);
 		expect(roleLocked(person({ roleSource: 'anonymous' }))).toBe(true);
 		expect(roleLocked(person())).toBe(false);
 		expect(platformAdminText(person({ platformAdmin: [{ nodeId: 'n', title: 'TEAMKU', role: 'owner', customTitle: 'CEO' }] }))).toBe('creator in TEAMKU (CEO)');
@@ -323,5 +333,52 @@ describe('proactive policy and the people directory', () => {
 			{ id: 'r', label: 'TEAMKU' },
 			{ id: 't', label: 'TEAMKU / produksi' }
 		]);
+	});
+});
+
+describe('number inputs bound by Svelte hold numbers, not strings (U1)', () => {
+	const numbers = { quietFrom: '', quietTo: '', maxMentions: 2 as string | number | null };
+	test('the helpers accept numbers and null without calling string methods on them', () => {
+		expect(fieldText(2)).toBe('2');
+		expect(fieldText(null)).toBe('');
+		expect(fieldText(' 7 ')).toBe('7');
+		expect(proactiveError(numbers)).toBeUndefined();
+		expect(proactiveError({ ...numbers, maxMentions: 21 })).toBe('Mention limit: 0 to 20');
+		expect(proactiveError({ ...numbers, maxMentions: 1.5 })).toBe('Mention limit: 0 to 20');
+		expect(proactiveError({ ...numbers, maxMentions: null })).toBeUndefined();
+		expect(retentionError(30)).toBeUndefined();
+		expect(retentionError(0)).toBeDefined();
+		expect(retentionError(null)).toBeUndefined();
+		expect(lastWindowDays(14)).toBe(14);
+		expect(lastWindowDays(null)).toBeNull();
+	});
+	test('a form with numbers builds the body and compares like one with strings', () => {
+		const base = formOfChat(chat({ policy: { retentionDays: 30, proactive: { maxMentions: 2 } } as never }));
+		const typed = { ...base, retention: 45, maxMentions: 3 };
+		expect(policyBody(typed)).toMatchObject({ retentionDays: 45, proactive: { maxMentions: 3 } });
+		expect(policyBody({ ...base, retention: null, maxMentions: null })).toMatchObject({ retentionDays: null, proactive: null });
+		expect(formChanged(base, typed)).toBe(true);
+		expect(formChanged(base, { ...base, retention: 30, maxMentions: 2 })).toBe(false);
+	});
+	test('the limits form accepts numbers', () => {
+		const r = limitsBody({ dmDailyMax: 20, dailyMax: 200, adminLogHours: 1.5 });
+		expect(r).toEqual({ body: { dmDailyMax: 20, dailyMax: 200, adminLogEveryMs: 5_400_000 } });
+		expect('error' in limitsBody({ dmDailyMax: null, dailyMax: 200, adminLogHours: 1 })).toBe(true);
+	});
+});
+
+describe('chat row labels (U2, U3, U5)', () => {
+	test('the connection is named, with what it is in the chat', () => {
+		expect(connectionText('Acme bot', 'admin')).toBe('Acme bot · Admin in this chat');
+		expect(connectionText('Acme bot', 'none')).toBe('Acme bot · not in this chat');
+		expect(connectionText('Acme bot', undefined)).toBe('Acme bot');
+	});
+	test('the wake hint follows the selection, else what is in force', () => {
+		expect(wakeHint('never', 'mention')).toContain('Never answers');
+		expect(wakeHint('', 'always')).toContain('Reads and may answer everything');
+	});
+	test('inherited quiet hours read as the values in force', () => {
+		expect(quietText({ from: '23:00', to: '06:30' })).toBe('23:00 to 06:30');
+		expect(quietText(undefined)).toBeUndefined();
 	});
 });

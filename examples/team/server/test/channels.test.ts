@@ -75,6 +75,8 @@ function instance(
     fastSleep?: boolean
     /** Model catalog (`inputModalities`) of the agents. */
     catalog?: ModelConfig['catalog']
+    /** Where the web app lives (default: the loopback default, which never goes into a chat). */
+    webUrl?: string
   } = {},
 ): Instance {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'team-p41-'))
@@ -102,6 +104,7 @@ function instance(
   const server = compose({
     dbFile: join(dir, 'team.db'),
     instanceId: 'channels-test',
+    ...(options.webUrl === undefined ? {} : { webUrl: options.webUrl }),
     models: config,
     env: {},
     tuning: TUNING,
@@ -1259,9 +1262,12 @@ describe('approvals in channel conversations', () => {
   }
   const setup = async (
     script: ScriptedStepInput[],
-    options: { buttons?: boolean; admins?: string[] } = {},
+    options: { buttons?: boolean; admins?: string[]; webUrl?: string } = {},
   ) => {
-    const i = instance({ lead: script })
+    const i = instance(
+      { lead: script },
+      options.webUrl === undefined ? {} : { webUrl: options.webUrl },
+    )
     const mock = await connect(i, {
       groups: { room: { label: 'Ops', ack: false }, news: { wake: 'never' } },
       config: {
@@ -1372,16 +1378,29 @@ describe('approvals in channel conversations', () => {
     expect(mock.edits[0]?.text).toContain('Approved by')
   })
 
-  test('without the buttons capability the request links to the web chat', async () => {
+  test('without the buttons capability the request points at the web app: a link only when it is reachable from outside', async () => {
     const { i, mock } = await setup([approvalStep, textStep('Posted it.')], { buttons: false })
     await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
     await until('the request', () =>
-      mock.sent.some((s) => s.message.text.includes('Answer it in http')),
+      mock.sent.some((s) => s.message.text.includes('Answer it in the team web app')),
     )
-    const ask = mock.sent.find((s) => s.message.text.includes('Answer it in http'))
+    const ask = mock.sent.find((s) => s.message.text.includes('Answer it in the team web app'))
     expect(ask?.message.buttons).toBeUndefined()
-    const thread = i.server.deps.threads.getBySession(sid(i, 'room'))
-    expect(ask?.message.text).toContain(`/a/${i.leadId}?t=${thread?.id}`)
+    // never a link to this machine
+    expect(JSON.stringify(mock.sent)).not.toContain('localhost')
+    void i
+    const outside = await setup([approvalStep, textStep('Posted it.')], {
+      buttons: false,
+      webUrl: 'https://team.example.com',
+    })
+    await outside.mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the request', () =>
+      outside.mock.sent.some((s) => s.message.text.includes('Answer it in https://')),
+    )
+    const thread = outside.i.server.deps.threads.getBySession(sid(outside.i, 'room'))
+    expect(
+      outside.mock.sent.find((s) => s.message.text.includes('Answer it in https://'))?.message.text,
+    ).toContain(`https://team.example.com/a/${outside.i.leadId}?t=${thread?.id}`)
   })
 
   test('answering in the web app first wins: the request is updated and the late button is refused', async () => {
@@ -1419,39 +1438,222 @@ describe('approvals in channel conversations', () => {
     expect(mock.sent.filter((s) => s.conversationId === 'news')).toHaveLength(1)
   })
 
-  test('a question (ask_user_question) is announced with a link, never answered from the chat', async () => {
-    const { i, mock } = await setup([
+  const askStep = (
+    questions: Array<{
+      question: string
+      header: string
+      options: string[]
+      multiSelect?: boolean
+    }>,
+    id = 'q1',
+  ): ScriptedStepInput => ({
+    toolCalls: [
       {
-        toolCalls: [
-          {
-            toolName: 'ask_user_question',
-            input: {
-              questions: [
-                {
-                  question: 'Which release channel?',
-                  header: 'Channel',
-                  multiSelect: false,
-                  options: [
-                    { label: 'beta', description: 'beta' },
-                    { label: 'stable', description: 'stable' },
-                  ],
-                },
-              ],
-            },
-            toolCallId: 'q1',
-          },
-        ],
+        toolName: 'ask_user_question',
+        input: {
+          questions: questions.map((q) => ({
+            question: q.question,
+            header: q.header,
+            multiSelect: q.multiSelect ?? false,
+            options: q.options.map((label) => ({ label, description: `${label} option` })),
+          })),
+        },
+        toolCallId: id,
       },
-      textStep('ok'),
-    ])
+    ],
+  })
+  const channelQ = {
+    question: 'Which release channel?',
+    header: 'Channel',
+    options: ['beta', 'stable'],
+  }
+  const questionMsg = (mock: MockAdapter) =>
+    mock.sent.find((s) => s.message.text.includes('Which release channel?'))
+
+  test('a question is posted in the chat with option buttons and no link; the requester answers by writing', async () => {
+    const { i, mock } = await setup([askStep([channelQ]), textStep('Going with stable.')])
     await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
-    await until('the question', () =>
-      mock.sent.some((s) => s.message.text.includes('Which release channel?')),
-    )
-    const q = mock.sent.find((s) => s.message.text.includes('Which release channel?'))
-    expect(q?.message.buttons).toBeUndefined()
-    expect(q?.message.text).toContain('/a/')
+    await until('the question', () => questionMsg(mock) !== undefined)
+    const q = questionMsg(mock) as NonNullable<ReturnType<typeof questionMsg>>
+    expect(q.message.buttons?.map((b) => b.label)).toEqual(['beta', 'stable'])
+    expect(q.message.text).toContain('reply with your own answer')
+    expect(q.message.text).not.toContain('localhost')
+    expect(q.message.text).not.toContain('http')
     expect(i.gw.approvals.open(sid(i, 'room'))[0]?.itemKind).toBe('question')
+
+    // the next message of the requester (not even addressed to the bot) is the answer
+    await mock.say({ from: ana, text: 'stable please', id: 'w2' })
+    await until('the reply', () => mock.sent.some((s) => s.message.text === 'Going with stable.'))
+    expect(wire(i.models.lead as ScriptedModel)).toContain('The user answered')
+    expect(wire(i.models.lead as ScriptedModel)).toContain('other: \\"stable please\\"')
+    await until('the announcement is edited', () => mock.edits.length === 1)
+    expect(mock.edits[0]?.text).toBe('Answered: "stable please"')
+    expect(mock.edits[0]?.messageId).toBe(q.messageId)
+    expect(i.gw.approvals.open(sid(i, 'room'))).toEqual([])
+    // the answer is not woken a second time: two model calls in all (the question and its continuation)
+    expect(calls(i.models.lead)).toBe(2)
+  })
+
+  test('tapping an option answers; the text of an option or its number counts as that option', async () => {
+    const { i, mock } = await setup([askStep([channelQ]), textStep('Beta it is.')])
+    await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the question', () => questionMsg(mock) !== undefined)
+    const q = questionMsg(mock) as NonNullable<ReturnType<typeof questionMsg>>
+    await mock.press({
+      from: ana,
+      name: 'o',
+      data: q.message.buttons?.[0]?.data as string,
+      messageId: q.messageId,
+    })
+    await until('the reply', () => mock.sent.some((s) => s.message.text === 'Beta it is.'))
+    expect(wire(i.models.lead as ScriptedModel)).toContain('Channel: beta')
+    await until('edited', () => mock.edits.length === 1)
+    expect(mock.edits[0]?.text).toBe('Answered: beta')
+
+    // by number
+    const second = await setup([askStep([channelQ]), textStep('Stable then.')])
+    await second.mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the question', () => questionMsg(second.mock) !== undefined)
+    await second.mock.say({ from: ana, text: '2', id: 'w2' })
+    await until('the reply', () => second.mock.sent.some((s) => s.message.text === 'Stable then.'))
+    expect(wire(second.i.models.lead as ScriptedModel)).toContain('Channel: stable')
+  })
+
+  test('other people stay context while a question waits; a stranger cannot tap; an admin may answer', async () => {
+    const { i, mock } = await setup([askStep([channelQ]), textStep('Done: stable.')])
+    await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the question', () => questionMsg(mock) !== undefined)
+    const q = questionMsg(mock) as NonNullable<ReturnType<typeof questionMsg>>
+    const carol = { id: 'u-carol', name: 'Carol' }
+    await pair(i, mock, carol, 'carol-member')
+    const before = mock.sent.length
+    await mock.say({ from: carol, text: '@team_bot stable', id: 'c1', mentionSelf: true })
+    await mock.press({
+      from: stranger,
+      name: 'o',
+      data: q.message.buttons?.[1]?.data as string,
+      messageId: q.messageId,
+    })
+    await sleep(150)
+    expect(mock.sent).toHaveLength(before) // silence: no reply, no change
+    expect(calls(i.models.lead)).toBe(1)
+    expect(i.gw.approvals.open(sid(i, 'room'))).toHaveLength(1)
+    // Carol's message is stored as context, not lost
+    const recent = await i.gw.log.recent(nid(i, 'room'), { limit: 20 })
+    expect(recent.some((m) => m.text.includes('@team_bot stable'))).toBe(true)
+    // Budi (the linked owner) is staff and may answer for Ana
+    await mock.say({ from: budi, text: 'stable', id: 'b1' })
+    await until('the reply', () => mock.sent.some((s) => s.message.text === 'Done: stable.'))
+    expect(mock.edits[0]?.text).toContain('Answered')
+  })
+
+  test('a question with several parts is answered in order, or all at once with one line each', async () => {
+    const two = [channelQ, { question: 'Announce it?', header: 'Announce', options: ['yes', 'no'] }]
+    const { i, mock } = await setup([askStep(two), textStep('Both noted.')])
+    await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the question', () => questionMsg(mock) !== undefined)
+    const q = questionMsg(mock) as NonNullable<ReturnType<typeof questionMsg>>
+    expect(q.message.buttons).toBeUndefined() // several parts: written answers only
+    expect(q.message.text).toContain('Question 2 of 2: Announce it?')
+    await mock.say({ from: ana, text: 'beta', id: 'w2' })
+    await until('the next part is asked', () =>
+      mock.sent.some((s) => s.message.text.startsWith('Noted (1 of 2)')),
+    )
+    expect(calls(i.models.lead)).toBe(1) // the turn waits for the last part
+    await mock.say({ from: ana, text: 'no', id: 'w3' })
+    await until('the reply', () => mock.sent.some((s) => s.message.text === 'Both noted.'))
+    const w = wire(i.models.lead as ScriptedModel)
+    expect(w).toContain('Channel: beta')
+    expect(w).toContain('Announce: no')
+    expect(mock.edits[0]?.text).toBe('Answered: beta; no')
+
+    // all at once
+    const all = await setup([askStep(two), textStep('All at once.')])
+    await all.mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the question', () => questionMsg(all.mock) !== undefined)
+    await all.mock.say({ from: ana, text: '1. stable\n2. yes', id: 'w2' })
+    await until('the reply', () => all.mock.sent.some((s) => s.message.text === 'All at once.'))
+    const w2 = wire(all.i.models.lead as ScriptedModel)
+    expect(w2).toContain('Channel: stable')
+    expect(w2).toContain('Announce: yes')
+  })
+
+  test('a question in a direct chat is answered in the chat too', async () => {
+    const { i, mock } = await setup([askStep([channelQ]), textStep('Stable, noted.')])
+    await mock.say({ chat: 'u-ana', kind: 'dm', from: ana, text: 'publish the notes', id: 'd1' })
+    await until('the question', () => questionMsg(mock) !== undefined)
+    const q = questionMsg(mock) as NonNullable<ReturnType<typeof questionMsg>>
+    expect(q.conversationId).toBe('u-ana')
+    expect(q.message.text).not.toContain('http')
+    await mock.say({ chat: 'u-ana', kind: 'dm', from: ana, text: 'stable', id: 'd2' })
+    await until('the reply', () => mock.sent.some((s) => s.message.text === 'Stable, noted.'))
+    expect(wire(i.models.lead as ScriptedModel)).toContain('Channel: stable')
+    void i
+  })
+
+  test('without buttons the question still reads as a chat question', async () => {
+    const { i, mock } = await setup([askStep([channelQ]), textStep('ok')], { buttons: false })
+    await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the question', () => questionMsg(mock) !== undefined)
+    const q = questionMsg(mock) as NonNullable<ReturnType<typeof questionMsg>>
+    expect(q.message.buttons).toBeUndefined()
+    expect(q.message.text).toContain('Reply with a number')
+    void i
+  })
+
+  test('an expired question is edited to Expired and the model is told it was not answered', async () => {
+    const { i, mock } = await setup([askStep([channelQ]), textStep('No answer, moving on.')])
+    await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the question', () => questionMsg(mock) !== undefined)
+    expect(await i.gw.expireApprovals(Date.now() + 25 * 3_600_000)).toBe(1)
+    await until('edited', () => mock.edits.length === 1)
+    expect(mock.edits[0]?.text).toContain('Expired')
+    await until('the reply', () =>
+      mock.sent.some((s) => s.message.text === 'No answer, moving on.'),
+    )
+  })
+
+  test('nobody is left in silence: a message while the session waits on something no chat shows is answered once', async () => {
+    const { i, mock } = await setup([textStep('first'), approvalStep, textStep('after')])
+    await mock.say({ from: ana, text: '@team_bot hi', id: 'w1', mentionSelf: true })
+    await until('the reply', () => mock.sent.some((s) => s.message.text === 'first'))
+    // a turn of the web app parks the session on an approval that is not announced in the chat
+    const res = await i.server.app.request(`/sessions/${sid(i, 'room')}/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: sid(i, 'room'),
+        messages: [{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'post the notes' }] }],
+      }),
+    })
+    await res.text()
+    await sleep(150)
+    const before = mock.sent.length
+    await mock.say({ from: ana, text: '@team_bot hello?', id: 'w2', mentionSelf: true })
+    await until('the explanation', () => mock.sent.length === before + 1)
+    expect(mock.sent.at(-1)?.message.text).toContain('cannot be answered in a chat')
+    expect(mock.sent.at(-1)?.message.text).not.toContain('http')
+    // once, not on every message
+    await mock.say({ from: ana, text: '@team_bot again', id: 'w3', mentionSelf: true })
+    await sleep(150)
+    expect(mock.sent).toHaveLength(before + 1)
+    expect(calls(i.models.lead)).toBe(2)
+  })
+
+  test('somebody else addressing the bot while an approval waits is told once whom it waits for', async () => {
+    const { i, mock } = await setup([approvalStep, textStep('Posted it.')])
+    await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the request', () => request(mock) !== undefined)
+    const carol = { id: 'u-carol', name: 'Carol' }
+    await pair(i, mock, carol, 'carol-member')
+    const before = mock.sent.length
+    await mock.say({ from: carol, text: '@team_bot and me?', id: 'c1', mentionSelf: true })
+    await until('the notice', () => mock.sent.length === before + 1)
+    expect(mock.sent.at(-1)?.message.text).toContain('waiting for an approval')
+    await mock.say({ from: carol, text: '@team_bot hello?', id: 'c2', mentionSelf: true })
+    await sleep(100)
+    expect(mock.sent).toHaveLength(before + 1)
+    expect(i.gw.approvals.open(sid(i, 'room'))).toHaveLength(1)
   })
 
   test('a turn started from the web app in a channel thread announces nothing in the chat', async () => {

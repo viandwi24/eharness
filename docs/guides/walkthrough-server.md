@@ -1315,8 +1315,12 @@ something you can run for U1-U3.
 - *Approvals in chat.* A turn that a channel message started and that stops at a tool approval or
   an `ask_user_question` posts a short request into the conversation (quoting the trigger). With
   the `buttons` capability an approval carries Approve / Deny buttons (inbound `action` events,
-  `approve` / `deny`, data = the approval row id); without it, and for every question, the request
-  links to the thread in the web app. **Who may answer from the chat:** the team member the
+  `approve` / `deny`, data = the approval row id); without it the request points at the web app
+  (a link only when the configured web URL is not loopback: a chat never gets `http://localhost`).
+  A question is posted in the chat and answered in the chat (L6 follow-up): options as buttons when the
+  adapter has them (a single-choice question), plus "or reply with your answer"; the asker's next
+  message (or staff's) answers it, anybody else's stays context, and the post is edited to
+  "Answered: ..." / "Expired: ...". **Who may answer from the chat:** the team member the
   trigger's sender is linked to (pairing), or a member listed in the connection's `admins`
   (default `['owner']`, the example's single principal). Everybody else, including unmapped
   accounts, gets a readable refusal and nothing changes. The answer goes through the same
@@ -1520,7 +1524,13 @@ unchanged.
   platform has.
 - **Mentions** only through `mention: [id]`; typed `@handles` are neutralized.
 - **Reminders** are `sys:reminder:<id>` routines whose fire posts the fixed text through the outbox without a
-  model call; the Reminders tab lists and cancels them.
+  model call; the Reminders tab lists and cancels them. The text is the person's own words, posted verbatim
+  with a single `Reminder:` label (added only when missing). A member may set reminders only for themselves
+  (they name themselves in `mention`); those post as `Reminder for <name>:` with their own mention. A reminder
+  for the whole chat or for other people needs an owner or admin.
+- **Nobody is left in silence.** A question in a chat is answered by the asker's next message; if the session
+  waits for something no chat message can resolve (a turn of the web app parked on an approval), the next
+  message gets one explanation instead of vanishing.
 - **Proactive posts** of routines and the heartbeat follow a per-node policy (allowed, quiet hours, digest,
   mention limit).
 

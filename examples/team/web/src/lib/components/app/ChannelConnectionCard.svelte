@@ -160,7 +160,7 @@
 					</div>
 				{:else}
 					<ul class="flex flex-col gap-2">
-						{#each tree as b (b.chat.id)}<ChannelChatRow connectionId={conn.id} branch={b} {titleOf} onChange={() => { onChange(); void loadDetail(); }} />{/each}
+						{#each tree as b (b.chat.id)}<ChannelChatRow connectionId={conn.id} connectionLabel={conn.label} branch={b} {titleOf} onChange={() => { onChange(); void loadDetail(); }} />{/each}
 					</ul>
 				{/if}
 			</Tabs.Content>

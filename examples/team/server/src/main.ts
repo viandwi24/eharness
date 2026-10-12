@@ -40,7 +40,13 @@ import type { OpenAPIHono } from '@hono/zod-openapi'
 import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
 import { updateAgent } from './app/agents.ts'
-import { hostAllowed, type ListenConfig, listenConfig, originOf } from './app/auth.ts'
+import {
+  hostAllowed,
+  isLoopbackHost,
+  type ListenConfig,
+  listenConfig,
+  originOf,
+} from './app/auth.ts'
 import { briefingsText } from './app/briefings.ts'
 import { checkChatBody, uploadFile } from './app/chat.ts'
 import {
@@ -302,6 +308,15 @@ export interface Server {
 }
 
 export const WORKSPACE_ID = 'default'
+
+/** True when a web URL points at this machine (`http://localhost:5173`): not reachable from a chat. */
+function isLoopbackWebUrl(url: string): boolean {
+  try {
+    return isLoopbackHost(new URL(url).hostname)
+  } catch {
+    return true
+  }
+}
 
 export function compose(config: ServerConfig): Server {
   installJsonSchemaValidator()
@@ -812,6 +827,8 @@ export function compose(config: ServerConfig): Server {
     // approvals of a channel turn can be answered from the chat, the same path as the web app
     approvals: { answer: channelApprovalAnswerer({ factory, agents, store: activityStore }) },
     webLink: ({ agentId, sessionId }) => {
+      // a link to this machine is useless in a chat: only an address people can reach
+      if (isLoopbackWebUrl(webUrl)) return undefined
       const thread = threadStore.getBySession(sessionId)
       return thread === undefined
         ? undefined

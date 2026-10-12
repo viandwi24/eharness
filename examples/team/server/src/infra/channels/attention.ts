@@ -8,9 +8,10 @@
  *    `answerAttention`, on the session that owns it), for the buttons of a chat.
  */
 import { type ActivityStore, answerAttention } from 'eharness/activity'
+import { answerOutput, pendingQuestions, type Question, type QuestionResult } from 'eharness/ask'
 import type { AgentRepo } from '../../app/ports.ts'
 import type { AgentFactory } from '../eh/agent-factory.ts'
-import type { ApprovalAnswerInput } from './gateway.ts'
+import type { ApprovalAnswerer } from './gateway.ts'
 
 export function watchPendingChanges(
   inner: ActivityStore,
@@ -40,22 +41,50 @@ export function watchPendingChanges(
   }
 }
 
+/** The questions of a pending `ask_user_question` call of a session (undefined when it is not pending). */
+async function questionsOf(
+  deps: { factory: AgentFactory },
+  sessionId: string,
+  itemId: string,
+): Promise<Question[] | undefined> {
+  const pending = await deps.factory.peek(sessionId).pending()
+  const call = pendingQuestions(pending).find((q) => q.toolCallId === itemId)
+  return call?.questions
+}
+
 export function channelApprovalAnswerer(deps: {
   factory: AgentFactory
   agents: AgentRepo
   store: ActivityStore
-}): (input: ApprovalAnswerInput) => Promise<{
-  status: 'resumed' | 'recorded' | 'already-answered' | 'not-found'
-}> {
-  return async (input) => {
+}): ApprovalAnswerer {
+  const answer: ApprovalAnswerer = async (input) => {
     const def = deps.agents.get(input.agentId)
     if (def === undefined) return { status: 'not-found' }
     await deps.factory.prepare(def)
+    let questionAnswer:
+      | { kind: 'client-tool'; output: unknown }
+      | { kind: 'client-tool'; errorText: string }
+      | undefined
+    if (input.kind === 'question' && input.answers !== undefined) {
+      // the person answered: the same tool output the web app writes (`answerOutput`)
+      const pending = await deps.factory.peek(input.sessionId).pending()
+      const call = pendingQuestions(pending).find((q) => q.toolCallId === input.itemId)
+      if (call === undefined) return { status: 'not-found' }
+      const result: QuestionResult = input.answers === null ? null : { answers: input.answers }
+      const out = answerOutput(call, result)
+      questionAnswer =
+        'output' in out
+          ? { kind: 'client-tool', output: out.output }
+          : { kind: 'client-tool', errorText: out.errorText }
+    }
     const result = await answerAttention(input.itemId, {
       sessionId: input.sessionId,
       answer:
         input.kind === 'question'
-          ? { kind: 'client-tool', errorText: input.reason ?? 'The question was not answered.' }
+          ? (questionAnswer ?? {
+              kind: 'client-tool',
+              errorText: input.reason ?? 'The question was not answered.',
+            })
           : {
               kind: 'approval',
               approved: input.approved,
@@ -69,4 +98,6 @@ export function channelApprovalAnswerer(deps: {
     })
     return { status: result.status }
   }
+  answer.questions = (input) => questionsOf(deps, input.sessionId, input.itemId)
+  return answer
 }

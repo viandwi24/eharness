@@ -9,13 +9,15 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import {
 		botGone,
+		connectionText,
 		cannotPost,
 		chatSummary,
 		DELIVERY_OPTIONS,
 		formChanged,
 		formOfChat,
 		KIND_LABEL,
-		memberLabel,
+		quietText,
+		wakeHint,
 		originText,
 		policyBody,
 		proactiveError,
@@ -32,11 +34,12 @@
 	// the connection or the defaults, and says where the value in force comes from.
 	let {
 		connectionId,
+		connectionLabel = 'This connection',
 		branch,
 		titleOf,
 		depth = 0,
 		onChange
-	}: { connectionId: string; branch: ChatBranch; titleOf: (nodeId: string) => string; depth?: number; onChange: () => void } = $props();
+	}: { connectionId: string; connectionLabel?: string; branch: ChatBranch; titleOf: (nodeId: string) => string; depth?: number; onChange: () => void } = $props();
 
 	const chat = $derived(branch.chat);
 	let open = $state(false);
@@ -103,7 +106,7 @@
 	{#if open}
 		<div class="flex flex-col gap-4 border-t border-border p-3 text-sm">
 			<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-				<span>Connection: {memberLabel(chat.member)}</span>
+				<span>Connection: {connectionText(connectionLabel, chat.member)}</span>
 				{#if chat.username}<span>@{chat.username}</span>{/if}
 				<span>Last heard {formatTime(chat.lastSeen)}</span>
 				<span class="font-mono">{chat.nativeId}</span>
@@ -186,9 +189,12 @@
 					</NativeSelect>
 				</label>
 				<div class="flex items-end gap-2">
-					<label class="flex flex-1 flex-col gap-1"><span class="text-xs font-medium">Quiet from (HH:MM)</span><Input placeholder="22:00" bind:value={form.quietFrom} aria-label="Quiet hours start" /></label>
-					<label class="flex flex-1 flex-col gap-1"><span class="text-xs font-medium">to</span><Input placeholder="07:00" bind:value={form.quietTo} aria-label="Quiet hours end" /></label>
+					<label class="flex flex-1 flex-col gap-1"><span class="text-xs font-medium">Quiet from (HH:MM)</span><Input placeholder={chat.effective.proactive.quietHours?.from ?? '22:00'} bind:value={form.quietFrom} aria-label="Quiet hours start" /></label>
+					<label class="flex flex-1 flex-col gap-1"><span class="text-xs font-medium">to</span><Input placeholder={chat.effective.proactive.quietHours?.to ?? '07:00'} bind:value={form.quietTo} aria-label="Quiet hours end" /></label>
 				</div>
+				<p class="text-xs text-muted-foreground sm:col-span-2" data-testid="quiet-inherited">
+					{#if quietText(chat.effective.proactive.quietHours)}Quiet hours in force: {quietText(chat.effective.proactive.quietHours)} · {origin('proactive')}. Leave both empty to inherit.{:else}No quiet hours are set. Leave both empty to inherit.{/if}
+				</p>
 				<label class="flex flex-col gap-1">
 					<span class="text-xs font-medium">Mentions per message</span>
 					<Input type="number" min="0" max="20" placeholder="Inherit ({chat.effective.proactive.maxMentions})" bind:value={form.maxMentions} />
@@ -196,7 +202,7 @@
 				{#if proactiveProblem}<span class="text-xs text-destructive-text sm:col-span-2">{proactiveProblem}</span>{/if}
 			</fieldset>
 			<p class="text-xs text-muted-foreground">
-				{WAKE_OPTIONS.find((o) => o.value === chat.effective.wake)?.hint}
+				{wakeHint(form.wake, chat.effective.wake)}
 			</p>
 			<div class="flex justify-end gap-2">
 				<Button size="sm" variant="ghost" disabled={saving || chat.policy === null} onclick={() => void clearAll()}>Inherit everything</Button>
@@ -208,7 +214,7 @@
 	{#if branch.children.length > 0}
 		<ul class="flex flex-col gap-2 border-t border-border bg-muted/30 p-2 pl-5">
 			{#each branch.children as child (child.chat.id)}
-				<Self {connectionId} branch={child} {titleOf} depth={depth + 1} {onChange} />
+				<Self {connectionId} {connectionLabel} branch={child} {titleOf} depth={depth + 1} {onChange} />
 			{/each}
 		</ul>
 	{/if}

@@ -15,7 +15,12 @@
  */
 import type { Database } from 'bun:sqlite'
 import { errorText, uuidv7 } from 'eharness'
-import { ASK_TOOL, pendingQuestions } from 'eharness/ask'
+import {
+  ASK_TOOL,
+  pendingQuestions,
+  type Answer as QuestionAnswer,
+  type Question as QuestionSpec,
+} from 'eharness/ask'
 import type { SecretVault } from 'eharness/providers'
 import type { EventAppender, NewRoutine, RoutinePatch, ThreadStore } from '../../app/ports.ts'
 import { userDeclinedText } from '../../domain/approvals.ts'
@@ -70,10 +75,19 @@ import {
 } from './policy.ts'
 import { type ProactiveStore, sqliteProactiveStore } from './proactive.ts'
 import {
+  answerFromOption,
+  answerFromText,
+  answersFromLines,
+  renderQuestions,
+  summarizeAnswers,
+  tappable,
+} from './questions.ts'
+import {
   type ReminderRow,
   type ReminderStore,
   type ReminderWhen,
   readWhen,
+  reminderText,
   sqliteReminderStore,
 } from './reminders.ts'
 import {
@@ -127,7 +141,26 @@ export interface ApprovalAnswerInput {
   approved: boolean
   /** The reason the model reads for a decline (the user-note wording, `userDeclinedText`). */
   reason?: string
+  /**
+   * A question answered by a person: one answer per question (`null` = dismissed). Without it a
+   * question is answered with `reason` as an error text (expiry, a declined turn).
+   */
+  answers?: QuestionAnswer[] | null
   actor: { id: string; name?: string }
+}
+
+/** Answers an item on the session that owns it; `questions` reads the questions of a pending question. */
+export interface ApprovalAnswerer {
+  (
+    input: ApprovalAnswerInput,
+  ): Promise<{
+    status: 'resumed' | 'recorded' | 'already-answered' | 'not-found'
+  }>
+  questions?(input: {
+    agentId: string
+    sessionId: string
+    itemId: string
+  }): Promise<QuestionSpec[] | undefined>
 }
 
 /** The routines a reminder is scheduled on (`sys:reminder:<id>`): the narrow part of the routine store. */
@@ -198,11 +231,7 @@ export interface GatewayDeps {
    * `answerAttention`, the same path as the web app). Absent = approvals cannot be answered from
    * a chat: the request only links to the web app.
    */
-  approvals?: {
-    answer(input: ApprovalAnswerInput): Promise<{
-      status: 'resumed' | 'recorded' | 'already-answered' | 'not-found'
-    }>
-  }
+  approvals?: { answer: ApprovalAnswerer }
   /** Link to a channel thread in the web app, for requests that cannot use buttons. */
   webLink?: (target: { agentId: string; sessionId: string }) => string | undefined
   /** Retry timing of the outbox (tests use small values). */
@@ -1688,7 +1717,21 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       }
       const scope = scopeOf(node)
       const cap = scope?.proactive.maxMentions ?? 3
-      const text = withMentions(`Reminder: ${rem.body}`, rem.mentions.slice(0, cap))
+      const mentioned = rem.mentions.slice(0, cap)
+      // a member's reminder is for themselves and says so; anything else posts the requested text
+      const memberOwn =
+        rem.createdByRole !== null &&
+        !isStaff(rem.createdByRole as Role) &&
+        mentioned.length === 1 &&
+        mentioned[0] === rem.createdByIdentityId
+      const own = memberOwn ? identities.get(mentioned[0] as string) : undefined
+      const text =
+        own === undefined
+          ? withMentions(reminderText(rem.body), mentioned)
+          : reminderText(
+              neutralizeHandles(rem.body),
+              mentionToken(own.nativeId, own.displayName ?? own.username ?? own.nativeId),
+            )
       const adapter = adapters.get(rem.connectionId)
       const caps = adapter === undefined ? undefined : capsOf(adapter, node)
       const chunks = splitText(text, caps?.maxTextLength ?? FALLBACK_TEXT_LENGTH)
@@ -2288,9 +2331,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
 
   // --- approvals in chat ----------------------------------------------------------------------
 
+  const ANSWERED = 'answered:'
   const outcomeText = (a: ApprovalRow): string => {
     if (a.outcome === 'cancelled') return `Cancelled: a new message arrived (${a.toolName})`
     if (a.outcome === 'expired') return `Expired: not answered (${a.toolName})`
+    if (a.outcome?.startsWith(ANSWERED)) return `Answered: ${a.outcome.slice(ANSWERED.length)}`
     if (a.outcome === 'approved' || a.outcome === 'denied') {
       const by = a.answeredBy === null ? '' : ` by ${a.answeredBy}`
       return `${a.outcome === 'approved' ? 'Approved' : 'Denied'}${by}: ${a.toolName}`
@@ -2322,21 +2367,16 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     }
   }
 
-  const questionTextOf = (item: {
+  const questionsOfItem = (item: {
     toolCallId: string
     toolName: string
     input?: unknown
-  }): string => {
-    const q = pendingQuestions({
+  }): QuestionSpec[] | undefined =>
+    pendingQuestions({
       approvals: [],
       clientTools: [{ toolCallId: item.toolCallId, toolName: item.toolName, input: item.input }],
       externals: [],
-    } as never)[0]
-    const lines = (q?.questions ?? []).map((x: { question?: string }) => x.question).filter(Boolean)
-    return lines.length === 0
-      ? 'I have a question for you.'
-      : `I have a question: ${lines.join(' / ')}`
-  }
+    } as never)[0]?.questions
 
   /**
    * Who may answer an approval from a chat: an owner or an admin of the team directory (the role
@@ -2356,6 +2396,297 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       sender.nativeId === a.requesterPeer ||
       (sender.personId !== null && sender.personId === a.requesterMember)
     )
+  }
+
+  // --- questions answered in the chat ----------------------------------------------------------
+
+  /** Answers collected so far for a question with several parts (by approval row id). Lost on restart: it asks again from the first. */
+  const questionProgress = new Map<string, QuestionAnswer[]>()
+  /** One explanation per pending item and kind of block, so a chat is told once, never spammed. */
+  const explained = new Set<string>()
+  /** Sessions parked on something that was not announced in a chat (a tool of the web app, an external wait). */
+  const parkedUnannounced = new Set<string>()
+
+  /** The person who asked (or staff) answers a question: anybody else's message is context. */
+  const mayAnswerQuestion = (
+    config: ConnectionConfig,
+    a: ApprovalRow,
+    sender: IdentityRow,
+  ): boolean =>
+    isStaff(resolveIdentityRole(config.connectionId, sender).role) ||
+    sender.nativeId === a.requesterPeer ||
+    (sender.personId !== null && sender.personId === a.requesterMember)
+
+  const questionsOfRow = async (rec: ApprovalRow): Promise<QuestionSpec[] | undefined> =>
+    deps.approvals?.answer.questions?.({
+      agentId: rec.agentId,
+      sessionId: rec.sessionId,
+      itemId: rec.itemId,
+    })
+
+  /** Record the complete answer of a question: claim the row, resume the parked turn, edit the announcement. */
+  async function submitQuestion(
+    rec: ApprovalRow,
+    questions: readonly QuestionSpec[],
+    answers: QuestionAnswer[],
+    sender: IdentityRow,
+    config: ConnectionConfig,
+    adapter: ChannelAdapter,
+    node: NodeRow,
+  ): Promise<'done' | 'gone' | 'failed'> {
+    const answerer = deps.approvals
+    if (answerer === undefined) return 'failed'
+    const who = sender.displayName ?? sender.username ?? sender.nativeId
+    const summary = clip(summarizeAnswers(questions, answers).replace(/\s+/g, ' '), 300)
+    // claim first (atomic): whichever answer arrives first wins
+    if (!approvals.answer(rec.id, who, `${ANSWERED}${summary}`, now())) return 'gone'
+    try {
+      const result = await answerer.answer({
+        agentId: rec.agentId,
+        sessionId: rec.sessionId,
+        itemId: rec.itemId,
+        kind: 'question',
+        approved: true,
+        answers,
+        actor: { id: sender.personId ?? sender.nativeId, name: who },
+      })
+      if (result.status === 'already-answered' || result.status === 'not-found') {
+        approvals.answer(rec.id, who, 'web', now())
+        const done = approvals.get(rec.id)
+        if (done !== undefined) await resolveMessage({ ...done, outcome: 'web' }, adapter, config)
+        return 'gone'
+      }
+    } catch (error) {
+      approvals.reopen(rec.id)
+      warn(`channels: could not record the answer of ${rec.itemId}: ${errorText(error)}`)
+      return 'failed'
+    }
+    questionProgress.delete(rec.id)
+    activity({
+      connectionId: config.connectionId,
+      type: 'approval-answered',
+      reason: 'answered',
+      conversationId: rec.conversationId,
+      peerId: sender.nativeId,
+      peerName: who,
+      detail: { tool: rec.toolName, via: 'chat' },
+    })
+    const done = approvals.get(rec.id)
+    if (done !== undefined) await resolveMessage(done, adapter, config)
+    void node
+    return 'done'
+  }
+
+  /**
+   * Take answers (from a message or a tap) for the oldest open question of the node. A question with
+   * several parts is answered in order, or all at once with one line per question; the turn
+   * continues when the last part is in.
+   */
+  async function applyQuestionAnswer(input: {
+    config: ConnectionConfig
+    adapter: ChannelAdapter
+    node: NodeRow
+    sender: IdentityRow
+    rec: ApprovalRow
+    /** What the sender gave: free text, or the chosen option of a tap. */
+    given: { text: string } | { option: number }
+    /** The message the continued turn answers (quoted); the tap's message has none of its own. */
+    triggerId?: string
+  }): Promise<'answered' | 'progress' | 'failed' | 'gone'> {
+    const { rec, config, adapter, node, sender } = input
+    const reply = (text: string): Promise<void> =>
+      sendDirect(config, adapter, node, text).catch((error) =>
+        warn(`channels: a question reply failed: ${errorText(error)}`),
+      )
+    const questions = await questionsOfRow(rec)
+    if (questions === undefined || questions.length === 0) {
+      if (rec.status === 'open') {
+        // the question is not pending any more (answered elsewhere): the announcement follows through pendingChanged
+        return 'gone'
+      }
+      return 'gone'
+    }
+    const so_far = questionProgress.get(rec.id) ?? []
+    const remaining = questions.slice(so_far.length)
+    const first = remaining[0] as QuestionSpec
+    let given: QuestionAnswer[]
+    if ('option' in input.given) {
+      const a = answerFromOption(first, input.given.option)
+      if (a === undefined) return 'failed'
+      given = [a]
+    } else {
+      given = answersFromLines(remaining, input.given.text) ?? [
+        answerFromText(first, input.given.text),
+      ]
+    }
+    const all = [...so_far, ...given]
+    if (all.length < questions.length) {
+      questionProgress.set(rec.id, all)
+      const next = questions[all.length] as QuestionSpec
+      await reply(
+        `Noted (${all.length} of ${questions.length}). Question ${all.length + 1}: ${next.question}${next.options.map((o, i) => `\n${i + 1}. ${o.label}`).join('')}`,
+      )
+      return 'progress'
+    }
+    // the turn that continues now answers the message that gave the answer
+    if (input.triggerId !== undefined) approvals.retrigger(rec.sessionId, input.triggerId)
+    const outcome = await submitQuestion(rec, questions, all, sender, config, adapter, node)
+    if (outcome === 'failed') {
+      await reply(
+        `I could not record that answer. Please try again${(() => {
+          const web = deps.webLink?.({ agentId: rec.agentId, sessionId: rec.sessionId })
+          return web === undefined ? '.' : `, or answer in ${web}.`
+        })()}`,
+      )
+      return 'failed'
+    }
+    return outcome === 'done' ? 'answered' : 'gone'
+  }
+
+  /** A tap on an option under a question. Undefined when it is not ours. */
+  async function handleQuestionAction(
+    event: EventOf<'action'>,
+    config: ConnectionConfig,
+    adapter: ChannelAdapter,
+    node: NodeRow,
+    sender: IdentityRow,
+  ): Promise<HandleResult | undefined> {
+    const data = event.data
+    const cut = data === undefined ? -1 : data.lastIndexOf(':')
+    if (data === undefined || cut < 0) return undefined
+    const rec = approvals.get(data.slice(0, cut))
+    const option = Number(data.slice(cut + 1))
+    if (
+      rec === undefined ||
+      rec.connectionId !== config.connectionId ||
+      rec.conversationId !== node.id ||
+      rec.itemKind !== 'question' ||
+      !Number.isInteger(option)
+    ) {
+      return undefined
+    }
+    if (!mayAnswerQuestion(config, rec, sender)) return { action: 'drop', reason: 'not-authorized' }
+    if (rec.status !== 'open') {
+      await sendDirect(
+        config,
+        adapter,
+        node,
+        `That was already answered (${outcomeText(rec)}).`,
+        rec.messageId ?? undefined,
+      ).catch(() => undefined)
+      return { action: 'approval', reason: 'already answered' }
+    }
+    const result = await applyQuestionAnswer({
+      config,
+      adapter,
+      node,
+      sender,
+      rec,
+      given: { option },
+    })
+    return { action: 'approval', reason: `question ${result}` }
+  }
+
+  /**
+   * A message arrived in a conversation whose session waits for a person. Returns what became of
+   * it, or `none` when nothing waits:
+   *  - `answered`: it answered a question (the turn continues, nothing else to do)
+   *  - `progress`: it answered part of a question with several parts
+   *  - `context`: somebody else's message while a question or approval waits (stored, no reply)
+   *  - `blocked`: something waits that no chat message can resolve; the chat was told once
+   */
+  async function pendingGate(input: {
+    config: ConnectionConfig
+    adapter: ChannelAdapter
+    scope: ResolvedScope
+    node: NodeRow
+    sender: IdentityRow
+    triggerId: string
+    text: string
+    woke: boolean
+  }): Promise<'none' | 'answered' | 'progress' | 'context' | 'blocked'> {
+    const { config, adapter, node, sender } = input
+    const owner = sessionOwnerOf(node, input.scope)
+    const session = sessions.get(config.connectionId, owner.id)
+    if (session === undefined) return 'none'
+    const open = approvals.open(session.sessionId)
+    const questions = open.filter((a) => a.itemKind === 'question')
+    const tell = async (key: string, text: string): Promise<void> => {
+      if (explained.has(key)) return
+      explained.add(key)
+      await sendDirect(config, adapter, node, text).catch((error) =>
+        warn(`channels: a notice failed: ${errorText(error)}`),
+      )
+    }
+    if (questions.length > 0) {
+      const here = questions.find((q) => q.conversationId === node.id)
+      if (here === undefined) {
+        // asked in another conversation of a shared session: nothing here can answer it
+        if (!input.woke) return 'none'
+        const where = nodes.get((questions[0] as ApprovalRow).conversationId)
+        await tell(
+          `${(questions[0] as ApprovalRow).id}:elsewhere`,
+          `I am waiting for an answer to a question I asked${where === undefined ? ' in another chat' : ` in ${labelOf(where, undefined)}`}. Please answer it there, then ask again.`,
+        )
+        return 'blocked'
+      }
+      if (!mayAnswerQuestion(config, here, sender)) return 'context'
+      if (deps.approvals === undefined) {
+        if (input.woke) {
+          await tell(
+            `${here.id}:noanswer`,
+            `I am waiting for an answer to my question, and it cannot be answered from here.${(() => {
+              const web = deps.webLink?.({ agentId: here.agentId, sessionId: here.sessionId })
+              return web === undefined
+                ? ' Ask a teammate to answer it in the team web app.'
+                : ` Answer it in ${web}.`
+            })()}`,
+          )
+          return 'blocked'
+        }
+        return 'none'
+      }
+      const result = await applyQuestionAnswer({
+        config,
+        adapter,
+        node,
+        sender,
+        rec: here,
+        given: { text: input.text },
+        triggerId: input.triggerId,
+      })
+      if (result === 'answered') return 'answered'
+      if (result === 'progress') return 'progress'
+      // not answerable now (the question was settled elsewhere, a failure was reported): carry on as usual
+      return result === 'failed' ? 'blocked' : 'none'
+    }
+    // approvals wait: the requester or staff declines them by writing (declinePendingFor), anybody
+    // else's message is context; a person who is told once knows whom they wait for
+    if (open.length > 0 && input.woke) {
+      const mine = open.some(
+        (a) =>
+          isStaff(resolveIdentityRole(config.connectionId, sender).role) ||
+          a.requesterPeer === sender.nativeId ||
+          (sender.personId !== null && a.requesterMember === sender.personId),
+      )
+      if (!mine) {
+        await tell(
+          `${(open[0] as ApprovalRow).id}:approval`,
+          'I am waiting for an approval before I can continue. Whoever asked me, or an admin, can answer it above; your message is saved as context.',
+        )
+        return 'context'
+      }
+      return 'none'
+    }
+    if (open.length === 0 && input.woke && parkedUnannounced.has(session.sessionId)) {
+      const web = deps.webLink?.({ agentId: session.agentId, sessionId: session.sessionId })
+      await tell(
+        `${session.sessionId}:parked`,
+        `I am waiting for something that cannot be answered in a chat.${web === undefined ? ' Ask a teammate to open this conversation in the team web app and resolve it.' : ` Resolve it in ${web}.`}`,
+      )
+      return 'blocked'
+    }
+    return 'none'
   }
 
   /** A turn of a channel session stopped at an approval or a question: say so where it was asked. */
@@ -2382,6 +2713,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       kind: 'approval' | 'question'
       toolName: string
       text: string
+      /** A question that taps: its single question (options become buttons). */
+      tap?: QuestionSpec
     }> = []
     for (const a of pending.approvals) {
       if (a.answer !== undefined || a.granted === true) continue
@@ -2395,11 +2728,19 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     }
     for (const c of pending.clientTools) {
       if (c.toolName !== ASK_TOOL || c.answer !== undefined || c.result !== undefined) continue
+      const questions = questionsOfItem(c)
+      const canTap = caps.buttons === true && questions !== undefined && tappable(questions)
       items.push({
         itemId: c.toolCallId,
         kind: 'question',
         toolName: c.toolName,
-        text: questionTextOf(c),
+        text:
+          questions === undefined
+            ? 'I have a question for you, but it is not readable here.'
+            : renderQuestions(questions, { buttons: canTap, webLink: link }),
+        ...(canTap && questions !== undefined && questions[0] !== undefined
+          ? { tap: questions[0] }
+          : {}),
       })
     }
     for (const item of items) {
@@ -2421,7 +2762,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       if (rec === undefined) continue // announced already (a partial answer re-ends the turn)
       const buttons =
         item.kind === 'approval' && caps.buttons === true && deps.approvals !== undefined
-      const text = buttons ? `${item.text}\nApprove?` : `${item.text}\nAnswer it in ${where}.`
+      const text =
+        item.kind === 'question'
+          ? item.text
+          : buttons
+            ? `${item.text}\nApprove?`
+            : `${item.text}\nAnswer it in ${where}.`
       await outbox.enqueue(
         [
           {
@@ -2441,7 +2787,15 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
                     { name: 'deny', label: 'Deny', data: rec.id },
                   ],
                 }
-              : {}),
+              : item.tap !== undefined
+                ? {
+                    buttons: item.tap.options.map((o, i) => ({
+                      name: 'o',
+                      label: o.label,
+                      data: `${rec.id}:${i}`,
+                    })),
+                  }
+                : {}),
             approvalId: rec.id,
           },
         ],
@@ -2688,6 +3042,41 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       },
     )
     if (!logged.inserted && logged.handled) return { action: 'drop', reason: 'duplicate' }
+
+    // somebody is waited for (a question, an approval, something only the web app can resolve): the
+    // person who asked answers a question by writing; nobody's message may go unanswered without a word
+    if (event.type === 'message.created') {
+      const gate = await pendingGate({
+        config,
+        adapter,
+        scope,
+        node,
+        sender,
+        triggerId: logged.id,
+        text: event.message.text,
+        woke: decision.action === 'wake',
+      })
+      if (gate === 'answered' || gate === 'progress') {
+        log.markHandled(node.id, nativeId)
+        return {
+          action: 'approval',
+          reason: gate === 'answered' ? 'answered the question' : 'answered part of the question',
+        }
+      }
+      if (gate === 'context' || gate === 'blocked') {
+        if (decision.action === 'wake') {
+          log.demote(node.id, nativeId)
+          log.markHandled(node.id, nativeId)
+          return {
+            action: 'observe',
+            reason:
+              gate === 'blocked'
+                ? 'something is pending that a chat message cannot resolve: this message is context'
+                : 'something is pending: this message is context',
+          }
+        }
+      }
+    }
 
     if (decision.action === 'observe') {
       log.markHandled(node.id, nativeId)
@@ -3148,6 +3537,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       const answered = await handleApprovalAction(event, config, adapter, node, sender)
       if (answered !== undefined) return answered
     }
+    if (event.type === 'action' && event.name === 'o') {
+      const answered = await handleQuestionAction(event, config, adapter, node, sender)
+      if (answered !== undefined) return answered
+    }
     // a replayed press of a button is not a new press
     if (replay && event.type === 'action') return { action: 'drop', reason: 'duplicate' }
     return handleMessage(
@@ -3569,6 +3962,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const adapter = adapters.get(row.connectionId)
     const trigger = triggerKey === undefined ? undefined : await triggerMessage(row, triggerKey)
     if (end.stop !== 'tool-pending') requesters.delete(end.sessionId)
+    if (end.stop !== 'tool-pending') parkedUnannounced.delete(end.sessionId)
     if (end.stop === 'tool-pending') {
       if (
         trigger !== undefined &&
@@ -3577,6 +3971,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         adapter !== undefined
       )
         await announce(row, adapter, trigger, end.pending)
+      // parked on something no chat shows (a turn of the web app, a tool only it can resolve)
+      const waits =
+        end.pending !== undefined &&
+        (end.pending.approvals.some((a) => a.answer === undefined && a.granted !== true) ||
+          end.pending.clientTools.some((c) => c.answer === undefined && c.result === undefined))
+      if (waits && approvals.open(end.sessionId).length === 0) parkedUnannounced.add(end.sessionId)
+      else parkedUnannounced.delete(end.sessionId)
       return
     }
     // the turn is over: its announcements no longer belong to a running turn

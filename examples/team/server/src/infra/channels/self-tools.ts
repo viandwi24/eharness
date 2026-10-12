@@ -24,7 +24,7 @@ import type { ChannelGateway, PersonView, Requester } from './gateway.ts'
 import { flat, localTime, personLabel, renderLinePrefix, timeLine } from './header.ts'
 import type { LogMessage } from './messages.ts'
 import type { NodeRow } from './model.ts'
-import { absoluteTime } from './reminders.ts'
+import { absoluteTime, reminderText } from './reminders.ts'
 import { isStaff } from './roles.ts'
 import { resolveWindow, type TimeWindow } from './time.ts'
 
@@ -127,7 +127,7 @@ const reminderSchema = z.object({
     .string()
     .optional()
     .describe(
-      'create / update: the exact text to post at the time (it is posted as written, no model is called).',
+      'create / update: the person\'s own words, verbatim (do not rephrase, translate, shorten or add "Reminder:": the label is added for you). It is posted as written at the time; no model is called.',
     ),
   at: z
     .string()
@@ -761,6 +761,10 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       if (!staff && requester !== undefined) {
         if (mentionIds?.some((id) => id !== requester.identityId))
           return 'Not allowed: a member can set reminders only for themselves. Ask an owner or an admin to remind other people or the whole chat.'
+        // a reminder to everybody in a chat is a message to the group: staff only. A member's reminder
+        // names themselves (mention) and is delivered as "Reminder for <name>:"
+        if (input.action === 'create' && (mentionIds === undefined || mentionIds.length === 0))
+          return `Not allowed: a member can set reminders only for themselves, not for the whole chat. To remind this person, create it again with mention: ["${requester.nativeId}"]; for the group, ask an owner or an admin.`
         mentionIds = [requester.identityId]
       }
 
@@ -824,7 +828,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
               .map((x) => x?.displayName ?? x?.username ?? x?.nativeId)
               .join(', ')}`
           : ', for the whole chat'
-      }. It will post: "${clip(flat(created.reminder.body, 200), 200)}". Tell the person this exact time and place.`
+      }. It will post: "${clip(flat(reminderText(created.reminder.body, staff ? undefined : (requester?.name ?? 'you')), 200), 200)}". Tell the person this exact time and place.`
     })
 
   return {
@@ -872,7 +876,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     }),
     [REMINDER_TOOL]: tool({
       description:
-        'Reminders posted to a chat at a time in the team timezone, without a model call: create (text, when, optional mention), list, cancel, update. The target is the chat and topic you are in unless you name another. Mentions are made only with the mention field (platform user ids); an owner or admin may remind other people or the whole chat, a member only themselves. Echo the absolute time and place back to the person.',
+        'Reminders posted to a chat at a time in the team timezone, without a model call: create (text, when, optional mention), list, cancel, update. The target is the chat and topic you are in unless you name another. Mentions are made only with the mention field (platform user ids); an owner or admin may remind other people or the whole chat; a member only themselves (mention their own id), delivered as "Reminder for <name>:". Pass the words of the person verbatim as text. Echo the absolute time and place back to the person.',
       inputSchema: reminderSchema,
       metadata: { risk: 'write', idempotent: false },
       execute: (input): Promise<string> => reminder(input),

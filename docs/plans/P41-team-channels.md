@@ -694,7 +694,38 @@ mentions and neutralization, reminder lifecycle including no model call and perm
 scope, proactive quiet hours and digest, decline on new input and expiry); `test/channels.test.ts` was adapted: its
 people act as admins because L6 made approvals in a chat a staff action. Web: `channels/model.test.ts`.
 
-**Not done / limits.** Questions (`ask_user_question`) cannot be answered by a chat message; they only expire.
+**Follow-up pass (e2e findings, real DeepSeek run).**
+
+- *D1 questions in chat.* A pending `ask_user_question` used to swallow every later message of its
+  conversation (the parked session queued them) and posted a `http://localhost:5173` link. Now a question is
+  posted in the chat (`questions.ts` renders it: numbered options, "reply with a number, an option or your own
+  answer"); a single-choice single question also gets one button per option (`o` action, data
+  `<row id>:<option index>`). The requester's next message in that conversation (even one that does not address
+  the bot) answers it: a number or an option label selects it, anything else is the "Other" text; a multi-select
+  accepts several separated by commas. Several questions are answered in order ("Noted (1 of 2)", progress kept
+  in memory) or all at once with one line per question. Staff may answer too; anybody else's message stays
+  context. The post is edited to `Answered: ...` (also `Expired:`). The answer reaches the model as the same
+  tool output as in the web app (`answerOutput`, in `attention.ts`); the questions are read from the session's
+  pending state, so no schema change. DMs behave the same.
+- *No dead conversations.* A wake message while the session waits on something no chat can resolve (a turn of
+  the web app parked on an approval, a question asked in another topic of a shared session, an answer path that
+  is missing) gets one explanation per pending item, and is stored as context; somebody who may not answer an
+  approval that waits is told once whom it waits for. Process state: `parkedUnannounced` is not persisted (after
+  a restart the old queue behaviour returns for that session until its next turn).
+- *Links.* `webLink` returns nothing when the web URL is loopback, so no chat message carries `localhost`.
+- *D2/D3 reminders.* A member creates a reminder only for themselves: `mention` must name them (no mention =
+  the whole chat = refused with the id to use); it is delivered with their own mention as
+  `Reminder for <name>: <text>`. Reminders for others or the group need an owner or admin. The text is stored
+  and delivered verbatim (tool description: pass the person's words); the gateway adds one `Reminder:` label
+  only when the text has none (`reminderText`).
+- *Web.* U1: number inputs bind numbers; `fieldText` and the helpers (`proactiveError`, `retentionError`,
+  `policyBody`, `formChanged`, `limitsBody`, `lastWindowDays`) accept `string | number | null`; the same pattern
+  in `providers/form.ts` (a bound number input was read as empty and dropped) is fixed. U2: quiet-hours
+  placeholders and a line show the values in force. U3: the row names the connection ("Acme bot · Admin in this
+  chat"). U4: the People list is ordered by name only (stable under role changes). U5: the wake hint follows the
+  selected value.
+
+**Not done / limits.** Multi-part question progress is in memory (a restart asks again from the first part).
 `alias_of` links, dropping the L1-L4 tables and an MTProto topic list are still open. A turn started by several
 people runs with the lowest role. The tool policy does not look at what a read tool reads outside the channels
 (a member can use any tool in their allow list; the default list is channel reads and reminders only).
