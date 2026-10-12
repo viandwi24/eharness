@@ -1732,7 +1732,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     for (const [i, rec] of claimed.entries()) {
       const last = i === claimed.length - 1
       const reason = last
-        ? userDeclinedText(input.text)
+        ? `${userDeclinedText(input.text)} Their pending request was cancelled by this new message: say so in one clear line (what was cancelled, and that they can ask again); do not say it is still waiting.`
         : 'The user declined this call by sending a new message instead (see the last result).'
       const outcome = await declineItem(
         rec,

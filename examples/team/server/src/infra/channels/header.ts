@@ -5,7 +5,7 @@
  * nothing a message says about itself can change them. Pure: no I/O.
  *
  *   <message-meta>
- *   from: Vian Dwi @viandwi24 · id 123456 · role owner (directory) · team member owner · chat admin (creator) "CEO"
+ *   from (the person you are answering; address only them): Vian Dwi @viandwi24 · id 123456 · role owner (directory) · team member owner · chat admin (creator) "CEO"
  *   in: "TEAMKU" supergroup -100123 · topic "produksi" 42 · message 987 · reply to 980 from Budi · 2026-10-12 12:57 Asia/Jakarta
  *   </message-meta>
  */
@@ -149,7 +149,7 @@ export function renderHeader(m: MessageMeta): string {
   if (m.forwardedFrom !== undefined) where.push(`forwarded from ${flat(m.forwardedFrom, 60)}`)
   return [
     '<message-meta>',
-    `from: ${from.join(' · ')}`,
+    `from (the person you are answering; address only them): ${from.join(' · ')}`,
     `in: ${where.join(' · ')}`,
     '</message-meta>',
   ].join('\n')

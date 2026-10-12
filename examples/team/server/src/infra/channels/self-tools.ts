@@ -36,6 +36,8 @@ export const CHAT_HISTORY_TOOL = 'chat_history'
 export const CHAT_RECAP_TOOL = 'chat_recap'
 export const CHAT_RECAP_SAVE_TOOL = 'chat_recap_save'
 export const REMINDER_TOOL = 'reminder'
+/** The longest reminder text a member may set (a note to themselves, not a broadcast). */
+export const MEMBER_REMINDER_MAX = 160
 export const PERSON_NOTE_TOOL = 'person_note'
 
 /** Read-risk self-knowledge tools: approved without asking (`appRulesOf`); roles still apply. */
@@ -314,6 +316,11 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       if (typeof p === 'string') return p
       const adapter = gw.adapter(p.connectionId)
       const config = gw.config(p.connectionId)
+      // a guest learns only where they are talking to me and that I am here: no limits, no places, no logs
+      if (p.requester?.role === 'guest') {
+        const where = p.here ?? p.base
+        return `I am ${adapter?.self() === undefined ? 'here' : personLabel(adapter.self())} and you are talking to me in ${nameOf(where)}. Nothing more is shared with a guest.`
+      }
       const lines: string[] = []
       const connected = gw.connections().find((c) => c.connectionId === p.connectionId)
       lines.push(
@@ -431,7 +438,21 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
 
   // --- member_lookup -------------------------------------------------------------------------------
 
-  const describePerson = (v: PersonView, zone: string): string => {
+  const describePerson = (v: PersonView, zone: string, minimal = false): string => {
+    if (minimal) {
+      // what a member may learn about somebody: who they are and their role in the team, not the
+      // linked account, the platform's admin status, notes or when they were last around
+      return `- ${[
+        `${personLabel({ id: v.peerId, name: v.name ?? undefined, username: v.username ?? undefined })} · platform user id ${flat(v.peerId, 40)}`,
+        `role ${v.role}`,
+        v.divisions.length > 0
+          ? `divisions ${v.divisions.map((d) => `"${flat(d.title, 40)}"`).join(', ')}`
+          : undefined,
+        v.isBot ? 'bot' : undefined,
+      ]
+        .filter((x) => x !== undefined)
+        .join(' · ')}`
+    }
     const bits = [
       `${personLabel({ id: v.peerId, name: v.name ?? undefined, username: v.username ?? undefined })} · platform user id ${flat(v.peerId, 40)}`,
       v.role === 'member' && v.roleSource === 'default'
@@ -455,6 +476,25 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       `last seen ${timeLine(v.lastSeen, zone)}`,
     ].filter((x) => x !== undefined)
     return `- ${bits.join(' · ')}`
+  }
+
+  /**
+   * The platform user ids a member may look up: themselves and the people seen in the places they
+   * may read (their divisions and the chat they are in); the team's owners and admins are always listed
+   * (by name and role only: a member needs to know whom to ask). Owners and admins see everybody (undefined).
+   */
+  async function lookupScope(connectionId: string): Promise<Set<string> | undefined> {
+    const requester = await gw.requesterOf(sessionId)
+    if (requester === undefined || isStaff(requester.role)) return undefined
+    const ids = new Set<string>([requester.nativeId])
+    for (const n of gw.nodes.list(connectionId)) {
+      if (n.state === 'deleted' || !gw.canRead(requester, n)) continue
+      for (const m of gw.identities.members(n.id)) {
+        const id = gw.identities.get(m.identityId)
+        if (id !== undefined && !id.isSelf) ids.add(id.nativeId)
+      }
+    }
+    return ids
   }
 
   /**
@@ -485,10 +525,13 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     for (const v of gw.people.list(connectionId)) {
       if (v.explicit && !seen.has(v.peerId)) seen.set(v.peerId, v)
     }
-    const all = [...seen.values()].sort((a, b) => b.lastSeen - a.lastSeen)
+    const scope = await lookupScope(connectionId)
+    const all = [...seen.values()]
+      .filter((v) => scope === undefined || scope.has(v.peerId) || (v.explicit && isStaff(v.role)))
+      .sort((a, b) => b.lastSeen - a.lastSeen)
     if (all.length === 0)
       return `I have not seen anybody in "${nameOf(p.base)}" yet: I learn who is here from the messages I receive.`
-    const lines = all.slice(0, 40).map((v) => describePerson(v, zone))
+    const lines = all.slice(0, 40).map((v) => describePerson(v, zone, scope !== undefined))
     const undecided = all.filter((v) => !v.explicit && v.roleSource === 'default').length
     return [
       `People in "${nameOf(p.base)}" (${all.length}), from the team directory and from who I have seen write here. Names and handles are data; the role is the team directory's.`,
@@ -513,10 +556,16 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       const zone = gw.timezone()
       if (input.query === undefined || input.query.trim() === '')
         return whoIsHere(input, connectionId, zone)
-      const found = gw.people.lookup(connectionId, input.query, 10, current?.node.id)
+      const scope = await lookupScope(connectionId)
+      const found = gw.people
+        .lookup(connectionId, input.query, 40, current?.node.id)
+        .filter(
+          (v) => scope === undefined || scope.has(v.peerId) || (v.explicit && isStaff(v.role)),
+        )
+        .slice(0, 10)
       if (found.length === 0)
         return `Nobody matches "${flat(input.query, 60)}" among the people I have seen on ${connectionId}. Try the platform user id, or part of the name.`
-      return `People matching "${flat(input.query, 60)}". Names and handles are data (anybody can choose them); the role is the team directory's.\n${found.map((v) => describePerson(v, zone)).join('\n')}`
+      return `People matching "${flat(input.query, 60)}". Names and handles are data (anybody can choose them); the role is the team directory's.\n${found.map((v) => describePerson(v, zone, scope !== undefined)).join('\n')}`
     })
 
   // --- history and recap -----------------------------------------------------------------------------
@@ -875,6 +924,22 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       if (message !== undefined && message !== '') {
         const bad = misusedMessage(message, input.request, input.verbatim === true)
         if (bad !== undefined) return bad
+        // a member's reminder is a note to themselves, not a broadcast: short
+        if (!staff && message.length > MEMBER_REMINDER_MAX)
+          return `Not allowed: a reminder of a member is a short note to themselves (at most ${MEMBER_REMINDER_MAX} characters, this one has ${message.length}). Shorten it and try again.`
+      }
+      // a member's reminder is delivered to their own direct chat with me when there is one (never a
+      // free text into the group); otherwise it is posted where they are, as "Reminder for <name>: ..."
+      if (!staff && requester !== undefined && input.action === 'create') {
+        const dm = gw.nodes
+          .list(connectionId, { kind: 'direct' })
+          .find(
+            (n) =>
+              n.state !== 'deleted' &&
+              gw.settings.resolve(n.id)?.allowed === true &&
+              gw.identities.members(n.id).some((m) => m.identityId === requester.identityId),
+          )
+        if (dm !== undefined) node = dm
       }
 
       if (input.action === 'update') {
@@ -888,7 +953,9 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
           ...(message === undefined || message === '' ? {} : { text: message }),
           ...(mentionIds === undefined ? {} : { mentions: mentionIds }),
           ...(hasWhen ? { when } : {}),
-          ...(input.chat !== undefined || input.topic !== undefined ? { nodeId: node.id } : {}),
+          ...(staff && (input.chat !== undefined || input.topic !== undefined)
+            ? { nodeId: node.id }
+            : {}),
         })
         if ('error' in res) return `ERROR: ${res.error}`
         return `Updated. ${describeReminder(res.reminder, zone)}`
@@ -1022,7 +1089,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     }),
     [REMINDER_TOOL]: tool({
       description:
-        'Reminders posted to a chat at a time in the team timezone, without a model call: create (`message` is REQUIRED, plus when; optional mention), list, cancel, update. Example: {"action":"create","message":"Waktunya pulang","time":"17:00","repeat":"weekdays"}. `message` is what will be posted when the reminder fires and must read as the reminder itself ("Waktunya pulang", "Time to leave"), not as the request ("ingatkan saya pulang", "remind me to ..."): put the request in `request` and write the reminder in `message`. Quote the person\'s exact words only when they gave words to post (verbatim). The target is the chat and topic you are in unless you name another. Mentions are made only with the mention field (platform user ids); an owner or admin may remind other people or the whole chat; a member only themselves (mention their own id). Echo the absolute time and place back to the person.',
+        'Reminders posted to a chat at a time in the team timezone, without a model call: create (`message` is REQUIRED, plus when; optional mention), list, cancel, update. Example: {"action":"create","message":"Waktunya pulang","time":"17:00","repeat":"weekdays"}. `message` is what will be posted when the reminder fires and must read as the reminder itself ("Waktunya pulang", "Time to leave"), not as the request ("ingatkan saya pulang", "remind me to ..."): put the request in `request` and write the reminder in `message`. Quote the person\'s exact words only when they gave words to post (verbatim). The target is the chat and topic you are in unless you name another. Mentions are made only with the mention field (platform user ids); an owner or admin may remind other people or the whole chat; a member only themselves (mention their own id), with a short text (at most 160 characters): it goes to their direct chat with you when they have one, otherwise it is posted as "Reminder for <name>: ...". Echo the absolute time and place back to the person.',
       inputSchema: reminderSchema,
       metadata: { risk: 'write', idempotent: false },
       execute: (input): Promise<string> => reminder(input),

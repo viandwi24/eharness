@@ -29,7 +29,7 @@ import {
 import { MEMORY_READ_TOOLS, memoryWriteRefusal, SMALL_TALK_MEMORY_REFUSAL } from './medium.ts'
 import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
-import { decideTool } from './roles.ts'
+import { decideTool, isStaff } from './roles.ts'
 import {
   REMINDER_TOOL,
   SELF_READ_TOOLS,
@@ -223,6 +223,19 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       const describe = async (input: z.infer<typeof describeSchema>): Promise<string> => {
         const lines: string[] = []
         const current = gw.conversationOf(sessionId)
+        // a member or a guest sees only the conversation they are in: never the other chats, their
+        // topics or the linked people (owners and admins keep the full view)
+        const asking = await gw.requesterOf(sessionId).catch(() => undefined)
+        if (asking !== undefined && !isStaff(asking.role)) {
+          if (current === undefined)
+            return 'Not allowed: a member can only ask about the conversation they are in. Say so plainly.'
+          const here = current.node
+          const scope = gw.settings.resolve(here.id)
+          return [
+            `You are in "${here.title ?? here.nativeId}" (${here.kind}${here.traits.postable ? '' : ', holds topics only'}) of ${current.connectionId}, ${scope?.allowed === true ? 'allowed' : 'not allowed'} for me.`,
+            'Other chats, topics and people are not listed to a member: if asked about them, say you can only talk about this conversation.',
+          ].join('\n')
+        }
         for (const c of gw.connectionsOf(agentId)) {
           if (input.connection !== undefined && c.connectionId !== input.connection) continue
           const adapter = gw.adapter(c.connectionId)
@@ -326,6 +339,9 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
 
       const read = async (input: z.infer<typeof readSchema>): Promise<string> => {
         const t = resolve(input)
+        const asking = await gw.requesterOf(sessionId).catch(() => undefined)
+        if (asking !== undefined && !isStaff(asking.role) && !gw.canRead(asking, t.node))
+          return `Not allowed: ${asking.name ?? 'the person who asked'} (role ${asking.role}) may read only the chats of their own divisions, and "${t.node.title ?? t.node.nativeId}" is not one of them. Say so plainly.`
         const limit = input.limit ?? 20
         if (input.action === 'members') {
           if (t.adapter.listMembers === undefined)
