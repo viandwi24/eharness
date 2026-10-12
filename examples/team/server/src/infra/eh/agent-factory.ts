@@ -211,6 +211,8 @@ export interface AgentFactoryDeps {
    * reply delivery of channel sessions. Late-bound; absent = no channel tools.
    */
   channels?: () => ChannelGateway | undefined
+  /** May this assigned task session post to a chat like a chat turn does (see `ChannelsPluginOptions.taskMayPost`)? */
+  taskMayPost?: (sessionId: string) => boolean
   /**
    * The persona of every agent (docs/plans/P42-team-persona.md): the structured identity, the voice
    * and the operating rules are the persona and operating-rules layers of the prompt, read from the
@@ -595,7 +597,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
    * once they are idle (`closeSuperseded`).
    */
   const superseded = new Map<string, HarnessAgent[]>()
-  const liveSessions = new Map<HarnessAgent, Map<string, HarnessSession>>()
+  /**
+   * Sessions opened per build, weakly: the library evicts idle sessions on its own, and this map
+   * must not keep every session a long-lived server ever opened alive (dead refs are swept).
+   */
+  const liveSessions = new Map<HarnessAgent, Map<string, WeakRef<HarnessSession>>>()
   const retired: HarnessAgent[] = []
 
   const leadAgent = (): HarnessAgent => {
@@ -973,7 +979,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...(deps.heartbeat === undefined ? [] : [heartbeat({ intake: deps.heartbeat })]),
       ...(deps.channels === undefined
         ? []
-        : [channels({ gateway: deps.channels, agentOf: (slug) => deps.agentBySlug?.(slug) })]),
+        : [
+            channels({
+              gateway: deps.channels,
+              agentOf: (slug) => deps.agentBySlug?.(slug),
+              ...(deps.taskMayPost === undefined ? {} : { taskMayPost: deps.taskMayPost }),
+            }),
+          ]),
       sessionPermissions({
         createEngine,
         gate: gateOf,
@@ -1216,9 +1228,18 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     for (const old of olds) {
       const sessions = liveSessions.get(old)
       if (sessions === undefined) continue
-      for (const [id, session] of [...sessions]) {
+      for (const [id, ref] of [...sessions]) {
+        const session = ref.deref()
+        if (session === undefined) {
+          sessions.delete(id)
+          continue
+        }
         const done = (async (): Promise<void> => {
           try {
+            await session.idle()
+            if ((await old.peek(id).pending()) !== null) return
+            // a message may have been queued while the checks ran: wait for the session to be
+            // idle once more right before the close, so a queued message is not cut off
             await session.idle()
             if ((await old.peek(id).pending()) !== null) return
             await old.closeSession(id)
@@ -1226,12 +1247,30 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             // already closed or evicted: nothing left to do
           } finally {
             sessions.delete(id)
+            pruneSuperseded(agentId)
           }
         })()
         // an idle session is closed before the caller opens the new one; a busy one finishes first
         await Promise.race([done, new Promise<void>((resolve) => setTimeout(resolve, 100))])
       }
     }
+    pruneSuperseded(agentId)
+  }
+
+  /** Forget replaced builds that hold no live session any more (the maps must not only grow). */
+  function pruneSuperseded(agentId: string): void {
+    const olds = superseded.get(agentId)
+    if (olds === undefined) return
+    const keep = olds.filter((old) => {
+      const sessions = liveSessions.get(old)
+      if (sessions === undefined) return false
+      for (const [id, ref] of [...sessions]) if (ref.deref() === undefined) sessions.delete(id)
+      if (sessions.size > 0) return true
+      liveSessions.delete(old)
+      return false
+    })
+    if (keep.length === 0) superseded.delete(agentId)
+    else superseded.set(agentId, keep)
   }
 
   /**
@@ -1264,6 +1303,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           cache.delete(previous)
           if (personaPart(previous) !== personaPart(key)) {
             superseded.set(def.id, [...(superseded.get(def.id) ?? []), old])
+          } else {
+            // replaced for another reason (settings, models): its sessions need no persona close
+            liveSessions.delete(old)
           }
         }
       }
@@ -1362,8 +1404,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         runtime: { workspaceId, agentId: def.id },
       }) as HarnessSession
       if (deps.personas !== undefined) {
-        const known = liveSessions.get(agent) ?? new Map<string, HarnessSession>()
-        known.set(sessionId, session)
+        const known = liveSessions.get(agent) ?? new Map<string, WeakRef<HarnessSession>>()
+        known.set(sessionId, new WeakRef(session))
+        // sweep the sessions the library already dropped
+        if (known.size > 64)
+          for (const [id, ref] of [...known]) if (ref.deref() === undefined) known.delete(id)
         liveSessions.set(agent, known)
       }
       return session

@@ -48,6 +48,10 @@ export const EscalationPayloadSchema = z
     options: z
       .array(z.string())
       .openapi({ description: 'Answers to pick from; empty: approve or reject.' }),
+    standDown: z.array(z.string()).optional().openapi({
+      description:
+        'The options the agent flagged as "leave it for now" (a subset of `options`); a pick of one is remembered by a standing program.',
+    }),
     source: z.enum(['agent', 'report']).openapi({
       description:
         '`agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`.',

@@ -271,6 +271,8 @@ export interface GatewayDeps {
       validate(spec: RoutineSpec): void
     }
     ids?: () => string
+    /** Most active repeating reminders one person may have (default 10; 0 = no limit). */
+    maxRepeatingPerPerson?: number
   }
   /** Where `chat_recap_save` writes its note (the library). Absent = the tool cannot save. */
   library?: { write(path: string, text: string): Promise<void> }
@@ -549,6 +551,11 @@ export interface ProactiveApi {
     text: string
     mentions: string[]
   }): Promise<ProactiveResult>
+  /**
+   * Would the policy let an unasked post that cannot wait (a file) go out right now? Returns the
+   * reason when not (not allowed here, quiet hours, inside the digest gap), undefined when it may.
+   */
+  check(input: { connectionId: string; nodeId: string }): Promise<string | undefined>
   /** Send what is due (outside quiet hours, after the gap): one message per node. Returns the nodes served. */
   flush(at?: number): Promise<number>
 }
@@ -635,6 +642,12 @@ export interface ChannelGateway {
    * when several people triggered it); undefined for a turn no chat message started.
    */
   requesterOf(sessionId: string): Promise<Requester | undefined>
+  /**
+   * True when a chat message woke the turn but its sender could not be resolved (row purged,
+   * identity unset): such a turn is treated as a guest, never as unrestricted. Turns no chat
+   * message started (web, program) are unrestricted by design and are not flagged.
+   */
+  unresolvedChatTurn(sessionId: string): boolean
   /** The room a node belongs to: itself, or the nearest ancestor that is not a thread. */
   roomOf(node: NodeRow): NodeRow
   /** May this requester read what was said in the node? Staff: any node; a member: their own node and their divisions; a guest: none. */
@@ -1445,6 +1458,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   const requesters = new Map<string, Requester>()
+  /** Sessions whose current turn was started by a chat message nobody could resolve (treated as guest). */
+  const unresolvedTurns = new Set<string>()
 
   async function requesterFromKeys(
     row: NodeSessionRow,
@@ -1481,14 +1496,22 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       .filter((k) => k.startsWith(EVENT_PREFIX))
       .map((k) => k.slice(EVENT_PREFIX.length))
     let r: Requester | undefined
-    if (evKeys.length > 0) r = await requesterFromKeys(row, evKeys)
-    else {
+    let chatTriggered = false
+    if (evKeys.length > 0) {
+      chatTriggered = true
+      r = await requesterFromKeys(row, evKeys)
+    } else {
       // a continuation of a parked turn (an approval answered): still the person who asked
       const parked = approvals.activeTrigger(sessionId)
-      if (parked?.triggerId != null) r = await requesterFromKeys(row, [parked.triggerId])
+      if (parked?.triggerId != null) {
+        chatTriggered = true
+        r = await requesterFromKeys(row, [parked.triggerId])
+      }
     }
     if (r === undefined) requesters.delete(sessionId)
     else requesters.set(sessionId, r)
+    if (chatTriggered && r === undefined) unresolvedTurns.add(sessionId)
+    else unresolvedTurns.delete(sessionId)
   }
 
   async function requesterOf(sessionId: string): Promise<Requester | undefined> {
@@ -1677,6 +1700,18 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         r.schedule.next({ kind: 'cron', expr, tz: zone }, after),
       )
       if ('error' in when) return when
+      // a person cannot pile up unlimited daily reminders (a one-time reminder is not counted)
+      const cap = r.maxRepeatingPerPerson ?? 10
+      const owner = input.createdBy?.identityId
+      if (cap > 0 && owner !== undefined && when.spec.kind !== 'at') {
+        const mine = reminderStore
+          .list(input.connectionId, { status: 'active', createdBy: owner })
+          .filter((x) => x.schedule.kind !== 'at').length
+        if (mine >= cap)
+          return {
+            error: `You already have ${mine} repeating reminders (the limit is ${cap}). Cancel one first, or make this one a single reminder.`,
+          }
+      }
       const id = reminderId()
       let routine: Routine
       try {
@@ -1725,6 +1760,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     cancel(id) {
       const rem = reminderStore.get(id)
       if (rem === undefined) return undefined
+      // a reminder that already fired (done) or was cancelled keeps its status: cancelling it again changes nothing
+      if (rem.status !== 'active') return rem
       if (rem.routineId !== null) deps.reminders?.routines.delete(rem.routineId)
       reminderChanged(rem.agentId, id, 'deleted')
       return reminderStore.update(id, { status: 'cancelled', routineId: null })
@@ -1916,6 +1953,22 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   const proactiveApi: ProactiveApi = {
+    async check(input) {
+      const node = nodes.get(input.nodeId)
+      const scope = node === undefined ? undefined : scopeOf(node)
+      if (node === undefined || scope === undefined) return 'That chat does not exist.'
+      const policy = scope.proactive
+      const label = labelOf(node, scope)
+      if (!policy.allowed)
+        return `Proactive posts are not allowed in "${label}": nobody asked for this file. A team admin can allow them for this chat on the Channels page (Proactive posts).`
+      const at = now()
+      if (inQuietHours(at, policy.quietHours, zoneNow()))
+        return `Quiet hours in "${label}": a file cannot be held, post it as text or try later.`
+      const last = proactiveStore.lastSentAt(node.id)
+      if (policy.digest && last !== undefined && at - last < policy.digestMinutes * 60_000)
+        return `"${label}" takes at most one proactive message every ${policy.digestMinutes} minutes: a file cannot be held for the digest, try later.`
+      return undefined
+    },
     async submit(input) {
       const node = nodes.get(input.nodeId)
       const scope = node === undefined ? undefined : scopeOf(node)
@@ -4170,6 +4223,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const adapter = adapters.get(row.connectionId)
     const trigger = triggerKey === undefined ? undefined : await triggerMessage(row, triggerKey)
     if (end.stop !== 'tool-pending') requesters.delete(end.sessionId)
+    if (end.stop !== 'tool-pending') unresolvedTurns.delete(end.sessionId)
     if (end.stop !== 'tool-pending') parkedUnannounced.delete(end.sessionId)
     if (end.stop === 'tool-pending') {
       if (
@@ -4631,6 +4685,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     proactive: proactiveApi,
     timezone: zoneNow,
     requesterOf,
+    unresolvedChatTurn: (sessionId) => unresolvedTurns.has(sessionId),
     roomOf,
     canRead,
     resolveMentions,

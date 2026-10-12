@@ -34,6 +34,7 @@ import type { ApprovalRisk, ApprovalView, QuestionView } from '../../domain/appr
 import { notFound } from '../../domain/errors.ts'
 import { deriveTaskStatus, type Task } from '../../domain/tasks.ts'
 import { isThreadSession, legacyThreadSessionId, parseChatSession } from '../../domain/threads.ts'
+import { parseAssignedSession } from '../../domain/work-queue.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
 
@@ -360,9 +361,15 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return out
   }
 
+  /** True until the first drift pass of this process (the boot pass). */
+  let bootPass = true
+
   /** Compare every unfinished task row with its session and fix what a crash left behind. */
   async function reconcileDrift(): Promise<ReconcileReport['drift']> {
     const out: ReconcileReport['drift'] = []
+    // the first pass of a process is the boot: nothing of this process can be starting a task yet
+    const grace = bootPass ? 0 : STALE_TURN_MS
+    bootPass = false
     for (const task of deps.tasks.active()) {
       try {
         const session = factory.peek(task.sessionId)
@@ -371,6 +378,37 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         const turn = stats.activeTurn
         const fresh = turn !== null && t - turn.heartbeatAt < STALE_TURN_MS
         const history = await session.messages({ limit: 10 })
+        // claimed `running` but the process died before the session got its first message: it
+        // would hold the agent's slot forever, so it goes back to the queue (it starts again)
+        if (
+          task.status === 'running' &&
+          parseAssignedSession(task.sessionId) !== undefined &&
+          turn === null &&
+          history.length === 0 &&
+          (stats.pending?.approvals.length ?? 0) === 0 &&
+          t - task.startedAt >= grace
+        ) {
+          const back = deps.tasks.requeueUnstarted(task.id, t)
+          if (back !== undefined) {
+            deps.events.append({
+              type: 'task-changed',
+              agentId: task.agentId,
+              sessionId: back.sessionId,
+              payload: {
+                taskId: task.id,
+                status: back.status,
+                pendingKind: null,
+                title: back.title,
+                parentSessionId: back.parentSessionId,
+                reason: 'reconcile',
+                change: 'requeued (the server stopped before it started)',
+              },
+              at: t,
+            })
+            out.push({ taskId: task.id, sessionId: task.sessionId, from: 'running', to: 'queued' })
+            continue
+          }
+        }
         const last = history.findLast((m) => m.role === 'assistant')
         const lastStop = last?.metadata?.eharness?.stop ?? null
         const interruptedNotice = history.some(

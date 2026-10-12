@@ -12144,6 +12144,8 @@ export interface components {
              * @enum {string|null}
              */
             queue?: "hold" | "worker" | "slot" | "starting" | null;
+            /** @description Queued tasks only: when a `slot` wait is held by a task that waits for the client, a sentence naming it ("waiting: <task> needs your approval first"). null otherwise. */
+            queueNote?: string | null;
             /**
              * @description Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`.
              * @enum {string}
@@ -13930,6 +13932,8 @@ export interface components {
             question: string;
             /** @description Answers to pick from; empty: approve or reject. */
             options: string[];
+            /** @description The options the agent flagged as "leave it for now" (a subset of `options`); a pick of one is remembered by a standing program. */
+            standDown?: string[];
             /**
              * @description `agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`.
              * @enum {string}

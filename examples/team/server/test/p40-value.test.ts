@@ -1,6 +1,11 @@
 /** P40 value pass: authority validation, remembered decisions, task titles. Pure, no server. */
 import { describe, expect, test } from 'bun:test'
-import { isStandDownChoice, memoryPromptSection, subjectOf } from '../src/domain/decision-memory.ts'
+import {
+  hasRecordId,
+  isStandDownChoice,
+  memoryPromptSection,
+  subjectOf,
+} from '../src/domain/decision-memory.ts'
 import {
   type AuthoritySources,
   EMPTY_AUTHORITY,
@@ -84,11 +89,35 @@ describe('inspectAuthority', () => {
 })
 
 describe('remembered decisions', () => {
-  test('stand-down answers are recognised', () => {
-    for (const c of ['Keep waiting', 'Skip this', 'Not now', 'Ignore it'])
+  test('stand-down answers: the flag of the agent, or a whole label on the allowlist', () => {
+    for (const c of [
+      'Keep waiting',
+      'Skip this',
+      'Not now',
+      'Ignore it',
+      'Later',
+      'Tunggu',
+      'Lewati',
+      'skip for now',
+    ])
       expect(isStandDownChoice(c)).toBe(true)
-    for (const c of ['Escalate to the CEO', 'Reassign to Budi'])
+    // an option that does something is never a stand-down, whatever words it contains
+    for (const c of [
+      'Escalate to the CEO',
+      'Reassign to Budi',
+      'Hold the shipment and refund',
+      'Approve now, do not wait',
+      'Skip nothing',
+      'Wait for the vendor and call them',
+    ])
       expect(isStandDownChoice(c)).toBe(false)
+    // the agent flags the option explicitly (preferred): any label then counts
+    expect(isStandDownChoice('Park it until Monday', ['Park it until Monday'])).toBe(true)
+    expect(isStandDownChoice('Hold the shipment and refund', ['Park it until Monday'])).toBe(false)
+  })
+  test('a record id is what makes a subject safe to remember without a flag', () => {
+    expect(hasRecordId('T-05 is blocked')).toBe(true)
+    expect(hasRecordId('Release gate is stuck')).toBe(false)
   })
   test('the subject is the record id of the title, else the title', () => {
     expect(subjectOf('T-05 is blocked and overdue')).toBe('T-05')

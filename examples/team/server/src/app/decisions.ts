@@ -10,7 +10,12 @@
  */
 
 import { isDmSession } from '../domain/chat.ts'
-import { isStandDownChoice, MEMORY_TTL_MS, subjectOf } from '../domain/decision-memory.ts'
+import {
+  hasRecordId,
+  isStandDownChoice,
+  MEMORY_TTL_MS,
+  subjectOf,
+} from '../domain/decision-memory.ts'
 import {
   amendmentBody,
   authorityLines,
@@ -23,6 +28,7 @@ import {
   type DecisionKind,
   type DecisionOutcome,
   type DecisionStatus,
+  type EscalationPayload,
   isEmptyAuthority,
   mergeAuthority,
   normalizeAmendmentAuthority,
@@ -231,6 +237,24 @@ export interface EscalateInput {
   question: string
   details?: string | undefined
   options?: string[] | undefined
+  /** Labels of `options` that mean "leave it for now" (keep waiting, skip). */
+  standDown?: string[] | undefined
+}
+
+function standDownPayload(
+  question: string,
+  options: string[],
+  standDown: readonly string[] | undefined,
+): EscalationPayload {
+  const flagged = [...new Set((standDown ?? []).map((l) => l.trim()))].filter((l) =>
+    options.includes(l),
+  )
+  return {
+    question,
+    options,
+    ...(flagged.length > 0 ? { standDown: flagged } : {}),
+    source: 'agent',
+  }
 }
 
 /** `escalate`: the decision of a parked session. */
@@ -246,7 +270,7 @@ export function createEscalation(deps: Deps, input: EscalateInput): Decision {
     agentId: input.agentId,
     sessionId: input.sessionId,
     programId: parseProgramSession(input.sessionId)?.programId ?? null,
-    payload: { question, options: cleanOptions(input.options), source: 'agent' },
+    payload: standDownPayload(question, cleanOptions(input.options), input.standDown),
     waitId: input.waitId,
     createdAt: deps.clock.now(),
   })
@@ -659,7 +683,11 @@ export async function decisionGrant(deps: Deps, d: Decision): Promise<EffectiveG
  */
 function rememberStandDown(deps: Deps, d: Decision, choice: string, note: string): void {
   if (d.kind !== 'escalation' || d.programId === null || d.payload.options.length === 0) return
-  if (!isStandDownChoice(choice) || deps.programs.get(d.programId) === undefined) return
+  if (deps.programs.get(d.programId) === undefined) return
+  const flagged = d.payload.standDown ?? []
+  if (!isStandDownChoice(choice, flagged)) return
+  // the allowlist is only a fallback and only for a record: a title is too loose a subject to silence a later escalation
+  if (!flagged.includes(choice) && !hasRecordId(`${d.title} ${d.payload.question}`)) return
   const now = deps.clock.now()
   try {
     deps.programMemory.remember({

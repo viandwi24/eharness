@@ -361,7 +361,8 @@ describe('send back restarts the work', () => {
     expect(back.status).toBe(200)
     const body = (await back.json()) as TaskView & { hint: string }
     expect(body.round).toBe(2)
-    expect(body.hint).toContain('revision')
+    // it started at once: the hint says the agent works on it again (not "queued")
+    expect(body.hint).toMatch(/working on it again with your feedback|starts the revision/)
     await until('round 2 ends', async () => {
       const x = await getTask(app, t.id)
       return x.round === 2 && settled(x)
@@ -404,6 +405,21 @@ describe('worker programs keep owning their agent queue', () => {
 })
 
 describe('task grants', () => {
+  test('negative control: the same write without the grant asks first and writes nothing', async () => {
+    const { app, server } = fresh({
+      writer: [
+        call('write_file', { path: '/library/out/note.md', content: 'hello' }),
+        report('wrote it'),
+      ],
+    })
+    const t = await assign(app, { agentId: 'writer', title: 'Write the note' })
+    await until('it parks on the approval', async () => {
+      const x = await getTask(app, t.id)
+      return x.status === 'needs_action' && x.pendingKind === 'approval'
+    })
+    expect(await server.deps.library.read('/library/out/note.md')).toBeUndefined()
+  })
+
   test('a write path granted with the task needs no approval', async () => {
     const { app, server } = fresh({
       writer: [
@@ -427,5 +443,86 @@ describe('task grants', () => {
       json('POST', { agentId: 'writer', title: 'x', grants: { write: ['library'] } }),
     )
     expect(bad.status).toBe(400)
+  })
+})
+
+describe('hardening (P40 review pass)', () => {
+  const enqueue = (server: Server, agentSlug: string, title: string, hold = false) => {
+    const agent = server.deps.agents.getBySlug(agentSlug)
+    if (agent === undefined) throw new Error('seed')
+    return server.deps.tasks.enqueue({
+      agentId: agent.id,
+      title,
+      brief: null,
+      inputs: [],
+      priority: 'normal',
+      dueAt: null,
+      createdBy: 'client',
+      hold,
+      now: Date.now(),
+    })
+  }
+
+  test('a task claimed running whose process died before its first message goes back to the queue', async () => {
+    const { app, server } = fresh({ writer: [report('after the restart')] })
+    const row = enqueue(server, 'writer', 'Stranded')
+    const claimed = server.deps.tasks.claimAssigned(row.agentId, 1, Date.now() - 600_000)
+    expect(claimed?.status).toBe('running')
+    // the session never got a message: the repair pass (the boot pass has no grace) puts it back
+    const report_ = await server.team.reconcile()
+    expect(report_.drift.some((d) => d.taskId === row.id && d.to === 'queued')).toBe(true)
+    const back = await getTask(app, row.id)
+    expect(back.status).toBe('queued')
+    expect(back.sessionId).toBe(`queued:${row.id}`)
+    // it starts again and finishes: the slot was not lost
+    expect(dispatchQueue(server.deps)).toBe(1)
+    await until('it ends', async () => settled(await getTask(app, row.id)))
+    expect((await getTask(app, row.id)).status).toBe('done')
+  })
+
+  test('a task parked on an approval keeps its agent slot (and says so) but not a place under the team cap', async () => {
+    const { app, server } = fresh({
+      writer: [call('write_file', { path: '/library/out/a.md', content: 'x' }), report('done')],
+      researcher: [report('researched')],
+    })
+    server.deps.settings.patch({ spawnCap: 1 }, Date.now())
+    const parked = await assign(app, { agentId: 'writer', title: 'Needs approval' })
+    await until('it parks', async () => (await getTask(app, parked.id)).status === 'needs_action')
+    const same = await assign(app, { agentId: 'writer', title: 'Behind the approval' })
+    const behind = await getTask(app, same.id)
+    expect(behind).toMatchObject({ status: 'queued', queue: 'slot' })
+    expect(JSON.stringify(behind)).toContain('Needs approval')
+    expect(JSON.stringify(behind)).toContain('needs your approval')
+    // another agent is not blocked by the parked task (cap 1): it starts and ends
+    const other = await assign(app, { agentId: 'researcher', title: 'Free agent' })
+    await until('the other agent works', async () => settled(await getTask(app, other.id)))
+  })
+
+  test('send back clears a hold left from a hand start and resolves the "ready for review" notice', async () => {
+    const { app, server } = fresh({ writer: [report('v1'), report('v2')] })
+    const t = await assign(app, { agentId: 'writer', title: 'Held first', hold: true })
+    expect((await post(app, `/tasks/${t.id}/start`)).status).toBe(200)
+    await until('round 1 ends', async () => settled(await getTask(app, t.id)))
+    const n = server.deps.notifications.insert({
+      id: 'n-review',
+      kind: 'alert',
+      key: `review:${t.id}:1`,
+      title: 'Ready for review',
+      body: 'x',
+      link: null,
+      agentId: t.agentId,
+      createdAt: Date.now(),
+    })
+    expect(n).toBeDefined()
+    const back = await post(app, `/tasks/${t.id}/send-back`, { note: 'Shorter.' })
+    expect(back.status).toBe(200)
+    const body = (await back.json()) as TaskView & { hint: string }
+    expect(body.hold).toBe(false)
+    expect(body.hint).not.toContain('hold')
+    expect(server.deps.notifications.get('n-review')?.dismissedAt).not.toBeNull()
+    await until('round 2 ends', async () => {
+      const x = await getTask(app, t.id)
+      return x.round === 2 && settled(x)
+    })
   })
 })

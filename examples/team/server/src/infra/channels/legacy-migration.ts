@@ -23,16 +23,19 @@
  * (`<chat>` and `<chat>/<topic>`), which is also what the Telegram adapters compose.
  */
 import type { Database } from 'bun:sqlite'
-import { uuidv7 } from 'eharness'
 import type { SecretVault } from 'eharness/providers'
 import { sqliteIdentityStore } from './identities.ts'
 import { contentOf } from './messages.ts'
-import { type NodeKind, type NodeTraits, traitsOf } from './model.ts'
+import type { NodeKind, NodeTraits } from './model.ts'
 import { sqliteNodeStore } from './nodes.ts'
 import { ScopePolicySchema } from './policy.ts'
 
 const MARKER_STRUCTURE = 'legacy_structure_migrated'
 const MARKER_MESSAGES = 'legacy_messages_migrated'
+/** Boots that tried the messages again after some bodies could not be opened. */
+const MARKER_ATTEMPTS = 'legacy_messages_attempts'
+/** After this many boots with unopenable bodies the migration stops trying and keeps the old table. */
+export const MAX_MESSAGE_ATTEMPTS = 3
 
 export interface LegacyReport {
   skipped: boolean
@@ -42,6 +45,8 @@ export interface LegacyReport {
   identities: number
   events: number
   messages: number
+  /** Old messages whose body the current key cannot open (they stay in the old table). */
+  unopenable?: number
 }
 
 const empty = (skipped: boolean): LegacyReport => ({
@@ -760,9 +765,11 @@ interface LegacyMessage {
 export async function migrateLegacyMessages(
   sqlite: Database,
   vault: SecretVault,
-  options: { batch?: number; now?: () => number } = {},
+  options: { batch?: number; now?: () => number; warn?: (message: string) => void } = {},
 ): Promise<LegacyReport> {
   const now = options.now ?? Date.now
+  const warn = options.warn ?? ((message: string): void => console.warn(`team: ${message}`))
+  let unopenable = 0
   const report = empty(false)
   const total =
     sqlite.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM channel_messages').get()?.n ?? 0
@@ -810,7 +817,8 @@ export async function migrateLegacyMessages(
       try {
         body = JSON.parse(await vault.open(r.body, `channel-message:${r.id}`)) as LegacyBody
       } catch {
-        // a body the current key cannot open stays in the old table; the count below shows it
+        // a body the current key cannot open stays in the old table; it is counted and reported below
+        unopenable++
         continue
       }
       const nodeId = fallbackNode(r.connection_id, r.conversation_id)
@@ -877,11 +885,29 @@ export async function migrateLegacyMessages(
         'SELECT COUNT(*) AS n FROM ch_messages WHERE id IN (SELECT id FROM channel_messages)',
       )
       .get()?.n ?? 0
-  // only a complete copy is marked: a body that could not be opened is tried again next boot
+  // only a complete copy is marked as done
   if (have === total) {
     setMarker(sqlite, MARKER_MESSAGES, JSON.stringify({ at: now(), legacy: total, migrated: have }))
+    return report
   }
-  void uuidv7
-  void traitsOf
+  // bodies that could not be opened: said once (not at every boot), retried a few boots, then given up
+  report.unopenable = unopenable
+  const tried = Number(marker(sqlite, MARKER_ATTEMPTS) ?? '0') + 1
+  setMarker(sqlite, MARKER_ATTEMPTS, String(tried))
+  if (tried === 1) {
+    warn(
+      `${unopenable} old channel message(s) could not be opened with the current key and were not migrated (${have} of ${total} done); they stay in the old table and are retried at the next ${MAX_MESSAGE_ATTEMPTS - 1} boot(s).`,
+    )
+  }
+  if (tried >= MAX_MESSAGE_ATTEMPTS) {
+    setMarker(
+      sqlite,
+      MARKER_MESSAGES,
+      JSON.stringify({ at: now(), legacy: total, migrated: have, gaveUp: true, unopenable }),
+    )
+    warn(
+      `giving up on ${unopenable} old channel message(s) that cannot be opened; the rest were migrated.`,
+    )
+  }
   return report
 }

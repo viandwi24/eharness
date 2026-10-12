@@ -70,6 +70,7 @@ import { repairProgramAuthorities } from './app/programs.ts'
 import { seedAgents } from './app/seed.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
+  CLIENT,
   cancelQueuedTask,
   completeTask,
   createTask,
@@ -254,6 +255,8 @@ export interface ServerConfig {
     outbound?: { now?: () => number; sleep?: (ms: number) => Promise<void> }
     /** Purge of the channel log past its retention: every `purgeEveryMs` (default 1 h; 0 = boot only). */
     purgeEveryMs?: number
+    /** Most active repeating reminders one person may have (default 10; env TEAM_MAX_REPEATING_REMINDERS; 0 = no limit). */
+    maxRepeatingReminders?: number
     /** Retry timing of the outbox (tests shorten it). */
     delivery?: { retryBaseMs?: number; retryMaxMs?: number; maxAttempts?: number }
     /** Period of the pass that expires approvals and sends held proactive posts (default 60 s; 0 = off). */
@@ -552,6 +555,15 @@ export function compose(config: ServerConfig): Server {
     taskGrants: (sessionId) => {
       const parsed = parseAssignedSession(sessionId)
       return parsed === undefined ? undefined : (tasks.get(parsed.taskId)?.grants ?? undefined)
+    },
+    // an assigned task posts like a chat when the client created it or granted channel_send
+    taskMayPost: (sessionId) => {
+      const parsed = parseAssignedSession(sessionId)
+      const task = parsed === undefined ? undefined : tasks.get(parsed.taskId)
+      return (
+        task !== undefined &&
+        (task.createdBy === CLIENT || (task.grants?.tools ?? []).includes('channel_send'))
+      )
     },
     bigData: bigDataConfig,
     decisions: () => decisionIntake,
@@ -857,7 +869,17 @@ export function compose(config: ServerConfig): Server {
       teamName: (config.env ?? process.env).TEAM_NAME?.trim() || undefined,
     }),
     // reminders created from a chat are `sys:reminder:<id>` routines
-    reminders: { routines: routineStore, schedule, ids: () => uuidv7() },
+    reminders: {
+      routines: routineStore,
+      schedule,
+      ids: () => uuidv7(),
+      maxRepeatingPerPerson:
+        config.channels?.maxRepeatingReminders ??
+        (Number.isInteger(Number((config.env ?? process.env).TEAM_MAX_REPEATING_REMINDERS)) &&
+        (config.env ?? process.env).TEAM_MAX_REPEATING_REMINDERS?.trim() !== ''
+          ? Number((config.env ?? process.env).TEAM_MAX_REPEATING_REMINDERS)
+          : 10),
+    },
     library: {
       write: async (path, text) => {
         await channelFiles.write(path, text)
@@ -1074,7 +1096,8 @@ export function compose(config: ServerConfig): Server {
   const app = createApp({ deps, token: config.token, harness, allowedOrigins })
   routines.start()
   // phantom connector names of stored programs (a tool prefix instead of the id) are repaired once
-  void repairProgramAuthorities(deps)
+  // (after the connectors are prepared: the repair itself never opens a connection)
+  void connectorsReady.then(() => repairProgramAuthorities(deps)).catch(() => undefined)
   return {
     app,
     deps,

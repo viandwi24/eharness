@@ -144,6 +144,10 @@ export const TaskSchema = z
       description:
         'Queued tasks only (`GET /tasks`, `GET /tasks/{id}`): why it has not started. `hold`: held by the client. `worker`: an active worker program of the agent owns the queue. `slot`: the agent (or the team) works on its maximum already; it starts when one ends. `starting`: a slot is free, it starts now.',
     }),
+    queueNote: z.string().nullable().optional().openapi({
+      description:
+        'Queued tasks only: when a `slot` wait is held by a task that waits for the client, a sentence naming it ("waiting: <task> needs your approval first"). null otherwise.',
+    }),
     column: z.enum(BOARD_COLUMNS).optional().openapi({
       description:
         'Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`.',

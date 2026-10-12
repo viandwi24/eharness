@@ -439,6 +439,16 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
         .immediate()
     },
 
+    requeueUnstarted(id, now) {
+      const res = sqlite
+        .query(
+          `UPDATE tasks SET state = 'queued', session_id = ?, pending_kind = NULL, last_activity_at = ?
+            WHERE id = ? AND state = 'running' AND session_id LIKE 'task:%'`,
+        )
+        .run(queuedSessionId(id), now, id)
+      return res.changes === 0 ? undefined : toTask(taskById.get(id) as TaskRow)
+    },
+
     running(agentId) {
       return (
         sqlite

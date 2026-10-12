@@ -66,6 +66,8 @@ export interface EscalationPayload {
   question: string
   /** Answers the client picks from; empty: approve or reject. */
   options: string[]
+  /** The options the agent flagged as "leave it for now" (a subset of `options`); remembered by the program. */
+  standDown?: string[]
   /** `agent`: the agent called `escalate`; `report`: its final report said `needs_decision`. */
   source: 'agent' | 'report'
 }

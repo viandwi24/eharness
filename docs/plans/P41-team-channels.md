@@ -799,3 +799,16 @@ Two layers, kept strict:
 Rule: an action is generic when it means the same on at least two platforms and degrades safely where
 unsupported; otherwise it is native (forward is native: Telegram forward/copy, Discord forward and Slack share
 links differ). Basic needs (am I admin, who is this, which topics exist) must never require a native tool.
+
+## Review pass (hardening, written not run)
+
+- A chat turn whose sender cannot be resolved is a guest (never unrestricted); web and program turns
+  stay unrestricted by design.
+- `channel_send` `upload` follows the proactive policy like text (a file cannot be held for a
+  digest); `react` is exempt. Assigned `task:` sessions created by the client (or granted
+  `channel_send`) post like chat; routines, the heartbeat and agent-made tasks stay proactive.
+- Reminders: cancel keeps a done reminder done; at most 10 repeating reminders per person
+  (`TEAM_MAX_REPEATING_REMINDERS`).
+- Legacy message migration: a body the key cannot open is counted and logged once; after 3 boots it
+  gives up and marks `gaveUp` in `ch_meta`. Dead `void` statements removed.
+- Tests are written (`channels-l6.test.ts`) but were not run in this pass.

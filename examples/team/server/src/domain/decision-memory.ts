@@ -23,13 +23,34 @@ export interface RememberedDecision {
 export const MEMORY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const MAX_REMEMBERED = 50
 
-/** Choices that say "leave it as it is for now": wait, skip, ignore, later, snooze. */
-const STAND_DOWN =
-  /\b(keep\s+waiting|wait|hold|skip|ignore|dismiss|snooze|not\s+now|later|no\s+action|leave\s+(it|as)|do\s+nothing|don'?t\s+(escalate|ask)|continue\s+waiting)\b/i
+/**
+ * Fallback when the agent did not flag the option (`standDown` of `escalate`): the WHOLE label is
+ * a stand-down phrase, optionally with a leading verb ("keep waiting", "just skip") or a trailing
+ * "it / this / for now". An option that carries an action ("Hold the shipment and refund") never
+ * matches.
+ */
+const STAND_DOWN_LABEL =
+  /^(?:(?:keep|just|please)\s+)?(?:waiting|wait|skip|ignore|dismiss|snooze|later|not\s+now|no\s+action|do\s+nothing|tunggu|menunggu|lewati|abaikan|nanti|biarkan)(?:\s+(?:it|this|for\s+now|dulu|saja))?$/
 
-export const isStandDownChoice = (choice: string): boolean => STAND_DOWN.test(choice)
+const normalizeLabel = (label: string): string =>
+  label
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+/**
+ * Is the picked option a "leave it for now" answer? True when the agent flagged it (`flagged`: the
+ * labels it marked `standDown` in `escalate`, the preferred signal) or, as a fallback, when the
+ * whole label is on the allowlist.
+ */
+export const isStandDownChoice = (choice: string, flagged: readonly string[] = []): boolean =>
+  flagged.includes(choice) || STAND_DOWN_LABEL.test(normalizeLabel(choice))
 
 const RECORD_ID = /\b[A-Za-z]{1,6}-\d{1,6}\b/g
+
+/** Does the text name a record (`T-05`)? Without one the subject is only a title, too loose to silence a later escalation. */
+export const hasRecordId = (text: string): boolean => new RegExp(RECORD_ID.source).test(text)
 
 /** The subject of an escalation: the record ids in its title, else the title without noise. */
 export function subjectOf(title: string, question = ''): string {

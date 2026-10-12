@@ -187,6 +187,13 @@ const escalateSchema = z.object({
     .max(MAX_OPTIONS)
     .optional()
     .describe('Alternatives to pick from (short labels). Absent: approve or reject.'),
+  standDown: z
+    .array(z.string().min(1).max(MAX_OPTION_CHARS))
+    .max(MAX_OPTIONS)
+    .optional()
+    .describe(
+      'The options (exact labels from `options`) that only mean "leave it for now" (keep waiting, skip): if the client picks one, you are not asked about the same record again for a week. Never flag an option that does something.',
+    ),
 })
 
 const authoritySchemaAsk = z.object({
@@ -333,6 +340,7 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
               question: input.question,
               details: input.details,
               options: input.options,
+              standDown: input.standDown,
             })
             return { payload: { decisionId: id } }
           },

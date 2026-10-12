@@ -533,9 +533,12 @@ Source: the value evaluation (work queue + Review = "needs redesign").
       hold*, *waits for worker*), the task drawer actions (Start now, Hold, Accept, Send back, Try
       again) in a footer that is always reachable, details capped and scrollable (fixes the clipped
       Review buttons at small heights).
-- [x] Tests (written, not run in the pass that built them): `server/test/task-assignment.test.ts`,
-      the work-queue tests adapted (a task for an agent without a worker now starts), web
-      `lib/tasks/queue.test.ts` and `lib/board/board.test.ts`.
+- [x] Tests: `server/test/task-assignment.test.ts`, the work-queue tests adapted (a task for an agent
+      without a worker now starts), web `lib/tasks/queue.test.ts` and `lib/board/board.test.ts`. The
+      first run of the review pass found six failing server tests (stale expectations, one broken
+      migration-rollback harness); they were corrected and the hardening tests below added.
+      **Status: written and corrected, not yet run again** (the pass that made these changes ran no
+      tests by order; run `bun test --no-env-file` in `examples/team/server` before relying on them).
 
 Decided in phase N:
 
@@ -543,12 +546,55 @@ Decided in phase N:
   the worker only takes what is left) would silently run a task outside the narrow authority the
   client gave the worker. *Start now* is the explicit escape hatch.
 - **Held tasks are skipped by worker programs too**: hold means "not by anything automatic".
-- **Slots count running and parked tasks.** A task that waits for an approval keeps its slot;
-  otherwise a second task could race ahead of a decision the client has not made yet.
+- **Slots count running and parked tasks (per agent).** A task that waits for an approval keeps its
+  agent's slot; otherwise a second task could race ahead of a decision the client has not made yet.
+  The team-wide spawn cap counts only running tasks (hardening pass).
 - **Agent-created tasks default to no Review**: the creator is an agent (or the lead for the
   client), it reads the result with `list_tasks`; it can ask for review with `review: true`.
 - Not done: the bell notice "Ready for review" is posted when a task ends in its own turn, not when
   it ends in a turn that continued after an approval (the board still shows Review).
+
+### Hardening pass after the code review (written, not run)
+
+- **Crash strand.** A task claimed `running` whose `task:` session never got a message (the process
+  died while the session was prepared) goes back to `queued` by the repair pass
+  (`team.reconcile`, drift step): at boot at once, later after the stale-turn grace (2 min). It
+  starts again by itself. New port `tasks.requeueUnstarted`.
+- **Assigned tasks may post like chat.** `channel_send` of a `task:` session is not under the
+  proactive policy when the client created the task or its grants name `channel_send`
+  (`taskMayPost`); a task an agent wrote for itself, routines and the heartbeat stay under it.
+  Files (`upload`) now follow the proactive policy too (`proactive.check`: allowed here, no quiet
+  hours, outside the digest gap; a file cannot be held). `react` stays free: an emoji on a message
+  is no text, mention or file.
+- **Role check no longer fails open.** A turn woken by a chat message whose sender cannot be
+  resolved is a guest (`gateway.unresolvedChatTurn`); a turn with no chat trigger (web, program,
+  routine) is unrestricted by design.
+- **Remembered decisions.** Only an option the agent flagged (`standDown` list of `escalate`,
+  labels from `options`) or, as a fallback, a *whole* label on a short allowlist (keep waiting,
+  skip, ignore, later, not now, tunggu, lewati, ...) is remembered, and the fallback only for a
+  record id (`T-05`), never for a bare title. "Hold the shipment and refund" is an action and is
+  not remembered.
+- **Parked tasks.** A task parked on an approval keeps its per-agent slot but no longer counts under
+  the team spawn cap; a queued task waiting behind it carries `queueNote` ("waiting: <task> needs
+  your approval first"). Web follow-up: show `queueNote` next to the `slot` badge.
+- **Send back.** Clears a hold left from a hand start (the revision starts); the hint reflects the
+  real state (it says "you put it on hold" only when the owner re-held it); accepting or sending
+  back resolves the "Ready for review" bell notice.
+- **Usage calendar.** `team_status` month and today are both team-timezone periods
+  (month = the larger of the UTC-month ledger and the call-log month, so today never exceeds it);
+  the Usage page keeps the ledger (UTC month) for the budget.
+- **Persona bookkeeping.** A proposal is marked applied only after the version committed (a
+  version conflict leaves it pending); the live-session map holds weak refs and is pruned; the
+  superseded-build list shrinks; a session is closed only when idle twice in a row.
+- **Small.** Cancelling a done reminder keeps it done; at most 10 active repeating reminders per
+  person (`channels.maxRepeatingReminders` / `TEAM_MAX_REPEATING_REMINDERS`, 0 = no limit);
+  program views and the authority repair no longer open connector connections (the repair runs after
+  boot activation; `GET /programs/{id}` uses what is activated); legacy message migration says once
+  how many bodies cannot be opened and gives up after 3 boots (marker `gaveUp`).
+- Tests written for the above, not run: `task-assignment.test.ts` (strand, parked slot, send back),
+  `channels-l6.test.ts` (unresolved sender, file policy, reminder limits), `p40-value.test.ts`
+  (stand-down). Not covered by a test: persona apply-after-commit, legacy attempts counter,
+  `taskMayPost` wiring.
 
 ## Requests to other phases
 

@@ -60,6 +60,10 @@ overlays (link to the Channels page setting), Pending proposals, History with di
 
 ## Notes (as built)
 
+Review pass: `applyProposal` now commits the version first and marks the proposal applied after (a
+version conflict leaves it pending); the agent factory keeps weak refs to live sessions. Tests of
+this pass are written, not run.
+
 Code: `domain/persona.ts` (pure: limits, injection patterns, diff, prompt layers, legacy split),
 `app/persona.ts` (use cases), `infra/db/persona-repo.ts`, `infra/eh/persona-plugin.ts` (the tool),
 `infra/channels/people-notes.ts` + the `person_note` tool, `personaOverlay` as a node setting

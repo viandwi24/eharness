@@ -187,7 +187,8 @@ describe('delegation with park', () => {
     expect(waiting).toHaveLength(1)
     const task = waiting[0] as Task
     expect(task.pendingKind).toBe('approval')
-    expect(task.title).toBe('Remove /library/old.md')
+    // a short human label (the value pass shortens titles), not the pasted prompt
+    expect(task.title).toBe('Clean up')
     const researcher = a.server.deps.agents.getBySlug('researcher')
     const lead = a.server.deps.agents.getBySlug('lead')
     expect(task.agentId).toBe(researcher?.id as string)

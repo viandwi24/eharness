@@ -302,15 +302,8 @@ export function applyProposal(
     )
   }
   assertValidContent(proposal)
-  if (
-    !deps.persona.decideProposal(id, {
-      status: 'applied',
-      decidedBy: actor.name,
-      decidedAt: deps.clock.now(),
-    })
-  ) {
-    throw conflict('That proposal was decided just now.', 'PROPOSAL_DECIDED')
-  }
+  // the version is committed first: a failed commit (a version conflict) throws and leaves the
+  // proposal pending, so it can be applied again; it is marked applied only once the version exists
   const version = commit(
     deps,
     proposal.agentId,
@@ -321,6 +314,15 @@ export function applyProposal(
     }),
     { source: actor.kind, actor, reason: proposal.reason, proposalId: proposal.id },
   )
+  if (
+    !deps.persona.decideProposal(id, {
+      status: 'applied',
+      decidedBy: actor.name,
+      decidedAt: deps.clock.now(),
+    })
+  ) {
+    throw conflict('That proposal was decided just now.', 'PROPOSAL_DECIDED')
+  }
   deps.persona.setAppliedVersion(id, version.version)
   return { version, proposal: { ...proposal, status: 'applied', appliedVersion: version.version } }
 }

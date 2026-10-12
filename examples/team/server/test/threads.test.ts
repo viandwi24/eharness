@@ -306,6 +306,24 @@ describe('migration of the single DM', () => {
     // the database as it was before this phase: no thread tables, migration 0020 not applied
     const db = new Database(join(dir, 'team.db'))
     // (and the tables of the migrations after it: they would be created again by the replay)
+    // Migrations after 0020 that ALTER a table (a column added to `agents`, `tasks`, ...) cannot be
+    // undone by dropping tables: replaying them would fail with "duplicate column name". Their
+    // columns are dropped first, newest migration first, so the replay starts from the 0019 shape.
+    const migrations = JSON.parse(
+      readFileSync(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8'),
+    ) as { entries: Array<{ tag: string; when: number }> }
+    const from = migrations.entries.findIndex((e) => e.tag.startsWith('0020_'))
+    for (const entry of migrations.entries.slice(from).reverse()) {
+      const sql = readFileSync(new URL(`../drizzle/${entry.tag}.sql`, import.meta.url), 'utf8')
+      const added = [...sql.matchAll(/ALTER TABLE `(\w+)` ADD (?:COLUMN )?`(\w+)`/g)].reverse()
+      for (const [, table, column] of added) {
+        const columns = db.query(`PRAGMA table_info(\`${table}\`)`).all() as Array<{
+          name: string
+        }>
+        if (columns.some((c) => c.name === column))
+          db.run(`ALTER TABLE \`${table}\` DROP COLUMN \`${column}\``)
+      }
+    }
     for (const table of [
       'chat_threads',
       'notifications',

@@ -304,6 +304,12 @@ export interface TaskStore {
   claimAssigned(agentId: string, limit: number, now: number): Task | undefined
   /** Start one queued task now (hold or not, a free slot or not: the client asked). */
   claimTask(id: string, now: number): Task | undefined
+  /**
+   * Put an assigned task that was claimed but never started a turn (the process died in between)
+   * back in the queue: running -> queued, the queued session id again. undefined when it is not
+   * running any more.
+   */
+  requeueUnstarted(id: string, now: number): Task | undefined
   /** Tasks of the agent that run or wait for the client now (they hold a slot). */
   running(agentId: string): number
   /** The client accepts finished work in Review; undefined when it is not in Review. */

@@ -17,6 +17,7 @@ import {
   checkTaskFields,
   cleanInputs,
   DEFAULT_TASK_CONCURRENCY,
+  isQueuedSession,
   MAX_NOTE_CHARS,
   normalizeGrants,
   type QueueReason,
@@ -50,6 +51,21 @@ const changed = (deps: Deps, task: Task, change: string): void =>
     },
   })
 
+/** "Ready for review" is answered once the client accepted the work or sent it back: its bell notice goes. */
+function resolveReviewBell(deps: Deps, task: Task): void {
+  try {
+    const n = deps.notifications.dismissByKeyPrefix(`review:${task.id}:`, deps.clock.now())
+    if (n > 0) {
+      deps.events.append({
+        type: 'notification-changed',
+        payload: { kind: 'alert', dismissed: `review:${task.id}` },
+      })
+    }
+  } catch {
+    // the bell is a courtesy
+  }
+}
+
 /** Sessions whose run waits on an open decision (for "Waiting for you"). */
 export function sessionsWithOpenDecision(deps: Deps): Set<string> {
   const out = new Set<string>()
@@ -76,18 +92,32 @@ export const concurrencyOf = (deps: Deps, agentId: string): number =>
 export const hasWorkerProgram = (deps: Deps, agentId: string): boolean =>
   deps.programs.list({ agentId }).some((p) => p.worker !== null && p.status === 'active')
 
-/** Tasks across the team that work now (they hold a slot of the team-wide cap). */
+/**
+ * Tasks across the team that work now (they hold a slot of the team-wide spawn cap). A task parked
+ * on an approval or a question does no work and costs nothing while it waits: it keeps its
+ * per-agent slot (the agent's own concurrency) but not a place under the team cap, so one
+ * unanswered approval cannot stop the whole team.
+ */
 function runningTotal(deps: Deps): number {
-  return (
-    deps.tasks.list({ status: 'running', limit: 500 }).filter((t) => t.createdBy !== null).length +
-    deps.tasks.list({ status: 'needs_action', limit: 500 }).filter((t) => t.createdBy !== null)
-      .length
-  )
+  return deps.tasks.list({ status: 'running', limit: 500 }).filter((t) => t.createdBy !== null)
+    .length
 }
 
-/** Why each queued task of `tasks` has not started (undefined for tasks that are not queued). */
-function queueReasons(deps: Deps, tasks: readonly Task[]): Map<string, QueueReason> {
-  const out = new Map<string, QueueReason>()
+/** The tasks of an agent that sit parked on the client (they hold a per-agent slot). */
+const parkedTasks = (deps: Deps, agentId: string): Task[] =>
+  deps.tasks
+    .list({ status: 'needs_action', agentId, limit: 100 })
+    .filter((t) => t.createdBy !== null && !isQueuedSession(t.sessionId))
+
+const parkedNote = (t: Task): string =>
+  `waiting: "${t.title}" ${t.pendingKind === 'approval' ? 'needs your approval' : 'needs your answer'} first`
+
+/** Why each queued task of `tasks` has not started, and for a `slot` wait held by a parked task, which one blocks it. */
+function queueReasons(
+  deps: Deps,
+  tasks: readonly Task[],
+): Map<string, { reason: QueueReason; note: string | null }> {
+  const out = new Map<string, { reason: QueueReason; note: string | null }>()
   const queued = tasks.filter((t) => t.status === 'queued')
   if (queued.length === 0) return out
   const cap = deps.settings.get().spawnCap
@@ -109,7 +139,9 @@ function queueReasons(deps: Deps, tasks: readonly Task[]): Map<string, QueueReas
       active: total >= cap ? Number.POSITIVE_INFINITY : info.active,
       limit: info.limit,
     })
-    out.set(t.id, reason)
+    // a slot held by a task that waits for the client: say so instead of a silent queue
+    const parked = reason === 'slot' && total < cap ? parkedTasks(deps, t.agentId)[0] : undefined
+    out.set(t.id, { reason, note: parked === undefined ? null : parkedNote(parked) })
   }
   return out
 }
@@ -118,13 +150,20 @@ function queueReasons(deps: Deps, tasks: readonly Task[]): Map<string, QueueReas
 export function withColumns(
   deps: Deps,
   tasks: readonly Task[],
-): Array<Task & { column: ReturnType<typeof boardColumn>; queue: QueueReason | null }> {
+): Array<
+  Task & {
+    column: ReturnType<typeof boardColumn>
+    queue: QueueReason | null
+    queueNote: string | null
+  }
+> {
   const columns = columnsOf(deps, tasks)
   const reasons = queueReasons(deps, tasks)
   return tasks.map((t) => ({
     ...t,
     column: columns.get(t.id) as ReturnType<typeof boardColumn>,
-    queue: reasons.get(t.id) ?? null,
+    queue: reasons.get(t.id)?.reason ?? null,
+    queueNote: reasons.get(t.id)?.note ?? null,
   }))
 }
 
@@ -277,6 +316,7 @@ export function acceptTask(deps: Deps, id: string): Task {
     })
   }
   changed(deps, next, 'accepted')
+  resolveReviewBell(deps, next)
   return next
 }
 
@@ -295,9 +335,15 @@ export function sendBackTask(deps: Deps, id: string, note: string): Task {
     })
   }
   changed(deps, next, 'sent-back')
-  dispatchQueue(deps, next.agentId)
+  // finished work in Review has no hold of its own: a hold left from when the client started it by
+  // hand would park the revision, so sending back clears it (the client can hold it again)
+  const released = next.hold
+    ? (deps.tasks.patchQueued(id, { hold: false }, deps.clock.now()) ?? next)
+    : next
+  resolveReviewBell(deps, released)
+  dispatchQueue(deps, released.agentId)
   // it may have started already
-  return deps.tasks.get(id) ?? next
+  return deps.tasks.get(id) ?? released
 }
 
 /**
@@ -310,7 +356,9 @@ export function sendBackHint(deps: Deps, task: Task): string {
   const name = agent?.name ?? 'the agent'
   const current = deps.tasks.get(task.id) ?? task
   if (current.status !== 'queued') return `${name} is working on it again with your feedback.`
-  if (current.hold) return 'Queued again and on hold: press Start now when you want it revised.'
+  if (current.hold) {
+    return 'Queued again, but you put it on hold: press Start now when you want it revised.'
+  }
   const worker = deps.programs
     .list({ agentId: task.agentId })
     .find((p) => p.worker !== null && p.status === 'active')

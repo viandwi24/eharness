@@ -407,6 +407,38 @@ describe('roles in a chat: the header and spoofed claims', () => {
   })
 })
 
+describe('hardening (P40 review pass)', () => {
+  test('a chat turn whose sender cannot be resolved is flagged (a guest), a turn without a chat trigger is not', async () => {
+    const i = instance([text('hi')])
+    const mock = await connect(i)
+    i.gw.people.setRole('c1', ceo.id, { role: 'owner' }, 'owner')
+    await mock.say({ from: ceo, text: '@team_bot hi', id: 'm1', mentionSelf: true })
+    await until('answered', () => mock.sent.length > 0)
+    const room = i.gw.nodes.byNative('c1', 'room')
+    const sessionId = i.gw.sessions.get('c1', room?.id as string)?.sessionId as string
+    // woken by a message that is not in the log: nobody can be named
+    await i.gw.beginTurn(sessionId, ['ev:missing-trigger'])
+    expect(await i.gw.requesterOf(sessionId)).toBeUndefined()
+    expect(i.gw.unresolvedChatTurn(sessionId)).toBe(true)
+    // the plugin decides such a turn as a guest: a write is refused
+    expect(decideTool('guest', 'channel_manage', 'write').allowed).toBe(false)
+    // a web turn into the same session has no chat trigger: unrestricted by design
+    await i.gw.beginTurn(sessionId, undefined)
+    expect(i.gw.unresolvedChatTurn(sessionId)).toBe(false)
+  })
+
+  test('an unasked file follows the proactive policy: refused where proactive posts are not allowed', async () => {
+    const i = instance([text('unused')])
+    await connect(i)
+    const room = i.gw.nodes.byNative('c1', 'room')
+    const reason = await i.gw.proactive.check({
+      connectionId: 'c1',
+      nodeId: room?.id as string,
+    })
+    expect(reason).toContain('not allowed')
+  })
+})
+
 describe('self-knowledge tools', () => {
   test('channel_status, list_topics, member_lookup and chat_history answer from the platform and the log', async () => {
     const i = instance([
@@ -728,6 +760,46 @@ describe('reminders', () => {
     i.gw.reminders.cancel(rem.id)
     expect(i.gw.reminders.get(rem.id)?.status).toBe('cancelled')
     expect(i.server.deps.routines.getByProgram(`sys:reminder:${rem.id}`)).toBeUndefined()
+  })
+})
+
+describe('reminders: limits and cancelling', () => {
+  const create = (i: Instance, nodeId: string, who: string, when: Record<string, unknown>) =>
+    i.gw.reminders.create({
+      connectionId: 'c1',
+      nodeId,
+      agentId: i.leadId,
+      text: 'stand up',
+      mentions: [],
+      when: when as never,
+      createdBy: { identityId: who, role: 'admin' },
+    })
+
+  test('one person cannot pile up unlimited repeating reminders; single ones do not count', async () => {
+    const i = instance([text('unused')], { timezone: 'Asia/Jakarta' })
+    await connect(i)
+    const room = i.gw.nodes.byNative('c1', 'room')?.id as string
+    for (let n = 0; n < 10; n++) {
+      expect('reminder' in create(i, room, 'p1', { repeat: 'daily', time: '09:00' })).toBe(true)
+    }
+    const over = create(i, room, 'p1', { repeat: 'daily', time: '10:00' })
+    expect('error' in over && over.error).toContain('limit is 10')
+    // another person, and a single reminder of the same person, are not blocked
+    expect('reminder' in create(i, room, 'p2', { repeat: 'daily', time: '09:00' })).toBe(true)
+    expect('reminder' in create(i, room, 'p1', { inMinutes: 30 })).toBe(true)
+  })
+
+  test('cancelling a reminder that already finished keeps it done', async () => {
+    const i = instance([text('unused')], { timezone: 'Asia/Jakarta' })
+    await connect(i)
+    const room = i.gw.nodes.byNative('c1', 'room')?.id as string
+    const made = create(i, room, 'p1', { inMinutes: 30 })
+    if (!('reminder' in made)) throw new Error('not created')
+    i.server.conn.sqlite.run("UPDATE ch_reminders SET status = 'done' WHERE id = ?", [
+      made.reminder.id,
+    ])
+    expect(i.gw.reminders.cancel(made.reminder.id)?.status).toBe('done')
+    expect(i.gw.reminders.get(made.reminder.id)?.status).toBe('done')
   })
 })
 

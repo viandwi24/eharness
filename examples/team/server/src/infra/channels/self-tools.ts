@@ -819,6 +819,8 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
           return `ERROR: no reminder ${input.id}.`
         if (!owns(r))
           return 'Not allowed: a member can cancel only the reminders they set themselves. Ask an owner or an admin.'
+        if (r.status !== 'active')
+          return `Reminder ${r.id} is already ${r.status}: nothing to cancel.`
         gw.reminders.cancel(r.id)
         return `Cancelled reminder ${r.id} (${r.whenText}): "${clip(flat(r.body, 120), 120)}".`
       }

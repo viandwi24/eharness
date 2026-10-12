@@ -260,7 +260,9 @@ export function programRoutes(deps: Deps): OpenAPIHono {
     })
     .openapi(getRoute, async (c) => {
       const view = programView(deps, getProgram(deps, c.req.valid('param').id))
-      const inspection = await authorityGrant(deps, view.agentId, view.authority)
+      const inspection = await authorityGrant(deps, view.agentId, view.authority, {
+        activate: false,
+      })
       return c.json({ ...view, grant: inspection?.grant ?? null } as never, 200)
     })
     .openapi(patchRoute, async (c) => {

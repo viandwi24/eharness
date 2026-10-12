@@ -331,9 +331,11 @@ export async function authorityGrant(
   deps: Deps,
   agentId: string,
   authority: Partial<ProgramAuthority> | undefined,
+  options: { activate?: boolean } = {},
 ): Promise<AuthorityInspection | null> {
   const agent = getAgent(deps, agentId)
-  await deps.programRunner.prepare(agent.id)
+  // a read (a program view) must not open connector connections: it uses what is activated already
+  if (options.activate !== false) await deps.programRunner.prepare(agent.id)
   return deps.programRunner.inspect(agent.id, normalizeAuthority(authority)) ?? null
 }
 
@@ -360,7 +362,8 @@ export async function repairProgramAuthorities(deps: Deps): Promise<number> {
   for (const program of deps.programs.list({})) {
     try {
       if (program.authority.connectors.length === 0) continue
-      await deps.programRunner.prepare(program.agentId)
+      // no activation here: boot runs this after the connectors are prepared; an agent that is not
+      // activated (inspect returns undefined) is repaired on a later boot
       const inspection = deps.programRunner.inspect(program.agentId, program.authority)
       if (inspection === undefined || inspection.repaired.length === 0) continue
       deps.programs.update(program.id, { authority: inspection.authority }, deps.clock.now())

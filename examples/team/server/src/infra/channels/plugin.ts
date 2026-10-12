@@ -64,13 +64,21 @@ export interface ChannelsPluginOptions {
   gateway: () => ChannelGateway | undefined
   /** The agent (id) of a hook context (`ctx.agent.id` is the slug of the definition). */
   agentOf: (slug: string) => { id: string } | undefined
+  /**
+   * An assigned task (`task:` session) that may post like a chat does: created by the client, or
+   * its grants name `channel_send` (the client's own instruction to tell somebody). Other tasks
+   * (an agent's own `create_task`) stay under the proactive policy. Absent = no task may.
+   */
+  taskMayPost?: (sessionId: string) => boolean
 }
 
 const HISTORY_LINE_CHARS = 1000
 /**
  * Sessions nobody is waiting in, whose posts nobody asked for: a routine's prompt and the
- * heartbeat. Their posts follow the proactive policy of the place. A program run is not here: its
- * authority names `channel_send` on purpose (the client's own grant, P41 U2).
+ * heartbeat, and a task an agent wrote for itself or a colleague. Their posts follow the proactive
+ * policy of the place. A program run is not here: its authority names `channel_send` on purpose
+ * (the client's own grant, P41 U2); an assigned task is not unattended either when the client
+ * created it or granted `channel_send` (`taskMayPost`): that is somebody's instruction to post.
  */
 const UNATTENDED: ReadonlySet<string> = new Set(['routine', 'task', 'heartbeat'])
 
@@ -170,6 +178,8 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       if (!inChannel && bound.length === 0) return {}
       const origin = originOfSession(sessionId)
       const rehearsal = origin === 'rehearsal'
+      const unattended =
+        UNATTENDED.has(origin) && !(origin === 'task' && options.taskMayPost?.(sessionId) === true)
 
       /** A rehearsal does not touch real chats: the call is recorded and the model told so. */
       const simulate = (toolName: string, input: unknown): string => {
@@ -393,6 +403,8 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       const send = async (input: z.infer<typeof sendSchema>): Promise<string> => {
         if (rehearsal) return simulate(CHANNEL_SEND_TOOL, input)
         const t = resolve(input)
+        // a reaction is an emoji on a message somebody wrote: no text, no mention, no file, so it is
+        // not a proactive post and stays free for every session
         if (input.action === 'react') {
           if (input.messageId === undefined || input.emoji === undefined)
             return 'ERROR: react needs messageId and emoji.'
@@ -415,6 +427,14 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           if (file.bytes.byteLength > MAX_UPLOAD_BYTES)
             return `ERROR: the file is larger than ${MAX_UPLOAD_BYTES} bytes.`
           const name = input.file.split('/').pop() ?? 'file'
+          // a file nobody asked for follows the proactive policy like a text does (it cannot be held for a digest)
+          if (unattended && (await gw.requesterOf(sessionId)) === undefined) {
+            const refusal = await gw.proactive.check({
+              connectionId: t.config.connectionId,
+              nodeId: t.node.id,
+            })
+            if (refusal !== undefined) return `ERROR: ${refusal}`
+          }
           const ids = await gw.post(t, {
             sessionId,
             text: input.text ?? '',
@@ -434,7 +454,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         }
         // a post nobody asked for (a routine, the heartbeat, a program) follows the proactive policy of the place
         const requester = await gw.requesterOf(sessionId)
-        if (requester === undefined && UNATTENDED.has(origin)) {
+        if (requester === undefined && unattended) {
           const res = await gw.proactive.submit({
             connectionId: t.config.connectionId,
             nodeId: t.node.id,
@@ -657,7 +677,21 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
               MEMORY_READ_TOOLS.includes(e.toolName)
             )
               return { type: 'denied', reason: SMALL_TALK_MEMORY_REFUSAL }
-            if (requester === undefined) return undefined
+            // no chat trigger (web, program, routine): unrestricted by design. A chat message woke the
+            // turn but nobody could be resolved from it: a guest, never unrestricted.
+            if (requester === undefined) {
+              if (!gw.unresolvedChatTurn(sessionId)) return undefined
+              const guest = decideTool(
+                'guest',
+                e.toolName,
+                e.risk,
+                undefined,
+                'an unidentified sender',
+              )
+              return guest.allowed
+                ? undefined
+                : { type: 'denied', reason: guest.reason ?? 'Not allowed.' }
+            }
             const config = gw.config(requester.connectionId)
             const decision = decideTool(
               requester.role,

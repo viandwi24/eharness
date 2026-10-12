@@ -2688,6 +2688,13 @@
             ],
             "description": "Queued tasks only (`GET /tasks`, `GET /tasks/{id}`): why it has not started. `hold`: held by the client. `worker`: an active worker program of the agent owns the queue. `slot`: the agent (or the team) works on its maximum already; it starts when one ends. `starting`: a slot is free, it starts now."
           },
+          "queueNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Queued tasks only: when a `slot` wait is held by a task that waits for the client, a sentence naming it (\"waiting: <task> needs your approval first\"). null otherwise."
+          },
           "column": {
             "type": "string",
             "enum": [
@@ -9405,6 +9412,13 @@
               "type": "string"
             },
             "description": "Answers to pick from; empty: approve or reject."
+          },
+          "standDown": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The options the agent flagged as \"leave it for now\" (a subset of `options`); a pick of one is remembered by a standing program."
           },
           "source": {
             "type": "string",
