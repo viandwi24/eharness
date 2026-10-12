@@ -17,6 +17,8 @@ import {
 	chatSummary,
 	formChanged,
 	formOfChat,
+	chatTree,
+	originText,
 	outboxSummary,
 	policyBody,
 	privacyWarning,
@@ -32,16 +34,32 @@ import {
 	type LogMessage
 } from './model';
 
+const effective = (over: Partial<ChannelChat['effective']> = {}): ChannelChat['effective'] => ({
+	allowed: false,
+	agentId: 'lead',
+	wake: 'mention',
+	delivery: 'final_text',
+	retentionDays: 30,
+	observe: true,
+	sessionScope: 'node',
+	redactOnDelete: false,
+	...over
+});
 const chat = (over: Partial<ChannelChat> = {}): ChannelChat => ({
-	chatId: '-1',
-	kind: 'group',
+	id: 'n-1',
+	nativeId: '-1',
+	kind: 'room',
+	chatKind: 'group',
+	platformType: 'telegram:supergroup',
 	title: 'Ops',
-	forum: false,
-	topics: [],
+	state: 'active',
+	container: false,
+	postable: true,
 	firstSeen: 1,
 	lastSeen: 10,
 	policy: null,
-	effective: { allowed: false, wake: 'mention', delivery: 'final_text', retentionDays: 30 },
+	effective: effective(),
+	inherited: {},
 	...over
 });
 const conn = (over: Partial<ChannelConnection> = {}): ChannelConnection => ({
@@ -70,14 +88,41 @@ describe('state', () => {
 });
 
 describe('chat policy form', () => {
-	test('the form follows the effective policy; the body is the whole policy', () => {
-		const c = chat({ effective: { allowed: true, wake: 'never', delivery: 'message_tool', retentionDays: 7 }, policy: { enabled: true, wake: 'never', retentionDays: 7 } });
+	test('the form is what the node sets itself; "" inherits; the body clears what is inherited', () => {
+		const c = chat({
+			effective: effective({ allowed: true, wake: 'never', delivery: 'message_tool', retentionDays: 7 }),
+			policy: { enabled: true, wake: 'never', retentionDays: 7 },
+			inherited: { enabled: { from: 'node', nodeId: 'n-1' }, wake: { from: 'node', nodeId: 'n-1' }, delivery: { from: 'connection' } }
+		});
 		const f = formOfChat(c);
-		expect(f).toEqual({ allowed: true, wake: 'never', delivery: 'message_tool', retention: '7' });
-		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: 'message_tool', retentionDays: 7 });
-		expect(policyBody({ ...f, retention: '' }).retentionDays).toBeNull();
+		expect(f).toEqual({ allowed: 'on', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '' });
+		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null });
+		expect(policyBody({ ...f, retention: '', allowed: '' }).retentionDays).toBeNull();
+		expect(policyBody({ ...f, allowed: 'off', observe: 'off' })).toMatchObject({ enabled: false, observe: false });
 		expect(formChanged(f, { ...f, wake: 'mention' })).toBe(true);
 		expect(formChanged(f, { ...f, retention: ' 7 ' })).toBe(false);
+		// a topic that only sets its wake does not own `enabled`, though the policy reads enabled: true
+		const topic = chat({ policy: { enabled: true, wake: 'never' }, inherited: { enabled: { from: 'ancestor', nodeId: 'n-0' }, wake: { from: 'node', nodeId: 'n-1' } } });
+		expect(formOfChat(topic).allowed).toBe('');
+	});
+	test('where a setting comes from, and the tree of a forum', () => {
+		const titles: Record<string, string> = { 'n-0': 'Company' };
+		const titleOf = (id: string): string => titles[id] ?? id;
+		const c = chat({ inherited: { wake: { from: 'ancestor', nodeId: 'n-0' }, delivery: { from: 'connection' }, retentionDays: { from: 'default' }, observe: { from: 'node', nodeId: 'n-1' } } });
+		expect(originText(c, 'wake', titleOf)).toBe('inherited from Company');
+		expect(originText(c, 'delivery', titleOf)).toBe('connection default');
+		expect(originText(c, 'retentionDays', titleOf)).toBe('default');
+		expect(originText(c, 'observe', titleOf)).toBe('set here');
+		const forum = chat({ id: 'f', title: 'Company', container: true, postable: false, lastSeen: 5 });
+		const general = chat({ id: 'g', parentId: 'f', title: 'General', platformType: 'telegram:forum_general' });
+		const billing = chat({ id: 'b', parentId: 'f', title: 'Billing', platformType: 'telegram:forum_topic' });
+		const roadmap = chat({ id: 'r', parentId: 'f', title: 'Roadmap', platformType: 'telegram:forum_topic' });
+		const other = chat({ id: 'o', title: 'Other', lastSeen: 9 });
+		const tree = chatTree([roadmap, other, billing, forum, general]);
+		expect(tree.map((b) => b.chat.id)).toEqual(['o', 'f']);
+		expect(tree[1]?.children.map((b) => b.chat.title)).toEqual(['General', 'Billing', 'Roadmap']);
+		// a node whose parent is not listed is a root
+		expect(chatTree([billing]).map((b) => b.chat.id)).toEqual(['b']);
 	});
 	test('retention is whole days from 1 to 3650', () => {
 		expect(retentionError('')).toBeUndefined();
@@ -89,23 +134,25 @@ describe('chat policy form', () => {
 	});
 	test('summary and ordering: allowed first, then still-a-member, then newest', () => {
 		expect(chatSummary(chat())).toContain('Not allowed');
-		expect(chatSummary(chat({ effective: { allowed: true, wake: 'always', delivery: 'final_text', retentionDays: 14 } }))).toBe('Every message · Reply in chat · 14 days');
-		const a = chat({ chatId: 'a', lastSeen: 5 });
-		const b = chat({ chatId: 'b', lastSeen: 9 });
-		const c = chat({ chatId: 'c', lastSeen: 1, effective: { allowed: true, wake: 'mention', delivery: 'final_text', retentionDays: 30 } });
-		const gone = chat({ chatId: 'd', lastSeen: 99, botStatus: 'kicked' });
-		expect(sortChats([a, gone, b, c]).map((x) => x.chatId)).toEqual(['c', 'b', 'a', 'd']);
+		expect(chatSummary(chat({ effective: effective({ allowed: true, wake: 'always', retentionDays: 14 }) }))).toBe('Every message · Reply in chat · 14 days');
+		const a = chat({ id: 'a', lastSeen: 5 });
+		const b = chat({ id: 'b', lastSeen: 9 });
+		const c = chat({ id: 'c', lastSeen: 1, effective: effective({ allowed: true }) });
+		const gone = chat({ id: 'd', lastSeen: 99, state: 'left', member: 'none' });
+		expect(sortChats([a, gone, b, c]).map((x) => x.id)).toEqual(['c', 'b', 'a', 'd']);
 	});
 });
 
 describe('privacy mode warning', () => {
 	const bot = { id: 1, username: 'b', name: 'B', canReadAllGroupMessages: false, guidance: '' };
-	const allowed = (over: Partial<ChannelChat>) => chat({ effective: { allowed: true, wake: 'always', delivery: 'final_text', retentionDays: 30 }, ...over });
+	const allowed = (over: Partial<ChannelChat>) => chat({ effective: effective({ allowed: true, wake: 'always' }), ...over });
 	test('warns only when a policy needs more than mentions and the bot is no admin', () => {
 		expect(privacyWarning(conn({ bot }), [allowed({ title: 'Ops' })])).toContain('Ops');
-		expect(privacyWarning(conn({ bot }), [allowed({ botStatus: 'administrator' })])).toBeUndefined();
-		expect(privacyWarning(conn({ bot }), [allowed({ kind: 'channel' })])).toBeUndefined();
-		expect(privacyWarning(conn({ bot }), [chat({ effective: { allowed: true, wake: 'mention', delivery: 'final_text', retentionDays: 30 } })])).toBeUndefined();
+		expect(privacyWarning(conn({ bot }), [allowed({ member: 'admin' })])).toBeUndefined();
+		expect(privacyWarning(conn({ bot }), [allowed({ chatKind: 'channel' })])).toBeUndefined();
+		// a forum holds no messages of its own: its topics decide
+		expect(privacyWarning(conn({ bot }), [allowed({ postable: false })])).toBeUndefined();
+		expect(privacyWarning(conn({ bot }), [chat({ effective: effective({ allowed: true }) })])).toBeUndefined();
 		expect(privacyWarning(conn({ bot: { ...bot, canReadAllGroupMessages: true } }), [allowed({})])).toBeUndefined();
 		expect(privacyWarning(conn(), [allowed({})])).toBeUndefined();
 	});

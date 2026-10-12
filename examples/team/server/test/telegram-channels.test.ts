@@ -93,6 +93,21 @@ async function boot(script: ScriptedStepInput[], webEnv: Record<string, string> 
   return { server, fake, models, leadId: def.id }
 }
 
+/** The node id of a chat the bot knows (`chat` or `chat/topic`, as Telegram names it). */
+const node = (server: Server, id: string, native: string): string => {
+  const n = server.channels.nodes.byNative(id, native)
+  if (n === undefined) throw new Error(`no node ${native}`)
+  return n.id
+}
+/** A chat the bot has not seen yet, as a node (the page lists nodes). */
+const know = (server: Server, id: string, native: string, title: string, broadcast = false) =>
+  server.channels.settings.ensureNode(id, {
+    nativeId: native,
+    kind: 'room',
+    title,
+    traits: { multiUser: !broadcast, broadcast },
+  }).id
+
 const call = async (server: Server, method: string, path: string, body?: unknown) => {
   const res = await server.app.request(path, {
     method,
@@ -212,9 +227,10 @@ describe('connect, bind, discover, wake', () => {
     )
     const chats = (await call(server, 'GET', `/channels/connections/${id}/chats`)).json.items
     expect(chats[0]).toMatchObject({
-      chatId: '-1001',
+      nativeId: '-1001',
       title: 'Ops',
-      kind: 'group',
+      kind: 'room',
+      chatKind: 'group',
       policy: null,
       effective: { allowed: false },
     })
@@ -223,10 +239,12 @@ describe('connect, bind, discover, wake', () => {
     expect(fake.callsOf('sendMessage')).toHaveLength(0)
 
     // allow it (mention wake is the default)
-    const allowed = await call(server, 'PATCH', `/channels/connections/${id}/chats/-1001/policy`, {
-      wake: 'mention',
-      retentionDays: 7,
-    })
+    const allowed = await call(
+      server,
+      'PATCH',
+      `/channels/connections/${id}/chats/${node(server, id, '-1001')}/policy`,
+      { wake: 'mention', retentionDays: 7 },
+    )
     expect(allowed.status).toBe(200)
     expect(allowed.json).toMatchObject({
       policy: { enabled: true, wake: 'mention', retentionDays: 7 },
@@ -246,7 +264,11 @@ describe('connect, bind, discover, wake', () => {
     await until('ack', () => fake.callsOf('setMessageReaction').length > 0)
 
     // taking it out of the allowlist
-    const removed = await call(server, 'DELETE', `/channels/connections/${id}/chats/-1001/policy`)
+    const removed = await call(
+      server,
+      'DELETE',
+      `/channels/connections/${id}/chats/${node(server, id, '-1001')}/policy`,
+    )
     expect(removed.json.effective.allowed).toBe(false)
     const counts = (await view(server, id)).counts
     expect(counts.chats).toBe(1)
@@ -279,25 +301,54 @@ describe('connect, bind, discover, wake', () => {
     await until(
       'topic seen',
       async () =>
-        (await call(server, 'GET', `/channels/connections/${id}/chats`)).json.items[0]?.topics
-          .length === 1,
+        (await call(server, 'GET', `/channels/connections/${id}/chats`)).json.items.length === 2,
     )
-    const chat = (await call(server, 'GET', `/channels/connections/${id}/chats`)).json.items[0]
-    expect(chat).toMatchObject({
-      forum: true,
-      topics: [{ id: '30', name: 'Billing', policy: null }],
+    const items = (await call(server, 'GET', `/channels/connections/${id}/chats`)).json.items
+    const forum = items.find((c: Json) => c.nativeId === '-1002')
+    const topic = items.find((c: Json) => c.nativeId === '-1002/30')
+    // a forum is a container that holds no messages of its own; its topics are its children
+    expect(forum).toMatchObject({ kind: 'room', container: true, postable: false })
+    expect(topic).toMatchObject({
+      kind: 'thread',
+      title: 'Billing',
+      parentId: forum.id,
+      policy: null,
     })
+    // switch the forum on: the topic inherits it, and says where it comes from
+    await call(server, 'PATCH', `/channels/connections/${id}/chats/${forum.id}/policy`, {
+      wake: 'always',
+    })
+    const inherited = (
+      await call(server, 'GET', `/channels/connections/${id}/chats`)
+    ).json.items.find((c: Json) => c.id === topic.id)
+    expect(inherited.effective).toMatchObject({ allowed: true, wake: 'always' })
+    expect(inherited.inherited.wake).toEqual({ from: 'ancestor', nodeId: forum.id })
+    // the topic differs on its own and the forum is untouched
     const set = await call(
       server,
       'PATCH',
-      `/channels/connections/${id}/chats/-1002/policy?topic=30`,
+      `/channels/connections/${id}/chats/${topic.id}/policy`,
       { wake: 'never' },
     )
     expect(set.status).toBe(200)
-    expect(set.json.topics[0].policy).toMatchObject({ wake: 'never' })
+    expect(set.json.policy).toMatchObject({ wake: 'never' })
+    expect(set.json.effective).toMatchObject({ wake: 'never', allowed: true })
+    expect(set.json.inherited.wake).toEqual({ from: 'node', nodeId: topic.id })
+    expect(
+      (await call(server, 'GET', `/channels/connections/${id}/chats`)).json.items.find(
+        (c: Json) => c.id === forum.id,
+      ).effective.wake,
+    ).toBe('always')
+    // clearing it inherits again
+    const cleared = await call(
+      server,
+      'DELETE',
+      `/channels/connections/${id}/chats/${topic.id}/policy`,
+    )
+    expect(cleared.json.effective.wake).toBe('always')
     expect(
       (
-        await call(server, 'PATCH', `/channels/connections/${id}/chats/-1002/policy?topic=99`, {
+        await call(server, 'PATCH', `/channels/connections/${id}/chats/no-such-node/policy`, {
           wake: 'never',
         })
       ).status,
@@ -307,10 +358,10 @@ describe('connect, bind, discover, wake', () => {
   test('without a binding a policy change is a 409; unbind stops the transport', async () => {
     const { server, fake, leadId } = await boot([])
     const { id } = await connectBot(server, fake.token)
-    server.telegram.known.see(id, { chatId: '-5', kind: 'group', title: 'X', forum: false, at: 1 })
+    const x = know(server, id, '-5', 'X')
     expect(
       (
-        await call(server, 'PATCH', `/channels/connections/${id}/chats/-5/policy`, {
+        await call(server, 'PATCH', `/channels/connections/${id}/chats/${x}/policy`, {
           wake: 'always',
         })
       ).status,
@@ -426,12 +477,16 @@ describe('linking people without links', () => {
 
     // the inbox: the DM with Ana (woke) and Eve's DM (dropped, not allowed to be answered)
     const inbox = (await call(server, 'GET', `/channels/connections/${id}/inbox`)).json
-    const ana = inbox.items.find((c: Json) => c.conversationId === '42')
+    const ana = inbox.items.find((c: Json) => c.conversationId === node(server, id, '42'))
     expect(ana).toMatchObject({ kind: 'dm', woke: 1, dropped: 2, agentId: leadId })
     expect(ana.threadId).toBeString()
     expect(ana.preview.text).toContain('Hi Ana')
     const log = (
-      await call(server, 'GET', `/channels/connections/${id}/inbox/messages?conversationId=42`)
+      await call(
+        server,
+        'GET',
+        `/channels/connections/${id}/inbox/messages?conversationId=${node(server, id, '42')}`,
+      )
     ).json
     expect(log.items.map((m: Json) => [m.text, m.self])).toEqual([
       ['status please', false],
@@ -507,22 +562,12 @@ describe('approvals in a Telegram chat', () => {
     const { id } = await connectBot(server, fake.token)
     await call(server, 'PUT', `/channels/connections/${id}/binding`, { agentId: leadId })
     // the news channel (observe only) and the ops group, both known
-    server.telegram.known.see(id, {
-      chatId: '-1002',
-      kind: 'channel',
-      title: 'News',
-      forum: false,
-      at: 1,
+    const news = know(server, id, '-1002', 'News', true)
+    const ops = know(server, id, '-1001', 'Ops')
+    await call(server, 'PATCH', `/channels/connections/${id}/chats/${news}/policy`, {
+      wake: 'never',
     })
-    server.telegram.known.see(id, {
-      chatId: '-1001',
-      kind: 'group',
-      title: 'Ops',
-      forum: false,
-      at: 1,
-    })
-    await call(server, 'PATCH', `/channels/connections/${id}/chats/-1002/policy`, { wake: 'never' })
-    await call(server, 'PATCH', `/channels/connections/${id}/chats/-1001/policy`, {
+    await call(server, 'PATCH', `/channels/connections/${id}/chats/${ops}/policy`, {
       wake: 'mention',
     })
     // Ana is the owner's account

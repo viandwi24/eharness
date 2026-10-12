@@ -17,13 +17,20 @@ export type ChannelRuntimeState =
   /** A user account whose session another process holds (one live client per session). */
   | 'lease'
 
+/** What is set on one node itself; everything else is inherited from its parent, the connection or the defaults. */
 export interface ChannelPolicy {
-  /** `false` takes the chat out of the allowlist. */
+  /** `false` takes the node out of the allowlist, `true` puts it in. */
   enabled: boolean
   agentId?: string
   wake?: 'mention' | 'always' | 'never'
   delivery?: 'final_text' | 'message_tool'
   retentionDays?: number
+  /** Store the full log of the node (default on). */
+  observe?: boolean
+  /** `node` (default): own session. `room`: a thread shares the session of its room. */
+  sessionScope?: 'node' | 'room'
+  /** Drop a message's content when it is deleted on the platform. */
+  redactOnDelete?: boolean
 }
 
 export interface ChannelBinding {
@@ -35,7 +42,10 @@ export interface ChannelBinding {
   replyToUnknown: boolean
   admins: string[]
   historyLimit: number
-  defaults: Pick<ChannelPolicy, 'wake' | 'delivery' | 'retentionDays'>
+  defaults: Pick<
+    ChannelPolicy,
+    'wake' | 'delivery' | 'retentionDays' | 'observe' | 'sessionScope' | 'redactOnDelete'
+  >
 }
 
 /** What the Channels page shows about a Telegram user account (P41 L4). Never a session or a full phone number. */
@@ -118,35 +128,63 @@ export interface ChannelConnectionView {
   breaker?: { open: boolean; until: number; reason: string }
 }
 
-export interface ChannelTopicView {
-  id: string
-  name: string
-  policy: ChannelPolicy | null
+export type ChannelSettingKey =
+  | 'enabled'
+  | 'agentId'
+  | 'wake'
+  | 'delivery'
+  | 'retentionDays'
+  | 'observe'
+  | 'sessionScope'
+  | 'redactOnDelete'
+
+/** Where an effective setting comes from. */
+export interface ChannelSettingOrigin {
+  from: 'node' | 'ancestor' | 'connection' | 'default'
+  /** The node that set it (`node` and `ancestor`). */
+  nodeId?: string
 }
 
-export interface ChannelChatView {
-  chatId: string
-  kind: 'dm' | 'group' | 'channel'
+/** A place of a connection (a chat, a channel, a forum topic) with its inherited settings. */
+export interface ChannelNodeView {
+  /** The node id. */
+  id: string
+  parentId?: string
+  /** The platform's id (opaque). */
+  nativeId: string
+  kind: 'space' | 'room' | 'thread' | 'direct'
+  /** Display badge: a person, a group or a broadcast channel. */
+  chatKind: 'dm' | 'group' | 'channel'
+  platformType: string
   title: string
   username?: string
-  forum: boolean
-  topics: ChannelTopicView[]
-  /** What the bot is in the chat (`member`, `administrator`, `left`, `kicked`, ...). */
-  botStatus?: string
+  state: 'active' | 'closed' | 'archived' | 'deleted' | 'left'
+  /** Has child nodes (a forum). */
+  container: boolean
+  /** Messages can be sent and stored here (a forum parent holds none). */
+  postable: boolean
+  /** What the connection is in the node (`member`, `admin`, `owner`, `none`, `unknown`). */
+  member?: string
+  canPost?: boolean
   /** User accounts: selection, backfill and admin-log state. */
   account?: ChannelAccountChatState
-  canPost?: boolean
   firstSeen: number
   lastSeen: number
-  /** The chat's own entry; null = not in the allowlist (or the open policy's defaults). */
+  /** What is set on this node itself; null = nothing (everything is inherited). */
   policy: ChannelPolicy | null
-  /** What applies right now (the connection's defaults filled in). */
+  /** What applies right now (inherited values filled in). */
   effective: {
     allowed: boolean
+    agentId: string
     wake: 'mention' | 'always' | 'never'
     delivery: 'final_text' | 'message_tool'
     retentionDays: number
+    observe: boolean
+    sessionScope: 'node' | 'room'
+    redactOnDelete: boolean
   }
+  /** Where each effective setting comes from. */
+  inherited: Partial<Record<ChannelSettingKey, ChannelSettingOrigin>>
 }
 
 export interface ChannelLinkView {
@@ -164,16 +202,22 @@ export interface ChannelBindInput {
   replyToUnknown?: boolean
   admins?: string[]
   historyLimit?: number
-  defaults?: Pick<ChannelPolicy, 'wake' | 'delivery' | 'retentionDays'>
+  defaults?: Pick<
+    ChannelPolicy,
+    'wake' | 'delivery' | 'retentionDays' | 'observe' | 'sessionScope' | 'redactOnDelete'
+  >
 }
 
 export interface ChannelPolicyInput {
-  enabled?: boolean
-  /** `null` clears the override (back to the connection's agent). */
+  enabled?: boolean | null
+  /** `null` clears the setting (inherit again). */
   agentId?: string | null
   wake?: 'mention' | 'always' | 'never' | null
   delivery?: 'final_text' | 'message_tool' | null
   retentionDays?: number | null
+  observe?: boolean | null
+  sessionScope?: 'node' | 'room' | null
+  redactOnDelete?: boolean | null
 }
 
 export interface ChannelLimitsInput {
@@ -205,11 +249,14 @@ export interface ChannelMemberView {
 }
 
 export interface ChannelInboxConversationView {
+  /** The node id. */
   conversationId: string
   kind: 'dm' | 'group' | 'channel'
   title: string
   container: string
   topic?: string
+  parentId?: string
+  parentTitle?: string
   agentId: string
   allowed: boolean
   woke: number

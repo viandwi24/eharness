@@ -22,6 +22,7 @@
 		agentChoices,
 		API_ID_URL,
 		backfillText,
+		chatTree,
 		KIND_LABEL,
 		lastWindowDays,
 		limitsBody,
@@ -58,12 +59,16 @@
 	const hint = $derived(accountHint(conn));
 	const bound = $derived(conn.binding !== null);
 	const running = $derived(conn.runtime.state === 'running');
-	const picked = $derived(sortAccountChats(chats.filter((c) => c.account?.selected)));
-	const others = $derived(sortAccountChats(chats.filter((c) => !c.account?.selected)));
+	const rooms = $derived(chats.filter((c) => c.kind === 'room'));
+	const picked = $derived(sortAccountChats(rooms.filter((c) => c.account?.selected)));
+	const others = $derived(sortAccountChats(rooms.filter((c) => !c.account?.selected)));
+	const titleOf = (nodeId: string): string => chats.find((c) => c.id === nodeId)?.title ?? 'a chat';
+	const branchOf = (c: ChannelChat) => chatTree(chats.filter((x) => x.id === c.id || x.parentId === c.id))[0] ?? { chat: c, children: [] };
 	const adminChats = $derived(picked.filter((c) => c.account?.admin));
 
 	async function loadDetail(): Promise<void> {
 		try {
+			// the account reads chats; their topics come with the chat (they are children of its row)
 			chats = (await api.get('/channels/connections/{id}/chats', { params: { id: conn.id } })).items;
 		} catch {
 			// the card still shows; the next refresh retries
@@ -101,17 +106,17 @@
 	const restart = (): Promise<void> => run('restart', () => api.post('/channels/connections/{id}/restart', { params: id() }), 'Restarted');
 	const refresh = (): Promise<void> => run('read the chats', () => api.post('/channels/connections/{id}/account/chats/refresh', { params: id() }), 'Chats refreshed');
 	const select = (c: ChannelChat, selected: boolean): Promise<void> =>
-		run('choose the chat', () => api.put('/channels/connections/{id}/account/chats/{chatId}/selected', { params: { id: conn.id, chatId: c.chatId }, body: { selected } }));
+		run('choose the chat', () => api.put('/channels/connections/{id}/account/chats/{chatId}/selected', { params: { id: conn.id, chatId: c.id }, body: { selected } }));
 	function setBackfill(c: ChannelChat, clear: boolean): Promise<void> {
-		const days = clear ? null : lastWindowDays(windows[c.chatId] ?? '');
+		const days = clear ? null : lastWindowDays(windows[c.id] ?? '');
 		if (days === undefined || (days === null && !clear)) {
 			toast.error('Days: a whole number, 1 to 3650');
 			return Promise.resolve();
 		}
-		return run('set the window', () => api.put('/channels/connections/{id}/account/chats/{chatId}/backfill', { params: { id: conn.id, chatId: c.chatId }, body: { days } }), clear ? 'History reading stopped' : 'History window set');
+		return run('set the window', () => api.put('/channels/connections/{id}/account/chats/{chatId}/backfill', { params: { id: conn.id, chatId: c.id }, body: { days } }), clear ? 'History reading stopped' : 'History window set');
 	}
 	const setAdminLog = (c: ChannelChat, enabled: boolean): Promise<void> =>
-		run('change the admin log', () => api.put('/channels/connections/{id}/account/chats/{chatId}/admin-log', { params: { id: conn.id, chatId: c.chatId }, body: { enabled } }));
+		run('change the admin log', () => api.put('/channels/connections/{id}/account/chats/{chatId}/admin-log', { params: { id: conn.id, chatId: c.id }, body: { enabled } }));
 	const runAdminLog = (): Promise<void> => run('read the admin log', () => api.post('/channels/connections/{id}/account/admin-log/run', { params: id(), body: { force: true } as never }), 'Admin logs read');
 	async function saveLimits(): Promise<void> {
 		const r = limitsBody(limits);
@@ -194,9 +199,9 @@
 				{#if picked.length > 0}
 					<h3 class="text-xs font-medium">Chosen</h3>
 					<ul class="flex flex-col gap-2">
-						{#each picked as c (c.chatId)}
+						{#each picked as c (c.id)}
 							<div class="flex flex-col gap-1">
-								<ChannelChatRow connectionId={conn.id} chat={c} onChange={() => { onChange(); void loadDetail(); }} />
+								<ChannelChatRow connectionId={conn.id} branch={branchOf(c)} {titleOf} onChange={() => { onChange(); void loadDetail(); }} />
 								<div class="flex justify-end"><Button size="sm" variant="ghost" onclick={() => void select(c, false)} disabled={busy}>Stop reading</Button></div>
 							</div>
 						{/each}
@@ -207,10 +212,10 @@
 					<p class="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">{chats.length === 0 ? 'No chats yet. Press Refresh chats once the account is running.' : 'Every chat of the account is chosen.'}</p>
 				{:else}
 					<ul class="flex flex-col divide-y divide-border rounded-lg border border-border">
-						{#each others as c (c.chatId)}
+						{#each others as c (c.id)}
 							<li class="flex items-center gap-3 p-3" data-testid="account-chat">
 								<div class="min-w-0 flex-1">
-									<div class="flex min-w-0 items-center gap-2"><span class="truncate text-sm">{c.title}</span><Badge variant="secondary">{KIND_LABEL[c.kind]}</Badge>{#if c.account?.admin}<Badge variant="secondary">Admin</Badge>{/if}</div>
+									<div class="flex min-w-0 items-center gap-2"><span class="truncate text-sm">{c.title}</span><Badge variant="secondary">{KIND_LABEL[c.chatKind]}</Badge>{#if c.account?.admin}<Badge variant="secondary">Admin</Badge>{/if}</div>
 								</div>
 								<Switch checked={false} onCheckedChange={() => void select(c, true)} disabled={busy} aria-label="Read {c.title}" />
 							</li>
@@ -229,12 +234,12 @@
 				<p class="text-xs text-muted-foreground">Reads the history of a chosen chat, newest first, down to the number of days you set (one chat at a time, with pauses). It resumes after a restart and obeys Telegram's flood waits.</p>
 				{#if picked.length === 0}<p class="text-sm text-muted-foreground">Choose a chat first.</p>{/if}
 				<ul class="flex flex-col gap-2">
-					{#each picked as c (c.chatId)}
+					{#each picked as c (c.id)}
 						<li class="flex flex-col gap-2 rounded-lg border border-border p-3" data-testid="backfill-row">
 							<span class="truncate text-sm font-medium">{c.title}</span>
 							<p class="text-xs text-muted-foreground">{backfillText(c, Date.now())}</p>
 							<div class="flex flex-wrap items-center gap-2">
-								<Input class="w-28" inputmode="numeric" placeholder="Days" aria-label="History window in days for {c.title}" value={windows[c.chatId] ?? (c.account?.backfill.days === null || c.account?.backfill.days === undefined ? '' : String(c.account.backfill.days))} oninput={(e) => (windows[c.chatId] = e.currentTarget.value)} />
+								<Input class="w-28" inputmode="numeric" placeholder="Days" aria-label="History window in days for {c.title}" value={windows[c.id] ?? (c.account?.backfill.days === null || c.account?.backfill.days === undefined ? '' : String(c.account.backfill.days))} oninput={(e) => (windows[c.id] = e.currentTarget.value)} />
 								<Button size="sm" variant="outline" onclick={() => void setBackfill(c, false)} disabled={busy}>Read history</Button>
 								{#if c.account?.backfill.days !== null && c.account?.backfill.days !== undefined}<Button size="sm" variant="ghost" onclick={() => void setBackfill(c, true)} disabled={busy}>Stop</Button>{/if}
 							</div>
@@ -250,7 +255,7 @@
 				</div>
 				{#if adminChats.length === 0}<p class="text-sm text-muted-foreground">No chosen chat where the account is an admin.</p>{/if}
 				<ul class="flex flex-col divide-y divide-border rounded-lg border border-border">
-					{#each adminChats as c (c.chatId)}
+					{#each adminChats as c (c.id)}
 						<li class="flex items-center gap-3 p-3" data-testid="adminlog-row">
 							<div class="min-w-0 flex-1">
 								<div class="truncate text-sm">{c.title}</div>

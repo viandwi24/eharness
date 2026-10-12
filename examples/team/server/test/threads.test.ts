@@ -325,6 +325,20 @@ describe('migration of the single DM', () => {
       'tgu_counters',
       'tgu_leases',
       'tgu_settings',
+      'ch_meta',
+      'ch_nodes',
+      'ch_node_links',
+      'ch_node_access',
+      'ch_node_settings',
+      'ch_identities',
+      'ch_identity_aliases',
+      'ch_identity_profiles',
+      'ch_memberships',
+      'ch_messages',
+      'ch_message_revisions',
+      'ch_reactions',
+      'ch_events',
+      'ch_node_sessions',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(

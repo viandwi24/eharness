@@ -1050,3 +1050,313 @@ export const tguSettings = sqliteTable('tgu_settings', {
   config: text('config').notNull(),
   updatedAt: integer('updated_at').notNull(),
 })
+
+// --- Generic conversation model (docs/plans/P41-team-channels.md, phase L5; `infra/channels`) ---
+//
+// One storage model for every platform: nodes (a tree of places), their links and per-connection
+// access, inherited settings, identities, messages with revisions and tombstones, reactions, an
+// append-only event log and the session bound to a node. The `channel_conversations`,
+// `channel_messages`, `channel_inbox`, `channel_events`, `channel_known_chats`, `channel_unlinked`,
+// `channel_identities`, `channel_pairing_tokens` and `tgu_chats` tables above are LEGACY: nothing
+// reads them after the boot-time data migration (`infra/channels/legacy-migration.ts`) copied them
+// here. They stay for one release so a bad migration is recoverable, then a later migration drops them.
+// `channel_outbox` and `channel_approvals` stay; their `conversation_id` column now holds a node id.
+
+/** Small key/value facts about the channel storage (migration markers). */
+export const chMeta = sqliteTable('ch_meta', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+})
+
+/**
+ * A place: a tree with a materialized `path` (`/<root id>/.../<id>`). `kind` and `traits` are the
+ * structure core logic may branch on; `platformType` is display and debugging only. `meta` is JSON
+ * validated by the adapter. `nativeId` is composed by the adapter and opaque to the core.
+ * `legacyRefId` is the conversation id of before L5, so old sessions and logs map without rewriting.
+ */
+export const chNodes = sqliteTable(
+  'ch_nodes',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    nativeId: text('native_id').notNull(),
+    parentId: text('parent_id'),
+    path: text('path').notNull(),
+    /** `space` | `room` | `thread` | `direct`. */
+    kind: text('kind').notNull(),
+    /** JSON `NodeTraits` (multiUser, broadcast, container, threading, postable, ephemeral, external, threadsOnly). */
+    traits: text('traits').notNull(),
+    platformType: text('platform_type').notNull().default(''),
+    /** A node created from a message (a Discord thread, a forum topic's first message). */
+    originMessageNativeId: text('origin_message_native_id'),
+    title: text('title'),
+    /** `active` | `closed` | `archived` | `deleted` | `left`. */
+    state: text('state').notNull().default('active'),
+    stateReason: text('state_reason'),
+    meta: text('meta').notNull().default('{}'),
+    metaVersion: integer('meta_version').notNull().default(0),
+    legacyRefId: text('legacy_ref_id'),
+    firstSeenAt: integer('first_seen_at').notNull(),
+    lastEventAt: integer('last_event_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('ch_nodes_native').on(t.connectionId, t.nativeId),
+    uniqueIndex('ch_nodes_legacy').on(t.connectionId, t.legacyRefId),
+    index('ch_nodes_parent').on(t.parentId),
+    index('ch_nodes_path').on(t.connectionId, t.path),
+  ],
+)
+
+/** Relations that are not parent and child: `discussion_of`, `monoforum_of`, `follows`, `alias_of`, `migrated_from`. */
+export const chNodeLinks = sqliteTable(
+  'ch_node_links',
+  {
+    fromNodeId: text('from_node_id').notNull(),
+    toNodeId: text('to_node_id').notNull(),
+    rel: text('rel').notNull(),
+    meta: text('meta').notNull().default('{}'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.fromNodeId, t.toNodeId, t.rel] }),
+    index('ch_node_links_to').on(t.toNodeId, t.rel),
+  ],
+)
+
+/**
+ * What the connection is in a node (a node belongs to one connection): membership, whether it may
+ * post or read, the read marker, `history` (backfill bookkeeping, JSON) and `extra` (adapter-private
+ * per-node job state, JSON).
+ */
+export const chNodeAccess = sqliteTable('ch_node_access', {
+  nodeId: text('node_id').primaryKey(),
+  connectionId: text('connection_id').notNull(),
+  /** `member` | `admin` | `owner` | `none` | `unknown`. */
+  member: text('member').notNull().default('unknown'),
+  canPost: integer('can_post'),
+  canRead: integer('can_read'),
+  muted: integer('muted').notNull().default(0),
+  lastReadNativeId: text('last_read_native_id'),
+  history: text('history').notNull().default('{}'),
+  extra: text('extra').notNull().default('{}'),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+/** Settings that inherit down the tree: node, ancestors, the connection's defaults, the product's. */
+export const chNodeSettings = sqliteTable(
+  'ch_node_settings',
+  {
+    nodeId: text('node_id').notNull(),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.nodeId, t.key] })],
+)
+
+/**
+ * A person, bot or channel as one connection sees it. `personId` is the team member the identity
+ * is linked to (set only by an authorized action, never merged automatically). `dm_*` count the
+ * direct messages of an identity that is not linked (the "Not linked yet" list): metadata only.
+ */
+export const chIdentities = sqliteTable(
+  'ch_identities',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    nativeId: text('native_id').notNull(),
+    /** `human` | `bot` | `app` | `channel` | `webhook` | `system` | `anonymous`. */
+    kind: text('kind').notNull().default('human'),
+    personId: text('person_id'),
+    linkedAt: integer('linked_at'),
+    isSelf: integer('is_self').notNull().default(0),
+    displayName: text('display_name'),
+    username: text('username'),
+    avatar: text('avatar'),
+    meta: text('meta').notNull().default('{}'),
+    firstSeenAt: integer('first_seen_at').notNull(),
+    lastSeenAt: integer('last_seen_at').notNull(),
+    dmFirstAt: integer('dm_first_at'),
+    dmLastAt: integer('dm_last_at'),
+    dmCount: integer('dm_count').notNull().default(0),
+    ignored: integer('ignored').notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex('ch_identities_native').on(t.connectionId, t.nativeId),
+    index('ch_identities_person').on(t.connectionId, t.personId),
+  ],
+)
+
+/** Ids that change or repeat a person: a username, a phone, a LID. */
+export const chIdentityAliases = sqliteTable(
+  'ch_identity_aliases',
+  {
+    identityId: text('identity_id').notNull(),
+    connectionId: text('connection_id').notNull(),
+    kind: text('kind').notNull(),
+    value: text('value').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.identityId, t.kind, t.value] }),
+    index('ch_identity_aliases_value').on(t.connectionId, t.kind, t.value),
+  ],
+)
+
+/** A guild nickname, a workspace display name, a custom admin title: per space or room. */
+export const chIdentityProfiles = sqliteTable(
+  'ch_identity_profiles',
+  {
+    identityId: text('identity_id').notNull(),
+    scopeNodeId: text('scope_node_id').notNull(),
+    nick: text('nick'),
+    avatar: text('avatar'),
+    roles: text('roles').notNull().default('[]'),
+    meta: text('meta').notNull().default('{}'),
+  },
+  (t) => [primaryKey({ columns: [t.identityId, t.scopeNodeId] })],
+)
+
+export const chMemberships = sqliteTable(
+  'ch_memberships',
+  {
+    nodeId: text('node_id').notNull(),
+    identityId: text('identity_id').notNull(),
+    role: text('role').notNull().default('member'),
+    joinedAt: integer('joined_at'),
+    leftAt: integer('left_at'),
+  },
+  (t) => [primaryKey({ columns: [t.nodeId, t.identityId] })],
+)
+
+/**
+ * Messages, keyed by `(node, native id)`. `content` is sealed with the channel vault (UIMessage
+ * compatible parts and entities; null once redacted). A deleted message stays as a tombstone
+ * (`deleted_at`): replies and thread roots still resolve. `rev` is the change counter collectors
+ * follow. `pending` = observed and not yet shown to a run; `handled` = the gateway finished
+ * acting on it (a redelivery of an unhandled one repeats the action).
+ */
+export const chMessages = sqliteTable(
+  'ch_messages',
+  {
+    /** uuidv7: sorts by creation. */
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    nodeId: text('node_id').notNull(),
+    nativeId: text('native_id').notNull(),
+    senderIdentityId: text('sender_identity_id'),
+    /** Platform time (epoch ms). */
+    sentAt: integer('sent_at').notNull(),
+    sortKey: text('sort_key').notNull().default(''),
+    /** `in` | `out`. */
+    direction: text('direction').notNull().default('in'),
+    /** `message` | `service` | `system`. */
+    kind: text('kind').notNull().default('message'),
+    content: text('content'),
+    contentVersion: integer('content_version').notNull().default(0),
+    replyToNativeId: text('reply_to_native_id'),
+    replyToMessageId: text('reply_to_message_id'),
+    threadRootNativeId: text('thread_root_native_id'),
+    editedAt: integer('edited_at'),
+    deletedAt: integer('deleted_at'),
+    deletedBy: text('deleted_by'),
+    deletedHasContent: integer('deleted_has_content').notNull().default(0),
+    sendTxnId: text('send_txn_id'),
+    /** What the gateway did with an incoming message: `woke` or `observed` (null = sent by us). */
+    disposition: text('disposition'),
+    pending: integer('pending').notNull().default(0),
+    handled: integer('handled').notNull().default(0),
+    rev: integer('rev').notNull().default(0),
+    meta: text('meta').notNull().default('{}'),
+  },
+  (t) => [
+    uniqueIndex('ch_messages_native').on(t.nodeId, t.nativeId),
+    uniqueIndex('ch_messages_txn').on(t.nodeId, t.sendTxnId).where(sql`${t.sendTxnId} IS NOT NULL`),
+    index('ch_messages_rev').on(t.connectionId, t.rev),
+    index('ch_messages_node').on(t.nodeId, t.id),
+    index('ch_messages_native_any').on(t.connectionId, t.nativeId),
+    index('ch_messages_sent').on(t.sentAt),
+  ],
+)
+
+/** Earlier versions of an edited message (content sealed like the message). */
+export const chMessageRevisions = sqliteTable(
+  'ch_message_revisions',
+  {
+    messageId: text('message_id').notNull(),
+    version: integer('version').notNull(),
+    content: text('content').notNull(),
+    editedAt: integer('edited_at').notNull(),
+    editorIdentityId: text('editor_identity_id'),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.version] })],
+)
+
+export const chReactions = sqliteTable(
+  'ch_reactions',
+  {
+    messageId: text('message_id').notNull(),
+    identityId: text('identity_id').notNull(),
+    emojiId: text('emoji_id').notNull(),
+    emoji: text('emoji').notNull(),
+    at: integer('at').notNull(),
+    removedAt: integer('removed_at'),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.identityId, t.emojiId] })],
+)
+
+/**
+ * The append-only event log: what the platform said (`message.created`, `node.updated`, ...) and
+ * what the gateway did with it (`gateway.woke`, `gateway.dropped`, `gateway.reply_sent`, ...).
+ * Unique `(connection, dedupe key)`; `node_id` is null while an event cannot be placed (a deletion
+ * without a chat id). `payload` holds facts, never a message text; `raw` (optional, prunable,
+ * sealed) the platform payload so events can be re-normalized with a newer `normalizer_version`.
+ */
+export const chEvents = sqliteTable(
+  'ch_events',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    type: text('type').notNull(),
+    nodeId: text('node_id'),
+    actorIdentityId: text('actor_identity_id'),
+    targetMessageNativeId: text('target_message_native_id'),
+    targetMessageId: text('target_message_id'),
+    at: integer('at').notNull(),
+    receivedAt: integer('received_at').notNull(),
+    dedupeKey: text('dedupe_key').notNull(),
+    streamOrder: text('stream_order'),
+    normalizerVersion: integer('normalizer_version').notNull().default(1),
+    payload: text('payload').notNull().default('{}'),
+    raw: text('raw'),
+  },
+  (t) => [
+    uniqueIndex('ch_events_dedupe').on(t.connectionId, t.dedupeKey),
+    index('ch_events_conn').on(t.connectionId, t.id),
+    index('ch_events_type').on(t.connectionId, t.type, t.id),
+    index('ch_events_node').on(t.connectionId, t.nodeId, t.id),
+    index('ch_events_at').on(t.at),
+  ],
+)
+
+/**
+ * The session of an agent for a node (or for the room a node shares its session with): the agent,
+ * the generation (bumped when the agent of the node changes) and the thread label.
+ * `session_id` is `channel:<connection>:<node id>[#generation]`, or the old key for nodes migrated
+ * from L1-L4.
+ */
+export const chNodeSessions = sqliteTable(
+  'ch_node_sessions',
+  {
+    connectionId: text('connection_id').notNull(),
+    nodeId: text('node_id').notNull(),
+    sessionId: text('session_id').notNull(),
+    agentId: text('agent_id').notNull(),
+    label: text('label'),
+    createdAt: integer('created_at').notNull(),
+    generation: integer('generation').notNull().default(0),
+    /** The node the session answered in last (the default target of its tools when it shares a room). */
+    lastNodeId: text('last_node_id'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.connectionId, t.nodeId] }),
+    uniqueIndex('ch_node_sessions_session').on(t.sessionId),
+  ],
+)

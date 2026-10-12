@@ -119,7 +119,7 @@
 					<li>
 						<button type="button" class="flex w-full flex-col gap-1 p-3 text-left hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none" onclick={() => void openLog(c)} data-testid="inbox-row">
 							<div class="flex min-w-0 flex-wrap items-center gap-2">
-								<span class="truncate text-sm font-medium">{c.title}</span>
+								<span class="truncate text-sm font-medium">{c.parentTitle ? `${c.parentTitle} / ${c.title}` : c.title}</span>
 								<Badge variant="secondary">{KIND_LABEL[c.kind]}{c.topic ? ' · topic' : ''}</Badge>
 								<Badge variant={c.allowed ? 'success' : 'warning'}>{allowlistLabel(c)}</Badge>
 								<span class="ml-auto shrink-0 text-xs text-muted-foreground">{ago(c.lastAt, Date.now())}</span>

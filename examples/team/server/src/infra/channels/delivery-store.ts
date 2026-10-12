@@ -6,14 +6,14 @@
 import type { Database } from 'bun:sqlite'
 import { uuidv7 } from 'eharness'
 import type { SecretVault } from 'eharness/providers'
-import type { ConversationRef, OutboundButton } from './types.ts'
+import type { OutboundButton } from './types.ts'
 
 // --- outbox ------------------------------------------------------------------------------------
 
 export type OutboxKind = 'reply' | 'post' | 'approval'
 export type OutboxStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'skipped'
 
-/** What an outbox row says once opened. */
+/** What an outbox row says once opened. `conversationId` is the id of the node it goes to. */
 export interface OutboxRow {
   id: string
   connectionId: string
@@ -23,7 +23,6 @@ export interface OutboxRow {
   triggerId: string | null
   chunkIndex: number
   chunkCount: number
-  ref: ConversationRef
   text: string
   replyTo?: string
   buttons?: OutboundButton[]
@@ -47,7 +46,6 @@ export interface NewOutbox {
   triggerId?: string | undefined
   chunkIndex: number
   chunkCount: number
-  ref: ConversationRef
   text: string
   replyTo?: string | undefined
   buttons?: OutboundButton[] | undefined
@@ -75,7 +73,6 @@ interface OutboxDb {
 }
 
 interface OutboxBody {
-  ref: ConversationRef
   text: string
   replyTo?: string
   buttons?: OutboundButton[]
@@ -129,7 +126,6 @@ export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxS
       triggerId: r.trigger_id,
       chunkIndex: r.chunk_index,
       chunkCount: r.chunk_count,
-      ref: body.ref,
       text: body.text,
       ...(body.replyTo === undefined ? {} : { replyTo: body.replyTo }),
       ...(body.buttons === undefined ? {} : { buttons: body.buttons }),
@@ -176,7 +172,6 @@ export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxS
       for (const row of rows) {
         const id = uuidv7()
         const body: OutboxBody = {
-          ref: row.ref,
           text: row.text,
           ...(row.replyTo === undefined ? {} : { replyTo: row.replyTo }),
           ...(row.buttons === undefined ? {} : { buttons: row.buttons }),

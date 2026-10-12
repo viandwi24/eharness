@@ -26,7 +26,6 @@ import {
   ChannelMessagesQuery,
   ChannelPolicyBodySchema,
   ChannelSelectBodySchema,
-  ChannelTopicQuery,
   ChannelUnlinkedListSchema,
   ChannelUnlinkedQuery,
 } from '../schemas/channels.ts'
@@ -92,9 +91,9 @@ const chats = createRoute({
   method: 'get',
   path: '/channels/connections/{id}/chats',
   tags,
-  summary: 'Known chats',
+  summary: 'Chats and topics',
   description:
-    'Groups, supergroups and channels the bot has seen (any update, or being added or removed), with the policy that applies. Discovery starts when the connection is bound and the bot is in a chat.',
+    'The nodes of the connection (groups, channels, forum topics; people are listed under the inbox): what each one sets itself and what it inherits. Discovery starts when the connection is bound and the bot is in a chat.',
   security,
   request: { params: ChannelIdParam },
   responses: {
@@ -107,18 +106,17 @@ const policy = createRoute({
   method: 'patch',
   path: '/channels/connections/{id}/chats/{chatId}/policy',
   tags,
-  summary: 'Allow a chat and set its policy',
+  summary: 'Set the settings of a chat or topic',
   description:
-    'Creates or changes the entry of a known chat in the allowlist: `wake` (`mention`, `always`, `never` = observe only), `delivery`, `retentionDays`, an `agentId` override. With `?topic=` the policy is of a forum topic. A `null` field clears the override.',
+    'Writes settings on one node (`chatId` is the node id of a chat or of a forum topic): `enabled` (allowlist), `wake` (`mention`, `always`, `never` = observe only), `delivery`, `retentionDays`, `agentId`, `observe`, `sessionScope`, `redactOnDelete`. Settings inherit down the tree: a topic keeps what its forum sets unless it sets its own. A `null` field clears the setting (inherit again); a chat that gets settings and has no `enabled` yet is switched on.',
   security,
   request: {
     params: ChannelChatParam,
-    query: ChannelTopicQuery,
     body: { required: true, content: content(ChannelPolicyBodySchema) },
   },
   responses: {
-    200: { description: 'The chat', content: content(ChannelChatSchema) },
-    404: jsonError('Unknown connection, chat or topic'),
+    200: { description: 'The node', content: content(ChannelChatSchema) },
+    404: jsonError('Unknown connection or node'),
     409: jsonError('The connection is not bound to an agent'),
     ...errorResponses,
   },
@@ -127,12 +125,14 @@ const policyRemove = createRoute({
   method: 'delete',
   path: '/channels/connections/{id}/chats/{chatId}/policy',
   tags,
-  summary: 'Take a chat out of the allowlist',
+  summary: 'Clear the settings of a chat or topic',
+  description:
+    'Removes everything set on the node itself: it inherits again (a chat of an allowlist connection is out of the allowlist).',
   security,
-  request: { params: ChannelChatParam, query: ChannelTopicQuery },
+  request: { params: ChannelChatParam },
   responses: {
-    200: { description: 'The chat', content: content(ChannelChatSchema) },
-    404: jsonError('Unknown connection, chat or topic'),
+    200: { description: 'The node', content: content(ChannelChatSchema) },
+    404: jsonError('Unknown connection or node'),
     409: jsonError('The connection is not bound to an agent'),
     ...errorResponses,
   },
@@ -439,19 +439,11 @@ export function channelRoutes(deps: Deps) {
     .openapi(chats, async (c) => c.json({ items: await ch.chats(c.req.valid('param').id) }, 200))
     .openapi(policy, async (c) => {
       const { id, chatId } = c.req.valid('param')
-      return c.json(
-        await ch.setChatPolicy(
-          id,
-          chatId,
-          c.req.valid('json') as never,
-          c.req.valid('query').topic,
-        ),
-        200,
-      )
+      return c.json(await ch.setChatPolicy(id, chatId, c.req.valid('json') as never), 200)
     })
     .openapi(policyRemove, async (c) => {
       const { id, chatId } = c.req.valid('param')
-      return c.json(await ch.setChatPolicy(id, chatId, null, c.req.valid('query').topic), 200)
+      return c.json(await ch.setChatPolicy(id, chatId, null), 200)
     })
     .openapi(links, async (c) => c.json({ items: await ch.links(c.req.valid('param').id) }, 200))
     .openapi(members, async (c) =>

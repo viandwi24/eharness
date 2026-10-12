@@ -14,13 +14,27 @@ const state = z.enum([
 const wake = z.enum(['mention', 'always', 'never'])
 const delivery = z.enum(['final_text', 'message_tool'])
 
+const sessionScope = z.enum(['node', 'room'])
+
 export const ChannelPolicySchema = z
   .object({
-    enabled: z.boolean().openapi({ description: '`false` takes the chat out of the allowlist.' }),
+    enabled: z.boolean().openapi({
+      description: '`false` takes the node out of the allowlist, `true` puts it in.',
+    }),
     agentId: z.string().optional(),
     wake: wake.optional(),
     delivery: delivery.optional(),
     retentionDays: z.number().int().optional(),
+    observe: z.boolean().optional().openapi({
+      description: 'Store the full log of the node (default on).',
+    }),
+    sessionScope: sessionScope.optional().openapi({
+      description:
+        '`node` (default): own session. `room`: a thread shares the session of its room.',
+    }),
+    redactOnDelete: z.boolean().optional().openapi({
+      description: "Drop a message's content when it is deleted on the platform.",
+    }),
   })
   .openapi('ChannelPolicy')
 
@@ -40,6 +54,9 @@ export const ChannelBindingSchema = z
       wake: wake.optional(),
       delivery: delivery.optional(),
       retentionDays: z.number().int().optional(),
+      observe: z.boolean().optional(),
+      sessionScope: sessionScope.optional(),
+      redactOnDelete: z.boolean().optional(),
     }),
   })
   .openapi('ChannelBinding')
@@ -141,34 +158,69 @@ export const ChannelConnectionListSchema = z
   .object({ items: z.array(ChannelConnectionSchema) })
   .openapi('ChannelConnectionList')
 
-export const ChannelChatSchema = z
+const settingKey = z.enum([
+  'enabled',
+  'agentId',
+  'wake',
+  'delivery',
+  'retentionDays',
+  'observe',
+  'sessionScope',
+  'redactOnDelete',
+])
+
+export const ChannelNodeSchema = z
   .object({
-    chatId: z.string(),
-    kind: z.enum(['dm', 'group', 'channel']),
+    id: z.string().openapi({ description: 'The node id.' }),
+    parentId: z
+      .string()
+      .optional()
+      .openapi({ description: 'The node this one is a child of (a topic of a forum).' }),
+    nativeId: z.string().openapi({ description: "The platform's id (opaque)." }),
+    kind: z.enum(['space', 'room', 'thread', 'direct']),
+    chatKind: z.enum(['dm', 'group', 'channel']),
+    platformType: z.string(),
     title: z.string(),
     username: z.string().optional(),
-    forum: z.boolean(),
-    topics: z.array(
-      z.object({ id: z.string(), name: z.string(), policy: ChannelPolicySchema.nullable() }),
-    ),
-    botStatus: z.string().optional(),
-    account: ChannelAccountChatSchema.optional(),
+    state: z.enum(['active', 'closed', 'archived', 'deleted', 'left']),
+    container: z.boolean().openapi({ description: 'Has child nodes (a forum).' }),
+    postable: z.boolean().openapi({ description: 'Messages can be sent and stored here.' }),
+    member: z.string().optional().openapi({
+      description: 'What the connection is in the node: `member`, `admin`, `owner` or `none`.',
+    }),
     canPost: z.boolean().optional(),
+    account: ChannelAccountChatSchema.optional(),
     firstSeen: z.number().int(),
     lastSeen: z.number().int(),
-    policy: ChannelPolicySchema.nullable(),
+    policy: ChannelPolicySchema.nullable().openapi({
+      description: 'What is set on this node itself; null = everything is inherited.',
+    }),
     effective: z.object({
       allowed: z.boolean(),
+      agentId: z.string(),
       wake,
       delivery,
       retentionDays: z.number().int(),
+      observe: z.boolean(),
+      sessionScope,
+      redactOnDelete: z.boolean(),
     }),
+    inherited: z
+      .partialRecord(
+        settingKey,
+        z.object({
+          from: z.enum(['node', 'ancestor', 'connection', 'default']),
+          nodeId: z.string().optional(),
+        }),
+      )
+      .openapi({ description: 'Where each effective setting comes from.' }),
   })
-  .openapi('ChannelChat')
+  .openapi('ChannelNode')
 
+export const ChannelChatSchema = ChannelNodeSchema
 export const ChannelChatListSchema = z
-  .object({ items: z.array(ChannelChatSchema) })
-  .openapi('ChannelChatList')
+  .object({ items: z.array(ChannelNodeSchema) })
+  .openapi('ChannelNodeList')
 
 export const ChannelLinkSchema = z
   .object({
@@ -197,6 +249,9 @@ export const ChannelBindBodySchema = z
         wake: wake.optional(),
         delivery: delivery.optional(),
         retentionDays: z.number().int().min(1).max(3650).optional(),
+        observe: z.boolean().optional(),
+        sessionScope: sessionScope.optional(),
+        redactOnDelete: z.boolean().optional(),
       })
       .optional(),
   })
@@ -204,11 +259,14 @@ export const ChannelBindBodySchema = z
 
 export const ChannelPolicyBodySchema = z
   .object({
-    enabled: z.boolean().optional(),
+    enabled: z.boolean().nullable().optional(),
     agentId: z.string().min(1).nullable().optional(),
     wake: wake.nullable().optional(),
     delivery: delivery.nullable().optional(),
     retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+    observe: z.boolean().nullable().optional(),
+    sessionScope: sessionScope.nullable().optional(),
+    redactOnDelete: z.boolean().nullable().optional(),
   })
   .openapi('ChannelPolicyBody')
 
@@ -258,11 +316,13 @@ export const ChannelIgnoreBodySchema = z
 const kind = z.enum(['dm', 'group', 'channel'])
 export const ChannelInboxConversationSchema = z
   .object({
-    conversationId: z.string(),
+    conversationId: z.string().openapi({ description: 'The node id.' }),
     kind,
     title: z.string(),
     container: z.string(),
     topic: z.string().optional(),
+    parentId: z.string().optional(),
+    parentTitle: z.string().optional(),
     agentId: z.string(),
     allowed: z.boolean().openapi({ description: 'The conversation passes the allowlist now.' }),
     woke: z.number().int().openapi({ description: 'Messages that woke the agent.' }),
@@ -374,7 +434,7 @@ export const ChannelActivitySchema = z
     type: z.enum(CHANNEL_EVENT_TYPES),
     reason: z.string().optional().openapi({
       description:
-        'A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`), a wake reason, or a short note. Never message text.',
+        'A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text.',
     }),
     conversationId: z.string().optional(),
     conversationTitle: z.string().optional(),
@@ -409,19 +469,15 @@ export const ChannelChatParam = ChannelIdParam.extend({
   chatId: z
     .string()
     .min(1)
-    .openapi({ param: { name: 'chatId', in: 'path' } }),
+    .openapi({
+      param: { name: 'chatId', in: 'path', description: 'The node id of the chat or topic.' },
+    }),
 })
 export const ChannelLinkParam = ChannelIdParam.extend({
   peerId: z
     .string()
     .min(1)
     .openapi({ param: { name: 'peerId', in: 'path' } }),
-})
-export const ChannelTopicQuery = z.object({
-  topic: z
-    .string()
-    .optional()
-    .openapi({ description: 'A forum topic id: the policy is of the topic.' }),
 })
 
 export const ChannelSelectBodySchema = z

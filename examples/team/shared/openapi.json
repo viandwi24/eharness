@@ -8668,13 +8668,13 @@
           }
         }
       },
-      "ChannelChatList": {
+      "ChannelNodeList": {
         "type": "object",
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChannelChat"
+              "$ref": "#/components/schemas/ChannelNode"
             }
           }
         },
@@ -8682,13 +8682,31 @@
           "items"
         ]
       },
-      "ChannelChat": {
+      "ChannelNode": {
         "type": "object",
         "properties": {
-          "chatId": {
-            "type": "string"
+          "id": {
+            "type": "string",
+            "description": "The node id."
+          },
+          "parentId": {
+            "type": "string",
+            "description": "The node this one is a child of (a topic of a forum)."
+          },
+          "nativeId": {
+            "type": "string",
+            "description": "The platform's id (opaque)."
           },
           "kind": {
+            "type": "string",
+            "enum": [
+              "space",
+              "room",
+              "thread",
+              "direct"
+            ]
+          },
+          "chatKind": {
             "type": "string",
             "enum": [
               "dm",
@@ -8696,45 +8714,42 @@
               "channel"
             ]
           },
+          "platformType": {
+            "type": "string"
+          },
           "title": {
             "type": "string"
           },
           "username": {
             "type": "string"
           },
-          "forum": {
-            "type": "boolean"
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "closed",
+              "archived",
+              "deleted",
+              "left"
+            ]
           },
-          "topics": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "policy": {
-                  "$ref": "#/components/schemas/ChannelPolicy"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "policy"
-              ]
-            }
+          "container": {
+            "type": "boolean",
+            "description": "Has child nodes (a forum)."
           },
-          "botStatus": {
-            "type": "string"
+          "postable": {
+            "type": "boolean",
+            "description": "Messages can be sent and stored here."
           },
-          "account": {
-            "$ref": "#/components/schemas/ChannelAccountChat"
+          "member": {
+            "type": "string",
+            "description": "What the connection is in the node: `member`, `admin`, `owner` or `none`."
           },
           "canPost": {
             "type": "boolean"
+          },
+          "account": {
+            "$ref": "#/components/schemas/ChannelAccountChat"
           },
           "firstSeen": {
             "type": "integer"
@@ -8750,6 +8765,9 @@
             "properties": {
               "allowed": {
                 "type": "boolean"
+              },
+              "agentId": {
+                "type": "string"
               },
               "wake": {
                 "type": "string",
@@ -8768,62 +8786,214 @@
               },
               "retentionDays": {
                 "type": "integer"
+              },
+              "observe": {
+                "type": "boolean"
+              },
+              "sessionScope": {
+                "type": "string",
+                "enum": [
+                  "node",
+                  "room"
+                ]
+              },
+              "redactOnDelete": {
+                "type": "boolean"
               }
             },
             "required": [
               "allowed",
+              "agentId",
               "wake",
               "delivery",
-              "retentionDays"
+              "retentionDays",
+              "observe",
+              "sessionScope",
+              "redactOnDelete"
             ]
+          },
+          "inherited": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              },
+              "agentId": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              },
+              "wake": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              },
+              "delivery": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              },
+              "retentionDays": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              },
+              "observe": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              },
+              "sessionScope": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              },
+              "redactOnDelete": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              }
+            },
+            "description": "Where each effective setting comes from."
           }
         },
         "required": [
-          "chatId",
+          "id",
+          "nativeId",
           "kind",
+          "chatKind",
+          "platformType",
           "title",
-          "forum",
-          "topics",
+          "state",
+          "container",
+          "postable",
           "firstSeen",
           "lastSeen",
           "policy",
-          "effective"
-        ]
-      },
-      "ChannelPolicy": {
-        "type": [
-          "object",
-          "null"
-        ],
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "`false` takes the chat out of the allowlist."
-          },
-          "agentId": {
-            "type": "string"
-          },
-          "wake": {
-            "type": "string",
-            "enum": [
-              "mention",
-              "always",
-              "never"
-            ]
-          },
-          "delivery": {
-            "type": "string",
-            "enum": [
-              "final_text",
-              "message_tool"
-            ]
-          },
-          "retentionDays": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "enabled"
+          "effective",
+          "inherited"
         ]
       },
       "ChannelAccountChat": {
@@ -8894,6 +9064,59 @@
           "backfill",
           "adminLog"
         ]
+      },
+      "ChannelPolicy": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` takes the node out of the allowlist, `true` puts it in."
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "wake": {
+            "type": "string",
+            "enum": [
+              "mention",
+              "always",
+              "never"
+            ]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "final_text",
+              "message_tool"
+            ]
+          },
+          "retentionDays": {
+            "type": "integer"
+          },
+          "observe": {
+            "type": "boolean",
+            "description": "Store the full log of the node (default on)."
+          },
+          "sessionScope": {
+            "type": "string",
+            "enum": [
+              "node",
+              "room"
+            ],
+            "description": "`node` (default): own session. `room`: a thread shares the session of its room."
+          },
+          "redactOnDelete": {
+            "type": "boolean",
+            "description": "Drop a message's content when it is deleted on the platform."
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "description": "What is set on this node itself; null = everything is inherited."
       },
       "ChannelSelectBody": {
         "type": "object",
@@ -9275,6 +9498,19 @@
               },
               "retentionDays": {
                 "type": "integer"
+              },
+              "observe": {
+                "type": "boolean"
+              },
+              "sessionScope": {
+                "type": "string",
+                "enum": [
+                  "node",
+                  "room"
+                ]
+              },
+              "redactOnDelete": {
+                "type": "boolean"
               }
             }
           }
@@ -9412,6 +9648,19 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 3650
+              },
+              "observe": {
+                "type": "boolean"
+              },
+              "sessionScope": {
+                "type": "string",
+                "enum": [
+                  "node",
+                  "room"
+                ]
+              },
+              "redactOnDelete": {
+                "type": "boolean"
               }
             }
           }
@@ -9424,7 +9673,10 @@
         "type": "object",
         "properties": {
           "enabled": {
-            "type": "boolean"
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "agentId": {
             "type": [
@@ -9463,6 +9715,29 @@
             ],
             "minimum": 1,
             "maximum": 3650
+          },
+          "observe": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "sessionScope": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "node",
+              "room",
+              null
+            ]
+          },
+          "redactOnDelete": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         }
       },
@@ -9636,7 +9911,8 @@
         "type": "object",
         "properties": {
           "conversationId": {
-            "type": "string"
+            "type": "string",
+            "description": "The node id."
           },
           "kind": {
             "type": "string",
@@ -9653,6 +9929,12 @@
             "type": "string"
           },
           "topic": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "parentTitle": {
             "type": "string"
           },
           "agentId": {
@@ -9929,7 +10211,7 @@
           },
           "reason": {
             "type": "string",
-            "description": "A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`), a wake reason, or a short note. Never message text."
+            "description": "A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text."
           },
           "conversationId": {
             "type": "string"
@@ -19520,7 +19802,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelChatList"
+                  "$ref": "#/components/schemas/ChannelNodeList"
                 }
               }
             }
@@ -19597,7 +19879,8 @@
             },
             "required": true,
             "name": "chatId",
-            "in": "path"
+            "in": "path",
+            "description": "The node id of the chat or topic."
           }
         ],
         "requestBody": {
@@ -19616,7 +19899,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelChat"
+                  "$ref": "#/components/schemas/ChannelNode"
                 }
               }
             }
@@ -19693,7 +19976,8 @@
             },
             "required": true,
             "name": "chatId",
-            "in": "path"
+            "in": "path",
+            "description": "The node id of the chat or topic."
           }
         ],
         "requestBody": {
@@ -19712,7 +19996,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelChat"
+                  "$ref": "#/components/schemas/ChannelNode"
                 }
               }
             }
@@ -19789,7 +20073,8 @@
             },
             "required": true,
             "name": "chatId",
-            "in": "path"
+            "in": "path",
+            "description": "The node id of the chat or topic."
           }
         ],
         "requestBody": {
@@ -19808,7 +20093,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelChat"
+                  "$ref": "#/components/schemas/ChannelNode"
                 }
               }
             }
@@ -20268,8 +20553,8 @@
         "tags": [
           "channels"
         ],
-        "summary": "Known chats",
-        "description": "Groups, supergroups and channels the bot has seen (any update, or being added or removed), with the policy that applies. Discovery starts when the connection is bound and the bot is in a chat.",
+        "summary": "Chats and topics",
+        "description": "The nodes of the connection (groups, channels, forum topics; people are listed under the inbox): what each one sets itself and what it inherits. Discovery starts when the connection is bound and the bot is in a chat.",
         "security": [
           {
             "Bearer": []
@@ -20292,7 +20577,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelChatList"
+                  "$ref": "#/components/schemas/ChannelNodeList"
                 }
               }
             }
@@ -20335,8 +20620,8 @@
         "tags": [
           "channels"
         ],
-        "summary": "Allow a chat and set its policy",
-        "description": "Creates or changes the entry of a known chat in the allowlist: `wake` (`mention`, `always`, `never` = observe only), `delivery`, `retentionDays`, an `agentId` override. With `?topic=` the policy is of a forum topic. A `null` field clears the override.",
+        "summary": "Set the settings of a chat or topic",
+        "description": "Writes settings on one node (`chatId` is the node id of a chat or of a forum topic): `enabled` (allowlist), `wake` (`mention`, `always`, `never` = observe only), `delivery`, `retentionDays`, `agentId`, `observe`, `sessionScope`, `redactOnDelete`. Settings inherit down the tree: a topic keeps what its forum sets unless it sets its own. A `null` field clears the setting (inherit again); a chat that gets settings and has no `enabled` yet is switched on.",
         "security": [
           {
             "Bearer": []
@@ -20359,17 +20644,8 @@
             },
             "required": true,
             "name": "chatId",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "A forum topic id: the policy is of the topic."
-            },
-            "required": false,
-            "description": "A forum topic id: the policy is of the topic.",
-            "name": "topic",
-            "in": "query"
+            "in": "path",
+            "description": "The node id of the chat or topic."
           }
         ],
         "requestBody": {
@@ -20384,11 +20660,11 @@
         },
         "responses": {
           "200": {
-            "description": "The chat",
+            "description": "The node",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelChat"
+                  "$ref": "#/components/schemas/ChannelNode"
                 }
               }
             }
@@ -20414,7 +20690,7 @@
             }
           },
           "404": {
-            "description": "Unknown connection, chat or topic",
+            "description": "Unknown connection or node",
             "content": {
               "application/json": {
                 "schema": {
@@ -20439,7 +20715,8 @@
         "tags": [
           "channels"
         ],
-        "summary": "Take a chat out of the allowlist",
+        "summary": "Clear the settings of a chat or topic",
+        "description": "Removes everything set on the node itself: it inherits again (a chat of an allowlist connection is out of the allowlist).",
         "security": [
           {
             "Bearer": []
@@ -20462,26 +20739,17 @@
             },
             "required": true,
             "name": "chatId",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "A forum topic id: the policy is of the topic."
-            },
-            "required": false,
-            "description": "A forum topic id: the policy is of the topic.",
-            "name": "topic",
-            "in": "query"
+            "in": "path",
+            "description": "The node id of the chat or topic."
           }
         ],
         "responses": {
           "200": {
-            "description": "The chat",
+            "description": "The node",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelChat"
+                  "$ref": "#/components/schemas/ChannelNode"
                 }
               }
             }
@@ -20507,7 +20775,7 @@
             }
           },
           "404": {
-            "description": "Unknown connection, chat or topic",
+            "description": "Unknown connection or node",
             "content": {
               "application/json": {
                 "schema": {

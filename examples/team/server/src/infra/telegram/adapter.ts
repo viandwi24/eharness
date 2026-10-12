@@ -16,20 +16,22 @@ import {
   type ChannelAdapter,
   type ChannelCapabilities,
   ChannelError,
-  type ConversationRef,
+  type ChannelNode,
   type EventSink,
   type Identity,
   type NativeAction,
+  type NodeInfo,
   type OutboundFile,
   type OutboundMessage,
   type SentMessage,
 } from '../channels/types.ts'
 import { htmlChunks, toTelegramHtml } from './format.ts'
 import {
+  chatNode,
   encodeCallback,
+  identityOfUser,
   type NormalizeContext,
   normalizeUpdate,
-  type SeenChat,
 } from './normalize.ts'
 
 /** Updates the adapter asks for (the default list omits `chat_member` and `message_reaction`). */
@@ -44,12 +46,15 @@ export const ALLOWED_UPDATES = [
   'message_reaction',
 ] as const
 
+/** The documented native id formats (see `normalize.ts`). */
+export const TELEGRAM_ID_FORMATS =
+  'private chat `<user id>`; group, supergroup, channel `<chat id>`; forum topic `<chat id>/<topic id>` (General is `/0`); message `<message id>` (unique per chat); person `<user id>`, a chat speaking as itself `chat:<chat id>`'
+
 export const TELEGRAM_CAPABILITIES: ChannelCapabilities = {
   maxTextLength: 4096,
   maxCaptionLength: 1024,
   // `getFile` serves files up to 20 MB
   maxDownloadBytes: 20 * 1024 * 1024,
-  topics: true,
   reactions: true,
   edit: true,
   delete: true,
@@ -60,8 +65,19 @@ export const TELEGRAM_CAPABILITIES: ChannelCapabilities = {
   history: false,
   /** Administrators only (`getChatAdministrators`); the Bot API cannot list all members. */
   members: true,
+  membersScope: 'admins',
   upload: true,
   buttons: true,
+  deletions: 'none',
+}
+
+/** What the bot can do in one node: a private chat has no member list, a channel no typing. */
+export function telegramCapabilitiesOf(node: ChannelNode): ChannelCapabilities {
+  return {
+    ...TELEGRAM_CAPABILITIES,
+    ...(node.kind === 'direct' ? { members: false } : {}),
+    ...(node.traits.broadcast ? { typing: false } : {}),
+  }
 }
 
 /** Setup problems the UI can explain and sometimes fix. */
@@ -147,8 +163,6 @@ export interface TelegramAdapterOptions {
   /** Longest flood wait auto-retry waits for itself (seconds, default 5); longer ones go to the outbox. */
   maxRetryDelaySec?: number
   hooks?: {
-    /** A chat the bot is in or heard from (known chats). */
-    onChat?(chat: SeenChat): void
     /** The runner stopped on its own (bad token, another poller, ...). */
     onFailure?(failure: TelegramFailure): void
     warn?(message: string): void
@@ -163,8 +177,22 @@ export interface TelegramAdapter extends ChannelAdapter {
 }
 
 const chatArg = (value: string): number | string => (/^-?\d+$/.test(value) ? Number(value) : value)
-const topicArg = (ref: ConversationRef): number | undefined =>
-  ref.topic === undefined ? undefined : Number(ref.topic)
+
+/** The chat and topic a node stands for: a topic is a child of its forum, General (`0`) has no thread id. */
+export function targetOf(node: ChannelNode): { chat: string; topic: number | undefined } {
+  const metaChat = node.meta.chatId
+  const chat =
+    typeof metaChat === 'string'
+      ? metaChat
+      : node.kind === 'thread'
+        ? (node.parentNativeId ?? node.nativeId.split('/')[0] ?? node.nativeId)
+        : node.nativeId
+  if (node.kind !== 'thread') return { chat, topic: undefined }
+  const topic = Number(
+    typeof node.meta.topicId === 'number' ? node.meta.topicId : node.nativeId.split('/')[1],
+  )
+  return { chat, topic: Number.isFinite(topic) && topic !== 0 ? topic : undefined }
+}
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
@@ -263,7 +291,6 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
   }
 
   const normalizeContext = (): NormalizeContext => ({
-    connectionId: options.connectionId,
     botId: botInfo?.id ?? 0,
     botUsername: botInfo?.username ?? '',
     download,
@@ -300,12 +327,12 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
   }
 
   async function sendFiles(
-    ref: ConversationRef,
+    node: ChannelNode,
     message: OutboundMessage,
     files: OutboundFile[],
     common: Record<string, unknown>,
   ): Promise<SentMessage> {
-    const chat = chatArg(ref.container)
+    const chat = chatArg(targetOf(node).chat)
     const html = toTelegramHtml(message.text)
     const captionOk = html.length <= (TELEGRAM_CAPABILITIES.maxCaptionLength as number)
     const caption = message.text === '' ? undefined : captionOk ? html : undefined
@@ -328,7 +355,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
             common,
           ),
       )
-      first = { messageId: String(result[0]?.message_id) }
+      first = { nativeId: String(result[0]?.message_id) }
     } else {
       for (const [i, f] of files.entries()) {
         const opts = {
@@ -346,7 +373,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
           () => send(opts),
           () => send(plainOpts),
         )
-        first ??= { messageId: String(result.message_id) }
+        first ??= { nativeId: String(result.message_id) }
       }
     }
     if (caption === undefined && message.text !== '') {
@@ -358,12 +385,13 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
     return first as SentMessage
   }
 
-  async function send(ref: ConversationRef, message: OutboundMessage): Promise<SentMessage> {
-    const done = message.key === undefined ? undefined : sent.get(message.key)
+  async function send(node: ChannelNode, message: OutboundMessage): Promise<SentMessage> {
+    const done = message.sendTxnId === undefined ? undefined : sent.get(message.sendTxnId)
     if (done !== undefined) return done
     return guard(async () => {
-      const chat = chatArg(ref.container)
-      const thread = topicArg(ref)
+      const target = targetOf(node)
+      const chat = chatArg(target.chat)
+      const thread = target.topic
       const common: Record<string, unknown> = {
         ...(thread === undefined ? {} : { message_thread_id: thread }),
         ...(message.silent === true ? { disable_notification: true } : {}),
@@ -377,7 +405,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
             }),
       }
       if (message.files !== undefined && message.files.length > 0) {
-        return remember(message.key, await sendFiles(ref, message, message.files, common))
+        return remember(message.sendTxnId, await sendFiles(node, message, message.files, common))
       }
       if (message.text.trim() === '') throw new ChannelError('invalid', 'there is nothing to send')
       const parts = htmlChunks(message.text, TELEGRAM_CAPABILITIES.maxTextLength)
@@ -404,19 +432,59 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
               extra,
             ),
         )
-        first ??= { messageId: String(result.message_id) }
+        first ??= { nativeId: String(result.message_id) }
       }
-      return remember(message.key, first as SentMessage)
+      return remember(message.sendTxnId, first as SentMessage)
     })
+  }
+
+  /** A node of this chat as the Bot API describes it (`getChat`). */
+  const infoOfChat = async (chatId: string): Promise<NodeInfo | undefined> => {
+    const chat = await guard(() => bot.api.getChat(chatArg(chatId)))
+    const base = chatNode(chat as never)
+    const linked = (chat as { linked_chat_id?: number }).linked_chat_id
+    const description = (chat as { description?: string }).description
+    return {
+      ...base,
+      meta: {
+        ...(base.meta ?? {}),
+        ...(description === undefined ? {} : { description }),
+        ...(linked === undefined ? {} : { linkedChatId: String(linked) }),
+      },
+      ...(linked === undefined
+        ? {}
+        : { links: [{ rel: 'discussion_of' as const, to: String(linked) }] }),
+    }
   }
 
   const adapter: TelegramAdapter = {
     platform: 'telegram',
     connectionId: options.connectionId,
-    capabilities: TELEGRAM_CAPABILITIES,
+    idFormats: TELEGRAM_ID_FORMATS,
     self: selfIdentity,
     info: () => botInfo,
     probe,
+    getCapabilities: telegramCapabilitiesOf,
+    async getNodeInfo(nativeId) {
+      const chat = nativeId.split('/')[0] as string
+      const info = await infoOfChat(chat)
+      return info === undefined || nativeId === chat ? info : undefined
+    },
+    async getIdentityInfo(nativeId) {
+      if (!/^\d+$/.test(nativeId)) return undefined
+      const chat = await guard(() => bot.api.getChat(Number(nativeId)))
+      if (chat.type !== 'private') return undefined
+      return identityOfUser(
+        {
+          id: chat.id,
+          is_bot: false,
+          first_name: chat.first_name ?? '',
+          ...(chat.last_name === undefined ? {} : { last_name: chat.last_name }),
+          ...(chat.username === undefined ? {} : { username: chat.username }),
+        },
+        botInfo?.id ?? 0,
+      )
+    },
     async start(sink: EventSink) {
       stopping = false
       const { bot: me, webhookUrl } = await probe()
@@ -440,7 +508,6 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
           // stop the spinner on the button at once; the answer to the person is a message
           await bot.api.answerCallbackQuery(normalized.callbackId).catch(() => undefined)
         }
-        if (normalized.chat !== undefined) options.hooks?.onChat?.(normalized.chat)
         for (const event of normalized.events) await sink(event)
       })
       bot.catch((error) =>
@@ -476,26 +543,22 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
       if (h?.isRunning()) await h.stop().catch(() => undefined)
     },
     send,
-    async edit(ref, messageId, text) {
+    async edit(node, nativeId, text) {
+      const { chat } = targetOf(node)
       await guard(async () => {
         const html = htmlChunks(text, TELEGRAM_CAPABILITIES.maxTextLength)[0] ?? ''
         try {
           await withHtml(
             () =>
-              bot.api.editMessageText(chatArg(ref.container), Number(messageId), html, {
+              bot.api.editMessageText(chatArg(chat), Number(nativeId), html, {
                 parse_mode: 'HTML',
                 reply_markup: { inline_keyboard: [] },
                 link_preview_options: { is_disabled: true },
               }),
             () =>
-              bot.api.editMessageText(
-                chatArg(ref.container),
-                Number(messageId),
-                text.slice(0, 4096),
-                {
-                  reply_markup: { inline_keyboard: [] },
-                },
-              ),
+              bot.api.editMessageText(chatArg(chat), Number(nativeId), text.slice(0, 4096), {
+                reply_markup: { inline_keyboard: [] },
+              }),
           )
         } catch (error) {
           if (error instanceof GrammyError && /not modified/i.test(error.description)) return
@@ -503,51 +566,56 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
         }
       })
     },
-    async delete(ref, messageId) {
-      await guard(() => bot.api.deleteMessage(chatArg(ref.container), Number(messageId)))
+    async delete(node, nativeId) {
+      await guard(() => bot.api.deleteMessage(chatArg(targetOf(node).chat), Number(nativeId)))
     },
-    async pin(ref, messageId, pinned) {
+    async pin(node, nativeId, pinned) {
+      const { chat } = targetOf(node)
       await guard(() =>
         pinned
-          ? bot.api.pinChatMessage(chatArg(ref.container), Number(messageId), {
+          ? bot.api.pinChatMessage(chatArg(chat), Number(nativeId), {
               disable_notification: true,
             })
-          : bot.api.unpinChatMessage(chatArg(ref.container), Number(messageId)),
+          : bot.api.unpinChatMessage(chatArg(chat), Number(nativeId)),
       )
     },
-    async react(ref, messageId, emoji) {
+    async react(node, nativeId, emoji) {
       await guard(() =>
-        bot.api.setMessageReaction(chatArg(ref.container), Number(messageId), [
+        bot.api.setMessageReaction(chatArg(targetOf(node).chat), Number(nativeId), [
           { type: 'emoji', emoji: emoji as never },
         ]),
       )
     },
-    async typing(ref) {
-      const thread = topicArg(ref)
+    async typing(node) {
+      const { chat, topic } = targetOf(node)
       await guard(() =>
         bot.api.sendChatAction(
-          chatArg(ref.container),
+          chatArg(chat),
           'typing',
-          thread === undefined ? {} : { message_thread_id: thread },
+          topic === undefined ? {} : { message_thread_id: topic },
         ),
       )
     },
-    async members(ref, opts) {
-      const admins = await guard(() => bot.api.getChatAdministrators(chatArg(ref.container)))
-      return admins.slice(0, opts.limit).map((a) => ({
-        id: String(a.user.id),
-        name: [a.user.first_name, a.user.last_name].filter(Boolean).join(' '),
-        ...(a.user.username === undefined ? {} : { username: a.user.username }),
-        ...(a.user.is_bot ? { isBot: true } : {}),
-      }))
+    async listMembers(node, opts) {
+      const admins = await guard(() => bot.api.getChatAdministrators(chatArg(targetOf(node).chat)))
+      return {
+        scope: 'admins' as const,
+        members: admins.slice(0, opts.limit).map((a) => ({
+          id: String(a.user.id),
+          name: [a.user.first_name, a.user.last_name].filter(Boolean).join(' '),
+          ...(a.user.username === undefined ? {} : { username: a.user.username }),
+          ...(a.user.is_bot ? { isBot: true } : {}),
+        })),
+      }
     },
-    conversationRef: (input) => ({
-      id: input.topic === undefined ? input.container : `${input.container}/${input.topic}`,
-      connectionId: options.connectionId,
-      container: input.container,
-      ...(input.topic === undefined ? {} : { topic: input.topic }),
-      kind: input.kind ?? (input.container.startsWith('-') ? 'group' : 'dm'),
+    openDirect: (identityNativeId) => ({
+      nativeId: identityNativeId,
+      kind: 'direct',
+      platformType: 'telegram:private',
+      traits: { multiUser: false, threading: 'none' },
+      meta: { chatId: identityNativeId },
     }),
+    childNativeId: (parent, key) => `${parent.nativeId}/${key}`,
     actions: nativeActions(bot, token),
   }
   return adapter

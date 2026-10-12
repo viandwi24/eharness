@@ -8,7 +8,7 @@
  */
 
 import type { RateLimits } from './policy.ts'
-import { ChannelError, type ConversationKind } from './types.ts'
+import { ChannelError } from './types.ts'
 
 export interface OutboundOptions {
   limitsOf: (connectionId: string) => RateLimits
@@ -21,8 +21,10 @@ export interface OutboundOptions {
 
 export interface OutboundTarget {
   connectionId: string
+  /** The id of the node the operation is for (the lane of its queue). */
   conversationId: string
-  kind: ConversationKind
+  /** Direct messages have no per-group window. */
+  kind: 'dm' | 'group' | 'channel'
 }
 
 export interface Outbound {

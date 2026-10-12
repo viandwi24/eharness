@@ -23,13 +23,16 @@ await server.ready
 const lead = server.deps.agents.list().find((a) => a.role === 'lead')
 if (lead === undefined) throw new Error('no lead agent')
 
-server.channels.configure({
-  connectionId: 'demo',
-  agentId: lead.id,
-  groups: { room: { label: 'Demo room' } },
-})
+server.channels.configure({ connectionId: 'demo', agentId: lead.id })
 const mock = createMockAdapter({ connectionId: 'demo' })
 await server.channels.register(mock)
+// the group is a node of the tree; switch it on (settings inherit down the tree)
+const room = server.channels.settings.ensureNode('demo', {
+  nativeId: 'room',
+  kind: 'room',
+  title: 'Demo room',
+})
+server.channels.settings.set(room.id, { enabled: true, label: 'Demo room' })
 
 const ana = { id: 'u1', name: 'Ana', username: 'ana' }
 const budi = { id: 'u2', name: 'Budi', username: 'budi' }

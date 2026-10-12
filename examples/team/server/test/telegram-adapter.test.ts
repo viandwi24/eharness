@@ -3,7 +3,13 @@
  * grammY + the runner, normalization, outbound, rate limits, 401, webhook, file cap, privacy).
  */
 import { afterEach, describe, expect, test } from 'bun:test'
-import type { ChannelError, InboundEvent } from '../src/infra/channels/types.ts'
+import { traitsOf } from '../src/infra/channels/model.ts'
+import type {
+  AdapterHost,
+  ChannelError,
+  ChannelNode,
+  RemoteEvent,
+} from '../src/infra/channels/types.ts'
 import {
   ALLOWED_UPDATES,
   createTelegramAdapter,
@@ -26,6 +32,9 @@ async function until(what: string, cond: () => boolean, ms = 5000) {
   }
 }
 
+/** What the gateway offers an adapter: everything allowed, nothing stored. */
+const host: AdapterHost = { isAllowed: () => true, locate: () => [], isOwn: () => false }
+
 let nextPort = 0
 const fakes: FakeTelegram[] = []
 const adapters: TelegramAdapter[] = []
@@ -45,8 +54,8 @@ function setup(options: Partial<TelegramAdapterOptions> = {}) {
     ...options,
   })
   adapters.push(adapter)
-  const events: InboundEvent[] = []
-  const start = () => adapter.start(async (e) => void events.push(e))
+  const events: RemoteEvent[] = []
+  const start = () => adapter.start(async (e) => void events.push(e), host)
   return { fake, adapter, events, start }
 }
 
@@ -124,7 +133,7 @@ describe('polling (grammY + runner under Bun)', () => {
     expect(adapter.info()?.canReadAllGroupMessages).toBe(false)
     for (let i = 1; i <= 5; i++) fake.push(tg.message({ chat: tg.group(), text: `m${i}`, id: i }))
     await until('five messages', () => events.length === 5)
-    expect(events.map((e) => (e.type === 'message' ? e.text : ''))).toEqual([
+    expect(events.map((e) => (e.type === 'message.created' ? e.message.text : ''))).toEqual([
       'm1',
       'm2',
       'm3',
@@ -219,7 +228,7 @@ describe('polling (grammY + runner under Bun)', () => {
       }),
     )
     await until('six', () => events.length === 6)
-    const sig = events.map((e) => (e.type === 'message' ? e.signals : undefined))
+    const sig = events.map((e) => (e.type === 'message.created' ? e.signals : undefined))
     expect(sig[0]).toMatchObject({ mentionedSelf: true, replyToSelf: false })
     expect(sig[1]).toMatchObject({ mentionedSelf: true })
     expect(sig[2]).toMatchObject({ mentionedSelf: false, mentionedOthers: true })
@@ -229,10 +238,10 @@ describe('polling (grammY + runner under Bun)', () => {
     expect(sig[5]?.command).toBeUndefined()
     expect(sig[5]).toMatchObject({ mentionedOthers: true })
     const reply = events[3]
-    expect(reply?.type === 'message' && reply.replyTo?.text).toBe('earlier')
+    expect(reply?.type === 'message.created' && reply.message.replyTo?.text).toBe('earlier')
   })
 
-  test('forum topics have their own conversation; the topic root is not a reply to the bot', async () => {
+  test('forum topics are thread nodes under the forum; the topic root is not a reply to the bot', async () => {
     const { fake, events, start } = setup()
     await start()
     const g = tg.group(-1002, 'Forum', { is_forum: true })
@@ -258,22 +267,21 @@ describe('polling (grammY + runner under Bun)', () => {
     fake.push(tg.message({ chat: g, id: 32, text: 'general' }))
     await until('two', () => events.length === 2)
     const [topic, general] = events
-    expect(topic?.conversation).toMatchObject({
-      id: '-1002/30',
-      container: '-1002',
-      topic: '30',
-      kind: 'group',
+    expect(topic?.node).toMatchObject({
+      nativeId: '-1002/30',
+      chain: [
+        { nativeId: '-1002/30', kind: 'thread', title: 'Billing', parent: '-1002' },
+        { nativeId: '-1002', kind: 'room', traits: { container: true, postable: false } },
+      ],
     })
-    expect(topic?.type === 'message' && topic.signals.replyToSelf).toBe(false)
-    expect(topic?.type === 'message' && topic.replyTo).toBeUndefined()
-    expect(general?.conversation.id).toBe('-1002')
+    expect(topic?.type === 'message.created' && topic.signals.replyToSelf).toBe(false)
+    expect(topic?.type === 'message.created' && topic.message.replyTo).toBeUndefined()
+    // a message outside any topic is in General (topic 0), a child of the forum
+    expect(general?.node?.nativeId).toBe('-1002/0')
   })
 
-  test('edits, channel posts, reactions and my_chat_member (known chats) are normalized', async () => {
-    const seen: string[] = []
-    const { fake, events, start } = setup({
-      hooks: { onChat: (c) => void seen.push(`${c.chatId}:${c.title}:${c.botStatus ?? ''}`) },
-    })
+  test('edits, channel posts, reactions and my_chat_member are normalized', async () => {
+    const { fake, events, start } = setup()
     await start()
     const chan = { id: -1003, type: 'channel', title: 'News' }
     fake.push({
@@ -308,16 +316,28 @@ describe('polling (grammY + runner under Bun)', () => {
         new_chat_member: { status: 'administrator', user: {}, can_post_messages: true },
       },
     })
-    await until('three events and known chats', () => events.length === 3 && seen.length >= 3)
-    expect(events[0]).toMatchObject({
-      type: 'message',
-      conversation: { kind: 'channel', id: '-1003' },
-      sender: { id: 'chat:-1003', name: 'News' },
+    await until('four events', () => events.length === 4)
+    // chats are polled concurrently: look events up by type
+    const by = (type: string) => events.find((e) => e.type === type)
+    expect(by('message.created')).toMatchObject({
+      type: 'message.created',
+      node: { nativeId: '-1003', chain: [{ kind: 'room', traits: { broadcast: true } }] },
+      message: { sender: { id: 'chat:-1003', name: 'News', kind: 'channel' } },
     })
-    expect(events[1]).toMatchObject({ type: 'edit', text: 'fixed' })
-    expect(events[2]).toMatchObject({ type: 'reaction', emoji: '👍', added: true })
-    expect(seen).toContain('-1009:New group:administrator')
-    expect(seen).toContain('-1003:News:')
+    expect(by('message.edited')).toMatchObject({ message: { text: 'fixed' } })
+    expect(by('reaction.added')).toMatchObject({
+      type: 'reaction.added',
+      emoji: '👍',
+      messageNativeId: '6',
+    })
+    // what the bot is in a chat now: the chat is discovered from this, with its access
+    expect(by('member.updated')).toMatchObject({
+      role: 'admin',
+      node: {
+        nativeId: '-1009',
+        chain: [{ title: 'New group', access: { member: 'admin', canPost: true } }],
+      },
+    })
   })
 
   test('a callback query becomes an action event and is answered at once', async () => {
@@ -342,8 +362,8 @@ describe('polling (grammY + runner under Bun)', () => {
       type: 'action',
       name: 'approve',
       data: 'row-123',
-      messageId: '88',
-      conversation: { id: '-1001' },
+      messageNativeId: '88',
+      node: { nativeId: '-1001' },
     })
     await until('answered', () => fake.callsOf('answerCallbackQuery').length === 1)
     expect(fake.callsOf('answerCallbackQuery')[0]?.params.callback_query_id).toBe('cb1')
@@ -352,7 +372,7 @@ describe('polling (grammY + runner under Bun)', () => {
   test('a bad token fails the start as fatal and never leaks the token', async () => {
     const { fake, adapter } = setup()
     fake.revoke()
-    const error = (await adapter.start(async () => undefined).catch((e) => e)) as ChannelError
+    const error = (await adapter.start(async () => undefined, host).catch((e) => e)) as ChannelError
     expect(error.kind).toBe('fatal')
     expect(error.message).not.toContain(fake.token)
   })
@@ -382,12 +402,18 @@ describe('polling (grammY + runner under Bun)', () => {
 })
 
 describe('outbound', () => {
-  const ref = (container = '-1001', topic?: string) => ({
+  /** A stored node as the adapter receives it: a chat, a forum topic (a child) or a direct chat. */
+  const ref = (container = '-1001', topic?: string): ChannelNode => ({
     id: topic === undefined ? container : `${container}/${topic}`,
     connectionId: 'tg1',
-    container,
-    ...(topic === undefined ? {} : { topic }),
-    kind: 'group' as const,
+    nativeId: topic === undefined ? container : `${container}/${topic}`,
+    kind: topic === undefined ? 'room' : 'thread',
+    traits: traitsOf({ multiUser: true }),
+    platformType: topic === undefined ? 'telegram:supergroup' : 'telegram:forum_topic',
+    title: undefined,
+    parentNativeId: topic === undefined ? undefined : container,
+    meta:
+      topic === undefined ? { chatId: container } : { chatId: container, topicId: Number(topic) },
   })
 
   test('sendMessage: HTML escaped, quoted reply, topic, buttons as an inline keyboard', async () => {
@@ -401,7 +427,7 @@ describe('outbound', () => {
         { name: 'deny', label: 'Deny', data: 'row-1' },
       ],
     })
-    expect(sent.messageId).toMatch(/^\d+$/)
+    expect(sent.nativeId).toMatch(/^\d+$/)
     const call = fake.callsOf('sendMessage')[0]
     expect(call?.params).toMatchObject({
       chat_id: -1001,
@@ -473,8 +499,8 @@ describe('outbound', () => {
   test('the idempotency key never posts twice in a process', async () => {
     const { fake, adapter, start } = setup()
     await start()
-    const a = await adapter.send(ref(), { text: 'once', key: 'row-1' })
-    const b = await adapter.send(ref(), { text: 'once', key: 'row-1' })
+    const a = await adapter.send(ref(), { text: 'once', sendTxnId: 'row-1' })
+    const b = await adapter.send(ref(), { text: 'once', sendTxnId: 'row-1' })
     expect(b).toEqual(a)
     expect(fake.callsOf('sendMessage')).toHaveLength(1)
   })
@@ -506,14 +532,18 @@ describe('outbound', () => {
       action: 'typing',
       message_thread_id: 30,
     })
-    expect((await adapter.members?.(ref(), { limit: 5 }))?.[0]?.name).toBe('Ana')
-    expect(adapter.capabilities).toMatchObject({
+    const listed = await adapter.listMembers?.(ref(), { limit: 5 })
+    expect(listed?.members[0]?.name).toBe('Ana')
+    expect(listed?.scope).toBe('admins')
+    // what a node supports is the adapter's answer for that node
+    expect(adapter.getCapabilities(ref())).toMatchObject({
       history: false,
       buttons: true,
       members: true,
       maxTextLength: 4096,
       maxCaptionLength: 1024,
     })
+    expect(adapter.getCapabilities({ ...ref('42'), kind: 'direct' }).members).toBe(false)
     expect(adapter.fetchHistory).toBeUndefined()
   })
 
@@ -525,7 +555,7 @@ describe('outbound', () => {
       description: "Forbidden: bot can't initiate conversation with a user",
     })
     const error = (await adapter
-      .send({ ...ref('42'), kind: 'dm' }, { text: 'hi' })
+      .send({ ...ref('42'), kind: 'direct' }, { text: 'hi' })
       .catch((e) => e)) as ChannelError
     expect(error.kind).toBe('invalid')
     expect(error.message).toContain('press Start')
@@ -600,18 +630,18 @@ describe('files in', () => {
     )
     await until('three', () => events.length === 3)
     const [doc, big, photo] = events
-    const docAtt = doc?.type === 'message' ? doc.attachments[0] : undefined
+    const docAtt = doc?.type === 'message.created' ? doc.message.attachments[0] : undefined
     expect(docAtt).toMatchObject({ name: 'small.txt', mediaType: 'text/plain', size: 4 })
     expect(Array.from((await docAtt?.fetch())?.bytes ?? [])).toEqual([1, 2, 3, 4])
-    expect(doc?.type === 'message' && doc.text).toBe('see')
+    expect(doc?.type === 'message.created' && doc.message.text).toBe('see')
     // the gateway reads `size` before downloading; the adapter also refuses on its own
-    const bigAtt = big?.type === 'message' ? big.attachments[0] : undefined
+    const bigAtt = big?.type === 'message.created' ? big.message.attachments[0] : undefined
     expect(bigAtt?.size).toBe(25 * 1024 * 1024)
     await expect(bigAtt?.fetch()).rejects.toThrow(/up to 20971520/)
     expect(fake.callsOf('getFile').some((c) => c.params.file_id === 'huge')).toBe(false)
     // the largest photo size wins
-    expect(photo?.type === 'message' && photo.attachments).toHaveLength(1)
-    expect(photo?.type === 'message' && photo.attachments[0]?.id).toBe('p2')
+    expect(photo?.type === 'message.created' && photo.message.attachments).toHaveLength(1)
+    expect(photo?.type === 'message.created' && photo.message.attachments[0]?.id).toBe('p2')
   })
 
   test('getFile reporting a size over the cap is refused too', async () => {
@@ -627,7 +657,7 @@ describe('files in', () => {
       }),
     )
     await until('one', () => events.length === 1)
-    const att = events[0]?.type === 'message' ? events[0].attachments[0] : undefined
+    const att = events[0]?.type === 'message.created' ? events[0].message.attachments[0] : undefined
     await expect(att?.fetch()).rejects.toThrow(/up to 20971520/)
   })
 })

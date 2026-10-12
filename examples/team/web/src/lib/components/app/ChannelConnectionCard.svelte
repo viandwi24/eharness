@@ -17,9 +17,9 @@
 	import {
 		agentChoices,
 		breakerText,
+		chatTree,
 		outboxSummary,
 		privacyWarning,
-		sortChats,
 		STATE_LABEL,
 		stateHint,
 		stateTone,
@@ -44,7 +44,10 @@
 	const hint = $derived(stateHint(conn));
 	const warning = $derived(privacyWarning(conn, chats));
 	const breaker = $derived(breakerText(conn, Date.now()));
-	const sorted = $derived(sortChats(chats));
+	const tree = $derived(chatTree(chats));
+	const titleOf = (nodeId: string): string => chats.find((c) => c.id === nodeId)?.title ?? 'a chat';
+	// chats (rooms), not their topics, are what the tab counts
+	const chatCount = $derived(chats.filter((c) => c.kind !== 'thread').length);
 	const bound = $derived(conn.binding !== null);
 	const link = $derived(conn.bot ? `https://t.me/${conn.bot.username}` : undefined);
 
@@ -134,7 +137,7 @@
 	{#if bound}
 		<Tabs.Root bind:value={tab}>
 			<Tabs.List class="max-w-full justify-start overflow-x-auto">
-				<Tabs.Trigger value="chats">Chats {#if chats.length}<Badge shape="number" variant="secondary">{chats.length}</Badge>{/if}</Tabs.Trigger>
+				<Tabs.Trigger value="chats">Chats {#if chatCount}<Badge shape="number" variant="secondary">{chatCount}</Badge>{/if}</Tabs.Trigger>
 				<Tabs.Trigger value="people">People {#if conn.counts.unlinked}<Badge shape="number" variant="warning" title="Not linked yet">{conn.counts.unlinked}</Badge>{:else if conn.counts.linked}<Badge shape="number" variant="secondary">{conn.counts.linked}</Badge>{/if}</Tabs.Trigger>
 				<Tabs.Trigger value="inbox">Inbox</Tabs.Trigger>
 				<Tabs.Trigger value="activity">Activity</Tabs.Trigger>
@@ -148,14 +151,14 @@
 				{#if conn.bot && !conn.bot.canReadAllGroupMessages}
 					<p class="text-xs text-muted-foreground">{conn.bot.guidance}</p>
 				{/if}
-				{#if sorted.length === 0}
+				{#if tree.length === 0}
 					<div class="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
 						No chats yet. Add the bot to a group (or as an admin to a channel) and write a message there; the chat shows up here and you choose whether the agent may use it.
 						{#if link}<a class="underline underline-offset-4" href={link} target="_blank" rel="noreferrer">Open the bot in Telegram</a>.{/if}
 					</div>
 				{:else}
 					<ul class="flex flex-col gap-2">
-						{#each sorted as c (c.chatId)}<ChannelChatRow connectionId={conn.id} chat={c} onChange={() => { onChange(); void loadDetail(); }} />{/each}
+						{#each tree as b (b.chat.id)}<ChannelChatRow connectionId={conn.id} branch={b} {titleOf} onChange={() => { onChange(); void loadDetail(); }} />{/each}
 					</ul>
 				{/if}
 			</Tabs.Content>

@@ -1,18 +1,25 @@
 /**
- * Channel policy: the configuration of a connection and the pure rules built on it (scope
- * resolution, wake decision, text splitting, session ids, the bot loop guard). No I/O.
+ * Channel policy: the configuration of a connection, the settings that inherit down the node tree
+ * and the pure rules built on them (resolution, wake decision, text splitting, the bot loop
+ * guard). No I/O.
+ *
+ * Settings (agent binding, wake rule, delivery, observe, retention, session scope, redaction)
+ * resolve the same way everywhere: the node itself, then its ancestors up to the root, then the
+ * connection's defaults, then the product's. There are no per-chat or per-topic override tables:
+ * a topic of an allowed forum is allowed because it inherits, and says so only to differ.
  */
 import { z } from 'zod'
-import type { ConversationRef, Identity, InboundEvent } from './types.ts'
+import type { NodeRow } from './model.ts'
+import type { Identity, InboundSignals } from './types.ts'
 
 const wake = z.enum(['mention', 'always', 'never'])
 const delivery = z.enum(['final_text', 'message_tool'])
 
-/** One scope of a connection: the defaults, a group, or a topic of a group. All fields optional. */
+/** One level of the inheritance: a node, or the connection's defaults. All fields optional. */
 export const ScopePolicySchema = z.object({
-  /** `false` takes the scope out of the allowlist. */
+  /** `false` takes the scope out of the allowlist, `true` puts it in. */
   enabled: z.boolean().optional(),
-  /** The agent that answers here (a group or topic may route to another agent). */
+  /** The agent that answers here (a room or topic may route to another agent). */
   agentId: z.string().min(1).optional(),
   wake: wake.optional(),
   /** Implicit wakes under `wake: 'mention'`. All default to true. */
@@ -32,17 +39,21 @@ export const ScopePolicySchema = z.object({
   quote: z.enum(['first', 'off']).optional(),
   /** Ack reaction on an addressed group message; `false` = none. */
   ack: z.union([z.string().min(1), z.literal(false)]).optional(),
-  /** Days the channel log keeps the messages of this scope. */
+  /** Days the message store keeps the messages of this scope. */
   retentionDays: z.number().int().min(1).max(3650).optional(),
-  /** A name for the thread list when the platform gives none. */
+  /** A name for the thread list when the platform gives none. Not inherited. */
   label: z.string().max(80).optional(),
+  /** Store the full log of an allowed node, also the messages that do not address the agent (default true). */
+  observe: z.boolean().optional(),
+  /** `node` (default): the node has its own session. `room`: a thread shares the session of its room. */
+  sessionScope: z.enum(['node', 'room']).optional(),
+  /** Drop the content of a message when it is deleted on the platform (default: keep it for audit until retention). */
+  redactOnDelete: z.boolean().optional(),
 })
 export type ScopePolicy = z.infer<typeof ScopePolicySchema>
 
-export const GroupPolicySchema = ScopePolicySchema.extend({
-  topics: z.record(z.string(), ScopePolicySchema).optional(),
-})
-export type GroupPolicy = z.infer<typeof GroupPolicySchema>
+/** Keys that apply to the node itself and are never inherited. */
+export const OWN_KEYS = ['label'] as const satisfies ReadonlyArray<keyof ScopePolicy>
 
 export const RateLimitsSchema = z.object({
   /** Smallest gap between two messages to one conversation (ms). */
@@ -67,11 +78,9 @@ export const ConnectionConfigSchema = z.object({
   connectionId: z.string().min(1).max(80),
   /** The agent this identity belongs to. */
   agentId: z.string().min(1),
-  /** `allowlist` (default): only the groups listed. `open`: every group the identity is in. */
+  /** `allowlist` (default): only nodes switched on (`enabled`). `open`: every group the identity is in. */
   groupPolicy: z.enum(['allowlist', 'open']).default('allowlist'),
-  /** Keyed by the container id of the group or channel; `*` is the default of an open policy. */
-  groups: z.record(z.string(), GroupPolicySchema).default({}),
-  /** Defaults of every scope. */
+  /** The connection's level of the inheritance: defaults of every node. */
   defaults: ScopePolicySchema.default({}),
   /** `pairing` (default): only linked team members reach the agent by DM (the name is kept for stored configs). */
   dm: z.enum(['pairing', 'disabled']).default('pairing'),
@@ -104,7 +113,14 @@ export type ConnectionConfigInput = z.input<typeof ConnectionConfigSchema>
 export const DEFAULT_RETENTION_DAYS = 30
 export const NO_REPLY = 'NO_REPLY'
 
-/** The resolved policy of one conversation. */
+/** Where a resolved value came from. */
+export interface ScopeOrigin {
+  from: 'node' | 'ancestor' | 'connection' | 'default'
+  /** The node that set it (`node` and `ancestor`). */
+  nodeId?: string
+}
+
+/** The resolved settings of one node. */
 export interface ResolvedScope {
   allowed: boolean
   agentId: string
@@ -117,52 +133,88 @@ export interface ResolvedScope {
   ack: string | false
   retentionDays: number
   label: string | undefined
-  /** The topic has its own entry that routes it to an agent (an "own topic" wake). */
+  observe: boolean
+  sessionScope: 'node' | 'room'
+  redactOnDelete: boolean
+  /** The node is a thread that has its own agent entry (an "own topic" wake). */
   ownTopic: boolean
+  /** Per setting, which level decided it (for the Channels page). */
+  origin: Partial<Record<keyof ScopePolicy, ScopeOrigin>>
 }
 
-const pick = <K extends keyof ScopePolicy>(
-  key: K,
-  ...scopes: Array<ScopePolicy | undefined>
-): ScopePolicy[K] | undefined => {
-  for (const scope of scopes) if (scope?.[key] !== undefined) return scope[key]
-  return undefined
+/** A node with the settings stored on it. */
+export interface ScopeNode {
+  node: Pick<NodeRow, 'id' | 'kind'>
+  settings: ScopePolicy
 }
 
-/** Group, topic and defaults folded into one policy; topic beats group beats defaults. */
-export function resolveScope(config: ConnectionConfig, ref: ConversationRef): ResolvedScope {
-  const group = config.groups[ref.container] ?? config.groups['*']
-  const topic = ref.topic === undefined ? undefined : group?.topics?.[ref.topic]
-  const d = config.defaults
-  const chain = [topic, group, d]
-  const isDm = ref.kind === 'dm'
-  const listed = group !== undefined && group.enabled !== false
+/**
+ * Fold the settings of a node and its ancestors (given root first, the node last), the
+ * connection's defaults and the product's defaults into one policy. The node beats its parent
+ * beats the connection beats the defaults.
+ */
+export function resolveScope(config: ConnectionConfig, chain: readonly ScopeNode[]): ResolvedScope {
+  const leaf = chain.at(-1)
+  const isDirect = leaf?.node.kind === 'direct'
+  const origin: ResolvedScope['origin'] = {}
+  const pick = <K extends keyof ScopePolicy>(key: K): ScopePolicy[K] | undefined => {
+    const own = (OWN_KEYS as readonly string[]).includes(key)
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const level = chain[i] as ScopeNode
+      if (own && i !== chain.length - 1) break
+      const v = level.settings[key]
+      if (v !== undefined) {
+        origin[key] = {
+          from: i === chain.length - 1 ? 'node' : 'ancestor',
+          nodeId: level.node.id,
+        }
+        return v
+      }
+    }
+    if (own) return undefined
+    const d = config.defaults[key]
+    if (d !== undefined) {
+      origin[key] = { from: 'connection' }
+      return d
+    }
+    return undefined
+  }
+  const fallback = <T>(key: keyof ScopePolicy, value: T): T => {
+    if (origin[key] === undefined) origin[key] = { from: 'default' }
+    return value
+  }
+  const explicit = pick('enabled')
   const allowed =
-    topic?.enabled === false
-      ? false
-      : isDm
+    explicit !== undefined
+      ? explicit
+      : isDirect
         ? config.dm !== 'disabled'
         : config.groupPolicy === 'open'
-          ? group?.enabled !== false
-          : listed
-  const implicit = pick('implicit', ...chain)
+  fallback('enabled', allowed)
+  const implicit = pick('implicit')
+  const own = leaf?.settings
   return {
     allowed,
-    agentId: pick('agentId', ...chain) ?? config.agentId,
-    wake: pick('wake', ...chain) ?? 'mention',
+    agentId: pick('agentId') ?? fallback('agentId', config.agentId),
+    wake: pick('wake') ?? fallback('wake', 'mention' as const),
     implicit: {
       reply: implicit?.reply ?? true,
       alias: implicit?.alias ?? true,
       ownTopic: implicit?.ownTopic ?? true,
     },
-    aliases: pick('aliases', ...chain) ?? [],
-    ignoreWhenOthersMentioned: pick('ignoreWhenOthersMentioned', ...chain) ?? true,
-    delivery: pick('delivery', ...chain) ?? 'final_text',
-    quote: pick('quote', ...chain) ?? (isDm ? 'off' : 'first'),
-    ack: pick('ack', ...chain) ?? '👀',
-    retentionDays: pick('retentionDays', ...chain) ?? DEFAULT_RETENTION_DAYS,
-    label: pick('label', ...chain),
-    ownTopic: topic?.agentId !== undefined,
+    aliases: pick('aliases') ?? [],
+    ignoreWhenOthersMentioned:
+      pick('ignoreWhenOthersMentioned') ?? fallback('ignoreWhenOthersMentioned', true),
+    delivery: pick('delivery') ?? fallback('delivery', 'final_text' as const),
+    quote: pick('quote') ?? fallback('quote', isDirect ? ('off' as const) : ('first' as const)),
+    ack: pick('ack') ?? fallback('ack', '👀'),
+    retentionDays: pick('retentionDays') ?? fallback('retentionDays', DEFAULT_RETENTION_DAYS),
+    label: pick('label'),
+    observe: pick('observe') ?? fallback('observe', true),
+    sessionScope: pick('sessionScope') ?? fallback('sessionScope', 'node' as const),
+    redactOnDelete: pick('redactOnDelete') ?? fallback('redactOnDelete', false),
+    ownTopic: leaf?.node.kind === 'thread' && own?.agentId !== undefined,
+    origin,
   }
 }
 
@@ -170,7 +222,11 @@ export type WakeDecision =
   | { action: 'wake'; reason: string }
   | { action: 'observe'; reason: string }
 
-type Addressable = Extract<InboundEvent, { type: 'message' }>
+/** What `decideWake` looks at of a message. */
+export interface Addressable {
+  text: string
+  signals: InboundSignals
+}
 
 /**
  * What a message in an allowed group or channel does: wake the agent, or only be observed.
@@ -208,25 +264,11 @@ export function matchesAlias(text: string, aliases: readonly string[], self: Ide
   return false
 }
 
-/**
- * `channel:<connectionId>:<conversation id>`: one session per conversation and agent. When the
- * agent of a conversation changes, the new agent gets the next generation (`...#2`): it never
- * continues the session of the agent before it.
- */
-export const channelSessionId = (
-  connectionId: string,
-  conversationId: string,
-  generation = 0,
-): string =>
-  `channel:${connectionId}:${conversationId}${generation > 0 ? `#${generation + 1}` : ''}`
-
 /** The tool name of a native action: `<platform>_<action>` (the same rule everywhere). */
 export const nativeToolName = (platform: string, action: string): string => {
   const safe = (s: string): string => s.toLowerCase().replace(/[^a-z0-9_]/g, '_')
   return `${safe(platform)}_${safe(action)}`
 }
-
-export const isChannelSession = (sessionId: string): boolean => sessionId.startsWith('channel:')
 
 /**
  * Split `text` into messages of at most `max` characters, breaking at the last newline (then the

@@ -1,0 +1,350 @@
+/**
+ * The append-only event log of a connection (docs/plans/P41-team-channels.md, phase L5). It holds
+ * what the platform said (`message.created`, `node.updated`, `member.joined`, ...) and what the
+ * gateway did with it (`gateway.woke`, `gateway.dropped`, `gateway.reply_sent`, ...). Unique per
+ * `(connection, dedupe key)`, so a replayed platform event is recognized; `node_id` is null while
+ * an event cannot be placed (a deletion that names no chat) and is filled in when it can.
+ *
+ * Payloads are facts (ids, counts, reasons), never a message text: texts live only in the sealed
+ * message store. Inbox counters and the Activity tab are views over this log.
+ */
+import type { Database } from 'bun:sqlite'
+import { uuidv7 } from 'eharness'
+
+export const GATEWAY_PREFIX = 'gateway.'
+
+/** The activity vocabulary (what the Activity tab filters on): `gateway.<type with _ for ->`. */
+export const EVENT_TYPES = [
+  'woke',
+  'observed',
+  'dropped',
+  'reply-queued',
+  'reply-sent',
+  'reply-retried',
+  'reply-failed',
+  'approval-posted',
+  'approval-answered',
+  'breaker-opened',
+  'needs-auth',
+] as const
+export type ChannelEventType = (typeof EVENT_TYPES)[number]
+
+/** Why an incoming message was dropped (the `reason` of a `dropped` event). */
+export const DROP_REASONS = [
+  'unlinked-sender',
+  'chat-not-allowed',
+  'dm-disabled',
+  'bot-sender',
+  'loop-guard',
+  'duplicate',
+  'agent-unavailable',
+  'not-authorized',
+  'not-observed',
+] as const
+export type DropReason = (typeof DROP_REASONS)[number]
+
+const gatewayType = (t: ChannelEventType): string => `${GATEWAY_PREFIX}${t.replace(/-/g, '_')}`
+const activityType = (t: string): ChannelEventType | undefined => {
+  if (!t.startsWith(GATEWAY_PREFIX)) return undefined
+  const name = t.slice(GATEWAY_PREFIX.length).replace(/_/g, '-')
+  return (EVENT_TYPES as readonly string[]).includes(name) ? (name as ChannelEventType) : undefined
+}
+
+/** One event as the Activity tab shows it. */
+export interface ChannelEvent {
+  id: string
+  connectionId: string
+  at: number
+  type: ChannelEventType
+  /** A drop reason code, a wake reason, or a short free text (never message text). */
+  reason?: string
+  /** The node the event is about (its internal id). */
+  conversationId?: string
+  peerId?: string
+  peerName?: string
+  /** Native id of the message the event is about. */
+  platformId?: string
+  /** Small facts (counts, outbox kind, attempt); never message text. */
+  detail?: Record<string, string | number | boolean>
+}
+
+export type NewChannelEvent = Omit<ChannelEvent, 'id'>
+
+export interface StoredEvent {
+  id: string
+  connectionId: string
+  type: string
+  nodeId: string | null
+  actorIdentityId: string | null
+  targetMessageNativeId: string | null
+  targetMessageId: string | null
+  at: number
+  receivedAt: number
+  dedupeKey: string
+  streamOrder: string | null
+  normalizerVersion: number
+  payload: Record<string, unknown>
+  /** The sealed platform payload, when the gateway keeps raw events. */
+  raw: string | null
+}
+
+export interface NewEvent {
+  connectionId: string
+  type: string
+  nodeId?: string | null
+  actorIdentityId?: string | null
+  targetMessageNativeId?: string | null
+  targetMessageId?: string | null
+  at: number
+  receivedAt: number
+  dedupeKey: string
+  streamOrder?: string | null
+  normalizerVersion?: number
+  payload?: Record<string, unknown>
+  raw?: string | null
+}
+
+interface EventDb {
+  id: string
+  connection_id: string
+  type: string
+  node_id: string | null
+  actor_identity_id: string | null
+  target_message_native_id: string | null
+  target_message_id: string | null
+  at: number
+  received_at: number
+  dedupe_key: string
+  stream_order: string | null
+  normalizer_version: number
+  payload: string
+  raw: string | null
+}
+
+const toStored = (r: EventDb): StoredEvent => ({
+  id: r.id,
+  connectionId: r.connection_id,
+  type: r.type,
+  nodeId: r.node_id,
+  actorIdentityId: r.actor_identity_id,
+  targetMessageNativeId: r.target_message_native_id,
+  targetMessageId: r.target_message_id,
+  at: r.at,
+  receivedAt: r.received_at,
+  dedupeKey: r.dedupe_key,
+  streamOrder: r.stream_order,
+  normalizerVersion: r.normalizer_version,
+  payload: JSON.parse(r.payload) as Record<string, unknown>,
+  raw: r.raw,
+})
+
+const toActivity = (r: EventDb): ChannelEvent | undefined => {
+  const type = activityType(r.type)
+  if (type === undefined) return undefined
+  const p = JSON.parse(r.payload) as {
+    reason?: string
+    peerId?: string
+    peerName?: string
+    platformId?: string
+    detail?: ChannelEvent['detail']
+  }
+  return {
+    id: r.id,
+    connectionId: r.connection_id,
+    at: r.at,
+    type,
+    ...(p.reason === undefined ? {} : { reason: p.reason }),
+    ...(r.node_id === null ? {} : { conversationId: r.node_id }),
+    ...(p.peerId === undefined ? {} : { peerId: p.peerId }),
+    ...(p.peerName === undefined ? {} : { peerName: p.peerName }),
+    ...(p.platformId === undefined ? {} : { platformId: p.platformId }),
+    ...(p.detail === undefined ? {} : { detail: p.detail }),
+  }
+}
+
+export interface EventQuery {
+  type?: ChannelEventType | undefined
+  /** Node id. */
+  conversationId?: string | undefined
+  /** Page back from this event id (exclusive). */
+  before?: string | undefined
+  limit: number
+}
+
+export interface EventPage {
+  items: ChannelEvent[]
+  /** Pass as `before` for the next (older) page; undefined at the end. */
+  next?: string
+}
+
+export interface EventStore {
+  /** Append once per `(connection, dedupe key)`; `inserted: false` = a replay. */
+  append(event: NewEvent): { event: StoredEvent; inserted: boolean }
+  /** Record gateway activity (never throws on a duplicate: the key is unique per call). */
+  record(event: NewChannelEvent): ChannelEvent
+  /** Activity newest first. */
+  list(connectionId: string, query: EventQuery): EventPage
+  /** Delete events older than `olderThan` (when set) and keep at most `keepLast` rows. */
+  prune(options: { olderThan?: number; keepLast?: number }): number
+  /** Events that name no node yet (oldest first). */
+  unresolved(connectionId: string, limit?: number): StoredEvent[]
+  resolve(id: string, nodeId: string): void
+  /** `gateway.dropped` per node: for the inbox counters. */
+  dropCounts(connectionId: string): Map<string, number>
+  /** Nodes with gateway activity of the inbox kind (woke, observed, dropped). */
+  clear(connectionId: string): void
+  count(connectionId: string, type?: string): number
+}
+
+export function sqliteEventStore(sqlite: Database): EventStore {
+  const insert = (e: NewEvent): { event: StoredEvent; inserted: boolean } => {
+    const id = uuidv7()
+    const res = sqlite
+      .query(
+        `INSERT INTO ch_events (id, connection_id, type, node_id, actor_identity_id, target_message_native_id,
+           target_message_id, at, received_at, dedupe_key, stream_order, normalizer_version, payload, raw)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (connection_id, dedupe_key) DO NOTHING`,
+      )
+      .run(
+        id,
+        e.connectionId,
+        e.type,
+        e.nodeId ?? null,
+        e.actorIdentityId ?? null,
+        e.targetMessageNativeId ?? null,
+        e.targetMessageId ?? null,
+        e.at,
+        e.receivedAt,
+        e.dedupeKey,
+        e.streamOrder ?? null,
+        e.normalizerVersion ?? 1,
+        JSON.stringify(e.payload ?? {}),
+        e.raw ?? null,
+      )
+    const row = sqlite
+      .query<EventDb, [string, string]>(
+        'SELECT * FROM ch_events WHERE connection_id = ? AND dedupe_key = ?',
+      )
+      .get(e.connectionId, e.dedupeKey) as EventDb
+    return { event: toStored(row), inserted: res.changes > 0 }
+  }
+  return {
+    append: insert,
+    record(event) {
+      const id = uuidv7()
+      const payload = {
+        ...(event.reason === undefined ? {} : { reason: event.reason }),
+        ...(event.peerId === undefined ? {} : { peerId: event.peerId }),
+        ...(event.peerName === undefined ? {} : { peerName: event.peerName }),
+        ...(event.platformId === undefined ? {} : { platformId: event.platformId }),
+        ...(event.detail === undefined ? {} : { detail: event.detail }),
+      }
+      sqlite
+        .query(
+          `INSERT INTO ch_events (id, connection_id, type, node_id, target_message_native_id, at, received_at, dedupe_key, payload)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          event.connectionId,
+          gatewayType(event.type),
+          event.conversationId ?? null,
+          event.platformId ?? null,
+          event.at,
+          event.at,
+          `gw:${id}`,
+          JSON.stringify(payload),
+        )
+      return { ...event, id }
+    },
+    list(connectionId, query) {
+      const where = ['connection_id = ?']
+      const args: Array<string | number> = [connectionId]
+      if (query.type !== undefined) {
+        where.push('type = ?')
+        args.push(gatewayType(query.type))
+      } else {
+        where.push('type LIKE ?')
+        args.push(`${GATEWAY_PREFIX}%`)
+      }
+      if (query.conversationId !== undefined) {
+        where.push('node_id = ?')
+        args.push(query.conversationId)
+      }
+      if (query.before !== undefined) {
+        where.push('id < ?')
+        args.push(query.before)
+      }
+      const rows = sqlite
+        .query<EventDb, Array<string | number>>(
+          `SELECT * FROM ch_events WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ?`,
+        )
+        .all(...args, query.limit + 1)
+      const more = rows.length > query.limit
+      const items = rows
+        .slice(0, query.limit)
+        .map(toActivity)
+        .filter((e): e is ChannelEvent => e !== undefined)
+      const last = rows.slice(0, query.limit).at(-1)
+      return { items, ...(more && last !== undefined ? { next: last.id } : {}) }
+    },
+    prune({ olderThan, keepLast }) {
+      let removed = 0
+      if (olderThan !== undefined) {
+        removed += sqlite.query('DELETE FROM ch_events WHERE at < ?').run(olderThan).changes
+      }
+      if (keepLast !== undefined) {
+        // the cap counts the activity of the gateway; platform events are bounded by age
+        removed += sqlite
+          .query(
+            `DELETE FROM ch_events WHERE type LIKE 'gateway.%' AND id NOT IN
+               (SELECT id FROM ch_events WHERE type LIKE 'gateway.%' ORDER BY id DESC LIMIT ?)`,
+          )
+          .run(keepLast).changes
+      }
+      return removed
+    },
+    unresolved(connectionId, limit = 100) {
+      return sqlite
+        .query<EventDb, [string, number]>(
+          "SELECT * FROM ch_events WHERE connection_id = ? AND node_id IS NULL AND type NOT LIKE 'gateway.%' ORDER BY id LIMIT ?",
+        )
+        .all(connectionId, limit)
+        .map(toStored)
+    },
+    resolve(id, nodeId) {
+      sqlite.query('UPDATE ch_events SET node_id = ? WHERE id = ?').run(nodeId, id)
+    },
+    dropCounts(connectionId) {
+      const out = new Map<string, number>()
+      for (const r of sqlite
+        .query<{ node_id: string; n: number }, [string, string]>(
+          `SELECT node_id, COUNT(*) AS n FROM ch_events WHERE connection_id = ? AND type = ? AND node_id IS NOT NULL GROUP BY node_id`,
+        )
+        .all(connectionId, gatewayType('dropped'))) {
+        out.set(r.node_id, r.n)
+      }
+      return out
+    },
+    clear(connectionId) {
+      sqlite.query('DELETE FROM ch_events WHERE connection_id = ?').run(connectionId)
+    },
+    count(connectionId, type) {
+      return (
+        (type === undefined
+          ? sqlite
+              .query<{ n: number }, [string]>(
+                'SELECT COUNT(*) AS n FROM ch_events WHERE connection_id = ?',
+              )
+              .get(connectionId)
+          : sqlite
+              .query<{ n: number }, [string, string]>(
+                'SELECT COUNT(*) AS n FROM ch_events WHERE connection_id = ? AND type = ?',
+              )
+              .get(connectionId, type)
+        )?.n ?? 0
+      )
+    },
+  }
+}

@@ -13,38 +13,43 @@
  */
 import { z } from 'zod'
 import {
+  type AdapterHost,
   type ChannelAdapter,
   type ChannelCapabilities,
   ChannelError,
-  type ConversationKind,
-  type ConversationRef,
+  type ChannelNode,
   type EventSink,
   type HistoryEntry,
   type Identity,
   type InboundAttachment,
-  type InboundEvent,
   type NativeAction,
+  type NodeInfo,
   type OutboundMessage,
+  type RemoteEvent,
   type SentMessage,
 } from '../channels/types.ts'
 import type { TgChat, TgDelete, TgMessage, TgUser, TgUserClient } from './client.ts'
 import { classifyError, describeError, type TgErrorKind } from './errors.ts'
 import {
+  chatNode,
   historyEntryOf,
   kindOfChatId,
+  nativeIdOf,
   normalizeEdit,
   normalizeMessage,
-  refOf,
-  splitConversationId,
+  splitNativeId,
 } from './normalize.ts'
 import type { AccountSettings, ChatStore, CounterStore } from './store.ts'
+
+/** The documented native id formats (see `normalize.ts`). */
+export const USER_ID_FORMATS =
+  'chat `<marked chat id>` (a person is the positive id, a basic group `-<id>`, a channel or supergroup `-100<id>`); forum topic `<chat>/<topic id>` (General is `/0`); message `<message id>`; person `<user id>`'
 
 export const USER_CAPABILITIES: ChannelCapabilities = {
   maxTextLength: 4096,
   maxCaptionLength: 1024,
   // chunked downloads have no Telegram cap; this is our own ceiling for what a model turn loads
   maxDownloadBytes: 25 * 1024 * 1024,
-  topics: true,
   reactions: true,
   edit: true,
   delete: true,
@@ -58,8 +63,6 @@ export const USER_CAPABILITIES: ChannelCapabilities = {
   membersScope: 'partial',
   upload: true,
   deletions: 'ids',
-  adminLog: true,
-  listChats: true,
 }
 
 /** Why the adapter wants the whole session stopped. */
@@ -87,16 +90,9 @@ export interface UserAdapterOptions {
   chats: ChatStore
   counters: CounterStore
   settings: () => AccountSettings
-  /** Find logged messages by id (`ChannelLog.locate`). */
-  locate: (
-    ids: string[],
-    container?: string,
-  ) => Array<{ conversationId: string; platformId: string }>
   hooks: UserAdapterHooks
-  /** Was message `messageId` of the chat sent by this account (our log knows)? Telegram does not say who a reply points at. */
   /** A reason to refuse every send (the account was flagged: PEER_FLOOD, a flood storm); undefined = fine. */
   blocked?: () => string | undefined
-  isOwn?: (chatId: string, messageId: string) => boolean
   now?: () => number
   random?: () => number
   /** Flood waits that trip the breaker (default 3 within 1 hour). */
@@ -133,6 +129,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
   }
 
   let sink: EventSink | undefined
+  let host: AdapterHost | undefined
   let stopped = false
   let events = 0
   let lastEventAt: number | undefined
@@ -176,13 +173,14 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
         throw toChannelError(error, m.chat.id)
       }
     }
-  const nopts = { connectionId, selfId, fetch: fetchOf }
+  const nopts = { selfId, fetch: fetchOf }
 
-  /** DMs are always accepted here (the gateway only lets paired people through); other chats must be chosen. */
+  /** DMs are always accepted here (the gateway only lets linked people through); other chats must be chosen. */
   const accepts = (m: { chat: { id: string; kind: string } }): boolean =>
-    m.chat.kind === 'dm' || chats.isSelected(connectionId, m.chat.id)
+    m.chat.kind === 'dm' ||
+    (host?.isAllowed(m.chat.id) ?? chats.isSelected(connectionId, m.chat.id))
 
-  const deliver = (event: InboundEvent): Promise<void> => {
+  const deliver = (event: RemoteEvent): Promise<void> => {
     events++
     lastEventAt = now()
     return sink === undefined ? Promise.resolve() : sink(event)
@@ -193,7 +191,12 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     const r = m.replyTo
     if (r === undefined || r.senderId !== undefined) return m
     const own =
-      sentIds.has(`${m.chat.id}:${r.id}`) || options.isOwn?.(m.chat.id, String(r.id)) === true
+      sentIds.has(`${m.chat.id}:${r.id}`) ||
+      host?.isOwn(
+        m.chat.forum && m.topicId !== undefined ? nativeIdOf(m.chat.id, m.topicId) : m.chat.id,
+        String(r.id),
+      ) === true ||
+      host?.isOwn(nativeIdOf(m.chat.id, 0), String(r.id)) === true
     return own ? { ...m, replyTo: { ...r, senderId: selfId, senderName: self.name ?? 'me' } } : m
   }
 
@@ -215,52 +218,74 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     })
   }
 
-  function conversationRefOf(conversationId: string): ConversationRef {
-    const { chatId, topicId } = splitConversationId(conversationId)
-    const known = chats.get(connectionId, chatId)
-    return refOf(
-      connectionId,
-      { id: chatId, kind: known?.kind ?? kindOfChatId(chatId), title: known?.title },
-      topicId,
-    )
-  }
-
   function onDelete(d: TgDelete): void {
     const ids = d.ids.map(String)
     if (ids.length === 0) return
     const chatId = d.chatId
-    if (chatId !== undefined && !chats.isSelected(connectionId, chatId)) return
+    const stamp = now()
+    if (
+      chatId !== undefined &&
+      !(host?.isAllowed(chatId) ?? chats.isSelected(connectionId, chatId))
+    )
+      return
     const run = async (): Promise<void> => {
-      const found = options.locate(ids, chatId)
+      const found = host?.locate(ids, chatId) ?? []
       // the common box (no chat id) holds persons and basic groups: channel ids are another space
       const usable =
-        chatId === undefined ? found.filter((f) => !f.conversationId.startsWith('-100')) : found
+        chatId === undefined
+          ? found.filter((f) => !splitNativeId(f.nodeNativeId).chatId.startsWith('-100'))
+          : found
       const byId = new Map<string, Set<string>>()
       for (const f of usable) {
-        const set = byId.get(f.platformId) ?? new Set<string>()
-        set.add(f.conversationId)
-        byId.set(f.platformId, set)
+        const set = byId.get(f.messageNativeId) ?? new Set<string>()
+        set.add(f.nodeNativeId)
+        byId.set(f.messageNativeId, set)
       }
-      const perConversation = new Map<string, string[]>()
+      const perNode = new Map<string, string[]>()
+      const unplaced: string[] = []
       for (const id of ids) {
         const where = byId.get(id)
         if (where === undefined) continue
         if (where.size > 1) {
           // the same id in two conversations of the common box: do not guess
           unresolvedDeletes++
+          unplaced.push(id)
           continue
         }
-        const conv = [...where][0] as string
-        const list = perConversation.get(conv) ?? []
-        list.push(id)
-        perConversation.set(conv, list)
+        const node = [...where][0] as string
+        perNode.set(node, [...(perNode.get(node) ?? []), id])
       }
-      for (const [conv, messageIds] of perConversation) {
+      for (const [nodeNative, messageNativeIds] of perNode) {
+        const { chatId: chat, topicId } = splitNativeId(nodeNative)
+        const known = chats.get(connectionId, chat)
+        const room = chatNode({
+          id: chat,
+          kind: known?.kind ?? kindOfChatId(chat),
+          title: known?.title,
+          forum: known?.forum,
+        })
         await deliver({
-          type: 'delete',
-          conversation: conversationRefOf(conv),
+          type: 'message.deleted',
+          dedupeKey: `tgu:d:${nodeNative}:${messageNativeIds.join(',')}:${stamp}`,
           at: now(),
-          messageIds,
+          node: {
+            nativeId: nodeNative,
+            chain:
+              topicId === undefined
+                ? [room]
+                : [{ nativeId: nodeNative, kind: 'thread', parent: chat }, room],
+          },
+          messageNativeIds,
+        })
+      }
+      if (unplaced.length > 0) {
+        // the gateway records what it cannot place and tries again when it learns more
+        await deliver({
+          type: 'message.deleted',
+          dedupeKey: `tgu:d:?:${unplaced.join(',')}:${stamp}`,
+          at: now(),
+          node: null,
+          messageNativeIds: unplaced,
         })
       }
     }
@@ -344,10 +369,29 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     }
   }
 
-  async function guardSend(ref: ConversationRef): Promise<void> {
+  /** The chat and topic a node stands for. */
+  const targetOf = (node: ChannelNode): { chat: string; topic: number | undefined } => {
+    const metaChat = node.meta.chatId
+    const chat =
+      typeof metaChat === 'string'
+        ? metaChat
+        : node.kind === 'thread'
+          ? (node.parentNativeId ?? splitNativeId(node.nativeId).chatId)
+          : node.nativeId
+    if (node.kind !== 'thread') return { chat, topic: undefined }
+    const topic = Number(
+      typeof node.meta.topicId === 'number'
+        ? node.meta.topicId
+        : splitNativeId(node.nativeId).topicId,
+    )
+    return { chat, topic: Number.isFinite(topic) && topic !== 0 ? topic : undefined }
+  }
+
+  async function guardSend(node: ChannelNode): Promise<void> {
+    const chat = targetOf(node).chat
     const blocked = options.blocked?.()
     if (blocked !== undefined) throw new ChannelError('fatal', blocked)
-    const parked = parkedUntil(ref.container)
+    const parked = parkedUntil(chat)
     if (parked !== undefined) {
       throw new ChannelError(
         'rate_limit',
@@ -363,9 +407,9 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
         `the account reached its daily limit of ${s.dailyMax} messages (it resets at 00:00 UTC); raise it on the Channels page only if you are sure`,
       )
     }
-    if (ref.kind === 'dm') {
-      let known = (await dialogs()).some((d) => d.id === ref.container)
-      if (!known) known = (await dialogs(true)).some((d) => d.id === ref.container)
+    if (node.kind === 'direct') {
+      let known = (await dialogs()).some((d) => d.id === chat)
+      if (!known) known = (await dialogs(true)).some((d) => d.id === chat)
       if (!known) {
         throw new ChannelError(
           'invalid',
@@ -381,40 +425,37 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     }
   }
 
-  const sendOptions = (ref: ConversationRef, message: OutboundMessage) => ({
+  const sendOptions = (node: ChannelNode, message: OutboundMessage) => ({
     ...(message.replyTo === undefined ? {} : { replyTo: Number(message.replyTo) }),
-    ...(ref.topic === undefined ? {} : { topicId: Number(ref.topic) }),
+    ...(targetOf(node).topic === undefined ? {} : { topicId: targetOf(node).topic as number }),
     ...(message.silent === true ? { silent: true } : {}),
-    ...(message.key === undefined ? {} : { key: message.key }),
+    ...(message.sendTxnId === undefined ? {} : { key: message.sendTxnId }),
   })
 
-  async function send(ref: ConversationRef, message: OutboundMessage): Promise<SentMessage> {
-    await guardSend(ref)
+  async function send(node: ChannelNode, message: OutboundMessage): Promise<SentMessage> {
+    await guardSend(node)
+    const chat = targetOf(node).chat
     try {
       const sent =
         message.files !== undefined && message.files.length > 0
-          ? await client.sendFiles(
-              ref.container,
-              message.files,
-              message.text,
-              sendOptions(ref, message),
-            )
-          : await client.sendText(ref.container, message.text, sendOptions(ref, message))
-      sentIds.add(`${ref.container}:${sent.id}`)
+          ? await client.sendFiles(chat, message.files, message.text, sendOptions(node, message))
+          : await client.sendText(chat, message.text, sendOptions(node, message))
+      sentIds.add(`${chat}:${sent.id}`)
       if (sentIds.size > DEDUPE_MAX) {
         const oldest = sentIds.values().next().value
         if (oldest !== undefined) sentIds.delete(oldest)
       }
       counters.add(connectionId, 'all', now())
-      if (ref.kind === 'dm') counters.add(connectionId, 'dm', now())
-      return { messageId: String(sent.id) }
+      if (node.kind === 'direct') counters.add(connectionId, 'dm', now())
+      return { nativeId: String(sent.id) }
     } catch (error) {
-      throw toChannelError(error, ref.container)
+      throw toChannelError(error, chat)
     }
   }
 
-  const guarded = async <T>(ref: ConversationRef, fn: () => Promise<T>): Promise<T> => {
-    const parked = parkedUntil(ref.container)
+  const guarded = async <T>(node: ChannelNode, fn: () => Promise<T>): Promise<T> => {
+    const chat = targetOf(node).chat
+    const parked = parkedUntil(chat)
     if (parked !== undefined) {
       throw new ChannelError(
         'rate_limit',
@@ -426,7 +467,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     try {
       return await fn()
     } catch (error) {
-      throw toChannelError(error, ref.container)
+      throw toChannelError(error, chat)
     }
   }
 
@@ -469,11 +510,21 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
   const adapter: TelegramUserAdapter = {
     platform: 'telegram-user',
     connectionId,
-    capabilities: USER_CAPABILITIES,
+    idFormats: USER_ID_FORMATS,
     self: () => self,
     actions,
-    async start(s) {
+    getCapabilities: () => USER_CAPABILITIES,
+    async getNodeInfo(nativeId) {
+      if (splitNativeId(nativeId).topicId !== undefined) return undefined
+      const d = (await dialogs()).find((x) => x.id === nativeId)
+      return d === undefined ? undefined : chatNode(d)
+    },
+    async getIdentityInfo() {
+      return undefined
+    },
+    async start(s, h) {
       sink = s
+      host = h
       stopped = false
       await client.startUpdates(
         {
@@ -498,48 +549,52 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
       await client.stop().catch(() => undefined)
     },
     send,
-    edit: (ref, messageId, text) =>
-      guarded(ref, () => client.editText(ref.container, Number(messageId), text)),
-    delete: (ref, messageId) =>
-      guarded(ref, () => client.deleteMessages(ref.container, [Number(messageId)])),
-    pin: (ref, messageId, pinned) =>
-      guarded(ref, () => client.pin(ref.container, Number(messageId), pinned)),
-    react: (ref, messageId, emoji) =>
-      guarded(ref, () => client.react(ref.container, Number(messageId), emoji)),
-    async fetchHistory(ref, o): Promise<HistoryEntry[]> {
-      const page = await guarded(ref, () =>
-        client.history(ref.container, {
+    edit: (node, nativeId, text) =>
+      guarded(node, () => client.editText(targetOf(node).chat, Number(nativeId), text)),
+    delete: (node, nativeId) =>
+      guarded(node, () => client.deleteMessages(targetOf(node).chat, [Number(nativeId)])),
+    pin: (node, nativeId, pinned) =>
+      guarded(node, () => client.pin(targetOf(node).chat, Number(nativeId), pinned)),
+    react: (node, nativeId, emoji) =>
+      guarded(node, () => client.react(targetOf(node).chat, Number(nativeId), emoji)),
+    async fetchHistory(node, o): Promise<HistoryEntry[]> {
+      const page = await guarded(node, () =>
+        client.history(targetOf(node).chat, {
           limit: Math.min(o.limit, 100),
           ...(o.before === undefined ? {} : { offsetId: Number(o.before) }),
         }),
       )
       return page.map(historyEntryOf).reverse()
     },
-    async members(ref, o) {
+    async listMembers(node, o) {
       // partial on purpose: a bounded look at who is there, never a sweep of a big group
-      const list = await guarded(ref, () => client.members(ref.container, Math.min(o.limit, 100)))
-      return list.map((u) => ({
-        id: u.id,
-        name: u.name,
-        ...(u.username === undefined ? {} : { username: u.username }),
-        ...(u.isBot ? { isBot: true } : {}),
-      }))
-    },
-    async fetchAttachment(ref, messageId) {
-      return guarded(ref, () => client.download(ref.container, Number(messageId)))
-    },
-    conversationRef(input) {
-      const kind: ConversationKind = input.kind ?? kindOfChatId(input.container)
-      return refOf(
-        connectionId,
-        {
-          id: input.container,
-          kind,
-          title: chats.get(connectionId, input.container)?.title,
-        },
-        input.topic,
+      const list = await guarded(node, () =>
+        client.members(targetOf(node).chat, Math.min(o.limit, 100)),
       )
+      return {
+        scope: 'partial' as const,
+        members: list.map((u) => ({
+          id: u.id,
+          name: u.name,
+          ...(u.username === undefined ? {} : { username: u.username }),
+          ...(u.isBot ? { isBot: true } : {}),
+        })),
+      }
     },
+    async listNodes(): Promise<NodeInfo[]> {
+      return (await dialogs(true)).map((d) => chatNode(d))
+    },
+    async fetchAttachment(node, messageNativeId) {
+      return guarded(node, () => client.download(targetOf(node).chat, Number(messageNativeId)))
+    },
+    openDirect: (identityNativeId) => ({
+      nativeId: identityNativeId,
+      kind: 'direct',
+      platformType: 'telegram-user:private',
+      traits: { multiUser: false, threading: 'none' },
+      meta: { chatId: identityNativeId },
+    }),
+    childNativeId: (parent, key) => nativeIdOf(parent.nativeId, key),
     dialogs,
     parkChat,
     parkedUntil,

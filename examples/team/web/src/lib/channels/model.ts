@@ -2,7 +2,8 @@
 import type { components } from '../api/schema';
 
 export type ChannelConnection = components['schemas']['ChannelConnection'];
-export type ChannelChat = components['schemas']['ChannelChat'];
+/** A place of a connection: a chat, a channel, a forum topic (a node of the tree). */
+export type ChannelChat = components['schemas']['ChannelNode'];
 export type ChannelLink = components['schemas']['ChannelLink'];
 export type ChannelUnlinked = components['schemas']['ChannelUnlinked'];
 export type ChannelMember = components['schemas']['ChannelMember'];
@@ -10,11 +11,12 @@ export type InboxConversation = components['schemas']['ChannelInboxConversation'
 export type LogMessage = components['schemas']['ChannelLogMessage'];
 export type ChannelActivity = components['schemas']['ChannelActivity'];
 export type ActivityType = ChannelActivity['type'];
-export type ChannelPolicy = NonNullable<components['schemas']['ChannelChat']['policy']>;
+export type ChannelPolicy = NonNullable<ChannelChat['policy']>;
 export type ChannelPolicyBody = components['schemas']['ChannelPolicyBody'];
 export type RuntimeState = ChannelConnection['runtime']['state'];
 export type Wake = NonNullable<ChannelPolicy['wake']>;
 export type Delivery = NonNullable<ChannelPolicy['delivery']>;
+export type SessionScope = NonNullable<ChannelPolicy['sessionScope']>;
 
 export type Tone = 'success' | 'warning' | 'destructive' | 'info' | 'secondary';
 
@@ -64,32 +66,48 @@ export const DELIVERY_OPTIONS: { value: Delivery; label: string; hint: string }[
 export const wakeLabel = (w: Wake): string => WAKE_OPTIONS.find((o) => o.value === w)?.label ?? w;
 export const deliveryLabel = (d: Delivery): string => DELIVERY_OPTIONS.find((o) => o.value === d)?.label ?? d;
 
-export const BOT_STATUS_LABEL: Record<string, string> = {
-	administrator: 'Admin',
-	creator: 'Owner',
+/** What the connection is in a chat (the platform's own word is the platform's business). */
+export const MEMBER_LABEL: Record<string, string> = {
+	owner: 'Owner',
+	admin: 'Admin',
 	member: 'Member',
-	restricted: 'Restricted',
-	left: 'Left',
-	kicked: 'Removed'
+	none: 'Not in the chat',
+	unknown: 'Unknown'
 };
-export const botStatusLabel = (s: string | undefined): string => (s === undefined ? 'Unknown' : (BOT_STATUS_LABEL[s] ?? s));
-/** The bot is not in the chat any more (it cannot read or post). */
-export const botGone = (c: ChannelChat): boolean => c.botStatus === 'left' || c.botStatus === 'kicked';
+export const memberLabel = (s: string | undefined): string => (s === undefined ? 'Unknown' : (MEMBER_LABEL[s] ?? s));
+/** The connection is not in the chat any more (it cannot read or post). */
+export const botGone = (c: ChannelChat): boolean => c.state === 'left' || c.member === 'none';
+/** The connection can administer the chat (sees everything in it under privacy mode). */
+export const isAdmin = (c: ChannelChat): boolean => c.member === 'admin' || c.member === 'owner';
 
-/** The form of one chat policy as typed. */
+/** A setting that is inherited by default: '' = inherit, otherwise set on this node. */
+export type Inherit<T extends string> = '' | T;
+export type Tri = Inherit<'on' | 'off'>;
+
+/** The form of one node's own settings as typed. Everything starts as what the node itself sets; '' = inherit. */
 export interface PolicyForm {
-	allowed: boolean;
-	wake: Wake;
-	delivery: Delivery;
-	/** Days, as typed; empty = the default (30). */
+	allowed: Tri;
+	wake: Inherit<Wake>;
+	delivery: Inherit<Delivery>;
+	/** Days, as typed; empty = inherit. */
 	retention: string;
+	observe: Tri;
+	sessionScope: Inherit<SessionScope>;
+	redactOnDelete: Tri;
 }
 
+const triOf = (v: boolean | undefined): Tri => (v === undefined ? '' : v ? 'on' : 'off');
+const boolOf = (t: Tri): boolean | null => (t === '' ? null : t === 'on');
+
 export const formOfChat = (c: ChannelChat): PolicyForm => ({
-	allowed: c.effective.allowed,
-	wake: c.policy?.wake ?? c.effective.wake,
-	delivery: c.policy?.delivery ?? c.effective.delivery,
-	retention: c.policy?.retentionDays === undefined ? '' : String(c.policy.retentionDays)
+	// `enabled` reads as true in a policy that only sets other fields: it is the node's own only when it says so
+	allowed: c.inherited.enabled?.from === 'node' ? triOf(c.policy?.enabled) : '',
+	wake: c.policy?.wake ?? '',
+	delivery: c.policy?.delivery ?? '',
+	retention: c.policy?.retentionDays === undefined ? '' : String(c.policy.retentionDays),
+	observe: triOf(c.policy?.observe),
+	sessionScope: c.policy?.sessionScope ?? '',
+	redactOnDelete: triOf(c.policy?.redactOnDelete)
 });
 
 export function retentionError(text: string): string | undefined {
@@ -98,18 +116,36 @@ export function retentionError(text: string): string | undefined {
 	return Number.isInteger(n) && n >= 1 && n <= 3650 ? undefined : 'Whole days, 1 to 3650';
 }
 
-/** The body of the PATCH for a form (every field explicit: it is the whole policy of the chat). */
+/** The body of the PATCH for a form (every field explicit: `null` clears a setting so it inherits again). */
 export function policyBody(f: PolicyForm): ChannelPolicyBody {
 	return {
-		enabled: f.allowed,
-		wake: f.wake,
-		delivery: f.delivery,
-		retentionDays: f.retention.trim() === '' ? null : Number(f.retention)
+		enabled: boolOf(f.allowed),
+		wake: f.wake === '' ? null : f.wake,
+		delivery: f.delivery === '' ? null : f.delivery,
+		retentionDays: f.retention.trim() === '' ? null : Number(f.retention),
+		observe: boolOf(f.observe),
+		sessionScope: f.sessionScope === '' ? null : f.sessionScope,
+		redactOnDelete: boolOf(f.redactOnDelete)
 	};
 }
 
 export const formChanged = (a: PolicyForm, b: PolicyForm): boolean =>
-	a.allowed !== b.allowed || a.wake !== b.wake || a.delivery !== b.delivery || a.retention.trim() !== b.retention.trim();
+	a.allowed !== b.allowed ||
+	a.wake !== b.wake ||
+	a.delivery !== b.delivery ||
+	a.retention.trim() !== b.retention.trim() ||
+	a.observe !== b.observe ||
+	a.sessionScope !== b.sessionScope ||
+	a.redactOnDelete !== b.redactOnDelete;
+
+/** Where one effective setting comes from, in words ("set here", "inherited from Company"). */
+export function originText(c: ChannelChat, key: keyof ChannelChat['inherited'], titleOf: (nodeId: string) => string): string {
+	const o = c.inherited[key];
+	if (o === undefined || o.from === 'default') return 'default';
+	if (o.from === 'connection') return 'connection default';
+	if (o.from === 'node') return 'set here';
+	return `inherited from ${o.nodeId === undefined ? 'above' : titleOf(o.nodeId)}`;
+}
 
 /** One line for the chat row. */
 export function chatSummary(c: ChannelChat): string {
@@ -125,7 +161,33 @@ export function sortChats(chats: readonly ChannelChat[]): ChannelChat[] {
 	);
 }
 
-export const KIND_LABEL: Record<ChannelChat['kind'], string> = { dm: 'Direct', group: 'Group', channel: 'Channel' };
+/** A node with its children (a forum with its topics). */
+export interface ChatBranch {
+	chat: ChannelChat;
+	children: ChatBranch[];
+}
+
+/**
+ * The tree of chats and topics: roots sorted like {@link sortChats}, children by name (General
+ * first). A node whose parent is not in the list is a root.
+ */
+export function chatTree(chats: readonly ChannelChat[]): ChatBranch[] {
+	const ids = new Set(chats.map((c) => c.id));
+	const byParent = new Map<string, ChannelChat[]>();
+	const roots: ChannelChat[] = [];
+	for (const c of chats) {
+		if (c.parentId !== undefined && ids.has(c.parentId)) byParent.set(c.parentId, [...(byParent.get(c.parentId) ?? []), c]);
+		else roots.push(c);
+	}
+	const general = (c: ChannelChat): number => (c.platformType.endsWith('forum_general') ? 0 : 1);
+	const branch = (c: ChannelChat): ChatBranch => ({
+		chat: c,
+		children: (byParent.get(c.id) ?? []).sort((a, b) => general(a) - general(b) || a.title.localeCompare(b.title)).map(branch)
+	});
+	return sortChats(roots).map(branch);
+}
+
+export const KIND_LABEL: Record<ChannelChat['chatKind'], string> = { dm: 'Direct', group: 'Group', channel: 'Channel' };
 
 /**
  * A warning when the bot cannot see what the policies ask of it: privacy mode hides ordinary
@@ -133,9 +195,7 @@ export const KIND_LABEL: Record<ChannelChat['kind'], string> = { dm: 'Direct', g
  */
 export function privacyWarning(c: ChannelConnection, chats: readonly ChannelChat[]): string | undefined {
 	if (c.bot === undefined || c.bot.canReadAllGroupMessages) return undefined;
-	const needsAll = chats.filter(
-		(x) => x.kind !== 'channel' && x.effective.allowed && x.effective.wake !== 'mention' && x.botStatus !== 'administrator' && x.botStatus !== 'creator'
-	);
+	const needsAll = chats.filter((x) => x.chatKind !== 'channel' && x.postable && x.effective.allowed && x.effective.wake !== 'mention' && !isAdmin(x));
 	if (needsAll.length === 0) return undefined;
 	const names = needsAll.slice(0, 3).map((x) => x.title).join(', ');
 	return `Privacy mode is on and the bot is not an admin in ${names}${needsAll.length > 3 ? ' and others' : ''}: it only sees mentions, replies and commands there. Make it an admin, or turn privacy mode off in @BotFather (/setprivacy) and re-add the bot.`;
@@ -187,7 +247,7 @@ export const ACCOUNT_WARNING =
 
 export const stateLabel = (s: RuntimeState): string => STATE_LABEL[s];
 
-/** Chats of an account: chosen ones first, then by title. */
+/** Chats of an account (rooms, not their topics): chosen ones first, then by title. */
 export const sortAccountChats = (chats: readonly ChannelChat[]): ChannelChat[] =>
 	[...chats].sort((a, b) => Number(!!b.account?.selected) - Number(!!a.account?.selected) || a.title.localeCompare(b.title));
 
@@ -365,7 +425,8 @@ export const DROP_REASON_LABEL: Record<string, string> = {
 	'loop-guard': 'bot loop guard',
 	duplicate: 'already handled (duplicate)',
 	'agent-unavailable': 'the agent is archived or missing',
-	'not-authorized': 'not allowed to answer the approval'
+	'not-authorized': 'not allowed to answer the approval',
+	'not-observed': 'the full log is off here and the message did not address the agent'
 };
 
 export const eventTone = (t: ActivityType): Tone =>

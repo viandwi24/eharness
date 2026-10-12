@@ -6,13 +6,13 @@ import type {
   ChannelActivityPage,
   ChannelActivityQuery,
   ChannelBindInput,
-  ChannelChatView,
   ChannelConnectionView,
   ChannelConversationLog,
   ChannelInboxPage,
   ChannelLimitsInput,
   ChannelLinkView,
   ChannelMemberView,
+  ChannelNodeView,
   ChannelPolicyInput,
   ChannelUnlinkedView,
 } from '../domain/channels.ts'
@@ -772,14 +772,14 @@ export interface ChannelsPort {
   bind(id: string, input: ChannelBindInput): Promise<ChannelConnectionView>
   /** Remove the binding (stops the transport; the connector connection stays). */
   unbind(id: string): Promise<ChannelConnectionView>
-  chats(id: string): Promise<ChannelChatView[]>
-  /** Set (or with `topic` set, set for a topic) the policy of a known chat. `null` removes the entry. */
+  /** The chats and topics of the connection (nodes of the tree) with their own and inherited settings. */
+  chats(id: string): Promise<ChannelNodeView[]>
+  /** Write the settings of one node (a chat or a topic). `null` clears them (inherit again). */
   setChatPolicy(
     id: string,
-    chatId: string,
+    nodeId: string,
     input: ChannelPolicyInput | null,
-    topic?: string,
-  ): Promise<ChannelChatView>
+  ): Promise<ChannelNodeView>
   links(id: string): Promise<ChannelLinkView[]>
   revokeLink(id: string, peerId: string): Promise<void>
   /** Remove the webhook of the bot so polling can start. */
@@ -817,12 +817,12 @@ export interface ChannelInboxPort {
 /** Telegram user accounts (P41 L4): chat picker, per-chat backfill window, admin log, limits. */
 export interface ChannelAccountsPort {
   /** Read the dialogs of the account from Telegram into the picker (needs a running connection). */
-  refreshChats(id: string): Promise<ChannelChatView[]>
+  refreshChats(id: string): Promise<ChannelNodeView[]>
   /** Choose (or stop) ingesting a chat. A chosen chat starts as observe-only. */
-  selectChat(id: string, chatId: string, selected: boolean): Promise<ChannelChatView>
+  selectChat(id: string, chatId: string, selected: boolean): Promise<ChannelNodeView>
   /** History window in days (`null` = no backfill). */
-  setBackfill(id: string, chatId: string, days: number | null): Promise<ChannelChatView>
-  setAdminLog(id: string, chatId: string, enabled: boolean): Promise<ChannelChatView>
+  setBackfill(id: string, chatId: string, days: number | null): Promise<ChannelNodeView>
+  setAdminLog(id: string, chatId: string, enabled: boolean): Promise<ChannelNodeView>
   /** Read the admin logs that are due now (all chats with `force`). */
   runAdminLog(id: string, force: boolean): Promise<ChannelConnectionView>
   setLimits(id: string, input: ChannelLimitsInput): Promise<ChannelConnectionView>

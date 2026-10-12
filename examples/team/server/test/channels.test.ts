@@ -20,6 +20,8 @@ import {
   createMockAdapter,
   type MockAdapter,
 } from '../src/infra/channels/index.ts'
+import { traitsOf } from '../src/infra/channels/model.ts'
+import type { ScopeNode, ScopePolicy } from '../src/infra/channels/policy.ts'
 import {
   ConnectionConfigSchema,
   createLoopGuard,
@@ -29,7 +31,8 @@ import {
   resolveScope,
   splitText,
 } from '../src/infra/channels/policy.ts'
-import type { InboundEvent } from '../src/infra/channels/types.ts'
+import { channelSessionId } from '../src/infra/channels/sessions.ts'
+import type { ChannelNode, InboundSignals } from '../src/infra/channels/types.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
 
@@ -137,6 +140,29 @@ const budi = { id: 'u-budi', name: 'Budi', username: 'budi' }
 const wire = (m: ScriptedModel): string => JSON.stringify(m.prompts)
 const calls = (m: ScriptedModel | undefined): number => m?.prompts.length ?? 0
 
+/** The groups of before L5 (`groups: { chat: { ...policy, topics: { t: {...} } } }`) as nodes with settings. */
+function applyGroups(
+  gw: ChannelGateway,
+  connectionId: string,
+  groups: Record<string, Record<string, unknown>>,
+): void {
+  for (const [native, raw] of Object.entries(groups)) {
+    const { topics, ...policy } = raw as {
+      topics?: Record<string, Record<string, unknown>>
+    } & Record<string, unknown>
+    const room = gw.settings.ensureNode(connectionId, { nativeId: native, kind: 'room' })
+    gw.settings.set(room.id, { enabled: true, ...policy } as never)
+    for (const [t, tp] of Object.entries(topics ?? {})) {
+      const thread = gw.settings.ensureNode(
+        connectionId,
+        { nativeId: `${native}/${t}`, kind: 'thread', title: t },
+        native,
+      )
+      gw.settings.set(thread.id, tp as never)
+    }
+  }
+}
+
 async function connect(
   i: Instance,
   options: {
@@ -151,79 +177,131 @@ async function connect(
   i.gw.configure({
     connectionId,
     agentId: options.agentId ?? i.leadId,
-    groups: options.groups ?? { room: { label: 'Ops' } },
     ...options.config,
   })
+  applyGroups(i.gw, connectionId, options.groups ?? { room: { label: 'Ops' } })
   const mock = createMockAdapter({ connectionId, ...options.adapter })
   await i.gw.register(mock)
   return mock
 }
 
+/** The node id of a chat (or `chat/topic`) of a connection, as the platform names it. */
+const nid = (i: Instance, native: string, connectionId = 'c1'): string => {
+  const node = i.gw.nodes.byNative(connectionId, native)
+  if (node === undefined) throw new Error(`no node ${native} on ${connectionId}`)
+  return node.id
+}
+/** The session of a chat (or `chat/topic`). */
+const sid = (i: Instance, native: string, connectionId = 'c1'): string => {
+  const row = i.gw.sessions.get(connectionId, nid(i, native, connectionId))
+  if (row === undefined) throw new Error(`no session for ${native}`)
+  return row.sessionId
+}
+
 const textStep = (text: string): ScriptedStepInput => ({ text })
 
+/** A node as an adapter receives it to act on (for calling a mock directly). */
+const chatNode = (native: string): ChannelNode => ({
+  id: native,
+  connectionId: 'c1',
+  nativeId: native,
+  kind: 'room',
+  traits: traitsOf({ multiUser: true }),
+  platformType: 'mock:group',
+  title: 'Room',
+  parentNativeId: undefined,
+  meta: {},
+})
+
 describe('policy (pure)', () => {
-  const cfg = ConnectionConfigSchema.parse({
-    connectionId: 'c',
-    agentId: 'lead',
-    groups: {
-      ops: {
-        wake: 'mention',
-        topics: { billing: { agentId: 'finance' }, quiet: { wake: 'never' } },
-      },
-      news: { wake: 'always' },
-    },
+  const cfg = ConnectionConfigSchema.parse({ connectionId: 'c', agentId: 'lead' })
+  /** Settings of a node and its ancestors, root first. */
+  const chain = (
+    ...levels: Array<{ kind?: 'room' | 'thread' | 'direct'; settings?: ScopePolicy }>
+  ) =>
+    levels.map(
+      (l, n): ScopeNode => ({
+        node: { id: `n${n}`, kind: l.kind ?? 'room' },
+        settings: l.settings ?? {},
+      }),
+    )
+  const ops = { kind: 'room' as const, settings: { enabled: true, wake: 'mention' as const } }
+  const billing = { kind: 'thread' as const, settings: { agentId: 'finance' } }
+  const quiet = { kind: 'thread' as const, settings: { wake: 'never' as const } }
+  const news = { kind: 'room' as const, settings: { enabled: true, wake: 'always' as const } }
+  const msg = (over: { text?: string; signals?: Partial<InboundSignals> } = {}) => ({
+    text: over.text ?? 'hello',
+    signals: { mentionedSelf: false, replyToSelf: false, ...over.signals },
   })
-  const ref = (container: string, topic?: string) => ({
-    id: topic === undefined ? container : `${container}/${topic}`,
-    connectionId: 'c',
-    container,
-    ...(topic === undefined ? {} : { topic }),
-    kind: 'group' as const,
-  })
-  const msg = (over: Partial<Extract<InboundEvent, { type: 'message' }>> = {}) =>
-    ({
-      type: 'message',
-      conversation: ref('ops'),
-      at: 1,
-      messageId: '1',
-      sender: ana,
-      text: 'hello',
-      attachments: [],
-      signals: { mentionedSelf: false, replyToSelf: false },
-      ...over,
-    }) as Extract<InboundEvent, { type: 'message' }>
   const self = { id: 'bot', username: 'team_bot', isSelf: true }
 
-  test('allowlist, topic overrides and defaults', () => {
-    expect(resolveScope(cfg, ref('ops')).allowed).toBe(true)
-    expect(resolveScope(cfg, ref('other')).allowed).toBe(false)
+  test('allowlist, inheritance down the tree and defaults', () => {
+    // a room is allowed when it is switched on; a node without any entry is not
+    expect(resolveScope(cfg, chain(ops)).allowed).toBe(true)
+    expect(resolveScope(cfg, chain({})).allowed).toBe(false)
     const open = ConnectionConfigSchema.parse({
       connectionId: 'c',
       agentId: 'a',
       groupPolicy: 'open',
     })
-    expect(resolveScope(open, ref('other')).allowed).toBe(true)
-    const topic = resolveScope(cfg, ref('ops', 'billing'))
-    expect(topic).toMatchObject({ agentId: 'finance', ownTopic: true, wake: 'mention' })
-    expect(resolveScope(cfg, ref('ops', 'quiet')).wake).toBe('never')
-    expect(resolveScope(cfg, ref('ops')).quote).toBe('first')
-    expect(resolveScope(cfg, { ...ref('x'), kind: 'dm' }).quote).toBe('off')
+    expect(resolveScope(open, chain({})).allowed).toBe(true)
+    // a topic inherits from its room and says so only to differ
+    const topic = resolveScope(cfg, chain(ops, billing))
+    expect(topic).toMatchObject({
+      allowed: true,
+      agentId: 'finance',
+      ownTopic: true,
+      wake: 'mention',
+    })
+    expect(topic.origin.wake).toEqual({ from: 'ancestor', nodeId: 'n0' })
+    expect(topic.origin.agentId).toEqual({ from: 'node', nodeId: 'n1' })
+    expect(resolveScope(cfg, chain(ops, quiet)).wake).toBe('never')
+    // a topic can switch itself off, a closed room can have an open topic
+    expect(
+      resolveScope(cfg, chain(ops, { kind: 'thread', settings: { enabled: false } })).allowed,
+    ).toBe(false)
+    expect(
+      resolveScope(cfg, chain({}, { kind: 'thread', settings: { enabled: true } })).allowed,
+    ).toBe(true)
+    expect(resolveScope(cfg, chain(ops)).quote).toBe('first')
+    expect(resolveScope(cfg, chain({ kind: 'direct' })).quote).toBe('off')
+    // the connection's defaults sit below the nodes and above the product's
+    const withDefaults = ConnectionConfigSchema.parse({
+      connectionId: 'c',
+      agentId: 'a',
+      defaults: { retentionDays: 7, delivery: 'message_tool' },
+    })
+    const r = resolveScope(
+      withDefaults,
+      chain({ settings: { enabled: true, retentionDays: 3 } }, { kind: 'thread' }),
+    )
+    expect(r).toMatchObject({ retentionDays: 3, delivery: 'message_tool', observe: true })
+    expect(r.origin.delivery).toEqual({ from: 'connection' })
+    expect(r.origin.observe).toEqual({ from: 'default' })
+    // a label names one node: it is not inherited
+    expect(
+      resolveScope(cfg, chain({ settings: { label: 'Ops' } }, { kind: 'thread' })).label,
+    ).toBeUndefined()
+    // session scope and redaction come from the tree too
+    const shared = resolveScope(
+      cfg,
+      chain({ settings: { sessionScope: 'room', redactOnDelete: true } }, { kind: 'thread' }),
+    )
+    expect(shared).toMatchObject({ sessionScope: 'room', redactOnDelete: true })
   })
 
   test('wake decisions: mention, reply, alias, others mentioned, own topic, never, always', () => {
-    const scope = resolveScope(cfg, ref('ops'))
+    const scope = resolveScope(cfg, chain(ops))
     const d = (m: ReturnType<typeof msg>, s = scope) => decideWake(m, s, self).action
     expect(d(msg())).toBe('observe')
-    expect(d(msg({ signals: { mentionedSelf: true, replyToSelf: false } }))).toBe('wake')
-    expect(d(msg({ signals: { mentionedSelf: false, replyToSelf: true } }))).toBe('wake')
-    expect(
-      d(msg({ signals: { mentionedSelf: false, mentionedOthers: true, replyToSelf: false } })),
-    ).toBe('observe')
+    expect(d(msg({ signals: { mentionedSelf: true } }))).toBe('wake')
+    expect(d(msg({ signals: { replyToSelf: true } }))).toBe('wake')
+    expect(d(msg({ signals: { mentionedOthers: true } }))).toBe('observe')
     expect(d(msg({ text: 'hey @team_bot look' }))).toBe('wake')
     expect(d(msg({ text: 'hey @team_botx look' }))).toBe('observe')
-    expect(d(msg(), resolveScope(cfg, ref('ops', 'billing')))).toBe('wake')
-    expect(d(msg(), resolveScope(cfg, ref('ops', 'quiet')))).toBe('observe')
-    expect(d(msg(), resolveScope(cfg, ref('news')))).toBe('wake')
+    expect(d(msg(), resolveScope(cfg, chain(ops, billing)))).toBe('wake')
+    expect(d(msg(), resolveScope(cfg, chain(ops, quiet)))).toBe('observe')
+    expect(d(msg(), resolveScope(cfg, chain(news)))).toBe('wake')
     expect(matchesAlias('Hey Robo, status?', ['robo'], self)).toBe(true)
     expect(matchesAlias('robotics', ['robo'], self)).toBe(false)
   })
@@ -259,33 +337,62 @@ describe('channel log, pairing and retention', () => {
     await mock.say({ from: ana, text: 'a secret about payroll', id: 'm1' })
     expect(i.gw.log.count('c1')).toBe(1)
     const raw = i.server.conn.sqlite
-      .query<{ body: string }, []>('SELECT body FROM channel_messages')
+      .query<{ content: string }, []>('SELECT content FROM ch_messages')
       .all()
     expect(raw).toHaveLength(1)
-    expect(raw[0]?.body).not.toContain('payroll')
-    expect(raw[0]?.body.startsWith('v2.')).toBe(true)
+    expect(raw[0]?.content).not.toContain('payroll')
+    expect(raw[0]?.content.startsWith('v2.')).toBe(true)
 
-    await mock.emit({
-      type: 'edit',
-      conversation: mock.ref('room'),
-      at: Date.now(),
-      messageId: 'm1',
-      sender: ana,
-      text: 'a different text',
-    })
-    await mock.emit({
-      type: 'delete',
-      conversation: mock.ref('room'),
-      at: Date.now(),
-      messageIds: ['m1'],
-    })
-    const row = await i.gw.log.find('c1', 'room', 'm1')
+    await mock.userEdit({ from: ana, id: 'm1', text: 'a different text' })
+    await mock.userDelete({ ids: ['m1'] })
+    const row = await i.gw.log.find(nid(i, 'room'), 'm1')
     expect(row).toMatchObject({
       text: 'a different text',
       edits: [{ text: 'a secret about payroll' }],
     })
     expect(row?.editedAt).toBeNumber()
+    // the content of a deleted message stays for audit (until the node's retention)
     expect(row?.deletedAt).toBeNumber()
+    expect(row?.deletedHasContent).toBe(true)
+    // the platform event log holds facts, not text
+    const events = i.server.conn.sqlite
+      .query<{ type: string; payload: string }, []>(
+        "SELECT type, payload FROM ch_events WHERE type NOT LIKE 'gateway.%'",
+      )
+      .all()
+    expect(events.map((e) => e.type)).toEqual([
+      'message.created',
+      'message.created',
+      'message.edited',
+      'message.deleted',
+    ])
+    expect(JSON.stringify(events)).not.toContain('payroll')
+  })
+
+  test('redactOnDelete drops the content of a deleted message; the tombstone stays', async () => {
+    const i = instance({})
+    const mock = await connect(i, { groups: { room: { redactOnDelete: true } } })
+    await mock.say({ from: ana, text: 'delete me please', id: 'r1' })
+    await mock.userEdit({ from: ana, id: 'r1', text: 'delete me now' })
+    await mock.userDelete({ ids: ['r1'] })
+    const row = await i.gw.log.find(nid(i, 'room'), 'r1')
+    expect(row).toMatchObject({ text: '', deletedHasContent: false })
+    expect(row?.deletedAt).toBeNumber()
+    expect(row?.edits).toBeUndefined()
+  })
+
+  test('a deletion that names no chat is placed by the message id, or recorded until it can be', async () => {
+    const i = instance({})
+    const mock = await connect(i, { groups: { room: {}, other: {} } })
+    await mock.say({ from: ana, text: 'one', id: 'u1' })
+    await mock.say({ from: ana, text: 'twin a', id: 'dup', chat: 'room' })
+    await mock.say({ from: ana, text: 'twin b', id: 'dup', chat: 'other' })
+    await mock.userDelete({ ids: ['u1'], unplaced: true })
+    expect((await i.gw.log.find(nid(i, 'room'), 'u1'))?.deletedAt).toBeNumber()
+    // the same id in two chats: not guessed, kept unresolved
+    await mock.userDelete({ ids: ['dup'], unplaced: true })
+    expect((await i.gw.log.find(nid(i, 'room'), 'dup'))?.deletedAt).toBeUndefined()
+    expect(i.gw.events.unresolved('c1')).toHaveLength(1)
   })
 
   test('the log of one conversation is purged past its own retention', async () => {
@@ -296,7 +403,7 @@ describe('channel log, pairing and retention', () => {
     await mock.say({ from: ana, text: 'recent', id: 'o2', at: Date.now() - 2 * day })
     expect(i.gw.purge()).toBe(1)
     expect(i.gw.log.count()).toBe(1)
-    expect(await i.gw.log.find('c1', 'room', 'o1')).toBeUndefined()
+    expect(await i.gw.log.find(nid(i, 'room'), 'o1')).toBeUndefined()
   })
 
   test('an account is linked by id (the person disappears from "not linked yet"); the link is replaced by a new one', () => {
@@ -347,14 +454,14 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
     // never in the instructions (the system prompt)
     const system = (i.models.lead as ScriptedModel).prompts[0]?.filter((m) => m.role === 'system')
     expect(JSON.stringify(system)).not.toContain('the deploy failed twice')
-    expect(JSON.stringify(system)).toContain('group \\"Room\\"')
+    expect(JSON.stringify(system)).toContain('topic \\"T1\\" of the group \\"Room\\"')
 
     // registered as a thread of the agent with a channel badge
     const threads = i.server.deps.threads.list(i.leadId).filter((t) => t.source === 'channel')
     expect(threads).toHaveLength(1)
     expect(threads[0]).toMatchObject({
-      sessionId: 'channel:c1:room/T1',
-      sourceLabel: 'mock · Room',
+      sessionId: sid(i, 'room/T1'),
+      sourceLabel: 'mock · Room / T1',
       source: 'channel',
     })
     await until('thread activity', () =>
@@ -367,7 +474,9 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
     const lead = i.server.deps.agents.get(i.leadId) as never
     expect(threadSessionOf(i.server.deps, lead)).not.toStartWith('channel:')
     // the channel thread is a session the web can open (read and continue)
-    const open = await i.server.app.request('/sessions/channel:c1:room%2FT1/messages')
+    const open = await i.server.app.request(
+      `/sessions/${encodeURIComponent(sid(i, 'room/T1'))}/messages`,
+    )
     expect(open.status).toBe(200)
 
     // a second wake does not show the same observed messages again
@@ -392,11 +501,11 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
     await until('two replies', () => mock.sent.length === 2)
     expect(mock.sent.map((s) => s.conversationId).sort()).toEqual(['room/A', 'room/B'])
     expect(
-      i.gw.conversations
+      i.gw.sessions
         .list('c1')
-        .map((c) => c.sessionId)
+        .map((c) => c.nodeId)
         .sort(),
-    ).toEqual(['channel:c1:room/A', 'channel:c1:room/B'])
+    ).toEqual([nid(i, 'room/A'), nid(i, 'room/B')].sort())
     expect(mock.reactions).toEqual([])
   })
 
@@ -555,9 +664,9 @@ describe('DMs: only linked employees; strangers get silence', () => {
     expect(i.gw.unlinked.list('c1')[0]?.messageCount).toBe(2)
     // no message text was stored anywhere for the stranger
     const dump = JSON.stringify([
-      i.server.conn.sqlite.query('SELECT * FROM channel_unlinked').all(),
-      i.server.conn.sqlite.query('SELECT * FROM channel_events').all(),
-      i.server.conn.sqlite.query('SELECT * FROM channel_inbox').all(),
+      i.server.conn.sqlite.query('SELECT * FROM ch_identities').all(),
+      i.server.conn.sqlite.query('SELECT * FROM ch_events').all(),
+      i.server.conn.sqlite.query('SELECT * FROM ch_nodes').all(),
     ])
     expect(dump).not.toContain('SECRET-TEXT')
     expect(dump).not.toContain('nope')
@@ -573,7 +682,7 @@ describe('DMs: only linked employees; strangers get silence', () => {
     expect(mock.reactions).toEqual([]) // no ack in a DM
     expect(wire(i.models.lead as ScriptedModel)).toContain('(team member)')
     // a different DM peer never shares the session
-    expect(i.gw.conversations.list('c1').map((c) => c.sessionId)).toEqual(['channel:c1:u-ana'])
+    expect(i.gw.sessions.list('c1').map((c) => c.sessionId)).toEqual([sid(i, 'u-ana')])
   })
 
   test('ignore hides a person and they stay silent; "reply to unknown people" sends one neutral line, rarely', async () => {
@@ -629,13 +738,15 @@ describe('bots and loops', () => {
     const lines = Array.from({ length: 30 }, (_, n) => textStep(`reply ${n}`))
     const i = instance({ lead: lines, researcher: lines })
     const guard = { maxEvents: 3, windowMs: 60_000, cooldownMs: 600_000 }
-    const cfg = {
-      allowBots: true,
-      botLoopGuard: guard,
-      groups: { room: { wake: 'always', ack: false } },
-    }
-    const a = await connect(i, { connectionId: 'ca', agentId: i.leadId, config: cfg })
-    const b = await connect(i, { connectionId: 'cb', agentId: i.researcherId, config: cfg })
+    const cfg = { allowBots: true, botLoopGuard: guard }
+    const groups = { room: { wake: 'always', ack: false } }
+    const a = await connect(i, { connectionId: 'ca', agentId: i.leadId, config: cfg, groups })
+    const b = await connect(i, {
+      connectionId: 'cb',
+      agentId: i.researcherId,
+      config: cfg,
+      groups,
+    })
     a.relayTo(b)
     b.relayTo(a)
     await a.say({ from: ana, text: 'start the debate', id: 'h1' })
@@ -656,31 +767,41 @@ describe('bots and loops', () => {
     expect(last).toBeGreaterThanOrEqual(3)
   })
 
-  test("the agent's own echoed messages and bots are dropped by default", async () => {
+  test("the agent's own echoes are kept in the log but never acted on; bots are dropped by default", async () => {
     const i = instance({})
     const mock = await connect(i)
     await mock.emit({
-      type: 'message',
-      conversation: mock.ref('room'),
+      type: 'message.created',
+      dedupeKey: 'own-1',
+      node: mock.ref('room'),
       at: Date.now(),
-      messageId: 'e1',
-      sender: { ...mock.self() },
-      text: '@team_bot talking to myself',
-      attachments: [],
+      message: {
+        nativeId: 'e1',
+        sender: { ...mock.self() },
+        text: '@team_bot talking to myself',
+        attachments: [],
+      },
       signals: { mentionedSelf: true, replyToSelf: false },
     })
     await mock.emit({
-      type: 'message',
-      conversation: mock.ref('room'),
+      type: 'message.created',
+      dedupeKey: 'bot-1',
+      node: mock.ref('room'),
       at: Date.now(),
-      messageId: 'e2',
-      sender: { id: 'other-bot', isBot: true },
-      text: '@team_bot beep',
-      attachments: [],
+      message: {
+        nativeId: 'e2',
+        sender: { id: 'other-bot', isBot: true },
+        text: '@team_bot beep',
+        attachments: [],
+      },
       signals: { mentionedSelf: true, replyToSelf: false },
     })
     await sleep(100)
-    expect(i.gw.log.count('c1')).toBe(0)
+    // what this identity sent (from another device, or echoed back) belongs to the full log
+    const own = await i.gw.log.find(nid(i, 'room'), 'e1')
+    expect(own).toMatchObject({ self: true, text: '@team_bot talking to myself' })
+    expect(await i.gw.log.find(nid(i, 'room'), 'e2')).toBeUndefined()
+    expect(i.gw.log.count('c1')).toBe(1)
     expect(calls(i.models.lead)).toBe(0)
   })
 })
@@ -705,10 +826,10 @@ describe('U1: observe only', () => {
     expect(i.gw.log.count('c1')).toBe(30)
     expect(i.server.deps.threads.list(i.leadId).filter((t) => t.source === 'channel')).toEqual([])
     // the log is readable for the audit: newest first page back
-    const page = await i.gw.log.recent('c1', 'audit', { limit: 5 })
-    expect(page.map((m) => m.platformId)).toEqual(['x25', 'x26', 'x27', 'x28', 'x29'])
-    const older = await i.gw.log.recent('c1', 'audit', { limit: 5, before: 'x25' })
-    expect(older.at(-1)?.platformId).toBe('x24')
+    const page = await i.gw.log.recent(nid(i, 'audit'), { limit: 5 })
+    expect(page.map((m) => m.nativeId)).toEqual(['x25', 'x26', 'x27', 'x28', 'x29'])
+    const older = await i.gw.log.recent(nid(i, 'audit'), { limit: 5, before: 'x25' })
+    expect(older.at(-1)?.nativeId).toBe('x24')
   })
 
   test('a group that is not on the allowlist is dropped without a trace', async () => {
@@ -809,7 +930,7 @@ describe('U2: a program posts through the outbound queue', () => {
     )
     // the run read its own posts back from the log (sent messages are logged as the agent's)
     expect(wire(i.models.researcher as ScriptedModel)).toContain('Post 3')
-    const logged = await i.gw.log.recent('c1', 'news', { limit: 10 })
+    const logged = await i.gw.log.recent(nid(i, 'news'), { limit: 10 })
     expect(logged.map((m) => m.text)).toEqual(['Post 1', 'Post 2', 'Post 3'])
     expect(logged.every((m) => m.self)).toBe(true)
   })
@@ -864,6 +985,8 @@ describe('tools', () => {
         ],
       },
     })
+    // a topic is a child of its group: the tool lists the places as a tree
+    await mock.say({ from: budi, text: 'in a topic', topic: 'T1', id: 't1' })
     await mock.say({
       from: ana,
       text: '@team_bot what can you do here?',
@@ -873,12 +996,14 @@ describe('tools', () => {
     await until('reply', () => mock.sent.length === 1)
     const described = JSON.stringify(i.models.lead?.prompts.at(-1))
     expect(described).toContain('Connection c1 (mock), connected')
+    expect(described).toMatch(/Conversation [0-9a-f-]+ \\"Room\\" \(room, allowed\)/)
+    expect(described).toMatch(/ {4}Conversation [0-9a-f-]+ \\"T1\\" \(thread, allowed\)/)
     expect(described).toContain('mock_create_poll (external)')
     expect(described).toContain('this one')
 
     const session = i.server.factory.openSession(
       i.server.deps.agents.get(i.leadId) as never,
-      'channel:c1:room',
+      sid(i, 'room'),
     )
     const tools = await session.tools()
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]))
@@ -940,7 +1065,7 @@ describe('tools', () => {
     const prompts = wire(i.models.researcher as ScriptedModel)
     expect(prompts).toContain('is not an allowed conversation')
     expect(prompts).toContain('has not linked an account')
-    const row = await i.gw.log.find('c1', 'news', 'm1-c1')
+    const row = await i.gw.log.find(nid(i, 'news'), 'm1-c1')
     expect(row?.editedAt).toBeNumber()
     expect(row?.deletedAt).toBeNumber()
   })
@@ -966,10 +1091,12 @@ describe('reliable delivery: the outbox', () => {
       >('SELECT kind, status, trigger_id, platform_id, body FROM channel_outbox')
       .all()
     expect(rows).toHaveLength(1)
+    // the trigger is our id of the message that woke the agent (the platform id is `w1`)
+    const trigger = await i.gw.log.find(nid(i, 'room'), 'w1')
     expect(rows[0]).toMatchObject({
       kind: 'reply',
       status: 'sent',
-      trigger_id: 'w1',
+      trigger_id: trigger?.id,
       platform_id: mock.sent[0]?.messageId,
     })
     expect(rows[0]?.body).not.toContain('Here you go') // sealed at rest
@@ -978,7 +1105,7 @@ describe('reliable delivery: the outbox', () => {
       i.server.conn.sqlite.query<{ id: string }, []>('SELECT id FROM channel_outbox').get()
         ?.id as string,
     )) as { id: string }
-    expect(mock.sent[0]?.message.key).toBe(row.id)
+    expect(mock.sent[0]?.message.sendTxnId).toBe(row.id)
   })
 
   test('a crash between turn end and delivery loses nothing; the reply goes out once on boot', async () => {
@@ -1035,7 +1162,7 @@ describe('reliable delivery: the outbox', () => {
         .replace(/\s+/g, ' '),
     ).toBe(long.replace(/\s+/g, ' ').trim())
     expect(mock.sent[0]?.message.replyTo).toBe('w1')
-    expect(new Set(mock.sent.map((s) => s.message.key)).size).toBe(3)
+    expect(new Set(mock.sent.map((s) => s.message.sendTxnId)).size).toBe(3)
     await sleep(150)
     expect(mock.sent).toHaveLength(3)
     const rows = i.server.conn.sqlite
@@ -1067,7 +1194,7 @@ describe('reliable delivery: the outbox', () => {
     const second = instance({}, { dir })
     const mockB = createMockAdapter({ connectionId: 'c1' })
     // the platform has the first reply, not the second
-    await mockB.send(mockB.ref('room', { title: 'Room' }), { text: 'one', replyTo: 'w1' })
+    await mockB.send(chatNode('room'), { text: 'one', replyTo: 'w1' })
     const before = mockB.sent.length
     await second.gw.register(mockB)
     await until('the second reply is resent', () => mockB.sent.length === before + 1)
@@ -1172,7 +1299,7 @@ describe('approvals in channel conversations', () => {
     expect(mock.edits[0]?.text).toContain('Approved by Ana Putri')
     // the reply to the original message is quoted as usual
     expect(mock.sent.find((s) => s.message.text === 'Posted it.')?.message.replyTo).toBe('w1')
-    expect(i.gw.approvals.open('channel:c1:room')).toEqual([])
+    expect(i.gw.approvals.open(sid(i, 'room'))).toEqual([])
   })
 
   test('deny ends the call; the model answers with that', async () => {
@@ -1214,7 +1341,7 @@ describe('approvals in channel conversations', () => {
     ).toHaveLength(2)
     await sleep(100)
     expect(mock.sent.some((s) => s.conversationId === 'news')).toBe(false)
-    expect(i.gw.approvals.open('channel:c1:room')).toHaveLength(1) // still waiting
+    expect(i.gw.approvals.open(sid(i, 'room'))).toHaveLength(1) // still waiting
     expect(mock.edits).toEqual([])
   })
 
@@ -1242,7 +1369,7 @@ describe('approvals in channel conversations', () => {
     )
     const ask = mock.sent.find((s) => s.message.text.includes('Answer it in http'))
     expect(ask?.message.buttons).toBeUndefined()
-    const thread = i.server.deps.threads.getBySession('channel:c1:room')
+    const thread = i.server.deps.threads.getBySession(sid(i, 'room'))
     expect(ask?.message.text).toContain(`/a/${i.leadId}?t=${thread?.id}`)
   })
 
@@ -1254,13 +1381,13 @@ describe('approvals in channel conversations', () => {
     const list = (await (await i.server.app.request('/attention')).json()) as {
       items: Array<{ id: string; sessionId: string; kind: string }>
     }
-    const item = list.items.find((x) => x.sessionId === 'channel:c1:room')
+    const item = list.items.find((x) => x.sessionId === sid(i, 'room'))
     expect(item?.kind).toBe('approval')
     const res = await i.server.app.request(`/attention/${item?.id}/answer`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        sessionId: 'channel:c1:room',
+        sessionId: sid(i, 'room'),
         answer: { kind: 'approval', approved: true },
       }),
     })
@@ -1313,7 +1440,7 @@ describe('approvals in channel conversations', () => {
     const q = mock.sent.find((s) => s.message.text.includes('Which release channel?'))
     expect(q?.message.buttons).toBeUndefined()
     expect(q?.message.text).toContain('/a/')
-    expect(i.gw.approvals.open('channel:c1:room')[0]?.itemKind).toBe('question')
+    expect(i.gw.approvals.open(sid(i, 'room'))[0]?.itemKind).toBe('question')
   })
 
   test('a turn started from the web app in a channel thread announces nothing in the chat', async () => {
@@ -1321,11 +1448,11 @@ describe('approvals in channel conversations', () => {
     await mock.say({ from: ana, text: '@team_bot hi', id: 'w1', mentionSelf: true })
     await until('the reply', () => mock.sent.some((s) => s.message.text === 'first'))
     const before = mock.sent.length
-    const res = await i.server.app.request('/sessions/channel:c1:room/chat', {
+    const res = await i.server.app.request(`/sessions/${sid(i, 'room')}/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        id: 'channel:c1:room',
+        id: sid(i, 'room'),
         messages: [{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'post the notes' }] }],
       }),
     })
@@ -1333,7 +1460,7 @@ describe('approvals in channel conversations', () => {
     await res.text()
     await sleep(150)
     expect(mock.sent.length).toBe(before) // the approval waits in the web app only
-    expect(i.gw.approvals.open('channel:c1:room')).toEqual([])
+    expect(i.gw.approvals.open(sid(i, 'room'))).toEqual([])
   })
 })
 
@@ -1346,19 +1473,14 @@ describe('the agent follows the current binding', () => {
     const mock = await connect(i, { config: NO_WAIT })
     await mock.say({ from: ana, text: '@team_bot hi', id: 'w1', mentionSelf: true })
     await until('lead replies', () => mock.sent.length === 1)
-    expect(i.gw.conversations.get('c1', 'room')).toMatchObject({
+    expect(i.gw.sessions.get('c1', nid(i, 'room'))).toMatchObject({
       agentId: i.leadId,
-      sessionId: 'channel:c1:room',
+      sessionId: sid(i, 'room'),
       generation: 0,
     })
 
     // the group is routed to another agent
-    i.gw.configure({
-      connectionId: 'c1',
-      agentId: i.leadId,
-      groups: { room: { label: 'Ops', agentId: i.researcherId } },
-      ...NO_WAIT,
-    })
+    i.gw.settings.set(nid(i, 'room'), { agentId: i.researcherId })
     await mock.say({ from: ana, text: '@team_bot and now?', id: 'w2', mentionSelf: true })
     await until('researcher replies', () => mock.sent.length === 2)
     expect(mock.sent[1]?.message.text).toBe('Researcher answers.')
@@ -1366,21 +1488,23 @@ describe('the agent follows the current binding', () => {
     expect(calls(i.models.researcher)).toBe(1)
     // the new agent never saw the old agent's session
     expect(wire(i.models.researcher as ScriptedModel)).not.toContain('Lead answers.')
-    expect(i.gw.conversations.get('c1', 'room')).toMatchObject({
+    expect(i.gw.sessions.get('c1', nid(i, 'room'))).toMatchObject({
       agentId: i.researcherId,
-      sessionId: 'channel:c1:room#2',
+      sessionId: channelSessionId('c1', nid(i, 'room'), 1),
       generation: 1,
     })
     const leadThreads = i.server.deps.threads.list(i.leadId).filter((t) => t.source === 'channel')
     const researcherThreads = i.server.deps.threads
       .list(i.researcherId)
       .filter((t) => t.source === 'channel')
-    expect(leadThreads.map((t) => t.sessionId)).toEqual(['channel:c1:room'])
-    expect(researcherThreads.map((t) => t.sessionId)).toEqual(['channel:c1:room#2'])
+    expect(leadThreads.map((t) => t.sessionId)).toEqual([channelSessionId('c1', nid(i, 'room'))])
+    expect(researcherThreads.map((t) => t.sessionId)).toEqual([
+      channelSessionId('c1', nid(i, 'room'), 1),
+    ])
     // a third wake keeps the researcher's session
     await mock.say({ from: ana, text: '@team_bot once more', id: 'w3', mentionSelf: true })
     await until('the third turn', () => (i.models.researcher?.prompts.length ?? 0) >= 2)
-    expect(i.gw.conversations.get('c1', 'room')?.generation).toBe(1)
+    expect(i.gw.sessions.get('c1', nid(i, 'room'))?.generation).toBe(1)
   })
 })
 
@@ -1422,10 +1546,10 @@ describe('native actions with risk read', () => {
     await mock.say({ from: ana, text: '@team_bot go', id: 'w1', mentionSelf: true })
     await until(
       'the turn parks at the external action',
-      () => i.gw.approvals.open('channel:c1:room').length === 1,
+      () => i.gw.approvals.open(sid(i, 'room')).length === 1,
     )
     expect(ran).toEqual(['get_info']) // the read action ran without an approval
-    expect(i.gw.approvals.open('channel:c1:room')[0]?.toolName).toBe('mock_make_poll')
+    expect(i.gw.approvals.open(sid(i, 'room'))[0]?.toolName).toBe('mock_make_poll')
   })
 })
 
@@ -1445,7 +1569,10 @@ describe('restart keeps state', () => {
 
     const second = instance({ lead: [textStep('second answer')] }, { dir })
     // the configuration and the log are still there; only the adapter is registered again
-    expect(second.gw.config('c1')?.groups.room).toBeDefined()
+    expect(second.gw.settings.get(nid(second, 'room'))).toMatchObject({
+      enabled: true,
+      label: 'Ops',
+    })
     expect(second.gw.log.count('c1')).toBeGreaterThanOrEqual(3)
     expect(second.gw.pairing.members('c1')).toMatchObject([{ memberId: 'owner' }])
     const mockB = createMockAdapter({ connectionId: 'c1' })
@@ -1479,13 +1606,16 @@ describe('silence for strangers', () => {
     const mock = await connect(i, { config: { replyToUnknown: false } })
     await mock.say({ chat: 'other', from: ana, text: '@team_bot hi', id: 's1', mentionSelf: true })
     await mock.emit({
-      type: 'message',
-      conversation: mock.ref('room'),
+      type: 'message.created',
+      dedupeKey: 'bot-b1',
+      node: mock.ref('room'),
       at: Date.now(),
-      messageId: 'b1',
-      sender: { id: 'other-bot', isBot: true },
-      text: '@team_bot beep',
-      attachments: [],
+      message: {
+        nativeId: 'b1',
+        sender: { id: 'other-bot', isBot: true },
+        text: '@team_bot beep',
+        attachments: [],
+      },
       signals: { mentionedSelf: true, replyToSelf: false },
     })
     await mock.say({
@@ -1507,19 +1637,19 @@ describe('silence for strangers', () => {
     expect(dropped).toEqual(['bot-sender', 'chat-not-allowed', 'duplicate', 'unlinked-sender'])
     // the stranger's chat is in the inbox with its allowlist state, counted as dropped
     const page = await i.gw.inbox.conversations('c1', { limit: 10 })
-    expect(page.items.find((c) => c.conversationId === 'other')).toMatchObject({
+    expect(page.items.find((c) => c.conversationId === nid(i, 'other'))).toMatchObject({
       allowed: false,
       dropped: 1,
       woke: 0,
     })
-    expect(page.items.find((c) => c.conversationId === 'u-eve')).toMatchObject({
+    expect(page.items.find((c) => c.conversationId === nid(i, 'u-eve'))).toMatchObject({
       kind: 'dm',
       allowed: false, // a direct message is allowed only for a linked person
       dropped: 1,
     })
     // a dropped event never carries text
     expect(
-      JSON.stringify(i.server.conn.sqlite.query('SELECT * FROM channel_events').all()),
+      JSON.stringify(i.server.conn.sqlite.query('SELECT * FROM ch_events').all()),
     ).not.toContain('psst')
   })
 })
@@ -1561,8 +1691,12 @@ describe('inbox: conversations and their logs', () => {
 
     const all = await i.gw.inbox.conversations('c1', { limit: 10 })
     expect(all.next).toBeUndefined()
-    expect(all.items.map((c) => c.conversationId)).toEqual(['u-ana', 'room', 'audit'])
-    const room = all.items.find((c) => c.conversationId === 'room')
+    expect(all.items.map((c) => c.conversationId)).toEqual([
+      nid(i, 'u-ana'),
+      nid(i, 'room'),
+      nid(i, 'audit'),
+    ])
+    const room = all.items.find((c) => c.conversationId === nid(i, 'room'))
     expect(room).toMatchObject({
       kind: 'group',
       title: 'Room',
@@ -1574,26 +1708,26 @@ describe('inbox: conversations and their logs', () => {
     })
     expect(room?.preview).toMatchObject({ text: 'Noted.', self: true })
     expect(room?.threadId).toBeString()
-    const audit = all.items.find((c) => c.conversationId === 'audit')
+    const audit = all.items.find((c) => c.conversationId === nid(i, 'audit'))
     expect(audit).toMatchObject({ woke: 0, observed: 2, allowed: true })
     expect(audit?.preview).toMatchObject({ text: 'second audit line', sender: 'Budi', self: false })
     expect(audit?.threadId).toBeUndefined() // never woke the agent: no thread
 
     // paging by cursor
     const p1 = await i.gw.inbox.conversations('c1', { limit: 2 })
-    expect(p1.items.map((c) => c.conversationId)).toEqual(['u-ana', 'room'])
+    expect(p1.items.map((c) => c.conversationId)).toEqual([nid(i, 'u-ana'), nid(i, 'room')])
     expect(p1.next).toBeString()
     const p2 = await i.gw.inbox.conversations('c1', {
       limit: 2,
       ...(p1.next === undefined ? {} : { cursor: p1.next }),
     })
-    expect(p2.items.map((c) => c.conversationId)).toEqual(['audit'])
+    expect(p2.items.map((c) => c.conversationId)).toEqual([nid(i, 'audit')])
     expect(p2.next).toBeUndefined()
     expect(await i.gw.inbox.conversations('c1', { limit: 5 }).then((r) => r.items.length)).toBe(3)
     expect((await i.gw.inbox.conversations('nobody', { limit: 5 })).items).toEqual([])
   })
 
-  test('backfills inbox rows from the existing log (idempotent, linked DM allowed, messages open)', async () => {
+  test('the inbox is a view over nodes, messages and events: a linked DM is allowed, it holds no text of its own', async () => {
     const { i, mock } = await setup()
     const t = Date.now()
     await mock.say({ chat: 'audit', from: ana, text: 'audit line', id: 'a1', at: t - 3000 })
@@ -1616,26 +1750,22 @@ describe('inbox: conversations and their logs', () => {
     })
     await until('dm reply', () => mock.sent.length === 2)
     const before = await i.gw.inbox.conversations('c1', { limit: 10 })
-
-    // an inbox that did not exist when the chats happened
-    i.server.conn.sqlite.query('DELETE FROM channel_inbox').run()
-    const after = await i.gw.inbox.conversations('c1', { limit: 10 })
-    expect(after.items.map((c) => c.conversationId).sort()).toEqual(
-      before.items
-        .map((c) => c.conversationId)
-        .filter((id) => id !== 'audit')
-        .sort(),
+    expect(before.items.map((c) => c.conversationId).sort()).toEqual(
+      [nid(i, 'audit'), nid(i, 'room'), nid(i, 'u-ana')].sort(),
     )
-    const dm = after.items.find((c) => c.conversationId === 'u-ana')
-    expect(dm).toMatchObject({ allowed: true, woke: 1, dropped: 0 })
+    const dm = before.items.find((c) => c.conversationId === nid(i, 'u-ana'))
+    expect(dm).toMatchObject({ allowed: true, woke: 1, dropped: 0, kind: 'dm' })
     expect(dm?.preview).toMatchObject({ self: true })
     expect(dm?.lastAt).toBeGreaterThan(0)
-    const msgs = await i.gw.inbox.messages('c1', 'u-ana', { limit: 10 })
+    const msgs = await i.gw.inbox.messages('c1', nid(i, 'u-ana'), { limit: 10 })
     expect(msgs?.items.map((m) => m.text)).toContain('dm hi')
-    // idempotent, and no text stored in the inbox table
-    expect((await i.gw.inbox.conversations('c1', { limit: 10 })).items).toEqual(after.items)
+    // reading it twice gives the same answer, and no table of the inbox holds a text
+    expect((await i.gw.inbox.conversations('c1', { limit: 10 })).items).toEqual(before.items)
     expect(
-      JSON.stringify(i.server.conn.sqlite.query('SELECT * FROM channel_inbox').all()),
+      JSON.stringify(i.server.conn.sqlite.query('SELECT * FROM ch_nodes').all()),
+    ).not.toContain('dm hi')
+    expect(
+      JSON.stringify(i.server.conn.sqlite.query('SELECT * FROM ch_events').all()),
     ).not.toContain('dm hi')
   })
 
@@ -1652,19 +1782,16 @@ describe('inbox: conversations and their logs', () => {
       at: t - 3000,
     })
     await until('reply', () => mock.sent.length === 1)
-    await mock.emit({
-      type: 'edit',
-      conversation: mock.ref('room'),
-      at: t,
-      messageId: 'm2',
-      sender: budi,
-      text: 'context two (fixed)',
-    })
-    await mock.emit({ type: 'delete', conversation: mock.ref('room'), at: t, messageIds: ['m1'] })
+    await mock.userEdit({ from: budi, id: 'm2', text: 'context two (fixed)', at: t })
+    await mock.userDelete({ ids: ['m1'], at: t })
 
-    const page = await i.gw.inbox.messages('c1', 'room', { limit: 10 })
+    const page = await i.gw.inbox.messages('c1', nid(i, 'room'), { limit: 10 })
     expect(page?.next).toBeUndefined()
-    expect(page?.conversation).toMatchObject({ conversationId: 'room', woke: 1, observed: 2 })
+    expect(page?.conversation).toMatchObject({
+      conversationId: nid(i, 'room'),
+      woke: 1,
+      observed: 2,
+    })
     expect(page?.items.map((m) => [m.platformId, m.disposition ?? 'self', m.self])).toEqual([
       ['m1', 'observed', false],
       ['m2', 'observed', false],
@@ -1679,19 +1806,19 @@ describe('inbox: conversations and their logs', () => {
     expect(page?.items[3]?.text).toBe('Noted.')
 
     // paged back: the newest page first, "next" is the id to continue from
-    const newest = await i.gw.inbox.messages('c1', 'room', { limit: 2 })
+    const newest = await i.gw.inbox.messages('c1', nid(i, 'room'), { limit: 2 })
     expect(newest?.items.map((m) => m.platformId)).toEqual([
       'm3',
       mock.sent[0]?.messageId as string,
     ])
     expect(newest?.next).toBeString()
-    const older = await i.gw.inbox.messages('c1', 'room', {
+    const older = await i.gw.inbox.messages('c1', nid(i, 'room'), {
       limit: 2,
       ...(newest?.next === undefined ? {} : { before: newest.next }),
     })
     expect(older?.items.map((m) => m.platformId)).toEqual(['m1', 'm2'])
     expect(older?.next).toBeUndefined()
-    expect(await i.gw.inbox.messages('c1', 'nope', { limit: 5 })).toBeUndefined()
+    expect(await i.gw.inbox.messages('c1', 'no-such-node', { limit: 5 })).toBeUndefined()
   })
 
   test('an approval request carries how it ended', async () => {
@@ -1706,7 +1833,7 @@ describe('inbox: conversations and their logs', () => {
     await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
     await until('the request', () => mock.sent.some((s) => s.message.buttons !== undefined))
     const ask = mock.sent.find((s) => s.message.buttons !== undefined) as (typeof mock.sent)[number]
-    let page = await i.gw.inbox.messages('c1', 'room', { limit: 10 })
+    let page = await i.gw.inbox.messages('c1', nid(i, 'room'), { limit: 10 })
     expect(page?.items.find((m) => m.platformId === ask.messageId)?.approval).toMatchObject({
       kind: 'approval',
       toolName: 'channel_send',
@@ -1718,8 +1845,8 @@ describe('inbox: conversations and their logs', () => {
       data: ask.message.buttons?.[0]?.data as string,
       messageId: ask.messageId,
     })
-    await until('answered', () => i.gw.approvals.open('channel:c1:room').length === 0)
-    page = await i.gw.inbox.messages('c1', 'room', { limit: 10 })
+    await until('answered', () => i.gw.approvals.open(sid(i, 'room')).length === 0)
+    page = await i.gw.inbox.messages('c1', nid(i, 'room'), { limit: 10 })
     expect(page?.items.find((m) => m.platformId === ask.messageId)?.approval).toMatchObject({
       status: 'answered',
       outcome: 'approved',
@@ -1745,12 +1872,12 @@ describe('activity events', () => {
     const all = i.gw.activity.list('c1', { limit: 50 }).items
     expect(all.map((e) => e.type)).toEqual(['reply-sent', 'reply-queued', 'woke', 'observed'])
     expect(all[3]).toMatchObject({
-      conversationId: 'audit',
+      conversationId: nid(i, 'audit'),
       peerName: 'Ana Putri',
       reason: 'wake is never here',
     })
     expect(all[2]).toMatchObject({
-      conversationId: 'room',
+      conversationId: nid(i, 'room'),
       reason: 'mentioned',
       platformId: 'w1',
       conversationTitle: 'Room',
@@ -1760,7 +1887,9 @@ describe('activity events', () => {
     // filters
     expect(i.gw.activity.list('c1', { type: 'woke', limit: 5 }).items).toHaveLength(1)
     expect(
-      i.gw.activity.list('c1', { conversationId: 'audit', limit: 5 }).items.map((e) => e.type),
+      i.gw.activity
+        .list('c1', { conversationId: nid(i, 'audit'), limit: 5 })
+        .items.map((e) => e.type),
     ).toEqual(['observed'])
     // paging
     const p1 = i.gw.activity.list('c1', { limit: 3 })
@@ -1775,7 +1904,8 @@ describe('activity events', () => {
     // retention prunes by age and count
     expect(i.gw.activity.prune({ keepLast: 2 })).toBe(2)
     expect(i.gw.activity.list('c1', { limit: 10 }).items).toHaveLength(2)
-    expect(i.gw.activity.prune({ olderThan: Date.now() + 1000 })).toBe(2)
+    // by age everything goes: the two that are left and the two platform events behind them
+    expect(i.gw.activity.prune({ olderThan: Date.now() + 1000 })).toBe(4)
   })
 
   test('retries, failures, approvals and the breaker show up', async () => {
@@ -1820,5 +1950,157 @@ describe('activity events', () => {
     expect(
       i.gw.activity.list('c1', { type: 'breaker-opened', limit: 5 }).items[0]?.reason,
     ).toContain('revoked')
+  })
+})
+
+describe('L5: settings inherit down the tree, the log is full, sessions follow nodes', () => {
+  test('observe off stores only what addresses the agent; a mention is still stored and wakes', async () => {
+    const i = instance({ lead: [textStep('Here.')] })
+    const mock = await connect(i, {
+      groups: { room: { observe: false, ack: false } },
+      config: NO_WAIT,
+    })
+    await mock.say({ from: ana, text: 'chatter nobody needs', id: 'c1' })
+    expect(await i.gw.log.find(nid(i, 'room'), 'c1')).toBeUndefined()
+    expect(
+      i.gw.activity.list('c1', { type: 'dropped', limit: 5 }).items.map((e) => e.reason),
+    ).toEqual(['not-observed'])
+    await mock.say({ from: ana, text: '@team_bot hi', id: 'c2', mentionSelf: true })
+    await until('the reply', () => mock.sent.length === 1)
+    expect((await i.gw.log.find(nid(i, 'room'), 'c2'))?.disposition).toBe('woke')
+    // by default (observe on) the same chatter is kept, sealed, for everybody who needs the history
+    const other = instance({})
+    const m2 = await connect(other)
+    await m2.say({ from: ana, text: 'chatter somebody may need', id: 'c1' })
+    expect((await other.gw.log.find(nid(other, 'room'), 'c1'))?.disposition).toBe('observed')
+  })
+
+  test('a topic inherits the agent and the wake rule of its room; its own agent makes it its own thread', async () => {
+    const i = instance({ lead: [textStep('Lead.')], researcher: [textStep('Researcher.')] })
+    const mock = await connect(i, {
+      groups: {
+        room: { wake: 'mention', ack: false, topics: { fin: { agentId: i.researcherId } } },
+      },
+      config: NO_WAIT,
+    })
+    await mock.say({ from: ana, text: '@team_bot a', topic: 'ops', id: 'a1', mentionSelf: true })
+    await until('lead in a topic of the room', () => mock.sent.length === 1)
+    expect(i.gw.sessions.get('c1', nid(i, 'room/ops'))?.agentId).toBe(i.leadId)
+    // `fin` routes to another agent, and (an own agent entry on a topic) wakes without a mention
+    await mock.say({ from: ana, text: 'quarter numbers?', topic: 'fin', id: 'f1' })
+    await until('the researcher answers', () => mock.sent.length === 2)
+    expect(mock.sent[1]?.message.text).toBe('Researcher.')
+    expect(i.gw.sessions.get('c1', nid(i, 'room/fin'))?.agentId).toBe(i.researcherId)
+    expect(i.gw.settings.resolve(nid(i, 'room/fin'))?.origin.agentId).toEqual({
+      from: 'node',
+      nodeId: nid(i, 'room/fin'),
+    })
+    expect(i.gw.settings.resolve(nid(i, 'room/fin'))?.origin.wake).toEqual({
+      from: 'ancestor',
+      nodeId: nid(i, 'room'),
+    })
+  })
+
+  test('sessionScope room: the topics of a room share one session and one thread', async () => {
+    const i = instance({ lead: [textStep('one'), textStep('two')] })
+    const mock = await connect(i, {
+      groups: { room: { sessionScope: 'room', ack: false, label: 'Ops' } },
+      config: NO_WAIT,
+    })
+    await mock.say({ from: ana, text: 'context in A', topic: 'A', id: 'a0' })
+    await mock.say({ from: budi, text: 'context in B', topic: 'B', id: 'b0' })
+    await mock.say({ from: ana, text: '@team_bot first', topic: 'A', id: 'a1', mentionSelf: true })
+    await until('first reply', () => mock.sent.length === 1)
+    await mock.say({ from: ana, text: '@team_bot second', topic: 'B', id: 'b1', mentionSelf: true })
+    await until('second reply', () => mock.sent.length === 2)
+    // the reply goes to the topic the message was in
+    expect(mock.sent.map((s) => s.conversationId)).toEqual(['room/A', 'room/B'])
+    // one session row (owned by the room), one thread
+    expect(i.gw.sessions.list('c1').map((r) => r.nodeId)).toEqual([nid(i, 'room')])
+    expect(i.server.deps.threads.list(i.leadId).filter((t) => t.source === 'channel')).toHaveLength(
+      1,
+    )
+    // the observed messages of both topics reached the same session's first prompt
+    const first = JSON.stringify((i.models.lead as ScriptedModel).prompts[0])
+    expect(first).toContain('context in A')
+    expect(first).toContain('context in B')
+  })
+
+  test('retention is inherited: a room keeps the messages of its topics for its own days', async () => {
+    const i = instance({})
+    const mock = await connect(i, { groups: { room: { retentionDays: 5, topics: { T: {} } } } })
+    const day = 86_400_000
+    await mock.say({ from: ana, text: 'old', topic: 'T', id: 'o1', at: Date.now() - 6 * day })
+    await mock.say({ from: ana, text: 'new', topic: 'T', id: 'o2', at: Date.now() - 4 * day })
+    expect(i.gw.settings.resolve(nid(i, 'room/T'))?.retentionDays).toBe(5)
+    expect(i.gw.purge()).toBe(1)
+    expect(await i.gw.log.find(nid(i, 'room/T'), 'o1')).toBeUndefined()
+    expect(await i.gw.log.find(nid(i, 'room/T'), 'o2')).toBeDefined()
+  })
+
+  test('events: a replayed press of a button is ignored, node state and access follow member events', async () => {
+    const i = instance({})
+    const mock = await connect(i)
+    await mock.say({ from: ana, text: 'hi', id: 'h1' })
+    const room = nid(i, 'room')
+    await mock.emit({
+      type: 'member.updated',
+      dedupeKey: 'm-1',
+      at: Date.now(),
+      node: {
+        nativeId: 'room',
+        chain: [{ nativeId: 'room', access: { member: 'admin', canPost: true } }],
+      },
+      actor: { ...mock.self() },
+      role: 'admin',
+    })
+    expect(i.gw.nodes.access(room)).toMatchObject({ member: 'admin', canPost: true })
+    await mock.emit({
+      type: 'member.left',
+      dedupeKey: 'm-2',
+      at: Date.now(),
+      node: { nativeId: 'room' },
+      actor: { ...mock.self() },
+    })
+    expect(i.gw.nodes.get(room)).toMatchObject({ state: 'left', stateReason: 'removed' })
+    expect(i.gw.nodes.access(room)?.member).toBe('none')
+    // a replay of the same event changes nothing and is told so
+    const again = await i.gw.handle('c1', {
+      type: 'member.left',
+      dedupeKey: 'm-2',
+      at: Date.now(),
+      node: { nativeId: 'room' },
+      actor: { ...mock.self() },
+    })
+    expect(again).toEqual({ action: 'record', reason: 'replay' })
+    // posting to a place the connection is not allowed to post in is refused with a reason
+    i.gw.nodes.setAccess(room, 'c1', { member: 'member', canPost: false }, Date.now())
+    expect(() => i.gw.resolveTarget(i.leadId, undefined, { conversation: 'room' })).toThrow(
+      /cannot post/,
+    )
+  })
+
+  test('reactions are stored with who and what, and removed when taken back', async () => {
+    const i = instance({})
+    const mock = await connect(i)
+    await mock.say({ from: ana, text: 'nice', id: 'r1' })
+    const message = await i.gw.log.find(nid(i, 'room'), 'r1')
+    const react = (type: 'reaction.added' | 'reaction.removed', key: string) =>
+      mock.emit({
+        type,
+        dedupeKey: key,
+        at: Date.now(),
+        node: mock.ref('room'),
+        actor: budi,
+        messageNativeId: 'r1',
+        emoji: '👍',
+      })
+    await react('reaction.added', 'ra')
+    const who = i.gw.identities.byNative('c1', budi.id)
+    expect(i.gw.log.reactions(message?.id as string)).toEqual([
+      expect.objectContaining({ identityId: who?.id, emoji: '👍' }),
+    ])
+    await react('reaction.removed', 'rb')
+    expect(i.gw.log.reactions(message?.id as string)[0]?.removedAt).toBeNumber()
   })
 })

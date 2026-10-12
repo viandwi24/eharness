@@ -1,52 +1,45 @@
 /**
- * Telegram updates to channel events (pure: no network). The adapter gives the bot identity and a
- * downloader; everything here is a function of the update. Raw payloads are kept on the event for
- * the adapter only (never stored, never shown to a model).
+ * Telegram Bot API updates to channel events (pure: no network). The adapter gives the bot identity
+ * and a downloader; everything here is a function of the update. Raw payloads are kept on the event
+ * for the adapter's use only (the gateway stores them sealed, and only when asked to).
+ *
+ * Native ids (documented in `idFormats`, covered by `test/telegram-golden.test.ts`):
+ *   private chat    `<chat id>` (the user id)            kind `direct`
+ *   group, supergroup, channel   `<chat id>`             kind `room` (a forum is a container that holds no messages of its own)
+ *   forum topic     `<chat id>/<topic id>`               kind `thread`, child of the forum; General is `<chat id>/0`
+ *   message         `<message id>`                       unique per chat
+ *   person          `<user id>`; a chat that speaks as itself (channel posts, anonymous admins) `chat:<chat id>`
  */
 import type { Chat, Message, MessageEntity, Update, User } from 'grammy/types'
+import type { MessageEntity as Entity, MemberRole } from '../channels/model.ts'
 import type {
-  ConversationKind,
-  ConversationRef,
   Identity,
   InboundAttachment,
-  InboundEvent,
   InboundSignals,
+  NodeInfo,
+  NodeRef,
+  RemoteEvent,
   ReplyInfo,
 } from '../channels/types.ts'
 
+/** Bumped when the mapping below changes in a way that would give another result for the same update. */
+export const NORMALIZER_VERSION = 1
+
 export interface NormalizeContext {
-  connectionId: string
   botId: number
   botUsername: string
   /** Downloads a file of a message through `getFile` (the 20 MB cap is the adapter's). */
   download(fileId: string, size: number | undefined): Promise<{ bytes: Uint8Array }>
 }
 
-/** What an update says about a chat the bot can see (for the "known chats" list). */
-export interface SeenChat {
-  chatId: string
-  kind: ConversationKind
-  title: string
-  username?: string
-  /** The chat is a forum (has topics). */
-  forum: boolean
-  /** A topic seen in this update (id and, when the update says, its name). */
-  topic?: { id: string; name?: string }
-  /** `my_chat_member`: what the bot is in this chat now. */
-  botStatus?: string
-  canPost?: boolean
-  at: number
-}
-
 export interface Normalized {
-  events: InboundEvent[]
-  chat?: SeenChat
+  events: RemoteEvent[]
   /** A callback query to acknowledge (`answerCallbackQuery`). */
   callbackId?: string
 }
 
-const kindOf = (chat: Chat): ConversationKind =>
-  chat.type === 'private' ? 'dm' : chat.type === 'channel' ? 'channel' : 'group'
+/** Telegram's own account that forwards channel posts into discussion groups. */
+const FORWARDER_ID = 777000
 
 const personName = (u: { first_name?: string; last_name?: string }): string =>
   [u.first_name, u.last_name].filter((p) => p !== undefined && p !== '').join(' ')
@@ -56,50 +49,175 @@ export function identityOfUser(user: User, botId: number): Identity {
     id: String(user.id),
     name: personName(user),
     ...(user.username === undefined ? {} : { username: user.username }),
-    ...(user.is_bot ? { isBot: true } : {}),
+    ...(user.is_bot ? { isBot: true, kind: 'bot' as const } : {}),
     ...(user.id === botId ? { isSelf: true } : {}),
   }
 }
 
-/** The sender: a person, or (channel posts, anonymous admins) the chat speaking as itself. */
-export function senderOf(message: Message, botId: number): Identity {
-  if (message.from !== undefined && message.from.id !== 777000 && !message.sender_chat) {
-    return identityOfUser(message.from, botId)
-  }
-  const chat = message.sender_chat ?? message.chat
+/** A chat that speaks as itself: a channel, or a group as an anonymous admin. */
+export function identityOfChat(chat: Chat, kind: 'channel' | 'anonymous'): Identity {
   return {
     id: `chat:${chat.id}`,
     name: 'title' in chat && chat.title !== undefined ? chat.title : String(chat.id),
     ...('username' in chat && chat.username !== undefined ? { username: chat.username } : {}),
+    kind,
   }
 }
 
-const isTopicMessage = (m: Message): boolean => m.is_topic_message === true
-const topicOf = (m: Message): string | undefined =>
-  isTopicMessage(m) && m.message_thread_id !== undefined ? String(m.message_thread_id) : undefined
+/**
+ * The sender: a person, or (channel posts, anonymous admins, the account that forwards channel
+ * posts) the chat speaking as itself. An anonymous admin is the group itself (`sender_chat` = the
+ * group); a channel posting in itself, or any other `sender_chat`, is a channel.
+ */
+export function senderOf(message: Message, botId: number): Identity {
+  if (message.sender_chat !== undefined) {
+    return identityOfChat(
+      message.sender_chat,
+      message.sender_chat.id === message.chat.id && message.chat.type !== 'channel'
+        ? 'anonymous'
+        : 'channel',
+    )
+  }
+  if (message.from !== undefined && message.from.id !== FORWARDER_ID) {
+    return identityOfUser(message.from, botId)
+  }
+  // a channel post has no `from`; the account that forwards posts is not a person either
+  return identityOfChat(message.chat, 'channel')
+}
 
-export function refOf(message: Message, connectionId: string): ConversationRef {
-  const container = String(message.chat.id)
-  const topic = topicOf(message)
-  const title =
-    message.chat.type === 'private'
-      ? personName(message.chat)
-      : 'title' in message.chat
-        ? message.chat.title
-        : undefined
+// --- nodes -------------------------------------------------------------------------------------
+
+type ChatLike = Chat | Message['chat']
+
+const titleOfChat = (chat: ChatLike): string | undefined =>
+  chat.type === 'private' ? personName(chat) || undefined : 'title' in chat ? chat.title : undefined
+
+const usernameOf = (chat: ChatLike): string | undefined =>
+  'username' in chat && chat.username !== undefined ? chat.username : undefined
+
+/** The node of a chat (the forum itself for a forum supergroup). */
+export function chatNode(chat: ChatLike): NodeInfo {
+  const username = usernameOf(chat)
+  const title = titleOfChat(chat)
+  if (chat.type === 'private') {
+    return {
+      nativeId: String(chat.id),
+      kind: 'direct',
+      platformType: 'telegram:private',
+      ...(title === undefined || title === '' ? {} : { title }),
+      traits: { multiUser: false, threading: 'none' },
+      meta: { chatId: String(chat.id), ...(username === undefined ? {} : { username }) },
+    }
+  }
+  const isForum = chat.type === 'supergroup' && 'is_forum' in chat && chat.is_forum === true
   return {
-    id: topic === undefined ? container : `${container}/${topic}`,
-    connectionId,
-    container,
-    ...(topic === undefined ? {} : { topic }),
-    kind: kindOf(message.chat),
-    ...(title === undefined || title === '' ? {} : { title }),
+    nativeId: String(chat.id),
+    kind: 'room',
+    platformType: `telegram:${chat.type}`,
+    ...(title === undefined ? {} : { title }),
+    traits:
+      chat.type === 'channel'
+        ? { multiUser: false, broadcast: true, threading: 'relation', postable: true }
+        : isForum
+          ? { multiUser: true, container: true, postable: false, threading: 'node' }
+          : { multiUser: true, threading: 'relation', postable: true },
+    meta: {
+      chatId: String(chat.id),
+      ...(username === undefined ? {} : { username }),
+      ...(isForum ? { isForum: true } : {}),
+    },
   }
 }
+
+/** A forum topic: a thread node, child of its forum. `name` is the patch (absent = unchanged). */
+export function topicNode(chatId: number | string, topicId: number, name?: string): NodeInfo {
+  return {
+    nativeId: `${chatId}/${topicId}`,
+    kind: 'thread',
+    platformType: topicId === 0 ? 'telegram:forum_general' : 'telegram:forum_topic',
+    ...(name === undefined ? (topicId === 0 ? { title: 'General' } : {}) : { title: name }),
+    parent: String(chatId),
+    traits: { multiUser: true, threading: 'relation', postable: true },
+    meta: { chatId: String(chatId), topicId },
+  }
+}
+
+const isForumChat = (chat: ChatLike): boolean =>
+  chat.type === 'supergroup' && 'is_forum' in chat && chat.is_forum === true
+
+/** The topic a message is in (a forum's General topic is 0), or undefined outside forums. */
+export const topicIdOf = (m: Message): number | undefined =>
+  !isForumChat(m.chat)
+    ? undefined
+    : m.is_topic_message === true && m.message_thread_id !== undefined
+      ? m.message_thread_id
+      : 0
+
+/** The node of a message and its ancestors, leaf first. */
+export function chainOfMessage(m: Message): NodeInfo[] {
+  const room = chatNode(m.chat)
+  const topic = topicIdOf(m)
+  if (topic === undefined) return [room]
+  const created = m.forum_topic_created ?? m.reply_to_message?.forum_topic_created
+  return [topicNode(m.chat.id, topic, created?.name), room]
+}
+
+const refOfMessage = (m: Message): NodeRef => {
+  const chain = chainOfMessage(m)
+  return { nativeId: (chain[0] as NodeInfo).nativeId, chain }
+}
+
+/** The topic of a message at its first reply (root) is the topic itself, not a reply. */
+const isTopicRoot = (m: Message, reply: Message | undefined): boolean =>
+  reply !== undefined &&
+  (reply.forum_topic_created !== undefined ||
+    (m.is_topic_message === true && reply.message_id === m.message_thread_id))
+
+// --- entities ----------------------------------------------------------------------------------
 
 // Telegram offsets count UTF-16 code units, like JavaScript strings
 const entityText = (text: string, e: MessageEntity): string =>
   text.slice(e.offset, e.offset + e.length)
+
+const ENTITY: Partial<Record<MessageEntity['type'], Entity['type']>> = {
+  url: 'link',
+  text_link: 'link',
+  bold: 'bold',
+  italic: 'italic',
+  underline: 'underline',
+  strikethrough: 'strike',
+  code: 'code',
+  pre: 'pre',
+  blockquote: 'quote',
+  expandable_blockquote: 'quote',
+  spoiler: 'spoiler',
+  bot_command: 'command',
+  hashtag: 'hashtag',
+}
+
+/** Normalized entities of a text (mentions by user id when the platform gives it, never by guessing a handle). */
+export function entitiesOf(text: string, entities: readonly MessageEntity[] | undefined): Entity[] {
+  const out: Entity[] = []
+  for (const e of entities ?? []) {
+    const base = { offset: e.offset, length: e.length }
+    if (e.type === 'mention') {
+      out.push({ type: 'mention', ...base, handle: entityText(text, e).replace(/^@/, '') })
+    } else if (e.type === 'text_mention') {
+      out.push({ type: 'mention', ...base, identity: String(e.user.id) })
+    } else {
+      const type = ENTITY[e.type]
+      if (type === undefined) continue
+      out.push({
+        type,
+        ...base,
+        ...(e.type === 'text_link' ? { url: e.url } : {}),
+        ...(e.type === 'url' ? { url: entityText(text, e) } : {}),
+        ...(e.type === 'pre' && e.language !== undefined ? { language: e.language } : {}),
+      })
+    }
+  }
+  return out
+}
 
 /** Mentions and commands of a message, relative to this bot. */
 export function signalsOf(message: Message, ctx: NormalizeContext): InboundSignals {
@@ -131,11 +249,7 @@ export function signalsOf(message: Message, ctx: NormalizeContext): InboundSigna
   }
   const reply = message.reply_to_message
   // inside a forum topic every message "replies" to the topic's first message: not a real reply
-  const topicRoot =
-    reply !== undefined &&
-    (reply.forum_topic_created !== undefined ||
-      (isTopicMessage(message) && reply.message_id === message.message_thread_id))
-  const replyToSelf = reply?.from?.id === ctx.botId && !topicRoot
+  const replyToSelf = reply?.from?.id === ctx.botId && !isTopicRoot(message, reply)
   return {
     mentionedSelf,
     ...(mentionedOthers ? { mentionedOthers: true } : {}),
@@ -219,8 +333,7 @@ function attachmentsOf(message: Message, ctx: NormalizeContext): InboundAttachme
 
 function replyInfoOf(message: Message): ReplyInfo | undefined {
   const r = message.reply_to_message
-  if (r === undefined || r.forum_topic_created !== undefined) return undefined
-  if (isTopicMessage(message) && r.message_id === message.message_thread_id) return undefined
+  if (r === undefined || isTopicRoot(message, r)) return undefined
   const text = r.text ?? r.caption
   const from = r.from === undefined ? undefined : personName(r.from) || r.from.username
   return {
@@ -231,23 +344,18 @@ function replyInfoOf(message: Message): ReplyInfo | undefined {
   }
 }
 
-function seenOf(message: Message, at: number): SeenChat | undefined {
-  const kind = kindOf(message.chat)
-  if (kind === 'dm') return undefined
-  const chat = message.chat
-  const forum = 'is_forum' in chat && chat.is_forum === true
-  const created = message.forum_topic_created ?? message.reply_to_message?.forum_topic_created
-  const topicId = topicOf(message)
+/** The origin of a forwarded message (a snapshot, not a link). */
+function forwardOf(message: Message): Record<string, unknown> | undefined {
+  const o = message.forward_origin
+  if (o === undefined) return undefined
   return {
-    chatId: String(chat.id),
-    kind,
-    title: 'title' in chat && chat.title !== undefined ? chat.title : String(chat.id),
-    ...('username' in chat && chat.username !== undefined ? { username: chat.username } : {}),
-    forum,
-    ...(topicId === undefined
-      ? {}
-      : { topic: { id: topicId, ...(created === undefined ? {} : { name: created.name }) } }),
-    at,
+    type: o.type,
+    at: o.date * 1000,
+    ...('chat' in o && o.chat !== undefined ? { chat: String(o.chat.id) } : {}),
+    ...('sender_user' in o && o.sender_user !== undefined
+      ? { user: String(o.sender_user.id) }
+      : {}),
+    ...('message_id' in o && o.message_id !== undefined ? { messageId: String(o.message_id) } : {}),
   }
 }
 
@@ -259,52 +367,202 @@ export function decodeCallback(value: string): { name: string; data?: string } {
   return i < 0 ? { name: value } : { name: value.slice(0, i), data: value.slice(i + 1) }
 }
 
+const ROLE: Record<string, MemberRole> = {
+  creator: 'owner',
+  administrator: 'admin',
+  member: 'member',
+  restricted: 'member',
+  left: 'none',
+  kicked: 'none',
+}
+
+const key = (update: Update, suffix?: string): string =>
+  `tg:upd:${update.update_id}${suffix === undefined ? '' : `:${suffix}`}`
+
+// --- the update --------------------------------------------------------------------------------
+
+/** Service messages: topic and chat changes, joins and leaves, an id that changed. */
+function serviceEvents(update: Update, m: Message, at: number): RemoteEvent[] {
+  const out: RemoteEvent[] = []
+  const chain = chainOfMessage(m)
+  const node: NodeRef = { nativeId: (chain[0] as NodeInfo).nativeId, chain }
+  const base = (suffix: string) => ({ dedupeKey: key(update, suffix), at, node, raw: update })
+  if (m.forum_topic_created !== undefined) {
+    const topic = topicNode(m.chat.id, m.message_thread_id ?? 0, m.forum_topic_created.name)
+    const ref: NodeRef = { nativeId: topic.nativeId, chain: [topic, chatNode(m.chat)] }
+    out.push({
+      type: 'node.created',
+      dedupeKey: key(update, 'topic-created'),
+      at,
+      node: ref,
+      raw: update,
+    })
+  }
+  if (m.forum_topic_edited !== undefined && m.message_thread_id !== undefined) {
+    const e = m.forum_topic_edited
+    const topic = topicNode(m.chat.id, m.message_thread_id, e.name)
+    out.push({
+      type: 'node.updated',
+      dedupeKey: key(update, 'topic-edited'),
+      at,
+      node: { nativeId: topic.nativeId, chain: [topic, chatNode(m.chat)] },
+      raw: update,
+    })
+  }
+  if (m.forum_topic_closed !== undefined && m.message_thread_id !== undefined) {
+    out.push({
+      type: 'node.state_changed',
+      dedupeKey: key(update, 'topic-closed'),
+      at,
+      node: {
+        nativeId: `${m.chat.id}/${m.message_thread_id}`,
+        chain: [topicNode(m.chat.id, m.message_thread_id), chatNode(m.chat)],
+      },
+      state: 'closed',
+      raw: update,
+    })
+  }
+  if (m.forum_topic_reopened !== undefined && m.message_thread_id !== undefined) {
+    out.push({
+      type: 'node.state_changed',
+      dedupeKey: key(update, 'topic-reopened'),
+      at,
+      node: {
+        nativeId: `${m.chat.id}/${m.message_thread_id}`,
+        chain: [topicNode(m.chat.id, m.message_thread_id), chatNode(m.chat)],
+      },
+      state: 'active',
+      raw: update,
+    })
+  }
+  if (m.new_chat_title !== undefined) {
+    out.push({
+      type: 'node.updated',
+      ...base('title'),
+      node: {
+        nativeId: String(m.chat.id),
+        chain: [{ ...chatNode(m.chat), title: m.new_chat_title }],
+      },
+    })
+  }
+  if (m.migrate_to_chat_id !== undefined) {
+    // the basic group became a supergroup: the new id is the node from now on
+    out.push({
+      type: 'node.migrated',
+      dedupeKey: key(update, 'migrated'),
+      at,
+      node: {
+        nativeId: String(m.migrate_to_chat_id),
+        chain: [
+          {
+            nativeId: String(m.migrate_to_chat_id),
+            kind: 'room',
+            platformType: 'telegram:supergroup',
+            ...(titleOfChat(m.chat) === undefined ? {} : { title: titleOfChat(m.chat) }),
+            traits: { multiUser: true, threading: 'relation', postable: true },
+            meta: { chatId: String(m.migrate_to_chat_id) },
+          },
+        ],
+      },
+      from: String(m.chat.id),
+      raw: update,
+    })
+  }
+  for (const u of m.new_chat_members ?? []) {
+    out.push({
+      type: 'member.joined',
+      dedupeKey: key(update, `joined:${u.id}`),
+      at,
+      node,
+      actor: identityOfUser(u, 0),
+      raw: update,
+    })
+  }
+  if (m.left_chat_member !== undefined) {
+    out.push({
+      type: 'member.left',
+      dedupeKey: key(update, `left:${m.left_chat_member.id}`),
+      at,
+      node,
+      actor: identityOfUser(m.left_chat_member, 0),
+      raw: update,
+    })
+  }
+  return out
+}
+
 export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normalized {
   const fresh = update.message ?? update.channel_post
   if (fresh !== undefined) {
     const m = fresh
     const at = m.date * 1000
-    const seen = seenOf(m, at)
-    const withSeen = seen === undefined ? {} : { chat: seen }
-    // service messages (joins, pins, topic changes) carry no text and no files: discovery only
+    const events: RemoteEvent[] = serviceEvents(update, m, at)
     const attachments = attachmentsOf(m, ctx)
     const text = m.text ?? m.caption ?? ''
-    if (text === '' && attachments.length === 0) return { events: [], ...withSeen }
-    const replyTo = replyInfoOf(m)
-    return {
-      events: [
-        {
-          type: 'message',
-          conversation: refOf(m, ctx.connectionId),
-          at,
-          messageId: String(m.message_id),
-          sender: senderOf(m, ctx.botId),
-          text,
-          attachments,
-          ...(replyTo === undefined ? {} : { replyTo }),
-          signals: signalsOf(m, ctx),
-        },
-      ],
-      ...withSeen,
+    // service messages carry no text and no files
+    if (text === '' && attachments.length === 0) return { events }
+    // a post of a channel forwarded into its discussion group: the group is a discussion of the channel
+    const chain = chainOfMessage(m)
+    const forwarded = m.forward_origin
+    if (m.is_automatic_forward === true && forwarded?.type === 'channel') {
+      const channel = chatNode(forwarded.chat)
+      events.push({
+        type: 'node.updated',
+        dedupeKey: key(update, 'channel'),
+        at,
+        node: { nativeId: channel.nativeId, chain: [channel] },
+        raw: update,
+      })
+      const room = chain.at(-1) as NodeInfo
+      room.links = [{ rel: 'discussion_of', to: channel.nativeId }]
     }
+    const replyTo = replyInfoOf(m)
+    const entities = entitiesOf(text, m.entities ?? m.caption_entities)
+    const fwd = forwardOf(m)
+    events.push({
+      type: 'message.created',
+      dedupeKey: key(update),
+      at,
+      node: { nativeId: (chain[0] as NodeInfo).nativeId, chain },
+      message: {
+        nativeId: String(m.message_id),
+        sender: senderOf(m, ctx.botId),
+        text,
+        attachments,
+        ...(entities.length === 0 ? {} : { entities }),
+        ...(replyTo === undefined ? {} : { replyTo }),
+        ...(m.message_thread_id !== undefined && m.is_topic_message !== true && !isForumChat(m.chat)
+          ? { threadRoot: String(m.message_thread_id) }
+          : {}),
+        ...(fwd === undefined ? {} : { forwardOf: fwd }),
+        sortKey: String(m.message_id).padStart(12, '0'),
+        ...(m.from?.id === ctx.botId ? { direction: 'out' as const } : {}),
+      },
+      signals: signalsOf(m, ctx),
+      raw: update,
+    })
+    return { events }
   }
   const edited = update.edited_message ?? update.edited_channel_post
   if (edited !== undefined) {
     const m = edited
-    const at = (m.edit_date ?? m.date) * 1000
-    const seen = seenOf(m, at)
+    const entities = entitiesOf(m.text ?? m.caption ?? '', m.entities ?? m.caption_entities)
     return {
       events: [
         {
-          type: 'edit',
-          conversation: refOf(m, ctx.connectionId),
-          at,
-          messageId: String(m.message_id),
-          sender: senderOf(m, ctx.botId),
-          text: m.text ?? m.caption ?? '',
+          type: 'message.edited',
+          dedupeKey: key(update),
+          at: (m.edit_date ?? m.date) * 1000,
+          node: refOfMessage(m),
+          message: {
+            nativeId: String(m.message_id),
+            sender: senderOf(m, ctx.botId),
+            text: m.text ?? m.caption ?? '',
+            ...(entities.length === 0 ? {} : { entities }),
+          },
+          raw: update,
         },
       ],
-      ...(seen === undefined ? {} : { chat: seen }),
     }
   }
   const cb = update.callback_query
@@ -318,12 +576,14 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
       events: [
         {
           type: 'action',
-          conversation: refOf(m as Message, ctx.connectionId),
+          dedupeKey: key(update),
           at: Date.now(),
+          node: refOfMessage(m as Message),
           name,
-          sender: identityOfUser(cb.from, ctx.botId),
+          actor: identityOfUser(cb.from, ctx.botId),
           ...(data === undefined ? {} : { data }),
-          messageId: String(m.message_id),
+          messageNativeId: String(m.message_id),
+          raw: update,
         },
       ],
     }
@@ -334,53 +594,78 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
       x.type === 'emoji' && x.emoji !== undefined ? x.emoji : x.type
     const before = new Set(r.old_reaction.map(label))
     const after = new Set(r.new_reaction.map(label))
-    const sender: Identity =
+    const actor: Identity =
       r.user === undefined
-        ? { id: `chat:${r.actor_chat?.id ?? r.chat.id}` }
+        ? identityOfChat(r.actor_chat ?? r.chat, 'channel')
         : identityOfUser(r.user, ctx.botId)
-    const conversation: ConversationRef = {
-      id: String(r.chat.id),
-      connectionId: ctx.connectionId,
-      container: String(r.chat.id),
-      kind: kindOf(r.chat),
-      ...('title' in r.chat && r.chat.title !== undefined ? { title: r.chat.title } : {}),
-    }
-    const events: InboundEvent[] = []
+    const room = chatNode(r.chat)
+    const events: RemoteEvent[] = []
     const push = (emoji: string, added: boolean): void => {
       events.push({
-        type: 'reaction',
-        conversation,
+        type: added ? 'reaction.added' : 'reaction.removed',
+        dedupeKey: key(update, `${added ? 'add' : 'rm'}:${emoji}`),
         at: r.date * 1000,
-        messageId: String(r.message_id),
-        sender,
+        node: { nativeId: room.nativeId, chain: [room] },
+        actor,
+        messageNativeId: String(r.message_id),
         emoji,
-        added,
+        raw: update,
       })
     }
     for (const emoji of after) if (!before.has(emoji)) push(emoji, true)
     for (const emoji of before) if (!after.has(emoji)) push(emoji, false)
     return { events }
   }
-  const member = update.my_chat_member
-  if (member !== undefined && kindOf(member.chat) !== 'dm') {
-    const chat = member.chat
-    const status = member.new_chat_member.status
+  const mine = update.my_chat_member
+  if (mine !== undefined) {
+    // what the bot is in a chat now (added, promoted, removed); the page lists chats from these
+    const status = mine.new_chat_member.status
+    const role = ROLE[status] ?? 'unknown'
     const canPost =
       status === 'administrator'
-        ? (member.new_chat_member as { can_post_messages?: boolean }).can_post_messages !== false
+        ? (mine.new_chat_member as { can_post_messages?: boolean }).can_post_messages !== false
         : status === 'member'
+    const room: NodeInfo = {
+      ...chatNode(mine.chat),
+      access: { member: role, canPost: role === 'none' ? false : canPost },
+      ...(role === 'none'
+        ? { state: 'left' as const, stateReason: status }
+        : { state: 'active' as const }),
+    }
+    const node: NodeRef = { nativeId: room.nativeId, chain: [room] }
     return {
-      events: [],
-      chat: {
-        chatId: String(chat.id),
-        kind: kindOf(chat),
-        title: 'title' in chat && chat.title !== undefined ? chat.title : String(chat.id),
-        ...('username' in chat && chat.username !== undefined ? { username: chat.username } : {}),
-        forum: 'is_forum' in chat && chat.is_forum === true,
-        botStatus: status,
-        canPost,
-        at: member.date * 1000,
-      },
+      events: [
+        {
+          type: role === 'none' ? 'member.left' : 'member.updated',
+          dedupeKey: key(update),
+          at: mine.date * 1000,
+          node,
+          actor: { ...identityOfUser(mine.new_chat_member.user, ctx.botId), isSelf: true },
+          role,
+          raw: update,
+        },
+      ],
+    }
+  }
+  const other = update.chat_member
+  if (other !== undefined) {
+    const status = other.new_chat_member.status
+    const was = other.old_chat_member.status
+    const role = ROLE[status] ?? 'unknown'
+    const room = chatNode(other.chat)
+    const joined = (was === 'left' || was === 'kicked') && role !== 'none'
+    return {
+      events: [
+        {
+          type: role === 'none' ? 'member.left' : joined ? 'member.joined' : 'member.updated',
+          dedupeKey: key(update),
+          at: other.date * 1000,
+          node: { nativeId: room.nativeId, chain: [room] },
+          actor: identityOfUser(other.new_chat_member.user, ctx.botId),
+          role,
+          raw: update,
+        },
+      ],
     }
   }
   return { events: [] }

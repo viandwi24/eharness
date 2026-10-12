@@ -1,12 +1,25 @@
-/** SQLite state of the Telegram user transport: chats and their jobs, the session lease, daily counters, account settings. */
+/**
+ * SQLite state of the Telegram user transport (P41 L4, on nodes since L5): the chats of the account
+ * and their jobs (stored as node access: `history` for backfill, `extra.adminLog` for the admin
+ * log), the session lease, daily counters and account settings.
+ *
+ * A chat is a room node of the connection. "Chosen for ingest" is the allowlist of the node
+ * (`enabled`, inherited like any setting); a chosen chat starts observe-only (`wake: never`).
+ */
 import type { Database } from 'bun:sqlite'
 import { z } from 'zod'
+import type { NodeRow } from '../channels/model.ts'
+import type { NodeStore } from '../channels/nodes.ts'
 import type { TgChat, TgChatKind } from './client.ts'
+import { chatNode } from './normalize.ts'
 
 export type BackfillState = 'idle' | 'queued' | 'running' | 'parked' | 'done' | 'error'
 
 export interface UserChat {
   connectionId: string
+  /** The node id. */
+  nodeId: string
+  /** The marked chat id (the native id of the node). */
   chatId: string
   kind: TgChatKind
   title: string
@@ -31,60 +44,6 @@ export interface UserChat {
   updatedAt: number
 }
 
-interface Row {
-  connection_id: string
-  chat_id: string
-  kind: string
-  title: string
-  username: string | null
-  forum: number
-  admin: number
-  selected: number
-  high_id: number | null
-  first_live_id: number | null
-  backfill_days: number | null
-  backfill_state: string
-  backfill_oldest_id: number | null
-  backfill_oldest_at: number | null
-  backfill_count: number
-  backfill_error: string | null
-  parked_until: number | null
-  admin_log_enabled: number
-  admin_log_last_id: string | null
-  admin_log_last_at: number | null
-  admin_log_count: number
-  admin_log_error: string | null
-  updated_at: number
-}
-
-const u = <T>(v: T | null): T | undefined => (v === null ? undefined : v)
-
-const toChat = (r: Row): UserChat => ({
-  connectionId: r.connection_id,
-  chatId: r.chat_id,
-  kind: r.kind as TgChatKind,
-  title: r.title,
-  username: u(r.username),
-  forum: r.forum === 1,
-  admin: r.admin === 1,
-  selected: r.selected === 1,
-  highId: u(r.high_id),
-  firstLiveId: u(r.first_live_id),
-  backfillDays: u(r.backfill_days),
-  backfillState: r.backfill_state as BackfillState,
-  backfillOldestId: u(r.backfill_oldest_id),
-  backfillOldestAt: u(r.backfill_oldest_at),
-  backfillCount: r.backfill_count,
-  backfillError: u(r.backfill_error),
-  parkedUntil: u(r.parked_until),
-  adminLogEnabled: r.admin_log_enabled === 1,
-  adminLogLastId: u(r.admin_log_last_id),
-  adminLogLastAt: u(r.admin_log_last_at),
-  adminLogCount: r.admin_log_count,
-  adminLogError: u(r.admin_log_error),
-  updatedAt: r.updated_at,
-})
-
 export interface BackfillPatch {
   state?: BackfillState
   oldestId?: number | null
@@ -108,6 +67,7 @@ export interface ChatStore {
   list(connectionId: string): UserChat[]
   selected(connectionId: string): UserChat[]
   isSelected(connectionId: string, chatId: string): boolean
+  /** Choose (observe-only) or stop ingesting a chat; stopping clears what the node sets itself and its jobs. */
   setSelected(connectionId: string, chatId: string, selected: boolean, now: number): void
   /** A message was stored: raise `highId`; `live` also lowers `firstLiveId`. */
   noteMessage(connectionId: string, chatId: string, id: number, live: boolean): void
@@ -121,158 +81,201 @@ export interface ChatStore {
   remove(connectionId: string): void
 }
 
-export function sqliteChatStore(sqlite: Database): ChatStore {
-  const get = sqlite.query<Row, [string, string]>(
-    'SELECT * FROM tgu_chats WHERE connection_id = ? AND chat_id = ?',
-  )
-  const touch = (connectionId: string, chatId: string, set: string, args: unknown[]): void => {
-    sqlite
-      .query(`UPDATE tgu_chats SET ${set} WHERE connection_id = ? AND chat_id = ?`)
-      .run(...(args as never[]), connectionId, chatId)
+const POLICY_KEYS = [
+  'enabled',
+  'agentId',
+  'wake',
+  'delivery',
+  'retentionDays',
+  'observe',
+  'sessionScope',
+  'redactOnDelete',
+]
+
+interface AdminLogState {
+  enabled?: boolean
+  lastId?: string
+  lastAt?: number
+  count?: number
+  error?: string
+}
+
+const num = (v: string | undefined): number | undefined => {
+  if (v === undefined) return undefined
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+export function nodeChatStore(deps: {
+  sqlite: Database
+  nodes: NodeStore
+  /** Does the node pass the allowlist (the chosen chats)? */
+  allowed: (node: NodeRow) => boolean
+}): ChatStore {
+  const { sqlite, nodes } = deps
+  const nodeOf = (connectionId: string, chatId: string): NodeRow | undefined => {
+    const n = nodes.byNative(connectionId, chatId)
+    return n !== undefined && n.kind !== 'thread' && n.kind !== 'direct' ? n : undefined
+  }
+  const toChat = (n: NodeRow): UserChat => {
+    const access = nodes.access(n.id)
+    const h = access?.history ?? {}
+    const log = (access?.extra.adminLog ?? {}) as AdminLogState
+    return {
+      connectionId: n.connectionId,
+      nodeId: n.id,
+      chatId: n.nativeId,
+      kind: n.traits.broadcast ? 'channel' : 'group',
+      title: n.title ?? n.nativeId,
+      username: typeof n.meta.username === 'string' ? n.meta.username : undefined,
+      forum: n.traits.container,
+      admin: access?.member === 'admin' || access?.member === 'owner',
+      selected: deps.allowed(n),
+      highId: num(h.highNativeId),
+      firstLiveId: num(h.firstLiveNativeId),
+      backfillDays: h.days,
+      backfillState: (h.state ?? 'idle') as BackfillState,
+      backfillOldestId: num(h.oldestNativeId),
+      backfillOldestAt: h.oldestAt,
+      backfillCount: h.count ?? 0,
+      backfillError: h.error,
+      parkedUntil: h.parkedUntil,
+      adminLogEnabled: log.enabled === true,
+      adminLogLastId: log.lastId,
+      adminLogLastAt: log.lastAt,
+      adminLogCount: log.count ?? 0,
+      adminLogError: log.error,
+      updatedAt: access?.updatedAt ?? n.lastEventAt,
+    }
+  }
+  const access = (n: NodeRow) => nodes.access(n.id)
+  const patchLog = (n: NodeRow, patch: Record<string, unknown>, now: number): void => {
+    const cur = (access(n)?.extra.adminLog ?? {}) as AdminLogState
+    const next: Record<string, unknown> = { ...cur }
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue
+      if (v === null) delete next[k]
+      else next[k] = v
+    }
+    nodes.patchExtra(n.id, n.connectionId, { adminLog: next }, now)
   }
   return {
     upsertDialog(connectionId, chat, now) {
-      sqlite
-        .query(
-          `INSERT INTO tgu_chats (connection_id, chat_id, kind, title, username, forum, admin, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (connection_id, chat_id) DO UPDATE SET kind = excluded.kind, title = excluded.title,
-             username = excluded.username, forum = excluded.forum, admin = excluded.admin, updated_at = excluded.updated_at`,
-        )
-        .run(
-          connectionId,
-          chat.id,
-          chat.kind,
-          chat.title,
-          chat.username ?? null,
-          chat.forum ? 1 : 0,
-          chat.admin ? 1 : 0,
-          now,
-        )
+      nodes.apply(connectionId, { ...chatNode(chat) }, undefined, { now })
     },
     get(connectionId, chatId) {
-      const r = get.get(connectionId, chatId)
-      return r === null ? undefined : toChat(r)
+      const n = nodeOf(connectionId, chatId)
+      return n === undefined ? undefined : toChat(n)
     },
     list(connectionId) {
-      return sqlite
-        .query<Row, [string]>(
-          'SELECT * FROM tgu_chats WHERE connection_id = ? ORDER BY selected DESC, title COLLATE NOCASE',
-        )
-        .all(connectionId)
+      return nodes
+        .list(connectionId, { kind: 'room' })
         .map(toChat)
+        .sort((a, b) => Number(b.selected) - Number(a.selected) || a.title.localeCompare(b.title))
     },
     selected(connectionId) {
-      return sqlite
-        .query<Row, [string]>(
-          'SELECT * FROM tgu_chats WHERE connection_id = ? AND selected = 1 ORDER BY title COLLATE NOCASE',
-        )
-        .all(connectionId)
+      return nodes
+        .list(connectionId, { kind: 'room' })
+        .filter((n) => deps.allowed(n))
         .map(toChat)
+        .sort((a, b) => a.title.localeCompare(b.title))
     },
     isSelected(connectionId, chatId) {
-      return get.get(connectionId, chatId)?.selected === 1
+      const n = nodeOf(connectionId, chatId)
+      return n !== undefined && deps.allowed(n)
     },
     setSelected(connectionId, chatId, selected, now) {
-      touch(connectionId, chatId, 'selected = ?, updated_at = ?', [selected ? 1 : 0, now])
+      const n = nodeOf(connectionId, chatId)
+      if (n === undefined) return
+      if (selected) {
+        const own = nodes.settings(n.id)
+        nodes.setSettings(n.id, {
+          ...(own.enabled === undefined ? { enabled: true } : {}),
+          ...(own.wake === undefined ? { wake: 'never' } : {}),
+        })
+      } else {
+        nodes.setSettings(n.id, Object.fromEntries(POLICY_KEYS.map((k) => [k, null])))
+      }
+      void now
     },
     noteMessage(connectionId, chatId, id, live) {
-      sqlite
-        .query(
-          `UPDATE tgu_chats SET high_id = MAX(COALESCE(high_id, 0), ?),
-             first_live_id = CASE WHEN ? = 1 THEN MIN(COALESCE(first_live_id, ?), ?) ELSE first_live_id END
-           WHERE connection_id = ? AND chat_id = ?`,
-        )
-        .run(id, live ? 1 : 0, id, id, connectionId, chatId)
+      const n = nodeOf(connectionId, chatId)
+      if (n === undefined) return
+      const h = access(n)?.history ?? {}
+      const high = Math.max(num(h.highNativeId) ?? 0, id)
+      const first = live ? Math.min(num(h.firstLiveNativeId) ?? id, id) : num(h.firstLiveNativeId)
+      nodes.patchHistory(
+        n.id,
+        connectionId,
+        {
+          highNativeId: String(high),
+          ...(first === undefined ? {} : { firstLiveNativeId: String(first) }),
+        },
+        Date.now(),
+      )
     },
     setBackfillDays(connectionId, chatId, days, now) {
-      const chat = get.get(connectionId, chatId)
-      if (chat === null) return
+      const n = nodeOf(connectionId, chatId)
+      if (n === undefined) return
       if (days === null) {
-        touch(
-          connectionId,
-          chatId,
-          "backfill_days = NULL, backfill_state = 'idle', backfill_error = NULL, updated_at = ?",
-          [now],
-        )
+        nodes.patchHistory(n.id, connectionId, { days: null, state: 'idle', error: null }, now)
         return
       }
       // a bigger window after a finished run walks further down from where it stopped
-      touch(
-        connectionId,
-        chatId,
-        "backfill_days = ?, backfill_state = 'queued', backfill_error = NULL, updated_at = ?",
-        [days, now],
-      )
+      nodes.patchHistory(n.id, connectionId, { days, state: 'queued', error: null }, now)
     },
     patchBackfill(connectionId, chatId, patch, now) {
-      const sets: string[] = ['updated_at = ?']
-      const args: unknown[] = [now]
-      if (patch.state !== undefined) {
-        sets.push('backfill_state = ?')
-        args.push(patch.state)
-      }
-      if (patch.oldestId !== undefined) {
-        sets.push('backfill_oldest_id = ?')
-        args.push(patch.oldestId)
-      }
-      if (patch.oldestAt !== undefined) {
-        sets.push('backfill_oldest_at = ?')
-        args.push(patch.oldestAt)
-      }
-      if (patch.addCount !== undefined) {
-        sets.push('backfill_count = backfill_count + ?')
-        args.push(patch.addCount)
-      }
-      if (patch.error !== undefined) {
-        sets.push('backfill_error = ?')
-        args.push(patch.error)
-      }
-      if (patch.parkedUntil !== undefined) {
-        sets.push('parked_until = ?')
-        args.push(patch.parkedUntil)
-      }
-      touch(connectionId, chatId, sets.join(', '), args)
+      const n = nodeOf(connectionId, chatId)
+      if (n === undefined) return
+      const h = access(n)?.history ?? {}
+      nodes.patchHistory(
+        n.id,
+        connectionId,
+        {
+          ...(patch.state === undefined ? {} : { state: patch.state }),
+          ...(patch.oldestId === undefined
+            ? {}
+            : { oldestNativeId: patch.oldestId === null ? null : String(patch.oldestId) }),
+          ...(patch.oldestAt === undefined ? {} : { oldestAt: patch.oldestAt }),
+          ...(patch.addCount === undefined ? {} : { count: (h.count ?? 0) + patch.addCount }),
+          ...(patch.error === undefined ? {} : { error: patch.error }),
+          ...(patch.parkedUntil === undefined ? {} : { parkedUntil: patch.parkedUntil }),
+        },
+        now,
+      )
     },
     setAdminLog(connectionId, chatId, enabled, now) {
-      touch(connectionId, chatId, 'admin_log_enabled = ?, admin_log_error = NULL, updated_at = ?', [
-        enabled ? 1 : 0,
-        now,
-      ])
+      const n = nodeOf(connectionId, chatId)
+      if (n !== undefined) patchLog(n, { enabled, error: null }, now)
     },
     patchAdminLog(connectionId, chatId, patch, now) {
-      const sets: string[] = ['updated_at = ?']
-      const args: unknown[] = [now]
-      if (patch.lastId !== undefined) {
-        sets.push('admin_log_last_id = ?')
-        args.push(patch.lastId)
-      }
-      if (patch.lastAt !== undefined) {
-        sets.push('admin_log_last_at = ?')
-        args.push(patch.lastAt)
-      }
-      if (patch.addCount !== undefined) {
-        sets.push('admin_log_count = admin_log_count + ?')
-        args.push(patch.addCount)
-      }
-      if (patch.error !== undefined) {
-        sets.push('admin_log_error = ?')
-        args.push(patch.error)
-      }
-      touch(connectionId, chatId, sets.join(', '), args)
+      const n = nodeOf(connectionId, chatId)
+      if (n === undefined) return
+      const cur = (access(n)?.extra.adminLog ?? {}) as AdminLogState
+      patchLog(
+        n,
+        {
+          ...(patch.lastId === undefined ? {} : { lastId: patch.lastId }),
+          ...(patch.lastAt === undefined ? {} : { lastAt: patch.lastAt }),
+          ...(patch.addCount === undefined ? {} : { count: (cur.count ?? 0) + patch.addCount }),
+          ...(patch.error === undefined ? {} : { error: patch.error }),
+        },
+        now,
+      )
     },
     setParked(connectionId, chatId, until, now) {
-      touch(connectionId, chatId, 'parked_until = ?, updated_at = ?', [until, now])
+      const n = nodeOf(connectionId, chatId)
+      if (n !== undefined) nodes.patchHistory(n.id, connectionId, { parkedUntil: until }, now)
     },
     recover(connectionId, now) {
-      sqlite
-        .query(
-          "UPDATE tgu_chats SET backfill_state = 'queued', updated_at = ? WHERE connection_id = ? AND backfill_state IN ('running', 'parked')",
-        )
-        .run(now, connectionId)
+      for (const n of nodes.list(connectionId, { kind: 'room' })) {
+        const state = access(n)?.history.state
+        if (state === 'running' || state === 'parked') {
+          nodes.patchHistory(n.id, connectionId, { state: 'queued' }, now)
+        }
+      }
     },
     remove(connectionId) {
-      sqlite.query('DELETE FROM tgu_chats WHERE connection_id = ?').run(connectionId)
       sqlite.query('DELETE FROM tgu_counters WHERE connection_id = ?').run(connectionId)
       sqlite.query('DELETE FROM tgu_settings WHERE connection_id = ?').run(connectionId)
       sqlite.query('DELETE FROM tgu_leases WHERE connection_id = ?').run(connectionId)

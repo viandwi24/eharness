@@ -9,10 +9,10 @@
  * (`kind: 'delete'`), and for admin-log events (`kind: 'event'`). Ingest dedupes by item id.
  */
 import { type CollectedItem, type Collector, channelSegment } from '../../domain/collectors.ts'
-import { type ConnectionConfig, resolveScope } from '../channels/policy.ts'
-import type { ChannelLog, LogChange } from '../channels/store.ts'
-import { kindOfChatId, refOf, splitConversationId } from './normalize.ts'
-import type { ChatStore } from './store.ts'
+import type { ChannelLog, LogChange } from '../channels/messages.ts'
+import type { NodeStore } from '../channels/nodes.ts'
+import type { ResolvedScope } from '../channels/policy.ts'
+import { splitNativeId } from './normalize.ts'
 
 export const ADMIN_EVENT_PREFIX = 'admin:'
 
@@ -28,29 +28,32 @@ export function collectorId(connectionId: string): string {
 export interface UserCollectorOptions {
   connectionId: string
   log: Pick<ChannelLog, 'changes'>
-  chats: ChatStore
-  config: () => ConnectionConfig | undefined
+  nodes: Pick<NodeStore, 'get' | 'byNative'>
+  /** The effective settings of a node (undefined when the connection is not bound). */
+  scopeOf: (nodeId: string) => ResolvedScope | undefined
   description?: string
 }
 
 export function telegramUserCollector(options: UserCollectorOptions): Collector {
-  const { connectionId, log, chats } = options
+  const { connectionId, log, nodes } = options
   const id = collectorId(connectionId)
 
-  /** Observe-only: the chat is in the allowlist with `wake: 'never'`. */
-  const observed = (config: ConnectionConfig, conversationId: string): boolean => {
-    const { chatId, topicId } = splitConversationId(conversationId)
-    const scope = resolveScope(
-      config,
-      refOf(connectionId, { id: chatId, kind: kindOfChatId(chatId) }, topicId),
-    )
-    return scope.allowed && scope.wake === 'never'
+  /** Observe-only: the node is in the allowlist with `wake: 'never'`. */
+  const observed = (nodeId: string, memo: Map<string, boolean>): boolean => {
+    const hit = memo.get(nodeId)
+    if (hit !== undefined) return hit
+    const scope = options.scopeOf(nodeId)
+    const value = scope?.allowed === true && scope.wake === 'never'
+    memo.set(nodeId, value)
+    return value
   }
 
   const itemOf = (row: LogChange): CollectedItem => {
-    const { chatId, topicId } = splitConversationId(row.conversationId)
-    const chat = chats.get(connectionId, chatId)
-    const isEvent = row.platformId.startsWith(ADMIN_EVENT_PREFIX)
+    const node = nodes.get(row.nodeId)
+    const nativeNode = node?.nativeId ?? row.nodeId
+    const { chatId, topicId } = splitNativeId(nativeNode)
+    const chat = nodes.byNative(connectionId, chatId)
+    const isEvent = row.kind === 'system' || row.nativeId.startsWith(ADMIN_EVENT_PREFIX)
     const kind = isEvent
       ? 'event'
       : row.deletedAt !== undefined
@@ -61,13 +64,12 @@ export function telegramUserCollector(options: UserCollectorOptions): Collector 
     const plain = kind === 'message' || kind === 'event'
     const edited = row.edits?.at(-1)
     return {
-      id: plain
-        ? `${row.conversationId}:${row.platformId}`
-        : `${row.conversationId}:${row.platformId}~${row.rev}`,
+      // the id keeps the shape of before L5 (`<chat>[/<topic>]:<message id>`): ingest dedupes by it
+      id: plain ? `${nativeNode}:${row.nativeId}` : `${nativeNode}:${row.nativeId}~${row.rev}`,
       channel: channelSegment(`${chat?.title ?? 'chat'}-${chatId.replace(/^-/, '')}`),
       at: row.at,
       kind,
-      messageId: row.platformId,
+      messageId: row.nativeId,
       chat: chatId,
       ...(topicId === undefined ? {} : { topic: topicId }),
       ...(row.sender === undefined
@@ -100,7 +102,7 @@ export function telegramUserCollector(options: UserCollectorOptions): Collector 
     async poll(cursor, pollOptions) {
       let after = cursor === null ? 0 : Number(cursor) || 0
       const limit = Math.min(pollOptions?.limit ?? 500, 1000)
-      const config = options.config()
+      const memo = new Map<string, boolean>()
       // pages with nothing to emit (other chats, chats that wake the agent) are skipped, not reported
       // as "nothing more": ingest would stop there and never move its cursor
       for (let pages = 0; pages < 50; pages++) {
@@ -109,9 +111,7 @@ export function telegramUserCollector(options: UserCollectorOptions): Collector 
           return { items: [], cursor: String(after) === '0' ? cursor : String(after) }
         after = (rows.at(-1) as LogChange).rev
         const items: CollectedItem[] = []
-        if (config !== undefined) {
-          for (const row of rows) if (observed(config, row.conversationId)) items.push(itemOf(row))
-        }
+        for (const row of rows) if (observed(row.nodeId, memo)) items.push(itemOf(row))
         if (items.length > 0) return { items, cursor: String(after) }
       }
       return { items: [], cursor: String(after) }

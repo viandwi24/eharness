@@ -14,21 +14,14 @@ import type { ChannelsPort } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import type {
   ChannelBindInput,
-  ChannelChatView,
   ChannelConnectionView,
-  ChannelPolicy,
   ChannelPolicyInput,
   ChannelRuntimeState,
 } from '../../domain/channels.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { ChannelGateway } from '../channels/index.ts'
-import {
-  type ConnectionConfig,
-  type GroupPolicy,
-  resolveScope,
-  type ScopePolicy,
-} from '../channels/policy.ts'
-import type { ConversationRef } from '../channels/types.ts'
+import { countChats, listNodeViews, nodeView, writePolicy } from '../channels/node-views.ts'
+import type { ConnectionConfig, ScopePolicy } from '../channels/policy.ts'
 import {
   createTelegramAdapter,
   type TelegramAdapter,
@@ -37,7 +30,6 @@ import {
   TelegramSetupError,
 } from './adapter.ts'
 import { privacyGuidance, TELEGRAM_CONNECTOR_ID } from './connector.ts'
-import { type KnownChat, type KnownChatStore, sqliteKnownChats } from './known-chats.ts'
 
 export interface TelegramChannelsOptions {
   sqlite: Database
@@ -72,8 +64,6 @@ export interface TelegramChannels extends ChannelsPort {
   /** One pass now: start what should run, stop what should not. */
   sync(): Promise<void>
   stop(): Promise<void>
-  /** Chats the bot has seen (store, for tests and the page). */
-  known: KnownChatStore
 }
 
 interface RuntimeEntry {
@@ -88,13 +78,10 @@ interface RuntimeEntry {
   retry?: ReturnType<typeof setTimeout>
 }
 
-const clip = (text: string, max: number): string => (text.length > max ? text.slice(0, max) : text)
-
 export function createTelegramChannels(options: TelegramChannelsOptions): TelegramChannels {
   const { gateway } = options
   const now = options.now ?? (() => Date.now())
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
-  const known = sqliteKnownChats(options.sqlite)
   const entries = new Map<string, RuntimeEntry>()
   let stopped = false
   let lastRev = -1
@@ -200,7 +187,6 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
       ...(options.pollTimeoutSec === undefined ? {} : { pollTimeoutSec: options.pollTimeoutSec }),
       onWebhook,
       hooks: {
-        onChat: (chat) => known.see(id, chat),
         onFailure: (failure) => void failed(id, failure).catch(() => undefined),
         warn,
       },
@@ -278,17 +264,6 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
 
   // --- views -----------------------------------------------------------------------------------
 
-  const policyOf = (g: ScopePolicy | undefined): ChannelPolicy | null =>
-    g === undefined
-      ? null
-      : {
-          enabled: g.enabled !== false,
-          ...(g.agentId === undefined ? {} : { agentId: g.agentId }),
-          ...(g.wake === undefined ? {} : { wake: g.wake }),
-          ...(g.delivery === undefined ? {} : { delivery: g.delivery }),
-          ...(g.retentionDays === undefined ? {} : { retentionDays: g.retentionDays }),
-        }
-
   async function viewOf(record: ConnectionRecord): Promise<ChannelConnectionView> {
     const id = record.id
     const e = peek(id) ?? { state: 'stopped' as const, since: now() }
@@ -332,18 +307,10 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
               replyToUnknown: config.replyToUnknown,
               admins: config.admins,
               historyLimit: config.historyLimit,
-              defaults: {
-                ...(config.defaults.wake === undefined ? {} : { wake: config.defaults.wake }),
-                ...(config.defaults.delivery === undefined
-                  ? {}
-                  : { delivery: config.defaults.delivery }),
-                ...(config.defaults.retentionDays === undefined
-                  ? {}
-                  : { retentionDays: config.defaults.retentionDays }),
-              },
+              defaults: defaultsView(config),
             },
       counts: {
-        chats: known.list(id).length,
+        chats: countChats(gateway, id),
         linked: gateway.pairing.members(id).length,
         unlinked: gateway.unlinked.list(id).length,
         outboxPending: counts.pending + counts.sending,
@@ -353,41 +320,20 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
     }
   }
 
-  const refOf = (chat: KnownChat, topic?: string): ConversationRef => ({
-    id: topic === undefined ? chat.chatId : `${chat.chatId}/${topic}`,
-    connectionId: chat.connectionId,
-    container: chat.chatId,
-    ...(topic === undefined ? {} : { topic }),
-    kind: chat.kind,
+  const defaultsView = (config: ConnectionConfig) => ({
+    ...(config.defaults.wake === undefined ? {} : { wake: config.defaults.wake }),
+    ...(config.defaults.delivery === undefined ? {} : { delivery: config.defaults.delivery }),
+    ...(config.defaults.retentionDays === undefined
+      ? {}
+      : { retentionDays: config.defaults.retentionDays }),
+    ...(config.defaults.observe === undefined ? {} : { observe: config.defaults.observe }),
+    ...(config.defaults.sessionScope === undefined
+      ? {}
+      : { sessionScope: config.defaults.sessionScope }),
+    ...(config.defaults.redactOnDelete === undefined
+      ? {}
+      : { redactOnDelete: config.defaults.redactOnDelete }),
   })
-
-  function chatView(config: ConnectionConfig | undefined, chat: KnownChat): ChannelChatView {
-    const group = config?.groups[chat.chatId]
-    const scope = config === undefined ? undefined : resolveScope(config, refOf(chat))
-    return {
-      chatId: chat.chatId,
-      kind: chat.kind,
-      title: chat.title,
-      ...(chat.username === undefined ? {} : { username: chat.username }),
-      forum: chat.forum,
-      topics: Object.entries(chat.topics).map(([topicId, name]) => ({
-        id: topicId,
-        name,
-        policy: policyOf(group?.topics?.[topicId]),
-      })),
-      ...(chat.botStatus === undefined ? {} : { botStatus: chat.botStatus }),
-      ...(chat.canPost === undefined ? {} : { canPost: chat.canPost }),
-      firstSeen: chat.firstSeen,
-      lastSeen: chat.lastSeen,
-      policy: policyOf(group),
-      effective: {
-        allowed: scope?.allowed ?? false,
-        wake: scope?.wake ?? 'mention',
-        delivery: scope?.delivery ?? 'final_text',
-        retentionDays: scope?.retentionDays ?? 30,
-      },
-    }
-  }
 
   // --- admin -----------------------------------------------------------------------------------
 
@@ -403,26 +349,27 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
   }
 
   const applyScope = (target: ScopePolicy, input: ChannelPolicyInput): ScopePolicy => {
-    const next: ScopePolicy = { ...target }
-    const set = <K extends 'agentId' | 'wake' | 'delivery' | 'retentionDays'>(
-      key: K,
-      value: ScopePolicy[K] | null | undefined,
-    ): void => {
-      if (value === undefined) return
+    const next: Record<string, unknown> = { ...target }
+    for (const key of [
+      'enabled',
+      'agentId',
+      'wake',
+      'delivery',
+      'retentionDays',
+      'observe',
+      'sessionScope',
+      'redactOnDelete',
+    ] as const) {
+      const value = input[key]
+      if (value === undefined) continue
       if (value === null) delete next[key]
       else next[key] = value
     }
-    if (input.enabled !== undefined) next.enabled = input.enabled
     if (typeof input.agentId === 'string') checkAgent(input.agentId)
-    set('agentId', input.agentId)
-    set('wake', input.wake)
-    set('delivery', input.delivery)
-    set('retentionDays', input.retentionDays)
-    return next
+    return next as ScopePolicy
   }
 
   const port: TelegramChannels = {
-    known,
     start() {
       stopped = false
       void sync().catch((e) => warn(`telegram: sync failed: ${String(e)}`))
@@ -468,17 +415,7 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
         ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
         ...(input.defaults === undefined
           ? {}
-          : {
-              defaults: applyScope(existing?.defaults ?? {}, {
-                ...(input.defaults.wake === undefined ? {} : { wake: input.defaults.wake }),
-                ...(input.defaults.delivery === undefined
-                  ? {}
-                  : { delivery: input.defaults.delivery }),
-                ...(input.defaults.retentionDays === undefined
-                  ? {}
-                  : { retentionDays: input.defaults.retentionDays }),
-              }),
-            }),
+          : { defaults: applyScope(existing?.defaults ?? {}, input.defaults) }),
       })
       await sync()
       return viewOf(record)
@@ -491,42 +428,16 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
     },
     async chats(id) {
       await recordOf(id)
-      const config = gateway.config(id)
-      return known.list(id).map((c) => chatView(config, c))
+      return listNodeViews(gateway, id)
     },
-    async setChatPolicy(id, chatId, input, topic) {
+    async setChatPolicy(id, nodeId, input) {
       await recordOf(id)
-      const config = requireConfig(id)
-      const chat = known.get(id, chatId)
-      if (chat === undefined) throw notFound('chat', chatId)
-      const groups: Record<string, GroupPolicy> = { ...config.groups }
-      const group: GroupPolicy = { ...(groups[chatId] ?? {}) }
-      if (topic === undefined) {
-        if (input === null) delete groups[chatId]
-        else {
-          const next = applyScope(group, { enabled: true, ...input })
-          groups[chatId] = {
-            ...group,
-            ...next,
-            label: group.label ?? clip(chat.title, 80),
-            ...(group.topics === undefined ? {} : { topics: group.topics }),
-          }
-        }
-      } else {
-        if (!(topic in chat.topics)) throw notFound('topic', topic)
-        const topics = { ...(group.topics ?? {}) }
-        if (input === null) delete topics[topic]
-        else topics[topic] = applyScope(topics[topic] ?? {}, input)
-        groups[chatId] = {
-          ...group,
-          // a topic entry needs the chat itself allowed
-          enabled: group.enabled ?? true,
-          label: group.label ?? clip(chat.title, 80),
-          topics,
-        }
-      }
-      gateway.configure({ ...config, groups })
-      return chatView(gateway.config(id), chat)
+      requireConfig(id)
+      const node = gateway.nodes.get(nodeId)
+      if (node === undefined || node.connectionId !== id || node.kind === 'direct')
+        throw notFound('chat', nodeId)
+      writePolicy(gateway, node, input, checkAgent)
+      return nodeView(gateway, node) as NonNullable<ReturnType<typeof nodeView>>
     },
     async links(id) {
       await recordOf(id)

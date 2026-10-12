@@ -8152,7 +8152,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ChannelChatList"];
+                        "application/json": components["schemas"]["ChannelNodeList"];
                     };
                 };
                 /** @description Invalid request */
@@ -8217,6 +8217,7 @@ export interface paths {
                 header?: never;
                 path: {
                     id: string;
+                    /** @description The node id of the chat or topic. */
                     chatId: string;
                 };
                 cookie?: never;
@@ -8233,7 +8234,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ChannelChat"];
+                        "application/json": components["schemas"]["ChannelNode"];
                     };
                 };
                 /** @description Invalid request */
@@ -8299,6 +8300,7 @@ export interface paths {
                 header?: never;
                 path: {
                     id: string;
+                    /** @description The node id of the chat or topic. */
                     chatId: string;
                 };
                 cookie?: never;
@@ -8315,7 +8317,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ChannelChat"];
+                        "application/json": components["schemas"]["ChannelNode"];
                     };
                 };
                 /** @description Invalid request */
@@ -8381,6 +8383,7 @@ export interface paths {
                 header?: never;
                 path: {
                     id: string;
+                    /** @description The node id of the chat or topic. */
                     chatId: string;
                 };
                 cookie?: never;
@@ -8397,7 +8400,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ChannelChat"];
+                        "application/json": components["schemas"]["ChannelNode"];
                     };
                 };
                 /** @description Invalid request */
@@ -8840,8 +8843,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Known chats
-         * @description Groups, supergroups and channels the bot has seen (any update, or being added or removed), with the policy that applies. Discovery starts when the connection is bound and the bot is in a chat.
+         * Chats and topics
+         * @description The nodes of the connection (groups, channels, forum topics; people are listed under the inbox): what each one sets itself and what it inherits. Discovery starts when the connection is bound and the bot is in a chat.
          */
         get: {
             parameters: {
@@ -8860,7 +8863,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ChannelChatList"];
+                        "application/json": components["schemas"]["ChannelNodeList"];
                     };
                 };
                 /** @description Invalid request */
@@ -8910,29 +8913,30 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Take a chat out of the allowlist */
+        /**
+         * Clear the settings of a chat or topic
+         * @description Removes everything set on the node itself: it inherits again (a chat of an allowlist connection is out of the allowlist).
+         */
         delete: {
             parameters: {
-                query?: {
-                    /** @description A forum topic id: the policy is of the topic. */
-                    topic?: string;
-                };
+                query?: never;
                 header?: never;
                 path: {
                     id: string;
+                    /** @description The node id of the chat or topic. */
                     chatId: string;
                 };
                 cookie?: never;
             };
             requestBody?: never;
             responses: {
-                /** @description The chat */
+                /** @description The node */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ChannelChat"];
+                        "application/json": components["schemas"]["ChannelNode"];
                     };
                 };
                 /** @description Invalid request */
@@ -8953,7 +8957,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description Unknown connection, chat or topic */
+                /** @description Unknown connection or node */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -8976,18 +8980,16 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Allow a chat and set its policy
-         * @description Creates or changes the entry of a known chat in the allowlist: `wake` (`mention`, `always`, `never` = observe only), `delivery`, `retentionDays`, an `agentId` override. With `?topic=` the policy is of a forum topic. A `null` field clears the override.
+         * Set the settings of a chat or topic
+         * @description Writes settings on one node (`chatId` is the node id of a chat or of a forum topic): `enabled` (allowlist), `wake` (`mention`, `always`, `never` = observe only), `delivery`, `retentionDays`, `agentId`, `observe`, `sessionScope`, `redactOnDelete`. Settings inherit down the tree: a topic keeps what its forum sets unless it sets its own. A `null` field clears the setting (inherit again); a chat that gets settings and has no `enabled` yet is switched on.
          */
         patch: {
             parameters: {
-                query?: {
-                    /** @description A forum topic id: the policy is of the topic. */
-                    topic?: string;
-                };
+                query?: never;
                 header?: never;
                 path: {
                     id: string;
+                    /** @description The node id of the chat or topic. */
                     chatId: string;
                 };
                 cookie?: never;
@@ -8998,13 +9000,13 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description The chat */
+                /** @description The node */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ChannelChat"];
+                        "application/json": components["schemas"]["ChannelNode"];
                     };
                 };
                 /** @description Invalid request */
@@ -9025,7 +9027,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description Unknown connection, chat or topic */
+                /** @description Unknown connection or node */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -12467,46 +12469,93 @@ export interface components {
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
         };
-        ChannelChatList: {
-            items: components["schemas"]["ChannelChat"][];
+        ChannelNodeList: {
+            items: components["schemas"]["ChannelNode"][];
         };
-        ChannelChat: {
-            chatId: string;
+        ChannelNode: {
+            /** @description The node id. */
+            id: string;
+            /** @description The node this one is a child of (a topic of a forum). */
+            parentId?: string;
+            /** @description The platform's id (opaque). */
+            nativeId: string;
             /** @enum {string} */
-            kind: "dm" | "group" | "channel";
+            kind: "space" | "room" | "thread" | "direct";
+            /** @enum {string} */
+            chatKind: "dm" | "group" | "channel";
+            platformType: string;
             title: string;
             username?: string;
-            forum: boolean;
-            topics: {
-                id: string;
-                name: string;
-                policy: components["schemas"]["ChannelPolicy"];
-            }[];
-            botStatus?: string;
-            account?: components["schemas"]["ChannelAccountChat"];
+            /** @enum {string} */
+            state: "active" | "closed" | "archived" | "deleted" | "left";
+            /** @description Has child nodes (a forum). */
+            container: boolean;
+            /** @description Messages can be sent and stored here. */
+            postable: boolean;
+            /** @description What the connection is in the node: `member`, `admin`, `owner` or `none`. */
+            member?: string;
             canPost?: boolean;
+            account?: components["schemas"]["ChannelAccountChat"];
             firstSeen: number;
             lastSeen: number;
             policy: components["schemas"]["ChannelPolicy"];
             effective: {
                 allowed: boolean;
+                agentId: string;
                 /** @enum {string} */
                 wake: "mention" | "always" | "never";
                 /** @enum {string} */
                 delivery: "final_text" | "message_tool";
                 retentionDays: number;
+                observe: boolean;
+                /** @enum {string} */
+                sessionScope: "node" | "room";
+                redactOnDelete: boolean;
+            };
+            /** @description Where each effective setting comes from. */
+            inherited: {
+                enabled?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                agentId?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                wake?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                delivery?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                retentionDays?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                observe?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                sessionScope?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                redactOnDelete?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
             };
         };
-        ChannelPolicy: {
-            /** @description `false` takes the chat out of the allowlist. */
-            enabled: boolean;
-            agentId?: string;
-            /** @enum {string} */
-            wake?: "mention" | "always" | "never";
-            /** @enum {string} */
-            delivery?: "final_text" | "message_tool";
-            retentionDays?: number;
-        } | null;
         ChannelAccountChat: {
             selected: boolean;
             admin: boolean;
@@ -12525,6 +12574,26 @@ export interface components {
                 error?: string;
             };
         };
+        /** @description What is set on this node itself; null = everything is inherited. */
+        ChannelPolicy: {
+            /** @description `false` takes the node out of the allowlist, `true` puts it in. */
+            enabled: boolean;
+            agentId?: string;
+            /** @enum {string} */
+            wake?: "mention" | "always" | "never";
+            /** @enum {string} */
+            delivery?: "final_text" | "message_tool";
+            retentionDays?: number;
+            /** @description Store the full log of the node (default on). */
+            observe?: boolean;
+            /**
+             * @description `node` (default): own session. `room`: a thread shares the session of its room.
+             * @enum {string}
+             */
+            sessionScope?: "node" | "room";
+            /** @description Drop a message's content when it is deleted on the platform. */
+            redactOnDelete?: boolean;
+        } | null;
         ChannelSelectBody: {
             selected: boolean;
         };
@@ -12628,6 +12697,10 @@ export interface components {
                 /** @enum {string} */
                 delivery?: "final_text" | "message_tool";
                 retentionDays?: number;
+                observe?: boolean;
+                /** @enum {string} */
+                sessionScope?: "node" | "room";
+                redactOnDelete?: boolean;
             };
         } | null;
         ChannelAdminLogRun: {
@@ -12662,16 +12735,24 @@ export interface components {
                 /** @enum {string} */
                 delivery?: "final_text" | "message_tool";
                 retentionDays?: number;
+                observe?: boolean;
+                /** @enum {string} */
+                sessionScope?: "node" | "room";
+                redactOnDelete?: boolean;
             };
         };
         ChannelPolicyBody: {
-            enabled?: boolean;
+            enabled?: boolean | null;
             agentId?: string | null;
             /** @enum {string|null} */
             wake?: "mention" | "always" | "never" | null;
             /** @enum {string|null} */
             delivery?: "final_text" | "message_tool" | null;
             retentionDays?: number | null;
+            observe?: boolean | null;
+            /** @enum {string|null} */
+            sessionScope?: "node" | "room" | null;
+            redactOnDelete?: boolean | null;
         };
         ChannelLinkList: {
             items: components["schemas"]["ChannelLink"][];
@@ -12717,12 +12798,15 @@ export interface components {
             next?: string;
         };
         ChannelInboxConversation: {
+            /** @description The node id. */
             conversationId: string;
             /** @enum {string} */
             kind: "dm" | "group" | "channel";
             title: string;
             container: string;
             topic?: string;
+            parentId?: string;
+            parentTitle?: string;
             agentId: string;
             /** @description The conversation passes the allowlist now. */
             allowed: boolean;
@@ -12800,7 +12884,7 @@ export interface components {
             at: number;
             /** @enum {string} */
             type: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
-            /** @description A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`), a wake reason, or a short note. Never message text. */
+            /** @description A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text. */
             reason?: string;
             conversationId?: string;
             conversationTitle?: string;

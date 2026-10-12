@@ -1234,24 +1234,26 @@ example (the library is untouched) and has a scripted-model regression test in
 *adapters* and the agent sessions and never names a platform; a Telegram bot, a Slack app or the
 in-memory `mock-adapter.ts` all implement the same `ChannelAdapter` (normalized inbound events,
 `send`/`edit`/`delete`/`react`/`typing`, optional history, members and a native action catalog,
-`capabilities` with the text limit). The contract is `types.ts`; the rules that need no I/O (scope
-resolution, the wake test, splitting text, the loop guard) are `policy.ts`.
+capabilities of a node with the text limit). The contract is `types.ts`; the rules that need no I/O
+(settings resolution, the wake test, splitting text, the loop guard) are `policy.ts`. *Since phase L5 the
+storage and the contract are the generic conversation model of section 28d (nodes, identities,
+`ch_*` tables); this section describes the behaviour, which did not change.*
 
-**One event, in order.** `gateway.handle(event)`: drop the agent's own messages and bots (unless
+**One event, in order.** `gateway.handle(connectionId, event)`: drop the agent's own messages and bots (unless
 `allowBots`, then the loop guard: 20 events in 300 s puts the conversation in a 600 s cooldown);
-the allowlist (`groupPolicy: allowlist` by default, per group and per topic overrides of `agentId`,
-`wake`, `delivery`, `retentionDays`); a DM only from a linked team member (linked by the owner on
+the allowlist (`groupPolicy: allowlist` by default; `enabled`, `agentId`, `wake`, `delivery`,
+`retentionDays`, ... are settings that inherit down the tree of chats and topics, see 28d); a DM only from a linked team member (linked by the owner on
 the People tab, see "Linking without links" below); then **wake** or **observe**. A message
 wakes the agent when it mentions it, replies to it, matches an alias, is in the agent's own topic,
 or the scope says `wake: 'always'`; a message that mentions somebody else and not the agent is only
-observed; `wake: 'never'` is an audit chat. Every kept message goes to the **channel log**
-(`channel_messages`, body sealed with its own key; unique per platform message id, which is the
-dedupe), then a wake is `session.enqueue(input, { mode: 'collect', id: 'ev:<message id>' })`:
+observed; `wake: 'never'` is an audit chat. Every kept message goes to the **message store**
+(`ch_messages`, content sealed with its own key; unique per node and platform message id, which is the
+dedupe), then a wake is `session.enqueue(input, { mode: 'collect', id: 'ev:<our message id>' })`:
 a burst of messages becomes one turn, and the inbox's caller id makes a redelivery a no-op.
 An observed message is just the log row marked `pending`.
 
-**Sessions.** `channel:<connection>:<conversation id>`, one per group, per forum topic and per DM
-peer (the adapter composes the conversation id). Each is registered as a `chat_threads` row with
+**Sessions.** `channel:<connection>:<node id>`, one per group, per forum topic and per DM
+peer (the nodes of the tree, composed by the adapter; sessions of before L5 keep their old key). Each is registered as a `chat_threads` row with
 `source: 'channel'` and a label, so it shows in the agent's thread list. Turns are prefixed with
 the sender (`[Ana Putri @ana] ...`), inbound files are stored like web uploads (same allowlist and
 size limit) and reach the model as file parts. At the next wake the messages observed since the
@@ -1276,8 +1278,8 @@ sends until its cooldown ends and raises one bell notification.
 download an attachment into the library) are read-only; `channel_send` (`external`: send, reply,
 upload, react, also to a mapped member's DM) and `channel_manage` (`destructive`: edit, delete,
 pin) keep one static risk each, so permissions, program authority and rehearsals work unchanged.
-A target must be a conversation the gateway knows or a configured group or channel; the tools
-return readable errors. The native actions of an adapter become **deferred tools** found with
+A target is a node the gateway knows (by id, native id or exact title; a topic is a child of its chat);
+the tools return readable errors. The native actions of an adapter become **deferred tools** found with
 `tool_search`, each with its own risk. *Without the split by risk:* one `channel(action)` tool would
 be `destructive` for everybody, or `read` for nobody.
 
@@ -1301,7 +1303,7 @@ something you can run for U1-U3.
   a trigger that already has reply rows queues nothing), `post` rows by `channel_send`, `approval`
   rows by the approval announcement. A row is claimed with a compare-and-set (`pending` ->
   `sending`) so it is posted by one sender at most, and its id travels to the adapter as
-  `OutboundMessage.key` (an adapter whose platform can dedupe uses it). Success marks the row
+  `OutboundMessage.sendTxnId` (an adapter whose platform can dedupe uses it). Success marks the row
   `sent` with the platform message id. A reply or approval row whose send fails is retried
   (backoff 5 s doubling to 5 min, ten attempts, then a bell notification); an `invalid` error is
   final. On boot (`register`) retries are due at once and rows a crash left in `sending` are
@@ -1326,9 +1328,9 @@ something you can run for U1-U3.
   A turn the web app starts in a channel thread announces nothing in the chat. The reply of the
   continuation is delivered through the outbox like any other (the parked trigger is kept in
   `channel_approvals`).
-- *Rebinding.* The agent of a conversation is the binding's agent at every wake (group or topic
-  `agentId`, else the connection's). When it changed, the conversation moves to the next
-  generation: a new session `channel:<connection>:<conversation>#2` and a new thread of the new
+- *Rebinding.* The agent of a conversation is the binding's agent at every wake (the inherited
+  `agentId` of the node, else the connection's). When it changed, the conversation moves to the next
+  generation: a new session `channel:<connection>:<node id>#2` and a new thread of the new
   agent. The old agent's thread stays as history; its pending approvals still work.
 - *Native read actions.* `gateway.readActionTools(agentId)` lists the tool names of the
   read-risk native actions of the agent's connections, derived from the adapters' catalogs, and
@@ -1361,10 +1363,11 @@ switcher; it can be read and continued there (what is written there is not poste
 **Transport.**
 
 - *Inbound.* `run(bot)` (concurrent) with `sequentialize` by chat, `allowed_updates` listed
-  explicitly, a long poll of 30 s. `normalize.ts` turns an update into an `InboundEvent`: mention
-  by entity, reply to the bot, `/command@botname`, forum topic as its own conversation, edits,
-  channel posts, reactions, callback queries (answered at once, then handed to the gateway as
-  `action` events), and `my_chat_member` / chat updates into the known chats table.
+  explicitly, a long poll of 30 s. `normalize.ts` turns an update into `RemoteEvent`s with the node
+  chain: mention by entity, reply to the bot, `/command@botname`, a forum topic as a thread node under
+  its forum, edits, channel posts, reactions, callback queries (answered at once, then handed to the
+  gateway as `action` events), and `my_chat_member` / `chat_member` / topic and title service messages
+  into node and member events (how chats are discovered; see 28d and the golden fixtures).
 - *Outbound.* Through the gateway's outbox and queue. Telegram's `retry_after` becomes a
   `ChannelError('rate_limit', ..., ms)` that the queue parks; auto-retry only absorbs waits up to
   5 s. HTML only, with a strict escaper and a Markdown subset; a parse failure is resent plain.
@@ -1377,7 +1380,7 @@ switcher; it can be read and continued there (what is written there is not poste
   (`test/telegram-channels.test.ts`). No real network.
 
 **Admin API.** `GET /channels/connections`, `PUT|DELETE .../{id}/binding`, `GET .../chats`,
-`PATCH|DELETE .../chats/{chatId}/policy[?topic=]`, `GET|POST .../links`, `DELETE .../links/{peerId}`,
+`PATCH|DELETE .../chats/{chatId}/policy` (a node id: a chat or a topic), `GET|POST .../links`, `DELETE .../links/{peerId}`,
 `GET .../members`, `GET .../unlinked`, `PUT .../unlinked/{peerId}/ignored`, `GET .../inbox`,
 `GET .../inbox/messages?conversationId=`, `GET .../activity`, `POST .../webhook/delete`, `.../restart`, `.../breaker/reset`
 (zod-openapi schemas, generated web types). The web page is `/channels`.
@@ -1385,8 +1388,8 @@ switcher; it can be read and continued there (what is written there is not poste
 **Linking without links, silence, inbox and activity** (P41 follow-up after a real-bot test). There
 is no `/start` deep link and no token any more (the `channel_pairing_tokens` table stays for old
 databases and is unused). Every DM from somebody who is not linked is recorded as an *unlinked
-sender* per connection (`channel_unlinked`: platform user id, name, `@username`, first and last seen,
-message count; **no message text**). The People tab lists them under "Not linked yet": **Link to
+sender* per connection (identities of the connection with direct-message counters: platform user id, name,
+`@username`, first and last seen, message count; **no message text**). The People tab lists them under "Not linked yet": **Link to
 member…** (a pick of the team members, in this single-principal example `owner` plus the connection's
 admins) or **Ignore**; a form links by numeric Telegram user id for somebody who has not written yet.
 It works the same for a bot and for an account connection (`POST .../links`, `pairing.link`).
@@ -1397,16 +1400,17 @@ spinner, no text), a non-allowlisted chat, or a bot sender. Group messages from 
 context only. The per-connection setting `replyToUnknown` ("Reply to unknown people", default off)
 sends one short neutral line to an unlinked DM, at most once per person every few hours.
 
-*Inbox* (`GET .../inbox`, `.../inbox/messages`). One row per conversation the connection has seen
-(`channel_inbox`: the adapter's reference and woke / observed / dropped counters), listed newest
+*Inbox* (`GET .../inbox`, `.../inbox/messages`). One row per node the connection has seen messages
+or activity in (a view over `ch_nodes`, `ch_messages` and `ch_events`: woke / observed / dropped
+counters), listed newest
 first with kind, the agent, a preview of the last stored message (decrypted on read), counters and
 the allowlist state (a DM counts as allowed only for a linked person). A conversation opens to its
 channel log in order, paged back with `before`: incoming messages (each marked woke or observed:
-`channel_messages.disposition`), the agent's replies, approval requests with how they ended,
+`ch_messages.disposition`), the agent's replies, approval requests with how they ended,
 edits (earlier versions) and deletions. "Open in the agent's thread" links to the thread once the
 conversation woke the agent. The log is sealed at rest and read for the holder of the web token.
 
-*Activity* (`GET .../activity`, `channel_events`, filter by `type` and `conversationId`, paged with
+*Activity* (`GET .../activity`, the `gateway.*` events of `ch_events`, filter by `type` and `conversationId` (a node id), paged with
 `before`). Events, newest first: `woke`, `observed`, `dropped` with a reason (`unlinked-sender`,
 `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`,
 `not-authorized`), `reply-queued`, `reply-sent`, `reply-retried`, `reply-failed`, `approval-posted`,
@@ -1441,6 +1445,61 @@ the policy). *Backfill*: a window in days per chat with progress, resumable and 
 
 **Safety.** One live client per session (a lease; a second instance shows *Another instance holds
 it*), flood waits park jobs, a revoked session shows *Needs a new login*.
+
+## 28d. The generic conversation model (P41 phase L5)
+
+**What.** One storage model and one adapter contract for every chat platform, replacing the per-chat
+overrides of L1-L4, the flat conversation reference and the Telegram specific tables. A new platform
+needs an adapter and golden fixtures; the gateway, the web page and the tools do not change. Spec and
+reasoning: [P41 L5](../plans/P41-team-channels.md#l5-notes-as-built); research behind it: mautrix
+bridgev2, Matrix, Chat SDK and the platforms' own structures.
+
+**Nodes.** A place is a node in a tree: a Telegram forum is a container room, its topics are thread
+children (General is topic `0`), a channel's discussion group is a separate room linked with
+`discussion_of`. `kind` (`space | room | thread | direct`) and structural `traits` (multi-user,
+broadcast, container, threading, postable, ephemeral, external, threads-only) are all the core ever
+branches on; the platform's own name for the thing is `platform_type`, for display. Node ids are opaque
+strings composed by the adapter (`idFormats` documents them, the fixtures pin them). A thread is a node
+only when the platform gives it its own id and lifecycle; a Slack thread or a Telegram reply chain is a
+relation between messages (`thread_root_native_id`, `reply_to_native_id`).
+
+**Per connection.** `ch_node_access`: whether the connection is a member or admin, may post or read, a
+read marker, and the bookkeeping of history jobs (the account's backfill cursor lives here).
+`ch_identities`: people, bots, channels speaking as themselves and anonymous admins as one connection
+sees them, with aliases, per-space profiles and memberships; `person_id` is the linked team member and is
+only ever set by an authorized action. Messages are keyed by `(node, native id)`, sealed, with edits as
+revisions, deletions as tombstones (content kept for audit until retention unless `redactOnDelete`),
+reactions and a `send_txn_id` that matches the platform's echo of our own post. Events are append-only:
+`message.created`, `node.updated`, `member.left`, ... and what the gateway did with them
+(`gateway.woke`, `gateway.dropped`, ...), unique per `(connection, dedupe_key)`, so a replayed
+platform event is recognized and an event that names no chat can wait to be placed.
+
+**Settings inherit.** `enabled` (the allowlist), `agentId`, `wake`, `delivery`, `retentionDays`,
+`observe` (store the full log of an allowed node), `sessionScope` (`node` or `room`), `redactOnDelete`,
+the implicit wake rules and `quote` / `ack` resolve node, then its ancestors, then the connection's
+defaults, then the product's. Switch a forum on and its topics are on; a topic says only what differs.
+The Channels page shows the tree and, next to each field, where the value in force comes from.
+
+**The contract in one screen.** Required: `getNodeInfo`, `getIdentityInfo` (patch semantics),
+`getCapabilities(node)`, `send(node, message)` and an event stream. Optional, found by presence:
+`edit`, `delete`, `pin`, `react`, `typing`, `fetchHistory`, `listMembers`, `listNodes`, ... Events carry
+the node chain from the leaf to the root so the gateway can create missing parents without asking.
+The mock adapter ([`mock-adapter.ts`](../../examples/team/server/src/infra/channels/mock-adapter.ts))
+is the smallest example; the Telegram bot adapter
+([`infra/telegram`](../../examples/team/server/src/infra/telegram)) is the real one, with golden
+fixtures in `test/fixtures/telegram-updates.ts` asserted by `test/telegram-golden.test.ts`.
+
+**Upgrading a database.** Migration `0026` creates the tables; when the gateway starts it copies the
+old `channel_*` / `tgu_chats` rows into them (`legacy-migration.ts`): conversations become nodes that
+remember their old id (old sessions, threads, approvals and queued messages keep working), sealed
+messages are opened and stored again with their ids, the connection configuration's group entries become
+node settings. It is idempotent and the old tables are kept, read by nothing, until a later migration drops
+them. `test/channels-migration.test.ts` boots the new code on a seeded database as it was at migration 0025.
+
+**Test it.** `bun test test/channels.test.ts test/channels-migration.test.ts test/telegram-golden.test.ts
+test/telegram-adapter.test.ts test/telegram-channels.test.ts` (scripted models, a fake Bot API, no network).
+The MTProto adapter was moved to the same contract without automated tests; use the manual checklist in
+[P41](../plans/P41-team-channels.md#manual-test-checklist-dedicated-test-account-2fa-on).
 
 ## What to change when you copy it
 

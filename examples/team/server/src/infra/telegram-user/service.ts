@@ -18,23 +18,17 @@ import type {
   ChannelAccountChatState,
   ChannelAccountView,
   ChannelBindInput,
-  ChannelChatView,
   ChannelConnectionView,
   ChannelLimitsInput,
-  ChannelPolicy,
+  ChannelNodeView,
   ChannelPolicyInput,
   ChannelRuntimeState,
 } from '../../domain/channels.ts'
 import type { Collector } from '../../domain/collectors.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { ChannelGateway } from '../channels/index.ts'
-import {
-  type ConnectionConfig,
-  type GroupPolicy,
-  RateLimitsSchema,
-  resolveScope,
-  type ScopePolicy,
-} from '../channels/policy.ts'
+import { listNodeViews, nodeView, writePolicy } from '../channels/node-views.ts'
+import { type ConnectionConfig, RateLimitsSchema, type ScopePolicy } from '../channels/policy.ts'
 import { createTelegramUserAdapter, type TelegramUserAdapter, type UserFatal } from './adapter.ts'
 import { type AdminLog, createAdminLog, eventText } from './adminlog.ts'
 import { type Backfill, createBackfill } from './backfill.ts'
@@ -47,11 +41,11 @@ import {
   type UserConnectionSettings,
 } from './connector.ts'
 import { classifyError, describeError } from './errors.ts'
-import { identityOf, kindOfChatId, refOf } from './normalize.ts'
+import { chainOfMessage, normalizeMessage } from './normalize.ts'
 import {
   type AccountSettings,
   type ChatStore,
-  sqliteChatStore,
+  nodeChatStore,
   sqliteCounterStore,
   sqliteLeaseStore,
   sqliteSettingsStore,
@@ -151,13 +145,15 @@ const maskPhone = (phone: string | undefined): string | undefined => {
   return `+${digits.slice(0, 2)}${'•'.repeat(Math.max(2, digits.length - 6))}${digits.slice(-4)}`
 }
 
-const clip = (text: string, max: number): string => (text.length > max ? text.slice(0, max) : text)
-
 export function createTelegramUserChannels(options: TelegramUserOptions): TelegramUserChannels {
   const { gateway, sqlite } = options
   const now = options.now ?? (() => Date.now())
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
-  const chats = sqliteChatStore(sqlite)
+  const chats = nodeChatStore({
+    sqlite,
+    nodes: gateway.nodes,
+    allowed: (node) => gateway.settings.resolve(node.id)?.allowed === true,
+  })
   const leases = sqliteLeaseStore(sqlite)
   const counters = sqliteCounterStore(sqlite)
   const settings = sqliteSettingsStore(sqlite)
@@ -195,75 +191,67 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     options.notify?.({ key, title, body, agentId: gateway.config(id)?.agentId ?? null })
   }
 
-  const allowedChat = (id: string, chatId: string): boolean => {
-    const config = gateway.config(id)
-    if (config === undefined) return false
-    const known = chats.get(id, chatId)
-    return resolveScope(
-      config,
-      refOf(id, { id: chatId, kind: known?.kind ?? kindOfChatId(chatId) }),
-    ).allowed
-  }
+  const allowedChat = (id: string, chatId: string): boolean => chats.isSelected(id, chatId)
 
   // --- storing history and admin events (no wake, ever) -----------------------------------------
 
+  const noFetch = (): (() => Promise<{ bytes: Uint8Array }>) => async () => {
+    throw new Error('attachments of history are not downloaded')
+  }
+
   async function ingestHistory(id: string, m: TgMessage): Promise<boolean> {
-    const config = gateway.config(id)
-    if (config === undefined) return false
-    const ref = refOf(id, m.chat, m.chat.forum ? m.topicId : undefined)
-    if (!resolveScope(config, ref).allowed) return false
-    const r = await gateway.log.insert(
-      {
-        connectionId: id,
-        conversationId: ref.id,
-        platformId: String(m.id),
-        at: m.at,
-        self: m.outgoing,
-        sender: identityOf(m.sender),
-        text: m.text,
-        attachments: m.attachments.map((a) => ({
-          id: a.id,
-          kind: a.kind,
-          ...(a.name === undefined ? {} : { name: a.name }),
-          ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
-          ...(a.size === undefined ? {} : { size: a.size }),
-        })),
-        ...(m.replyTo === undefined ? {} : { replyTo: { messageId: String(m.replyTo.id) } }),
-      },
-      { pending: false, handled: true },
-    )
-    return r.inserted
+    const selfId = entries.get(id)?.me?.id ?? ''
+    return gateway.ingest(id, normalizeMessage(m, { selfId, fetch: noFetch }))
   }
 
   async function recordAdminEvent(id: string, chatId: string, ev: TgAdminEvent): Promise<boolean> {
-    const r = await gateway.log.insert(
-      {
-        connectionId: id,
-        conversationId: chatId,
-        platformId: `${ADMIN_EVENT_PREFIX}${ev.id}`,
-        at: ev.at,
-        sender: ev.actor === undefined ? undefined : { id: ev.actor.id, name: ev.actor.name },
-        text: eventText(ev),
+    const known = chats.get(id, chatId)
+    const chain = chainOfMessage({
+      chat: {
+        id: chatId,
+        kind: known?.kind ?? 'group',
+        title: known?.title ?? chatId,
+        forum: false,
+        ...(known?.username === undefined ? {} : { username: known.username }),
       },
-      { pending: false, handled: true },
-    )
-    if (r.inserted && ev.kind === 'delete' && ev.messageId !== undefined) {
+      id: 0,
+      at: ev.at,
+      text: '',
+      outgoing: false,
+      mention: false,
+      mentionsOthers: false,
+      attachments: [],
+      service: false,
+    })
+    const inserted = await gateway.ingest(id, {
+      type: 'message.created',
+      dedupeKey: `tgu:admin:${chatId}:${ev.id}`,
+      at: ev.at,
+      node: { nativeId: chatId, chain },
+      message: {
+        nativeId: `${ADMIN_EVENT_PREFIX}${ev.id}`,
+        sender:
+          ev.actor === undefined
+            ? { id: 'unknown', name: 'Unknown' }
+            : { id: ev.actor.id, name: ev.actor.name },
+        text: eventText(ev),
+        attachments: [],
+        kind: 'system',
+      },
+      signals: { mentionedSelf: false, replyToSelf: false },
+    })
+    if (inserted && ev.kind === 'delete' && ev.messageId !== undefined) {
       // the message is gone: mark the one we may have stored (the event text keeps what it said)
-      for (const f of gateway.log.locate(id, [String(ev.messageId)], chatId)) {
-        gateway.log.recordDeleted(id, f.conversationId, [f.platformId], ev.at)
+      const room = gateway.nodes.byNative(id, chatId)
+      for (const f of gateway.log.locate(id, [String(ev.messageId)])) {
+        const n = gateway.nodes.get(f.nodeId)
+        if (n === undefined || room === undefined || !n.path.startsWith(room.path)) continue
+        gateway.log.recordDeleted(f.nodeId, [f.nativeId], ev.at, {
+          redact: gateway.settings.resolve(f.nodeId)?.redactOnDelete === true,
+        })
       }
     }
-    return r.inserted
-  }
-
-  const isOwn = (id: string, chatId: string, messageId: string): boolean => {
-    const row = sqlite
-      .query<{ self: number }, [string, string, string, string]>(
-        `SELECT self FROM channel_messages WHERE connection_id = ? AND platform_id = ?
-           AND (conversation_id = ? OR conversation_id LIKE ?) LIMIT 1`,
-      )
-      .get(id, messageId, chatId, `${chatId}/%`)
-    return row?.self === 1
+    return inserted
   }
 
   // --- runtime ----------------------------------------------------------------------------------
@@ -401,10 +389,8 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
           },
           now(),
         )
-        if (had === undefined) {
-          chats.setSelected(id, c.id, true, now())
-          ensureObserve(id, c.id, c.title)
-        }
+        // a chat chosen while connecting is in the allowlist, observe-only
+        if (had === undefined) chats.setSelected(id, c.id, true, now())
       }
       chats.recover(id, now())
       const adapter = createTelegramUserAdapter({
@@ -414,8 +400,6 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         chats,
         counters,
         settings: () => settings.get(id),
-        locate: (ids, container) => gateway.log.locate(id, ids, container),
-        isOwn: (chatId, messageId) => isOwn(id, chatId, messageId),
         blocked: () => e.blocked,
         ...(options.now === undefined ? {} : { now: options.now }),
         ...(options.jobs?.random === undefined ? {} : { random: options.jobs.random }),
@@ -500,8 +484,8 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         const source = telegramUserCollector({
           connectionId: id,
           log: gateway.log,
-          chats,
-          config: () => gateway.config(id),
+          nodes: gateway.nodes,
+          scopeOf: (nodeId) => gateway.settings.resolve(nodeId),
         })
         options.collectors.add(source)
         e.collectorId = source.id
@@ -517,19 +501,6 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       setState(e, 'error', describeError(k))
       scheduleRetry(id)
     }
-  }
-
-  /** A chosen chat joins the allowlist observe-only: the safest default for a user account. */
-  function ensureObserve(id: string, chatId: string, title: string): void {
-    const config = gateway.config(id)
-    if (config === undefined || config.groups[chatId] !== undefined) return
-    gateway.configure({
-      ...config,
-      groups: {
-        ...config.groups,
-        [chatId]: { enabled: true, wake: 'never', label: clip(title, 80) },
-      },
-    })
   }
 
   async function doSync(): Promise<void> {
@@ -577,17 +548,6 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
 
   // --- views ------------------------------------------------------------------------------------
 
-  const policyOf = (g: ScopePolicy | undefined): ChannelPolicy | null =>
-    g === undefined
-      ? null
-      : {
-          enabled: g.enabled !== false,
-          ...(g.agentId === undefined ? {} : { agentId: g.agentId }),
-          ...(g.wake === undefined ? {} : { wake: g.wake }),
-          ...(g.delivery === undefined ? {} : { delivery: g.delivery }),
-          ...(g.retentionDays === undefined ? {} : { retentionDays: g.retentionDays }),
-        }
-
   const accountState = (c: UserChat): ChannelAccountChatState => ({
     selected: c.selected,
     admin: c.admin,
@@ -609,42 +569,23 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     },
   })
 
-  function chatView(
-    id: string,
-    config: ConnectionConfig | undefined,
-    chat: UserChat,
-  ): ChannelChatView {
-    const group = config?.groups[chat.chatId]
-    const scope =
-      config === undefined
-        ? undefined
-        : resolveScope(config, refOf(id, { id: chat.chatId, kind: chat.kind }))
-    return {
-      chatId: chat.chatId,
-      kind: chat.kind,
-      title: chat.title,
-      ...(chat.username === undefined ? {} : { username: chat.username }),
-      forum: chat.forum,
-      topics: [],
-      firstSeen: chat.updatedAt,
-      lastSeen: chat.updatedAt,
-      policy: policyOf(group),
-      effective: {
-        allowed: scope?.allowed ?? false,
-        wake: scope?.wake ?? 'never',
-        delivery: scope?.delivery ?? 'final_text',
-        retentionDays: scope?.retentionDays ?? 30,
-      },
+  /** The node view of a chat of the account, with its jobs. */
+  function chatView(chat: UserChat): ChannelNodeView {
+    const node = gateway.nodes.get(chat.nodeId)
+    return nodeView(gateway, node as NonNullable<typeof node>, {
       account: accountState(chat),
-    }
+    }) as ChannelNodeView
   }
 
   function adminLogText(id: string, chatId: string, limit: number): string {
+    const room = gateway.nodes.byNative(id, chatId)
+    if (room === undefined) return ''
     const rows = sqlite
-      .query<{ n: number }, [string, string]>(
-        `SELECT COUNT(*) AS n FROM channel_messages WHERE connection_id = ? AND conversation_id = ? AND platform_id LIKE 'admin:%'`,
+      .query<{ n: number }, [string, string, string]>(
+        `SELECT COUNT(*) AS n FROM ch_messages m JOIN ch_nodes n ON n.id = m.node_id
+           WHERE m.connection_id = ? AND m.kind = 'system' AND (n.path = ? OR n.path LIKE ?)`,
       )
-      .get(id, chatId)
+      .get(id, room.path, `${room.path}/%`)
     if ((rows?.n ?? 0) === 0) return ''
     void limit
     return `${rows?.n} admin log events are stored for this chat; read them with channel_read on conversation ${chatId} (rows start with "[admin log]").`
@@ -669,7 +610,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     for (const c of list) {
       if (
         c.backfillDays !== undefined &&
-        c.backfillDays > (config?.groups[c.chatId]?.retentionDays ?? retention)
+        c.backfillDays > (gateway.settings.resolve(c.nodeId)?.retentionDays ?? retention)
       ) {
         warnings.push(
           `The history window of "${c.title}" (${c.backfillDays} days) is longer than its retention: older messages are purged.`,
@@ -739,15 +680,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
               replyToUnknown: config.replyToUnknown,
               admins: config.admins,
               historyLimit: config.historyLimit,
-              defaults: {
-                ...(config.defaults.wake === undefined ? {} : { wake: config.defaults.wake }),
-                ...(config.defaults.delivery === undefined
-                  ? {}
-                  : { delivery: config.defaults.delivery }),
-                ...(config.defaults.retentionDays === undefined
-                  ? {}
-                  : { retentionDays: config.defaults.retentionDays }),
-              },
+              defaults: defaultsView(config),
             },
       counts: {
         chats: list.filter((c) => c.selected).length,
@@ -760,6 +693,21 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     }
   }
 
+  const defaultsView = (config: ConnectionConfig) => ({
+    ...(config.defaults.wake === undefined ? {} : { wake: config.defaults.wake }),
+    ...(config.defaults.delivery === undefined ? {} : { delivery: config.defaults.delivery }),
+    ...(config.defaults.retentionDays === undefined
+      ? {}
+      : { retentionDays: config.defaults.retentionDays }),
+    ...(config.defaults.observe === undefined ? {} : { observe: config.defaults.observe }),
+    ...(config.defaults.sessionScope === undefined
+      ? {}
+      : { sessionScope: config.defaults.sessionScope }),
+    ...(config.defaults.redactOnDelete === undefined
+      ? {}
+      : { redactOnDelete: config.defaults.redactOnDelete }),
+  })
+
   // --- admin ------------------------------------------------------------------------------------
 
   const requireConfig = (id: string): ConnectionConfig => {
@@ -771,28 +719,33 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     const a = options.agents.get(agentId)
     if (a === undefined || a.archivedAt !== null) throw invalid(`unknown agent: ${agentId}`)
   }
-  const chatOf = (id: string, chatId: string): UserChat => {
-    const c = chats.get(id, chatId)
-    if (c === undefined) throw notFound('chat', chatId)
+  /** The chat of a node id of this connection. */
+  const chatOf = (id: string, nodeId: string): UserChat => {
+    const node = gateway.nodes.get(nodeId)
+    const c =
+      node === undefined || node.connectionId !== id ? undefined : chats.get(id, node.nativeId)
+    if (c === undefined) throw notFound('chat', nodeId)
     return c
   }
   const applyScope = (target: ScopePolicy, input: ChannelPolicyInput): ScopePolicy => {
-    const next: ScopePolicy = { ...target }
-    const set = <K extends 'agentId' | 'wake' | 'delivery' | 'retentionDays'>(
-      key: K,
-      value: ScopePolicy[K] | null | undefined,
-    ): void => {
-      if (value === undefined) return
+    const next: Record<string, unknown> = { ...target }
+    for (const key of [
+      'enabled',
+      'agentId',
+      'wake',
+      'delivery',
+      'retentionDays',
+      'observe',
+      'sessionScope',
+      'redactOnDelete',
+    ] as const) {
+      const value = input[key]
+      if (value === undefined) continue
       if (value === null) delete next[key]
       else next[key] = value
     }
-    if (input.enabled !== undefined) next.enabled = input.enabled
     if (typeof input.agentId === 'string') checkAgent(input.agentId)
-    set('agentId', input.agentId)
-    set('wake', input.wake)
-    set('delivery', input.delivery)
-    set('retentionDays', input.retentionDays)
-    return next
+    return next as ScopePolicy
   }
 
   const port: TelegramUserChannels = {
@@ -854,17 +807,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
         ...(input.defaults === undefined
           ? {}
-          : {
-              defaults: applyScope(existing?.defaults ?? {}, {
-                ...(input.defaults.wake === undefined ? {} : { wake: input.defaults.wake }),
-                ...(input.defaults.delivery === undefined
-                  ? {}
-                  : { delivery: input.defaults.delivery }),
-                ...(input.defaults.retentionDays === undefined
-                  ? {}
-                  : { retentionDays: input.defaults.retentionDays }),
-              }),
-            }),
+          : { defaults: applyScope(existing?.defaults ?? {}, input.defaults) }),
       })
       await sync()
       return viewOf(record)
@@ -877,38 +820,26 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     },
     async chats(id) {
       await recordOf(id)
-      const config = gateway.config(id)
-      return chats.list(id).map((c) => chatView(id, config, c))
+      return listNodeViews(gateway, id, {
+        account: (node) => {
+          const c = node.kind === 'room' ? chats.get(id, node.nativeId) : undefined
+          return c === undefined ? undefined : accountState(c)
+        },
+      })
     },
-    async setChatPolicy(id, chatId, input, topic) {
+    async setChatPolicy(id, nodeId, input) {
       await recordOf(id)
-      const config = requireConfig(id)
-      const chat = chatOf(id, chatId)
-      const groups: Record<string, GroupPolicy> = { ...config.groups }
-      const group: GroupPolicy = { ...(groups[chatId] ?? {}) }
-      if (topic === undefined) {
-        if (input === null) delete groups[chatId]
-        else {
-          groups[chatId] = {
-            ...group,
-            ...applyScope(group, { enabled: true, ...input }),
-            label: group.label ?? clip(chat.title, 80),
-            ...(group.topics === undefined ? {} : { topics: group.topics }),
-          }
-        }
-      } else {
-        const topics = { ...(group.topics ?? {}) }
-        if (input === null) delete topics[topic]
-        else topics[topic] = applyScope(topics[topic] ?? {}, input)
-        groups[chatId] = {
-          ...group,
-          enabled: group.enabled ?? true,
-          label: group.label ?? clip(chat.title, 80),
-          topics,
-        }
-      }
-      gateway.configure({ ...config, groups })
-      return chatView(id, gateway.config(id), chat)
+      requireConfig(id)
+      const node = gateway.nodes.get(nodeId)
+      if (node === undefined || node.connectionId !== id || node.kind === 'direct')
+        throw notFound('chat', nodeId)
+      writePolicy(gateway, node, input, checkAgent)
+      const chat = node.kind === 'room' ? chats.get(id, node.nativeId) : undefined
+      return nodeView(
+        gateway,
+        node,
+        chat === undefined ? {} : { account: accountState(chat) },
+      ) as ChannelNodeView
     },
     async links(id) {
       await recordOf(id)
@@ -954,47 +885,42 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       }
       try {
         for (const d of await e.adapter.dialogs(true)) {
-          // people are not chats to ingest: they reach the agent through pairing
+          // people are not chats to ingest: they reach the agent through linking
           if (d.kind !== 'dm') chats.upsertDialog(id, d, now())
         }
       } catch (error) {
         throw conflict(error instanceof Error ? error.message : String(error), 'TELEGRAM_ERROR')
       }
-      const config = gateway.config(id)
-      return chats.list(id).map((c) => chatView(id, config, c))
+      return this.chats(id)
     },
-    async selectChat(id, chatId, selected) {
+    async selectChat(id, nodeId, selected) {
       await recordOf(id)
-      const config = requireConfig(id)
-      const chat = chatOf(id, chatId)
-      chats.setSelected(id, chatId, selected, now())
-      if (selected) ensureObserve(id, chatId, chat.title)
-      else {
-        const groups = { ...config.groups }
-        delete groups[chatId]
-        gateway.configure({ ...config, groups })
-        chats.setBackfillDays(id, chatId, null, now())
-        chats.setAdminLog(id, chatId, false, now())
+      requireConfig(id)
+      const chat = chatOf(id, nodeId)
+      chats.setSelected(id, chat.chatId, selected, now())
+      if (!selected) {
+        chats.setBackfillDays(id, chat.chatId, null, now())
+        chats.setAdminLog(id, chat.chatId, false, now())
       }
-      return chatView(id, gateway.config(id), chatOf(id, chatId))
+      return chatView(chatOf(id, nodeId))
     },
-    async setBackfill(id, chatId, days) {
+    async setBackfill(id, nodeId, days) {
       await recordOf(id)
-      const chat = chatOf(id, chatId)
+      const chat = chatOf(id, nodeId)
       if (!chat.selected) throw conflict('Choose the chat for ingest first.', 'NOT_SELECTED')
       if (days !== null && (!Number.isInteger(days) || days < 1 || days > 3650)) {
         throw invalid('days must be a whole number from 1 to 3650 (or null for no backfill)')
       }
-      chats.setBackfillDays(id, chatId, days, now())
+      chats.setBackfillDays(id, chat.chatId, days, now())
       void entries
         .get(id)
         ?.backfill?.runUntilIdle()
         .catch(() => undefined)
-      return chatView(id, gateway.config(id), chatOf(id, chatId))
+      return chatView(chatOf(id, nodeId))
     },
-    async setAdminLog(id, chatId, enabled) {
+    async setAdminLog(id, nodeId, enabled) {
       await recordOf(id)
-      const chat = chatOf(id, chatId)
+      const chat = chatOf(id, nodeId)
       if (enabled && !chat.admin) {
         throw conflict(
           'The account is not an admin of this chat: Telegram only shows the admin log to admins.',
@@ -1003,8 +929,8 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       }
       if (enabled && !chat.selected)
         throw conflict('Choose the chat for ingest first.', 'NOT_SELECTED')
-      chats.setAdminLog(id, chatId, enabled, now())
-      return chatView(id, gateway.config(id), chatOf(id, chatId))
+      chats.setAdminLog(id, chat.chatId, enabled, now())
+      return chatView(chatOf(id, nodeId))
     },
     async runAdminLog(id, force) {
       const record = await recordOf(id)
@@ -1055,8 +981,7 @@ export function compositeChannelsPort(
     bind: async (id, input) => (await pick(id)).bind(id, input),
     unbind: async (id) => (await pick(id)).unbind(id),
     chats: async (id) => (await pick(id)).chats(id),
-    setChatPolicy: async (id, chatId, input, topic) =>
-      (await pick(id)).setChatPolicy(id, chatId, input, topic),
+    setChatPolicy: async (id, nodeId, input) => (await pick(id)).setChatPolicy(id, nodeId, input),
     links: async (id) => (await pick(id)).links(id),
     revokeLink: async (id, peerId) => (await pick(id)).revokeLink(id, peerId),
     deleteWebhook: async (id) => (await pick(id)).deleteWebhook(id),
