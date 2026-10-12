@@ -49,6 +49,8 @@ one context. The client sees outputs (reports, drafts, findings) and a short lis
   with an owner agent, a brief, links). The manager (or the client) creates queued tasks; a worker
   program picks the next queued task assigned to its agent. Board columns: Queued · Running ·
   Waiting for you · Review · Done/Failed.
+  *(Phase N: assigning a task starts it by itself with the agent's chat authority; a worker program is
+  optional, for standing orders.)*
 - **D7 — Big data is processed in chunks with a manifest.** Pattern for any large source:
   1. *Ingest* (deterministic, no model): a collector pulls new items since a cursor into the
      library as files `/data/<source>/<channel>/<YYYY-MM-DD>/<HH>.jsonl`.
@@ -115,6 +117,7 @@ and decided before code (docs over presets: patterns become guides, not wrapper 
 | J | **Evals** (developer tool, a CLI such as `bun run eval <scenario>`, no web page; opt-in, real model, budget-capped, not in CI; generic scenario format: fixture data + program config + deterministic checks + rubric): fixed scenarios scored automatically (auditor recall/precision against the planted incidents, deliverable checks) and by a rubric judge; scores kept per run to compare prompt/skill/model changes. Needs the client's output examples as the answer key. | **built** (framework + 3 illustrative scenarios); real runs await the client's examples and an approved budget |
 | K | **Rehearsal (test run)** for clients, generic for any program: run a program on sample data in a safe mode (writes go to a scratch area, external writes such as company API calls or posts are disabled or simulated), show the deliverables, decisions it would raise and cost before activating; save rehearsals as the program's test cases and re-run them after edits. | after H, J. **built** (walkthrough section 25) |
 | M | **Chat threads per agent, all equal** (pattern of ChatGPT / Claude Cowork / Devin): "New chat", rename, archive/delete for any thread (`chat:<agentId>:<threadId>`; the existing `dm:<agentId>` becomes the first thread with no special status). System news leaves the chat: the **daily digest becomes a Briefing page** (one entry per day + one bell notification; later deliverable to channels), **urgent heartbeat alerts go to the bell** (later channels), reports of work started from a thread return to that thread, work not started from a chat shows on the board. The lead can read briefings with a tool from any thread. **Following up**: every run is already its own session (open it from the board, a notification or a briefing and use its follow-up box: same session, same context); a briefing or an alert has **"Discuss in chat"**, which creates a new lead thread seeded with that item as context — threads are created on demand, never automatically per event. Continuity across threads comes from memory, not chat history. Generic, example only. | after I, K. **built** (walkthrough section 27) |
+| N | **Work queue redesign: assign a task, it starts.** The value evaluation found the queue + Review flow "needs redesign" (a worker program form, manual *Run now*, authority amendments, manual re-run after send-back, clipped Review buttons; chat gave the same result faster). Tasks now start by themselves with the agent's normal chat authority, per-agent concurrency queues the rest, *Hold* keeps one from starting, Review is the creator's choice, send back restarts by itself, worker programs stay for standing orders. | after the value pass. **built** (walkthrough section 21, "Assigned tasks") |
 | F | ~~Telegram source~~ — **deferred**: decided together with the messaging/channels design (data source vs outbound tools vs live chat) | later |
 | G | **Docs only for now** ([docs/examples/integrate-team-to-your-system.md](../examples/integrate-team-to-your-system.md)); no implementation until a client integrates. Original scope: **Company system integration (agent = virtual user)**: a mock internal company API in the repo (OpenAPI 3.1; roles employee / leader / manager; illustrative modules from one client use case — any departments work — e.g. a *Clipper* module: upload video, submit social link, analytics by views and by uploader; *Video production* module: idea → draft → shoot → edit → YouTube upload) and the team agents connected to it as **bot users** — one service account and token per agent (`kind: bot`, least-privilege role, revocable), tools from `openApiSource` (include/exclude per agent, method risk feeding program authority, token injected by `headers()` from the vault, never visible to the model), read-only first. Shows that business logic is written once (the API) and reused by people and agents. | D11 |
 
@@ -499,8 +502,53 @@ Done in `examples/team`, no library change, no migration:
 5. The Analyst seed has library write (new workspaces; an existing Analyst gets it by turning Files
    edit on in its settings). 6. Task titles are short labels.
 
-Not done here: the work queue / Review redesign (a later phase); existing connections keep their
-stored Ask modes for reads.
+The work queue / Review redesign is phase N below. Existing connections keep their stored Ask
+modes for reads.
+
+## Phase N checklist (work queue redesign: assign a task, it starts)
+
+Source: the value evaluation (work queue + Review = "needs redesign").
+
+- [x] **Assigning starts it.** `createTask` (dialog, board, `POST /tasks`, `create_task`) and send back
+      call `dispatchQueue`: the owner agent works the task in a chat-like session
+      `task:<taskId>:<round>` (run profile `task`: the agent's own tools, permissions and mode;
+      `escalate` is available, approvals ask the client on the board). No worker program needed.
+- [x] **Concurrency.** `agents.task_concurrency` (1 to 8, default 1, *Tasks at once* in the agent
+      settings) and the team-wide spawn cap: extra tasks wait as Queued with a reason (`queue`:
+      `slot`, `hold`, `worker`, `starting`) and start when one ends (run promise, 10 s safety pass,
+      boot / repair pass). Claiming is atomic (`claimAssigned`).
+- [x] **Hold / Start now.** `tasks.hold`; `POST /tasks/{id}/start` starts any queued task at once.
+- [x] **Authority = chat authority** plus optional task grants (`tasks.grants`: tools, connectors,
+      read and write paths) as pre-approved allow rules for that task; deny rules and pinned asks
+      still win. No amendment step for normal work.
+- [x] **Review is the creator's choice.** `tasks.review`: default on for client-made tasks, off for
+      tasks an agent created (the delegator reads the result with `list_tasks`). Send back re-queues
+      and **starts again by itself** with the note (hint says so).
+- [x] **Worker programs keep working.** An agent with an active worker program keeps its queue (tasks
+      wait as `worker`, held tasks are skipped); standing orders are what they are for.
+- [x] **Migration 0029** (additive columns with defaults): queued tasks of agents without an active
+      worker program start at the first pass after the upgrade, held ones do not.
+- [x] **Web.** New task dialog without the worker warning (review / hold toggles, optional extra
+      permissions), *Tasks at once* in the agent editor, board badges (*waiting for a slot*, *on
+      hold*, *waits for worker*), the task drawer actions (Start now, Hold, Accept, Send back, Try
+      again) in a footer that is always reachable, details capped and scrollable (fixes the clipped
+      Review buttons at small heights).
+- [x] Tests (written, not run in the pass that built them): `server/test/task-assignment.test.ts`,
+      the work-queue tests adapted (a task for an agent without a worker now starts), web
+      `lib/tasks/queue.test.ts` and `lib/board/board.test.ts`.
+
+Decided in phase N:
+
+- **A worker program still owns its agent's queue.** The alternative (assigned tasks always start,
+  the worker only takes what is left) would silently run a task outside the narrow authority the
+  client gave the worker. *Start now* is the explicit escape hatch.
+- **Held tasks are skipped by worker programs too**: hold means "not by anything automatic".
+- **Slots count running and parked tasks.** A task that waits for an approval keeps its slot;
+  otherwise a second task could race ahead of a decision the client has not made yet.
+- **Agent-created tasks default to no Review**: the creator is an agent (or the lead for the
+  client), it reads the result with `list_tasks`; it can ask for review with `review: true`.
+- Not done: the bell notice "Ready for review" is posted when a task ends in its own turn, not when
+  it ends in a turn that continued after an approval (the board still shows Review).
 
 ## Requests to other phases
 

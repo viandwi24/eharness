@@ -1,5 +1,6 @@
 /** Tasks and the board: status is derived from session facts (plan §6.4). Pure. */
 import type { DeliverableResult } from './deliverables.ts'
+import type { ProgramAuthority } from './programs.ts'
 
 export const TASK_STATUSES = [
   'queued',
@@ -64,6 +65,12 @@ export interface Task {
   round: number
   /** Sessions of earlier rounds (their chats stay readable). */
   history: string[]
+  /** Queued only: do not start on its own; the client starts it ("Start now"). */
+  hold: boolean
+  /** Finished work waits in Review for the client (client-made tasks); false = it goes to Done. */
+  review: boolean
+  /** Extra permissions given with the task on top of the agent's own (null = none). */
+  grants: ProgramAuthority | null
 }
 
 /** The board of the web app: where a task is shown. */
@@ -76,10 +83,12 @@ export const isWorkItem = (t: Pick<Task, 'createdBy'>): boolean => t.createdBy !
 /** A finished work item whose report says the work is there and that the client has not accepted yet. */
 export function inReview(
   t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'> &
-    Partial<Pick<Task, 'deliverables'>>,
+    Partial<Pick<Task, 'deliverables' | 'review'>>,
 ): boolean {
   return (
     t.status === 'done' &&
+    // the creator did not ask for review (agent-made tasks: the delegator reads the result)
+    t.review !== false &&
     // failing deliverables keep the item out of Review until they are fixed or decided (phase H)
     t.deliverables?.status !== 'fail' &&
     isWorkItem(t) &&
@@ -95,7 +104,7 @@ export function inReview(
  */
 export function boardColumn(
   t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'> &
-    Partial<Pick<Task, 'deliverables'>>,
+    Partial<Pick<Task, 'deliverables' | 'review'>>,
   openDecision: boolean,
 ): BoardColumn {
   if (t.status === 'queued') return 'queued'

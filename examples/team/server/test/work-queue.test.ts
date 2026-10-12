@@ -242,6 +242,7 @@ describe('the queue on the API', () => {
     const { app, server } = fresh({})
     const t = await queue(app, {
       agentId: 'writer',
+      hold: true,
       title: 'Script: the island',
       brief: '## Goal\nA 5 minute script.',
       inputs: ['/library/production/videos.md'],
@@ -310,6 +311,7 @@ describe('manager', () => {
         call('create_task', {
           agent: 'researcher',
           title: 'Research: tide tables',
+          hold: true,
           brief: 'Find how tide tables are built. Save to /library/research/tide-tables.md.',
           inputs: ['/library/production/videos.md'],
           priority: 'high',
@@ -318,6 +320,7 @@ describe('manager', () => {
         call('create_task', {
           agent: 'writer',
           title: 'Script: the lighthouse',
+          hold: true,
           brief: 'Write the script. Save to /library/scripts/the-lighthouse.md.',
         }),
         call('create_task', { agent: 'nobody', title: 'bad' }),
@@ -358,7 +361,8 @@ describe('manager', () => {
     expect(String(lists[1]?.output)).toContain('Research: tide tables')
     expect(String(lists[1]?.output)).toContain('[queued]')
     const creates = await toolParts(app, 'dm:lead', 'create_task')
-    expect(String(creates[0]?.output)).toContain('Queued task')
+    expect(String(creates[0]?.output)).toContain('Assigned task')
+    expect(String(creates[0]?.output)).toContain('on hold')
     expect(String(creates[2]?.output)).toMatch(/^ERROR: could not queue the task: /)
     // a role agent has no manager tools in its chat
     expect(columnsOf(server.deps, queued).get(research.id)).toBe('queued')
@@ -381,7 +385,7 @@ describe('manager', () => {
   test('update_task re-prioritises, reassigns and cancels; a program run gets the manager tools only when its authority names them', async () => {
     let oneId = ''
     const { app, server, models } = fresh({
-      lead: [call('create_task', { agent: 'writer', title: 'One' }), { text: 'ok' }],
+      lead: [call('create_task', { agent: 'writer', title: 'One', hold: true }), { text: 'ok' }],
       researcher: [
         () => call('update_task', { id: oneId, priority: 'urgent', agent: 'researcher' }),
         () => call('update_task', { id: oneId, cancel: true }),
@@ -446,6 +450,9 @@ describe('writer worker program', () => {
       '/library/production/videos.md',
       '- The island\n- The lighthouse\n- The tide\n',
     )
+    // the worker program owns the queue of the writer: create it first, tasks then wait for it
+    const worker = await createProgram(app, { agentId: 'writer', worker: { maxTasks: 5 } })
+    expect(worker.worker).toEqual({ maxTasks: 5 })
     const island = await queue(app, {
       agentId: 'writer',
       title: 'Script: The island',
@@ -459,8 +466,6 @@ describe('writer worker program', () => {
       inputs: ['/library/production/videos.md'],
       priority: 'high',
     })
-    const worker = await createProgram(app, { agentId: 'writer', worker: { maxTasks: 5 } })
-    expect(worker.worker).toEqual({ maxTasks: 5 })
 
     const started = await runNow(app, worker.id)
     expect(started).toMatchObject({ started: true, idle: false })
@@ -609,6 +614,13 @@ describe('researcher worker program', () => {
         }),
       ],
     })
+    const worker = await createProgram(app, {
+      agentId: 'researcher',
+      name: 'Research items',
+      brief: 'Research the task you were given. Write /library/research/<slug>.md.',
+      authority: { read: ['/library/**'], write: ['/library/research/**'] },
+      worker: { maxTasks: 1 },
+    })
     const glass = await queue(app, {
       agentId: 'researcher',
       title: 'Research: sea glass',
@@ -620,14 +632,7 @@ describe('researcher worker program', () => {
       dueAt: Date.now() + 86_400_000,
     })
     // a task of another agent is never taken
-    const other = await queue(app, { agentId: 'writer', title: 'Not yours' })
-    const worker = await createProgram(app, {
-      agentId: 'researcher',
-      name: 'Research items',
-      brief: 'Research the task you were given. Write /library/research/<slug>.md.',
-      authority: { read: ['/library/**'], write: ['/library/research/**'] },
-      worker: { maxTasks: 1 },
-    })
+    const other = await queue(app, { agentId: 'writer', title: 'Not yours', hold: true })
     // one task per run: the nearest due date (tides) first, then the rest
     const first = await runNow(app, worker.id)
     await until('tides done', async () => settled(await getTask(app, tides.id)))
@@ -662,16 +667,16 @@ describe('task inputs that are uploads', () => {
     }
     const photo = await up('photo.png', 'image/png', new Uint8Array([137, 80, 78, 71, 1, 2, 3]))
     const notes = await up('notes.csv', 'text/csv', 'a,b\n1,2\n')
-    const task = await queue(app, {
-      agentId: 'researcher',
-      title: 'Look at the photo',
-      inputs: [photo, notes, '/uploads/2020-01-01/missing.png', '/library/other.png'],
-    })
     const worker = await createProgram(app, {
       agentId: 'researcher',
       name: 'Look',
       authority: { read: ['/library/**'], write: ['/library/research/**'] },
       worker: { maxTasks: 1 },
+    })
+    const task = await queue(app, {
+      agentId: 'researcher',
+      title: 'Look at the photo',
+      inputs: [photo, notes, '/uploads/2020-01-01/missing.png', '/library/other.png'],
     })
     await runNow(app, worker.id)
     await until('done', async () => settled(await getTask(app, task.id)))
@@ -705,8 +710,8 @@ describe('waiting for you', () => {
         ...draft('tone'),
       ],
     })
-    const t = await queue(app, { agentId: 'writer', title: 'Script: tone' })
     const worker = await createProgram(app, { agentId: 'writer', worker: { maxTasks: 1 } })
+    const t = await queue(app, { agentId: 'writer', title: 'Script: tone' })
     await runNow(app, worker.id)
     let decision: Decision | undefined
     await until('an open decision', async () => {
@@ -766,7 +771,6 @@ describe('atomic claim', () => {
       finalReport({ status: 'done', summary: 'done', outputs: [] }),
     )
     const { app } = fresh({ writer: same })
-    for (let i = 0; i < 4; i++) await queue(app, { agentId: 'writer', title: `Task ${i}` })
     const p1 = await createProgram(app, {
       agentId: 'writer',
       name: 'Worker A',
@@ -777,6 +781,7 @@ describe('atomic claim', () => {
       name: 'Worker B',
       worker: { maxTasks: 2 },
     })
+    for (let i = 0; i < 4; i++) await queue(app, { agentId: 'writer', title: `Task ${i}` })
     const [r1, r2] = await Promise.all([runNow(app, p1.id), runNow(app, p2.id)])
     expect(r1.started && r2.started).toBe(true)
     await until('all tasks done', async () => {

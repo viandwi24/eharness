@@ -1,5 +1,11 @@
 import { z } from '@hono/zod-openapi'
-import { BOARD_COLUMNS, EVENT_TYPES, TASK_PRIORITIES, TASK_STATUSES } from '../../app/catalog.ts'
+import {
+  BOARD_COLUMNS,
+  EVENT_TYPES,
+  QUEUE_REASONS,
+  TASK_PRIORITIES,
+  TASK_STATUSES,
+} from '../../app/catalog.ts'
 import { ChatStatsSchema, UiMessageSchema } from './chat.ts'
 import { LibraryEntrySchema, MemoryFileInfoSchema } from './library.ts'
 import { RoutineSchema } from './routines.ts'
@@ -69,6 +75,19 @@ export const DeliverableResultSchema = z
       'The deliverable checks of a run. `fail`: the run is partial, a decision is open, and a work item stays out of Review.',
   })
 
+export const GrantsSchema = z
+  .object({
+    tools: z.array(z.string().max(500)).max(100),
+    connectors: z.array(z.string().max(500)).max(100),
+    read: z.array(z.string().max(500)).max(100),
+    write: z.array(z.string().max(500)).max(100),
+  })
+  .partial()
+  .openapi('TaskGrants', {
+    description:
+      'Extra permissions for one task: tool names or rules, connectors (every tool), library path globs to read and to write. Pre-approved on top of what the agent has in chat.',
+  })
+
 export const TaskSchema = z
   .object({
     id: z.string(),
@@ -111,6 +130,20 @@ export const TaskSchema = z
     }),
     round: z.number().int().openapi({ description: '1, +1 every time the work was sent back.' }),
     history: z.array(z.string()).openapi({ description: 'Sessions of earlier rounds.' }),
+    hold: z.boolean().openapi({
+      description: 'Queued only: the task does not start on its own; the client starts it.',
+    }),
+    review: z.boolean().openapi({
+      description:
+        'Finished work waits in Review (client-made tasks by default). false: it goes straight to Done and the creator (an agent) reads the result.',
+    }),
+    grants: GrantsSchema.nullable().openapi({
+      description: "Extra permissions given with the task on top of the agent's own; null = none.",
+    }),
+    queue: z.enum(QUEUE_REASONS).nullable().optional().openapi({
+      description:
+        'Queued tasks only (`GET /tasks`, `GET /tasks/{id}`): why it has not started. `hold`: held by the client. `worker`: an active worker program of the agent owns the queue. `slot`: the agent (or the team) works on its maximum already; it starts when one ends. `starting`: a slot is free, it starts now.',
+    }),
     column: z.enum(BOARD_COLUMNS).optional().openapi({
       description:
         'Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`.',
@@ -292,6 +325,14 @@ export const TaskCreateSchema = z
       .nullable()
       .optional()
       .openapi({ description: 'Epoch milliseconds.' }),
+    hold: z.boolean().optional().openapi({
+      description:
+        'Do not start on its own (default false: the task starts when the agent has a free slot).',
+    }),
+    review: z.boolean().optional().openapi({
+      description: 'Finished work waits in Review. Default true for the client.',
+    }),
+    grants: GrantsSchema.nullable().optional(),
   })
   .openapi('TaskCreate')
 
@@ -303,6 +344,9 @@ export const TaskPatchSchema = z
     inputs: paths.optional(),
     priority: TaskPrioritySchema.optional(),
     dueAt: z.number().int().positive().nullable().optional(),
+    hold: z.boolean().optional().openapi({ description: 'false releases a held task.' }),
+    review: z.boolean().optional(),
+    grants: GrantsSchema.nullable().optional(),
   })
   .openapi('TaskPatch')
 
@@ -319,6 +363,6 @@ export const TaskSendBackSchema = z
 export const TaskSendBackResultSchema = TaskSchema.extend({
   hint: z.string().openapi({
     description:
-      'What happens next: a scheduled worker program picks the task up at its next run, a manual one must be run ("Run now"), or no worker program runs the agent queue.',
+      'What happens next: it starts on its own, waits for a free slot of the agent, or (an active worker program of the agent) is picked up by that program at its next run.',
   }),
 }).openapi('TaskSendBackResult')

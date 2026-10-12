@@ -480,18 +480,18 @@ describe('work items', () => {
       report('done', [slugPath]),
     ]
     const { server, app } = fresh({ writer: steps() })
-    const queued = await app.request(
-      '/tasks',
-      json('POST', { agentId: 'writer', title: 'The island', brief: 'Draft the script.' }),
-    )
-    expect(queued.status).toBe(201)
-    const task0 = (await queued.json()) as Task
     const program = await createProgram(app, {
       name: 'Script writer',
       authority: { read: ['/library/**'], write: ['/library/scripts/**'] },
       worker: { maxTasks: 1 },
       deliverables: [spec],
     })
+    const queued = await app.request(
+      '/tasks',
+      json('POST', { agentId: 'writer', title: 'The island', brief: 'Draft the script.' }),
+    )
+    expect(queued.status).toBe(201)
+    const task0 = (await queued.json()) as Task
     await runNow(app, program.id)
     await server.programs.idle()
 

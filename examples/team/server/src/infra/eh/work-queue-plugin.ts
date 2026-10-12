@@ -84,6 +84,16 @@ const createSchema = z.object({
   inputs: z.array(path).max(50).optional().describe('Library paths the task starts from.'),
   priority: z.enum(TASK_PRIORITIES).optional().describe('Default normal.'),
   due: due.optional(),
+  hold: z
+    .boolean()
+    .optional()
+    .describe('true: the task waits and does not start on its own (the client starts it).'),
+  review: z
+    .boolean()
+    .optional()
+    .describe(
+      'true: the finished work waits in Review for the client. Default false: you read the result yourself (list_tasks) and report it.',
+    ),
 })
 
 const listSchema = z.object({
@@ -109,6 +119,10 @@ const updateSchema = z.object({
   priority: z.enum(TASK_PRIORITIES).optional().describe('Re-prioritise.'),
   due: due.nullable().optional().describe('null removes the due date.'),
   agent: z.string().optional().describe('Reassign to this agent (slug).'),
+  hold: z
+    .boolean()
+    .optional()
+    .describe('true: keep it from starting; false: release it (it starts when a slot is free).'),
   cancel: z.boolean().optional().describe('true: cancel the task.'),
 })
 
@@ -124,11 +138,11 @@ const text = (error: unknown): string =>
   error instanceof DomainError ? error.message : errorText(error)
 
 export const CREATE_TASK_DESCRIPTION =
-  'Put a task in the work queue of an agent. The task waits as Queued on the board until a worker program of that agent picks it up (priority first, then the nearest due date, then the oldest). The client sees it and may change or cancel it. Write a complete brief.'
+  'Assign a task to an agent. It starts on its own as soon as that agent has a free slot (an agent works on one task at a time by default; the others wait as Queued, priority first, then the nearest due date, then the oldest) and the agent works with its normal tools and permissions. The client sees it on the board and may change or cancel it while it waits. Write a complete brief: the agent starts with an empty context.'
 export const LIST_TASKS_DESCRIPTION =
   'Read the task board: each task with its column (queued, running, waiting, review, done), owner, priority and what it cost so far (its own session). Filter by column, agent or program; the total cost of the rows is at the end. Use it before queueing work, so you do not queue the same thing twice, and to answer what a run or a program cost.'
 export const UPDATE_TASK_DESCRIPTION =
-  'Change a task that has not started: re-prioritise, reassign, rewrite, set a due date, or cancel it. A task that runs or finished cannot be changed.'
+  'Change a task that has not started: re-prioritise, reassign, rewrite, set a due date, hold or release it, or cancel it. A task that runs or finished cannot be changed.'
 export const COMPLETE_TASK_DESCRIPTION =
   'Mark the task of this run done: a short summary and the library paths of what you made (they must exist). The client then reviews it. Call it once the work is verified, then give your final report.'
 
@@ -187,7 +201,8 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
       const offered = (name: string): boolean =>
         origin === 'program' || origin === 'rehearsal'
           ? intake().authorizes(sessionId, name)
-          : (origin === 'dm' || origin === 'heartbeat') && agent?.role === 'lead'
+          : (origin === 'dm' || origin === 'heartbeat' || origin === 'task') &&
+            agent?.role === 'lead'
       if (offered(CREATE_TASK_TOOL)) {
         tools[CREATE_TASK_TOOL] = tool({
           description: CREATE_TASK_DESCRIPTION,
@@ -211,9 +226,15 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
                 inputs: input.inputs,
                 priority: input.priority,
                 dueAt: input.due === undefined ? undefined : dueAt(input.due),
+                hold: input.hold,
+                review: input.review,
                 createdBy: self().id,
               })
-              return `Queued task ${task.id} for ${input.agent}: ${task.title}. It starts when a worker program of that agent runs.`
+              return `Assigned task ${task.id} to ${input.agent}: ${task.title}. ${
+                task.hold
+                  ? 'It is on hold: it starts when the client starts it.'
+                  : 'It starts on its own when the agent has a free slot.'
+              } Read the result with list_tasks.`
             } catch (error) {
               return `ERROR: could not queue the task: ${text(error)}`
             }
@@ -271,6 +292,7 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
                 brief: input.brief,
                 inputs: input.inputs,
                 priority: input.priority,
+                hold: input.hold,
                 dueAt:
                   input.due === undefined
                     ? undefined

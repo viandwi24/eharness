@@ -204,6 +204,13 @@
       "when": 1791801934569,
       "tag": "0028_tiny_shatterstar",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1791807474350,
+      "tag": "0029_worthless_dagger",
+      "breakpoints": true
     }
   ]
 }

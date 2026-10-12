@@ -14,12 +14,21 @@
  *                                      (`chat:<leadId>:<threadId>:agent:<call>` from a thread)
  *   routine:<routineId>:<slot>         a scheduled prompt (task mode)
  *   program:<programId>:<runAt>        a run of a program (a standing order, `domain/programs.ts`)
+ *   task:<taskId>:<round>              an assigned task of the work queue, worked like a chat (`domain/work-queue.ts`)
  *   heartbeat:<agentId>                the ambient monitor of an agent (P40 phase E, `domain/heartbeat.ts`)
  *   rehearsal:<programId>:<ts>         a test run of a program on sample data (P40 phase K, `domain/rehearsal.ts`)
  */
 import type { TaskOrigin } from './tasks.ts'
 
-export const RUN_ORIGINS = ['dm', 'lead', 'routine', 'program', 'heartbeat', 'rehearsal'] as const
+export const RUN_ORIGINS = [
+  'dm',
+  'lead',
+  'routine',
+  'program',
+  'task',
+  'heartbeat',
+  'rehearsal',
+] as const
 export type RunOrigin = (typeof RUN_ORIGINS)[number]
 
 /** Where the tool permission decisions of a session come from. */
@@ -81,6 +90,18 @@ export const RUN_PROFILES: Record<RunOrigin, RunProfile> = {
     task: { origin: 'routine' },
     budget: 'workspace',
   },
+  // an assigned task: the agent's own tools and permissions as in chat (a call that needs approval
+  // asks the client on the board), the result goes to the task (and Review)
+  task: {
+    origin: 'task',
+    startedBy: 'scheduler',
+    permissions: 'session-mode',
+    unattended: false,
+    feedsMemory: true,
+    resultTo: 'task',
+    task: { origin: 'user' },
+    budget: 'workspace',
+  },
   program: {
     origin: 'program',
     startedBy: 'program',
@@ -119,6 +140,7 @@ export const RUN_PROFILES: Record<RunOrigin, RunProfile> = {
 export function originOfSession(sessionId: string, hasParent = false): RunOrigin {
   if (sessionId.startsWith('routine:')) return 'routine'
   if (sessionId.startsWith('program:')) return 'program'
+  if (sessionId.startsWith('task:')) return 'task'
   if (sessionId.startsWith('heartbeat:')) return 'heartbeat'
   if (sessionId.startsWith('rehearsal:')) return 'rehearsal'
   if (hasParent || /^dm:[^:]+:/.test(sessionId) || /^chat:[^:]+:[^:]+:/.test(sessionId))

@@ -69,6 +69,9 @@ describe('work queue columns', () => {
 		expect(columnOf(item({ report: report('needs_decision') }))).toBe('done');
 		expect(columnOf(item({ acceptedAt: 10 }))).toBe('done');
 		expect(columnOf(item({ createdBy: null }))).toBe('done');
+		// the creator did not ask for review (an agent that assigned the work reads it itself)
+		expect(columnOf(item({ review: false }))).toBe('done');
+		expect(columnOf(item({ review: true }))).toBe('review');
 		expect(columnOf(item({ status: 'failed' }))).toBe('done');
 		expect(badgeOf({ ...item({}), summary: null }).label).toBe('review');
 		expect(badgeOf({ ...item({ acceptedAt: 10 }), summary: null }).label).toBe('accepted');
@@ -80,6 +83,16 @@ describe('work queue columns', () => {
 		expect(columnOf(item)).toBe('done');
 		expect(columnOf(item, new Set(['program:x:1']))).toBe('waiting');
 		expect(columnOf({ ...item, deliverables: { ...fail, status: 'pass' } })).toBe('review');
+	});
+
+	test('a queued card says why it waits: hold, a slot, a worker program', () => {
+		const q = (over: Partial<Task>) => ({ ...t('q', 'queued', over), summary: null });
+		expect(badgeOf(q({ hold: true })).label).toBe('on hold');
+		expect(badgeOf(q({ queue: 'hold' })).label).toBe('on hold');
+		expect(badgeOf(q({ queue: 'slot' })).label).toBe('waiting for a slot');
+		expect(badgeOf(q({ queue: 'worker' })).label).toBe('waits for worker');
+		expect(badgeOf(q({ queue: 'starting' })).label).toBe('starting');
+		expect(badgeOf(q({})).label).toBe('queued');
 	});
 
 	test('the queue is shown in the order a worker takes it', () => {

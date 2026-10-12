@@ -2806,7 +2806,7 @@ export interface paths {
         put?: never;
         /**
          * Queue a task for an agent (the work queue)
-         * @description Creates a task that has no session yet (`status: queued`) with an owner, a brief, inputs (library paths), a priority and an optional due date. A worker program of that agent picks it up (priority, then due date, then age). Managers do the same with the `create_task` tool.
+         * @description Assigns a task to an agent: it has an owner, a brief, inputs (library paths), a priority, an optional due date, optional `grants` (extra permissions for this task) and `hold` / `review` flags. It starts on its own (`status: queued` until the agent has a free slot, see `Agent.taskConcurrency`) and the agent works with its normal tools and permissions, as in chat. An agent with an active worker program leaves its queue to that program. Managers do the same with the `create_task` tool.
          */
         post: {
             parameters: {
@@ -2939,7 +2939,7 @@ export interface paths {
         head?: never;
         /**
          * Change a queued task
-         * @description Re-prioritise, reassign, rewrite or set a due date. `409 TASK_NOT_QUEUED` once a worker took it.
+         * @description Re-prioritise, reassign, rewrite, set a due date, grants, hold (`hold: false` releases a held task). `409 TASK_NOT_QUEUED` once it started.
          */
         patch: {
             parameters: {
@@ -3084,6 +3084,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a queued task now
+         * @description Starts a queued task at once: a held task, one that waits for a free slot of its agent, or one an active worker program has not taken yet. The agent works on it with its normal tools and permissions (plus the task grants). `409 TASK_NOT_QUEUED` once it runs.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The task, running */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `TASK_NOT_QUEUED` or the agent is archived */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/accept": {
         parameters: {
             query?: never;
@@ -3173,7 +3251,7 @@ export interface paths {
         put?: never;
         /**
          * Send finished work back with a note
-         * @description The task is queued again with the note appended to its brief (`round` + 1); the next worker run revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.
+         * @description The task is queued again with the note appended to its brief (`round` + 1) and starts on its own, so the agent revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.
          */
         post: {
             parameters: {
@@ -11393,6 +11471,8 @@ export interface components {
              * @enum {string|null}
              */
             toolAccess: "auto" | "on-demand" | null;
+            /** @description Assigned tasks (the work queue) this agent works on at the same time; further tasks wait as Queued and start when one ends. Default 1. The team-wide spawn cap (`GET /settings`) still applies. */
+            taskConcurrency: number;
             /** @description This agent's own choices per connection id (on / off / inherit, capability modes). Use `GET /agents/{id}/connectors` for the effective view. */
             connectors: {
                 [key: string]: components["schemas"]["ConnectionChoices"];
@@ -11445,6 +11525,8 @@ export interface components {
              * @enum {string|null}
              */
             toolAccess?: "auto" | "on-demand" | null;
+            /** @description See `Agent.taskConcurrency`. Default 1. */
+            taskConcurrency?: number;
             skills?: string[];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
@@ -11477,6 +11559,8 @@ export interface components {
              * @enum {string|null}
              */
             toolAccess?: "auto" | "on-demand" | null;
+            /** @description See `Agent.taskConcurrency`. Default 1. */
+            taskConcurrency?: number;
             skills?: string[];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
@@ -12050,6 +12134,16 @@ export interface components {
             round: number;
             /** @description Sessions of earlier rounds. */
             history: string[];
+            /** @description Queued only: the task does not start on its own; the client starts it. */
+            hold: boolean;
+            /** @description Finished work waits in Review (client-made tasks by default). false: it goes straight to Done and the creator (an agent) reads the result. */
+            review: boolean;
+            grants: components["schemas"]["TaskGrants"];
+            /**
+             * @description Queued tasks only (`GET /tasks`, `GET /tasks/{id}`): why it has not started. `hold`: held by the client. `worker`: an active worker program of the agent owns the queue. `slot`: the agent (or the team) works on its maximum already; it starts when one ends. `starting`: a slot is free, it starts now.
+             * @enum {string|null}
+             */
+            queue?: "hold" | "worker" | "slot" | "starting" | null;
             /**
              * @description Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`.
              * @enum {string}
@@ -12088,6 +12182,13 @@ export interface components {
         };
         /** @enum {string} */
         TaskPriority: "low" | "normal" | "high" | "urgent";
+        /** @description Extra permissions given with the task on top of the agent's own; null = none. */
+        TaskGrants: {
+            tools?: string[];
+            connectors?: string[];
+            read?: string[];
+            write?: string[];
+        } | null;
         TaskDetail: {
             task: components["schemas"]["Task"];
             /** @description The stored messages of the task session (newest 200). */
@@ -12133,6 +12234,11 @@ export interface components {
             priority?: components["schemas"]["TaskPriority"];
             /** @description Epoch milliseconds. */
             dueAt?: number | null;
+            /** @description Do not start on its own (default false: the task starts when the agent has a free slot). */
+            hold?: boolean;
+            /** @description Finished work waits in Review. Default true for the client. */
+            review?: boolean;
+            grants?: components["schemas"]["TaskGrants"] & unknown;
         };
         TaskPatch: {
             /** @description Reassign (agent id or slug). */
@@ -12142,9 +12248,13 @@ export interface components {
             inputs?: string[];
             priority?: components["schemas"]["TaskPriority"];
             dueAt?: number | null;
+            /** @description false releases a held task. */
+            hold?: boolean;
+            review?: boolean;
+            grants?: components["schemas"]["TaskGrants"] & unknown;
         };
         TaskSendBackResult: components["schemas"]["Task"] & {
-            /** @description What happens next: a scheduled worker program picks the task up at its next run, a manual one must be run ("Run now"), or no worker program runs the agent queue. */
+            /** @description What happens next: it starts on its own, waits for a free slot of the agent, or (an active worker program of the agent) is picked up by that program at its next run. */
             hint: string;
         };
         TaskSendBack: {

@@ -22,7 +22,7 @@ export const acceptTask = (id: string): Promise<boolean> => run('accept the task
 export async function sendBackTask(id: string, note: string): Promise<{ hint: string } | null> {
 	try {
 		const r = await api.post('/tasks/{id}/send-back', { params: { id }, body: { note } });
-		toast.success('Sent back: it is queued again');
+		toast.success('Sent back: the agent picks it up again');
 		void live.loadTasks();
 		return { hint: r.hint };
 	} catch (e) {
@@ -41,3 +41,10 @@ export const cancelTask = (id: string): Promise<boolean> => run('cancel the task
 /** Re-prioritise a queued task. */
 export const setPriority = (id: string, priority: Priority): Promise<boolean> =>
 	run('change the priority', () => api.patch('/tasks/{id}', { params: { id }, body: { priority } }), 'Priority changed');
+
+/** Start a queued task now: held, waiting for a slot or left to a worker program. */
+export const startTask = (id: string): Promise<boolean> => run('start the task', () => api.post('/tasks/{id}/start', { params: { id } }), 'Task started');
+
+/** Hold a queued task (it does not start on its own) or release it (it starts when the agent is free). */
+export const setHold = (id: string, hold: boolean): Promise<boolean> =>
+	run(hold ? 'hold the task' : 'release the task', () => api.patch('/tasks/{id}', { params: { id }, body: { hold } }), hold ? 'On hold' : 'Released');

@@ -18,8 +18,10 @@ import type {
   TaskStatus,
 } from '../../domain/tasks.ts'
 import {
+  assignedSessionId,
   briefWithFeedback,
   isQueuedSession,
+  normalizeGrants,
   PRIORITY_RANK,
   queuedSessionId,
 } from '../../domain/work-queue.ts'
@@ -49,6 +51,9 @@ interface TaskRow {
   accepted_at: number | null
   round: number
   history: string
+  hold: number
+  review: number
+  grants: string | null
 }
 
 const parseJson = (text: string | null): unknown => {
@@ -63,6 +68,19 @@ const parseJson = (text: string | null): unknown => {
 const strings = (text: string): string[] => {
   const v = parseJson(text)
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+}
+
+const toGrants = (v: unknown): Task['grants'] => {
+  if (typeof v !== 'object' || v === null) return null
+  const o = v as Record<string, unknown>
+  const list = (x: unknown): string[] =>
+    Array.isArray(x) ? x.filter((i): i is string => typeof i === 'string') : []
+  return normalizeGrants({
+    tools: list(o.tools),
+    connectors: list(o.connectors),
+    read: list(o.read),
+    write: list(o.write),
+  })
 }
 
 const toTask = (r: TaskRow): Task => ({
@@ -90,6 +108,9 @@ const toTask = (r: TaskRow): Task => ({
   acceptedAt: r.accepted_at,
   round: r.round,
   history: strings(r.history),
+  hold: r.hold === 1,
+  review: r.review !== 0,
+  grants: toGrants(parseJson(r.grants)),
 })
 
 export interface NewTask {
@@ -133,6 +154,23 @@ export type SqliteTaskStore = TaskStore & TaskWriter
 export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
   const taskBySession = sqlite.query<TaskRow, [string]>('SELECT * FROM tasks WHERE session_id = ?')
   const taskById = sqlite.query<TaskRow, [string]>('SELECT * FROM tasks WHERE id = ?')
+
+  /** Give a queued row the session of its round and start it (origin `user`: an assigned task). */
+  const takeQueued = (row: TaskRow, now: number): Task | undefined => {
+    const sessionId = assignedSessionId(row.id, row.round)
+    const history = isQueuedSession(row.session_id)
+      ? strings(row.history)
+      : [...strings(row.history), row.session_id]
+    const res = sqlite
+      .query(
+        `UPDATE tasks SET state = 'running', session_id = ?, origin = 'user', history = ?, started_at = ?,
+                ended_at = NULL, last_activity_at = ?, summary = NULL, report = NULL,
+                deliverables = NULL, pending_kind = NULL, accepted_at = NULL
+          WHERE id = ? AND state = 'queued'`,
+      )
+      .run(sessionId, JSON.stringify(history), now, now, row.id)
+    return res.changes === 0 ? undefined : toTask(taskById.get(row.id) as TaskRow)
+  }
 
   return {
     list({ status, agentId, limit }) {
@@ -290,8 +328,8 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
         .query(
           `INSERT INTO tasks (id, agent_id, session_id, parent_session_id, origin, title, state, pending_kind,
                               started_at, ended_at, summary, last_activity_at, cost_usd, tokens,
-                              brief, inputs, priority, due_at, created_by, round, history)
-           VALUES (?, ?, ?, NULL, 'program', ?, 'queued', NULL, ?, NULL, NULL, ?, 0, 0, ?, ?, ?, ?, ?, 1, '[]')`,
+                              brief, inputs, priority, due_at, created_by, round, history, hold, review, grants)
+           VALUES (?, ?, ?, NULL, 'program', ?, 'queued', NULL, ?, NULL, NULL, ?, 0, 0, ?, ?, ?, ?, ?, 1, '[]', ?, ?, ?)`,
         )
         .run(
           id,
@@ -305,6 +343,9 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
           t.priority,
           t.dueAt,
           t.createdBy,
+          t.hold === true ? 1 : 0,
+          t.review === false ? 0 : 1,
+          t.grants == null ? null : JSON.stringify(t.grants),
         )
       return toTask(taskById.get(id) as TaskRow)
     },
@@ -322,6 +363,9 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
       if (p.inputs !== undefined) set('inputs', JSON.stringify(p.inputs))
       if (p.priority !== undefined) set('priority', p.priority)
       if (p.dueAt !== undefined) set('due_at', p.dueAt)
+      if (p.hold !== undefined) set('hold', p.hold ? 1 : 0)
+      if (p.review !== undefined) set('review', p.review ? 1 : 0)
+      if (p.grants !== undefined) set('grants', p.grants === null ? null : JSON.stringify(p.grants))
       set('last_activity_at', now)
       const res = sqlite
         .query(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ? AND state = 'queued'`)
@@ -344,7 +388,7 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
         .transaction((): Task | undefined => {
           const row = sqlite
             .query<TaskRow, [string]>(
-              `SELECT * FROM tasks WHERE state = 'queued' AND agent_id = ? ORDER BY ${QUEUE_ORDER} LIMIT 1`,
+              `SELECT * FROM tasks WHERE state = 'queued' AND hold = 0 AND agent_id = ? ORDER BY ${QUEUE_ORDER} LIMIT 1`,
             )
             .get(agentId)
           if (row === null) return undefined
@@ -362,6 +406,49 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
           return res.changes === 0 ? undefined : toTask(taskById.get(row.id) as TaskRow)
         })
         .immediate()
+    },
+
+    claimAssigned(agentId, limit, now) {
+      return sqlite
+        .transaction((): Task | undefined => {
+          const busy =
+            sqlite
+              .query<{ n: number }, [string]>(
+                `SELECT COUNT(*) AS n FROM tasks
+                  WHERE agent_id = ? AND created_by IS NOT NULL AND state IN ('running', 'needs_action')
+                    AND session_id NOT LIKE 'queued:%'`,
+              )
+              .get(agentId)?.n ?? 0
+          if (busy >= limit) return undefined
+          const row = sqlite
+            .query<TaskRow, [string]>(
+              `SELECT * FROM tasks WHERE state = 'queued' AND hold = 0 AND agent_id = ? ORDER BY ${QUEUE_ORDER} LIMIT 1`,
+            )
+            .get(agentId)
+          return row === null ? undefined : takeQueued(row, now)
+        })
+        .immediate()
+    },
+
+    claimTask(id, now) {
+      return sqlite
+        .transaction((): Task | undefined => {
+          const row = taskById.get(id)
+          return row === null || row.state !== 'queued' ? undefined : takeQueued(row, now)
+        })
+        .immediate()
+    },
+
+    running(agentId) {
+      return (
+        sqlite
+          .query<{ n: number }, [string]>(
+            `SELECT COUNT(*) AS n FROM tasks
+              WHERE agent_id = ? AND created_by IS NOT NULL AND state IN ('running', 'needs_action')
+                AND session_id NOT LIKE 'queued:%'`,
+          )
+          .get(agentId)?.n ?? 0
+      )
     },
 
     accept(id, now) {

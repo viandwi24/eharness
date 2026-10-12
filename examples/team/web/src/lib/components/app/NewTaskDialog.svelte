@@ -9,9 +9,7 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { bodyFromTaskForm, emptyTaskForm, PRIORITIES, type TaskForm, validateTaskForm } from '#lib/tasks/queue.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
-	import { closeTaskDialog, openNewProgram, taskDialog } from '#lib/stores/dialogs.svelte.js';
-	import { hasWorkerProgram } from '#lib/tasks/queue.js';
-	import type { Program } from '#lib/programs/form.js';
+	import { closeTaskDialog, taskDialog } from '#lib/stores/dialogs.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 
 	let form = $state<TaskForm>(emptyTaskForm());
@@ -26,14 +24,8 @@
 			errors = {};
 			formError = '';
 			void agentsStore.load();
-			programs = null;
-			void api.get('/programs').then((r) => (programs = r.programs), () => (programs = null));
 		});
 	});
-	// the programs of the team: a queued task only starts when a worker program of its agent runs
-	let programs = $state<Program[] | null>(null);
-	const noWorker = $derived(programs !== null && form.agentId !== '' && !hasWorkerProgram(programs, form.agentId));
-	const agentName = $derived(agentsStore.state.agents.find((a) => a.id === form.agentId)?.name ?? 'this agent');
 
 	async function submit(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
@@ -43,7 +35,7 @@
 		saving = true;
 		try {
 			await api.post('/tasks', { body: bodyFromTaskForm(form) });
-			toast.success('Task queued');
+			toast.success(form.hold ? 'Task saved on hold' : 'Task assigned: it starts when the agent is free');
 			closeTaskDialog();
 			void live.loadTasks();
 		} catch (err) {
@@ -60,7 +52,7 @@
 		<Dialog.Header class="border-b border-border px-5 py-4">
 			<Dialog.Title>New task</Dialog.Title>
 			<Dialog.Description>
-				It waits in the queue of the agent you pick. A worker program of that agent takes it (highest priority first, then the nearest due date), and the result comes back to you for review.
+				The agent you pick starts on it right away (or as soon as it finishes its current task) with the tools and permissions it has in chat. You follow it on the board and review the result.
 			</Dialog.Description>
 		</Dialog.Header>
 		<form id="new-task-form" class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4 text-sm" onsubmit={submit}>
@@ -72,14 +64,6 @@
 				</NativeSelect>
 				{#if errors.agentId}<span class="text-xs text-destructive-text">{errors.agentId}</span>{/if}
 			</label>
-			{#if noWorker}
-				<div class="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/50 px-3 py-2.5" role="status" data-testid="no-worker">
-					<p class="text-[13px]">{agentName} has no worker program yet, so a queued task would wait. A worker program is what takes queued tasks and works them.</p>
-					<div>
-						<Button type="button" size="xs" variant="outline" onclick={() => { const id = form.agentId; closeTaskDialog(); openNewProgram(id, true); }}>Create a worker program for {agentName}</Button>
-					</div>
-				</div>
-			{/if}
 			<label class="flex flex-col gap-1">
 				<span class="font-medium">Title</span>
 				<Input bind:value={form.title} placeholder="Script: the lighthouse" aria-invalid={!!errors.title} />
@@ -108,11 +92,41 @@
 					{#if errors.due}<span class="text-xs text-destructive-text">{errors.due}</span>{/if}
 				</label>
 			</div>
+			<div class="flex flex-col gap-2">
+				<label class="flex items-start gap-2">
+					<input type="checkbox" bind:checked={form.review} class="mt-0.5" />
+					<span>Ask me to review the result<span class="block text-xs text-muted-foreground">It waits in Review until you accept it or send it back with a note.</span></span>
+				</label>
+				<label class="flex items-start gap-2">
+					<input type="checkbox" bind:checked={form.hold} class="mt-0.5" data-testid="task-hold" />
+					<span>Hold: do not start yet<span class="block text-xs text-muted-foreground">It waits in Queued until you press Start now.</span></span>
+				</label>
+			</div>
+			<details class="rounded-lg border border-border px-3 py-2" data-testid="task-grants">
+				<summary class="cursor-pointer text-[13px] font-medium">Extra permissions for this task (optional)</summary>
+				<div class="mt-2 flex flex-col gap-3">
+					<p class="text-xs text-muted-foreground">Normally the agent has what it has in chat: anything that needs approval asks you on the board. Pre-approve more here, only for this task.</p>
+					<label class="flex flex-col gap-1">
+						<span class="text-xs font-medium">Tools (one per line)</span>
+						<Textarea bind:value={form.grantTools} rows={2} placeholder="add_comment" class="font-mono text-xs" />
+					</label>
+					<label class="flex flex-col gap-1">
+						<span class="text-xs font-medium">May read (library paths)</span>
+						<Textarea bind:value={form.grantRead} rows={2} placeholder="/library/research/**" class="font-mono text-xs" aria-invalid={!!errors.grantRead} />
+						{#if errors.grantRead}<span class="text-xs text-destructive-text">{errors.grantRead}</span>{/if}
+					</label>
+					<label class="flex flex-col gap-1">
+						<span class="text-xs font-medium">May write (library paths)</span>
+						<Textarea bind:value={form.grantWrite} rows={2} placeholder="/library/reports/**" class="font-mono text-xs" aria-invalid={!!errors.grantWrite} />
+						{#if errors.grantWrite}<span class="text-xs text-destructive-text">{errors.grantWrite}</span>{/if}
+					</label>
+				</div>
+			</details>
 			{#if formError && !Object.keys(errors).length}<p class="text-xs text-destructive-text" role="alert">{formError}</p>{/if}
 		</form>
 		<Dialog.Footer class="border-t border-border px-5 py-3">
 			<Button type="button" variant="ghost" onclick={closeTaskDialog}>Cancel</Button>
-			<Button type="submit" form="new-task-form" disabled={saving}>{saving ? 'Queuing…' : 'Queue task'}</Button>
+			<Button type="submit" form="new-task-form" disabled={saving}>{saving ? 'Assigning…' : form.hold ? 'Save on hold' : 'Assign task'}</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

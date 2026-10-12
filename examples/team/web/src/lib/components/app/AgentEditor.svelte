@@ -52,6 +52,8 @@
 	let modelProfile = $state<string | null>(agent?.modelProfile ?? null);
 	// svelte-ignore state_referenced_locally
 	let modeChoice = $state<AgentChoice>(agentChoiceOf(agent?.permissionMode));
+	// svelte-ignore state_referenced_locally
+	let taskConcurrency = $state(String(agent?.taskConcurrency ?? 1));
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
 
@@ -77,7 +79,8 @@
 			description,
 			model: model || null,
 			modelProfile: modelProfile || null,
-			permissionMode: storedOfChoice(modeChoice) as Agent['permissionMode']
+			permissionMode: storedOfChoice(modeChoice) as Agent['permissionMode'],
+			taskConcurrency: Number.parseInt(taskConcurrency, 10) || 1
 		};
 		try {
 			if (agent) {
@@ -172,6 +175,15 @@
 			{agentChoices.find((m) => m.id === modeChoice)?.hint}
 			A mode set here is also the loosest this agent can run in; delegated tasks follow the chat that started them, unless this agent is stricter.
 		</span>
+	</label>
+
+	<label class="flex flex-col gap-1">
+		<span class="font-medium">Tasks at once</span>
+		<NativeSelect bind:value={taskConcurrency} aria-label="Tasks at once" data-testid="task-concurrency">
+			{#each [1, 2, 3, 4, 5, 6, 7, 8] as n (n)}<NativeSelectOption value={String(n)}>{n}</NativeSelectOption>{/each}
+		</NativeSelect>
+		{#if errors.taskConcurrency}<span class="text-xs text-destructive-text">{errors.taskConcurrency}</span>{/if}
+		<span class="text-xs text-muted-foreground">How many assigned tasks this agent works on at the same time. More wait as Queued and start when one finishes; the team-wide limit in Settings still applies.</span>
 	</label>
 
 	{#if formError && !Object.keys(errors).length}<p class="text-xs text-destructive-text" role="alert">{formError}</p>{/if}

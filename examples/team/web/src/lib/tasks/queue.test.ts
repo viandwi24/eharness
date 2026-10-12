@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { bodyFromTaskForm, dueFromInput, dueLabel, dueToInput, emptyTaskForm, hasWorkerProgram, validateTaskForm } from './queue';
+import { bodyFromTaskForm, dueFromInput, dueLabel, dueToInput, emptyTaskForm, queueStatus, validateTaskForm } from './queue';
 
 describe('task form', () => {
 	test('validation', () => {
@@ -18,7 +18,12 @@ describe('task form', () => {
 			brief: '  ## Goal ',
 			inputs: '/library/a\n/library/a\n/library/b',
 			priority: 'high',
-			due: '2026-11-15'
+			due: '2026-11-15',
+			hold: false,
+			review: true,
+			grantTools: '',
+			grantRead: '',
+			grantWrite: ''
 		});
 		expect(body).toEqual({
 			agentId: 'a1',
@@ -41,16 +46,28 @@ describe('task form', () => {
 	});
 });
 
-describe('hasWorkerProgram', () => {
-	test('only an active worker program of that agent counts', () => {
-		const ps = [
-			{ agentId: 'a', status: 'active', worker: { maxTasks: 3 } },
-			{ agentId: 'b', status: 'paused', worker: { maxTasks: 3 } },
-			{ agentId: 'c', status: 'active', worker: null }
-		];
-		expect(hasWorkerProgram(ps, 'a')).toBe(true);
-		expect(hasWorkerProgram(ps, 'b')).toBe(false);
-		expect(hasWorkerProgram(ps, 'c')).toBe(false);
-		expect(hasWorkerProgram(ps, 'd')).toBe(false);
+describe('assigning work', () => {
+	test('defaults start on their own and go to Review; only changes are sent', () => {
+		const base = { ...emptyTaskForm('a1'), title: 't' };
+		expect(bodyFromTaskForm(base)).not.toHaveProperty('hold');
+		expect(bodyFromTaskForm(base)).not.toHaveProperty('review');
+		expect(bodyFromTaskForm(base)).not.toHaveProperty('grants');
+		expect(bodyFromTaskForm({ ...base, hold: true, review: false })).toMatchObject({ hold: true, review: false });
+	});
+
+	test('grants are split by line and their paths are checked', () => {
+		const f = { ...emptyTaskForm('a1'), title: 't', grantTools: 'add_comment\nupdate_task', grantRead: '/library/**', grantWrite: '/library/reports/**' };
+		expect(bodyFromTaskForm(f).grants).toEqual({ tools: ['add_comment', 'update_task'], read: ['/library/**'], write: ['/library/reports/**'] });
+		expect(validateTaskForm({ ...f, grantWrite: 'reports' }).grantWrite).toContain('reports');
+		expect(validateTaskForm(f)).toEqual({});
+	});
+
+	test('why a queued task waits', () => {
+		expect(queueStatus({ status: 'running' })).toBeNull();
+		expect(queueStatus({ status: 'queued', hold: true })?.label).toBe('on hold');
+		expect(queueStatus({ status: 'queued', queue: 'worker' })?.label).toBe('waits for worker');
+		expect(queueStatus({ status: 'queued', queue: 'slot' })?.label).toBe('waiting for a slot');
+		expect(queueStatus({ status: 'queued', queue: 'starting' })?.label).toBe('starting');
+		expect(queueStatus({ status: 'queued' })?.label).toBe('queued');
 	});
 });

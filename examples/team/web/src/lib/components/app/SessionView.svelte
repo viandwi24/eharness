@@ -26,6 +26,7 @@
 	import { live } from '#lib/stores/live.svelte.js';
 	import { followSessionStream } from 'eharness/client';
 	import { isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
+	import { queueStatus } from '#lib/tasks/queue.js';
 	import {
 		Conversation,
 		ConversationContent,
@@ -40,6 +41,7 @@
 	import { groupPending, entryKey } from '#lib/approval/group.js';
 	import type { ApprovalStanding } from '#lib/approval/chip.js';
 	import TaskInfo from './TaskInfo.svelte';
+	import TaskActions from './TaskActions.svelte';
 
 	/**
 	 * Watch (and steer) the session of a delegated task, like the coder's agent page: the full
@@ -304,7 +306,7 @@
 							<Empty.Root class="border-0 py-16">
 								<Empty.Header>
 									<Empty.Title>{task?.status === 'queued' ? 'Waiting in the queue' : 'No messages yet'}</Empty.Title>
-									<Empty.Description>{task?.status === 'queued' ? 'A worker program of this agent starts it, highest priority first.' : 'This task has not produced anything yet.'}</Empty.Description>
+									<Empty.Description>{task?.status === 'queued' ? (queueStatus(task)?.detail ?? 'It starts when its agent is free.') : 'This task has not produced anything yet.'}</Empty.Description>
 								</Empty.Header>
 							</Empty.Root>
 						{/each}
@@ -347,5 +349,7 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if task}<TaskActions {task} />{/if}
 </div>
 </Tooltip.Provider>

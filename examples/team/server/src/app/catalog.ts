@@ -21,3 +21,4 @@ export {
 } from '../domain/persona.ts'
 export { SETTINGS_MODES } from '../domain/settings.ts'
 export { BOARD_COLUMNS, TASK_PRIORITIES, TASK_STATUSES } from '../domain/tasks.ts'
+export { MAX_TASK_CONCURRENCY, QUEUE_REASONS } from '../domain/work-queue.ts'

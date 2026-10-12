@@ -268,6 +268,10 @@ export interface TaskStore {
     priority: TaskPriority
     dueAt: number | null
     createdBy: string
+    hold?: boolean
+    /** Default true. */
+    review?: boolean
+    grants?: ProgramAuthority | null
     now: number
   }): Task
   /** Change a task that is still queued; undefined when it is not (any more). */
@@ -280,6 +284,9 @@ export interface TaskStore {
       inputs?: string[]
       priority?: TaskPriority
       dueAt?: number | null
+      hold?: boolean
+      review?: boolean
+      grants?: ProgramAuthority | null
     },
     now: number,
   ): Task | undefined
@@ -290,6 +297,15 @@ export interface TaskStore {
    * session. One atomic step: two callers never get the same task. undefined: nothing queued.
    */
   claimNext(agentId: string, sessionId: string, now: number): Task | undefined
+  /**
+   * Start the next queued, not held task of the agent as an assigned task (session
+   * `task:<id>:<round>`) when it works on fewer than `limit` tasks. One atomic step.
+   */
+  claimAssigned(agentId: string, limit: number, now: number): Task | undefined
+  /** Start one queued task now (hold or not, a free slot or not: the client asked). */
+  claimTask(id: string, now: number): Task | undefined
+  /** Tasks of the agent that run or wait for the client now (they hold a slot). */
+  running(agentId: string): number
   /** The client accepts finished work in Review; undefined when it is not in Review. */
   accept(id: string, now: number): Task | undefined
   /** The client sends it back: queued again, the note appended to the brief. */
@@ -349,6 +365,12 @@ export interface ProgramRunner {
       scheduled?: boolean
     },
   ): Promise<{ sessionId: string; started: boolean; idle?: boolean }>
+  /**
+   * Work an assigned task (`task:<id>:<round>`, already claimed: status `running`): the agent gets
+   * the task prompt in its session, with its own tools and permissions, and a structured-output
+   * spec. Returns at once; `ended` resolves (never rejects) when the turn ended, parked or not.
+   */
+  startTask(task: Task): { ended: Promise<void> }
   /**
    * What a program of this agent, authority and budget cannot do (`ProgramWarning`): tools the run
    * can never have and a budget below the cost of one model call. Nothing is stored.

@@ -1,4 +1,5 @@
 import type { Task } from '../api/client';
+import { queueStatus } from '../tasks/queue';
 
 /** The columns of the board (P40 D6): the work queue to the finished work. */
 export type Column = 'queued' | 'running' | 'waiting' | 'review' | 'done';
@@ -8,12 +9,12 @@ export type Board = Record<Column, Task[]>;
 /** Sessions that wait on an open decision of the Decision Center (a parked run still shows `running`). */
 export type WaitingSessions = ReadonlySet<string>;
 
-type ColumnInput = Pick<Task, 'status' | 'sessionId' | 'createdBy' | 'acceptedAt' | 'report'> & Partial<Pick<Task, 'deliverables'>>;
+type ColumnInput = Pick<Task, 'status' | 'sessionId' | 'createdBy' | 'acceptedAt' | 'report'> & Partial<Pick<Task, 'deliverables' | 'review' | 'hold' | 'queue'>>;
 
 /** Finished work of the queue that the client has not accepted yet. */
 /** Failing deliverables keep a work item out of Review until they are fixed or decided. */
-export const inReview = (t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'> & Partial<Pick<Task, 'deliverables'>>): boolean =>
-	t.status === 'done' && t.deliverables?.status !== 'fail' && t.createdBy !== null && t.acceptedAt === null && (t.report?.status === 'done' || t.report?.status === 'partial');
+export const inReview = (t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'> & Partial<Pick<Task, 'deliverables' | 'review'>>): boolean =>
+	t.status === 'done' && t.review !== false && t.deliverables?.status !== 'fail' && t.createdBy !== null && t.acceptedAt === null && (t.report?.status === 'done' || t.report?.status === 'partial');
 
 /**
  * Where a task shows. Waiting for you: an approval or question waits, or the run is parked on an open
@@ -83,6 +84,8 @@ export const badgeFor = (status: Task['status'], summary?: string | null): { lab
 /** The badge of a task on the board: its column says more than its status. */
 export function badgeOf(t: ColumnInput & Pick<Task, 'summary'>, waiting: WaitingSessions = new Set()): { label: string; variant: Variant } {
 	const column = columnOf(t, waiting);
+	const queued = queueStatus(t);
+	if (queued !== null) return { label: queued.label, variant: t.hold || t.queue === 'hold' ? 'outline' : 'secondary' };
 	if (column === 'waiting') return { label: 'waiting for you', variant: 'warning' };
 	if (column === 'review') return { label: t.report?.status === 'partial' ? 'review (partial)' : 'review', variant: 'info' };
 	if (column === 'done' && t.status === 'done' && t.acceptedAt !== null) return { label: 'accepted', variant: 'success' };

@@ -318,7 +318,7 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
           },
         })
       }
-      if (origin === 'program' || origin === 'routine') {
+      if (origin === 'program' || origin === 'routine' || origin === 'task') {
         tools[ESCALATE_TOOL] = externalTool({
           description: ESCALATE_DESCRIPTION,
           inputSchema: escalateSchema,

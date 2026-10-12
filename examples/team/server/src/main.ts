@@ -73,6 +73,7 @@ import {
   cancelQueuedTask,
   completeTask,
   createTask,
+  dispatchQueue,
   listBoard,
   updateQueuedTask,
 } from './app/work-queue.ts'
@@ -83,6 +84,7 @@ import { parseProgramSession } from './domain/programs.ts'
 import { parseRehearsalSession } from './domain/rehearsal.ts'
 import { hostTimezone } from './domain/settings.ts'
 import { legacyThreadSessionId, sortThreads } from './domain/threads.ts'
+import { parseAssignedSession } from './domain/work-queue.ts'
 import { createApp } from './http/app.ts'
 import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
@@ -546,6 +548,11 @@ export function compose(config: ServerConfig): Server {
     ...(config.classifier === undefined ? {} : { classifier: config.classifier }),
     sessionModes,
     programs: programStore,
+    // an assigned task may come with extra permissions (the grants of its row)
+    taskGrants: (sessionId) => {
+      const parsed = parseAssignedSession(sessionId)
+      return parsed === undefined ? undefined : (tasks.get(parsed.taskId)?.grants ?? undefined)
+    },
     bigData: bigDataConfig,
     decisions: () => decisionIntake,
     heartbeat: () => heartbeatIntake,
@@ -986,9 +993,18 @@ export function compose(config: ServerConfig): Server {
       })
     return repairing
   }
+  // queued tasks start on their own: after the repair pass (boot, so tasks queued before the
+  // redesign or before a restart start), when a task ends, and on a short timer as a safety net
+  const dispatch = (): void => {
+    try {
+      dispatchQueue(deps)
+    } catch (error) {
+      console.warn(`team: starting queued tasks failed: ${String(error)}`)
+    }
+  }
   const quiet = (): Promise<void> =>
     reconcile().then(
-      () => undefined,
+      () => dispatch(),
       (error) => console.warn(`team: reconcile failed: ${String(error)}`),
     )
   // agents from before connectors get their enablement, then every agent's connectors activate
@@ -1016,6 +1032,9 @@ export function compose(config: ServerConfig): Server {
   const everyMs = config.reconcile?.everyMs ?? 60_000
   const timer = everyMs > 0 ? setInterval(() => void quiet(), everyMs) : undefined
   timer?.unref()
+  const dispatchEveryMs = config.reconcile?.everyMs === 0 ? 0 : 10_000
+  const dispatchTimer = dispatchEveryMs > 0 ? setInterval(dispatch, dispatchEveryMs) : undefined
+  dispatchTimer?.unref()
 
   // chat, sessions, attention answers and the activity feed: the library's HTTP module
   const harness = createTeamHttp({
@@ -1080,6 +1099,7 @@ export function compose(config: ServerConfig): Server {
     reconcile,
     async close() {
       if (timer !== undefined) clearInterval(timer)
+      if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
       await telegram?.stop()

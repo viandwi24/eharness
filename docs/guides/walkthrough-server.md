@@ -796,7 +796,68 @@ remaining chunks. `bigdata.test.ts` covers the fixture, ingest, manifest and the
 worth. *Without the authority check on `reads`:* a read-only program's code could copy any library
 file into its reports.
 
-## 21. Work queue: tasks that wait for a worker
+## 21. Work queue: assign a task, it starts
+
+> **Redesign (P40 phase N).** Assigning is as easy as chat now: a task starts by itself with the
+> agent's normal tools and permissions; a worker program is no longer needed (it stays for standing
+> orders). The section below keeps the original worker-program description (points 3 to 5 still
+> apply to an agent that has an active worker program); read **Assigned tasks** first.
+
+### Assigned tasks (the default)
+
+**What.** Creating a task (the *New task* dialog, the board, `POST /tasks`, or the lead's
+`create_task`) starts it: the owner agent works on it in a session `task:<taskId>:<round>`, a
+chat-like session (run profile `task`: the agent's own tools, permissions and mode, nothing
+closed-world). A call that needs approval asks the client on the board (*Waiting for you*), exactly
+as in chat. The run ends with a structured report (`final_answer`: status, summary, outputs); the
+task goes to **Review** only when the creator asked for it (`review`, default **on for the
+client**, **off for a task an agent created**: the delegator reads the result with `list_tasks`).
+*Accept* ends Review; *Send back* with a note re-queues the task (note appended to the brief, round
++ 1) and it **starts again by itself** with a fresh session; no manual run.
+
+**Slots.** A task that cannot start waits as **Queued** with a reason (`queue` on the task):
+`slot` (the agent works on `taskConcurrency` tasks already; setting per agent, 1 to 8, default 1, in
+the agent settings), `slot` also when the team-wide spawn cap (Settings) is reached, `hold`
+(the task was marked *Hold*: it never starts on its own; *Start now* or releasing it does) or
+`worker` (see below). The next task starts when one ends: the run's promise ends, the 10 s
+safety pass (and the boot / repair pass) of `dispatchQueue` in `app/work-queue.ts`. A task parked on
+a question or an approval keeps its slot. Claiming is one atomic statement
+(`claimAssigned`: count the agent's running tasks, take the next not held task by priority,
+nearest due date, age), so two instances never start the same task.
+
+**Authority.** Normal work needs no authority step: it is chat authority. A task may carry
+optional **grants** (`tools`, `connectors`, `read`, `write`, the same shapes as a program's
+authority) that are pre-approved for that task only: allow rules in the session's permission
+engine, the plain "Ask first" of exactly those tools lifted, the file tools its paths need
+offered. Deny rules and pinned asks still win. Standing orders (scheduled, unattended, budgeted,
+verified) are still worker programs and ordinary programs.
+
+**Worker programs still work.** An agent with an **active worker program** keeps its old behaviour:
+the program owns the queue, tasks wait as Queued (`queue: worker`) and are taken at its next run;
+held tasks are skipped by it. *Start now* (`POST /tasks/{id}/start`) runs any queued task at once
+as an assigned task. Pause or delete the worker program and the queued tasks start by themselves
+at the next pass.
+
+**Migration (migration 0029).** `tasks.hold` (0), `tasks.review` (1: rows from before were always
+reviewed), `tasks.grants` (null), `agents.task_concurrency` (1). Nothing is rewritten: existing
+worker programs keep working unchanged, and the first pass after the upgrade starts queued tasks of
+agents **without** an active worker program (respecting hold).
+
+**Where.** `domain/work-queue.ts` (`taskRunPrompt`, grants, queue reasons, session ids),
+`app/work-queue.ts` (`dispatchQueue`, `startTaskNow`), `infra/eh/program-service.ts` (`startTask`),
+`infra/eh/agent-factory.ts` (`taskGrants`), `domain/run-profiles.ts` (`task`). Web: `NewTaskDialog`,
+`TaskActions` (the footer of the task drawer: Start now, Hold, Cancel; Accept, Send back; Try again;
+always reachable, the details above it scroll), the Tasks board badges (*waiting for a slot*,
+*on hold*, *waits for worker*) and *Tasks at once* in the agent settings.
+
+**Test it.** [`task-assignment.test.ts`](../../examples/team/server/test/task-assignment.test.ts):
+assigning starts a run without a worker program and lands in Review; `review: false` goes to Done;
+one task at a time per agent and the team cap queue the rest; hold, Start now and release; the
+boot pass starts old queued tasks; send back restarts with the note; a worker program keeps its
+queue; a task grant lets a write through without approval.
+
+### The original design: worker programs
+
 
 **What.** The board can hold work that has not started. A **queued task** is a row of the task
 board with an owner agent, a brief (markdown), inputs (library paths), a priority, an optional due

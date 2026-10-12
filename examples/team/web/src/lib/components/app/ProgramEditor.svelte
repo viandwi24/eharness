@@ -195,7 +195,7 @@
 			<input type="checkbox" bind:checked={form.worker} class="mt-0.5" />
 			<span>
 				Work through the queued tasks of this agent
-				<span class="block text-xs text-muted-foreground">Each run takes the next queued tasks (highest priority, then the nearest due date) and works each in a session of its own. The brief above is the standing instruction; the task says what to make. A run with nothing queued does nothing. Finished work comes to you in Review.</span>
+				<span class="block text-xs text-muted-foreground">Optional, for standing orders: tasks assigned to this agent start by themselves with its normal tools and permissions, so most work needs no worker program. With this on, the program owns the agent's queue instead: each run takes the next queued tasks (highest priority, then the nearest due date) and works each under the authority above (the brief is the standing instruction; the task says what to make). Held tasks are skipped; Start now on a task still runs it at once.</span>
 			</span>
 		</label>
 		{#if form.worker}

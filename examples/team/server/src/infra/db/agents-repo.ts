@@ -20,6 +20,7 @@ const toDef = (row: Row, connectors: AgentDef['connectors']): AgentDef => ({
   modelProfile: row.modelProfile,
   connectors,
   toolAccess: (row.toolAccess ?? null) as AgentDef['toolAccess'],
+  taskConcurrency: row.taskConcurrency,
   skills: row.skills,
   permissionMode: row.permissionMode as PermissionMode,
   rules: row.rules,

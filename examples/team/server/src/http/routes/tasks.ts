@@ -16,6 +16,7 @@ import {
   createTask,
   sendBackHint,
   sendBackTask,
+  startTaskNow,
   updateQueuedTask,
   withColumns,
 } from '../../app/work-queue.ts'
@@ -86,7 +87,7 @@ const createTaskRoute = createRoute({
   tags: ['tasks'],
   summary: 'Queue a task for an agent (the work queue)',
   description:
-    'Creates a task that has no session yet (`status: queued`) with an owner, a brief, inputs (library paths), a priority and an optional due date. A worker program of that agent picks it up (priority, then due date, then age). Managers do the same with the `create_task` tool.',
+    'Assigns a task to an agent: it has an owner, a brief, inputs (library paths), a priority, an optional due date, optional `grants` (extra permissions for this task) and `hold` / `review` flags. It starts on its own (`status: queued` until the agent has a free slot, see `Agent.taskConcurrency`) and the agent works with its normal tools and permissions, as in chat. An agent with an active worker program leaves its queue to that program. Managers do the same with the `create_task` tool.',
   security,
   request: { body: { required: true, content: json(TaskCreateSchema) } },
   responses: {
@@ -103,7 +104,7 @@ const patchTaskRoute = createRoute({
   tags: ['tasks'],
   summary: 'Change a queued task',
   description:
-    'Re-prioritise, reassign, rewrite or set a due date. `409 TASK_NOT_QUEUED` once a worker took it.',
+    'Re-prioritise, reassign, rewrite, set a due date, grants, hold (`hold: false` releases a held task). `409 TASK_NOT_QUEUED` once it started.',
   security,
   request: { params: TaskIdParam, body: { required: true, content: json(TaskPatchSchema) } },
   responses: {
@@ -131,6 +132,23 @@ const cancelTaskRoute = createRoute({
   },
 })
 
+const startTaskRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/start',
+  tags: ['tasks'],
+  summary: 'Start a queued task now',
+  description:
+    'Starts a queued task at once: a held task, one that waits for a free slot of its agent, or one an active worker program has not taken yet. The agent works on it with its normal tools and permissions (plus the task grants). `409 TASK_NOT_QUEUED` once it runs.',
+  security,
+  request: { params: TaskIdParam },
+  responses: {
+    200: { description: 'The task, running', content: json(TaskSchema) },
+    404: jsonError('Unknown task'),
+    409: jsonError('`TASK_NOT_QUEUED` or the agent is archived'),
+    ...errorResponses,
+  },
+})
+
 const acceptTaskRoute = createRoute({
   method: 'post',
   path: '/tasks/{id}/accept',
@@ -154,7 +172,7 @@ const sendBackRoute = createRoute({
   tags: ['tasks'],
   summary: 'Send finished work back with a note',
   description:
-    'The task is queued again with the note appended to its brief (`round` + 1); the next worker run revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.',
+    'The task is queued again with the note appended to its brief (`round` + 1) and starts on its own, so the agent revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.',
   security,
   request: { params: TaskIdParam, body: { required: true, content: json(TaskSendBackSchema) } },
   responses: {
@@ -288,6 +306,9 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
     )
     .openapi(cancelTaskRoute, (c) =>
       c.json(cancelQueuedTask(deps, c.req.valid('param').id) as never, 200),
+    )
+    .openapi(startTaskRoute, (c) =>
+      c.json(startTaskNow(deps, c.req.valid('param').id) as never, 200),
     )
     .openapi(acceptTaskRoute, (c) =>
       c.json(acceptTask(deps, c.req.valid('param').id) as never, 200),

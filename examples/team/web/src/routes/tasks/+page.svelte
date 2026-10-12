@@ -54,7 +54,7 @@
 	const total = $derived(COLUMNS.reduce((n, c) => n + board[c].length, 0));
 
 	const columns: { id: Column; title: string; icon: typeof HandPalmIcon; empty: string }[] = [
-		{ id: 'queued', title: 'Queued', icon: TrayIcon, empty: 'No task is waiting for a worker.' },
+		{ id: 'queued', title: 'Queued', icon: TrayIcon, empty: 'No task is waiting to start.' },
 		{ id: 'running', title: 'Running', icon: CircleNotchIcon, empty: 'No task is running.' },
 		{ id: 'waiting', title: 'Waiting for you', icon: HandPalmIcon, empty: 'Nothing is waiting for you.' },
 		{ id: 'review', title: 'Review', icon: EyeIcon, empty: 'Finished work to accept shows up here.' },

@@ -95,6 +95,7 @@ import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../dom
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import { parseChatSession } from '../../domain/threads.ts'
+import { taskGrantRules } from '../../domain/work-queue.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
 import { CHANNEL_TOOLS, type ChannelGateway, channels } from '../channels/index.ts'
 import { nativeToolName } from '../channels/policy.ts'
@@ -189,6 +190,11 @@ export interface AgentFactoryDeps {
    * no program sessions.
    */
   programs?: Pick<ProgramStore, 'get'>
+  /**
+   * Extra permissions given with an assigned task (`task:<id>:<round>`, `domain/work-queue.ts`):
+   * allow rules on top of the agent's own, so the task needs no approval for them. undefined = none.
+   */
+  taskGrants?: (sessionId: string) => ProgramAuthority | undefined
   /**
    * The Decision Center intake (`decisions-plugin.ts`): `propose_plan`, `escalate`,
    * `request_authority` and the needs_decision report hook. Late-bound (built after the app
@@ -740,6 +746,24 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         })
       }
       const classifier = classifierFor(sessionId, def.id)
+      // an assigned task may bring grants: allow rules, and the plain "Ask first" of exactly those
+      // tools is lifted (the client pre-approved them); pinned asks and deny rules stay
+      const grants = deps.taskGrants?.(sessionId)
+      const granted =
+        grants === undefined
+          ? []
+          : taskGrantRules(
+              grants,
+              Object.entries(out.toolNameMap).map(([name, origin]) => ({
+                name,
+                connectorId: origin.connectorId,
+                connectionIds: origin.connectionIds,
+              })),
+            )
+      // the plain "Ask first" of exactly the tools the grants name (and the file tools the paths need)
+      const lifted = new Set<string>(
+        grants === undefined ? [] : [...granted, ...runFileTools(grants)],
+      )
       return createPermissionEngine({
         roots: () => [{ virtual: '/', real: '/' }],
         mode: 'default',
@@ -748,8 +772,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         // read-risk native actions of the agent's channel connections never ask (derived from the
         // adapters' action catalog, `infra/channels`)
         rules: {
-          allow: [...out.rules.allow, ...(deps.channels?.()?.readActionTools(def.id) ?? [])],
-          ask: out.rules.ask,
+          allow: [
+            ...out.rules.allow,
+            ...(deps.channels?.()?.readActionTools(def.id) ?? []),
+            ...granted,
+          ],
+          ask: lifted.size === 0 ? out.rules.ask : out.rules.ask.filter((r) => !lifted.has(r)),
           deny: out.rules.deny,
         },
         // pinned asks (write / destructive tools of non-built-in connectors) ask even in Bypass
@@ -865,6 +893,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     )
     /** What the authority of the program of a session grants of them (empty for other sessions). */
     const grantedFileTools = (sessionId: string): ReadonlySet<string> => {
+      const task = deps.taskGrants?.(sessionId)
+      if (task !== undefined) return new Set(runFileTools(task))
       const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
       const program = parsed === undefined ? undefined : deps.programs?.get(parsed.programId)
       return new Set(program === undefined ? [] : runFileTools(program.authority))

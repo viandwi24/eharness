@@ -475,6 +475,9 @@ describe('finding 4: honest numbers', () => {
     acceptedAt: null,
     round: 1,
     history: [],
+    hold: false,
+    review: true,
+    grants: null,
     ...over,
   })
 
@@ -692,11 +695,6 @@ describe('manager, worker and auditor programs with Files edit off (real client 
     await turnOffFileEdit(server, 'writer')
     await turnOffFileEdit(server, 'researcher')
 
-    const queued = await app.request(
-      '/tasks',
-      json('POST', { agentId: 'writer', title: 'Script: the island', brief: 'Write it.' }),
-    )
-    expect(queued.status).toBe(201)
     const worker = await createProgram(app, {
       agentId: 'writer',
       name: 'Script writer',
@@ -705,6 +703,11 @@ describe('manager, worker and auditor programs with Files edit off (real client 
       worker: { maxTasks: 1 },
     })
     expect(worker.warnings).toEqual([])
+    const queued = await app.request(
+      '/tasks',
+      json('POST', { agentId: 'writer', title: 'Script: the island', brief: 'Write it.' }),
+    )
+    expect(queued.status).toBe(201)
     await runNow(app, worker.id)
     const run = await firstRun(app, worker.id)
     expect(run.status).toBe('done')

@@ -16,7 +16,11 @@ import {
 import {
   checkTaskFields,
   cleanInputs,
+  DEFAULT_TASK_CONCURRENCY,
   MAX_NOTE_CHARS,
+  normalizeGrants,
+  type QueueReason,
+  queueReason,
   type TaskDraft,
   type TaskPatch,
 } from '../domain/work-queue.ts'
@@ -64,13 +68,64 @@ export function columnsOf(
   return new Map(tasks.map((t) => [t.id, boardColumn(t, waiting.has(t.sessionId))]))
 }
 
-/** Tasks with the column the board shows them in (a run parked on a decision is `waiting`). */
+/** The most assigned tasks one agent works on at once (setting per agent, default 1). */
+export const concurrencyOf = (deps: Deps, agentId: string): number =>
+  Math.max(1, deps.agents.get(agentId)?.taskConcurrency ?? DEFAULT_TASK_CONCURRENCY)
+
+/** An active worker program of the agent owns its queue (the standing order of before the redesign). */
+export const hasWorkerProgram = (deps: Deps, agentId: string): boolean =>
+  deps.programs.list({ agentId }).some((p) => p.worker !== null && p.status === 'active')
+
+/** Tasks across the team that work now (they hold a slot of the team-wide cap). */
+function runningTotal(deps: Deps): number {
+  return (
+    deps.tasks.list({ status: 'running', limit: 500 }).filter((t) => t.createdBy !== null).length +
+    deps.tasks.list({ status: 'needs_action', limit: 500 }).filter((t) => t.createdBy !== null)
+      .length
+  )
+}
+
+/** Why each queued task of `tasks` has not started (undefined for tasks that are not queued). */
+function queueReasons(deps: Deps, tasks: readonly Task[]): Map<string, QueueReason> {
+  const out = new Map<string, QueueReason>()
+  const queued = tasks.filter((t) => t.status === 'queued')
+  if (queued.length === 0) return out
+  const cap = deps.settings.get().spawnCap
+  const total = runningTotal(deps)
+  const perAgent = new Map<string, { worker: boolean; active: number; limit: number }>()
+  for (const t of queued) {
+    let info = perAgent.get(t.agentId)
+    if (info === undefined) {
+      info = {
+        worker: hasWorkerProgram(deps, t.agentId),
+        active: deps.tasks.running(t.agentId),
+        limit: concurrencyOf(deps, t.agentId),
+      }
+      perAgent.set(t.agentId, info)
+    }
+    const reason = queueReason({
+      hold: t.hold,
+      workerProgram: info.worker,
+      active: total >= cap ? Number.POSITIVE_INFINITY : info.active,
+      limit: info.limit,
+    })
+    out.set(t.id, reason)
+  }
+  return out
+}
+
+/** Tasks with the column the board shows them in (a run parked on a decision is `waiting`) and, for queued ones, why they wait. */
 export function withColumns(
   deps: Deps,
   tasks: readonly Task[],
-): Array<Task & { column: ReturnType<typeof boardColumn> }> {
+): Array<Task & { column: ReturnType<typeof boardColumn>; queue: QueueReason | null }> {
   const columns = columnsOf(deps, tasks)
-  return tasks.map((t) => ({ ...t, column: columns.get(t.id) as ReturnType<typeof boardColumn> }))
+  const reasons = queueReasons(deps, tasks)
+  return tasks.map((t) => ({
+    ...t,
+    column: columns.get(t.id) as ReturnType<typeof boardColumn>,
+    queue: reasons.get(t.id) ?? null,
+  }))
 }
 
 /** Queue a task. `createdBy` is `client` or the id of the agent that wrote it. */
@@ -90,10 +145,75 @@ export function createTask(deps: Deps, draft: TaskDraft & { createdBy?: string }
     priority: draft.priority ?? 'normal',
     dueAt: draft.dueAt ?? null,
     createdBy: draft.createdBy ?? CLIENT,
+    hold: draft.hold ?? false,
+    // review by default for the client; an agent that assigns work reads the result itself
+    review: draft.review ?? (draft.createdBy ?? CLIENT) === CLIENT,
+    grants: normalizeGrants(draft.grants),
     now: deps.clock.now(),
   })
   changed(deps, task, 'queued')
+  dispatchQueue(deps, task.agentId)
   return task
+}
+
+/**
+ * Start what can start: for every agent (or one) with queued tasks, take the next not held task
+ * while the agent works on fewer than its concurrency and the team on fewer than the spawn cap.
+ * An agent with an active worker program is left to that program. Safe to call at any time (task
+ * created, released, sent back, one ended, the periodic pass): it only claims what has a free slot.
+ * Returns how many tasks it started.
+ */
+export function dispatchQueue(deps: Deps, only?: string): number {
+  const queued = deps.tasks.list({ status: 'queued', limit: 500 })
+  const agentIds = [...new Set(queued.map((t) => t.agentId))].filter(
+    (id) => only === undefined || id === only,
+  )
+  let started = 0
+  let total = agentIds.length === 0 ? 0 : runningTotal(deps)
+  const cap = deps.settings.get().spawnCap
+  for (const agentId of agentIds) {
+    const agent = deps.agents.get(agentId)
+    if (agent === undefined || agent.archivedAt !== null) continue
+    if (hasWorkerProgram(deps, agentId)) continue
+    const limit = concurrencyOf(deps, agentId)
+    while (total < cap) {
+      const row = deps.tasks.claimAssigned(agentId, limit, deps.clock.now())
+      if (row === undefined) break
+      total++
+      started++
+      beginTask(deps, row)
+    }
+  }
+  return started
+}
+
+/** Start the session of a claimed task; when it ends, the next waiting task may start. */
+function beginTask(deps: Deps, task: Task): void {
+  changed(deps, task, 'started')
+  const { ended } = deps.programRunner.startTask(task)
+  void ended.finally(() => {
+    try {
+      dispatchQueue(deps)
+    } catch {
+      // the periodic pass tries again
+    }
+  })
+}
+
+/** "Start now": the client starts a queued task at once (held, waiting for a slot or owned by a worker program). */
+export function startTaskNow(deps: Deps, id: string): Task {
+  const current = taskOrThrow(deps, id)
+  if (current.status !== 'queued') {
+    throw conflict('only a queued task can be started', 'TASK_NOT_QUEUED', {
+      status: current.status,
+    })
+  }
+  const agent = getAgent(deps, current.agentId)
+  if (agent.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
+  const row = deps.tasks.claimTask(id, deps.clock.now())
+  if (row === undefined) throw conflict('the task was started meanwhile', 'TASK_NOT_QUEUED')
+  beginTask(deps, row)
+  return row
 }
 
 /** Change a task that has not started (re-prioritise, reassign, rewrite). */
@@ -117,12 +237,17 @@ export function updateQueuedTask(deps: Deps, id: string, patch: TaskPatch): Task
       ...(patch.inputs === undefined ? {} : { inputs: cleanInputs(patch.inputs) }),
       ...(patch.priority === undefined ? {} : { priority: patch.priority as TaskPriority }),
       ...(patch.dueAt === undefined ? {} : { dueAt: patch.dueAt }),
+      ...(patch.hold === undefined ? {} : { hold: patch.hold }),
+      ...(patch.review === undefined ? {} : { review: patch.review }),
+      ...(patch.grants === undefined ? {} : { grants: normalizeGrants(patch.grants) }),
     },
     deps.clock.now(),
   )
   // a worker claimed it between the read and the write
   if (next === undefined) throw conflict('the task was claimed meanwhile', 'TASK_NOT_QUEUED')
   changed(deps, next, 'updated')
+  // released, reassigned or re-prioritised: it may start now
+  dispatchQueue(deps)
   return next
 }
 
@@ -170,28 +295,31 @@ export function sendBackTask(deps: Deps, id: string, note: string): Task {
     })
   }
   changed(deps, next, 'sent-back')
-  return next
+  dispatchQueue(deps, next.agentId)
+  // it may have started already
+  return deps.tasks.get(id) ?? next
 }
 
 /**
- * What the client must know after a send-back: the task is queued again, but only a worker
- * program of its agent picks it up (D11 of the e2e pass). A scheduled worker does it at its next
- * run; a manual one waits for "Run now"; none means nothing will run it.
+ * What the client must know after a send-back: the task is queued again and starts on its own
+ * with the feedback, unless the agent has an active worker program (that program owns the queue),
+ * the task is held, or the agent has no free slot.
  */
 export function sendBackHint(deps: Deps, task: Task): string {
-  const workers = deps.programs
-    .list({})
-    .filter((p) => p.worker !== null && p.agentId === task.agentId && p.status === 'active')
-  const scheduled = workers.find((p) => p.trigger.kind === 'schedule')
-  if (scheduled !== undefined) {
-    return `Queued again. The worker program "${scheduled.name}" picks it up at its next scheduled run.`
-  }
-  const manual = workers[0]
-  if (manual !== undefined) {
-    return `Queued again. "${manual.name}" is a manual worker program: press Run now on the Programs page for it to pick this up.`
-  }
   const agent = deps.agents.get(task.agentId)
-  return `Queued again, but no active worker program runs the queue of ${agent?.name ?? 'this agent'}: create one on the Programs page (with Work queue on) or the task stays queued.`
+  const name = agent?.name ?? 'the agent'
+  const current = deps.tasks.get(task.id) ?? task
+  if (current.status !== 'queued') return `${name} is working on it again with your feedback.`
+  if (current.hold) return 'Queued again and on hold: press Start now when you want it revised.'
+  const worker = deps.programs
+    .list({ agentId: task.agentId })
+    .find((p) => p.worker !== null && p.status === 'active')
+  if (worker !== undefined) {
+    return worker.trigger.kind === 'schedule'
+      ? `Queued again. The worker program "${worker.name}" picks it up at its next scheduled run (or press Start now).`
+      : `Queued again. "${worker.name}" is a manual worker program: press Run now on the Programs page, or Start now here.`
+  }
+  return `Queued again: ${name} starts the revision as soon as a slot is free.`
 }
 
 export interface TaskQuery {

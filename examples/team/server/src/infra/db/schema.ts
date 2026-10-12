@@ -49,6 +49,8 @@ export const agents = sqliteTable(
     modelProfile: text('model_profile'),
     /** Tool access of third-party connectors (`auto` | `on-demand`); null = the workspace default. */
     toolAccess: text('tool_access'),
+    /** Assigned tasks this agent works on at the same time (the rest wait as Queued). */
+    taskConcurrency: integer('task_concurrency').notNull().default(1),
     /** Legacy tool checklist (before connectors): read by the boot migration only, never written. */
     tools: json<string[]>('tools').notNull(),
     skills: json<string[]>('skills').notNull(),
@@ -232,6 +234,14 @@ export const tasks = sqliteTable(
     round: integer('round').notNull().default(1),
     /** Sessions of earlier rounds. */
     history: json<string[]>('history').notNull().default([]),
+    /** 1 = do not start on its own (the client starts it). P40 work queue redesign. */
+    hold: integer('hold').notNull().default(0),
+    /** 1 = finished work waits in Review (rows from before the redesign were always reviewed). */
+    review: integer('review').notNull().default(1),
+    /** Extra permissions given with the task (`{ tools, connectors, read, write }`); null = none. */
+    grants: json<{ tools: string[]; connectors: string[]; read: string[]; write: string[] }>(
+      'grants',
+    ),
   },
   (t) => [
     index('tasks_state').on(t.status),

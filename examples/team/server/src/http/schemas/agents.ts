@@ -36,6 +36,10 @@ export const AgentSchema = z
       description:
         'How the tools of third-party connectors reach the model: `auto` (up front until the agent has 20 or more, then found with `tool_search`) or `on-demand` (always found with `tool_search`); null = the workspace default (`GET /settings`). Built-in connectors are never deferred.',
     }),
+    taskConcurrency: z.number().int().min(1).max(8).openapi({
+      description:
+        'Assigned tasks (the work queue) this agent works on at the same time; further tasks wait as Queued and start when one ends. Default 1. The team-wide spawn cap (`GET /settings`) still applies.',
+    }),
     connectors: z.record(z.string(), ConnectionChoicesSchema).openapi({
       description:
         "This agent's own choices per connection id (on / off / inherit, capability modes). Use `GET /agents/{id}/connectors` for the effective view.",
@@ -77,6 +81,9 @@ export const AgentCreateSchema = z
     }),
     toolAccess: z.enum(TOOL_ACCESS).nullable().optional().openapi({
       description: 'See `Agent.toolAccess`; null = the workspace default.',
+    }),
+    taskConcurrency: z.number().int().min(1).max(8).optional().openapi({
+      description: 'See `Agent.taskConcurrency`. Default 1.',
     }),
     skills: z.array(z.string()).optional(),
     permissionMode: z.enum(PERMISSION_MODES).optional(),

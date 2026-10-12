@@ -56,6 +56,8 @@ export interface AgentDef {
   connectors: AgentConnectors
   /** Tool access of third-party connectors; null = the workspace default. */
   toolAccess: ToolAccess | null
+  /** Assigned tasks (the work queue) this agent works on at the same time; the rest wait as Queued. */
+  taskConcurrency: number
   skills: string[]
   permissionMode: PermissionMode
   rules: PermissionRules
@@ -79,6 +81,8 @@ export interface AgentDraft {
   modelProfile?: string | null | undefined
   /** Null/absent = the workspace default. */
   toolAccess?: ToolAccess | null | undefined
+  /** Assigned tasks worked on at once (1-8, default 1). */
+  taskConcurrency?: number | undefined
   /** Default: the legacy default checklist as enablement (files read, memory, planning). */
   connectors?: AgentConnectors | undefined
   /** Seeds and tests: a legacy tool checklist (`library_read`, `memory`, ...) mapped onto connectors. */

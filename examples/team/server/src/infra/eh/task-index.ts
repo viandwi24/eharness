@@ -29,7 +29,7 @@ import type { EventAppender } from '../../app/ports.ts'
 import { isDmSession } from '../../domain/chat.ts'
 import type { NewEvent } from '../../domain/events.ts'
 import { parseReport, programRunOutcome } from '../../domain/programs.ts'
-import { profileOfSession } from '../../domain/run-profiles.ts'
+import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import { previewOf, statusFromStop, titleFromText } from '../../domain/tasks.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 
@@ -202,7 +202,9 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 t,
               )
             } else if (isTaskSession(ctx)) {
-              const isProgram = taskOrigin(ctx) === 'program'
+              // a program run and an assigned task of the work queue end with a typed report
+              const isProgram =
+                taskOrigin(ctx) === 'program' || originOfSession(ctx.session.id) === 'task'
               const report = isProgram ? parseReport(e.output) : undefined
               const program = isProgram ? programRunOutcome(e.stop, report) : undefined
               const status = program?.status ?? statusFromStop(e.stop)

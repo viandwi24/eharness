@@ -47,7 +47,7 @@ import {
   toolWarnings,
 } from '../../domain/programs.ts'
 import { inReview, type Task } from '../../domain/tasks.ts'
-import { workItemPrompt } from '../../domain/work-queue.ts'
+import { taskRunPrompt, workItemPrompt } from '../../domain/work-queue.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
 
@@ -398,6 +398,55 @@ export function createProgramService(
       if (before === undefined) announce(def, sessionId, row, true)
       track(runChecked(program, def, sessionId, prompt))
       return { sessionId, started: true }
+    },
+
+    startTask(task) {
+      const def = deps.agents.get(task.agentId)
+      const failed = (why: string): void => {
+        // the row was claimed as running: a run that cannot start must not stay "running" forever
+        const row = deps.tasks.update(task.sessionId, {
+          status: 'failed',
+          pendingKind: null,
+          now: clock(),
+          summary: why,
+        })
+        if (row !== undefined) {
+          deps.events.append({
+            type: 'task-changed',
+            agentId: row.agentId,
+            sessionId: row.sessionId,
+            payload: {
+              taskId: row.id,
+              status: row.status,
+              pendingKind: null,
+              title: row.title,
+              parentSessionId: null,
+            },
+            at: clock(),
+          })
+        }
+      }
+      const ended = (async (): Promise<void> => {
+        if (def === undefined || def.archivedAt !== null) {
+          failed('The agent is gone or archived, so the task could not start.')
+          return
+        }
+        try {
+          await factory.prepare(def)
+          announce(def, task.sessionId, task, false)
+          const stop = await send(def, task.sessionId, taskRunPrompt(task), await inputFiles(task))
+          noticeReview(task.sessionId)
+          // the turn never started (the provider or the session was unavailable): say so
+          if (stop === undefined && deps.tasks.getBySession(task.sessionId)?.status === 'running') {
+            failed('The task could not start: the session or the model provider was unavailable.')
+          }
+        } catch (error) {
+          log.warn(`task ${task.id} failed to start: ${errorText(error)}`)
+          failed(`The task could not start: ${errorText(error)}`.slice(0, 500))
+        }
+      })()
+      track(ended)
+      return { ended }
     },
 
     inspect(agentId, authority) {

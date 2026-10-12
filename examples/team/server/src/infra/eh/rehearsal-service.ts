@@ -296,6 +296,9 @@ export function createRehearsalService(
     acceptedAt: null,
     round: 1,
     history: [],
+    hold: false,
+    review: true,
+    grants: null,
   })
 
   async function execute(

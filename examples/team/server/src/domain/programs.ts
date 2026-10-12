@@ -453,7 +453,7 @@ export interface ProgramRules {
   deny: string[]
 }
 
-const globRule = (kind: 'Read' | 'Edit', glob: string): string => `${kind}(${glob.trim()})`
+export const globRule = (kind: 'Read' | 'Edit', glob: string): string => `${kind}(${glob.trim()})`
 
 /**
  * Read rules of a path glob. A gitignore-style `dir/**` does not match `dir` itself, so listing,
@@ -461,7 +461,7 @@ const globRule = (kind: 'Read' | 'Edit', glob: string): string => `${kind}(${glo
  * refused although everything below it is granted. A trailing `/**` therefore also grants the
  * directory path (a pattern matching a directory covers what is below it, so nothing widens).
  */
-const readRules = (glob: string): string[] => {
+export const readRules = (glob: string): string[] => {
   const g = glob.trim()
   const dir = g.endsWith('/**') ? g.slice(0, -3) : ''
   return dir.length > 1 ? [globRule('Read', g), globRule('Read', dir)] : [globRule('Read', g)]

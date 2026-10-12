@@ -343,16 +343,16 @@ describe('D11: Review in the bell, and a send-back says who picks the task up', 
         finalReport(),
       ],
     })
-    const queued = await app.request(
-      '/tasks',
-      json('POST', { agentId: 'writer', title: 'Write A', brief: 'Write /library/out/a.md' }),
-    )
-    const task = (await queued.json()) as { id: string }
     const worker = await createProgram(app, {
       agentId: 'writer',
       worker: { maxTasks: 1 },
       authority: { tools: [], read: [], write: ['/library/out/**'] },
     })
+    const queued = await app.request(
+      '/tasks',
+      json('POST', { agentId: 'writer', title: 'Write A', brief: 'Write /library/out/a.md' }),
+    )
+    const task = (await queued.json()) as { id: string }
     await app.request(`/programs/${worker.id}/run`, json('POST'))
     await until('the task is in review', async () => {
       const t = (await (await app.request(`/tasks/${task.id}`)).json()) as {

@@ -72,7 +72,7 @@ const HISTORY_LINE_CHARS = 1000
  * heartbeat. Their posts follow the proactive policy of the place. A program run is not here: its
  * authority names `channel_send` on purpose (the client's own grant, P41 U2).
  */
-const UNATTENDED: ReadonlySet<string> = new Set(['routine', 'heartbeat'])
+const UNATTENDED: ReadonlySet<string> = new Set(['routine', 'task', 'heartbeat'])
 
 const target = {
   connection: z

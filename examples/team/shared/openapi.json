@@ -314,6 +314,12 @@
             ],
             "description": "How the tools of third-party connectors reach the model: `auto` (up front until the agent has 20 or more, then found with `tool_search`) or `on-demand` (always found with `tool_search`); null = the workspace default (`GET /settings`). Built-in connectors are never deferred."
           },
+          "taskConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Assigned tasks (the work queue) this agent works on at the same time; further tasks wait as Queued and start when one ends. Default 1. The team-wide spawn cap (`GET /settings`) still applies."
+          },
           "connectors": {
             "type": "object",
             "additionalProperties": {
@@ -372,6 +378,7 @@
           "model",
           "modelProfile",
           "toolAccess",
+          "taskConcurrency",
           "connectors",
           "skills",
           "permissionMode",
@@ -478,6 +485,12 @@
               null
             ],
             "description": "See `Agent.toolAccess`; null = the workspace default."
+          },
+          "taskConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "See `Agent.taskConcurrency`. Default 1."
           },
           "skills": {
             "type": "array",
@@ -586,6 +599,12 @@
               null
             ],
             "description": "See `Agent.toolAccess`; null = the workspace default."
+          },
+          "taskConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "See `Agent.taskConcurrency`. Default 1."
           },
           "skills": {
             "type": "array",
@@ -2644,6 +2663,31 @@
             },
             "description": "Sessions of earlier rounds."
           },
+          "hold": {
+            "type": "boolean",
+            "description": "Queued only: the task does not start on its own; the client starts it."
+          },
+          "review": {
+            "type": "boolean",
+            "description": "Finished work waits in Review (client-made tasks by default). false: it goes straight to Done and the creator (an agent) reads the result."
+          },
+          "grants": {
+            "$ref": "#/components/schemas/TaskGrants"
+          },
+          "queue": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "hold",
+              "worker",
+              "slot",
+              "starting",
+              null
+            ],
+            "description": "Queued tasks only (`GET /tasks`, `GET /tasks/{id}`): why it has not started. `hold`: held by the client. `worker`: an active worker program of the agent owns the queue. `slot`: the agent (or the team) works on its maximum already; it starts when one ends. `starting`: a slot is free, it starts now."
+          },
           "column": {
             "type": "string",
             "enum": [
@@ -2680,7 +2724,10 @@
           "createdBy",
           "acceptedAt",
           "round",
-          "history"
+          "history",
+          "hold",
+          "review",
+          "grants"
         ]
       },
       "TaskStatus": {
@@ -2803,6 +2850,47 @@
           "high",
           "urgent"
         ]
+      },
+      "TaskGrants": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "connectors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "read": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "write": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "maxItems": 100
+          }
+        },
+        "description": "Extra permissions given with the task on top of the agent's own; null = none."
       },
       "TaskDetail": {
         "type": "object",
@@ -2996,6 +3084,24 @@
             ],
             "exclusiveMinimum": 0,
             "description": "Epoch milliseconds."
+          },
+          "hold": {
+            "type": "boolean",
+            "description": "Do not start on its own (default false: the task starts when the agent has a free slot)."
+          },
+          "review": {
+            "type": "boolean",
+            "description": "Finished work waits in Review. Default true for the client."
+          },
+          "grants": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskGrants"
+              },
+              {
+                "description": "Extra permissions for one task: tool names or rules, connectors (every tool), library path globs to read and to write. Pre-approved on top of what the agent has in chat."
+              }
+            ]
           }
         },
         "required": [
@@ -3038,6 +3144,23 @@
               "null"
             ],
             "exclusiveMinimum": 0
+          },
+          "hold": {
+            "type": "boolean",
+            "description": "false releases a held task."
+          },
+          "review": {
+            "type": "boolean"
+          },
+          "grants": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskGrants"
+              },
+              {
+                "description": "Extra permissions for one task: tool names or rules, connectors (every tool), library path globs to read and to write. Pre-approved on top of what the agent has in chat."
+              }
+            ]
           }
         }
       },
@@ -3051,7 +3174,7 @@
             "properties": {
               "hint": {
                 "type": "string",
-                "description": "What happens next: a scheduled worker program picks the task up at its next run, a manual one must be run (\"Run now\"), or no worker program runs the agent queue."
+                "description": "What happens next: it starts on its own, waits for a free slot of the agent, or (an active worker program of the agent) is picked up by that program at its next run."
               }
             },
             "required": [
@@ -15647,7 +15770,7 @@
           "tasks"
         ],
         "summary": "Queue a task for an agent (the work queue)",
-        "description": "Creates a task that has no session yet (`status: queued`) with an owner, a brief, inputs (library paths), a priority and an optional due date. A worker program of that agent picks it up (priority, then due date, then age). Managers do the same with the `create_task` tool.",
+        "description": "Assigns a task to an agent: it has an owner, a brief, inputs (library paths), a priority, an optional due date, optional `grants` (extra permissions for this task) and `hold` / `review` flags. It starts on its own (`status: queued` until the agent has a free slot, see `Agent.taskConcurrency`) and the agent works with its normal tools and permissions, as in chat. An agent with an active worker program leaves its queue to that program. Managers do the same with the `create_task` tool.",
         "security": [
           {
             "Bearer": []
@@ -15790,7 +15913,7 @@
           "tasks"
         ],
         "summary": "Change a queued task",
-        "description": "Re-prioritise, reassign, rewrite or set a due date. `409 TASK_NOT_QUEUED` once a worker took it.",
+        "description": "Re-prioritise, reassign, rewrite, set a due date, grants, hold (`hold: false` releases a held task). `409 TASK_NOT_QUEUED` once it started.",
         "security": [
           {
             "Bearer": []
@@ -15954,6 +16077,86 @@
         }
       }
     },
+    "/tasks/{id}/start": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Start a queued task now",
+        "description": "Starts a queued task at once: a held task, one that waits for a free slot of its agent, or one an active worker program has not taken yet. The agent works on it with its normal tools and permissions (plus the task grants). `409 TASK_NOT_QUEUED` once it runs.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The task, running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`TASK_NOT_QUEUED` or the agent is archived",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tasks/{id}/accept": {
       "post": {
         "tags": [
@@ -16040,7 +16243,7 @@
           "tasks"
         ],
         "summary": "Send finished work back with a note",
-        "description": "The task is queued again with the note appended to its brief (`round` + 1); the next worker run revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.",
+        "description": "The task is queued again with the note appended to its brief (`round` + 1) and starts on its own, so the agent revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.",
         "security": [
           {
             "Bearer": []
