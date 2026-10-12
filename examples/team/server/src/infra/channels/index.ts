@@ -7,6 +7,8 @@ export type {
   GatewayDeps,
   HandleResult,
   PendingView,
+  PersonView,
+  Requester,
   WakeInput,
 } from './gateway.ts'
 export { createChannelGateway } from './gateway.ts'
@@ -14,8 +16,14 @@ export type { MockAdapter, MockKind, MockOptions, MockSay, MockSent } from './mo
 export { createMockAdapter, MOCK_CAPABILITIES } from './mock-adapter.ts'
 export * from './model.ts'
 export type { ChannelsPluginOptions } from './plugin.ts'
-export { CHANNEL_READ_TOOLS, CHANNEL_TOOLS, channels } from './plugin.ts'
+export {
+  CHANNEL_OWN_WRITE_TOOLS,
+  CHANNEL_READ_TOOLS,
+  CHANNEL_TOOLS,
+  channels,
+} from './plugin.ts'
 export type { ConnectionConfig, ConnectionConfigInput, ScopePolicy } from './policy.ts'
 export { ConnectionConfigSchema } from './policy.ts'
+export type { Role } from './roles.ts'
 export * from './types.ts'
 export { channelVault, channelVaultFromEnv } from './vault.ts'

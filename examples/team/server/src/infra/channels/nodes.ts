@@ -154,6 +154,8 @@ export interface NodeStore {
       canRead?: boolean | null
       muted?: boolean
       lastReadNativeId?: string | null
+      /** The connection's own administrator rights in the node (stored in `extra.rights`). */
+      rights?: Record<string, boolean>
     },
     now: number,
   ): NodeAccessRow
@@ -571,7 +573,15 @@ export function sqliteNodeStore(sqlite: Database): NodeStore {
         sets.push('last_read_native_id = ?')
         args.push(patch.lastReadNativeId)
       }
-      void cur
+      if (patch.rights !== undefined) {
+        sets.push('extra = ?')
+        args.push(
+          JSON.stringify({
+            ...(JSON.parse(cur.extra) as Record<string, unknown>),
+            rights: patch.rights,
+          }),
+        )
+      }
       sqlite
         .query(`UPDATE ch_node_access SET ${sets.join(', ')} WHERE node_id = ?`)
         .run(...(args as never[]), nodeId)

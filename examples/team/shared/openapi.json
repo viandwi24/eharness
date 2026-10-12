@@ -8668,6 +8668,320 @@
           }
         }
       },
+      "ChannelPersonList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelPerson"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelPerson": {
+        "type": "object",
+        "properties": {
+          "peerId": {
+            "type": "string",
+            "description": "The platform user id."
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "isBot": {
+            "type": "boolean"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "guest"
+            ]
+          },
+          "roleSource": {
+            "type": "string",
+            "description": "`directory`, `linked-admin`, `linked-member`, `anonymous`, `bot` or `default`."
+          },
+          "explicit": {
+            "type": "boolean",
+            "description": "The team set this role (a directory entry exists)."
+          },
+          "divisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "nodeId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "nodeId",
+                "title"
+              ]
+            }
+          },
+          "memberId": {
+            "type": "string",
+            "description": "The linked team member."
+          },
+          "platformAdmin": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "nodeId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "owner",
+                    "admin"
+                  ]
+                },
+                "customTitle": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "nodeId",
+                "title",
+                "role"
+              ]
+            }
+          },
+          "suggestion": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "owner",
+                  "admin",
+                  "member",
+                  "guest"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "reason"
+            ],
+            "description": "The platform lists this person as admin and the team has not decided."
+          },
+          "firstSeen": {
+            "type": "integer"
+          },
+          "lastSeen": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "peerId",
+          "kind",
+          "isBot",
+          "role",
+          "roleSource",
+          "explicit",
+          "divisions",
+          "platformAdmin",
+          "firstSeen",
+          "lastSeen"
+        ]
+      },
+      "ChannelPeopleSettings": {
+        "type": "object",
+        "properties": {
+          "defaultRole": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "guest"
+            ],
+            "description": "Role of somebody who is neither in the directory nor linked to a team member."
+          },
+          "approvalTtlHours": {
+            "type": "number",
+            "minimum": 0.02,
+            "maximum": 720,
+            "description": "An approval nobody answers in a chat is declined after this long."
+          }
+        },
+        "required": [
+          "defaultRole",
+          "approvalTtlHours"
+        ]
+      },
+      "ChannelPeopleSettingsBody": {
+        "type": "object",
+        "properties": {
+          "defaultRole": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "guest"
+            ],
+            "description": "Role of somebody who is neither in the directory nor linked to a team member."
+          },
+          "approvalTtlHours": {
+            "type": "number",
+            "minimum": 0.02,
+            "maximum": 720,
+            "description": "An approval nobody answers in a chat is declined after this long."
+          }
+        }
+      },
+      "ChannelImportResult": {
+        "type": "object",
+        "properties": {
+          "chats": {
+            "type": "integer"
+          },
+          "people": {
+            "type": "integer"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "chats",
+          "people",
+          "problems"
+        ]
+      },
+      "ChannelRoleBody": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "guest"
+            ]
+          },
+          "divisions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "role"
+        ]
+      },
+      "ChannelReminderList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelReminder"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelReminder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "chatTitle": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "whenText": {
+            "type": "string",
+            "description": "The schedule in words with the absolute time and zone."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "done",
+              "cancelled"
+            ]
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdByName": {
+            "type": "string"
+          },
+          "createdByRole": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "lastFiredAt": {
+            "type": "integer"
+          },
+          "fireCount": {
+            "type": "integer"
+          },
+          "lastError": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "nodeId",
+          "chatTitle",
+          "text",
+          "whenText",
+          "status",
+          "mentions",
+          "createdAt",
+          "fireCount"
+        ]
+      },
       "ChannelNodeList": {
         "type": "object",
         "properties": {
@@ -8799,6 +9113,44 @@
               },
               "redactOnDelete": {
                 "type": "boolean"
+              },
+              "proactive": {
+                "type": "object",
+                "properties": {
+                  "allowed": {
+                    "type": "boolean"
+                  },
+                  "digest": {
+                    "type": "boolean"
+                  },
+                  "digestMinutes": {
+                    "type": "integer"
+                  },
+                  "maxMentions": {
+                    "type": "integer"
+                  },
+                  "quietHours": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to"
+                    ]
+                  }
+                },
+                "required": [
+                  "allowed",
+                  "digest",
+                  "digestMinutes",
+                  "maxMentions"
+                ]
               }
             },
             "required": [
@@ -8809,7 +9161,8 @@
               "retentionDays",
               "observe",
               "sessionScope",
-              "redactOnDelete"
+              "redactOnDelete",
+              "proactive"
             ]
           },
           "inherited": {
@@ -8974,6 +9327,26 @@
                 "required": [
                   "from"
                 ]
+              },
+              "proactive": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
               }
             },
             "description": "Where each effective setting comes from."
@@ -9111,6 +9484,46 @@
           "redactOnDelete": {
             "type": "boolean",
             "description": "Drop a message's content when it is deleted on the platform."
+          },
+          "proactive": {
+            "type": "object",
+            "properties": {
+              "allowed": {
+                "type": "boolean",
+                "description": "May the agent post here without being asked (routines, heartbeat). Default off."
+              },
+              "quietHours": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "description": "HH:MM in the team timezone; proactive posts are held during this window."
+              },
+              "digest": {
+                "type": "boolean"
+              },
+              "digestMinutes": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 1440
+              },
+              "maxMentions": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 20
+              }
+            }
           }
         },
         "required": [
@@ -9738,6 +10151,49 @@
               "boolean",
               "null"
             ]
+          },
+          "proactive": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "allowed": {
+                "type": "boolean",
+                "description": "May the agent post here without being asked (routines, heartbeat). Default off."
+              },
+              "quietHours": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "description": "HH:MM in the team timezone; proactive posts are held during this window."
+              },
+              "digest": {
+                "type": "boolean"
+              },
+              "digestMinutes": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 1440
+              },
+              "maxMentions": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 20
+              }
+            }
           }
         }
       },
@@ -19762,6 +20218,580 @@
           },
           "401": {
             "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/people": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "The people directory",
+        "description": "Everybody the connection has seen with the role the team gave them (owner, admin, member, guest), their divisions (topics), the linked team member and what the platform says (admin or creator, a suggestion until confirmed). Roles come only from here: nothing said in a chat changes them.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "People",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPersonList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/people/settings": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Directory settings",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPeopleSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Change the directory settings",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelPeopleSettingsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPeopleSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/people/import": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Import the administrators of the allowed chats",
+        "description": "Asks the platform for the creator and administrators of every allowed chat and keeps them as suggestions (never as roles).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was imported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/people/{peerId}/role": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Set the role and divisions of a person",
+        "description": "Gives a platform user id a role and divisions. Also confirms a suggestion from the platform in one click. A chat speaking as itself (an anonymous admin) is always a guest.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "peerId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelRoleBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPerson"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Remove the directory entry of a person",
+        "description": "Back to the derived role (linked team member, else the default).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "peerId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/reminders": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Reminders created from chats",
+        "description": "Active reminders (or all with `all=true`): where they post, when, whom they mention, who set them.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Also finished and cancelled ones."
+            },
+            "required": false,
+            "description": "Also finished and cancelled ones.",
+            "name": "all",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reminders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelReminderList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/reminders/{reminderId}": {
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Cancel a reminder",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "reminderId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Cancelled"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown reminder",
             "content": {
               "application/json": {
                 "schema": {

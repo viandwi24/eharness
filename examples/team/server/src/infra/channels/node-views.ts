@@ -22,6 +22,7 @@ const KEYS: ChannelSettingKey[] = [
   'observe',
   'sessionScope',
   'redactOnDelete',
+  'proactive',
 ]
 
 /** The part of the settings stored on one node that the page edits. */
@@ -37,6 +38,7 @@ export function policyView(own: ScopePolicy): ChannelPolicy | null {
     ...(own.observe === undefined ? {} : { observe: own.observe }),
     ...(own.sessionScope === undefined ? {} : { sessionScope: own.sessionScope }),
     ...(own.redactOnDelete === undefined ? {} : { redactOnDelete: own.redactOnDelete }),
+    ...(own.proactive === undefined ? {} : { proactive: own.proactive }),
   }
 }
 
@@ -83,6 +85,15 @@ export function nodeView(
       observe: scope.observe,
       sessionScope: scope.sessionScope,
       redactOnDelete: scope.redactOnDelete,
+      proactive: {
+        allowed: scope.proactive.allowed,
+        digest: scope.proactive.digest,
+        digestMinutes: scope.proactive.digestMinutes,
+        maxMentions: scope.proactive.maxMentions,
+        ...(scope.proactive.quietHours === undefined
+          ? {}
+          : { quietHours: scope.proactive.quietHours }),
+      },
     },
     inherited,
   }

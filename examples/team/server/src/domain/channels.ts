@@ -31,6 +31,62 @@ export interface ChannelPolicy {
   sessionScope?: 'node' | 'room'
   /** Drop a message's content when it is deleted on the platform. */
   redactOnDelete?: boolean
+  /** What the agent may post here unasked (routines, heartbeat). */
+  proactive?: ChannelProactive
+}
+
+export interface ChannelProactive {
+  allowed?: boolean
+  quietHours?: { from: string; to: string }
+  digest?: boolean
+  digestMinutes?: number
+  maxMentions?: number
+}
+
+export type ChannelRole = 'owner' | 'admin' | 'member' | 'guest'
+
+/** One person of the directory (People tab). */
+export interface ChannelPersonView {
+  peerId: string
+  name?: string
+  username?: string
+  kind: string
+  isBot: boolean
+  role: ChannelRole
+  roleSource: string
+  explicit: boolean
+  divisions: Array<{ nodeId: string; title: string }>
+  memberId?: string
+  platformAdmin: Array<{
+    nodeId: string
+    title: string
+    role: 'owner' | 'admin'
+    customTitle?: string
+  }>
+  suggestion?: { role: ChannelRole; reason: string }
+  firstSeen: number
+  lastSeen: number
+}
+
+export interface ChannelReminderView {
+  id: string
+  nodeId: string
+  chatTitle: string
+  text: string
+  whenText: string
+  status: 'active' | 'done' | 'cancelled'
+  mentions: string[]
+  createdByName?: string
+  createdByRole?: string
+  createdAt: number
+  lastFiredAt?: number
+  fireCount: number
+  lastError?: string
+}
+
+export interface ChannelPeopleSettings {
+  defaultRole: ChannelRole
+  approvalTtlHours: number
 }
 
 export interface ChannelBinding {
@@ -137,6 +193,7 @@ export type ChannelSettingKey =
   | 'observe'
   | 'sessionScope'
   | 'redactOnDelete'
+  | 'proactive'
 
 /** Where an effective setting comes from. */
 export interface ChannelSettingOrigin {
@@ -182,6 +239,9 @@ export interface ChannelNodeView {
     observe: boolean
     sessionScope: 'node' | 'room'
     redactOnDelete: boolean
+    proactive: Required<Omit<ChannelProactive, 'quietHours'>> & {
+      quietHours?: { from: string; to: string }
+    }
   }
   /** Where each effective setting comes from. */
   inherited: Partial<Record<ChannelSettingKey, ChannelSettingOrigin>>
@@ -218,6 +278,7 @@ export interface ChannelPolicyInput {
   observe?: boolean | null
   sessionScope?: 'node' | 'room' | null
   redactOnDelete?: boolean | null
+  proactive?: ChannelProactive | null
 }
 
 export interface ChannelLimitsInput {

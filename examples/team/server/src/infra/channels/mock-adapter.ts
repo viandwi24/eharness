@@ -15,6 +15,7 @@ import {
   type HistoryEntry,
   type Identity,
   type InboundAttachment,
+  type MemberInfo,
   type NativeAction,
   type NodeInfo,
   type NodeRef,
@@ -36,6 +37,7 @@ export const MOCK_CAPABILITIES: ChannelCapabilities = {
   members: true,
   upload: true,
   buttons: true,
+  mentions: 'id',
 }
 
 export type MockKind = 'dm' | 'group' | 'channel'
@@ -61,7 +63,8 @@ export interface MockSay {
   mentionSelf?: boolean
   mentionOthers?: boolean
   replyToSelf?: boolean
-  replyTo?: { messageId: string; senderName?: string; text?: string }
+  replyTo?: { messageId: string; senderName?: string; senderId?: string; text?: string }
+  forwardOf?: Record<string, unknown>
   command?: { name: string; args: string }
   attachments?: Array<{
     id?: string
@@ -138,6 +141,10 @@ export interface MockOptions {
   /** Capabilities that depend on the node (overrides `capabilities` for what it returns). */
   capabilitiesOf?: (node: ChannelNode) => Partial<ChannelCapabilities>
   actions?: NativeAction[]
+  /** What `listMembers` returns (default: the mock's own identity). */
+  members?: MemberInfo[]
+  /** What `status` returns, for `channel_status`. */
+  status?: { readsEverything?: boolean; notes?: string[] }
   now?: () => number
   /** Time of sends, for rate limit assertions (default `Date.now`). */
   clock?: () => number
@@ -303,8 +310,9 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
       return all.slice(Math.max(0, upTo - opts.limit), upTo)
     },
     async listMembers() {
-      return { members: [selfIdentity], scope: 'partial' as const }
+      return { members: options.members ?? [selfIdentity], scope: 'admins' as const }
     },
+    ...(options.status === undefined ? {} : { status: () => options.status as never }),
     async fetchAttachment(_node, messageNativeId, attachmentId) {
       const found = attachmentBytes.get(`${messageNativeId}:${attachmentId}`)
       if (found === undefined) throw new ChannelError('invalid', 'no such attachment')
@@ -357,6 +365,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
           text: input.text,
           attachments,
           ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+          ...(input.forwardOf === undefined ? {} : { forwardOf: input.forwardOf }),
         },
         signals: {
           mentionedSelf: input.mentionSelf === true,

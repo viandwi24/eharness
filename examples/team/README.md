@@ -140,6 +140,30 @@ remove it. Run one server process per bot. `TEAM_TELEGRAM_API_ROOT` points at a 
 server. Telegram's terms limit what may be done with chat data (platform data and AI): read the
 notes in [P41](../../docs/plans/P41-team-channels.md) and ingest only chats you own or manage.
 
+## People, roles, reminders and recaps (internal groups)
+
+For a company group (for example a forum supergroup with a topic per division):
+
+1. Add the bot to the group as an **administrator** (so it receives every message and topic), allow the chat on
+   **Channels** -> **Chats** (topics inherit it), and keep "Full log" on.
+2. **Channels** -> **People**: **Read the chat admins** imports the creator and administrators as
+   *suggestions* ("suggested: admin in TEAMKU"); press **Confirm as ...** to make one a role. Give everybody a role
+   (`owner`, `admin`, `member`, `guest`) and divisions (the topics a member may read). Link yourself to the
+   team member `owner` so you are the owner. Somebody who is not in the directory is a `guest` (change the
+   default on the same tab). Roles never come from chat text.
+3. What each role may do: owner and admin approve in a chat, set reminders for others, schedule and use write
+   tools; a member reads and recaps the chats of their divisions and sets their own reminders; a guest only gets
+   answers. Every message the agent sees carries a header with the sender's role, topic and time.
+4. **Reminders**: ask in the chat ("remind the group tomorrow at 9:00", "remind @Budi at 15:00"). The confirmation
+   states the absolute time and topic in the team timezone (Settings). They post as written, without a model call,
+   and appear on the **Reminders** tab where you can cancel them.
+5. **Recaps**: "note today's chat" reads the allowed topics of the day in chunks and saves a note under
+   `/library/recaps` with its source range; it says when the log starts after the window.
+6. **Proactive posts** (routines, heartbeat): off until you allow them per chat or topic (Chats -> Proactive posts:
+   quiet hours, digest, mention limit).
+7. An approval request nobody answers expires after 24 hours (People tab); a new message from the person who asked
+   declines it with their message as the note.
+
 ## Telegram account (MTProto)
 
 For groups and channels a bot cannot join (history backfill, admin log). Get an `api_id` and

@@ -10,10 +10,34 @@
  */
 import { z } from 'zod'
 import type { NodeRow } from './model.ts'
+import { RolePoliciesSchema, RoleSchema } from './roles.ts'
 import type { Identity, InboundSignals } from './types.ts'
 
 const wake = z.enum(['mention', 'always', 'never'])
 const delivery = z.enum(['final_text', 'message_tool'])
+
+const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM, 24 hours')
+
+/**
+ * What the agent may post here without being asked (a routine, the heartbeat, a program): nothing
+ * unless `allowed`. Posts are held in quiet hours and while a digest collects them, then sent as
+ * one message; `maxMentions` caps the pings of one message. Reminders people asked for are not
+ * proactive: they ignore quiet hours but obey `maxMentions`.
+ */
+export const ProactivePolicySchema = z.object({
+  allowed: z.boolean().optional(),
+  /** `HH:MM` in the team timezone; a window that wraps midnight is fine. */
+  quietHours: z.object({ from: clock, to: clock }).optional(),
+  /** Collect proactive posts into one message per `digestMinutes` (default on). */
+  digest: z.boolean().optional(),
+  digestMinutes: z.number().int().min(5).max(1440).optional(),
+  maxMentions: z.number().int().min(0).max(20).optional(),
+})
+export type ProactivePolicy = z.infer<typeof ProactivePolicySchema>
+
+export const DEFAULT_PROACTIVE: Required<Omit<ProactivePolicy, 'quietHours'>> & {
+  quietHours: ProactivePolicy['quietHours']
+} = { allowed: false, quietHours: undefined, digest: true, digestMinutes: 60, maxMentions: 3 }
 
 /** One level of the inheritance: a node, or the connection's defaults. All fields optional. */
 export const ScopePolicySchema = z.object({
@@ -49,6 +73,8 @@ export const ScopePolicySchema = z.object({
   sessionScope: z.enum(['node', 'room']).optional(),
   /** Drop the content of a message when it is deleted on the platform (default: keep it for audit until retention). */
   redactOnDelete: z.boolean().optional(),
+  /** What the agent may post here unasked (L6). */
+  proactive: ProactivePolicySchema.optional(),
 })
 export type ScopePolicy = z.infer<typeof ScopePolicySchema>
 
@@ -103,6 +129,18 @@ export const ConnectionConfigSchema = z.object({
    * principal, `owner`.
    */
   admins: z.array(z.string().min(1)).default(['owner']),
+  /**
+   * The people directory (L6): the role of somebody who is neither in the directory nor linked to
+   * a team member (default `guest`), and per-role tool policy overrides (deny wins).
+   */
+  people: z
+    .object({
+      defaultRole: RoleSchema.default('guest'),
+      policy: RolePoliciesSchema,
+    })
+    .default({ defaultRole: 'guest', policy: {} }),
+  /** An approval announced in a chat that nobody answers is declined after this long (default 24 h). */
+  approvalTtlMs: z.number().int().min(60_000).default(86_400_000),
   /** Observed messages injected into the next wake (default 50). */
   historyLimit: z.number().int().min(1).max(200).default(50),
   rate: RateLimitsSchema.default(RateLimitsSchema.parse({})),
@@ -136,6 +174,9 @@ export interface ResolvedScope {
   observe: boolean
   sessionScope: 'node' | 'room'
   redactOnDelete: boolean
+  proactive: Required<Omit<ProactivePolicy, 'quietHours'>> & {
+    quietHours: ProactivePolicy['quietHours']
+  }
   /** The node is a thread that has its own agent entry (an "own topic" wake). */
   ownTopic: boolean
   /** Per setting, which level decided it (for the Channels page). */
@@ -213,6 +254,7 @@ export function resolveScope(config: ConnectionConfig, chain: readonly ScopeNode
     observe: pick('observe') ?? fallback('observe', true),
     sessionScope: pick('sessionScope') ?? fallback('sessionScope', 'node' as const),
     redactOnDelete: pick('redactOnDelete') ?? fallback('redactOnDelete', false),
+    proactive: { ...DEFAULT_PROACTIVE, ...(pick('proactive') ?? fallback('proactive', {})) },
     ownTopic: leaf?.node.kind === 'thread' && own?.agentId !== undefined,
     origin,
   }

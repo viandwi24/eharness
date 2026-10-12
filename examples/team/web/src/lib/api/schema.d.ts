@@ -8122,6 +8122,519 @@ export interface paths {
         };
         trace?: never;
     };
+    "/channels/connections/{id}/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The people directory
+         * @description Everybody the connection has seen with the role the team gave them (owner, admin, member, guest), their divisions (topics), the linked team member and what the platform says (admin or creator, a suggestion until confirmed). Roles come only from here: nothing said in a chat changes them.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description People */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelPersonList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/people/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Directory settings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelPeopleSettings"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        /** Change the directory settings */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelPeopleSettingsBody"];
+                };
+            };
+            responses: {
+                /** @description Settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelPeopleSettings"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/people/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import the administrators of the allowed chats
+         * @description Asks the platform for the creator and administrators of every allowed chat and keeps them as suggestions (never as roles).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description What was imported */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelImportResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/people/{peerId}/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the role and divisions of a person
+         * @description Gives a platform user id a role and divisions. Also confirms a suggestion from the platform in one click. A chat speaking as itself (an anonymous admin) is always a guest.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    peerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelRoleBody"];
+                };
+            };
+            responses: {
+                /** @description The person */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelPerson"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Remove the directory entry of a person
+         * @description Back to the derived role (linked team member, else the default).
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    peerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Done */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown person */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reminders created from chats
+         * @description Active reminders (or all with `all=true`): where they post, when, whom they mention, who set them.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Also finished and cancelled ones. */
+                    all?: "true" | "false";
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Reminders */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelReminderList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/reminders/{reminderId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Cancel a reminder */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    reminderId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Cancelled */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown reminder */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/channels/connections/{id}/account/chats/refresh": {
         parameters: {
             query?: never;
@@ -12469,6 +12982,92 @@ export interface components {
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
         };
+        ChannelPersonList: {
+            items: components["schemas"]["ChannelPerson"][];
+        };
+        ChannelPerson: {
+            /** @description The platform user id. */
+            peerId: string;
+            name?: string;
+            username?: string;
+            kind: string;
+            isBot: boolean;
+            /** @enum {string} */
+            role: "owner" | "admin" | "member" | "guest";
+            /** @description `directory`, `linked-admin`, `linked-member`, `anonymous`, `bot` or `default`. */
+            roleSource: string;
+            /** @description The team set this role (a directory entry exists). */
+            explicit: boolean;
+            divisions: {
+                nodeId: string;
+                title: string;
+            }[];
+            /** @description The linked team member. */
+            memberId?: string;
+            platformAdmin: {
+                nodeId: string;
+                title: string;
+                /** @enum {string} */
+                role: "owner" | "admin";
+                customTitle?: string;
+            }[];
+            /** @description The platform lists this person as admin and the team has not decided. */
+            suggestion?: {
+                /** @enum {string} */
+                role: "owner" | "admin" | "member" | "guest";
+                reason: string;
+            };
+            firstSeen: number;
+            lastSeen: number;
+        };
+        ChannelPeopleSettings: {
+            /**
+             * @description Role of somebody who is neither in the directory nor linked to a team member.
+             * @enum {string}
+             */
+            defaultRole: "owner" | "admin" | "member" | "guest";
+            /** @description An approval nobody answers in a chat is declined after this long. */
+            approvalTtlHours: number;
+        };
+        ChannelPeopleSettingsBody: {
+            /**
+             * @description Role of somebody who is neither in the directory nor linked to a team member.
+             * @enum {string}
+             */
+            defaultRole?: "owner" | "admin" | "member" | "guest";
+            /** @description An approval nobody answers in a chat is declined after this long. */
+            approvalTtlHours?: number;
+        };
+        ChannelImportResult: {
+            chats: number;
+            people: number;
+            problems: string[];
+        };
+        ChannelRoleBody: {
+            /** @enum {string} */
+            role: "owner" | "admin" | "member" | "guest";
+            divisions?: string[];
+        };
+        ChannelReminderList: {
+            items: components["schemas"]["ChannelReminder"][];
+        };
+        ChannelReminder: {
+            id: string;
+            nodeId: string;
+            chatTitle: string;
+            text: string;
+            /** @description The schedule in words with the absolute time and zone. */
+            whenText: string;
+            /** @enum {string} */
+            status: "active" | "done" | "cancelled";
+            mentions: string[];
+            createdByName?: string;
+            createdByRole?: string;
+            createdAt: number;
+            lastFiredAt?: number;
+            fireCount: number;
+            lastError?: string;
+        };
         ChannelNodeList: {
             items: components["schemas"]["ChannelNode"][];
         };
@@ -12511,6 +13110,16 @@ export interface components {
                 /** @enum {string} */
                 sessionScope: "node" | "room";
                 redactOnDelete: boolean;
+                proactive: {
+                    allowed: boolean;
+                    digest: boolean;
+                    digestMinutes: number;
+                    maxMentions: number;
+                    quietHours?: {
+                        from: string;
+                        to: string;
+                    };
+                };
             };
             /** @description Where each effective setting comes from. */
             inherited: {
@@ -12554,6 +13163,11 @@ export interface components {
                     from: "node" | "ancestor" | "connection" | "default";
                     nodeId?: string;
                 };
+                proactive?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
             };
         };
         ChannelAccountChat: {
@@ -12593,6 +13207,18 @@ export interface components {
             sessionScope?: "node" | "room";
             /** @description Drop a message's content when it is deleted on the platform. */
             redactOnDelete?: boolean;
+            proactive?: {
+                /** @description May the agent post here without being asked (routines, heartbeat). Default off. */
+                allowed?: boolean;
+                /** @description HH:MM in the team timezone; proactive posts are held during this window. */
+                quietHours?: {
+                    from: string;
+                    to: string;
+                };
+                digest?: boolean;
+                digestMinutes?: number;
+                maxMentions?: number;
+            };
         } | null;
         ChannelSelectBody: {
             selected: boolean;
@@ -12753,6 +13379,18 @@ export interface components {
             /** @enum {string|null} */
             sessionScope?: "node" | "room" | null;
             redactOnDelete?: boolean | null;
+            proactive?: {
+                /** @description May the agent post here without being asked (routines, heartbeat). Default off. */
+                allowed?: boolean;
+                /** @description HH:MM in the team timezone; proactive posts are held during this window. */
+                quietHours?: {
+                    from: string;
+                    to: string;
+                };
+                digest?: boolean;
+                digestMinutes?: number;
+                maxMentions?: number;
+            } | null;
         };
         ChannelLinkList: {
             items: components["schemas"]["ChannelLink"][];

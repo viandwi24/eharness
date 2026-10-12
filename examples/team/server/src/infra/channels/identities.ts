@@ -105,6 +105,15 @@ export interface IdentityStore {
     membership: { role?: string; joinedAt?: number | null; leftAt?: number | null },
   ): void
   members(nodeId: string): Array<{ identityId: string; role: string }>
+  /** The places an identity is a member of (it has not left), with its platform role there. */
+  memberships(identityId: string): Array<{ nodeId: string; role: string }>
+  /** Identities of a connection, most recently seen first (the self identity is left out). */
+  list(connectionId: string, limit: number): IdentityRow[]
+  /**
+   * Find people by what is known about them: the platform user id (exact), a username (with or
+   * without `@`), or a part of the name. Newest first, the connection's own identity left out.
+   */
+  search(connectionId: string, query: string, limit: number): IdentityRow[]
   clear(connectionId: string): void
 }
 
@@ -318,6 +327,38 @@ export function sqliteIdentityStore(sqlite: Database): IdentityStore {
         .all(nodeId)
         .map((r) => ({ identityId: r.identity_id, role: r.role }))
     },
+    memberships(identityId) {
+      return sqlite
+        .query<{ node_id: string; role: string }, [string]>(
+          'SELECT node_id, role FROM ch_memberships WHERE identity_id = ? AND left_at IS NULL',
+        )
+        .all(identityId)
+        .map((r) => ({ nodeId: r.node_id, role: r.role }))
+    },
+    list(connectionId, limit) {
+      return sqlite
+        .query<IdentityDb, [string, number]>(
+          'SELECT * FROM ch_identities WHERE connection_id = ? AND is_self = 0 ORDER BY last_seen_at DESC, id DESC LIMIT ?',
+        )
+        .all(connectionId, limit)
+        .map(toIdentity)
+    },
+    search(connectionId, query, limit) {
+      const q = query.trim().replace(/^@/, '')
+      if (q === '') return []
+      const like = `%${q.replace(/[\\%_]/g, '\\$&')}%`
+      return sqlite
+        .query<IdentityDb, [string, string, string, string, string, number]>(
+          `SELECT DISTINCT i.* FROM ch_identities i
+             LEFT JOIN ch_identity_aliases a ON a.identity_id = i.id AND a.kind = 'username'
+             WHERE i.connection_id = ? AND i.is_self = 0
+               AND (i.native_id = ? OR lower(i.username) = lower(?) OR lower(a.value) = lower(?)
+                    OR lower(i.display_name) LIKE lower(?) ESCAPE '\\')
+             ORDER BY i.last_seen_at DESC, i.id DESC LIMIT ?`,
+        )
+        .all(connectionId, q, q, q, like, limit)
+        .map(toIdentity)
+    },
     clear(connectionId) {
       const ids = sqlite
         .query<{ id: string }, [string]>('SELECT id FROM ch_identities WHERE connection_id = ?')
@@ -328,6 +369,7 @@ export function sqliteIdentityStore(sqlite: Database): IdentityStore {
         sqlite.query('DELETE FROM ch_identity_profiles WHERE identity_id = ?').run(id)
         sqlite.query('DELETE FROM ch_memberships WHERE identity_id = ?').run(id)
       }
+      sqlite.query('DELETE FROM ch_people WHERE connection_id = ?').run(connectionId)
       sqlite.query('DELETE FROM ch_identities WHERE connection_id = ?').run(connectionId)
     },
   }

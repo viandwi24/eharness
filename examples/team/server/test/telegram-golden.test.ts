@@ -58,7 +58,7 @@ const DISCUSSION = '-1001234500004'
 
 describe('golden: nodes and events of every update shape', () => {
   test('the normalizer version is part of the contract', () => {
-    expect(NORMALIZER_VERSION).toBe(1)
+    expect(NORMALIZER_VERSION).toBe(2)
   })
 
   test('private chat: a direct node keyed by the user id', () => {

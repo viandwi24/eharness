@@ -1360,3 +1360,87 @@ export const chNodeSessions = sqliteTable(
     uniqueIndex('ch_node_sessions_session').on(t.sessionId),
   ],
 )
+
+// --- Internal groups: people directory, reminders, proactive posts (docs/plans/P41-team-channels.md, phase L6) ---
+
+/**
+ * The directory entry of an identity: the role the people of the team gave it (set only by an
+ * authorized action, never by chat text) and the divisions (topic nodes) it belongs to. An
+ * identity without a row has the default role of the connection (see `infra/channels/people.ts`).
+ * The platform's own admin status lives in `ch_memberships` and is only a suggestion.
+ */
+export const chPeople = sqliteTable(
+  'ch_people',
+  {
+    identityId: text('identity_id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    /** `owner` | `admin` | `member` | `guest`. */
+    role: text('role').notNull(),
+    /** Node ids (topics or rooms) the person belongs to. */
+    divisions: text('divisions').notNull().default('[]'),
+    setBy: text('set_by'),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('ch_people_connection').on(t.connectionId)],
+)
+
+/**
+ * A reminder created from a chat (or the web): what to post, where, whom to mention. The schedule
+ * is a `sys:reminder:<id>` routine (claim, restart safety); a fire posts `body` through the outbox
+ * without a model call. `body` and `mentions` are plain data (the text was typed in a chat).
+ */
+export const chReminders = sqliteTable(
+  'ch_reminders',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    nodeId: text('node_id').notNull(),
+    agentId: text('agent_id').notNull(),
+    routineId: text('routine_id'),
+    /** The fixed text posted at the fire. */
+    body: text('body').notNull(),
+    /** Identity ids (ours) to mention, as JSON. */
+    mentions: text('mentions').notNull().default('[]'),
+    /** The schedule as JSON (`RoutineSpec`) and a human line (absolute time in the team timezone). */
+    schedule: text('schedule').notNull(),
+    whenText: text('when_text').notNull(),
+    timezone: text('timezone').notNull(),
+    /** `active` | `done` | `cancelled`. */
+    status: text('status').notNull().default('active'),
+    createdByIdentityId: text('created_by_identity_id'),
+    createdByName: text('created_by_name'),
+    createdByRole: text('created_by_role'),
+    createdAt: integer('created_at').notNull(),
+    lastFiredAt: integer('last_fired_at'),
+    fireCount: integer('fire_count').notNull().default(0),
+    /** The last delivery problem, when a fire could not be queued. */
+    lastError: text('last_error'),
+  },
+  (t) => [
+    index('ch_reminders_connection').on(t.connectionId, t.status),
+    index('ch_reminders_routine').on(t.routineId),
+  ],
+)
+
+/**
+ * Posts an agent makes without being asked (a routine, the heartbeat): held while quiet hours are
+ * on or while a digest collects them, then sent as one message per node. `sent_at` also records
+ * when a node last got a proactive message (the minimum gap between pings).
+ */
+export const chProactive = sqliteTable(
+  'ch_proactive',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    nodeId: text('node_id').notNull(),
+    agentId: text('agent_id').notNull(),
+    /** Sealed with the channel vault (the text came from a chat or a model). */
+    body: text('body').notNull(),
+    mentions: text('mentions').notNull().default('[]'),
+    /** `held` | `sent` | `dropped`. */
+    status: text('status').notNull().default('held'),
+    createdAt: integer('created_at').notNull(),
+    sentAt: integer('sent_at'),
+  },
+  (t) => [index('ch_proactive_node').on(t.nodeId, t.status)],
+)

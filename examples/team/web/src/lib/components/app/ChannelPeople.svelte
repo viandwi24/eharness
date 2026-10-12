@@ -9,6 +9,7 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
+	import ChannelDirectory from '#lib/components/app/ChannelDirectory.svelte';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import { peerIdError, unlinkedDetail, unlinkedLabel, type ChannelConnection, type ChannelLink, type ChannelMember, type ChannelUnlinked } from '#lib/channels/model.js';
 	import { formatTime } from '#lib/format.js';
@@ -98,8 +99,9 @@
 </script>
 
 <div class="flex flex-col gap-4" data-testid="people-tab">
+	<ChannelDirectory {conn} {onChange} />
 	<p class="text-xs text-muted-foreground">
-		Only linked people can talk to the agent in a direct message, and approvals in a chat are answered by the person who asked or an admin. Anyone else who writes is listed here, and gets no answer. Link them to a team member, or ignore them.
+		Only linked people can talk to the agent in a direct message. Anyone else who writes directly is listed below, and gets no answer. Link them to a team member, or ignore them.
 	</p>
 
 	<div class="flex flex-col gap-2">

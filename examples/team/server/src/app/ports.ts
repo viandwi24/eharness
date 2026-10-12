@@ -13,7 +13,11 @@ import type {
   ChannelLinkView,
   ChannelMemberView,
   ChannelNodeView,
+  ChannelPeopleSettings,
+  ChannelPersonView,
   ChannelPolicyInput,
+  ChannelReminderView,
+  ChannelRole,
   ChannelUnlinkedView,
 } from '../domain/channels.ts'
 import type {
@@ -812,6 +816,22 @@ export interface ChannelInboxPort {
     options: { limit: number; before?: string },
   ): Promise<ChannelConversationLog>
   activity(id: string, query: ChannelActivityQuery): Promise<ChannelActivityPage>
+  /** The people directory (roles, divisions, suggestions from the platform's admins). */
+  people(id: string): Promise<ChannelPersonView[]>
+  setRole(
+    id: string,
+    peerId: string,
+    input: { role: ChannelRole; divisions?: string[] },
+  ): Promise<ChannelPersonView>
+  clearRole(id: string, peerId: string): Promise<void>
+  importAdmins(id: string): Promise<{ chats: number; people: number; problems: string[] }>
+  peopleSettings(id: string): Promise<ChannelPeopleSettings>
+  setPeopleSettings(
+    id: string,
+    input: Partial<ChannelPeopleSettings>,
+  ): Promise<ChannelPeopleSettings>
+  reminders(id: string, options: { all: boolean }): Promise<ChannelReminderView[]>
+  cancelReminder(id: string, reminderId: string): Promise<void>
 }
 
 /** Telegram user accounts (P41 L4): chat picker, per-chat backfill window, admin log, limits. */

@@ -16,6 +16,27 @@ const delivery = z.enum(['final_text', 'message_tool'])
 
 const sessionScope = z.enum(['node', 'room'])
 
+const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+const proactiveShape = z.object({
+  allowed: z.boolean().optional().openapi({
+    description: 'May the agent post here without being asked (routines, heartbeat). Default off.',
+  }),
+  quietHours: z.object({ from: clock, to: clock }).optional().openapi({
+    description: 'HH:MM in the team timezone; proactive posts are held during this window.',
+  }),
+  digest: z.boolean().optional(),
+  digestMinutes: z.number().int().min(5).max(1440).optional(),
+  maxMentions: z.number().int().min(0).max(20).optional(),
+})
+export const ChannelProactiveSchema = proactiveShape
+const proactiveEffective = z.object({
+  allowed: z.boolean(),
+  digest: z.boolean(),
+  digestMinutes: z.number().int(),
+  maxMentions: z.number().int(),
+  quietHours: z.object({ from: z.string(), to: z.string() }).optional(),
+})
+
 export const ChannelPolicySchema = z
   .object({
     enabled: z.boolean().openapi({
@@ -35,6 +56,7 @@ export const ChannelPolicySchema = z
     redactOnDelete: z.boolean().optional().openapi({
       description: "Drop a message's content when it is deleted on the platform.",
     }),
+    proactive: ChannelProactiveSchema.optional(),
   })
   .openapi('ChannelPolicy')
 
@@ -167,6 +189,7 @@ const settingKey = z.enum([
   'observe',
   'sessionScope',
   'redactOnDelete',
+  'proactive',
 ])
 
 export const ChannelNodeSchema = z
@@ -204,6 +227,7 @@ export const ChannelNodeSchema = z
       observe: z.boolean(),
       sessionScope,
       redactOnDelete: z.boolean(),
+      proactive: proactiveEffective,
     }),
     inherited: z
       .partialRecord(
@@ -267,6 +291,7 @@ export const ChannelPolicyBodySchema = z
     observe: z.boolean().nullable().optional(),
     sessionScope: sessionScope.nullable().optional(),
     redactOnDelete: z.boolean().nullable().optional(),
+    proactive: proactiveShape.nullable().optional(),
   })
   .openapi('ChannelPolicyBody')
 
@@ -516,3 +541,89 @@ export const ChannelLimitsBodySchema = z
     connectionWindowMs: z.number().int().min(1).optional(),
   })
   .openapi('ChannelLimitsBody')
+
+// --- people directory, reminders (L6) ---------------------------------------------------------
+
+const role = z.enum(['owner', 'admin', 'member', 'guest'])
+export const ChannelPersonSchema = z
+  .object({
+    peerId: z.string().openapi({ description: 'The platform user id.' }),
+    name: z.string().optional(),
+    username: z.string().optional(),
+    kind: z.string(),
+    isBot: z.boolean(),
+    role,
+    roleSource: z.string().openapi({
+      description: '`directory`, `linked-admin`, `linked-member`, `anonymous`, `bot` or `default`.',
+    }),
+    explicit: z
+      .boolean()
+      .openapi({ description: 'The team set this role (a directory entry exists).' }),
+    divisions: z.array(z.object({ nodeId: z.string(), title: z.string() })),
+    memberId: z.string().optional().openapi({ description: 'The linked team member.' }),
+    platformAdmin: z.array(
+      z.object({
+        nodeId: z.string(),
+        title: z.string(),
+        role: z.enum(['owner', 'admin']),
+        customTitle: z.string().optional(),
+      }),
+    ),
+    suggestion: z.object({ role, reason: z.string() }).optional().openapi({
+      description: 'The platform lists this person as admin and the team has not decided.',
+    }),
+    firstSeen: z.number().int(),
+    lastSeen: z.number().int(),
+  })
+  .openapi('ChannelPerson')
+export const ChannelPersonListSchema = z
+  .object({ items: z.array(ChannelPersonSchema) })
+  .openapi('ChannelPersonList')
+export const ChannelRoleBodySchema = z
+  .object({ role, divisions: z.array(z.string().min(1)).max(100).optional() })
+  .openapi('ChannelRoleBody')
+export const ChannelImportResultSchema = z
+  .object({ chats: z.number().int(), people: z.number().int(), problems: z.array(z.string()) })
+  .openapi('ChannelImportResult')
+export const ChannelPeopleSettingsSchema = z
+  .object({
+    defaultRole: role.openapi({
+      description: 'Role of somebody who is neither in the directory nor linked to a team member.',
+    }),
+    approvalTtlHours: z.number().min(0.02).max(720).openapi({
+      description: 'An approval nobody answers in a chat is declined after this long.',
+    }),
+  })
+  .openapi('ChannelPeopleSettings')
+export const ChannelPeopleSettingsBodySchema = ChannelPeopleSettingsSchema.partial().openapi(
+  'ChannelPeopleSettingsBody',
+)
+export const ChannelReminderSchema = z
+  .object({
+    id: z.string(),
+    nodeId: z.string(),
+    chatTitle: z.string(),
+    text: z.string(),
+    whenText: z
+      .string()
+      .openapi({ description: 'The schedule in words with the absolute time and zone.' }),
+    status: z.enum(['active', 'done', 'cancelled']),
+    mentions: z.array(z.string()),
+    createdByName: z.string().optional(),
+    createdByRole: z.string().optional(),
+    createdAt: z.number().int(),
+    lastFiredAt: z.number().int().optional(),
+    fireCount: z.number().int(),
+    lastError: z.string().optional(),
+  })
+  .openapi('ChannelReminder')
+export const ChannelReminderListSchema = z
+  .object({ items: z.array(ChannelReminderSchema) })
+  .openapi('ChannelReminderList')
+export const ChannelReminderQuery = z.object({
+  all: z
+    .enum(['true', 'false'])
+    .optional()
+    .openapi({ description: 'Also finished and cancelled ones.' }),
+})
+export const ChannelReminderParam = z.object({ id: z.string(), reminderId: z.string() })

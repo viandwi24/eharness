@@ -18,6 +18,7 @@
 		memberLabel,
 		originText,
 		policyBody,
+		proactiveError,
 		retentionError,
 		WAKE_OPTIONS,
 		type ChatBranch,
@@ -44,6 +45,7 @@
 	const base = $derived(formOfChat(chat));
 	const dirty = $derived(formChanged(form, base));
 	const retentionProblem = $derived(retentionError(form.retention));
+	const proactiveProblem = $derived(proactiveError(form));
 	const nested = $derived(depth > 0);
 	// follow the server while the form is untouched
 	$effect(() => {
@@ -57,7 +59,7 @@
 	const inheritLabel = (what: string): string => `Inherit (${what})`;
 
 	async function save(): Promise<void> {
-		if (retentionProblem) return;
+		if (retentionProblem || proactiveProblem) return;
 		saving = true;
 		try {
 			await api.patch('/channels/connections/{id}/chats/{chatId}/policy', { params: { id: connectionId, chatId: chat.id }, body: policyBody(form) });
@@ -165,13 +167,41 @@
 					</NativeSelect>
 				</label>
 			</div>
+			<fieldset class="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2" data-testid="proactive-fields">
+				<legend class="px-1 text-xs font-medium">Proactive posts <span class="font-normal text-muted-foreground">· what the agent says unasked (routines, heartbeat) · {origin('proactive')}</span></legend>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Allowed</span>
+					<NativeSelect bind:value={form.proactive} aria-label="Proactive posts allowed">
+						<NativeSelectOption value="">{inheritLabel(chat.effective.proactive.allowed ? 'allowed' : 'not allowed')}</NativeSelectOption>
+						<NativeSelectOption value="on">Allowed</NativeSelectOption>
+						<NativeSelectOption value="off">Not allowed</NativeSelectOption>
+					</NativeSelect>
+				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">One digest instead of many pings</span>
+					<NativeSelect bind:value={form.digest} aria-label="Digest">
+						<NativeSelectOption value="">{inheritLabel(chat.effective.proactive.digest ? `digest every ${chat.effective.proactive.digestMinutes} min` : 'send at once')}</NativeSelectOption>
+						<NativeSelectOption value="on">Digest</NativeSelectOption>
+						<NativeSelectOption value="off">Send at once</NativeSelectOption>
+					</NativeSelect>
+				</label>
+				<div class="flex items-end gap-2">
+					<label class="flex flex-1 flex-col gap-1"><span class="text-xs font-medium">Quiet from (HH:MM)</span><Input placeholder="22:00" bind:value={form.quietFrom} aria-label="Quiet hours start" /></label>
+					<label class="flex flex-1 flex-col gap-1"><span class="text-xs font-medium">to</span><Input placeholder="07:00" bind:value={form.quietTo} aria-label="Quiet hours end" /></label>
+				</div>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Mentions per message</span>
+					<Input type="number" min="0" max="20" placeholder="Inherit ({chat.effective.proactive.maxMentions})" bind:value={form.maxMentions} />
+				</label>
+				{#if proactiveProblem}<span class="text-xs text-destructive-text sm:col-span-2">{proactiveProblem}</span>{/if}
+			</fieldset>
 			<p class="text-xs text-muted-foreground">
 				{WAKE_OPTIONS.find((o) => o.value === chat.effective.wake)?.hint}
 			</p>
 			<div class="flex justify-end gap-2">
 				<Button size="sm" variant="ghost" disabled={saving || chat.policy === null} onclick={() => void clearAll()}>Inherit everything</Button>
 				<Button size="sm" variant="ghost" disabled={!dirty || saving} onclick={() => (form = { ...base })}>Reset</Button>
-				<Button size="sm" disabled={!dirty || saving || !!retentionProblem} onclick={() => void save()} data-testid="chat-save">Save</Button>
+				<Button size="sm" disabled={!dirty || saving || !!retentionProblem || !!proactiveProblem} onclick={() => void save()} data-testid="chat-save">Save</Button>
 			</div>
 		</div>
 	{/if}

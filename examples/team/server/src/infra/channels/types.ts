@@ -43,8 +43,16 @@ export interface NodeInfo {
   parent?: string | null
   originMessageNativeId?: string | null
   meta?: Record<string, unknown>
-  /** What this connection is in the node and may do there. */
-  access?: { member?: MemberRole; canPost?: boolean | null; canRead?: boolean | null }
+  /**
+   * What this connection is in the node and may do there. `rights` are the platform's own
+   * administrator rights of the connection (delete messages, pin, manage topics, ...), by name.
+   */
+  access?: {
+    member?: MemberRole
+    canPost?: boolean | null
+    canRead?: boolean | null
+    rights?: Record<string, boolean>
+  }
   /** Relations to other nodes of the same connection, by native id. */
   links?: Array<{ rel: NodeLinkRel; to: string }>
 }
@@ -88,6 +96,13 @@ export interface Identity {
   aliases?: Array<{ kind: string; value: string }>
   /** A per-node profile: a guild nick, a custom admin title. */
   profile?: { nick?: string; roles?: string[] }
+}
+
+/** A member as `listMembers` reports it: the identity plus the platform's role and title in the node. */
+export interface MemberInfo extends Identity {
+  role?: MemberRole
+  /** A custom admin title (Telegram), shown to the agent as data. */
+  title?: string
 }
 
 /** Patch semantics like {@link NodeInfo}. */
@@ -216,6 +231,12 @@ export interface ChannelCapabilities {
    * `action` event. Without it the gateway falls back to a link to the web app.
    */
   buttons?: boolean
+  /**
+   * `id`: the text of an outbound message may carry mention tokens (`mentionToken`, `mentions.ts`)
+   * that the adapter renders as a real mention by platform user id. Otherwise the gateway turns
+   * them into plain names before sending. Default none.
+   */
+  mentions?: 'id'
   /** Deletions arrive as `message.deleted` events: ids only (no text, no actor). Default `none`. */
   deletions?: 'none' | 'ids'
   /** What `listMembers` returns: administrators only, a part of the list, or everybody. */
@@ -375,7 +396,12 @@ export interface ChannelAdapter {
   listMembers?(
     node: ChannelNode,
     options: { limit: number },
-  ): Promise<{ members: Identity[]; scope: 'admins' | 'partial' | 'full' }>
+  ): Promise<{ members: MemberInfo[]; scope: 'admins' | 'partial' | 'full' }>
+  /**
+   * What this connection sees in a node and why (privacy mode, rights): facts for `channel_status`
+   * that are not stored on the node. Absent = nothing more to say.
+   */
+  status?(node: ChannelNode): { readsEverything?: boolean; notes?: string[] }
   /** The nodes of the identity (dialog sync). With `parent`, only its children. */
   listNodes?(parent?: ChannelNode): Promise<NodeInfo[]>
   resolveIdentifier?(query: string): Promise<IdentityInfo | undefined>

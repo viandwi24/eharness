@@ -1501,6 +1501,32 @@ test/telegram-adapter.test.ts test/telegram-channels.test.ts` (scripted models, 
 The MTProto adapter was moved to the same contract without automated tests; use the manual checklist in
 [P41](../plans/P41-team-channels.md#manual-test-checklist-dedicated-test-account-2fa-on).
 
+## 28e. Internal groups: roles, reminders, recaps (P41 phase L6)
+
+A company group (a forum supergroup with a topic per division) needs more than wake and reply: who is
+speaking, what they may ask, reminders, recaps. All of it is example code in `infra/channels`; the library is
+unchanged.
+
+- **Roles come from the directory only.** Each person has a role (`owner`, `admin`, `member`, `guest`) and
+  divisions (topics) in `ch_people`, set on the People tab. The platform's admin badge is imported as a suggestion
+  with a one-click confirm; an anonymous admin or a bot is always a guest; a chat message cannot change a role.
+- **The agent sees a header** with who sent the message, their role, linked team member, chat admin status, topic,
+  message id, reply-to and time in the team timezone, as data (`header.ts`).
+- **Tools check the requester.** The `tool.approve` hook of the channels plugin calls `decideTool` with the role of
+  the person who asked (deny wins); refusals are strings the model relays. Approvals in a chat need an owner or
+  admin, and a new message from the requester declines pending approvals like in the web app.
+- **Layer 1 tools** work on any platform: `channel_status`, `list_topics`, `member_lookup`, `chat_history`,
+  `chat_recap` / `chat_recap_save`, `reminder`. Native platform actions stay deferred tools for what only that
+  platform has.
+- **Mentions** only through `mention: [id]`; typed `@handles` are neutralized.
+- **Reminders** are `sys:reminder:<id>` routines whose fire posts the fixed text through the outbox without a
+  model call; the Reminders tab lists and cancels them.
+- **Proactive posts** of routines and the heartbeat follow a per-node policy (allowed, quiet hours, digest,
+  mention limit).
+
+See [P41 L6 notes](../plans/P41-team-channels.md#l6-notes-as-built) for the details and the limits.
+**Test it.** `bun test test/channels-l6.test.ts` (scripted models, mock adapter).
+
 ## What to change when you copy it
 
 | In the example | In your harness |

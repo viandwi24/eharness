@@ -10,7 +10,12 @@ import type { OutboundButton } from './types.ts'
 
 // --- outbox ------------------------------------------------------------------------------------
 
-export type OutboxKind = 'reply' | 'post' | 'approval'
+/**
+ * `reminder` rows are posts nobody is waiting on at a tool call: retried like a reply (a reminder
+ * that cannot be sent right now goes out when the platform is back) and deduplicated per trigger
+ * (`reminder:<id>:<slot>`), so a recovered routine fire never posts twice.
+ */
+export type OutboxKind = 'reply' | 'post' | 'approval' | 'reminder'
 export type OutboxStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'skipped'
 
 /** What an outbox row says once opened. `conversationId` is the id of the node it goes to. */
@@ -159,13 +164,13 @@ export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxS
     async enqueue(rows, now) {
       const first = rows[0]
       if (first === undefined) return []
-      if (first.kind === 'reply' && first.triggerId !== undefined) {
+      if ((first.kind === 'reply' || first.kind === 'reminder') && first.triggerId !== undefined) {
         const exists = sqlite
-          .query<{ n: number }, [string, string, string]>(
+          .query<{ n: number }, [string, string, string, string]>(
             `SELECT COUNT(*) AS n FROM channel_outbox
-               WHERE kind = 'reply' AND connection_id = ? AND conversation_id = ? AND trigger_id = ?`,
+               WHERE kind = ? AND connection_id = ? AND conversation_id = ? AND trigger_id = ?`,
           )
-          .get(first.connectionId, first.conversationId, first.triggerId)
+          .get(first.kind, first.connectionId, first.conversationId, first.triggerId)
         if ((exists?.n ?? 0) > 0) return []
       }
       const sealed: Array<{ id: string; row: NewOutbox; body: string }> = []
@@ -426,6 +431,10 @@ export interface ApprovalStore {
   reopen(id: string): void
   /** The trigger of the channel-originated turn that is still running or parked in a session. */
   activeTrigger(sessionId: string): { triggerId: string | null } | undefined
+  /** The unconsumed rows of a session now answer to another message (a new message continues the parked turn). */
+  retrigger(sessionId: string, triggerId: string): void
+  /** Open rows announced at or before `before`, oldest first (they expire). */
+  openBefore(before: number): ApprovalRow[]
   /** The turn of the session finished: its rows no longer belong to a running turn. */
   consume(sessionId: string): void
 }
@@ -516,6 +525,20 @@ export function sqliteApprovalStore(sqlite: Database): ApprovalStore {
     },
     consume(sessionId) {
       sqlite.query('UPDATE channel_approvals SET consumed = 1 WHERE session_id = ?').run(sessionId)
+    },
+    retrigger(sessionId, triggerId) {
+      sqlite
+        .query('UPDATE channel_approvals SET trigger_id = ? WHERE session_id = ? AND consumed = 0')
+        .run(triggerId, sessionId)
+    },
+    openBefore(before) {
+      return sqlite
+        .query<ApprovalDb, [number]>(
+          `SELECT * FROM channel_approvals WHERE status = 'open' AND consumed = 0 AND created_at <= ?
+             ORDER BY created_at, id`,
+        )
+        .all(before)
+        .map(toApproval)
     },
   }
 }

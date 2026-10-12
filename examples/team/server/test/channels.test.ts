@@ -177,6 +177,8 @@ async function connect(
   i.gw.configure({
     connectionId,
     agentId: options.agentId ?? i.leadId,
+    // the tests of L1 to L5 are about delivery, wake and approvals: their people act as admins unless a test says otherwise
+    people: { defaultRole: 'admin', policy: {} },
     ...options.config,
   })
   applyGroups(i.gw, connectionId, options.groups ?? { room: { label: 'Ops' } })
@@ -1251,6 +1253,9 @@ describe('approvals in channel conversations', () => {
     memberId: string,
   ) => {
     i.gw.pairing.link('c1', who.id, memberId, who.name)
+    // approvals in a chat are for the team's staff (L6): Ana is an admin by the directory, Budi is the
+    // linked owner; Carol (linked, no directory entry) is a member and Eve (unknown) a guest
+    if (who.id === ana.id) i.gw.people.setRole('c1', ana.id, { role: 'admin' }, 'test')
   }
   const setup = async (
     script: ScriptedStepInput[],
@@ -1259,7 +1264,11 @@ describe('approvals in channel conversations', () => {
     const i = instance({ lead: script })
     const mock = await connect(i, {
       groups: { room: { label: 'Ops', ack: false }, news: { wake: 'never' } },
-      config: { ...NO_WAIT, ...(options.admins === undefined ? {} : { admins: options.admins }) },
+      config: {
+        ...NO_WAIT,
+        people: { defaultRole: 'guest', policy: {} },
+        ...(options.admins === undefined ? {} : { admins: options.admins }),
+      },
       adapter: {
         connectionId: 'c1',
         capabilities: { buttons: options.buttons ?? true },
@@ -1346,9 +1355,11 @@ describe('approvals in channel conversations', () => {
   })
 
   test('a team admin can answer a request somebody else triggered', async () => {
-    const { mock } = await setup([approvalStep, textStep('Posted it.')])
-    // Eve is not linked to anybody: only an admin (budi is linked to `owner`) can answer
-    await mock.say({ from: stranger, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    const { i, mock } = await setup([approvalStep, textStep('Posted it.')])
+    // Dan is an admin by the directory and triggers the request; Budi (the linked owner) answers it
+    const dan = { id: 'u-dan', name: 'Dan', username: 'dan' }
+    i.gw.people.setRole('c1', dan.id, { role: 'admin' }, 'test')
+    await mock.say({ from: dan, text: '@team_bot publish', id: 'w1', mentionSelf: true })
     await until('the request', () => request(mock) !== undefined)
     const ask = request(mock) as NonNullable<ReturnType<typeof request>>
     await mock.press({

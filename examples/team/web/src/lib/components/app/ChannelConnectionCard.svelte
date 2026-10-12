@@ -8,6 +8,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
+	import ChannelReminders from '#lib/components/app/ChannelReminders.svelte';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import ChannelActivity from '#lib/components/app/ChannelActivity.svelte';
@@ -139,6 +140,7 @@
 			<Tabs.List class="max-w-full justify-start overflow-x-auto">
 				<Tabs.Trigger value="chats">Chats {#if chatCount}<Badge shape="number" variant="secondary">{chatCount}</Badge>{/if}</Tabs.Trigger>
 				<Tabs.Trigger value="people">People {#if conn.counts.unlinked}<Badge shape="number" variant="warning" title="Not linked yet">{conn.counts.unlinked}</Badge>{:else if conn.counts.linked}<Badge shape="number" variant="secondary">{conn.counts.linked}</Badge>{/if}</Tabs.Trigger>
+				<Tabs.Trigger value="reminders">Reminders</Tabs.Trigger>
 				<Tabs.Trigger value="inbox">Inbox</Tabs.Trigger>
 				<Tabs.Trigger value="activity">Activity</Tabs.Trigger>
 				<Tabs.Trigger value="delivery">Delivery</Tabs.Trigger>
@@ -164,6 +166,8 @@
 			</Tabs.Content>
 
 			<Tabs.Content value="people" class="pt-3"><ChannelPeople {conn} {onChange} /></Tabs.Content>
+
+			<Tabs.Content value="reminders" class="pt-3"><ChannelReminders {conn} /></Tabs.Content>
 
 			<Tabs.Content value="inbox" class="pt-3"><ChannelInbox {conn} /></Tabs.Content>
 

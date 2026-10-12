@@ -381,7 +381,16 @@ export function createRoutineService(
       return store.getRun(run.id) as RoutineRun
     }
     try {
-      if (key.kind === 'heartbeat') {
+      if (key.kind === 'reminder') {
+        const out = (await system.reminder?.(key.id, { slot: run.scheduledAt })) ?? {
+          posted: false,
+          reason: 'reminders are not set up',
+        }
+        if (!out.posted) {
+          store.markSkipped(run.id, out.reason ?? 'skipped', now)
+          return store.getRun(run.id) as RoutineRun
+        }
+      } else if (key.kind === 'heartbeat') {
         const out = await system.heartbeat(key.agentId, { slot: run.scheduledAt })
         if (!out.started) {
           store.markSkipped(run.id, out.reason ?? 'skipped', now)

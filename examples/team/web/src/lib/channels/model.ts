@@ -10,6 +10,10 @@ export type ChannelMember = components['schemas']['ChannelMember'];
 export type InboxConversation = components['schemas']['ChannelInboxConversation'];
 export type LogMessage = components['schemas']['ChannelLogMessage'];
 export type ChannelActivity = components['schemas']['ChannelActivity'];
+export type ChannelPerson = components['schemas']['ChannelPerson'];
+export type ChannelReminder = components['schemas']['ChannelReminder'];
+export type ChannelPeopleSettings = components['schemas']['ChannelPeopleSettings'];
+export type Role = ChannelPerson['role'];
 export type ActivityType = ChannelActivity['type'];
 export type ChannelPolicy = NonNullable<ChannelChat['policy']>;
 export type ChannelPolicyBody = components['schemas']['ChannelPolicyBody'];
@@ -94,6 +98,12 @@ export interface PolicyForm {
 	observe: Tri;
 	sessionScope: Inherit<SessionScope>;
 	redactOnDelete: Tri;
+	/** Proactive posts (what the agent says unasked): allowed, quiet hours, digest, mention limit. */
+	proactive: Tri;
+	quietFrom: string;
+	quietTo: string;
+	digest: Tri;
+	maxMentions: string;
 }
 
 const triOf = (v: boolean | undefined): Tri => (v === undefined ? '' : v ? 'on' : 'off');
@@ -107,8 +117,26 @@ export const formOfChat = (c: ChannelChat): PolicyForm => ({
 	retention: c.policy?.retentionDays === undefined ? '' : String(c.policy.retentionDays),
 	observe: triOf(c.policy?.observe),
 	sessionScope: c.policy?.sessionScope ?? '',
-	redactOnDelete: triOf(c.policy?.redactOnDelete)
+	redactOnDelete: triOf(c.policy?.redactOnDelete),
+	proactive: triOf(c.policy?.proactive?.allowed),
+	quietFrom: c.policy?.proactive?.quietHours?.from ?? '',
+	quietTo: c.policy?.proactive?.quietHours?.to ?? '',
+	digest: triOf(c.policy?.proactive?.digest),
+	maxMentions: c.policy?.proactive?.maxMentions === undefined ? '' : String(c.policy.proactive.maxMentions)
 });
+
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** A problem with the quiet hours or the mention limit as typed, or undefined. */
+export function proactiveError(f: Pick<PolicyForm, 'quietFrom' | 'quietTo' | 'maxMentions'>): string | undefined {
+	const from = f.quietFrom.trim();
+	const to = f.quietTo.trim();
+	if ((from === '') !== (to === '')) return 'Quiet hours need both a start and an end';
+	if (from !== '' && (!CLOCK.test(from) || !CLOCK.test(to))) return 'Quiet hours are HH:MM (24 hours)';
+	const m = f.maxMentions.trim();
+	if (m !== '' && !(Number.isInteger(Number(m)) && Number(m) >= 0 && Number(m) <= 20)) return 'Mention limit: 0 to 20';
+	return undefined;
+}
 
 export function retentionError(text: string): string | undefined {
 	if (text.trim() === '') return undefined;
@@ -125,7 +153,23 @@ export function policyBody(f: PolicyForm): ChannelPolicyBody {
 		retentionDays: f.retention.trim() === '' ? null : Number(f.retention),
 		observe: boolOf(f.observe),
 		sessionScope: f.sessionScope === '' ? null : f.sessionScope,
-		redactOnDelete: boolOf(f.redactOnDelete)
+		redactOnDelete: boolOf(f.redactOnDelete),
+		proactive: proactiveBody(f)
+	};
+}
+
+/** The proactive object of a form: only what is set; null when nothing is (inherit again). */
+export function proactiveBody(f: PolicyForm): ChannelPolicyBody['proactive'] {
+	const allowed = boolOf(f.proactive);
+	const digest = boolOf(f.digest);
+	const quiet = f.quietFrom.trim() !== '' && f.quietTo.trim() !== '' ? { from: f.quietFrom.trim(), to: f.quietTo.trim() } : undefined;
+	const max = f.maxMentions.trim() === '' ? undefined : Number(f.maxMentions);
+	if (allowed === null && digest === null && quiet === undefined && max === undefined) return null;
+	return {
+		...(allowed === null ? {} : { allowed }),
+		...(digest === null ? {} : { digest }),
+		...(quiet === undefined ? {} : { quietHours: quiet }),
+		...(max === undefined ? {} : { maxMentions: max })
 	};
 }
 
@@ -136,7 +180,12 @@ export const formChanged = (a: PolicyForm, b: PolicyForm): boolean =>
 	a.retention.trim() !== b.retention.trim() ||
 	a.observe !== b.observe ||
 	a.sessionScope !== b.sessionScope ||
-	a.redactOnDelete !== b.redactOnDelete;
+	a.redactOnDelete !== b.redactOnDelete ||
+	a.proactive !== b.proactive ||
+	a.quietFrom.trim() !== b.quietFrom.trim() ||
+	a.quietTo.trim() !== b.quietTo.trim() ||
+	a.digest !== b.digest ||
+	a.maxMentions.trim() !== b.maxMentions.trim();
 
 /** Where one effective setting comes from, in words ("set here", "inherited from Company"). */
 export function originText(c: ChannelChat, key: keyof ChannelChat['inherited'], titleOf: (nodeId: string) => string): string {
@@ -455,3 +504,63 @@ export function eventText(e: ChannelActivity): string {
 	}
 	return bits.join(' ');
 }
+
+
+// --- people directory and reminders (L6) ---------------------------------------------------------
+
+export const ROLES: { value: Role; label: string; hint: string }[] = [
+	{ value: 'owner', label: 'Owner', hint: 'Everything, including approvals in a chat.' },
+	{ value: 'admin', label: 'Admin', hint: 'Approvals in a chat, reminders for others, writes and deletes.' },
+	{ value: 'member', label: 'Member', hint: 'Reads and recaps of their divisions, their own reminders.' },
+	{ value: 'guest', label: 'Guest', hint: 'Answers only: no tools.' }
+];
+export const roleLabel = (r: Role): string => ROLES.find((x) => x.value === r)?.label ?? r;
+
+export function roleSourceLabel(p: ChannelPerson): string {
+	switch (p.roleSource) {
+		case 'directory':
+			return 'set by the team';
+		case 'linked-admin':
+			return 'linked team admin';
+		case 'linked-member':
+			return 'linked team member';
+		case 'anonymous':
+			return 'anonymous admin or channel: identity unknown, always a guest';
+		case 'bot':
+			return 'bot, always a guest';
+		default:
+			return 'default, not in the directory';
+	}
+}
+
+/** The platform's own word for the admin status of a person ("admin in TEAMKU (CEO)"). */
+export function platformAdminText(p: ChannelPerson): string {
+	return p.platformAdmin
+		.map((a) => `${a.role === 'owner' ? 'creator' : 'admin'} in ${a.title}${a.customTitle ? ` (${a.customTitle})` : ''}`)
+		.join(', ');
+}
+
+/** The role of an anonymous admin or a bot cannot be changed. */
+export const roleLocked = (p: ChannelPerson): boolean => p.roleSource === 'anonymous' || p.roleSource === 'bot';
+
+/** Suggestions first, then staff, then the most recently seen. */
+export function sortPeople(people: readonly ChannelPerson[]): ChannelPerson[] {
+	const rank: Record<Role, number> = { owner: 0, admin: 1, member: 2, guest: 3 };
+	return [...people].sort(
+		(a, b) => Number(b.suggestion !== undefined) - Number(a.suggestion !== undefined) || rank[a.role] - rank[b.role] || b.lastSeen - a.lastSeen
+	);
+}
+
+/** Chats and topics a person can be given as divisions, with the room named for a topic. */
+export function divisionOptions(chats: readonly ChannelChat[]): { id: string; label: string }[] {
+	const byId = new Map(chats.map((c) => [c.id, c]));
+	return chats
+		.filter((c) => c.state !== 'deleted' && c.state !== 'left')
+		.map((c) => {
+			const parent = c.parentId === undefined ? undefined : byId.get(c.parentId);
+			return { id: c.id, label: parent === undefined ? c.title : `${parent.title} / ${c.title}` };
+		})
+		.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export const personName = (p: ChannelPerson): string => p.name ?? (p.username ? `@${p.username}` : `id ${p.peerId}`);

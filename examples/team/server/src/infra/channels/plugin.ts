@@ -28,6 +28,8 @@ import {
 } from './gateway.ts'
 import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
+import { decideTool } from './roles.ts'
+import { SELF_READ_TOOLS, SELF_TOOLS, SELF_WRITE_TOOLS, selfTools } from './self-tools.ts'
 import type { ActionRisk, ChannelAdapter, HistoryEntry } from './types.ts'
 
 export const CHANNEL_DESCRIBE_TOOL = 'channel_describe'
@@ -39,10 +41,22 @@ export const CHANNEL_TOOLS = [
   CHANNEL_READ_TOOL,
   CHANNEL_SEND_TOOL,
   CHANNEL_MANAGE_TOOL,
+  ...SELF_TOOLS,
 ] as const
 
 /** Read-only: approved without asking (`appRulesOf`). The posting tools keep their own risk. */
-export const CHANNEL_READ_TOOLS = [CHANNEL_DESCRIBE_TOOL, CHANNEL_READ_TOOL] as const
+export const CHANNEL_READ_TOOLS = [
+  CHANNEL_DESCRIBE_TOOL,
+  CHANNEL_READ_TOOL,
+  ...SELF_READ_TOOLS,
+] as const
+
+/**
+ * Writes that stay inside the team's own space (a recap note in the library, a reminder): allowed
+ * by rule so they do not ask for an approval in a chat. WHO may use them is the role policy of the
+ * person who asked (`roles.ts`), checked by the `tool.approve` hook below.
+ */
+export const CHANNEL_OWN_WRITE_TOOLS = SELF_WRITE_TOOLS
 
 export interface ChannelsPluginOptions {
   /** Late-bound: the plugin is built before the gateway. */
@@ -52,6 +66,12 @@ export interface ChannelsPluginOptions {
 }
 
 const HISTORY_LINE_CHARS = 1000
+/**
+ * Sessions nobody is waiting in, whose posts nobody asked for: a routine's prompt and the
+ * heartbeat. Their posts follow the proactive policy of the place. A program run is not here: its
+ * authority names `channel_send` on purpose (the client's own grant, P41 U2).
+ */
+const UNATTENDED: ReadonlySet<string> = new Set(['routine', 'heartbeat'])
 
 const target = {
   connection: z
@@ -101,6 +121,12 @@ const sendSchema = z.object({
     .string()
     .optional()
     .describe('A team member to message directly (they must have linked their account).'),
+  mention: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'People to mention (ping): their platform user ids (from the message header or member_lookup). This is the only way to ping anybody: @handles typed in the text do nothing.',
+    ),
   text: z.string().optional().describe('send / reply: the text; upload: the caption.'),
   replyTo: z.string().optional().describe('reply: platform message id to quote.'),
   file: z
@@ -141,7 +167,8 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       const inChannel = gw.conversationOf(sessionId) !== undefined
       const bound = gw.connectionsOf(agentId)
       if (!inChannel && bound.length === 0) return {}
-      const rehearsal = originOfSession(sessionId) === 'rehearsal'
+      const origin = originOfSession(sessionId)
+      const rehearsal = origin === 'rehearsal'
 
       /** A rehearsal does not touch real chats: the call is recorded and the model told so. */
       const simulate = (toolName: string, input: unknown): string => {
@@ -398,9 +425,28 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           return 'ERROR: send and reply need text.'
         if (input.action === 'reply' && input.replyTo === undefined)
           return 'ERROR: reply needs replyTo (a platform message id).'
+        let mentions: string[] = []
+        if (input.mention !== undefined && input.mention.length > 0) {
+          const r = gw.resolveMentions(t.config.connectionId, input.mention)
+          if ('error' in r) return `ERROR: ${r.error}`
+          mentions = r.ids
+        }
+        // a post nobody asked for (a routine, the heartbeat, a program) follows the proactive policy of the place
+        const requester = await gw.requesterOf(sessionId)
+        if (requester === undefined && UNATTENDED.has(origin)) {
+          const res = await gw.proactive.submit({
+            connectionId: t.config.connectionId,
+            nodeId: t.node.id,
+            agentId,
+            text: input.text,
+            mentions,
+          })
+          return res.status === 'refused' ? `ERROR: ${res.message}` : res.message
+        }
         const ids = await gw.post(t, {
           sessionId,
           text: input.text,
+          mentions,
           ...(input.action === 'reply' ? { replyTo: input.replyTo } : {}),
         })
         return `Sent (message ${ids.join(', ')}).`
@@ -482,6 +528,20 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         }),
       }
 
+      // the generic self-knowledge tools (layer 1): status, topics, people, history, recaps, reminders
+      const own = selfTools({ gw, sessionId, agentId, origin })
+      for (const [name, def] of Object.entries(own)) {
+        const writes = (SELF_WRITE_TOOLS as readonly string[]).includes(name)
+        tools[name] =
+          rehearsal && writes
+            ? {
+                ...(def as object),
+                // a rehearsal never writes a note or schedules a real reminder
+                execute: (input: unknown): string => simulate(name, input),
+              }
+            : def
+      }
+
       // native actions: one deferred tool each (found with tool_search), grouped by tool name
       const natives = new Map<
         string,
@@ -552,10 +612,36 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           },
         ] as never,
         hooks: {
-          'turn.start': (hookCtx: HarnessContext): void => {
+          'turn.start': async (hookCtx: HarnessContext): Promise<void> => {
             const keys = (hookCtx.turn as { source?: { keys?: string[] } } | undefined)?.source
               ?.keys
-            if (keys !== undefined) gw.turnStarted(sessionId, keys)
+            try {
+              // the requester of the turn (the person whose role the tools check) is known before any tool runs
+              await gw.beginTurn(sessionId, keys)
+            } catch (error) {
+              hookCtx.log.warn(
+                `channels: could not start the turn of ${sessionId}: ${errorText(error)}`,
+              )
+            }
+          },
+          // authorization by code on the current requester: deny wins, nothing a message says changes it
+          'tool.approve': async (
+            _hookCtx: HarnessContext,
+            e: { toolName: string; risk?: string },
+          ): Promise<{ type: 'denied'; reason: string } | undefined> => {
+            const requester = await gw.requesterOf(sessionId)
+            if (requester === undefined) return undefined
+            const config = gw.config(requester.connectionId)
+            const decision = decideTool(
+              requester.role,
+              e.toolName,
+              e.risk,
+              config?.people.policy,
+              requester.name ?? requester.username ?? requester.nativeId,
+            )
+            return decision.allowed
+              ? undefined
+              : { type: 'denied', reason: decision.reason ?? 'Not allowed.' }
           },
           'turn.end': async (
             hookCtx: HarnessContext,

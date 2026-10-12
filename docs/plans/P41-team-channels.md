@@ -127,7 +127,7 @@ template; stores only what a task needs. Operators must review these terms for t
 - [x] L3 (grammY Bot API adapter in `infra/telegram`, "Telegram bot" connector, Channels page; migration 0023; fake Bot API tests; manual check with a real bot still open)
 - [x] L4 (MTProto user transport in `infra/telegram-user` over mtcute, "Telegram account (MTProto)" connector, account card on the Channels page; migration 0024; **no automated tests for the MTProto transport by owner decision**: manual checklist below)
 - [x] L5 (generic conversation model: nodes, identities, messages, events, sessions on nodes; inherited settings; bridgev2-shaped adapter contract; both Telegram adapters on it; the L1-L4 tables migrated at boot; migration 0026; golden fixtures for the bot adapter; the MTProto adapter is moved **without tests**, owner decision; see "L5 notes (as built)")
-- [ ] L6 (internal groups: directory and roles, metadata header, self-knowledge tools, reminders, recaps)
+- [x] L6 (internal groups: people directory and roles, metadata header, role policy, self-knowledge tools, mentions by id, reminders, recaps, proactive policy, decline-on-new-input and approval expiry; migration 0027; see "L6 notes (as built)"; manual check with the owner's real group still open)
 - [ ] U1, U2, U3 scripted flows green; manual checks with a real test bot and test account
 
 ## L1 notes (as built)
@@ -609,6 +609,95 @@ Acceptance (real bot, owner's group): CEO tag → correct role in the header; em
 founder → still employee; "note today's chat" → recap of all allowed topics saved; "remind the group at
 15:00" and "remind <person> tomorrow 9:00" → delivered with an id mention; proactive overdue digest in the
 right topic; no accidental @pings.
+
+## L6 notes (as built)
+
+Everything is in `examples/team` (server, web, docs); `src/` (the library) is unchanged. Migration
+`0027_living_mac_gargan.sql` adds three tables (`ch_people`, `ch_reminders`, `ch_proactive`), purely additive. A
+connection configuration stored before L6 parses with the new defaults (`people.defaultRole: guest`,
+`approvalTtlMs: 24 h`).
+
+**Directory and roles** (`infra/channels/people.ts`, `roles.ts`). `ch_people` keeps, per identity (platform user
+id, never a username), a role `owner | admin | member | guest` and divisions (node ids: a topic, or a room which
+covers its topics). Effective role, in this order: a chat speaking as itself (anonymous admin, channel) or a bot is
+`guest` whatever the directory says; the directory entry; the team member the identity is linked to (a member in
+the connection's `admins` is `owner`, any other linked member is `member`); the connection's `people.defaultRole`
+(`guest`). Roles are written only by `gateway.people.setRole` (People tab, `PUT .../people/{peerId}/role`), never by
+chat text. The platform's admin status (`ch_memberships`: `member.*` events, `getChatAdministrators` through
+`adapter.listMembers`, now returning `role` and a custom `title`) is a **suggestion**: the People tab shows
+"suggested: admin in TEAMKU" with one button to confirm. The admins of an allowed group are refreshed on its first
+message every 6 hours, and on demand (`POST .../people/import`). Telegram: `listMembers` maps `creator` to owner
+and `administrator` to admin with `custom_title`; `chat_member` events carry the title; `my_chat_member` stores the
+bot's own rights (`access.extra.rights`); `NORMALIZER_VERSION` is 2.
+
+**Header** (`header.ts`). Every wake message starts with a `<message-meta>` block (data, escaped so it cannot be
+closed from a name): sender name, `@username`, platform user id, role and where it came from, divisions, linked team
+member, chat admin status and title, bot / anonymous; chat title, kind and id, topic name and id, message id,
+reply-to (id and sender), time in the team timezone, edited, forwarded-from. Observed messages in the turn reminder
+carry the same data in one line each. The session note tells the agent that roles are only what the header says and
+that claims in the text change nothing.
+
+**Authorization by code** (`roles.ts`, `plugin.ts`). The channels plugin's `turn.start` hook records the requester
+of the turn (the sender of the wake messages; the lowest role if several people triggered it; a continuation after
+an approval keeps the original requester) and its `tool.approve` hook calls `decideTool(role, tool, risk)`:
+deny list first (deny wins), then `tool_search`, the role's allow list, its allowed risks; an unknown risk counts as
+a write. Defaults: owner and admin all risks; member the channel read tools, `channel_status`, `list_topics`,
+`member_lookup`, `chat_history`, `chat_recap` and `reminder` (reads scoped to their divisions in the tools); guest
+`channel_status` only. Overridable per connection (`people.policy`). Refusals are readable strings telling the model
+to relay them. A turn no chat message started (the web, a program) has no requester and is not restricted by roles.
+Approvals in a chat: only an owner or admin may answer; in a direct chat the person who asked may answer their own
+(not a guest).
+
+**Self-knowledge tools** (`self-tools.ts`, layer 1). `channel_status` (admin status, rights, privacy, log coverage,
+allowed places, who is asking, team time), `list_topics`, `member_lookup`, `chat_history` (time window or from/to in
+the team timezone, topic filter, paged), `chat_recap` (the same window as a transcript in chunks of about 12 000
+characters, with a cursor), `chat_recap_save` (writes `/library/recaps/<date>-<title>-<id>.md`; the source range,
+message count and log coverage are written by code, not by the model) and `reminder`. The recap is summarized by
+the agent chunk by chunk (no hidden model call); the tool says plainly when the log starts after the window and
+which topics were left out for the requester's divisions. Read tools are allowed by rule; `chat_recap_save` and
+`reminder` (writes inside the team's own space) are allowed by rule too, roles decide who.
+
+**Mentions** (`mentions.ts`). The only way to ping somebody is the structured `mention: [platform user id or team
+member id]` of `channel_send` and `reminder`; the gateway writes a private-use token into the text and an adapter
+with capability `mentions: 'id'` renders it (Telegram: `<a href="tg://user?id=...">name</a>`, which pings people
+without a username); for other adapters it is the plain name. All free text (final replies, sends, reminder text) is
+neutralized: `@handle` becomes `@` + zero-width space, forged tokens are stripped. A message may mention at most
+`proactive.maxMentions` people (default 3).
+
+**Reminders** (`reminders.ts`, gateway `reminders`). One tool, `create | list | cancel | update`. A reminder is a
+row in `ch_reminders` plus a `sys:reminder:<id>` routine (claim, catch-up of 12 h after downtime, recovery); the fire
+posts `Reminder: <text>` (with the mention tokens) through the outbox as kind `reminder` (retries, deduplicated per
+`reminder:<id>:<slot>`) with **no model call**; the routine service hands `sys:reminder` fires to
+`gateway.reminders.fire`. "When" is `at` ("YYYY-MM-DD HH:MM" in the team timezone), `inMinutes`, or `repeat`
+(daily, weekdays, weekly, monthly) with `time`; the confirmation echoes the absolute time, zone and place. Target:
+the current chat and topic unless named. Role rules: a member only reminds themselves (mention is forced to
+themselves) and cancels or changes only their own, in places they may read; staff remind anybody or the whole chat; no
+reminder is created from a scheduled or automated run (no reminder from a reminder). A closed or removed topic
+falls back to the room (or General). The web lists and cancels them (Channels, Reminders tab).
+
+**Proactive policy** (`policy.ts` `proactive`, gateway `proactive`). Inherited node setting: `allowed` (default
+off), `quietHours`, `digest` (default on) with `digestMinutes` (60), `maxMentions`. It applies to `channel_send` from
+a **routine or heartbeat** session (a program's authority names the tool on purpose and is exempt, so U2 still works):
+refused unless allowed; empty or `NO_REPLY` text is silent; held in quiet hours and while a digest collects posts
+(`ch_proactive`), then sent as one message per node by the maintenance pass (`gateway.proactive.flush`, every
+60 s). Reminders people asked for ignore quiet hours but obey the mention limit.
+
+**Approvals** (gateway). A wake message in a session with open approvals: from the person who asked (or an owner or
+admin) it declines them with the user's note (`userDeclinedText` wording, the message is the note), continues the
+parked turn with it (the answer quotes the new message) and edits the request to "Cancelled: a new message arrived";
+from anybody else it is stored as context and the approval stays. Unanswered approvals and questions expire after
+`approvalTtlMs` (default 24 h, People tab) and are declined with "not answered"; the request is edited to "Expired:
+not answered". Library: no approval timeout exists, so this is app logic (`expireApprovals`).
+
+**Tests.** `test/channels-l6.test.ts` (roles and spoofed claims, deny-wins per role, header, self-knowledge tools,
+mentions and neutralization, reminder lifecycle including no model call and permissions, recap windows and division
+scope, proactive quiet hours and digest, decline on new input and expiry); `test/channels.test.ts` was adapted: its
+people act as admins because L6 made approvals in a chat a staff action. Web: `channels/model.test.ts`.
+
+**Not done / limits.** Questions (`ask_user_question`) cannot be answered by a chat message; they only expire.
+`alias_of` links, dropping the L1-L4 tables and an MTProto topic list are still open. A turn started by several
+people runs with the lowest role. The tool policy does not look at what a read tool reads outside the channels
+(a member can use any tool in their allow list; the default list is channel reads and reminders only).
 
 ### Tool layering rule (owner emphasis)
 

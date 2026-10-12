@@ -15,6 +15,7 @@ import {
   ChannelConversationLogSchema,
   ChannelIdParam,
   ChannelIgnoreBodySchema,
+  ChannelImportResultSchema,
   ChannelInboxPageSchema,
   ChannelInboxQuery,
   ChannelLimitsBodySchema,
@@ -24,7 +25,15 @@ import {
   ChannelLinkSchema,
   ChannelMemberListSchema,
   ChannelMessagesQuery,
+  ChannelPeopleSettingsBodySchema,
+  ChannelPeopleSettingsSchema,
+  ChannelPersonListSchema,
+  ChannelPersonSchema,
   ChannelPolicyBodySchema,
+  ChannelReminderListSchema,
+  ChannelReminderParam,
+  ChannelReminderQuery,
+  ChannelRoleBodySchema,
   ChannelSelectBodySchema,
   ChannelUnlinkedListSchema,
   ChannelUnlinkedQuery,
@@ -401,11 +410,170 @@ const limitsSet = createRoute({
   responses: { 200: connectionOk, 404: jsonError('Unknown connection'), ...errorResponses },
 })
 
+const peopleList = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/people',
+  tags,
+  summary: 'The people directory',
+  description:
+    'Everybody the connection has seen with the role the team gave them (owner, admin, member, guest), their divisions (topics), the linked team member and what the platform says (admin or creator, a suggestion until confirmed). Roles come only from here: nothing said in a chat changes them.',
+  security,
+  request: { params: ChannelIdParam },
+  responses: {
+    200: { description: 'People', content: content(ChannelPersonListSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const roleSet = createRoute({
+  method: 'put',
+  path: '/channels/connections/{id}/people/{peerId}/role',
+  tags,
+  summary: 'Set the role and divisions of a person',
+  description:
+    'Gives a platform user id a role and divisions. Also confirms a suggestion from the platform in one click. A chat speaking as itself (an anonymous admin) is always a guest.',
+  security,
+  request: {
+    params: ChannelLinkParam,
+    body: { required: true, content: content(ChannelRoleBodySchema) },
+  },
+  responses: {
+    200: { description: 'The person', content: content(ChannelPersonSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const roleClear = createRoute({
+  method: 'delete',
+  path: '/channels/connections/{id}/people/{peerId}/role',
+  tags,
+  summary: 'Remove the directory entry of a person',
+  description: 'Back to the derived role (linked team member, else the default).',
+  security,
+  request: { params: ChannelLinkParam },
+  responses: { 204: { description: 'Done' }, 404: jsonError('Unknown person'), ...errorResponses },
+})
+const peopleImport = createRoute({
+  method: 'post',
+  path: '/channels/connections/{id}/people/import',
+  tags,
+  summary: 'Import the administrators of the allowed chats',
+  description:
+    'Asks the platform for the creator and administrators of every allowed chat and keeps them as suggestions (never as roles).',
+  security,
+  request: { params: ChannelIdParam },
+  responses: {
+    200: { description: 'What was imported', content: content(ChannelImportResultSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const peopleSettingsGet = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/people/settings',
+  tags,
+  summary: 'Directory settings',
+  security,
+  request: { params: ChannelIdParam },
+  responses: {
+    200: { description: 'Settings', content: content(ChannelPeopleSettingsSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const peopleSettingsSet = createRoute({
+  method: 'put',
+  path: '/channels/connections/{id}/people/settings',
+  tags,
+  summary: 'Change the directory settings',
+  security,
+  request: {
+    params: ChannelIdParam,
+    body: { required: true, content: content(ChannelPeopleSettingsBodySchema) },
+  },
+  responses: {
+    200: { description: 'Settings', content: content(ChannelPeopleSettingsSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const remindersList = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/reminders',
+  tags,
+  summary: 'Reminders created from chats',
+  description:
+    'Active reminders (or all with `all=true`): where they post, when, whom they mention, who set them.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelReminderQuery },
+  responses: {
+    200: { description: 'Reminders', content: content(ChannelReminderListSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const reminderCancel = createRoute({
+  method: 'delete',
+  path: '/channels/connections/{id}/reminders/{reminderId}',
+  tags,
+  summary: 'Cancel a reminder',
+  security,
+  request: { params: ChannelReminderParam },
+  responses: {
+    204: { description: 'Cancelled' },
+    404: jsonError('Unknown reminder'),
+    ...errorResponses,
+  },
+})
+
 export function channelRoutes(deps: Deps) {
   const ch = deps.channels
   const acc = deps.channelAccounts
   const inbox = deps.channelInbox
   return new OpenAPIHono()
+    .openapi(peopleList, async (c) =>
+      c.json({ items: await inbox.people(c.req.valid('param').id) }, 200),
+    )
+    .openapi(peopleSettingsGet, async (c) =>
+      c.json(await inbox.peopleSettings(c.req.valid('param').id), 200),
+    )
+    .openapi(peopleSettingsSet, async (c) =>
+      c.json(await inbox.setPeopleSettings(c.req.valid('param').id, c.req.valid('json')), 200),
+    )
+    .openapi(peopleImport, async (c) =>
+      c.json(await inbox.importAdmins(c.req.valid('param').id), 200),
+    )
+    .openapi(roleSet, async (c) => {
+      const { id, peerId } = c.req.valid('param')
+      const { role, divisions } = c.req.valid('json')
+      return c.json(
+        await inbox.setRole(id, peerId, {
+          role,
+          ...(divisions === undefined ? {} : { divisions }),
+        }),
+        200,
+      )
+    })
+    .openapi(roleClear, async (c) => {
+      const { id, peerId } = c.req.valid('param')
+      await inbox.clearRole(id, peerId)
+      return c.body(null, 204)
+    })
+    .openapi(remindersList, async (c) =>
+      c.json(
+        {
+          items: await inbox.reminders(c.req.valid('param').id, {
+            all: c.req.valid('query').all === 'true',
+          }),
+        },
+        200,
+      ),
+    )
+    .openapi(reminderCancel, async (c) => {
+      const { id, reminderId } = c.req.valid('param')
+      await inbox.cancelReminder(id, reminderId)
+      return c.body(null, 204)
+    })
     .openapi(refresh, async (c) =>
       c.json({ items: await acc.refreshChats(c.req.valid('param').id) }, 200),
     )

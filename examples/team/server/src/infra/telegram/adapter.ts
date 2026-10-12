@@ -12,6 +12,7 @@ import { run, sequentialize } from '@grammyjs/runner'
 import { Bot, GrammyError, HttpError, InputFile } from 'grammy'
 import type { Update } from 'grammy/types'
 import { z } from 'zod'
+import { plainMentions } from '../channels/mentions.ts'
 import {
   type ChannelAdapter,
   type ChannelCapabilities,
@@ -68,6 +69,8 @@ export const TELEGRAM_CAPABILITIES: ChannelCapabilities = {
   membersScope: 'admins',
   upload: true,
   buttons: true,
+  /** `<a href="tg://user?id=...">` mentions by user id: they ping people who have no username. */
+  mentions: 'id',
   deletions: 'none',
 }
 
@@ -409,7 +412,8 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
       }
       if (message.text.trim() === '') throw new ChannelError('invalid', 'there is nothing to send')
       const parts = htmlChunks(message.text, TELEGRAM_CAPABILITIES.maxTextLength)
-      const plainParts = parts.length === 1 ? [message.text.slice(0, 4096)] : undefined
+      const plainText = plainMentions(message.text)
+      const plainParts = parts.length === 1 ? [plainText.slice(0, 4096)] : undefined
       let first: SentMessage | undefined
       for (const [i, html] of parts.entries()) {
         const last = i === parts.length - 1
@@ -428,7 +432,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
           () =>
             bot.api.sendMessage(
               chat,
-              plainParts?.[0] ?? message.text.slice(i * 4000, (i + 1) * 4000),
+              plainParts?.[0] ?? plainText.slice(i * 4000, (i + 1) * 4000),
               extra,
             ),
         )
@@ -604,10 +608,26 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
           id: String(a.user.id),
           name: [a.user.first_name, a.user.last_name].filter(Boolean).join(' '),
           ...(a.user.username === undefined ? {} : { username: a.user.username }),
-          ...(a.user.is_bot ? { isBot: true } : {}),
+          ...(a.user.is_bot ? { isBot: true, kind: 'bot' as const } : {}),
+          // `creator` is the owner of the chat; an administrator may carry a custom title
+          role: a.status === 'creator' ? ('owner' as const) : ('admin' as const),
+          ...(a.status === 'administrator' && a.custom_title !== undefined && a.custom_title !== ''
+            ? { title: a.custom_title }
+            : {}),
         })),
       }
     },
+    status: (node) => ({
+      readsEverything: botInfo?.canReadAllGroupMessages === true,
+      notes:
+        node.kind === 'direct'
+          ? []
+          : [
+              botInfo?.canReadAllGroupMessages === true
+                ? 'privacy mode is off: this bot receives every message of the groups it is in'
+                : 'privacy mode is on: without admin rights this bot receives only @mentions, replies to it and commands; as an administrator it receives every message',
+            ],
+    }),
     openDirect: (identityNativeId) => ({
       nativeId: identityNativeId,
       kind: 'direct',

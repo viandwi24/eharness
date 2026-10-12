@@ -5,6 +5,7 @@
  * recognised is escaped text, so the output is always valid HTML for Telegram's subset, except
  * for crossing emphasis, which Telegram rejects (the adapter then resends the plain text).
  */
+import { parseMentions } from '../channels/mentions.ts'
 import { splitText } from '../channels/policy.ts'
 
 export const escapeHtml = (text: string): string =>
@@ -26,6 +27,16 @@ export function toTelegramHtml(text: string): string {
     return `${open}${stash.length - 1}${close}`
   }
   let s = text.replace(/[\uE000\uE001]/g, '')
+  // a mention of the gateway (`channels/mentions.ts`): a link by user id, which pings the person
+  // even without a username; ids that are not numbers are shown as plain names
+  const mentions = parseMentions(s)
+  for (let i = mentions.length - 1; i >= 0; i--) {
+    const m = mentions[i] as (typeof mentions)[number]
+    const html = /^\d{1,20}$/.test(m.id)
+      ? keep(`<a href="tg://user?id=${m.id}">${escapeHtml(m.name)}</a>`)
+      : keep(escapeHtml(m.name))
+    s = `${s.slice(0, m.start)}${html}${s.slice(m.end)}`
+  }
   // fenced code
   s = s.replace(
     /```([A-Za-z0-9+#_-]*)[^\S\n]*\n?([\s\S]*?)```/g,

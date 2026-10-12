@@ -1028,12 +1028,19 @@ export function urgentText(items: readonly BeatItem[]): string {
  */
 export const heartbeatKey = (agentId: string): string => `sys:heartbeat:${agentId}`
 export const DIGEST_KEY = 'sys:digest'
+/** A reminder created from a chat (P41 L6): its schedule is a routine, its fire posts a fixed text. */
+export const reminderKey = (reminderId: string): string => `sys:reminder:${reminderId}`
 
-export type SystemRoutine = { kind: 'heartbeat'; agentId: string } | { kind: 'digest' }
+export type SystemRoutine =
+  | { kind: 'heartbeat'; agentId: string }
+  | { kind: 'digest' }
+  | { kind: 'reminder'; id: string }
 
 export function parseSystemKey(key: string | null | undefined): SystemRoutine | undefined {
   if (key === null || key === undefined || !key.startsWith('sys:')) return undefined
   if (key === DIGEST_KEY) return { kind: 'digest' }
+  const r = /^sys:reminder:(.+)$/.exec(key)
+  if (r !== null) return { kind: 'reminder', id: r[1] as string }
   const m = /^sys:heartbeat:(.+)$/.exec(key)
   return m === null ? undefined : { kind: 'heartbeat', agentId: m[1] as string }
 }

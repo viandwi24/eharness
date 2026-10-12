@@ -15,6 +15,13 @@ import {
 	unlinkedLabel,
 	breakerText,
 	chatSummary,
+	divisionOptions,
+	platformAdminText,
+	proactiveBody,
+	proactiveError,
+	roleLocked,
+	sortPeople,
+	type ChannelPerson,
 	formChanged,
 	formOfChat,
 	chatTree,
@@ -43,6 +50,7 @@ const effective = (over: Partial<ChannelChat['effective']> = {}): ChannelChat['e
 	observe: true,
 	sessionScope: 'node',
 	redactOnDelete: false,
+	proactive: { allowed: false, digest: true, digestMinutes: 60, maxMentions: 3 },
 	...over
 });
 const chat = (over: Partial<ChannelChat> = {}): ChannelChat => ({
@@ -95,8 +103,8 @@ describe('chat policy form', () => {
 			inherited: { enabled: { from: 'node', nodeId: 'n-1' }, wake: { from: 'node', nodeId: 'n-1' }, delivery: { from: 'connection' } }
 		});
 		const f = formOfChat(c);
-		expect(f).toEqual({ allowed: 'on', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '' });
-		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null });
+		expect(f).toEqual({ allowed: 'on', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '', proactive: '', quietFrom: '', quietTo: '', digest: '', maxMentions: '' });
+		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null, proactive: null });
 		expect(policyBody({ ...f, retention: '', allowed: '' }).retentionDays).toBeNull();
 		expect(policyBody({ ...f, allowed: 'off', observe: 'off' })).toMatchObject({ enabled: false, observe: false });
 		expect(formChanged(f, { ...f, wake: 'mention' })).toBe(true);
@@ -265,5 +273,55 @@ describe('activity', () => {
 		expect(eventText(e({ type: 'dropped', peerId: '9', reason: 'unlinked-sender' }))).toBe('Telegram 9 (the sender is not linked)');
 		expect(eventText(e({ type: 'reply-sent', conversationId: 'room', detail: { kind: 'reply', chunks: 2 } }))).toBe('in room 2 parts');
 		expect(eventText(e({ type: 'approval-answered', reason: 'approved', detail: { tool: 'channel_send' } }))).toBe('(approved) tool channel_send');
+	});
+});
+
+
+describe('proactive policy and the people directory', () => {
+	test('the proactive form: only what is set, quiet hours need both ends', () => {
+		const f = formOfChat(chat());
+		expect(proactiveBody(f)).toBeNull();
+		const set = { ...f, proactive: 'on' as const, quietFrom: '22:00', quietTo: '07:00', maxMentions: '2' };
+		expect(proactiveBody(set)).toEqual({ allowed: true, quietHours: { from: '22:00', to: '07:00' }, maxMentions: 2 });
+		expect(proactiveError({ ...set, quietTo: '' })).toContain('both');
+		expect(proactiveError({ ...set, quietFrom: '25:00' })).toContain('HH:MM');
+		expect(proactiveError({ ...set, maxMentions: '30' })).toContain('0 to 20');
+		expect(proactiveError(set)).toBeUndefined();
+		const fromServer = formOfChat(chat({ policy: { enabled: true, proactive: { allowed: false, digest: true, quietHours: { from: '21:00', to: '06:00' }, maxMentions: 0 } } }));
+		expect(fromServer).toMatchObject({ proactive: 'off', digest: 'on', quietFrom: '21:00', maxMentions: '0' });
+		expect(formChanged(f, set)).toBe(true);
+	});
+
+	const person = (over: Partial<ChannelPerson> = {}): ChannelPerson => ({
+		peerId: '1',
+		kind: 'human',
+		isBot: false,
+		role: 'guest',
+		roleSource: 'default',
+		explicit: false,
+		divisions: [],
+		platformAdmin: [],
+		firstSeen: 1,
+		lastSeen: 1,
+		...over
+	});
+	test('suggestions come first, then staff; anonymous admins and bots are locked; admin status reads as the platform says', () => {
+		const people = [
+			person({ peerId: 'a', lastSeen: 9 }),
+			person({ peerId: 'b', role: 'owner', explicit: true, roleSource: 'directory', lastSeen: 1 }),
+			person({ peerId: 'c', suggestion: { role: 'admin', reason: 'admin in TEAMKU' }, lastSeen: 2 })
+		];
+		expect(sortPeople(people).map((p) => p.peerId)).toEqual(['c', 'b', 'a']);
+		expect(roleLocked(person({ roleSource: 'anonymous' }))).toBe(true);
+		expect(roleLocked(person())).toBe(false);
+		expect(platformAdminText(person({ platformAdmin: [{ nodeId: 'n', title: 'TEAMKU', role: 'owner', customTitle: 'CEO' }] }))).toBe('creator in TEAMKU (CEO)');
+	});
+	test('divisions are chats and topics named with their room', () => {
+		const room = chat({ id: 'r', title: 'TEAMKU' });
+		const topic = chat({ id: 't', title: 'produksi', parentId: 'r' });
+		expect(divisionOptions([topic, room])).toEqual([
+			{ id: 'r', label: 'TEAMKU' },
+			{ id: 't', label: 'TEAMKU / produksi' }
+		]);
 	});
 });

@@ -23,7 +23,7 @@ import type {
 } from '../channels/types.ts'
 
 /** Bumped when the mapping below changes in a way that would give another result for the same update. */
-export const NORMALIZER_VERSION = 1
+export const NORMALIZER_VERSION = 2
 
 export interface NormalizeContext {
   botId: number
@@ -348,9 +348,18 @@ function replyInfoOf(message: Message): ReplyInfo | undefined {
 function forwardOf(message: Message): Record<string, unknown> | undefined {
   const o = message.forward_origin
   if (o === undefined) return undefined
+  const name =
+    'sender_user' in o && o.sender_user !== undefined
+      ? personName(o.sender_user) || o.sender_user.username
+      : 'sender_user_name' in o && typeof o.sender_user_name === 'string'
+        ? o.sender_user_name
+        : 'chat' in o && o.chat !== undefined && 'title' in o.chat
+          ? o.chat.title
+          : undefined
   return {
     type: o.type,
     at: o.date * 1000,
+    ...(name === undefined || name === '' ? {} : { name }),
     ...('chat' in o && o.chat !== undefined ? { chat: String(o.chat.id) } : {}),
     ...('sender_user' in o && o.sender_user !== undefined
       ? { user: String(o.sender_user.id) }
@@ -374,6 +383,23 @@ const ROLE: Record<string, MemberRole> = {
   restricted: 'member',
   left: 'none',
   kicked: 'none',
+}
+
+/** The administrator rights of a chat member, `can_*` flags by name. Empty for anybody else. */
+export function rightsOf(member: unknown): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  if (typeof member !== 'object' || member === null) return out
+  for (const [k, v] of Object.entries(member))
+    if (k.startsWith('can_') && typeof v === 'boolean') out[k] = v
+  return out
+}
+
+/** The custom title of an administrator, as the per-chat profile of the identity. */
+export function withTitle(identity: Identity, member: unknown): Identity {
+  const title = (member as { custom_title?: unknown } | null)?.custom_title
+  return typeof title === 'string' && title !== ''
+    ? { ...identity, profile: { roles: [title] } }
+    : identity
 }
 
 const key = (update: Update, suffix?: string): string =>
@@ -627,7 +653,12 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
         : status === 'member'
     const room: NodeInfo = {
       ...chatNode(mine.chat),
-      access: { member: role, canPost: role === 'none' ? false : canPost },
+      access: {
+        member: role,
+        canPost: role === 'none' ? false : canPost,
+        // the bot's own administrator rights, by Bot API name (`channel_status` reads them)
+        rights: rightsOf(mine.new_chat_member),
+      },
       ...(role === 'none'
         ? { state: 'left' as const, stateReason: status }
         : { state: 'active' as const }),
@@ -661,7 +692,10 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
           dedupeKey: key(update),
           at: other.date * 1000,
           node: { nativeId: room.nativeId, chain: [room] },
-          actor: identityOfUser(other.new_chat_member.user, ctx.botId),
+          actor: withTitle(
+            identityOfUser(other.new_chat_member.user, ctx.botId),
+            other.new_chat_member,
+          ),
           role,
           raw: update,
         },

@@ -4,8 +4,27 @@
  * gateway; platform neutral.
  */
 import type { ChannelInboxPort } from '../../app/ports.ts'
+import type { ChannelPersonView, ChannelReminderView } from '../../domain/channels.ts'
 import { invalid, notFound } from '../../domain/errors.ts'
-import type { ChannelGateway } from './gateway.ts'
+import type { ChannelGateway, PersonView } from './gateway.ts'
+import type { ReminderRow } from './reminders.ts'
+
+const personOf = (v: PersonView): ChannelPersonView => ({
+  peerId: v.peerId,
+  ...(v.name === null ? {} : { name: v.name }),
+  ...(v.username === null ? {} : { username: v.username }),
+  kind: v.kind,
+  isBot: v.isBot,
+  role: v.role,
+  roleSource: v.roleSource,
+  explicit: v.explicit,
+  divisions: v.divisions,
+  ...(v.memberId === null ? {} : { memberId: v.memberId }),
+  platformAdmin: v.platformAdmin,
+  ...(v.suggestion === undefined ? {} : { suggestion: v.suggestion }),
+  firstSeen: v.firstSeen,
+  lastSeen: v.lastSeen,
+})
 
 const OWNER = 'owner'
 
@@ -82,6 +101,92 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
     async activity(id, query) {
       await known(id)
       return gateway.activity.list(id, query)
+    },
+    async people(id) {
+      await known(id)
+      return gateway.people.list(id).map(personOf)
+    },
+    async setRole(id, peerId, input) {
+      await known(id)
+      try {
+        return personOf(gateway.people.setRole(id, clean(peerId, 'peerId'), input, OWNER))
+      } catch (error) {
+        throw invalid(error instanceof Error ? error.message : String(error))
+      }
+    },
+    async clearRole(id, peerId) {
+      await known(id)
+      if (gateway.people.clearRole(id, peerId) === undefined) throw notFound('person', peerId)
+    },
+    async importAdmins(id) {
+      await known(id)
+      try {
+        return await gateway.people.importAdmins(id)
+      } catch (error) {
+        throw invalid(error instanceof Error ? error.message : String(error))
+      }
+    },
+    async peopleSettings(id) {
+      await known(id)
+      const c = gateway.config(id)
+      return {
+        defaultRole: c?.people.defaultRole ?? 'guest',
+        approvalTtlHours: Math.round(((c?.approvalTtlMs ?? 86_400_000) / 3_600_000) * 100) / 100,
+      }
+    },
+    async setPeopleSettings(id, input) {
+      await known(id)
+      const c = gateway.config(id)
+      if (c === undefined) throw invalid('Bind the connection to an agent first.')
+      gateway.configure({
+        ...c,
+        people: {
+          ...c.people,
+          ...(input.defaultRole === undefined ? {} : { defaultRole: input.defaultRole }),
+        },
+        ...(input.approvalTtlHours === undefined
+          ? {}
+          : { approvalTtlMs: Math.max(60_000, Math.round(input.approvalTtlHours * 3_600_000)) }),
+      })
+      const n = gateway.config(id)
+      return {
+        defaultRole: n?.people.defaultRole ?? 'guest',
+        approvalTtlHours: Math.round(((n?.approvalTtlMs ?? 86_400_000) / 3_600_000) * 100) / 100,
+      }
+    },
+    async reminders(id, opts) {
+      await known(id)
+      const view = (r: ReminderRow): ChannelReminderView => {
+        const node = gateway.nodes.get(r.nodeId)
+        return {
+          id: r.id,
+          nodeId: r.nodeId,
+          chatTitle: node === undefined ? r.nodeId : (node.title ?? node.nativeId),
+          text: r.body,
+          whenText: r.whenText,
+          status: r.status,
+          mentions: r.mentions.map((m) => {
+            const i = gateway.identities.get(m)
+            return i?.displayName ?? i?.username ?? i?.nativeId ?? m
+          }),
+          ...(r.createdByName === null ? {} : { createdByName: r.createdByName }),
+          ...(r.createdByRole === null ? {} : { createdByRole: r.createdByRole }),
+          createdAt: r.createdAt,
+          ...(r.lastFiredAt === null ? {} : { lastFiredAt: r.lastFiredAt }),
+          fireCount: r.fireCount,
+          ...(r.lastError === null ? {} : { lastError: r.lastError }),
+        }
+      }
+      return gateway.reminders
+        .list(id, opts.all ? {} : { status: 'active' })
+        .slice(0, 200)
+        .map(view)
+    },
+    async cancelReminder(id, reminderId) {
+      await known(id)
+      const r = gateway.reminders.get(reminderId)
+      if (r === undefined || r.connectionId !== id) throw notFound('reminder', reminderId)
+      gateway.reminders.cancel(reminderId)
     },
   }
 }

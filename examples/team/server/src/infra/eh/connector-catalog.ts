@@ -31,7 +31,7 @@ import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
-import { CHANNEL_READ_TOOLS } from '../channels/index.ts'
+import { CHANNEL_OWN_WRITE_TOOLS, CHANNEL_READ_TOOLS } from '../channels/index.ts'
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
@@ -74,6 +74,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       READ_BRIEFINGS_TOOL,
       // reading and describing chat channels is read-only; posting keeps its own risk (`infra/channels`)
       ...CHANNEL_READ_TOOLS,
+      // a recap note and a reminder stay in the team's own space; roles decide who may use them
+      ...CHANNEL_OWN_WRITE_TOOLS,
     ],
     ask: [...def.rules.ask],
     deny: [...def.rules.deny],

@@ -44,6 +44,8 @@ export interface LogMessage {
   entities?: MessageEntity[]
   replyTo?: { messageId: string; senderName?: string; text?: string }
   threadRoot?: string
+  /** Origin of a forwarded message, as the adapter reported it. */
+  forwardOf?: Record<string, unknown>
   kind: 'message' | 'service' | 'system'
   editedAt?: number
   deletedAt?: number
@@ -121,6 +123,8 @@ export interface ChannelLog {
     options: { pending: boolean; handled?: boolean; disposition?: 'woke' | 'observed' },
   ): Promise<InsertResult>
   markHandled(nodeId: string, nativeId: string): void
+  /** A message that was going to wake the agent becomes context for the next wake (observed, shown once). */
+  demote(nodeId: string, nativeId: string): void
   find(nodeId: string, nativeId: string): Promise<LogMessage | undefined>
   byId(id: string): Promise<LogMessage | undefined>
   /** A message of the connection by native id, when exactly one node has it. */
@@ -152,6 +156,27 @@ export interface ChannelLog {
   ): Promise<{ items: LogMessage[]; more: boolean }>
   /** The newest message of a node, if any. */
   last(nodeId: string): Promise<LogMessage | undefined>
+  /** How much of these nodes the log holds: the oldest and newest message time and the count (deleted ones not counted). */
+  stats(nodeIds: readonly string[]): {
+    firstAt: number | undefined
+    lastAt: number | undefined
+    count: number
+  }
+  /**
+   * Messages of these nodes sent in `[from, to)`, oldest first by time. `after` is the `next` of
+   * the previous page; `next` is undefined at the end. Deleted messages are left out; system
+   * entries (a moderation log) are left out unless `includeSystem`.
+   */
+  range(
+    nodeIds: readonly string[],
+    options: {
+      from: number
+      to: number
+      limit: number
+      after?: string | undefined
+      includeSystem?: boolean
+    },
+  ): Promise<{ items: LogMessage[]; next?: string }>
   /** Observed messages of these nodes not yet shown to a run, oldest first (the newest `limit`). */
   pending(nodeIds: readonly string[], limit: number): Promise<LogMessage[]>
   /** Messages of these nodes up to our id `upTo` are shown: not pending anymore. */
@@ -333,6 +358,7 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
             },
           }),
       ...(r.thread_root_native_id === null ? {} : { threadRoot: r.thread_root_native_id }),
+      ...(content.forwardOf === undefined ? {} : { forwardOf: content.forwardOf }),
       kind: r.kind as LogMessage['kind'],
       ...(r.edited_at === null ? {} : { editedAt: r.edited_at }),
       ...(r.deleted_at === null ? {} : { deletedAt: r.deleted_at }),
@@ -389,6 +415,13 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
       if (res.changes > 0) return { inserted: true, handled: options.handled === true, id }
       const row = byNative.get(message.nodeId, message.nativeId)
       return { inserted: false, handled: row?.handled === 1, id: row?.id ?? id }
+    },
+    demote(nodeId, nativeId) {
+      sqlite
+        .query(
+          "UPDATE ch_messages SET pending = 1, disposition = 'observed', handled = 1 WHERE node_id = ? AND native_id = ?",
+        )
+        .run(nodeId, nativeId)
     },
     markHandled(nodeId, nativeId) {
       sqlite
@@ -510,6 +543,46 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
         )
         .get(nodeId)
       return r === null ? undefined : open(r)
+    },
+    stats(nodeIds) {
+      if (nodeIds.length === 0) return { firstAt: undefined, lastAt: undefined, count: 0 }
+      const r = sqlite
+        .query<{ first_at: number | null; last_at: number | null; n: number }, string[]>(
+          `SELECT MIN(sent_at) AS first_at, MAX(sent_at) AS last_at, COUNT(*) AS n FROM ch_messages
+             WHERE node_id IN (${nodeIds.map(() => '?').join(',')}) AND deleted_at IS NULL AND kind != 'system'`,
+        )
+        .get(...nodeIds)
+      return {
+        firstAt: r?.first_at ?? undefined,
+        lastAt: r?.last_at ?? undefined,
+        count: r?.n ?? 0,
+      }
+    },
+    async range(nodeIds, options) {
+      if (nodeIds.length === 0) return { items: [] }
+      const [afterAt, afterId] =
+        options.after === undefined
+          ? [options.from - 1, '']
+          : [
+              Number(options.after.split(':')[0]),
+              options.after.slice(options.after.indexOf(':') + 1),
+            ]
+      const marks = nodeIds.map(() => '?').join(',')
+      const rows = sqlite
+        .query<MessageDb, Array<string | number>>(
+          `SELECT * FROM ch_messages WHERE node_id IN (${marks}) AND sent_at >= ? AND sent_at < ?
+             AND deleted_at IS NULL${options.includeSystem === true ? '' : " AND kind != 'system'"}
+             AND (sent_at > ? OR (sent_at = ? AND id > ?))
+             ORDER BY sent_at, id LIMIT ?`,
+        )
+        .all(...nodeIds, options.from, options.to, afterAt, afterAt, afterId, options.limit + 1)
+      const more = rows.length > options.limit
+      const items = await openAll(rows.slice(0, options.limit))
+      const lastRow = rows[options.limit - 1]
+      return {
+        items,
+        ...(more && lastRow !== undefined ? { next: `${lastRow.sent_at}:${lastRow.id}` } : {}),
+      }
     },
     async pending(nodeIds, limit) {
       if (nodeIds.length === 0) return []

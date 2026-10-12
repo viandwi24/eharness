@@ -53,7 +53,14 @@ export function channelApprovalAnswerer(deps: {
     await deps.factory.prepare(def)
     const result = await answerAttention(input.itemId, {
       sessionId: input.sessionId,
-      answer: { kind: 'approval', approved: input.approved },
+      answer:
+        input.kind === 'question'
+          ? { kind: 'client-tool', errorText: input.reason ?? 'The question was not answered.' }
+          : {
+              kind: 'approval',
+              approved: input.approved,
+              ...(input.reason === undefined ? {} : { reason: input.reason }),
+            },
       open: () => deps.factory.openSession(def, input.sessionId),
       peek: (id) => deps.factory.peek(id),
       actor: input.actor,

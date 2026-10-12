@@ -234,6 +234,8 @@ export interface ServerConfig {
     purgeEveryMs?: number
     /** Retry timing of the outbox (tests shorten it). */
     delivery?: { retryBaseMs?: number; retryMaxMs?: number; maxAttempts?: number }
+    /** Period of the pass that expires approvals and sends held proactive posts (default 60 s; 0 = off). */
+    maintenanceMs?: number
   }
   /** Telegram bot transport timers (tests shorten them). */
   telegram?: { pollTimeoutSec?: number; syncPollMs?: number; retryMs?: number }
@@ -618,7 +620,16 @@ export function compose(config: ServerConfig): Server {
     tasks,
     events,
     programs: { store: programStore, runner: programRunner },
-    system: () => heartbeats,
+    // the heartbeat and the digest, plus the reminders created from a chat (a fire posts text, no model)
+    system: () => ({
+      heartbeat: heartbeats.heartbeat,
+      digest: heartbeats.digest,
+      reminder: async (id, input) =>
+        (await channelGateway?.reminders.fire(id, input)) ?? {
+          posted: false,
+          reason: 'channels are not ready',
+        },
+    }),
     app: () => deps,
     // a routine in `dm` mode fires into a live thread of the agent, never an archived one
     dmSession: (agentId) => {
@@ -780,6 +791,18 @@ export function compose(config: ServerConfig): Server {
       },
     },
     notify: (n) => channelNotify(n),
+    // the team timezone decides what "today" and "09:00" mean in a chat
+    timezone: () => settings.get().timezone,
+    // reminders created from a chat are `sys:reminder:<id>` routines
+    reminders: { routines: routineStore, schedule, ids: () => uuidv7() },
+    library: {
+      write: async (path, text) => {
+        await channelFiles.write(path, text)
+      },
+    },
+    ...(config.channels?.maintenanceMs === undefined
+      ? {}
+      : { maintenanceMs: config.channels.maintenanceMs }),
     ...(config.channels?.collect === undefined ? {} : { collect: config.channels.collect }),
     ...(config.channels?.typingEveryMs === undefined
       ? {}
