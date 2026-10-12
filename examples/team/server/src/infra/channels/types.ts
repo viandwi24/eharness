@@ -304,6 +304,8 @@ export interface NativeAction {
   /** One line for the tool description. */
   summary: string
   schema: z.ZodObject
+  /** Answers from what the gateway stored, never calling the platform: the API governor skips it. */
+  local?: boolean
   run(input: Record<string, unknown>): Promise<string>
 }
 
@@ -370,6 +372,8 @@ export interface ChannelAdapter {
   readonly connectionId: string
   /** Human readable description of the native id formats the adapter composes (covered by its fixtures). */
   readonly idFormats: string
+  /** `user` = a person's account driven through an API client (stricter API limits than a `bot`, the default). */
+  readonly actsAs?: 'bot' | 'user'
   /** The adapter's schema for `NodeInfo.meta`, and its version (bumped when the shape changes). */
   readonly nodeMeta?: { schema: z.ZodType; version: number }
   /** The identity the adapter runs as (so the gateway can drop its own messages). */

@@ -5,7 +5,7 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { ServerTable } from '#lib/channels/table.svelte.js';
 	import { tableQuery } from '#lib/channels/table-core.js';
-	import { ago, EVENT_LABEL, EVENT_TYPES, eventText, eventTone, type ActivityType, type ChannelActivity } from '#lib/channels/model.js';
+	import { ago, DIRECTION_FILTERS, DIRECTION_LABEL, EVENT_LABEL, EVENT_TYPES, eventText, eventToneOf, type ActivityType, type ChannelActivity } from '#lib/channels/model.js';
 	import { formatTime } from '#lib/format.js';
 
 	// Activity of a connection, newest first: what was received and what happened to it (woke the
@@ -21,21 +21,40 @@
 				params: { id: connectionId },
 				query: tableQuery(p, { peerId, conversationId }) as never
 			}),
-		{ sort: undefined, order: undefined, filters: { type: '' } },
+		{ sort: undefined, order: undefined, filters: { type: '', direction: '', action: '' } },
 		{ url }
 	);
 
+	// the names of the actions and reads recorded so far (the filter by action)
+	let actionNames = $state<string[]>([]);
+	$effect(() => {
+		void api
+			.get('/channels/connections/{id}/activity/actions', { params: { id: connectionId } })
+			.then((r) => (actionNames = r.actions))
+			.catch(() => undefined);
+	});
+
 	const columns: Column<ChannelActivity>[] = [
+		{ id: 'direction', header: 'Direction', cell: directionCell },
 		{ id: 'type', header: 'Event', mobile: 'title', cell: typeCell },
 		{ id: 'what', header: 'Details', cell: whatCell },
 		{ id: 'at', header: 'When', numeric: false, cell: whenCell }
 	];
 </script>
 
-{#snippet typeCell(e: ChannelActivity)}<Badge variant={eventTone(e.type)}>{EVENT_LABEL[e.type]}</Badge>{/snippet}
+{#snippet directionCell(e: ChannelActivity)}<span class="text-xs whitespace-nowrap text-muted-foreground" data-testid="activity-direction">{e.direction === 'in' ? '← ' : e.direction === 'out' ? '→ ' : ''}{DIRECTION_LABEL[e.direction ?? 'system']}</span>{/snippet}
+{#snippet typeCell(e: ChannelActivity)}<Badge variant={eventToneOf(e)}>{EVENT_LABEL[e.type]}</Badge>{/snippet}
 {#snippet whatCell(e: ChannelActivity)}<span class="text-xs break-words text-muted-foreground">{eventText(e) || '–'}</span>{/snippet}
 {#snippet whenCell(e: ChannelActivity)}<span class="text-xs whitespace-nowrap text-muted-foreground" title={formatTime(e.at)}>{ago(e.at, Date.now())}</span>{/snippet}
 {#snippet filters()}
+	<NativeSelect size="sm" value={table.params.filters.direction ?? ''} onchange={(e) => table.setFilter('direction', (e.currentTarget as HTMLSelectElement).value)} aria-label="Filter by direction" data-testid="activity-direction-filter">
+		<NativeSelectOption value="">In and out</NativeSelectOption>
+		{#each DIRECTION_FILTERS as d (d.value)}<NativeSelectOption value={d.value}>{d.label}</NativeSelectOption>{/each}
+	</NativeSelect>
+	<NativeSelect size="sm" value={table.params.filters.action ?? ''} onchange={(e) => table.setFilter('action', (e.currentTarget as HTMLSelectElement).value)} aria-label="Filter by action" data-testid="activity-action-filter">
+		<NativeSelectOption value="">All actions</NativeSelectOption>
+		{#each actionNames as a (a)}<NativeSelectOption value={a}>{a.replace(/[_-]+/g, ' ')}</NativeSelectOption>{/each}
+	</NativeSelect>
 	<NativeSelect size="sm" value={table.params.filters.type ?? ''} onchange={(e) => table.setFilter('type', (e.currentTarget as HTMLSelectElement).value)} aria-label="Filter by event type" data-testid="activity-type">
 		<NativeSelectOption value="">All events</NativeSelectOption>
 		{#each EVENT_TYPES as t (t as ActivityType)}<NativeSelectOption value={t}>{EVENT_LABEL[t]}</NativeSelectOption>{/each}

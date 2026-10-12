@@ -12,6 +12,7 @@ import { run, sequentialize } from '@grammyjs/runner'
 import { Bot, GrammyError, HttpError, InputFile } from 'grammy'
 import type { Update } from 'grammy/types'
 import { z } from 'zod'
+import { reportFailure } from '../channels/governor.ts'
 import { plainMentions } from '../channels/mentions.ts'
 import {
   type ChannelAdapter,
@@ -651,11 +652,19 @@ const intId = z.coerce.number().int()
  * `read` is allowed without asking, `write` and `external` ask, `destructive` always asks.
  */
 export function nativeActions(bot: Bot, token: string): NativeAction[] {
+  /**
+   * A refusal is answered as text for the model (and reported to the governor's audit); a rate
+   * limit is thrown so the API governor parks the connection and tells the model when to retry.
+   */
+  const refused = (error: unknown): string => {
+    const mapped = mapTelegramError(error, token)
+    if (mapped.kind === 'rate_limit') throw mapped
+    const text = `Telegram refused: ${mapped.message}`
+    reportFailure(text)
+    return text
+  }
   const run = (fn: () => Promise<unknown>, done: string): Promise<string> =>
-    fn().then(
-      () => done,
-      (error) => `Telegram refused: ${mapTelegramError(error, token).message}`,
-    )
+    fn().then(() => done, refused)
   const text = (value: unknown): string => JSON.stringify(value, null, 1).slice(0, 4000)
   const act = (
     name: string,
@@ -671,10 +680,7 @@ export function nativeActions(bot: Bot, token: string): NativeAction[] {
     schema: z.object(shape),
     run: (input) =>
       done === undefined
-        ? exec(input as Record<string, never>).then(
-            (v) => text(v),
-            (e) => `Telegram refused: ${mapTelegramError(e, token).message}`,
-          )
+        ? exec(input as Record<string, never>).then((v) => text(v), refused)
         : run(() => exec(input as Record<string, never>), done),
   })
   const c = (i: Record<string, unknown>): number | string => chatArg(String(i.chat))

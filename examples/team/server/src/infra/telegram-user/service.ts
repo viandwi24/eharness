@@ -41,6 +41,7 @@ import {
   type UserConnectionSettings,
 } from './connector.ts'
 import { classifyError, describeError } from './errors.ts'
+import { governJobClient } from './governed-client.ts'
 import { chainOfMessage, normalizeMessage } from './normalize.ts'
 import {
   type AccountSettings,
@@ -453,9 +454,11 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         warn,
       }
       const j = options.jobs ?? {}
+      // the jobs read through the connection's API governor (shared park state with sends and tools)
+      const jobClient = governJobClient(client, gateway.governor, id)
       e.backfill = createBackfill({
         connectionId: id,
-        client,
+        client: jobClient,
         chats,
         ingest: (m) => ingestHistory(id, m),
         allowed: (chatId) => allowedChat(id, chatId),
@@ -468,7 +471,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       })
       e.adminLog = createAdminLog({
         connectionId: id,
-        client,
+        client: jobClient,
         chats,
         record: (chatId, ev) => recordAdminEvent(id, chatId, ev),
         allowed: (chatId) => allowedChat(id, chatId),

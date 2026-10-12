@@ -47,6 +47,13 @@ import {
   type NewChannelEvent,
   sqliteEventStore,
 } from './events.ts'
+import {
+  type AuditRecord,
+  createGovernor,
+  type Governor,
+  governAdapter,
+  governorLimitsOf,
+} from './governor.ts'
 import { type MessageMeta, renderHeader, renderLinePrefix } from './header.ts'
 import { type IdentityStore, sqliteIdentityStore } from './identities.ts'
 import { migrateLegacyMessages, migrateLegacyStructure } from './legacy-migration.ts'
@@ -672,6 +679,8 @@ export interface ChannelGateway {
       connectionId: string,
       query: {
         type?: ChannelEventType | undefined
+        direction?: 'in' | 'out' | undefined
+        action?: string | undefined
         conversationId?: string | undefined
         before?: string | undefined
         limit: number
@@ -679,6 +688,8 @@ export interface ChannelGateway {
     ): Omit<EventPage, 'items'> & { items: ActivityItem[] }
     /** One page of activity (SQL filter and count), newest first by default. */
     table(connectionId: string, query: EventTableQuery): { items: ActivityItem[]; total: number }
+    /** The action and read names recorded so far. */
+    actions(connectionId: string): string[]
     /** Delete events past the events retention (age and count). */
     prune(options: { olderThan?: number; keepLast?: number }): number
   }
@@ -747,6 +758,8 @@ export interface ChannelGateway {
   /** Tool names of the read-risk native actions of the connections an agent has (allowed without asking). */
   readActionTools(agentId: string): string[]
   outbound: Outbound
+  /** The API governor of every connection: buckets, the shared park state and the audit of platform calls. */
+  governor: Governor
   /** Where `chat_recap_save` writes (undefined = notes cannot be saved). */
   library: GatewayDeps['library']
   /** Library access of the tools (uploads out, attachments in). */
@@ -907,7 +920,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const activity = (event: Omit<NewChannelEvent, 'at'> & { at?: number }): void => {
     try {
       events.record({ ...event, at: event.at ?? now() })
-      if (event.conversationId !== undefined && event.type !== 'dropped')
+      if (
+        event.conversationId !== undefined &&
+        event.type !== 'dropped' &&
+        event.type !== 'action' &&
+        event.type !== 'read' &&
+        event.type !== 'parked'
+      )
         nodes.touch(event.conversationId, event.at ?? now())
     } catch (error) {
       if (!stopped) warn(`channels: could not record an activity event: ${errorText(error)}`)
@@ -915,8 +934,50 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
   const limitsOf = (connectionId: string): RateLimits =>
     cache.get(connectionId)?.rate ?? ConnectionConfigSchema.shape.rate.parse(undefined)
+  const governorLimitsFor = (connectionId: string): ReturnType<typeof governorLimitsOf> =>
+    governorLimitsOf(adapters.get(connectionId)?.actsAs, cache.get(connectionId)?.rate.governor)
+  /** One Activity row per governed platform call: ids and targets, never a message body. */
+  const auditCall = (r: AuditRecord): void => {
+    const c = r.context
+    const args = Object.entries(r.args)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(' ')
+    activity({
+      connectionId: r.connectionId,
+      type: r.kind,
+      at: r.at,
+      action: r.action,
+      ...(r.nodeId === undefined ? {} : { conversationId: r.nodeId }),
+      ...(r.note === undefined ? {} : { reason: clip(r.note, 160) }),
+      ...(c?.requester === undefined ? {} : { peerName: c.requester }),
+      detail: {
+        result: r.result,
+        ms: r.durationMs,
+        ...(args === '' ? {} : { args: clip(args, 200) }),
+        ...(c?.memberId === undefined ? {} : { member: c.memberId }),
+        ...(c?.sessionId === undefined ? {} : { session: c.sessionId }),
+        ...(c?.agentId === undefined ? {} : { agent: c.agentId }),
+        ...(c?.origin === undefined ? {} : { origin: c.origin }),
+      },
+    })
+  }
+  const governor: Governor = createGovernor({
+    limitsOf: governorLimitsFor,
+    ...(deps.outbound?.now === undefined ? {} : { now: deps.outbound.now }),
+    ...(deps.outbound?.sleep === undefined ? {} : { sleep: deps.outbound.sleep }),
+    audit: auditCall,
+    onPark: ({ connectionId, ms, scope, reason }) =>
+      activity({
+        connectionId,
+        type: 'parked',
+        reason: clip(reason, 160),
+        detail: { scope, seconds: Math.max(1, Math.ceil(ms / 1000)) },
+      }),
+    onStorm: ({ connectionId, reason }) => outbound.open(connectionId, reason),
+  })
   const outbound: Outbound = createOutbound({
     limitsOf,
+    governor,
     ...(deps.outbound?.now === undefined ? {} : { now: deps.outbound.now }),
     ...(deps.outbound?.sleep === undefined ? {} : { sleep: deps.outbound.sleep }),
     onWarn: warn,
@@ -4792,7 +4853,14 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     async register(adapter) {
       const existing = adapters.get(adapter.connectionId)
       if (existing !== undefined) await existing.stop().catch(() => undefined)
-      adapters.set(adapter.connectionId, adapter)
+      // every platform call of the adapter goes through the governor (buckets, park state, audit)
+      adapters.set(
+        adapter.connectionId,
+        governAdapter(adapter, {
+          governor,
+          nodeIdOf: (connectionId, nativeId) => nodes.byNative(connectionId, nativeId)?.id,
+        }),
+      )
       recovered.delete(adapter.connectionId)
       selfIdentities.delete(adapter.connectionId)
       selfIdentity(adapter.connectionId, adapter)
@@ -4840,6 +4908,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     },
     activity: {
       record: activity,
+      actions: (connectionId) => events.actions(connectionId),
       list(connectionId, query) {
         const page = events.list(connectionId, query)
         const titles = new Map<string, string | undefined>()
@@ -4930,6 +4999,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       return [...new Set(names)]
     },
     outbound: limitedOutbound,
+    governor,
     library: deps.library,
     files: deps.files,
     attachments: deps.attachments,

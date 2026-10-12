@@ -900,6 +900,8 @@ export interface ChannelInboxPort {
     options: { limit: number; before?: string },
   ): Promise<ChannelConversationLog>
   activity(id: string, query: ChannelActivityQuery): Promise<ChannelActivityPage>
+  /** The action and read names recorded in the activity (the Activity filter). */
+  activityActions(id: string): Promise<string[]>
   /** One page of activity: SQL filter and count, newest first by default. */
   activityTable(
     id: string,

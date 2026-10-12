@@ -1,6 +1,7 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import {
+  ChannelActivityActionsSchema,
   ChannelActivityPageSchema,
   ChannelActivityQuery,
   ChannelActivityTablePageSchema,
@@ -318,6 +319,21 @@ const activityList = createRoute({
   request: { params: ChannelIdParam, query: ChannelActivityQuery },
   responses: {
     200: { description: 'Events', content: content(ChannelActivityPageSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const activityActions = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/activity/actions',
+  tags,
+  summary: 'Action and read names seen in the activity',
+  description:
+    'The distinct `action` values of the `action` and `read` events of the connection (`pin_message`, `history`, ...), for the Activity filter.',
+  security,
+  request: { params: ChannelIdParam },
+  responses: {
+    200: { description: 'Names', content: content(ChannelActivityActionsSchema) },
     404: jsonError('Unknown connection'),
     ...errorResponses,
   },
@@ -677,6 +693,9 @@ export function channelRoutes(deps: Deps) {
     .openapi(inboxTable, async (c) =>
       c.json(await inbox.inboxTable(c.req.valid('param').id, defined(c.req.valid('query'))), 200),
     )
+    .openapi(activityActions, async (c) =>
+      c.json({ actions: await inbox.activityActions(c.req.valid('param').id) }, 200),
+    )
     .openapi(activityTable, async (c) =>
       c.json(
         await inbox.activityTable(c.req.valid('param').id, defined(c.req.valid('query'))),
@@ -829,11 +848,13 @@ export function channelRoutes(deps: Deps) {
       )
     })
     .openapi(activityList, async (c) => {
-      const { type, conversationId, before, limit } = c.req.valid('query')
+      const { type, direction, action, conversationId, before, limit } = c.req.valid('query')
       return c.json(
         await inbox.activity(c.req.valid('param').id, {
           limit,
           ...(type === undefined ? {} : { type }),
+          ...(direction === undefined ? {} : { direction }),
+          ...(action === undefined ? {} : { action }),
           ...(conversationId === undefined ? {} : { conversationId }),
           ...(before === undefined ? {} : { before }),
         }),

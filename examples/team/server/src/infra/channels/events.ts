@@ -27,8 +27,36 @@ export const EVENT_TYPES = [
   'approval-answered',
   'breaker-opened',
   'needs-auth',
+  /** A native action or a platform write the agent made (the API governor's audit). */
+  'action',
+  /** A platform read the agent made (history, members, chat info). */
+  'read',
+  /** The platform asked to slow down: the connection (or a chat) is parked. */
+  'parked',
 ] as const
 export type ChannelEventType = (typeof EVENT_TYPES)[number]
+
+/** Which way an event goes: what the platform sent us (`in`), what we did to the platform (`out`), or neither (`system`). */
+export type EventDirection = 'in' | 'out' | 'system'
+const DIRECTION: Record<ChannelEventType, EventDirection> = {
+  woke: 'in',
+  observed: 'in',
+  dropped: 'in',
+  'approval-answered': 'in',
+  'reply-queued': 'out',
+  'reply-sent': 'out',
+  'reply-retried': 'out',
+  'reply-failed': 'out',
+  'approval-posted': 'out',
+  action: 'out',
+  read: 'out',
+  'breaker-opened': 'system',
+  'needs-auth': 'system',
+  parked: 'system',
+}
+export const directionOf = (type: ChannelEventType): EventDirection => DIRECTION[type]
+const typesOf = (direction: 'in' | 'out'): ChannelEventType[] =>
+  EVENT_TYPES.filter((t) => DIRECTION[t] === direction)
 
 /** Why an incoming message was dropped (the `reason` of a `dropped` event). */
 export const DROP_REASONS = [
@@ -57,6 +85,10 @@ export interface ChannelEvent {
   connectionId: string
   at: number
   type: ChannelEventType
+  /** `in`: what the platform sent; `out`: what the agent did to it (replies, actions, reads); `system`. */
+  direction?: EventDirection
+  /** The name of the action or read (`pin_message`, `history`, ...) of an `action` or `read` event. */
+  action?: string
   /** A drop reason code, a wake reason, or a short free text (never message text). */
   reason?: string
   /** The node the event is about (its internal id). */
@@ -147,6 +179,7 @@ const toActivity = (r: EventDb): ChannelEvent | undefined => {
     peerId?: string
     peerName?: string
     platformId?: string
+    action?: string
     detail?: ChannelEvent['detail']
   }
   return {
@@ -154,6 +187,8 @@ const toActivity = (r: EventDb): ChannelEvent | undefined => {
     connectionId: r.connection_id,
     at: r.at,
     type,
+    direction: directionOf(type),
+    ...(p.action === undefined ? {} : { action: p.action }),
     ...(p.reason === undefined ? {} : { reason: p.reason }),
     ...(r.node_id === null ? {} : { conversationId: r.node_id }),
     ...(p.peerId === undefined ? {} : { peerId: p.peerId }),
@@ -165,6 +200,8 @@ const toActivity = (r: EventDb): ChannelEvent | undefined => {
 
 export interface EventQuery {
   type?: ChannelEventType | undefined
+  direction?: 'in' | 'out' | undefined
+  action?: string | undefined
   /** Node id. */
   conversationId?: string | undefined
   /** Page back from this event id (exclusive). */
@@ -174,6 +211,10 @@ export interface EventQuery {
 
 export interface EventTableQuery {
   type?: ChannelEventType | undefined
+  /** `in`: what the platform sent; `out`: what the agent did (replies, actions, reads). */
+  direction?: 'in' | 'out' | undefined
+  /** An action or read name, as the `action` of the event. */
+  action?: string | undefined
   conversationId?: string | undefined
   /** The platform user id of the person the event is about. */
   peerId?: string | undefined
@@ -199,6 +240,8 @@ export interface EventStore {
   list(connectionId: string, query: EventQuery): EventPage
   /** One page of activity, newest first by default, with the number of events that match. */
   table(connectionId: string, query: EventTableQuery): { items: ChannelEvent[]; total: number }
+  /** The action and read names recorded so far (the Activity filter). */
+  actions(connectionId: string): string[]
   /** Delete events older than `olderThan` (when set) and keep at most `keepLast` rows. */
   prune(options: { olderThan?: number; keepLast?: number }): number
   /** Events that name no node yet (oldest first). */
@@ -253,6 +296,8 @@ export function sqliteEventStore(sqlite: Database): EventStore {
         ...(event.peerId === undefined ? {} : { peerId: event.peerId }),
         ...(event.peerName === undefined ? {} : { peerName: event.peerName }),
         ...(event.platformId === undefined ? {} : { platformId: event.platformId }),
+        ...(event.action === undefined ? {} : { action: event.action }),
+        direction: directionOf(event.type),
         ...(event.detail === undefined ? {} : { detail: event.detail }),
       }
       sqlite
@@ -279,9 +324,17 @@ export function sqliteEventStore(sqlite: Database): EventStore {
       if (query.type !== undefined) {
         where.push('type = ?')
         args.push(gatewayType(query.type))
+      } else if (query.direction !== undefined) {
+        const types = typesOf(query.direction).map(gatewayType)
+        where.push(`type IN (${types.map(() => '?').join(',')})`)
+        args.push(...types)
       } else {
         where.push('type LIKE ?')
         args.push(`${GATEWAY_PREFIX}%`)
+      }
+      if (query.action !== undefined) {
+        where.push("json_extract(payload, '$.action') = ?")
+        args.push(query.action)
       }
       if (query.conversationId !== undefined) {
         where.push('node_id = ?')
@@ -312,8 +365,14 @@ export function sqliteEventStore(sqlite: Database): EventStore {
         where.push('e.type = ?')
         args.push(gatewayType(query.type))
       } else {
-        where.push(`e.type IN (${types.map(() => '?').join(',')})`)
-        args.push(...types)
+        const wanted =
+          query.direction === undefined ? types : typesOf(query.direction).map(gatewayType)
+        where.push(`e.type IN (${wanted.map(() => '?').join(',')})`)
+        args.push(...wanted)
+      }
+      if (query.action !== undefined) {
+        where.push("json_extract(e.payload, '$.action') = ?")
+        args.push(query.action)
       }
       if (query.conversationId !== undefined) {
         where.push('e.node_id = ?')
@@ -327,9 +386,10 @@ export function sqliteEventStore(sqlite: Database): EventStore {
         const like = likePattern(query.q.trim())
         where.push(
           `(json_extract(e.payload, '$.reason') LIKE ? ESCAPE '\\' OR json_extract(e.payload, '$.peerName') LIKE ? ESCAPE '\\'
+             OR json_extract(e.payload, '$.action') LIKE ? ESCAPE '\\'
              OR e.node_id IN (SELECT id FROM ch_nodes WHERE connection_id = e.connection_id AND title LIKE ? ESCAPE '\\'))`,
         )
-        args.push(like, like, like)
+        args.push(like, like, like, like)
       }
       const from = `FROM ch_events e WHERE ${where.join(' AND ')}`
       const total =
@@ -346,6 +406,15 @@ export function sqliteEventStore(sqlite: Database): EventStore {
         items: rows.map(toActivity).filter((e): e is ChannelEvent => e !== undefined),
         total,
       }
+    },
+    actions(connectionId) {
+      return sqlite
+        .query<{ a: string }, [string]>(
+          `SELECT DISTINCT json_extract(payload, '$.action') AS a FROM ch_events
+             WHERE connection_id = ? AND type IN ('gateway.action', 'gateway.read') AND a IS NOT NULL ORDER BY a`,
+        )
+        .all(connectionId)
+        .map((r) => r.a)
     },
     prune({ olderThan, keepLast }) {
       let removed = 0

@@ -9154,6 +9154,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/channels/connections/{id}/activity/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Action and read names seen in the activity
+         * @description The distinct `action` values of the `action` and `read` events of the connection (`pin_message`, `history`, ...), for the Activity filter.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Names */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelActivityActions"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/channels/connections/{id}/activity/table": {
         parameters: {
             query?: never;
@@ -9176,7 +9244,11 @@ export interface paths {
                     page?: number;
                     /** @description Page size. */
                     limit?: number;
-                    type?: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
+                    type?: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth" | "action" | "read" | "parked";
+                    /** @description `in`: received from the platform; `out`: what the agent did. */
+                    direction?: "in" | "out";
+                    /** @description An action or read name. */
+                    action?: string;
                     conversationId?: string;
                     /** @description The platform user id of the person. */
                     peerId?: string;
@@ -11380,7 +11452,9 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    type?: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
+                    type?: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth" | "action" | "read" | "parked";
+                    direction?: "in" | "out";
+                    action?: string;
                     conversationId?: string;
                     before?: string;
                     limit?: number;
@@ -14928,6 +15002,9 @@ export interface components {
             /** @description The agent's thread of this conversation, once it woke the agent. */
             threadId?: string;
         };
+        ChannelActivityActions: {
+            actions: string[];
+        };
         ChannelActivityTablePage: {
             items: components["schemas"]["ChannelActivity"][];
             /** @description Rows that match the filters. */
@@ -14939,7 +15016,14 @@ export interface components {
             id: string;
             at: number;
             /** @enum {string} */
-            type: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
+            type: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth" | "action" | "read" | "parked";
+            /**
+             * @description `in`: what the platform sent; `out`: what the agent did to it (replies, native actions, reads); `system`: the connection itself (parked, breaker).
+             * @enum {string}
+             */
+            direction?: "in" | "out" | "system";
+            /** @description The action or read of an `action` / `read` event (`pin_message`, `history`, ...). The requester is `peerName`; `detail` has the result, duration, ids and session. Never message text. */
+            action?: string;
             /** @description A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text. */
             reason?: string;
             conversationId?: string;

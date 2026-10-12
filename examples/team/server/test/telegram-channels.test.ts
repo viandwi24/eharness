@@ -552,7 +552,13 @@ describe('the tables of the Channels pages (HTTP)', () => {
     know(server, id, '-2001', 'Alpha')
     know(server, id, '-2002', 'Beta')
     know(server, id, '-2003', 'News', true)
-    const forum = know(server, id, '-2004', 'Forum')
+    // a forum is a container: the adapter says so with its traits
+    const forum = server.channels.settings.ensureNode(id, {
+      nativeId: '-2004',
+      kind: 'room',
+      title: 'Forum',
+      traits: { multiUser: true, container: true, threadsOnly: true, postable: false },
+    }).id
     for (const [n, t] of [
       ['1', 'Produksi'],
       ['2', 'Sales'],

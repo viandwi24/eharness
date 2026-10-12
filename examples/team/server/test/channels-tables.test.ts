@@ -197,7 +197,9 @@ describe('people table', () => {
       ['Citra', 'owner'],
     ])
     expect(run(i, { linked: false }).total).toBe(4)
-    i.gw.unlinked.ignore('c1', '2003', true)
+    // only people who wrote directly can be ignored
+    i.gw.identities.noteDirect(i.gw.identities.byNative('c1', '2003')?.id as string, 9000)
+    expect(i.gw.unlinked.ignore('c1', '2003', true)).toBe(true)
     expect(run(i, { ignored: true }).items.map((p) => p.name)).toEqual(['Dewi'])
     expect(run(i, { ignored: true }).items[0]?.ignored).toBe(true)
   })
@@ -263,6 +265,11 @@ describe('inbox table', () => {
         at: 5000 + n,
       })
     await mock.say({ chat: '-4', topic: '1', from: who, text: 'topic line', id: '9', at: 6000 })
+    // the mock names every chat "Room" (and a topic by its id): the platform names them here
+    for (const [native, title] of rooms)
+      i.gw.settings.ensureNode('c1', { nativeId: native, kind: 'room', title })
+    i.gw.settings.ensureNode('c1', { nativeId: '-4', kind: 'room', title: 'Forum' })
+    i.gw.settings.ensureNode('c1', { nativeId: '-4/1', kind: 'thread', title: 'Budget' }, '-4')
 
     const all = await i.gw.inbox.table('c1', { page: 1, limit: 2 })
     expect(all.total).toBe(4)

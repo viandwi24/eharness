@@ -1548,7 +1548,7 @@ column is a whitelist, an unknown one is a 400):
 | `chats/table` | `title`, `lastSeen`, `firstSeen`, `state`, `kind`, `allowed`, `messages`, `backfill` | `level` (`chat` default, `topic`, `all`), `parentId`, `kind` (`group`, `channel`), `state`, `allowed`, `admin`, `history`, `adminLog` (`yes`/`no`) |
 | `people/table` | `name`, `lastSeen`, `firstSeen`, `role`, `messages` | `role`, `linked`, `ignored` (`yes`/`no`), `kind` |
 | `inbox/table` | `lastAt`, `firstAt`, `title` | `kind` (`dm`, `group`, `channel`, `topic`) |
-| `activity/table` | newest first (`order`) | `type`, `conversationId`, `peerId` |
+| `activity/table` | newest first (`order`) | `type`, `direction` (`in`, `out`), `action`, `conversationId`, `peerId` |
 | `reminders/table` | `createdAt`, `lastFiredAt`, `status`, `fireCount`, `text` | `status`, `nodeId` |
 
 Detail reads: `GET chats/{chatId}` (one node with `topics` for a forum), `GET people/{peerId}`.
@@ -1674,6 +1674,56 @@ unchanged.
 
 See [P41 L6 notes](../plans/P41-team-channels.md#l6-notes-as-built) for the details and the limits.
 **Test it.** `bun test test/channels-l6.test.ts` (scripted models, mock adapter).
+
+## 28h. The API governor: every platform call is paced, parked together and audited
+
+Before this, only outbox sends were paced; a native action (`telegram_pin_message`, a ban), a platform
+read (`channel_read` source `platform`, members, `get_chat`) or the history job of a user account called
+the platform directly. A bot leaned on grammY's auto-retry; MTProto had nothing, so a model looping on
+`channel_read` could flood-ban the account. Now `examples/team/server/src/infra/channels/governor.ts`
+sits in front of every platform call of a connection (the gateway wraps each adapter it registers):
+
+- **Token buckets** per call class: `read` (history, members, chat info, downloads), `edit` (edit, delete,
+  pin, react, write-risk actions), `admin` (destructive actions: ban, promote) and a `global` bucket every
+  call is charged to (sends included, never held back by it). Defaults: a bot 120 reads, 60 edits, 30 admin,
+  600 calls per minute; a **user account** (`adapter.actsAs === 'user'`) 30 / 15 / 6 / 45. Override per
+  connection in the send limits: `rate.governor = { read: { burst, perMinute }, edit, admin, global,
+  parkWaitMs, floodStorm: { count, windowMs } }` (all optional, merged over the defaults of the account kind).
+- **One park state.** A `ChannelError('rate_limit', ..., retryAfterMs)` from ANY call (a 429 `retry_after`,
+  a FLOOD_WAIT_X) parks the whole connection, or only the chat when `scope === 'chat'`. The outbox
+  (`outbound.ts`) has no park map of its own anymore: it asks `governor.parkedFor(connection, chat)` before
+  every send, so a flood seen by a read holds the sends and the other way round. The history and admin-log
+  jobs of a user account read through the same governor (`telegram-user/governed-client.ts`, patient: they
+  wait instead of failing and leave a small reserve in the buckets for tool calls).
+- **What the model sees.** A tool call during a park or with an empty bucket waits up to `parkWaitMs`
+  (5 s bot, 10 s account); beyond that a native action answers `ERROR: rate limited, retry in N s (...)` and a
+  read fails with the same readable text. `channel_describe` and `channel_status` print the current park and
+  the limits.
+- **Flood storm.** `floodStorm.count` rate limits within the window (5 per hour for a bot, 3 for an account)
+  open the existing outbox breaker (`breaker-opened` event and the bell), the same one a fatal error opens.
+- **Bot native actions** now throw the rate limit (instead of swallowing it as text) so it parks; other
+  refusals stay text for the model and are reported to the audit with `reportFailure(text)`.
+
+**Audit.** Every governed call that the agent made (a tool call: the channels plugin runs each tool body
+`within` a context with the session, the agent and the requester) records one `ch_events` row, direction
+`out`, type `action` (native actions, edits, deletes, pins, reactions) or `read` (history, members,
+downloads, chat info). Payload: the action name, the node, the requester (person name, member id, session,
+agent, origin), `result` (`ok` | `error` | `rate_limited`), duration in ms, and an args summary made only
+of ids and targets (`chat=-100123 message=5`): keys outside an id allowlist and any value with spaces are
+dropped, so a message body, a title or a secret never gets in. Calls the gateway makes for itself (an ack
+reaction, a card update, a lookup) are governed but not recorded. A rate limit also writes a `parked` row
+(direction `system`). Plain sends keep their `reply-*` rows. No migration: `direction` is derived from the
+event type (`in`: woke, observed, dropped, approval-answered; `out`: replies, approval-posted, action,
+read; `system`: parked, breaker-opened, needs-auth) and `action` lives in the JSON payload.
+
+**Activity page.** `/channels/<id>/activity` has a Direction column and two filters next to the type
+filter: *In / Out* and *Action* (the names come from `GET /channels/connections/{id}/activity/actions`).
+An action row reads "pinned a message in TEAMKU / produksi, requested by Vian" with the result, the ids
+and the duration. The same `direction` and `action` filters exist on `activity` and `activity/table`.
+**Test it.** `bun test test/channels-governor.test.ts` (scripted clock for the buckets and parks, the
+mock adapter and the real gateway for the audit and the filters). The Telegram user transport is manual
+only: with a real account, make the model call `channel_read` (platform) in a loop and watch the rows and
+the "rate limited, retry in N s" answers.
 
 ## 28g. Reminders in web chats, and the markers the UI reads (UX follow-ups)
 

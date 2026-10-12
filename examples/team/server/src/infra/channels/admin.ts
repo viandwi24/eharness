@@ -130,6 +130,10 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
       if (p === undefined) throw notFound('person', peerId)
       return personOf(p)
     },
+    async activityActions(id) {
+      await known(id)
+      return gateway.activity.actions(id)
+    },
     async activityTable(id, query) {
       await known(id)
       const page = gateway.activity.table(id, query)

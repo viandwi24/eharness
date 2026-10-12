@@ -820,3 +820,36 @@ on the Routines page), the `instruction` and `autoAllowed` message markers, `pay
 stand-down list, humanized plan cards, `task.queueNote` in the queue, and Telegram account copy (option labels, short
 credentials step, titled flow errors, `limitDefaults`). See walkthrough 28g. Tests: `server/test/ux-followups.test.ts`,
 `web/src/lib/decisions/humanize.test.ts`.
+
+## API governor and the outbound audit (written, not run)
+
+Gaps found at 819a528: native actions and direct platform reads bypassed the queue (no pacing, no audit;
+a user account over MTProto relied on nothing), and `ch_events` had no outbound action rows or direction.
+
+Built (example only, `src/` of the library unchanged):
+
+- `infra/channels/governor.ts`: token buckets per class (read, edit, admin) plus a global bucket, a park
+  state shared by every call of a connection (or one chat for a chat-scoped limit), a flood storm that
+  opens the existing outbox breaker (bell included), and an audit sink. `governAdapter` wraps every adapter
+  at `gateway.register`; the user-account history and admin-log jobs read through `governJobClient`.
+- `outbound.ts` no longer keeps park maps: it reads `governor.parkedFor` and hands rate limits to
+  `governor.noteError` (an error is counted once), `outbound.open` lets the governor open the breaker.
+- Limits: `rate.governor` overrides on the connection's send limits; user accounts
+  (`ChannelAdapter.actsAs = 'user'`) are stricter by default. `NativeAction.local` marks actions that
+  answer from stored data (the account's `list_chats`, `admin_log`): not governed.
+- Audit rows: `ch_events` types `action`, `read`, `parked`; `direction` derived per type and `action` in the
+  payload, so **no migration**. `reportFailure` lets a text-answering action mark itself as an error.
+- Web: Direction column, direction and action filters, readable action rows (`actionText`).
+- `channel_describe` / `channel_status` print the park and the limits.
+- Tests (written, not run): `server/test/channels-governor.test.ts`. No tests for `infra/telegram-user/**`
+  (manual only).
+
+Decisions and open points:
+
+- The telegram-user adapter keeps its own chat park (`tgu_chats.parked_until`, survives a restart) and
+  its flood-storm fatal; they now coexist with the governor's park (a chat flood is parked in both). Moving
+  that persistence into the governor is a follow-up.
+- Reads the gateway makes for itself without waiting (`getNodeInfo`, `getIdentityInfo`, `listNodes`,
+  `resolveIdentifier`) are charged but never held, so inbound handling is not delayed by a park.
+- Bucket sizes are conservative guesses; tune `rate.governor` on the real account and report the numbers.
+

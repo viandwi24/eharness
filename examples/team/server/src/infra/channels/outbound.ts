@@ -3,15 +3,19 @@
  * conversation, operations run one at a time in order, at most one per `chatMinIntervalMs` and,
  * for groups and channels, at most `groupMax` per window; over the whole connection at most
  * `connectionMax` per window. A `rate_limit` error parks the connection for the time the
- * platform asked and retries; a `fatal` error (or too many failures in a row) opens a circuit
+ * platform asked and retries (the park state is the API governor's: `governor.ts` is the one place
+ * that knows when a connection or a chat may talk again); a `fatal` error (or too many failures in a row) opens a circuit
  * breaker that refuses operations until its cooldown ends and raises an alert once.
  */
 
+import { createGovernor, type Governor, governorLimitsOf } from './governor.ts'
 import type { RateLimits } from './policy.ts'
 import { ChannelError } from './types.ts'
 
 export interface OutboundOptions {
   limitsOf: (connectionId: string) => RateLimits
+  /** The shared API governor (park state and flood storm). Absent = a private one. */
+  governor?: Governor
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   /** The breaker opened (or the identity needs attention): raise an alert. */
@@ -34,6 +38,8 @@ export interface Outbound {
   breaker(connectionId: string): { open: boolean; until: number; reason: string } | undefined
   /** Close a breaker by hand (the person fixed the credential). */
   reset(connectionId: string): void
+  /** Open the breaker from outside (a flood storm seen by the governor). */
+  open(connectionId: string, reason: string): void
 }
 
 interface Window {
@@ -49,9 +55,14 @@ export function createOutbound(options: OutboundOptions): Outbound {
   const lanes = new Map<string, Promise<unknown>>()
   const chatWindow = new Map<string, Window>()
   const connWindow = new Map<string, Window>()
-  const parkedUntil = new Map<string, number>()
-  /** Conversations parked by a per-chat flood wait (`ChannelError.scope === 'chat'`). */
-  const chatParked = new Map<string, number>()
+  const governor =
+    options.governor ??
+    createGovernor({
+      limitsOf: (id) => governorLimitsOf(undefined, options.limitsOf(id).governor),
+      now,
+      sleep,
+      onStorm: ({ connectionId, reason }) => trip(connectionId, reason),
+    })
   const failures = new Map<string, number>()
   const open = new Map<string, { until: number; reason: string; alerted: boolean }>()
 
@@ -115,12 +126,8 @@ export function createOutbound(options: OutboundOptions): Outbound {
             'the outbound queue is backed up; the message was not sent',
           )
         }
-        const parked = Math.max(
-          (parkedUntil.get(connectionId) ?? 0) - now(),
-          (chatParked.get(chatKey) ?? 0) - now(),
-        )
         const wait = Math.max(
-          parked,
+          governor.parkedFor(connectionId, chatKey),
           waitFor(
             chatWindow.get(chatKey),
             target.kind === 'dm' ? Number.MAX_SAFE_INTEGER : limits.groupMax,
@@ -155,17 +162,16 @@ export function createOutbound(options: OutboundOptions): Outbound {
           throw error
         }
         if (error.kind === 'rate_limit') {
-          // the platform asked everyone to wait: park the connection, then try again
+          // the platform asked everyone to wait: park the connection (or the chat) in the
+          // governor, then try again. The governor ignores an error it parked already.
           const ms = Math.max(error.retryAfterMs ?? 1000, 1)
-          if (error.scope === 'chat') {
-            chatParked.set(chatKey, Math.max(chatParked.get(chatKey) ?? 0, now() + ms))
-          } else {
-            parkedUntil.set(connectionId, Math.max(parkedUntil.get(connectionId) ?? 0, now() + ms))
-          }
+          governor.noteError(connectionId, error, chatKey)
           options.onWarn?.(
             `channels: ${connectionId} rate limited${error.scope === 'chat' ? ` (one chat)` : ''}, parked for ${ms} ms`,
           )
           if (attempt >= limits.maxAttempts) throw error
+          // the governor's own refusal (an empty bucket) is not parked: wait for the bucket
+          if ((error as { local?: boolean }).local === true) await sleep(Math.ceil(ms))
           continue
         }
         const n = (failures.get(connectionId) ?? 0) + 1
@@ -201,10 +207,10 @@ export function createOutbound(options: OutboundOptions): Outbound {
     reset(connectionId) {
       open.delete(connectionId)
       failures.set(connectionId, 0)
-      parkedUntil.delete(connectionId)
-      for (const key of [...chatParked.keys()]) {
-        if (key.startsWith(`${connectionId}\n`)) chatParked.delete(key)
-      }
+      governor.reset(connectionId)
+    },
+    open(connectionId, reason) {
+      trip(connectionId, reason)
     },
   }
 }

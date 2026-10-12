@@ -443,8 +443,63 @@ export const EVENT_LABEL: Record<ActivityType, string> = {
 	'approval-posted': 'Approval asked',
 	'approval-answered': 'Approval answered',
 	'breaker-opened': 'Sending paused',
-	'needs-auth': 'Needs sign-in'
+	'needs-auth': 'Needs sign-in',
+	action: 'Action',
+	read: 'Read',
+	parked: 'Rate limited'
 };
+
+/** Which way an event goes: received from the platform, done by the agent, or about the connection. */
+export const DIRECTION_LABEL: Record<NonNullable<ChannelActivity['direction']>, string> = { in: 'In', out: 'Out', system: 'System' };
+export const DIRECTION_FILTERS = [
+	{ value: 'in', label: 'Received (in)' },
+	{ value: 'out', label: 'Done by the agent (out)' }
+] as const;
+
+/** What an action or read did, in the past tense, and the word that joins it to the place. */
+const ACTION_VERB: Record<string, [string, string]> = {
+	edit: ['edited a message', 'in'],
+	delete: ['deleted a message', 'in'],
+	pin: ['pinned a message', 'in'],
+	unpin: ['unpinned a message', 'in'],
+	pin_message: ['pinned a message', 'in'],
+	unpin_message: ['unpinned a message', 'in'],
+	react: ['reacted to a message', 'in'],
+	history: ['read the history of', ''],
+	members: ['listed the members of', ''],
+	download: ['downloaded an attachment from', ''],
+	messages: ['read messages of', ''],
+	node_info: ['looked up', ''],
+	identity_info: ['looked up a person', ''],
+	list_nodes: ['listed the chats', ''],
+	resolve_identifier: ['looked up a person', ''],
+	get_chat: ['looked up', ''],
+	get_member_count: ['counted the members of', ''],
+	list_admins: ['listed the admins of', ''],
+	get_member: ['looked up a member of', ''],
+	send_poll: ['posted a poll in', ''],
+	ban_member: ['banned a member from', ''],
+	unban_member: ['unbanned a member of', ''],
+	create_forum_topic: ['created a topic in', '']
+};
+
+const humanize = (name: string): string => name.replace(/[_-]+/g, ' ');
+
+/** "pinned a message in TEAMKU / produksi, requested by Vian" (an `action` or `read` event). */
+export function actionText(e: ChannelActivity): string {
+	const [verb, prep] = ACTION_VERB[e.action ?? ''] ?? [`ran ${humanize(e.action ?? 'an action')} on`, ''];
+	const where = e.conversationTitle ?? e.conversationId;
+	const d = e.detail ?? {};
+	const target = where ?? (typeof d.args === 'string' ? (/(?:^|\s)(?:chat|chat_id)=(\S+)/.exec(d.args)?.[1] ?? '') : '');
+	const head = target === '' ? verb : `${verb} ${prep === '' ? '' : `${prep} `}${target}`;
+	const by = e.peerName ? `requested by ${e.peerName}` : typeof d.origin === 'string' && d.origin !== 'chat' ? `by a ${d.origin}` : 'by the agent';
+	const bits = [`${head}, ${by}`];
+	if (d.result === 'rate_limited') bits.push(`rate limited${e.reason ? ` (${e.reason})` : ''}`);
+	else if (d.result === 'error') bits.push(`failed${e.reason ? `: ${e.reason}` : ''}`);
+	if (typeof d.args === 'string' && d.args !== '') bits.push(`[${d.args}]`);
+	if (typeof d.ms === 'number') bits.push(`${d.ms} ms`);
+	return bits.join(' · ');
+}
 
 export const EVENT_TYPES = Object.keys(EVENT_LABEL) as ActivityType[];
 
@@ -463,14 +518,20 @@ export const DROP_REASON_LABEL: Record<string, string> = {
 export const eventTone = (t: ActivityType): Tone =>
 	t === 'reply-failed' || t === 'breaker-opened' || t === 'needs-auth'
 		? 'destructive'
-		: t === 'reply-retried' || t === 'dropped'
+		: t === 'reply-retried' || t === 'dropped' || t === 'parked'
 			? 'warning'
 			: t === 'woke' || t === 'reply-sent' || t === 'approval-answered'
 				? 'success'
 				: 'secondary';
 
+/** The badge tone of one event: an action that failed or was held back shows it. */
+export const eventToneOf = (e: ChannelActivity): Tone =>
+	(e.type === 'action' || e.type === 'read') && e.detail?.result === 'error' ? 'destructive' : (e.type === 'action' || e.type === 'read') && e.detail?.result === 'rate_limited' ? 'warning' : eventTone(e.type);
+
 /** One sentence for an event: who, where and why (never message text: there is none). */
 export function eventText(e: ChannelActivity): string {
+	if (e.type === 'action' || e.type === 'read') return actionText(e);
+	if (e.type === 'parked') return `${e.reason ?? 'the platform asked to slow down'}${typeof e.detail?.seconds === 'number' ? `, paused for ${e.detail.seconds} s` : ''}${e.detail?.scope === 'chat' ? ' (one chat)' : ''}`;
 	const who = e.peerName ?? (e.peerId ? `Telegram ${e.peerId}` : undefined);
 	const where = e.conversationTitle ?? e.conversationId;
 	const bits: string[] = [];

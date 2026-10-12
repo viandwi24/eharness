@@ -412,11 +412,16 @@ export type ChannelEventKind =
   | 'approval-answered'
   | 'breaker-opened'
   | 'needs-auth'
+  | 'action'
+  | 'read'
+  | 'parked'
 
 export interface ChannelActivityView {
   id: string
   at: number
   type: ChannelEventKind
+  direction?: 'in' | 'out' | 'system'
+  action?: string
   reason?: string
   conversationId?: string
   conversationTitle?: string
@@ -433,6 +438,8 @@ export interface ChannelActivityPage {
 
 export interface ChannelActivityQuery {
   type?: ChannelEventKind
+  direction?: 'in' | 'out'
+  action?: string
   conversationId?: string
   before?: string
   limit: number
@@ -490,6 +497,8 @@ export interface ChannelInboxTableQuery extends TableQuery {
 
 export interface ChannelActivityTableQuery extends TableQuery {
   type?: ChannelEventKind
+  direction?: 'in' | 'out'
+  action?: string
   conversationId?: string
   peerId?: string
 }

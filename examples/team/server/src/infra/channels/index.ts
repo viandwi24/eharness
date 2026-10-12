@@ -12,6 +12,22 @@ export type {
   WakeInput,
 } from './gateway.ts'
 export { createChannelGateway } from './gateway.ts'
+export type {
+  AuditRecord,
+  CallClass,
+  CallContext,
+  Governor,
+  GovernorLimits,
+  GovernorState,
+} from './governor.ts'
+export {
+  BOT_GOVERNOR,
+  createGovernor,
+  GovernorLimited,
+  governAdapter,
+  governorLimitsOf,
+  USER_GOVERNOR,
+} from './governor.ts'
 export type { MockAdapter, MockKind, MockOptions, MockSay, MockSent } from './mock-adapter.ts'
 export { createMockAdapter, MOCK_CAPABILITIES } from './mock-adapter.ts'
 export * from './model.ts'

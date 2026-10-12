@@ -196,9 +196,24 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       const resolve = (input: TargetInput): ResolvedTarget =>
         gw.resolveTarget(agentId, sessionId, input)
 
+      /**
+       * Runs a tool body for the person it is for: the API governor records who asked on every
+       * platform call made inside (audit), and waits or refuses when the connection is limited.
+       */
       const guard = async (fn: () => Promise<string>): Promise<string> => {
         try {
-          return await fn()
+          const requester = await gw.requesterOf(sessionId).catch(() => undefined)
+          const name = requester?.name ?? requester?.username
+          return await gw.governor.within(
+            {
+              sessionId,
+              agentId,
+              origin,
+              ...(name === undefined ? {} : { requester: name }),
+              ...(requester?.memberId === undefined ? {} : { memberId: requester.memberId }),
+            },
+            fn,
+          )
         } catch (error) {
           if (error instanceof ChannelUserError) return `ERROR: ${error.message}`
           return `ERROR: ${errorText(error)}`
@@ -214,6 +229,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           lines.push(
             `Connection ${c.connectionId} (${c.platform}), ${c.connected ? 'connected' : 'NOT connected'}${c.breaker?.open ? `, sending paused: ${c.breaker.reason}` : ''}`,
           )
+          lines.push(`  ${gw.governor.describe(c.connectionId)}`)
           const all = gw.nodes.list(c.connectionId)
           const shown = all.filter((n) => n.state !== 'deleted')
           const byParent = new Map<string | null, NodeRow[]>()

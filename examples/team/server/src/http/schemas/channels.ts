@@ -476,6 +476,9 @@ export const CHANNEL_EVENT_TYPES = [
   'approval-answered',
   'breaker-opened',
   'needs-auth',
+  'action',
+  'read',
+  'parked',
 ] as const
 
 export const ChannelActivitySchema = z
@@ -483,6 +486,14 @@ export const ChannelActivitySchema = z
     id: z.string(),
     at: z.number().int(),
     type: z.enum(CHANNEL_EVENT_TYPES),
+    direction: z.enum(['in', 'out', 'system']).optional().openapi({
+      description:
+        '`in`: what the platform sent; `out`: what the agent did to it (replies, native actions, reads); `system`: the connection itself (parked, breaker).',
+    }),
+    action: z.string().optional().openapi({
+      description:
+        'The action or read of an `action` / `read` event (`pin_message`, `history`, ...). The requester is `peerName`; `detail` has the result, duration, ids and session. Never message text.',
+    }),
     reason: z.string().optional().openapi({
       description:
         'A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text.',
@@ -503,8 +514,14 @@ export const ChannelActivityPageSchema = z
   })
   .openapi('ChannelActivityPage')
 
+export const ChannelActivityActionsSchema = z
+  .object({ actions: z.array(z.string()) })
+  .openapi('ChannelActivityActions')
+
 export const ChannelActivityQuery = z.object({
   type: z.enum(CHANNEL_EVENT_TYPES).optional(),
+  direction: z.enum(['in', 'out']).optional(),
+  action: z.string().optional(),
   conversationId: z.string().optional(),
   before: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -740,6 +757,11 @@ export const ChannelInboxTablePageSchema = tablePage(
 export const ChannelActivityTableQuery = z.object({
   ...tableQuery,
   type: z.enum(CHANNEL_EVENT_TYPES).optional(),
+  direction: z
+    .enum(['in', 'out'])
+    .optional()
+    .openapi({ description: '`in`: received from the platform; `out`: what the agent did.' }),
+  action: z.string().optional().openapi({ description: 'An action or read name.' }),
   conversationId: z.string().optional(),
   peerId: z.string().optional().openapi({ description: 'The platform user id of the person.' }),
 })

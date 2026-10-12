@@ -11,6 +11,7 @@ import {
 	approvalOutcome,
 	eventText,
 	eventTone,
+	eventToneOf,
 	inboxCounts,
 	messageMarks,
 	peerIdError,
@@ -258,6 +259,18 @@ describe('activity', () => {
 		expect(eventText(e({ type: 'dropped', peerId: '9', reason: 'unlinked-sender' }))).toBe('Telegram 9 (the sender is not linked)');
 		expect(eventText(e({ type: 'reply-sent', conversationId: 'room', detail: { kind: 'reply', chunks: 2 } }))).toBe('in room 2 parts');
 		expect(eventText(e({ type: 'approval-answered', reason: 'approved', detail: { tool: 'channel_send' } }))).toBe('(approved) tool channel_send');
+	});
+
+	test('actions and reads of the agent read as sentences: what, where, who asked, result', () => {
+		const pin = e({ type: 'action', direction: 'out', action: 'pin_message', conversationTitle: 'TEAMKU / produksi', peerName: 'Vian', detail: { result: 'ok', ms: 120, args: 'chat=-100 message=5' } });
+		expect(eventText(pin)).toBe('pinned a message in TEAMKU / produksi, requested by Vian · [chat=-100 message=5] · 120 ms');
+		expect(eventToneOf(pin)).toBe('secondary');
+		const held = e({ type: 'read', direction: 'out', action: 'history', conversationTitle: 'Ops', reason: 'rate limited, retry in 12 s', detail: { result: 'rate_limited', origin: 'routine' } });
+		expect(eventText(held)).toBe('read the history of Ops, by a routine · rate limited (rate limited, retry in 12 s)');
+		expect(eventToneOf(held)).toBe('warning');
+		expect(eventToneOf(e({ type: 'action', action: 'ban_member', detail: { result: 'error' }, reason: 'not an admin' }))).toBe('destructive');
+		expect(eventText(e({ type: 'action', action: 'create_poll_x', conversationId: 'room' }))).toBe('ran create poll x on room, by the agent');
+		expect(eventText(e({ type: 'parked', reason: 'slow down', detail: { seconds: 20, scope: 'chat' } }))).toBe('slow down, paused for 20 s (one chat)');
 	});
 });
 

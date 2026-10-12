@@ -91,6 +91,39 @@ export type ScopePolicy = z.infer<typeof ScopePolicySchema>
 /** Keys that apply to the node itself and are never inherited. */
 export const OWN_KEYS = ['label'] as const satisfies ReadonlyArray<keyof ScopePolicy>
 
+const BucketOverrideSchema = z.object({
+  /** Calls that may go out at once. */
+  burst: z.number().int().min(1).optional(),
+  /** Refill speed: calls per minute. */
+  perMinute: z.number().min(1).optional(),
+})
+
+/**
+ * Overrides of the API governor (`governor.ts`): token buckets per call class and a bucket over
+ * the whole connection. Absent = the defaults of the account kind (a user account is stricter
+ * than a bot).
+ */
+export const GovernorOverridesSchema = z.object({
+  /** Platform reads: history, members, chat info, downloads. */
+  read: BucketOverrideSchema.optional(),
+  /** Edit, delete, pin, react. */
+  edit: BucketOverrideSchema.optional(),
+  /** Administration and moderation (native actions that change a chat or a member). */
+  admin: BucketOverrideSchema.optional(),
+  /** Every call of the connection, sends included. */
+  global: BucketOverrideSchema.optional(),
+  /** Longest a tool call waits for a park or a bucket before it answers "rate limited". */
+  parkWaitMs: z.number().int().min(0).optional(),
+  /** Flood waits within the window that open the circuit breaker. */
+  floodStorm: z
+    .object({
+      count: z.number().int().min(1).optional(),
+      windowMs: z.number().int().min(1).optional(),
+    })
+    .optional(),
+})
+export type GovernorOverrides = z.infer<typeof GovernorOverridesSchema>
+
 export const RateLimitsSchema = z.object({
   /** Smallest gap between two messages to one conversation (ms). */
   chatMinIntervalMs: z.number().int().min(0).default(1000),
@@ -107,6 +140,8 @@ export const RateLimitsSchema = z.object({
   /** Failures in a row that open the breaker (a `fatal` error opens it at once). */
   breakerFailures: z.number().int().min(1).default(5),
   breakerCooldownMs: z.number().int().min(1).default(300_000),
+  /** Limits of the API governor for everything that is not a plain send (see `governor.ts`). */
+  governor: GovernorOverridesSchema.optional(),
 })
 export type RateLimits = z.infer<typeof RateLimitsSchema>
 

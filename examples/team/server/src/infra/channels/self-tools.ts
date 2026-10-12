@@ -319,6 +319,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       lines.push(
         `Connection ${p.connectionId} (${adapter?.platform ?? 'unknown'}): ${connected?.connected === true ? 'connected' : 'NOT connected'}${connected?.breaker?.open === true ? `, sending paused: ${connected.breaker.reason}` : ''}.`,
       )
+      lines.push(gw.governor.describe(p.connectionId))
       const self = adapter?.self()
       if (self !== undefined)
         lines.push(

@@ -475,6 +475,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     {
       name: 'list_chats',
       risk: 'read',
+      local: true,
       summary:
         'List the chats this account has chosen for ingest (and whether it is an admin there).',
       schema: z.object({}),
@@ -492,6 +493,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     {
       name: 'admin_log',
       risk: 'read',
+      local: true,
       summary:
         'Moderation events stored for a chat the account administers (deletions with their text, edits, bans, promotions). Telegram keeps them only briefly: this is what we stored.',
       schema: z.object({
@@ -509,6 +511,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
 
   const adapter: TelegramUserAdapter = {
     platform: 'telegram-user',
+    actsAs: 'user',
     connectionId,
     idFormats: USER_ID_FORMATS,
     self: () => self,

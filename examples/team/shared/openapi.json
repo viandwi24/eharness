@@ -11001,6 +11001,20 @@
           "lastAt"
         ]
       },
+      "ChannelActivityActions": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "actions"
+        ]
+      },
       "ChannelActivityTablePage": {
         "type": "object",
         "properties": {
@@ -11050,8 +11064,24 @@
               "approval-posted",
               "approval-answered",
               "breaker-opened",
-              "needs-auth"
+              "needs-auth",
+              "action",
+              "read",
+              "parked"
             ]
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "in",
+              "out",
+              "system"
+            ],
+            "description": "`in`: what the platform sent; `out`: what the agent did to it (replies, native actions, reads); `system`: the connection itself (parked, breaker)."
+          },
+          "action": {
+            "type": "string",
+            "description": "The action or read of an `action` / `read` event (`pin_message`, `history`, ...). The requester is `peerName`; `detail` has the result, duration, ids and session. Never message text."
           },
           "reason": {
             "type": "string",
@@ -23271,6 +23301,73 @@
         }
       }
     },
+    "/channels/connections/{id}/activity/actions": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Action and read names seen in the activity",
+        "description": "The distinct `action` values of the `action` and `read` events of the connection (`pin_message`, `history`, ...), for the Activity filter.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelActivityActions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/channels/connections/{id}/activity/table": {
       "get": {
         "tags": [
@@ -23357,11 +23454,38 @@
                 "approval-posted",
                 "approval-answered",
                 "breaker-opened",
-                "needs-auth"
+                "needs-auth",
+                "action",
+                "read",
+                "parked"
               ]
             },
             "required": false,
             "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "in",
+                "out"
+              ],
+              "description": "`in`: received from the platform; `out`: what the agent did."
+            },
+            "required": false,
+            "description": "`in`: received from the platform; `out`: what the agent did.",
+            "name": "direction",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "An action or read name."
+            },
+            "required": false,
+            "description": "An action or read name.",
+            "name": "action",
             "in": "query"
           },
           {
@@ -25917,11 +26041,34 @@
                 "approval-posted",
                 "approval-answered",
                 "breaker-opened",
-                "needs-auth"
+                "needs-auth",
+                "action",
+                "read",
+                "parked"
               ]
             },
             "required": false,
             "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "in",
+                "out"
+              ]
+            },
+            "required": false,
+            "name": "direction",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "action",
             "in": "query"
           },
           {
