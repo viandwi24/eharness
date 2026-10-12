@@ -473,3 +473,16 @@ Acceptance (real bot, owner's group): CEO tag → correct role in the header; em
 founder → still employee; "note today's chat" → recap of all allowed topics saved; "remind the group at
 15:00" and "remind <person> tomorrow 9:00" → delivered with an id mention; proactive overdue digest in the
 right topic; no accidental @pings.
+
+### Tool layering rule (owner emphasis)
+
+Two layers, kept strict:
+1. **Generic channel tools** (every platform, filled by adapters, capabilities per node): read messages/history,
+   chat info, person info, topic list, own status (`channel_status`, `list_topics`, `member_lookup`,
+   `chat_history`, `chat_recap`, `reminder`), send/reply/edit/delete/pin/react, mentions by id.
+2. **Native platform actions** (deferred tools found via `tool_search`, static risk each): e.g.
+   `telegram.forwardMessage`, `copyMessage`, `createForumTopic`, `banChatMember`, `setChatMemberTag`;
+   later `discord.createThread`, `slack.setTopic`.
+Rule: an action is generic when it means the same on at least two platforms and degrades safely where
+unsupported; otherwise it is native (forward is native: Telegram forward/copy, Discord forward and Slack share
+links differ). Basic needs (am I admin, who is this, which topics exist) must never require a native tool.
