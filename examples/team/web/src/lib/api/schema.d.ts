@@ -4416,7 +4416,7 @@ export interface paths {
         };
         /**
          * Usage of the whole workspace, by agent and by source
-         * @description Tokens and cost of every agent by source: chats (all threads), tasks, delegated work, routine runs, program runs, the heartbeat, test runs and other calls. One source of truth: the model call log (the rows of the Logs page and the daily digest), so the numbers agree; `calls` counts model calls (a turn or a run makes several), `count` counts turns (chat, heartbeat) or runs. The log is kept for a limited time and number of rows, `since` is the start of the oldest call in it.
+         * @description Tokens and cost of every agent by source: chats (all threads), tasks, delegated work, routine runs, program runs, the heartbeat, test runs and other calls. `month` (spend and budget) comes from the budget ledger, which is not pruned. The breakdown (`total`, `bySource`, `agents`) comes from the model call log, the rows of the Logs page: `calls` counts model calls (a turn or a run makes several), `count` counts turns (chat, heartbeat) or runs. The log is kept for a limited time and number of rows, so the breakdown covers from `since` (the oldest call kept) and can be lower than `month`.
          */
         get: {
             parameters: {
@@ -12153,7 +12153,12 @@ export interface components {
             timezone?: string;
         };
         WorkspaceUsage: {
-            /** @description Start of the oldest call still in the log; the totals cover from then on. */
+            /** @description Spend and limit of the workspace budget this month (UTC), from the budget ledger: not limited by log retention, the same numbers as the briefing cost line. */
+            month: {
+                spentUsd: number;
+                limitUsd: number | null;
+            } | null;
+            /** @description Start of the oldest call still in the call log; `total`, `bySource` and `agents` cover from then on (older calls are pruned). */
             since: number | null;
             total: {
                 count: number;

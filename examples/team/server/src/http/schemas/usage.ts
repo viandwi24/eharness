@@ -26,8 +26,13 @@ export const SourceUsageSchema = z
 
 export const WorkspaceUsageSchema = z
   .object({
+    month: z.object({ spentUsd: z.number(), limitUsd: z.number().nullable() }).nullable().openapi({
+      description:
+        'Spend and limit of the workspace budget this month (UTC), from the budget ledger: not limited by log retention, the same numbers as the briefing cost line.',
+    }),
     since: z.number().int().nullable().openapi({
-      description: 'Start of the oldest call still in the log; the totals cover from then on.',
+      description:
+        'Start of the oldest call still in the call log; `total`, `bySource` and `agents` cover from then on (older calls are pruned).',
     }),
     total: TotalSchema,
     bySource: z.array(SourceUsageSchema),

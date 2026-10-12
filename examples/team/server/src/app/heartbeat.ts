@@ -368,11 +368,12 @@ export async function teamStatus(
       now,
     )
   }
-  // one source (the call log) and one calendar (the team timezone), the day inside the month:
-  // today can never exceed the month. The ledger only supplies the limit.
+  // The month is the budget ledger (the same number as Settings > Usage and the budget check; not
+  // pruned); today is the call log (the Logs page) inside the team-timezone day, never above the month.
   const { dayStart, monthStart } = periodStarts(now, deps.settings.get().timezone)
   const ledger = await deps.heartbeat.budget()
-  const monthSpent = deps.modelCalls.stats({ from: monthStart, to: now }).totals.costUsd
+  const monthSpent =
+    ledger?.spentUsd ?? deps.modelCalls.stats({ from: monthStart, to: now }).totals.costUsd
   const todaySpent = deps.modelCalls.stats({ from: dayStart, to: now }).totals.costUsd
   const spend = {
     month: ledger === null ? null : { spentUsd: monthSpent, limitUsd: ledger.limitUsd },

@@ -9,6 +9,9 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { inReview } from '#lib/board/board.js';
 	import { REPORT_LABELS } from '#lib/programs/form.js';
+	import { api } from '#lib/api/index.js';
+	import { programAction } from '#lib/programs/actions.js';
+	import { manualWorker } from '#lib/tasks/sendback.js';
 	import { acceptTask, cancelTask, recheckDeliverables, sendBackTask, setPriority } from '#lib/tasks/actions.js';
 	import { dueLabel, PRIORITIES, priorityLabel, type Priority } from '#lib/tasks/queue.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -27,6 +30,10 @@
 	let sendingBack = $state(false);
 	let note = $state('');
 	let busy = $state(false);
+	/** What the server said happens next after a send-back, and the manual worker to run now. */
+	let sentHint = $state('');
+	let worker = $state<Program | null>(null);
+	type Program = import('#lib/api/schema.js').components['schemas']['Program'];
 
 	async function accept(): Promise<void> {
 		busy = true;
@@ -41,10 +48,23 @@
 	async function sendBack(): Promise<void> {
 		if (note.trim() === '') return;
 		busy = true;
-		if (await sendBackTask(task.id, note.trim())) {
+		const sent = await sendBackTask(task.id, note.trim());
+		if (sent !== null) {
 			note = '';
 			sendingBack = false;
+			sentHint = sent.hint;
+			try {
+				worker = manualWorker(task, (await api.get('/programs')).programs);
+			} catch {
+				worker = null;
+			}
 		}
+		busy = false;
+	}
+	async function runWorker(): Promise<void> {
+		if (worker === null) return;
+		busy = true;
+		if (await programAction(worker, 'run')) worker = null;
 		busy = false;
 	}
 </script>
@@ -105,6 +125,13 @@
 							</li>
 						{/each}
 					</ul>
+				</div>
+			{/if}
+
+			{#if sentHint}
+				<div class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-popover px-3 py-2 text-xs" role="status" data-testid="send-back-hint">
+					<span class="min-w-0 flex-1">{sentHint}</span>
+					{#if worker}<Button size="sm" variant="outline" disabled={busy} onclick={() => void runWorker()}>Run now</Button>{/if}
 				</div>
 			{/if}
 

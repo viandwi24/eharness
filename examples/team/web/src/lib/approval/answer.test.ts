@@ -13,4 +13,8 @@ describe('buildAnswer', () => {
 	test('always allow remembers for the session and ignores text', () => {
 		expect(buildAnswer('remember', 'ignored')).toEqual({ approved: true, remember: 'session' });
 	});
+	test('always allow carries the scope when one is picked', () => {
+		expect(buildAnswer('remember', '', 'agent')).toEqual({ approved: true, remember: 'session', scope: 'agent' });
+		expect(buildAnswer('remember', '', 'all')).toEqual({ approved: true, remember: 'session', scope: 'all' });
+	});
 });

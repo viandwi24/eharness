@@ -5,6 +5,8 @@
 	import type { Approval } from '#lib/api/client.js';
 	import { answerFailureText } from '#lib/approval/outcome.js';
 	import { friendlyTitle, summarizeApproval } from '#lib/approval/summary.js';
+	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+	import { ALLOW_SCOPES, DEFAULT_ALLOW_SCOPE, type AllowScope } from '#lib/approval/answer.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Kbd } from '#lib/components/ui/kbd/index.js';
 	import { cn } from '#lib/utils.js';
@@ -22,6 +24,7 @@
 	}: { items: Approval[]; toolName: string; onOpenTask?: (taskId: string) => void; onAnswered?: () => void } = $props();
 
 	let busy = $state(false);
+	let scope = $state<AllowScope>(DEFAULT_ALLOW_SCOPE);
 	let open = $state<Record<string, boolean>>({});
 	const agentName = $derived(items[0]?.agentName ?? '');
 	const taskId = $derived(items[0]?.taskId ?? null);
@@ -54,7 +57,7 @@
 		}
 	}
 	const approveAll = (): Promise<void> => answerAll(() => ({ approved: true }));
-	const alwaysAllow = (): Promise<void> => answerAll((i) => (i === 0 ? { approved: true, remember: 'session' } : { approved: true }));
+	const alwaysAllow = (): Promise<void> => answerAll((i) => (i === 0 ? { approved: true, remember: 'session', scope } : { approved: true }));
 	const denyAll = (): Promise<void> => answerAll(() => ({ approved: false }));
 
 	// Scoped to the dock card (focus inside it): 1 Approve all, 2 Always allow, 3 Deny all.
@@ -119,9 +122,12 @@
 		<Button size="sm" disabled={busy} onclick={() => void approveAll()}>
 			Approve all ({items.length}) <Kbd class="ml-1 h-4 min-w-4 text-[10px]">1</Kbd>
 		</Button>
-		<Button variant="outline" size="sm" disabled={busy} title="Allow this tool without asking for the rest of this session; the {items.length} waiting are approved" onclick={() => void alwaysAllow()}>
-			Always allow <span class="max-w-32 truncate">{toolName}</span> (once) <Kbd class="ml-1 h-4 min-w-4 text-[10px]">2</Kbd>
+		<Button variant="outline" size="sm" disabled={busy} title="Allow this tool without asking (scope picked next to it); the {items.length} waiting are approved" onclick={() => void alwaysAllow()}>
+			Always allow <span class="max-w-32 truncate">{toolName}</span> <Kbd class="ml-1 h-4 min-w-4 text-[10px]">2</Kbd>
 		</Button>
+		<NativeSelect bind:value={scope} size="sm" aria-label="Always allow for" title="How far Always allow reaches" disabled={busy}>
+			{#each ALLOW_SCOPES as s (s.value)}<NativeSelectOption value={s.value}>{s.label}</NativeSelectOption>{/each}
+		</NativeSelect>
 		<Button variant="outline" size="sm" disabled={busy} onclick={() => void denyAll()}>
 			Deny all <Kbd class="ml-1 h-4 min-w-4 text-[10px]">3</Kbd>
 		</Button>

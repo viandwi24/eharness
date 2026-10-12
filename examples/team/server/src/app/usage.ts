@@ -1,8 +1,12 @@
 /**
- * Workspace usage: what every agent spent, by where the work came from. One source of truth (D14 of
- * the e2e pass): the model call log, the same rows as the Logs page and the daily digest, so the
- * pages agree and every source is counted (heartbeat and test runs included). The log is kept for
- * `TEAM_LOG_RETENTION_DAYS` / `TEAM_LOG_MAX_ROWS`; `since` says how far back it reaches.
+ * Workspace usage: what every agent spent, by where the work came from. Two sources, each with one
+ * job, so the pages agree with each other:
+ * - the month's spend and the budget come from the budget ledger (`month`): the same numbers the
+ *   budget check, the briefing's cost line and the heartbeat use. The ledger is not pruned.
+ * - the breakdown by source and agent comes from the model call log: the same rows as the Logs page
+ *   (every source is counted, heartbeat and test runs included). The log is kept for
+ *   `TEAM_LOG_RETENTION_DAYS` / `TEAM_LOG_MAX_ROWS`; `since` says how far back the breakdown reaches
+ *   (older calls are pruned), so its total can be lower than the month's spend.
  */
 import type { Deps } from './ports.ts'
 
@@ -35,7 +39,15 @@ export interface UsageTotal {
   costUsd: number
 }
 
+/** This month's spend and limit from the shared budget ledger (UTC month); null = no ledger. */
+export interface MonthSpend {
+  spentUsd: number
+  limitUsd: number | null
+}
+
 export interface WorkspaceUsage {
+  /** The month's spend and budget (the ledger: not retention-limited). */
+  month: MonthSpend | null
   /** Start of the oldest call still in the log (the totals cover from then on); null = no calls. */
   since: number | null
   total: UsageTotal
@@ -60,7 +72,8 @@ const sum = (rows: SourceUsage[]): UsageTotal => ({
   costUsd: rows.reduce((n, r) => n + r.costUsd, 0),
 })
 
-export function workspaceUsage(deps: Deps): WorkspaceUsage {
+export async function workspaceUsage(deps: Deps): Promise<WorkspaceUsage> {
+  const month = await deps.heartbeat.budget()
   const agents = deps.agents.list({ includeArchived: true })
   const { since, rows } = deps.modelCalls.usage()
   const perAgent = new Map<string, SourceUsage[]>(agents.map((a) => [a.id, empty()]))
@@ -81,6 +94,7 @@ export function workspaceUsage(deps: Deps): WorkspaceUsage {
     if (r.agentId !== null) add(perAgent.get(r.agentId)?.[at])
   }
   return {
+    month,
     since,
     total: sum(bySource),
     bySource,

@@ -19,8 +19,17 @@ async function run(label: string, call: () => Promise<unknown>, done: string): P
 export const acceptTask = (id: string): Promise<boolean> => run('accept the task', () => api.post('/tasks/{id}/accept', { params: { id } }), 'Accepted');
 
 /** Send finished (or failed) work back: it is queued again with the note appended to its brief. */
-export const sendBackTask = (id: string, note: string): Promise<boolean> =>
-	run('send the task back', () => api.post('/tasks/{id}/send-back', { params: { id }, body: { note } }), 'Sent back: it is queued again');
+export async function sendBackTask(id: string, note: string): Promise<{ hint: string } | null> {
+	try {
+		const r = await api.post('/tasks/{id}/send-back', { params: { id }, body: { note } });
+		toast.success('Sent back: it is queued again');
+		void live.loadTasks();
+		return { hint: r.hint };
+	} catch (e) {
+		toast.error(e instanceof Error ? e.message : 'Could not send the task back');
+		return null;
+	}
+}
 
 /** Check the deliverables of a finished run again (after the files were repaired). */
 export const recheckDeliverables = (id: string): Promise<boolean> =>

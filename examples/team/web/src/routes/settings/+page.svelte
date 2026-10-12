@@ -5,6 +5,7 @@
 	import CubeIcon from 'phosphor-svelte/lib/Cube';
 	import ChartBarIcon from 'phosphor-svelte/lib/ChartBar';
 	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
+	import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheck';
 	import SlidersIcon from 'phosphor-svelte/lib/Sliders';
 	import { api, fieldErrors, getToken, setToken } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
@@ -27,7 +28,7 @@
 	import * as Table from '#lib/components/ui/table/index.js';
 	import { providersStore } from '#lib/providers/store.svelte.js';
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
-	import { percentOf, sourceLabel } from '#lib/settings/usage.js';
+	import { monthText, percentOf, sinceText, sourceLabel } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
 	import { timezoneOptions } from '#lib/heartbeat/model.js';
 	import { AUTO_THRESHOLD } from '#lib/connectors/tool-access.js';
@@ -41,6 +42,7 @@
 		{ id: 'general', label: 'General', icon: SlidersIcon },
 		{ id: 'providers', label: 'Providers', icon: CubeIcon },
 		{ id: 'usage', label: 'Usage', icon: ChartBarIcon },
+		{ id: 'rules', label: 'Saved rules', icon: ShieldCheckIcon },
 		{ id: 'memory', label: 'Memory', icon: BrainIcon },
 		{ id: 'connection', label: 'Connection', icon: PlugsConnectedIcon }
 	] as const;
@@ -147,6 +149,16 @@
 			.slice(0, 5)
 			.map((r) => ({ label: r.name, value: Math.max(1, percentOf(r.total.costUsd, usage?.total.costUsd ?? 0)) }))
 	);
+
+	// --- saved rules (the allow rules of each agent) ---------------------------------------------
+	async function removeRule(a: components['schemas']['Agent'], rule: string): Promise<void> {
+		try {
+			await agentsStore.update(a.id, { rules: { ...a.rules, allow: a.rules.allow.filter((r) => r !== rule) } });
+			toast.success(`Removed ${rule} from ${a.name}`);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not remove the rule');
+		}
+	}
 
 	// --- connection ------------------------------------------------------------------------
 	let token = $state(getToken() ?? '');
@@ -276,8 +288,7 @@
 						<Card.Header>
 							<Card.Title>Usage</Card.Title>
 							<Card.Description>
-								All-time totals: chats, tasks, delegated work, routine and program runs.
-								{#if settings?.budgetUsd !== null && settings?.budgetUsd !== undefined}Monthly budget: {formatUsd(settings.budgetUsd)}.{/if}
+								This month's spend and budget come from the budget ledger; the breakdown below comes from the call log (the Logs page). A call is one model request; a turn or a run makes several.
 							</Card.Description>
 						</Card.Header>
 						<Card.Content class="flex flex-col gap-5">
@@ -288,10 +299,19 @@
 									{#each [0, 1, 2, 3] as n (n)}<Skeleton class="h-24 rounded-xl" />{/each}
 								</div>
 							{:else}
-								<div class="grid grid-cols-2 gap-3 lg:grid-cols-3">
-									<StatTile class="w-full px-4 py-3.5" label="Cost" value={formatUsd(usage.total.costUsd)} />
+								{#if usage.month}
+									<div class="grid grid-cols-2 gap-3 lg:grid-cols-3" data-testid="usage-month">
+										<StatTile class="w-full px-4 py-3.5" label="Spent this month" value={formatUsd(usage.month.spentUsd)} />
+										<StatTile class="w-full px-4 py-3.5" label="Monthly budget" value={usage.month.limitUsd === null ? 'No limit' : formatUsd(usage.month.limitUsd)} />
+									</div>
+									<p class="sr-only">{monthText(usage.month, formatUsd)}</p>
+								{/if}
+								<p class="text-[13px] text-muted-foreground" data-testid="usage-since">{sinceText(usage.since)}</p>
+								<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+									<StatTile class="w-full px-4 py-3.5" label="Cost (breakdown)" value={formatUsd(usage.total.costUsd)} />
 									<StatTile class="w-full px-4 py-3.5" label="Tokens" value={num(usage.total.tokens)} />
-									<StatTile class="w-full px-4 py-3.5" label="Turns and runs" value={num(usage.total.count)} />
+									<StatTile class="w-full px-4 py-3.5" label="Model calls" value={num(usage.total.calls)} />
+									<StatTile class="w-full px-4 py-3.5" label="Turns + runs" value={num(usage.total.count)} />
 								</div>
 								<div class="flex flex-col gap-1.5">
 									<h3 class="text-[13px] font-medium">By source</h3>
@@ -300,7 +320,8 @@
 											<Table.Header>
 												<Table.Row class="hover:bg-transparent">
 													<Table.Head>Source</Table.Head>
-													<Table.Head class="text-right">Count</Table.Head>
+													<Table.Head class="text-right">Turns / runs</Table.Head>
+													<Table.Head class="text-right">Calls</Table.Head>
 													<Table.Head class="text-right">Tokens</Table.Head>
 													<Table.Head class="text-right">Cost</Table.Head>
 												</Table.Row>
@@ -311,6 +332,7 @@
 													<Table.Row>
 														<Table.Cell>{l.label}</Table.Cell>
 														<Table.Cell class="text-right font-mono text-xs">{num(s.count)} {l.unit}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{num(s.calls)}</Table.Cell>
 														<Table.Cell class="text-right font-mono text-xs">{num(s.tokens)}</Table.Cell>
 														<Table.Cell class="text-right font-mono text-xs">{formatUsd(s.costUsd)}</Table.Cell>
 													</Table.Row>
@@ -338,7 +360,8 @@
 											<Table.Header>
 												<Table.Row class="hover:bg-transparent">
 													<Table.Head>Agent</Table.Head>
-													<Table.Head class="text-right">Turns and runs</Table.Head>
+													<Table.Head class="text-right">Turns + runs</Table.Head>
+													<Table.Head class="text-right">Calls</Table.Head>
 													<Table.Head class="text-right">Tokens</Table.Head>
 													<Table.Head class="text-right">Cost</Table.Head>
 												</Table.Row>
@@ -350,6 +373,7 @@
 															<span class="flex items-center gap-2"><AgentAvatar seed={r.id} color={r.color} size={18} />{r.name}</span>
 														</Table.Cell>
 														<Table.Cell class="text-right font-mono text-xs">{num(r.total.count)}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{num(r.total.calls)}</Table.Cell>
 														<Table.Cell class="text-right font-mono text-xs">{num(r.total.tokens)}</Table.Cell>
 														<Table.Cell class="text-right font-mono text-xs">{formatUsd(r.total.costUsd)}</Table.Cell>
 													</Table.Row>
@@ -359,6 +383,32 @@
 									</div>
 								{/if}
 							{/if}
+						</Card.Content>
+					</Card.Root>
+				{:else if section === 'rules'}
+					<Card.Root>
+						<Card.Header>
+							<Card.Title>Saved rules</Card.Title>
+							<Card.Description>Tools an agent may use without asking. "Always allow" in an approval saves one here (for this agent or all agents). Remove a rule and the agent asks again.</Card.Description>
+						</Card.Header>
+						<Card.Content class="flex flex-col gap-4" data-testid="saved-rules">
+							{#each agentsStore.state.agents.filter((a) => !a.archivedAt) as a (a.id)}
+								<div class="flex flex-col gap-1.5">
+									<span class="flex items-center gap-2 text-[13px] font-medium"><AgentAvatar seed={a.id} color={a.color} size={18} />{a.name}</span>
+									{#if !a.rules.allow.length}
+										<p class="text-xs text-muted-foreground">No saved rules.</p>
+									{:else}
+										<ul class="flex flex-wrap gap-1.5">
+											{#each a.rules.allow as rule (rule)}
+												<li class="flex items-center gap-1 rounded bg-muted py-0.5 pr-0.5 pl-1.5 font-mono text-[11px]">
+													{rule}
+													<button type="button" class="rounded px-1 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Remove rule {rule} of {a.name}" onclick={() => void removeRule(a, rule)}>×</button>
+												</li>
+											{/each}
+										</ul>
+									{/if}
+								</div>
+							{/each}
 						</Card.Content>
 					</Card.Root>
 				{:else if section === 'memory'}

@@ -10,7 +10,7 @@ const usageRoute = createRoute({
   tags: ['settings'],
   summary: 'Usage of the whole workspace, by agent and by source',
   description:
-    'Tokens and cost of every agent by source: chats (all threads), tasks, delegated work, routine runs, program runs, the heartbeat, test runs and other calls. One source of truth: the model call log (the rows of the Logs page and the daily digest), so the numbers agree; `calls` counts model calls (a turn or a run makes several), `count` counts turns (chat, heartbeat) or runs. The log is kept for a limited time and number of rows, `since` is the start of the oldest call in it.',
+    'Tokens and cost of every agent by source: chats (all threads), tasks, delegated work, routine runs, program runs, the heartbeat, test runs and other calls. `month` (spend and budget) comes from the budget ledger, which is not pruned. The breakdown (`total`, `bySource`, `agents`) comes from the model call log, the rows of the Logs page: `calls` counts model calls (a turn or a run makes several), `count` counts turns (chat, heartbeat) or runs. The log is kept for a limited time and number of rows, so the breakdown covers from `since` (the oldest call kept) and can be lower than `month`.',
   security: [{ Bearer: [] }],
   responses: {
     200: {
@@ -22,5 +22,5 @@ const usageRoute = createRoute({
 })
 
 export function usageRoutes(deps: Deps): OpenAPIHono {
-  return new OpenAPIHono().openapi(usageRoute, async (c) => c.json(workspaceUsage(deps), 200))
+  return new OpenAPIHono().openapi(usageRoute, async (c) => c.json(await workspaceUsage(deps), 200))
 }

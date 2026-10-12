@@ -2,7 +2,8 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Kbd } from '#lib/components/ui/kbd/index.js';
-	import { buildAnswer, type ApprovalAnswerBody, type ApprovalChoice } from '#lib/approval/answer.js';
+	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+	import { ALLOW_SCOPES, DEFAULT_ALLOW_SCOPE, buildAnswer, type AllowScope, type ApprovalAnswerBody, type ApprovalChoice } from '#lib/approval/answer.js';
 
 	let {
 		toolName,
@@ -24,6 +25,7 @@
 	// with the button picked next: a note for the agent on Approve, the reason on Deny.
 	let noting = $state(false);
 	let text = $state('');
+	let scope = $state<AllowScope>(DEFAULT_ALLOW_SCOPE);
 	let field = $state<HTMLTextAreaElement | HTMLInputElement | null>(null);
 
 	function openNote(): void {
@@ -37,7 +39,7 @@
 	}
 	function send(choice: ApprovalChoice): void {
 		if (busy) return;
-		onAnswer(buildAnswer(choice, noting ? text : ''));
+		onAnswer(buildAnswer(choice, noting ? text : '', scope));
 	}
 
 	// Scoped to the card (focus inside it): 1 Approve, 2 Always allow, 3 Deny, 4 Add note, Esc cancels the note.
@@ -90,12 +92,15 @@
 				variant="outline"
 				size="sm"
 				disabled={busy}
-				title="Allow this tool without asking for the rest of this session"
+				title="Allow this tool without asking, for the scope picked next to this button"
 				onclick={() => send('remember')}
 			>
 				Always allow <span class="max-w-40 truncate">{toolName}</span>
 				<Kbd class="ml-1 h-4 min-w-4 text-[10px]">2</Kbd>
 			</Button>
+			<NativeSelect bind:value={scope} size="sm" aria-label="Always allow for" title="How far Always allow reaches" disabled={busy}>
+				{#each ALLOW_SCOPES as s (s.value)}<NativeSelectOption value={s.value}>{s.label}</NativeSelectOption>{/each}
+			</NativeSelect>
 		{/if}
 		<Button variant={noting ? 'destructive' : 'outline'} size="sm" disabled={busy} onclick={() => send('deny')}>
 			Deny {#if !noting}<Kbd class="ml-1 h-4 min-w-4 text-[10px]">3</Kbd>{/if}
