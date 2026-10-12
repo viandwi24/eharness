@@ -1,0 +1,5 @@
+Meeting notes (test fixture)
+- Decision: pricing tiers stay at three.
+- Action: Eka to run the accessibility review on the header.
+- Action: Budi to confirm the refresh-token behaviour with the auth team.
+- Risk: release 2.0 may slip if T-05 stays blocked.
