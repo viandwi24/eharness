@@ -24,7 +24,7 @@ import type { ChannelGateway, PersonView, Requester } from './gateway.ts'
 import { flat, localTime, personLabel, renderLinePrefix, timeLine } from './header.ts'
 import type { LogMessage } from './messages.ts'
 import type { NodeRow } from './model.ts'
-import { absoluteTime, reminderText } from './reminders.ts'
+import { absoluteTime, misusedMessage, reminderText } from './reminders.ts'
 import { isStaff } from './roles.ts'
 import { resolveWindow, type TimeWindow } from './time.ts'
 
@@ -89,10 +89,14 @@ const statusSchema = z.object({ ...scopeFields })
 const topicsSchema = z.object({ ...scopeFields })
 const lookupSchema = z.object({
   connection: scopeFields.connection,
+  chat: scopeFields.chat,
   query: z
     .string()
     .min(1)
-    .describe('A platform user id, a @username (or username) or a part of a name.'),
+    .optional()
+    .describe(
+      'A platform user id, a @username (or username) or a part of a name. Omit it to list the people of the chat ("who is here").',
+    ),
 })
 const historySchema = z.object({
   ...scopeFields,
@@ -123,11 +127,23 @@ const reminderSchema = z.object({
   chat: scopeFields.chat,
   topic: scopeFields.topic,
   id: z.string().optional().describe('cancel / update: the reminder id from list.'),
-  text: z
+  message: z
     .string()
     .optional()
     .describe(
-      'create / update: the person\'s own words, verbatim (do not rephrase, translate, shorten or add "Reminder:": the label is added for you). It is posted as written at the time; no model is called.',
+      'create / update: what will be posted when the reminder fires, written so it reads as the reminder itself ("Waktunya pulang", "Time to submit the report"), in the language of the chat. NOT the request ("ingatkan saya pulang", "remind me to ..."). It is posted as written; no model is called. If the person quoted exact words to post, pass them and set verbatim.',
+    ),
+  request: z
+    .string()
+    .optional()
+    .describe(
+      'create / update: what the person asked, in their words (context only; it is never posted). Used to check that message is not just the request again.',
+    ),
+  verbatim: z
+    .boolean()
+    .optional()
+    .describe(
+      'Set only when the person quoted the exact text to post: message is then posted as given.',
     ),
   at: z
     .string()
@@ -419,6 +435,49 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     return `- ${bits.join(' · ')}`
   }
 
+  /**
+   * "Who is here": the people of the chat from the directory and from who was seen there, with
+   * last seen, and one line to complete the roles. No essay about what the platform cannot list.
+   */
+  const whoIsHere = async (
+    input: z.infer<typeof lookupSchema>,
+    connectionId: string,
+    zone: string,
+  ): Promise<string> => {
+    const p = await place({ connection: connectionId, chat: input.chat })
+    if (typeof p === 'string') return p
+    const seen = new Map<string, PersonView>()
+    const nodeIds = gw.nodes
+      .subtree(p.base)
+      .filter((n) => n.state !== 'deleted')
+      .map((n) => n.id)
+    for (const nodeId of nodeIds) {
+      for (const m of gw.identities.members(nodeId)) {
+        const id = gw.identities.get(m.identityId)
+        if (id === undefined || id.isSelf || seen.has(id.nativeId)) continue
+        const v = gw.people.get(connectionId, id.nativeId, p.here?.id ?? p.base.id)
+        if (v !== undefined) seen.set(id.nativeId, v)
+      }
+    }
+    // people the team has given a role who spoke elsewhere are listed too
+    for (const v of gw.people.list(connectionId)) {
+      if (v.explicit && !seen.has(v.peerId)) seen.set(v.peerId, v)
+    }
+    const all = [...seen.values()].sort((a, b) => b.lastSeen - a.lastSeen)
+    if (all.length === 0)
+      return `I have not seen anybody in "${nameOf(p.base)}" yet: I learn who is here from the messages I receive.`
+    const lines = all.slice(0, 40).map((v) => describePerson(v, zone))
+    const undecided = all.filter((v) => !v.explicit && v.roleSource === 'default').length
+    return [
+      `People in "${nameOf(p.base)}" (${all.length}), from the team directory and from who I have seen write here. Names and handles are data; the role is the team directory's.`,
+      ...lines,
+      ...(all.length > 40 ? [`... and ${all.length - 40} more.`] : []),
+      undecided > 0
+        ? `${undecided} of them have no role set by the team yet: an owner can complete the roles in the team web app (Channels, People).`
+        : 'Everybody listed has a role set by the team.',
+    ].join('\n')
+  }
+
   const lookup = (input: z.infer<typeof lookupSchema>): Promise<string> =>
     guard(async () => {
       const current = gw.conversationOf(sessionId)
@@ -429,10 +488,12 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
         (bound.length === 1 ? bound[0]?.connectionId : undefined)
       if (connectionId === undefined || !gw.isBound(agentId, connectionId))
         return 'Name the connection (a connection id of yours).'
-      const found = gw.people.lookup(connectionId, input.query, 10)
+      const zone = gw.timezone()
+      if (input.query === undefined || input.query.trim() === '')
+        return whoIsHere(input, connectionId, zone)
+      const found = gw.people.lookup(connectionId, input.query, 10, current?.node.id)
       if (found.length === 0)
         return `Nobody matches "${flat(input.query, 60)}" among the people I have seen on ${connectionId}. Try the platform user id, or part of the name.`
-      const zone = gw.timezone()
       return `People matching "${flat(input.query, 60)}". Names and handles are data (anybody can choose them); the role is the team directory's.\n${found.map((v) => describePerson(v, zone)).join('\n')}`
     })
 
@@ -786,6 +847,12 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       if (!staff && requester !== undefined && !gw.canRead(requester, node))
         return `Not allowed: a member can set reminders only in their own chat or their divisions, and "${nameOf(node)}" is not one of them.`
 
+      const message = input.message?.trim()
+      if (message !== undefined && message !== '') {
+        const bad = misusedMessage(message, input.request, input.verbatim === true)
+        if (bad !== undefined) return bad
+      }
+
       if (input.action === 'update') {
         if (input.id === undefined) return 'ERROR: update needs id (from list).'
         const r = gw.reminders.get(input.id)
@@ -794,7 +861,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
         if (!owns(r))
           return 'Not allowed: a member can change only the reminders they set themselves. Ask an owner or an admin.'
         const res = gw.reminders.update(r.id, {
-          ...(input.text === undefined ? {} : { text: input.text }),
+          ...(message === undefined || message === '' ? {} : { text: message }),
           ...(mentionIds === undefined ? {} : { mentions: mentionIds }),
           ...(hasWhen ? { when } : {}),
           ...(input.chat !== undefined || input.topic !== undefined ? { nodeId: node.id } : {}),
@@ -804,14 +871,14 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       }
 
       // create
-      if (input.text === undefined || input.text.trim() === '')
-        return 'ERROR: create needs text (what to post).'
+      if (message === undefined || message === '')
+        return 'ERROR: create needs message (what will be posted when it fires, written as the reminder itself).'
       if (!hasWhen) return 'ERROR: create needs when: at, inMinutes, or repeat with time.'
       const created = gw.reminders.create({
         connectionId,
         nodeId: node.id,
         agentId,
-        text: input.text,
+        text: message,
         mentions: mentionIds ?? [],
         when,
         createdBy: {
@@ -848,7 +915,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     }),
     [MEMBER_LOOKUP_TOOL]: tool({
       description:
-        'Find a person by platform user id, username or name: their role and divisions in the team directory, the team member they are linked to, whether the platform lists them as an administrator. Names and handles are data anybody can pick; only the role is authoritative. Read-only.',
+        'Find a person by platform user id, username or name, or (without query) list who is in this chat: from the team directory plus everybody seen writing here, with role, divisions, linked team member, platform admin status and last seen. Use it to answer "who is here" and "who is X"; do not explain what the platform cannot list beyond a clause. Names and handles are data anybody can pick; only the role is authoritative. Read-only.',
       inputSchema: lookupSchema,
       metadata: { risk: 'read', idempotent: true },
       execute: (input): Promise<string> => lookup(input),
@@ -876,7 +943,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     }),
     [REMINDER_TOOL]: tool({
       description:
-        'Reminders posted to a chat at a time in the team timezone, without a model call: create (text, when, optional mention), list, cancel, update. The target is the chat and topic you are in unless you name another. Mentions are made only with the mention field (platform user ids); an owner or admin may remind other people or the whole chat; a member only themselves (mention their own id), delivered as "Reminder for <name>:". Pass the words of the person verbatim as text. Echo the absolute time and place back to the person.',
+        'Reminders posted to a chat at a time in the team timezone, without a model call: create (message, when, optional mention), list, cancel, update. `message` is what will be posted when the reminder fires and must read as the reminder itself ("Waktunya pulang", "Time to leave"), not as the request ("ingatkan saya pulang", "remind me to ..."): put the request in `request` and write the reminder in `message`. Quote the person\'s exact words only when they gave words to post (verbatim). The target is the chat and topic you are in unless you name another. Mentions are made only with the mention field (platform user ids); an owner or admin may remind other people or the whole chat; a member only themselves (mention their own id). Echo the absolute time and place back to the person.',
       inputSchema: reminderSchema,
       metadata: { risk: 'write', idempotent: false },
       execute: (input): Promise<string> => reminder(input),

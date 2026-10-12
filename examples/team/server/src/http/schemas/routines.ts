@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi'
+import { ChannelReminderSchema } from './channels.ts'
 
 export const RoutineSpecSchema = z
   .discriminatedUnion('kind', [
@@ -73,7 +74,13 @@ export const RoutineSchema = z
   .openapi('Routine')
 
 export const RoutineListSchema = z
-  .object({ routines: z.array(RoutineSchema) })
+  .object({
+    routines: z.array(RoutineSchema),
+    reminders: z.array(ChannelReminderSchema).openapi({
+      description:
+        'Reminders created from chats (`sys:reminder:*` routines): active ones and the recent finished ones, newest first. Cancel with `DELETE /channels/connections/{id}/reminders/{reminderId}`. The heartbeat and digest routines are not listed (they have their own pages).',
+    }),
+  })
   .openapi('RoutineList')
 
 const fields = {

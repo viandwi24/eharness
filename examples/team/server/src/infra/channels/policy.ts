@@ -75,6 +75,14 @@ export const ScopePolicySchema = z.object({
   redactOnDelete: z.boolean().optional(),
   /** What the agent may post here unasked (L6). */
   proactive: ProactivePolicySchema.optional(),
+  /**
+   * The role of somebody here who is neither in the directory nor linked to a team member
+   * (`guest` or `member`). `member` is the "trusted internal group" switch. Inherited; the
+   * connection's `people.defaultRole` is the fallback.
+   */
+  defaultRole: z.enum(['guest', 'member']).optional(),
+  /** How long the agent's replies are in a group when its persona says nothing: the medium context's default. */
+  replyStyle: z.enum(['brief', 'normal', 'detailed']).optional(),
 })
 export type ScopePolicy = z.infer<typeof ScopePolicySchema>
 
@@ -177,6 +185,9 @@ export interface ResolvedScope {
   proactive: Required<Omit<ProactivePolicy, 'quietHours'>> & {
     quietHours: ProactivePolicy['quietHours']
   }
+  /** The role of an unknown person here (`undefined` = the connection's default). */
+  defaultRole: 'guest' | 'member' | undefined
+  replyStyle: 'brief' | 'normal' | 'detailed' | undefined
   /** The node is a thread that has its own agent entry (an "own topic" wake). */
   ownTopic: boolean
   /** Per setting, which level decided it (for the Channels page). */
@@ -255,6 +266,8 @@ export function resolveScope(config: ConnectionConfig, chain: readonly ScopeNode
     sessionScope: pick('sessionScope') ?? fallback('sessionScope', 'node' as const),
     redactOnDelete: pick('redactOnDelete') ?? fallback('redactOnDelete', false),
     proactive: { ...DEFAULT_PROACTIVE, ...(pick('proactive') ?? fallback('proactive', {})) },
+    defaultRole: pick('defaultRole'),
+    replyStyle: pick('replyStyle'),
     ownTopic: leaf?.node.kind === 'thread' && own?.agentId !== undefined,
     origin,
   }

@@ -1,4 +1,5 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
+import { getAgent } from '../../app/agents.ts'
 import type { Deps } from '../../app/ports.ts'
 import {
   createRoutine,
@@ -176,12 +177,18 @@ const runsRoute = createRoute({
 
 export function routineRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
-    .openapi(listRoute, (c) => {
+    .openapi(listRoute, async (c) => {
       const { agentId } = c.req.valid('query')
-      return c.json(
-        { routines: listRoutines(deps, agentId === undefined ? {} : { agentId }) } as never,
-        200,
-      )
+      const routines = listRoutines(deps, agentId === undefined ? {} : { agentId })
+      // reminders created from chats are `sys:reminder:*` routines kept out of the list above; they are
+      // shown on the same page (cancel through the channels API). Channels not ready = none yet.
+      const reminders = await deps.channelInbox
+        .allReminders({
+          all: true,
+          ...(agentId === undefined ? {} : { agentId: getAgent(deps, agentId).id }),
+        })
+        .catch(() => [])
+      return c.json({ routines, reminders } as never, 200)
     })
     .openapi(createRoute_, (c) => {
       const b = c.req.valid('json')

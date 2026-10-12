@@ -163,6 +163,36 @@ For a company group (for example a forum supergroup with a topic per division):
    quiet hours, digest, mention limit).
 7. An approval request nobody answers expires after 24 hours (People tab); a new message from the person who asked
    declines it with their message as the note.
+8. **Trusted internal group**: on **Chats**, "People and tone" -> *Trusted internal group* makes people who are not in
+   the directory *members* in that chat (inherited by its topics) instead of guests. Admin and owner stay explicit
+   (People tab). You get one bell notification per new unknown person and per unconfirmed platform-admin
+   suggestion, linking to the People tab. *Reply style* (brief, normal, detailed) sets the default reply length of
+   the chat; the agent's own persona wins over the default.
+9. **Who the agent is in a chat**: the persona and instructions of the agent own voice and tone. The channel layer
+   adds a short per-turn *medium* reminder (where it is, default reply length) and a few non-overridable rules:
+   it never explains internals (directory, tool names) to chat users, never invents product or platform names (its
+   name is the agent's name; set `TEAM_NAME` to add the team's name) and takes roles only from the message header.
+10. **Memory in chats**: greetings and small talk do not read memory, and a write that records a role, admin
+    status, permission or capability is refused with a readable reason (those facts come live from
+    `channel_status`, `member_lookup` and the header). To clean notes an older version wrote, run the one-off
+    script (it only lists unless you ask it to remove, and backs up what it removes):
+
+    ```bash
+    cd examples/team/server
+    bun ../scripts/clean-memory.ts                                   # list flagged files (dry run)
+    bun ../scripts/clean-memory.ts --prefix /memories/agents/<agent id>
+    bun ../scripts/clean-memory.ts --remove /memories/agents/<id>/telegram-capabilities.md
+    bun ../scripts/clean-memory.ts --remove-all                      # every flagged file
+    ```
+
+    `--db` defaults to `TEAM_DB` or `./data/team.db`. Read the listed lines first: a flagged file can hold other
+    useful notes too. A backup JSON is written next to the database before anything is removed.
+11. **Reminders on the Routines page**: reminders made from chats show on **Routines** with a
+    "Reminder · <chat>/<topic>" badge (active ones, and the recent finished or cancelled ones); cancel works there
+    too. The `reminder` tool takes `message` (what is posted when it fires, written as the reminder itself, for
+    example "Waktunya pulang"), `request` (what the person asked; context only) and `verbatim` (the person quoted
+    the words); a message that just restates the request ("ingatkan ...", "remind me ...") is refused with a
+    correction. The heartbeat and the digest stay off this page (they have their own pages).
 
 ## Telegram account (MTProto)
 

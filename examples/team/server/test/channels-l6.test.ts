@@ -573,7 +573,7 @@ describe('reminders', () => {
     const { i, mock } = await setup([
       call(
         'reminder',
-        { action: 'create', text: 'submit the report @all', inMinutes: 60, mention: [eve.id] },
+        { action: 'create', message: 'submit the report @all', inMinutes: 60, mention: [eve.id] },
         'r1',
       ),
       text('Set.'),
@@ -611,15 +611,15 @@ describe('reminders', () => {
     const { i, mock } = await setup([
       call(
         'reminder',
-        { action: 'create', text: 'stand-up', inMinutes: 30, mention: [eve.id] },
+        { action: 'create', message: 'stand-up', inMinutes: 30, mention: [eve.id] },
         'm1',
       ),
-      call('reminder', { action: 'create', text: 'to everybody', inMinutes: 30 }, 'm2'),
+      call('reminder', { action: 'create', message: 'to everybody', inMinutes: 30 }, 'm2'),
       call(
         'reminder',
         {
           action: 'create',
-          text: '⏰ Reminder: call the vendor',
+          message: '⏰ Reminder: call the vendor',
           inMinutes: 30,
           mention: [budi.id],
         },
@@ -627,7 +627,7 @@ describe('reminders', () => {
       ),
       call('reminder', { action: 'list' }, 'm3'),
       text('done'),
-      call('reminder', { action: 'create', text: 'x', inMinutes: 5 }, 'g1'),
+      call('reminder', { action: 'create', message: 'x', inMinutes: 5 }, 'g1'),
       text('guest done'),
     ])
     await askIn(mock, budi, 'b1')
@@ -673,7 +673,7 @@ describe('reminders', () => {
     const { i, mock } = await setup([
       call(
         'reminder',
-        { action: 'create', text: '⏰ Reminder: send the report', inMinutes: 5 },
+        { action: 'create', message: '⏰ Reminder: send the report', inMinutes: 5 },
         'd1',
       ),
       text('ok'),
@@ -692,7 +692,7 @@ describe('reminders', () => {
 
   test('a reminder to a closed topic falls back to the room', async () => {
     const { i, mock } = await setup([
-      call('reminder', { action: 'create', text: 'wrap up', inMinutes: 10 }, 'f1'),
+      call('reminder', { action: 'create', message: 'wrap up', inMinutes: 10 }, 'f1'),
       text('ok'),
     ])
     await askIn(mock, ceo, 'f0')
@@ -714,7 +714,7 @@ describe('reminders', () => {
 
   test('no reminders from scheduled runs; cancel and update', async () => {
     const { i, mock } = await setup([
-      call('reminder', { action: 'create', text: 'later', inMinutes: 90 }, 'c1'),
+      call('reminder', { action: 'create', message: 'later', inMinutes: 90 }, 'c1'),
       text('made'),
     ])
     await askIn(mock, ceo, 'c0')

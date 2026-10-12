@@ -12244,6 +12244,31 @@ export interface components {
         };
         RoutineList: {
             routines: components["schemas"]["Routine"][];
+            /** @description Reminders created from chats (`sys:reminder:*` routines): active ones and the recent finished ones, newest first. Cancel with `DELETE /channels/connections/{id}/reminders/{reminderId}`. The heartbeat and digest routines are not listed (they have their own pages). */
+            reminders: components["schemas"]["ChannelReminder"][];
+        };
+        ChannelReminder: {
+            id: string;
+            connectionId: string;
+            agentId: string;
+            nodeId: string;
+            chatTitle: string;
+            /** @description `<chat>/<topic>` where it posts. */
+            place: string;
+            /** @description The next fire of an active one-time reminder (epoch ms). */
+            nextAt?: number;
+            text: string;
+            /** @description The schedule in words with the absolute time and zone. */
+            whenText: string;
+            /** @enum {string} */
+            status: "active" | "done" | "cancelled";
+            mentions: string[];
+            createdByName?: string;
+            createdByRole?: string;
+            createdAt: number;
+            lastFiredAt?: number;
+            fireCount: number;
+            lastError?: string;
         };
         RoutineCreate: {
             /** @description Agent id or slug. */
@@ -13051,23 +13076,6 @@ export interface components {
         ChannelReminderList: {
             items: components["schemas"]["ChannelReminder"][];
         };
-        ChannelReminder: {
-            id: string;
-            nodeId: string;
-            chatTitle: string;
-            text: string;
-            /** @description The schedule in words with the absolute time and zone. */
-            whenText: string;
-            /** @enum {string} */
-            status: "active" | "done" | "cancelled";
-            mentions: string[];
-            createdByName?: string;
-            createdByRole?: string;
-            createdAt: number;
-            lastFiredAt?: number;
-            fireCount: number;
-            lastError?: string;
-        };
         ChannelNodeList: {
             items: components["schemas"]["ChannelNode"][];
         };
@@ -13120,6 +13128,10 @@ export interface components {
                         to: string;
                     };
                 };
+                /** @enum {string} */
+                defaultRole?: "guest" | "member";
+                /** @enum {string} */
+                replyStyle?: "brief" | "normal" | "detailed";
             };
             /** @description Where each effective setting comes from. */
             inherited: {
@@ -13164,6 +13176,16 @@ export interface components {
                     nodeId?: string;
                 };
                 proactive?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                defaultRole?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                replyStyle?: {
                     /** @enum {string} */
                     from: "node" | "ancestor" | "connection" | "default";
                     nodeId?: string;
@@ -13219,6 +13241,16 @@ export interface components {
                 digestMinutes?: number;
                 maxMentions?: number;
             };
+            /**
+             * @description Role of somebody here who is not in the directory and not linked. `member` = a trusted internal group.
+             * @enum {string}
+             */
+            defaultRole?: "guest" | "member";
+            /**
+             * @description Reply length in a group when the agent persona says nothing.
+             * @enum {string}
+             */
+            replyStyle?: "brief" | "normal" | "detailed";
         } | null;
         ChannelSelectBody: {
             selected: boolean;
@@ -13391,6 +13423,10 @@ export interface components {
                 digestMinutes?: number;
                 maxMentions?: number;
             } | null;
+            /** @enum {string|null} */
+            defaultRole?: "guest" | "member" | null;
+            /** @enum {string|null} */
+            replyStyle?: "brief" | "normal" | "detailed" | null;
         };
         ChannelLinkList: {
             items: components["schemas"]["ChannelLink"][];

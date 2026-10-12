@@ -23,6 +23,8 @@ const KEYS: ChannelSettingKey[] = [
   'sessionScope',
   'redactOnDelete',
   'proactive',
+  'defaultRole',
+  'replyStyle',
 ]
 
 /** The part of the settings stored on one node that the page edits. */
@@ -39,6 +41,8 @@ export function policyView(own: ScopePolicy): ChannelPolicy | null {
     ...(own.sessionScope === undefined ? {} : { sessionScope: own.sessionScope }),
     ...(own.redactOnDelete === undefined ? {} : { redactOnDelete: own.redactOnDelete }),
     ...(own.proactive === undefined ? {} : { proactive: own.proactive }),
+    ...(own.defaultRole === undefined ? {} : { defaultRole: own.defaultRole }),
+    ...(own.replyStyle === undefined ? {} : { replyStyle: own.replyStyle }),
   }
 }
 
@@ -94,6 +98,8 @@ export function nodeView(
           ? {}
           : { quietHours: scope.proactive.quietHours }),
       },
+      ...(scope.defaultRole === undefined ? {} : { defaultRole: scope.defaultRole }),
+      ...(scope.replyStyle === undefined ? {} : { replyStyle: scope.replyStyle }),
     },
     inherited,
   }

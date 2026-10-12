@@ -116,6 +116,10 @@ export interface PolicyForm {
 	quietTo: string;
 	digest: Tri;
 	maxMentions: string | number | null;
+	/** Trusted internal group: unknown people here are members (`member`) or guests (`guest`); '' = inherit. */
+	defaultRole: Inherit<'member' | 'guest'>;
+	/** Reply length in a group when the agent persona says nothing; '' = inherit. */
+	replyStyle: Inherit<'brief' | 'normal' | 'detailed'>;
 }
 
 /** A form field as trimmed text: a text input holds a string, a number input a number or null. */
@@ -137,7 +141,9 @@ export const formOfChat = (c: ChannelChat): PolicyForm => ({
 	quietFrom: c.policy?.proactive?.quietHours?.from ?? '',
 	quietTo: c.policy?.proactive?.quietHours?.to ?? '',
 	digest: triOf(c.policy?.proactive?.digest),
-	maxMentions: c.policy?.proactive?.maxMentions === undefined ? '' : String(c.policy.proactive.maxMentions)
+	maxMentions: c.policy?.proactive?.maxMentions === undefined ? '' : String(c.policy.proactive.maxMentions),
+	defaultRole: c.policy?.defaultRole ?? '',
+	replyStyle: c.policy?.replyStyle ?? ''
 });
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -170,7 +176,9 @@ export function policyBody(f: PolicyForm): ChannelPolicyBody {
 		observe: boolOf(f.observe),
 		sessionScope: f.sessionScope === '' ? null : f.sessionScope,
 		redactOnDelete: boolOf(f.redactOnDelete),
-		proactive: proactiveBody(f)
+		proactive: proactiveBody(f),
+		defaultRole: f.defaultRole === '' ? null : f.defaultRole,
+		replyStyle: f.replyStyle === '' ? null : f.replyStyle
 	};
 }
 
@@ -201,6 +209,8 @@ export const formChanged = (a: PolicyForm, b: PolicyForm): boolean =>
 	a.quietFrom.trim() !== b.quietFrom.trim() ||
 	a.quietTo.trim() !== b.quietTo.trim() ||
 	a.digest !== b.digest ||
+	a.defaultRole !== b.defaultRole ||
+	a.replyStyle !== b.replyStyle ||
 	fieldText(a.maxMentions) !== fieldText(b.maxMentions);
 
 /** Where one effective setting comes from, in words ("set here", "inherited from Company"). */

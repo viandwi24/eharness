@@ -58,11 +58,19 @@ const norm = (s: string): string =>
 /** An option named by its number or its label (case and trailing punctuation ignored). */
 function optionOf(q: Question, part: string): string | undefined {
   const t = norm(part)
-  if (/^\d+$/.test(t)) {
-    const n = Number(t)
+  // "2", "no 2", "nomor 2", "option 2", "pilih 2", "2." (the number may carry a short word before it)
+  const num = /^(?:(?:no|nomor|number|option|opsi|pilihan|pilih|choice)\.?\s*)?(\d+)$/.exec(t)
+  if (num !== null) {
+    const n = Number(num[1])
     if (n >= 1 && n <= q.options.length) return q.options[n - 1]?.label
   }
-  return q.options.find((o) => norm(o.label) === t)?.label
+  const exact = q.options.find((o) => norm(o.label) === t)?.label
+  if (exact !== undefined) return exact
+  // "1. Beta" or "pilih Beta": the label with a number or a pick word in front of it
+  const stripped = t
+    .replace(/^(?:\d+\s*[.):-]?\s*|(?:pilih|choose|pick|option|opsi)\s+)/, '')
+    .trim()
+  return stripped === t ? undefined : q.options.find((o) => norm(o.label) === stripped)?.label
 }
 
 /** One reply as the answer to one question: options when it names them, otherwise "Other" text. */

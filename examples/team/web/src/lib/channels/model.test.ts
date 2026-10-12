@@ -109,8 +109,11 @@ describe('chat policy form', () => {
 			inherited: { enabled: { from: 'node', nodeId: 'n-1' }, wake: { from: 'node', nodeId: 'n-1' }, delivery: { from: 'connection' } }
 		});
 		const f = formOfChat(c);
-		expect(f).toEqual({ allowed: 'on', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '', proactive: '', quietFrom: '', quietTo: '', digest: '', maxMentions: '' });
-		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null, proactive: null });
+		expect(f).toEqual({ allowed: 'on', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '', proactive: '', quietFrom: '', quietTo: '', digest: '', maxMentions: '', defaultRole: '', replyStyle: '' });
+		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null, proactive: null, defaultRole: null, replyStyle: null });
+		// the trusted internal group switch writes the role of unknown people
+		expect(policyBody({ ...f, defaultRole: 'member' })).toMatchObject({ defaultRole: 'member' });
+		expect(formChanged(f, { ...f, defaultRole: 'member' })).toBe(true);
 		expect(policyBody({ ...f, retention: '', allowed: '' }).retentionDays).toBeNull();
 		expect(policyBody({ ...f, allowed: 'off', observe: 'off' })).toMatchObject({ enabled: false, observe: false });
 		expect(formChanged(f, { ...f, wake: 'mention' })).toBe(true);

@@ -5797,10 +5797,99 @@
             "items": {
               "$ref": "#/components/schemas/Routine"
             }
+          },
+          "reminders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelReminder"
+            },
+            "description": "Reminders created from chats (`sys:reminder:*` routines): active ones and the recent finished ones, newest first. Cancel with `DELETE /channels/connections/{id}/reminders/{reminderId}`. The heartbeat and digest routines are not listed (they have their own pages)."
           }
         },
         "required": [
-          "routines"
+          "routines",
+          "reminders"
+        ]
+      },
+      "ChannelReminder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "chatTitle": {
+            "type": "string"
+          },
+          "place": {
+            "type": "string",
+            "description": "`<chat>/<topic>` where it posts."
+          },
+          "nextAt": {
+            "type": "integer",
+            "description": "The next fire of an active one-time reminder (epoch ms)."
+          },
+          "text": {
+            "type": "string"
+          },
+          "whenText": {
+            "type": "string",
+            "description": "The schedule in words with the absolute time and zone."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "done",
+              "cancelled"
+            ]
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdByName": {
+            "type": "string"
+          },
+          "createdByRole": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "lastFiredAt": {
+            "type": "integer"
+          },
+          "fireCount": {
+            "type": "integer"
+          },
+          "lastError": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "connectionId",
+          "agentId",
+          "nodeId",
+          "chatTitle",
+          "place",
+          "text",
+          "whenText",
+          "status",
+          "mentions",
+          "createdAt",
+          "fireCount"
         ]
       },
       "RoutineCreate": {
@@ -8918,70 +9007,6 @@
           "items"
         ]
       },
-      "ChannelReminder": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "nodeId": {
-            "type": "string"
-          },
-          "chatTitle": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "whenText": {
-            "type": "string",
-            "description": "The schedule in words with the absolute time and zone."
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "active",
-              "done",
-              "cancelled"
-            ]
-          },
-          "mentions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "createdByName": {
-            "type": "string"
-          },
-          "createdByRole": {
-            "type": "string"
-          },
-          "createdAt": {
-            "type": "integer"
-          },
-          "lastFiredAt": {
-            "type": "integer"
-          },
-          "fireCount": {
-            "type": "integer"
-          },
-          "lastError": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "nodeId",
-          "chatTitle",
-          "text",
-          "whenText",
-          "status",
-          "mentions",
-          "createdAt",
-          "fireCount"
-        ]
-      },
       "ChannelNodeList": {
         "type": "object",
         "properties": {
@@ -9150,6 +9175,21 @@
                   "digest",
                   "digestMinutes",
                   "maxMentions"
+                ]
+              },
+              "defaultRole": {
+                "type": "string",
+                "enum": [
+                  "guest",
+                  "member"
+                ]
+              },
+              "replyStyle": {
+                "type": "string",
+                "enum": [
+                  "brief",
+                  "normal",
+                  "detailed"
                 ]
               }
             },
@@ -9347,6 +9387,46 @@
                 "required": [
                   "from"
                 ]
+              },
+              "defaultRole": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
+              },
+              "replyStyle": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "enum": [
+                      "node",
+                      "ancestor",
+                      "connection",
+                      "default"
+                    ]
+                  },
+                  "nodeId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from"
+                ]
               }
             },
             "description": "Where each effective setting comes from."
@@ -9524,6 +9604,23 @@
                 "maximum": 20
               }
             }
+          },
+          "defaultRole": {
+            "type": "string",
+            "enum": [
+              "guest",
+              "member"
+            ],
+            "description": "Role of somebody here who is not in the directory and not linked. `member` = a trusted internal group."
+          },
+          "replyStyle": {
+            "type": "string",
+            "enum": [
+              "brief",
+              "normal",
+              "detailed"
+            ],
+            "description": "Reply length in a group when the agent persona says nothing."
           }
         },
         "required": [
@@ -10194,6 +10291,29 @@
                 "maximum": 20
               }
             }
+          },
+          "defaultRole": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "guest",
+              "member",
+              null
+            ]
+          },
+          "replyStyle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "brief",
+              "normal",
+              "detailed",
+              null
+            ]
           }
         }
       },

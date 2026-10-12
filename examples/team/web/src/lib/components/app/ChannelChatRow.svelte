@@ -170,6 +170,27 @@
 					</NativeSelect>
 				</label>
 			</div>
+			<fieldset class="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2" data-testid="people-fields">
+				<legend class="px-1 text-xs font-medium">People and tone <span class="font-normal text-muted-foreground">· who counts as a member here, how long replies are</span></legend>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Trusted internal group <span class="font-normal text-muted-foreground">· {origin('defaultRole')}</span></span>
+					<NativeSelect bind:value={form.defaultRole} aria-label="Trusted internal group">
+						<NativeSelectOption value="">{inheritLabel(chat.effective.defaultRole === 'member' ? 'trusted: unknown people are members' : 'unknown people are guests')}</NativeSelectOption>
+						<NativeSelectOption value="member">Trusted: unknown people here are members</NativeSelectOption>
+						<NativeSelectOption value="guest">Not trusted: unknown people are guests</NativeSelectOption>
+					</NativeSelect>
+				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Reply style <span class="font-normal text-muted-foreground">· {origin('replyStyle')}</span></span>
+					<NativeSelect bind:value={form.replyStyle} aria-label="Reply style">
+						<NativeSelectOption value="">{inheritLabel(chat.effective.replyStyle ?? 'the agent decides')}</NativeSelectOption>
+						<NativeSelectOption value="brief">Brief</NativeSelectOption>
+						<NativeSelectOption value="normal">Normal</NativeSelectOption>
+						<NativeSelectOption value="detailed">Detailed</NativeSelectOption>
+					</NativeSelect>
+				</label>
+				<p class="text-xs text-muted-foreground sm:col-span-2">Owners and admins are always set on the People tab. Anybody you have not given a role is a guest, unless this chat is a trusted internal group. You get a notification for each new unknown person.</p>
+			</fieldset>
 			<fieldset class="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2" data-testid="proactive-fields">
 				<legend class="px-1 text-xs font-medium">Proactive posts <span class="font-normal text-muted-foreground">· what the agent says unasked (routines, heartbeat) · {origin('proactive')}</span></legend>
 				<label class="flex flex-col gap-1">

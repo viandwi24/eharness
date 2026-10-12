@@ -33,6 +33,10 @@ export interface ChannelPolicy {
   redactOnDelete?: boolean
   /** What the agent may post here unasked (routines, heartbeat). */
   proactive?: ChannelProactive
+  /** Role of an unknown person here (`member` = a trusted internal group). Inherited. */
+  defaultRole?: 'guest' | 'member'
+  /** Reply length in a group when the persona says nothing. Inherited. */
+  replyStyle?: 'brief' | 'normal' | 'detailed'
 }
 
 export interface ChannelProactive {
@@ -70,8 +74,14 @@ export interface ChannelPersonView {
 
 export interface ChannelReminderView {
   id: string
+  connectionId: string
+  agentId: string
   nodeId: string
   chatTitle: string
+  /** `<chat>/<topic>` (or the chat alone): where it posts, for the Routines page badge. */
+  place: string
+  /** The next fire of an active one-time reminder (epoch ms). */
+  nextAt?: number
   text: string
   whenText: string
   status: 'active' | 'done' | 'cancelled'
@@ -194,6 +204,8 @@ export type ChannelSettingKey =
   | 'sessionScope'
   | 'redactOnDelete'
   | 'proactive'
+  | 'defaultRole'
+  | 'replyStyle'
 
 /** Where an effective setting comes from. */
 export interface ChannelSettingOrigin {
@@ -242,6 +254,9 @@ export interface ChannelNodeView {
     proactive: Required<Omit<ChannelProactive, 'quietHours'>> & {
       quietHours?: { from: string; to: string }
     }
+    /** Role of an unknown person here; absent = the connection's default. */
+    defaultRole?: 'guest' | 'member'
+    replyStyle?: 'brief' | 'normal' | 'detailed'
   }
   /** Where each effective setting comes from. */
   inherited: Partial<Record<ChannelSettingKey, ChannelSettingOrigin>>
@@ -279,6 +294,8 @@ export interface ChannelPolicyInput {
   sessionScope?: 'node' | 'room' | null
   redactOnDelete?: boolean | null
   proactive?: ChannelProactive | null
+  defaultRole?: 'guest' | 'member' | null
+  replyStyle?: 'brief' | 'normal' | 'detailed' | null
 }
 
 export interface ChannelLimitsInput {

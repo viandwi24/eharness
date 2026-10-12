@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { page } from '$app/state';
 	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwise';
 	import TelegramLogoIcon from 'phosphor-svelte/lib/TelegramLogo';
 	import WarningIcon from 'phosphor-svelte/lib/Warning';
@@ -34,7 +35,15 @@
 	// linked to it, and what is waiting to be sent.
 	let { conn, onChange }: { conn: ChannelConnection; onChange: () => void } = $props();
 
-	let tab = $state('chats');
+	// a link from a notification (`?connection=<id>&tab=people`) opens the tab it names
+	const TABS = ['chats', 'people', 'reminders', 'inbox', 'activity', 'delivery'];
+	let tab = $state(
+		untrack(() => {
+			const t = page.url.searchParams.get('tab');
+			const c = page.url.searchParams.get('connection');
+			return t !== null && TABS.includes(t) && (c === null || c === conn.id) ? t : 'chats';
+		})
+	);
 	let chats = $state<ChannelChat[]>([]);
 	let agentId = $state(untrack(() => conn.binding?.agentId ?? ''));
 	let busy = $state(false);

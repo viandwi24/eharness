@@ -749,6 +749,7 @@ export function compose(config: ServerConfig): Server {
     title: string
     body: string
     agentId: string | null
+    link?: string
   }): void => {
     const added = deps.notifications.insert({
       id: deps.ids.next(),
@@ -756,7 +757,7 @@ export function compose(config: ServerConfig): Server {
       key: n.key,
       title: n.title,
       body: n.body,
-      link: null,
+      link: n.link ?? null,
       agentId: n.agentId,
       createdAt: Date.now(),
     })
@@ -808,6 +809,11 @@ export function compose(config: ServerConfig): Server {
     notify: (n) => channelNotify(n),
     // the team timezone decides what "today" and "09:00" mean in a chat
     timezone: () => settings.get().timezone,
+    // who the agent is in a chat: its name and the team's, from configuration (never invented)
+    identity: (agentId) => ({
+      agentName: agents.get(agentId)?.name,
+      teamName: (config.env ?? process.env).TEAM_NAME?.trim() || undefined,
+    }),
     // reminders created from a chat are `sys:reminder:<id>` routines
     reminders: { routines: routineStore, schedule, ids: () => uuidv7() },
     library: {

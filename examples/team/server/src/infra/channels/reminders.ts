@@ -342,3 +342,37 @@ export function reminderText(body: string, forName?: string): string {
   if (forName === undefined) return LABEL.test(text) ? text : `Reminder: ${text}`
   return `Reminder for ${forName}: ${stripReminderLabel(text)}`.trimEnd()
 }
+
+// --- the message of a reminder ------------------------------------------------------------------
+
+const norm = (t: string): string =>
+  t
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+/** A text that is a request to remind ("ingatkan ...", "remind me ...") and not the reminder itself. */
+const REQUEST_START =
+  /^(?:tolong\s+|please\s+|pls\s+|dong\s+|bisa\s+|can you\s+|could you\s+|kak\s+|bot\s+)*(?:ingatkan|ingetin|ingetkan|mengingatkan|diingatkan|jangan lupa(?: ingatkan)?|buatkan\s+(?:pengingat|reminder)|bikin(?:kan)?\s+(?:pengingat|reminder)|set\s+(?:a\s+)?reminder|create\s+(?:a\s+)?reminder|remind(?:er)?\b|please remind)/u
+
+/**
+ * The correction when `message` is not written as the reminder itself: it restates the request
+ * (starts with "ingatkan", "remind me", equals or contains the request). `undefined` = fine. A
+ * message the person quoted (`verbatim`) is never checked.
+ */
+export function misusedMessage(
+  message: string,
+  request: string | undefined,
+  verbatim: boolean,
+): string | undefined {
+  if (verbatim) return undefined
+  // a text that already carries its own label (`Reminder: ...`) is judged by what follows it
+  const m = norm(stripReminderLabel(message))
+  const asked = request === undefined ? '' : norm(request)
+  const restates =
+    REQUEST_START.test(m) ||
+    (asked !== '' && (m === asked || (asked.includes(m) && m.length >= asked.length * 0.8)))
+  if (!restates) return undefined
+  return `ERROR: message must be the reminder itself, as it will read when it fires (for example "Waktunya pulang" or "Time to leave"), not the request ("ingatkan ...", "remind me ..."). Rewrite it from what the person wants to be reminded of, put their original words in request, and call again. Only if the person quoted exact words to post, pass them with verbatim: true.`
+}

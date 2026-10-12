@@ -730,6 +730,63 @@ people act as admins because L6 made approvals in a chat a staff action. Web: `c
 people runs with the lowest role. The tool policy does not look at what a read tool reads outside the channels
 (a member can use any tool in their allow list; the default list is channel reads and reminders only).
 
+### Medium context, memory discipline, default role and reminders on Routines (owner real-group pass)
+
+Everything in `examples/team`; `src/` unchanged. No migration. Reported by the owner after trying the bot in a real
+group (verbose, over-explaining replies, memory polluted with roles, a "guest" co-founder refused, a reminder that
+posted the request).
+
+- *Medium vs persona* (`channels/medium.ts`, gateway `sessionNote` / `mediumNote`). The persona owns voice and
+  tone. The session note (instructions) now starts with **system rules** that no persona overrides: the agent's
+  name comes from configuration (the agent name, plus `TEAM_NAME` when set; no invented product or platform names),
+  never explain internals (directory, tool names, "the tool refused"), roles only from the header, and the memory
+  discipline below. A second, per-turn **medium reminder** (`refresh: 'turn'`, not instructions) says where the
+  agent is (DM, or group/topic) and the default reply length: short in a group, normal in a DM; the inherited node
+  setting `replyStyle: brief | normal | detailed` overrides it, and the text says the persona wins too. A refusal to
+  the requester is one polite sentence.
+- *Memory discipline* (channels plugin `tool.approve`). In a channel session: (a) `memory_view` is denied for a
+  turn whose triggering messages are all small talk (`isSmallTalk`: greetings, thanks, pings) with a readable reason,
+  and the protocol text says reads are on demand (the memory plugin's own protocol, "view relevant files before a
+  task", is static; the session note overrides it for chats); (b) `memory_create | str_replace | insert` whose new
+  text states a role, admin status, permission or capability (`systemFactIn`, a small documented regex list for ID
+  and EN) is denied with "Not saved: ... that is system state ... use channel_status / member_lookup / the header".
+  Heuristic by design: obvious statements only. (c) `examples/team/scripts/clean-memory.ts` (never run
+  automatically) lists the files the same detector flags, and removes chosen ones after writing a backup.
+- *Default role per chat*. Inherited node settings `defaultRole: guest | member` (Channels -> Chats -> "Trusted
+  internal group") and `replyStyle`. `resolveIdentityRole(connection, identity, node?)` uses the node's value before
+  the connection's `people.defaultRole`; the header, tool policy and `member_lookup` (with the asking chat) all use
+  it. Owner and admin remain explicit. `GatewayDeps.notify` got an optional `link`; the gateway raises one bell per
+  new unknown person and one per unconfirmed platform-admin suggestion (keys `channel-person:<id>`,
+  `channel-suggest:<id>:<role>`, deduped), linking to `/channels?connection=<id>&tab=people` (the connection card
+  opens the tab the link names).
+- *Reminder contract*. `reminder` takes `message` (posted when it fires; must read as the reminder, "Waktunya
+  pulang"), `request` (context only) and `verbatim`. `misusedMessage` refuses a message that starts like a request
+  ("ingatkan", "remind me", "set a reminder"...) or equals / contains the request, with a correction; a leading
+  `Reminder:` label is judged by what follows; `verbatim: true` skips the check. The old `text` field is gone.
+  Delivery is unchanged (fixed text, no model call). The request is not stored.
+- *Reminders on the Routines page*. `GET /routines` now returns `reminders` next to `routines`: the reminders of
+  every connection (active first, then the 50 most recent finished or cancelled), each with `place`
+  (`<chat>/<topic>`), status, `nextAt` for a one-time one. The page shows them with a "Reminder · <place>" badge, a
+  status badge and a cancel button (the channels reminder API), and a filter (routines and reminders, routines only,
+  active reminders, finished reminders). Reminder create, fire and cancel emit `routine-changed` so the page
+  refreshes. **Decision**: the other `sys:` routines (heartbeat, digest) stay hidden: they have their own surfaces
+  (Heartbeat settings, Briefings) and no action that makes sense on the Routines page.
+- *Who is here*. `member_lookup` without `query` lists the people of the chat from the directory plus everybody seen
+  writing there (memberships), with role, divisions, platform admin status and last seen, and one line that says how
+  many have no role set by the team (complete them on the People tab). The tool description tells the model not to
+  explain platform limits beyond a clause.
+- *Thread titles*. At boot (after the message migration) `retitleThreads` renames channel threads whose title is the
+  bare chat, topic, native id or old label to "<chat> / <topic>", once; a title a person chose is left alone; a
+  second pass changes nothing.
+- *Question labels*. A reply is matched to an option by number ("2", "nomor 2", "pilih 2", "option 2"), exact label or
+  a number/pick word before the label, so "Answered:" shows the option label. A tap already did.
+- *Tests*. `test/channels-medium.test.ts` (pure rules, medium and system rules on the wire, memory guard, small-talk
+  memory denial, trusted group and bells, reminder contract, Routines list with finished reminders, who is here,
+  retitle); web `routines/reminders.test.ts`, `channels/model.test.ts`. The L6 reminder tests use `message`.
+- *Limits*. Memory reads for small talk are denied by code only for the narrow greeting vocabulary; the rest relies
+  on the instruction. The write guard is regex-based and can miss a paraphrase or flag a harmless note (the reason
+  is readable and the agent can rewrite). `request` is not persisted.
+
 ### Tool layering rule (owner emphasis)
 
 Two layers, kept strict:

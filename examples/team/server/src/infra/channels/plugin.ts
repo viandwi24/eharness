@@ -26,6 +26,7 @@ import {
   type ResolvedTarget,
   type TargetInput,
 } from './gateway.ts'
+import { MEMORY_READ_TOOLS, memoryWriteRefusal, SMALL_TALK_MEMORY_REFUSAL } from './medium.ts'
 import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
 import { decideTool } from './roles.ts'
@@ -606,6 +607,11 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         instructions: [
           (c: HarnessContext) => gw.sessionNote(c.session.id),
           {
+            text: (c: HarnessContext) => gw.mediumNote(c.session.id),
+            refresh: 'turn' as const,
+            id: 'channel-medium',
+          },
+          {
             text: (c: HarnessContext) => gw.reminder(c.session.id),
             refresh: 'turn' as const,
             id: 'channel-recent',
@@ -627,9 +633,21 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           // authorization by code on the current requester: deny wins, nothing a message says changes it
           'tool.approve': async (
             _hookCtx: HarnessContext,
-            e: { toolName: string; risk?: string },
+            e: { toolName: string; risk?: string; input?: unknown },
           ): Promise<{ type: 'denied'; reason: string } | undefined> => {
+            // memory discipline in a chat session (medium.ts): no system or state facts in memory,
+            // no memory lookups for a greeting
+            if (inChannel) {
+              const refusal = memoryWriteRefusal(e.toolName, e.input)
+              if (refusal !== undefined) return { type: 'denied', reason: refusal }
+            }
             const requester = await gw.requesterOf(sessionId)
+            if (
+              inChannel &&
+              requester?.smallTalk === true &&
+              MEMORY_READ_TOOLS.includes(e.toolName)
+            )
+              return { type: 'denied', reason: SMALL_TALK_MEMORY_REFUSAL }
             if (requester === undefined) return undefined
             const config = gw.config(requester.connectionId)
             const decision = decideTool(

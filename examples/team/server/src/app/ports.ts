@@ -831,6 +831,8 @@ export interface ChannelInboxPort {
     input: Partial<ChannelPeopleSettings>,
   ): Promise<ChannelPeopleSettings>
   reminders(id: string, options: { all: boolean }): Promise<ChannelReminderView[]>
+  /** Reminders of every connection (the Routines page): active ones, and with `all` the finished ones too. */
+  allReminders(options: { all: boolean; agentId?: string }): Promise<ChannelReminderView[]>
   cancelReminder(id: string, reminderId: string): Promise<void>
 }
 

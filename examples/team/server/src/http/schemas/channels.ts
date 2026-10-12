@@ -57,6 +57,13 @@ export const ChannelPolicySchema = z
       description: "Drop a message's content when it is deleted on the platform.",
     }),
     proactive: ChannelProactiveSchema.optional(),
+    defaultRole: z.enum(['guest', 'member']).optional().openapi({
+      description:
+        'Role of somebody here who is not in the directory and not linked. `member` = a trusted internal group.',
+    }),
+    replyStyle: z.enum(['brief', 'normal', 'detailed']).optional().openapi({
+      description: 'Reply length in a group when the agent persona says nothing.',
+    }),
   })
   .openapi('ChannelPolicy')
 
@@ -190,6 +197,8 @@ const settingKey = z.enum([
   'sessionScope',
   'redactOnDelete',
   'proactive',
+  'defaultRole',
+  'replyStyle',
 ])
 
 export const ChannelNodeSchema = z
@@ -228,6 +237,8 @@ export const ChannelNodeSchema = z
       sessionScope,
       redactOnDelete: z.boolean(),
       proactive: proactiveEffective,
+      defaultRole: z.enum(['guest', 'member']).optional(),
+      replyStyle: z.enum(['brief', 'normal', 'detailed']).optional(),
     }),
     inherited: z
       .partialRecord(
@@ -292,6 +303,8 @@ export const ChannelPolicyBodySchema = z
     sessionScope: sessionScope.nullable().optional(),
     redactOnDelete: z.boolean().nullable().optional(),
     proactive: proactiveShape.nullable().optional(),
+    defaultRole: z.enum(['guest', 'member']).nullable().optional(),
+    replyStyle: z.enum(['brief', 'normal', 'detailed']).nullable().optional(),
   })
   .openapi('ChannelPolicyBody')
 
@@ -601,8 +614,14 @@ export const ChannelPeopleSettingsBodySchema = ChannelPeopleSettingsSchema.parti
 export const ChannelReminderSchema = z
   .object({
     id: z.string(),
+    connectionId: z.string(),
+    agentId: z.string(),
     nodeId: z.string(),
     chatTitle: z.string(),
+    place: z.string().openapi({ description: '`<chat>/<topic>` where it posts.' }),
+    nextAt: z.number().int().optional().openapi({
+      description: 'The next fire of an active one-time reminder (epoch ms).',
+    }),
     text: z.string(),
     whenText: z
       .string()

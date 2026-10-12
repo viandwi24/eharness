@@ -156,31 +156,27 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
     },
     async reminders(id, opts) {
       await known(id)
-      const view = (r: ReminderRow): ChannelReminderView => {
-        const node = gateway.nodes.get(r.nodeId)
-        return {
-          id: r.id,
-          nodeId: r.nodeId,
-          chatTitle: node === undefined ? r.nodeId : (node.title ?? node.nativeId),
-          text: r.body,
-          whenText: r.whenText,
-          status: r.status,
-          mentions: r.mentions.map((m) => {
-            const i = gateway.identities.get(m)
-            return i?.displayName ?? i?.username ?? i?.nativeId ?? m
-          }),
-          ...(r.createdByName === null ? {} : { createdByName: r.createdByName }),
-          ...(r.createdByRole === null ? {} : { createdByRole: r.createdByRole }),
-          createdAt: r.createdAt,
-          ...(r.lastFiredAt === null ? {} : { lastFiredAt: r.lastFiredAt }),
-          fireCount: r.fireCount,
-          ...(r.lastError === null ? {} : { lastError: r.lastError }),
-        }
-      }
       return gateway.reminders
         .list(id, opts.all ? {} : { status: 'active' })
         .slice(0, 200)
         .map(view)
+    },
+    async allReminders(opts) {
+      const rows = gateway
+        .connections()
+        .flatMap((c) =>
+          gateway.reminders.list(c.connectionId, opts.all ? {} : { status: 'active' }),
+        )
+        .filter((r) => opts.agentId === undefined || r.agentId === opts.agentId)
+      // active first (soonest first), then the finished ones, newest first, capped
+      const active = rows
+        .filter((r) => r.status === 'active')
+        .sort((a, b) => (nextAtOf(a) ?? Infinity) - (nextAtOf(b) ?? Infinity))
+      const finished = rows
+        .filter((r) => r.status !== 'active')
+        .sort((a, b) => (b.lastFiredAt ?? b.createdAt) - (a.lastFiredAt ?? a.createdAt))
+        .slice(0, 50)
+      return [...active, ...finished].map(view)
     },
     async cancelReminder(id, reminderId) {
       await known(id)
@@ -188,6 +184,43 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
       if (r === undefined || r.connectionId !== id) throw notFound('reminder', reminderId)
       gateway.reminders.cancel(reminderId)
     },
+  }
+
+  function nextAtOf(r: ReminderRow): number | undefined {
+    return r.schedule.kind === 'at' ? r.schedule.at : undefined
+  }
+
+  function view(r: ReminderRow): ChannelReminderView {
+    const node = gateway.nodes.get(r.nodeId)
+    const parent = node?.parentId == null ? undefined : gateway.nodes.get(node.parentId)
+    const next = r.status === 'active' ? nextAtOf(r) : undefined
+    return {
+      id: r.id,
+      connectionId: r.connectionId,
+      agentId: r.agentId,
+      nodeId: r.nodeId,
+      chatTitle: node === undefined ? r.nodeId : (node.title ?? node.nativeId),
+      place:
+        node === undefined
+          ? r.nodeId
+          : parent === undefined
+            ? (node.title ?? node.nativeId)
+            : `${parent.title ?? parent.nativeId}/${node.title ?? node.nativeId}`,
+      ...(next === undefined ? {} : { nextAt: next }),
+      text: r.body,
+      whenText: r.whenText,
+      status: r.status,
+      mentions: r.mentions.map((m) => {
+        const i = gateway.identities.get(m)
+        return i?.displayName ?? i?.username ?? i?.nativeId ?? m
+      }),
+      ...(r.createdByName === null ? {} : { createdByName: r.createdByName }),
+      ...(r.createdByRole === null ? {} : { createdByRole: r.createdByRole }),
+      createdAt: r.createdAt,
+      ...(r.lastFiredAt === null ? {} : { lastFiredAt: r.lastFiredAt }),
+      fireCount: r.fireCount,
+      ...(r.lastError === null ? {} : { lastError: r.lastError }),
+    }
   }
 }
 
