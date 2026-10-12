@@ -327,19 +327,31 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
     refreshBusy()
   }
 
+  /**
+   * `Chat` calls `onError` BEFORE it sets its status to `error`, so a clear inside the handler is a
+   * no-op. Clear now (for bridges that already flipped) and again once the status has been set.
+   */
+  function clearAfterStatus(c: ChatBridge<UI>): void {
+    c.clearError()
+    queueMicrotask(() => {
+      if (c.status === 'error') c.clearError()
+      refreshBusy()
+    })
+  }
+
   function onError(e: Error): void {
     const c = chat
     if (c === undefined) return
     if (isHarnessHttpError(e) && (e.isAlreadyAnswered || e.isDuplicate)) {
       // answered elsewhere, or the message was stored already: show what is stored, nothing else
-      c.clearError()
+      clearAfterStatus(c)
       void refetch()
       return
     }
     if (isHarnessHttpError(e) && e.isBusy) {
       // the optimistic user message was never accepted: drop it and restore the stored view
       if (c.messages.at(-1)?.role === 'user') c.messages = c.messages.slice(0, -1)
-      c.clearError()
+      clearAfterStatus(c)
       notify('error', describeChatError(e, false)?.message ?? e.message)
       return
     }
@@ -347,25 +359,25 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
       if (store.get().following) {
         // `follow` retries quietly and shows the banner when it gives up
         netError = e
-        c.clearError()
+        clearAfterStatus(c)
         return
       }
       // the connection of a turn this tab started broke after the reply began: the turn runs on
       // the server, so re-attach (full replay) instead of leaving a half reply and an error
       if (c.messages.at(-1)?.role === 'assistant') {
-        c.clearError()
+        clearAfterStatus(c)
         void follow()
         return
       }
     }
     const problem = describeChatError(e, store.get().following)
     if (problem === null) {
-      c.clearError()
+      clearAfterStatus(c)
       void refetch()
     } else if (store.get().following) {
       // a turn the server started (a report, a routine, another tab): an inline banner
       patch({ problem })
-      c.clearError()
+      clearAfterStatus(c)
     } else {
       notify('error', problem.message)
     }

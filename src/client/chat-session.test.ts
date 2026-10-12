@@ -544,3 +544,50 @@ describe('chat bridge', () => {
     expect(typeof check).toBe('function')
   })
 })
+
+describe('chat session: real AI SDK Chat', () => {
+  test('a refused send leaves the real Chat ready (Chat calls onError before it sets the status)', async () => {
+    const { AbstractChat } = await import('ai')
+    class Chat extends AbstractChat<UIMessage> {
+      constructor(
+        init: ConstructorParameters<typeof AbstractChat<UIMessage>>[0] extends infer I
+          ? Omit<NonNullable<I>, 'state'>
+          : never,
+      ) {
+        const state = {
+          status: 'ready' as ChatStatus,
+          error: undefined as Error | undefined,
+          messages: [] as UIMessage[],
+          pushMessage(m: UIMessage) {
+            this.messages.push(m)
+          },
+          popMessage() {
+            this.messages.pop()
+          },
+          replaceMessage(i: number, m: UIMessage) {
+            this.messages[i] = m
+          },
+          snapshot: <T>(v: T): T => structuredClone(v),
+        }
+        super({ ...init, state })
+      }
+    }
+    const { w, client } = world()
+    const notes: string[] = []
+    const session = createChatSession({
+      client,
+      sessionId: 's1',
+      sleep: async () => {},
+      notify: (_l, t) => notes.push(t),
+    })
+    w.chat = () => err(409, 'EH_SESSION_BUSY')
+    const chat = new Chat(session.chatInit)
+    session.bind(chat as unknown as ChatBridge)
+    await chat.sendMessage({ text: 'hi' })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(chat.status).toBe('ready')
+    expect(chat.error).toBeUndefined()
+    expect(notes.length).toBe(1)
+    expect(session.get().busy).toBe(false)
+  })
+})

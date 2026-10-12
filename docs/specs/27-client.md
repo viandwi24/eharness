@@ -210,6 +210,11 @@ reads and writes `chat.messages`.
   while it still runs) and clears `stopping`. It never swallows the failure. **Interrupted turns**: `interrupted()` is
   true when the conversation ends with an assistant message of stop `interrupted` (kind messages
   do not count); `continueTurn()` sends `CONTINUE_TEXT`, `retryTurn()` regenerates that reply.
+- **Error clearing**: AI SDK `Chat` calls `onError` *before* it sets `status: 'error'`, so a
+  `clearError()` inside the handler is a no-op. For the cases the session handles silently (already
+  answered, duplicate, busy, a dropped connection that re-attaches, a failure with nothing to show) it clears
+  now and again in a microtask, after the status was set. A failure shown as a toast keeps the chat in
+  `error` (the UI decides how to render it).
 - `busy` = following, or a send in flight, or a running chat status, or `stopping`; call `refreshBusy()` when the
   chat status changed outside the session.
 - `transportOptions` (`ifBusy`, `body`) configure the default transport; with an own `transport`
