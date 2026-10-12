@@ -6331,7 +6331,11 @@
           },
           "place": {
             "type": "string",
-            "description": "`<chat>/<topic>` where it posts."
+            "description": "`<chat>/<topic>` where it posts, or `This chat` for a reminder of a web chat thread."
+          },
+          "sessionId": {
+            "type": "string",
+            "description": "A reminder made in a web chat thread (`connectionId` `web`): the thread it is delivered into."
           },
           "nextAt": {
             "type": "integer",
@@ -9418,7 +9422,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The options the agent flagged as \"leave it for now\" (a subset of `options`); a pick of one is remembered by a standing program."
+            "description": "The options that mean \"leave it for now\" (a subset of `options`): the ones the agent flagged plus the server's fallback word list. A pick of one is remembered by a standing program, so a client shows the hint from this list and keeps no word list of its own."
           },
           "source": {
             "type": "string",
@@ -11184,6 +11188,46 @@
               "connectionWindowMs"
             ]
           },
+          "limitDefaults": {
+            "type": "object",
+            "properties": {
+              "dmDailyMax": {
+                "type": "integer"
+              },
+              "dailyMax": {
+                "type": "integer"
+              },
+              "adminLogEveryMs": {
+                "type": "integer"
+              },
+              "chatMinIntervalMs": {
+                "type": "integer"
+              },
+              "groupMax": {
+                "type": "integer"
+              },
+              "groupWindowMs": {
+                "type": "integer"
+              },
+              "connectionMax": {
+                "type": "integer"
+              },
+              "connectionWindowMs": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "dmDailyMax",
+              "dailyMax",
+              "adminLogEveryMs",
+              "chatMinIntervalMs",
+              "groupMax",
+              "groupWindowMs",
+              "connectionMax",
+              "connectionWindowMs"
+            ],
+            "description": "The values a new account starts with, for \"default N\" beside each limit."
+          },
           "today": {
             "type": "object",
             "properties": {
@@ -11247,6 +11291,7 @@
         },
         "required": [
           "limits",
+          "limitDefaults",
           "today",
           "floods",
           "source",

@@ -812,3 +812,11 @@ links differ). Basic needs (am I admin, who is this, which topics exist) must ne
 - Legacy message migration: a body the key cannot open is counted and logged once; after 3 boots it
   gives up and marks `gaveUp` in `ch_meta`. Dead `void` statements removed.
 - Tests are written (`channels-l6.test.ts`) but were not run in this pass.
+
+## UX follow-ups (written, not run)
+
+Reminders for web-chat agents (same `reminder` tool, delivery into the thread plus the bell, rows with connection `web`
+on the Routines page), the `instruction` and `autoAllowed` message markers, `payload.standDown` as the effective
+stand-down list, humanized plan cards, `task.queueNote` in the queue, and Telegram account copy (option labels, short
+credentials step, titled flow errors, `limitDefaults`). See walkthrough 28g. Tests: `server/test/ux-followups.test.ts`,
+`web/src/lib/decisions/humanize.test.ts`.

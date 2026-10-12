@@ -147,6 +147,56 @@ export function describeSpec(spec: RoutineSpec): string {
 	}
 }
 
+/** The zone as people write it ("WIB" for Asia/Jakarta), else the IANA id. */
+export function zoneLabel(tz: string): string {
+	try {
+		const part = new Intl.DateTimeFormat('id-ID', { timeZone: tz, timeZoneName: 'short' }).formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value;
+		return part && !/^GMT[+-]/.test(part) ? part : tz;
+	} catch {
+		return tz;
+	}
+}
+
+const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** A cron day-of-week field in words, or null when it is too unusual to say. */
+function dowWords(dow: string): string | null {
+	if (dow === '*') return 'every day';
+	if (dow === '1-5') return 'every weekday';
+	if (dow === '0,6' || dow === '6,0') return 'every weekend day';
+	if (/^[0-7]$/.test(dow)) return `every ${WEEKDAYS[Number(dow) % 7]}`;
+	if (/^[0-7](,[0-7])+$/.test(dow)) return `every ${dow.split(',').map((d) => DAY_SHORT[Number(d) % 7]).join(', ')}`;
+	if (/^[0-7]-[0-7]$/.test(dow)) {
+		const [a, b] = dow.split('-').map(Number) as [number, number];
+		return `${DAY_SHORT[a % 7]} to ${DAY_SHORT[b % 7]}`;
+	}
+	return null;
+}
+
+/**
+ * A schedule as a sentence with the zone, never raw cron: "Every weekday at 09:00 WIB",
+ * "Every 2 hours", "On day 1 of every month at 08:00 WIB". Unusual cron shapes say so plainly.
+ */
+export function describeScheduleWords(spec: RoutineSpec): string {
+	if (spec.kind !== 'cron') return describeSpec(spec);
+	const zone = zoneLabel(spec.tz);
+	const parts = spec.expr.trim().split(/\s+/);
+	if (parts.length === 5) {
+		const [m, h, dom, mon, dow] = parts as [string, string, string, string, string];
+		const clock = /^\d{1,2}$/.test(m) && /^\d{1,2}$/.test(h) ? `${pad(Number(h))}:${pad(Number(m))}` : null;
+		if (clock && mon === '*' && dom === '*') {
+			const words = dowWords(dow);
+			if (words) return `${words[0]!.toUpperCase()}${words.slice(1)} at ${clock} ${zone}`;
+		}
+		if (clock && mon === '*' && dow === '*' && /^\d{1,2}$/.test(dom)) return `On day ${dom} of every month at ${clock} ${zone}`;
+		const every = /^\*\/(\d{1,2})$/.exec(h);
+		if (every && m === '0' && dom === '*' && mon === '*' && dow === '*') return `Every ${every[1]} hours`;
+		const mins = /^\*\/(\d{1,2})$/.exec(m);
+		if (mins && h === '*' && dom === '*' && mon === '*' && dow === '*') return `Every ${mins[1]} minutes`;
+	}
+	return `On a custom schedule (${spec.expr}, ${zone})`;
+}
+
 /** `datetime-local` input value (local time) <-> epoch ms. */
 export const toLocalInput = (ms: number): string => {
 	const d = new Date(ms);

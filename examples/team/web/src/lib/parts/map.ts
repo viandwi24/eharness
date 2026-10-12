@@ -11,7 +11,8 @@ export type ToolViewState =
 	| 'output-error'
 	| 'output-denied';
 
-export type ToolApproval = { id: string; approved?: boolean; reason?: string };
+/** `auto`: the server let the call through without asking (`metadata.app.autoAllowed`): a saved grant, a permission rule or the mode. */
+export type ToolApproval = { id: string; approved?: boolean; reason?: string; auto?: 'grant' | 'rule' | 'mode' };
 
 /** Preliminary output of the `agent` tool (spec 20 §2). */
 export type SubagentProgress = {
@@ -174,6 +175,7 @@ export function viewModel(message: UIMessage, live = true): PartView[] {
 	const parts = message.parts as unknown as AnyPart[];
 	const out: PartView[] = [];
 
+	const autoAllowed = (message.metadata as { app?: { autoAllowed?: Record<string, unknown> } } | undefined)?.app?.autoAllowed;
 	const runs = new Map<string, SubagentRun>();
 	const toolCallIds = new Set<string>();
 	for (const p of parts) {
@@ -210,6 +212,8 @@ export function viewModel(message: UIMessage, live = true): PartView[] {
 			}
 			const isSubagent = name === 'agent';
 			const toolCallId = String(part.toolCallId ?? key);
+			const via = autoAllowed?.[toolCallId];
+			if (approval && (via === 'grant' || via === 'rule' || via === 'mode')) approval = { ...approval, auto: via };
 			const progress = isSubagent && isProgress(part.output) ? part.output : undefined;
 			const title = toolTitle(name, part.input);
 			out.push({
@@ -288,6 +292,17 @@ export function viewModel(message: UIMessage, live = true): PartView[] {
 /** True when the message has something a person can see (skips empty streaming shells). */
 export function hasVisibleParts(views: PartView[]): boolean {
 	return views.some((v) => !(v.kind === 'text' && v.text === '') && v.kind !== 'unknown');
+}
+
+/**
+ * A user message the system wrote (task, program, routine or rehearsal prompt): the server flags it
+ * `metadata.app.instruction`. `fallback` is the old positional guess (the first message of a task
+ * session) for history stored before the flag existed; a message the server did flag always wins.
+ */
+export function isInstructionMessage(message: UIMessage, fallback = false): boolean {
+	if (message.role !== 'user') return false;
+	const app = (message.metadata as { app?: { instruction?: unknown } } | undefined)?.app;
+	return app?.instruction === true || (app?.instruction === undefined && fallback);
 }
 
 /** Kind of a kind message (`metadata.eharness.kind`), if any. */

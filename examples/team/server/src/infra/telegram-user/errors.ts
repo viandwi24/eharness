@@ -132,3 +132,42 @@ export function describeError(kind: TgErrorKind): string {
       return `Telegram request failed: ${kind.text}`
   }
 }
+
+/**
+ * A short heading for a failed sign-in step, so the error view says what went wrong ("Wrong code")
+ * and not just "Could not connect". The flow error view has no title field (it is part of the
+ * library's flow types), so the connector puts it before the message as `<Title>: <message>`;
+ * `splitErrorTitle` (web) reads it back.
+ */
+export function errorTitle(kind: TgErrorKind): string {
+  switch (kind.kind) {
+    case 'flood':
+      return `Too many tries, wait ${Math.max(1, Math.ceil(kind.seconds / 60))} min`
+    case 'peer-flood':
+      return 'Sending is limited'
+    case 'auth-lost':
+      return 'Session ended'
+    case 'duplicated':
+      return 'Session in use elsewhere'
+    case 'code-invalid':
+      return 'Wrong code'
+    case 'code-expired':
+      return 'Code expired'
+    case 'password-needed':
+      return 'Password needed'
+    case 'password-invalid':
+      return 'Wrong password'
+    case 'phone-invalid':
+      return 'Phone number not accepted'
+    case 'app-invalid':
+      return 'api_id or api_hash rejected'
+    case 'invalid':
+      return 'Telegram refused the request'
+    case 'transient':
+      return 'Telegram could not be reached'
+  }
+}
+
+/** `describeError` with its heading in front: `Wrong code: That code is not right.` */
+export const describeErrorTitled = (kind: TgErrorKind): string =>
+  `${errorTitle(kind)}: ${describeError(kind)}`

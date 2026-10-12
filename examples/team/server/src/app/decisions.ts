@@ -37,6 +37,7 @@ import {
   type ProposedProgramInput,
   programOfProposal,
   reportBody,
+  withoutCenterHints,
 } from '../domain/decisions.ts'
 import { type DeliverableCheck, deliverableLine } from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
@@ -154,7 +155,7 @@ export function createProposal(deps: Deps, input: ProposeInput): Decision {
     id: deps.ids.next(),
     kind: 'proposal',
     title: checkTitle(input.title),
-    body: checkBody(input.body) || proposalBody(program, input.runOnce),
+    body: withoutCenterHints(checkBody(input.body)) || proposalBody(program, input.runOnce),
     agentId: asker.id,
     sessionId: input.sessionId,
     programId: null,
@@ -249,10 +250,13 @@ function standDownPayload(
   const flagged = [...new Set((standDown ?? []).map((l) => l.trim()))].filter((l) =>
     options.includes(l),
   )
+  // the payload says which options are remembered: the ones the agent flagged plus the allowlist
+  // fallback, exactly what `rememberStandDown` will check, so no client has to copy the word list
+  const effective = options.filter((o) => isStandDownChoice(o, flagged))
   return {
     question,
     options,
-    ...(flagged.length > 0 ? { standDown: flagged } : {}),
+    ...(effective.length > 0 ? { standDown: effective } : {}),
     source: 'agent',
   }
 }

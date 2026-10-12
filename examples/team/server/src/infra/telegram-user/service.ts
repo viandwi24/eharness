@@ -44,6 +44,7 @@ import { classifyError, describeError } from './errors.ts'
 import { chainOfMessage, normalizeMessage } from './normalize.ts'
 import {
   type AccountSettings,
+  AccountSettingsSchema,
   type ChatStore,
   nodeChatStore,
   sqliteCounterStore,
@@ -62,6 +63,21 @@ export const USER_RATE_DEFAULTS = {
   maxWaitMs: 300_000,
   breakerCooldownMs: 900_000,
 } as const
+
+/** The send limits a new account starts with (the account card shows "default N" beside each value). */
+export function accountLimitDefaults(): ChannelAccountView['limits'] {
+  const s = AccountSettingsSchema.parse({})
+  return {
+    dmDailyMax: s.dmDailyMax,
+    dailyMax: s.dailyMax,
+    adminLogEveryMs: s.adminLogEveryMs,
+    chatMinIntervalMs: USER_RATE_DEFAULTS.chatMinIntervalMs,
+    groupMax: USER_RATE_DEFAULTS.groupMax,
+    groupWindowMs: USER_RATE_DEFAULTS.groupWindowMs,
+    connectionMax: USER_RATE_DEFAULTS.connectionMax,
+    connectionWindowMs: USER_RATE_DEFAULTS.connectionWindowMs,
+  }
+}
 
 export interface TelegramUserOptions {
   sqlite: Database
@@ -637,6 +653,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         connectionMax: rate.connectionMax,
         connectionWindowMs: rate.connectionWindowMs,
       },
+      limitDefaults: accountLimitDefaults(),
       today: { dm: counters.get(id, 'dm', now()), all: counters.get(id, 'all', now()) },
       floods: {
         ...(e.lastFloodAt === undefined ? {} : { lastAt: e.lastFloodAt }),

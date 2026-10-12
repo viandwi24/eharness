@@ -50,6 +50,7 @@ import { inReview, type Task } from '../../domain/tasks.ts'
 import { taskRunPrompt, workItemPrompt } from '../../domain/work-queue.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
+import { withInstruction } from './instruction-marks.ts'
 
 /** The final report of a run (`TaskReport` in `domain/tasks.ts`). */
 export const REPORT_SCHEMA = z.object({
@@ -127,21 +128,24 @@ export function createProgramService(
     files: FileUIPart[] = [],
   ): Promise<string | undefined> {
     const session = factory.openSession(def, sessionId)
-    const run = session.send(files.length === 0 ? prompt : { text: prompt, files }, {
-      output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
-      ifBusy: 'reject',
-      maxSteps: PROGRAM_RUN_MAX_STEPS,
-      // every call reserves its worst case against the budgets: a run gets the cap its budget can
-      // afford, not the agent-wide one (`programMaxOutputTokens`)
-      ...factory.programTurn(def, sessionId),
+    // the prompt is the system's, not a person's: the stored message is flagged `instruction`
+    return withInstruction(sessionId, () => {
+      const run = session.send(files.length === 0 ? prompt : { text: prompt, files }, {
+        output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
+        ifBusy: 'reject',
+        maxSteps: PROGRAM_RUN_MAX_STEPS,
+        // every call reserves its worst case against the budgets: a run gets the cap its budget can
+        // afford, not the agent-wide one (`programMaxOutputTokens`)
+        ...factory.programTurn(def, sessionId),
+      })
+      return run.result.then(
+        (result) => (result as { stop?: string }).stop,
+        (error: unknown) => {
+          log.warn(`program run ${sessionId} failed: ${errorText(error)}`)
+          return undefined
+        },
+      )
     })
-    return run.result.then(
-      (result) => (result as { stop?: string }).stop,
-      (error: unknown) => {
-        log.warn(`program run ${sessionId} failed: ${errorText(error)}`)
-        return undefined
-      },
-    )
   }
 
   /**

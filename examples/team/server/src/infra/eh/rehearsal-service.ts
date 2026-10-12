@@ -64,6 +64,7 @@ import {
 import type { Task } from '../../domain/tasks.ts'
 import { workItemPrompt } from '../../domain/work-queue.ts'
 import type { AgentFactory } from './agent-factory.ts'
+import { clearInstruction, markInstruction } from './instruction-marks.ts'
 import { type OverlayFs, overlayFs } from './overlay-fs.ts'
 import { type RehearsalRecorder, rehearsalSessions } from './rehearsal-registry.ts'
 
@@ -245,6 +246,8 @@ export function createRehearsalService(
     prompt: string,
   ): Promise<{ stop: string; report: Rehearsal['report']; error: string | null }> {
     const session = factory.openSession(def, sessionId)
+    // the prompt is the system's: the stored message is flagged `instruction`
+    markInstruction(sessionId)
     const run = session.send(prompt, {
       output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
       ifBusy: 'reject',
@@ -263,6 +266,8 @@ export function createRehearsalService(
       }
     } catch (error) {
       return { stop: 'error', report: null, error: errorText(error) }
+    } finally {
+      clearInstruction(sessionId)
     }
   }
 

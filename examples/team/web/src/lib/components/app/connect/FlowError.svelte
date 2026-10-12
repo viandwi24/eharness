@@ -12,14 +12,20 @@
 		onBack,
 		onCancel
 	}: { view: Extract<FlowView, { type: 'error' }>; busy: boolean; canBack: boolean; onRetry: () => void; onBack: () => void; onCancel: () => void } = $props();
+
+	// A connector may start its message with a short heading: `Wrong code: That code is not right.`
+	const parts = $derived.by(() => {
+		const m = /^([^:.\n]{3,40}): (.+)$/s.exec(view.message);
+		return m ? { title: m[1] as string, text: m[2] as string } : { title: 'Could not connect', text: view.message };
+	});
 </script>
 
 <div class="flex flex-col gap-4">
 	<div class="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
 		<WarningIcon class="mt-0.5 size-5 shrink-0 text-destructive-text" />
 		<div class="flex flex-col gap-1">
-			<h3 class="text-sm font-medium">Could not connect</h3>
-			<p class="text-sm text-muted-foreground" role="alert">{view.message}</p>
+			<h3 class="text-sm font-medium">{parts.title}</h3>
+			<p class="text-sm text-muted-foreground" role="alert">{parts.text}</p>
 		</div>
 	</div>
 	<FlowFooter>

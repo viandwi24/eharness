@@ -137,6 +137,23 @@ export function checkTitle(title: string): string {
   return t
 }
 
+/**
+ * The body of a proposal without sentences that send the reader to the Decision Center ("Approve or
+ * edit it in the Decision Center."): the card is already there.
+ */
+export function withoutCenterHints(body: string): string {
+  return body
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(/(?:^|(?<=[.!?]\s))[^.!?\n]*\bin the Decision Center\b[^.!?\n]*[.!?]?\s*/gi, '')
+        .trimEnd(),
+    )
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export function checkBody(body: string | undefined): string {
   const b = (body ?? '').trim()
   if (b.length > MAX_BRIEF_CHARS) {
@@ -307,7 +324,9 @@ export const PROPOSE_PLAN_DESCRIPTION =
   'standing program (`runOnce: false`, optionally with a schedule). The plan is a program: name, ' +
   'brief (what to do, step by step), the authority it needs (tools, connectors, library paths), ' +
   'what still needs a decision (gates), forbidden actions and a budget. `body` is the pitch for ' +
-  'the client in markdown: the goal, the steps, why, and links to the evidence (library paths). ' +
+  'the client in markdown: the goal, the steps, why, and links to the evidence (library paths); do ' +
+  'not tell the reader where to approve it (the card already is the Decision Center). This is not ' +
+  'for reminders ("remind me at 9"): use the `reminder` tool for those. ' +
   '`agent` (required) is the slug of the agent that will run it. An open proposal that says the ' +
   'same thing is not created twice: you are told which one exists. This does not start anything and does ' +
   'not pause you: the client approves, edits or rejects it in the Decision Center. Ask for the ' +

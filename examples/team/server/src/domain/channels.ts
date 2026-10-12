@@ -84,6 +84,8 @@ export interface ChannelReminderView {
   chatTitle: string
   /** `<chat>/<topic>` (or the chat alone): where it posts, for the Routines page badge. */
   place: string
+  /** A reminder made in a web chat thread: the thread (session) it is delivered into. */
+  sessionId?: string
   /** The next fire of an active one-time reminder (epoch ms). */
   nextAt?: number
   text: string
@@ -134,6 +136,8 @@ export interface ChannelAccountView {
     connectionMax: number
     connectionWindowMs: number
   }
+  /** What a new account starts with, per limit (the card says "default N"). */
+  limitDefaults: ChannelAccountView['limits']
   today: { dm: number; all: number }
   floods: { lastAt?: number; parkedChats: number }
   /** Jobs (backfill) are paused by a flood storm until this time. */

@@ -10,6 +10,20 @@ import type { RoutineSpec } from '../../domain/routines.ts'
 import { localTime } from './header.ts'
 import { parseClock, parseLocalDateTime, wallOf } from './time.ts'
 
+/** The `connectionId` of a reminder that is delivered into a web chat thread (no channel connection). */
+export const WEB_REMINDER_CONNECTION = 'web'
+const WEB_NODE_PREFIX = 'thread:'
+/** The `nodeId` of a reminder for the thread (session) it was created in. */
+export const webReminderNode = (sessionId: string): string => `${WEB_NODE_PREFIX}${sessionId}`
+/** The session id of a web reminder row, or undefined for a channel reminder. */
+export const webReminderSession = (r: {
+  connectionId: string
+  nodeId: string
+}): string | undefined =>
+  r.connectionId === WEB_REMINDER_CONNECTION && r.nodeId.startsWith(WEB_NODE_PREFIX)
+    ? r.nodeId.slice(WEB_NODE_PREFIX.length)
+    : undefined
+
 export type ReminderStatus = 'active' | 'done' | 'cancelled'
 
 export interface ReminderRow {

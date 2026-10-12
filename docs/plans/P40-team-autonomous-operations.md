@@ -596,6 +596,14 @@ Decided in phase N:
   (stand-down). Not covered by a test: persona apply-after-commit, legacy attempts counter,
   `taskMayPost` wiring.
 
+## UX follow-ups (written, not run)
+
+Server markers the web reads instead of guessing: `metadata.app.instruction` (task, program, routine, rehearsal
+prompts), `metadata.app.autoAllowed` (calls let through without asking), `payload.standDown` (options a program
+remembers). Plan cards say schedule and authority in words and no longer point to the Decision Center inside it;
+`task.queueNote` shows beside the slot label. Reminders also work from web chats (P41 notes, walkthrough 28g), so the
+lead no longer turns "remind me" into a proposal. No library change.
+
 ## Requests to other phases
 
 - Library (optional, not blocking): `createChatSession` of `eharness/client` has `send`, `retryTurn` and

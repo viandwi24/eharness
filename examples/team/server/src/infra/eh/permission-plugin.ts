@@ -111,8 +111,33 @@ export function sessionPermissions<G extends SessionGate = SessionGate>(
                 return verdict
               },
             } as typeof base)
+      // which calls the rules let through without asking: `metadata.app.autoAllowed[toolCallId]`
+      // on the assistant message, so the web chip says "Auto-allowed" without guessing from reasons
+      const auto = new Map<string, AutoAllowedVia>()
+      const hooksWithMarks = {
+        ...(hooks ?? {}),
+        'approval.decided': async (hookCtx: unknown, e: ApprovalDecisionLike) => {
+          const inner = hooks?.['approval.decided'] as
+            | ((c: unknown, d: ApprovalDecisionLike) => unknown)
+            | undefined
+          if (e.approved && e.by !== 'user' && e.by !== 'new-input') {
+            auto.set(e.toolCallId, autoAllowedVia(e.by, opts.mode(hookCtx as HarnessContext)))
+          }
+          await inner?.(hookCtx, e)
+        },
+        'message.beforeSave': async (hookCtx: unknown, message: MarkableMessage) => {
+          const inner = hooks?.['message.beforeSave'] as
+            | ((
+                c: unknown,
+                m: MarkableMessage,
+              ) => Promise<MarkableMessage | undefined> | MarkableMessage | undefined)
+            | undefined
+          const next = (await inner?.(hookCtx, message)) ?? message
+          return markAutoAllowed(next, auto) ?? (next === message ? undefined : next)
+        },
+      } as typeof base
       return {
-        ...(hooks === undefined ? {} : { hooks }),
+        hooks: hooksWithMarks,
         dispose: () => {
           unsubscribe()
           if (opts.registry.get(sessionId) === engine) opts.registry.delete(sessionId)
@@ -158,5 +183,51 @@ function gatedApprove(
     // approved (or no objection): a rehearsal still does not make the call of an external write
     const simulated = gate.simulate?.({ toolName: e.toolName, input: e.input, risk: e.risk })
     return simulated === undefined ? verdict : { type: 'denied', reason: simulated }
+  }
+}
+
+/** How a call was let through without a person: a saved grant, the permission rules, or the mode (Auto / Bypass). */
+export type AutoAllowedVia = 'grant' | 'rule' | 'mode'
+
+interface ApprovalDecisionLike {
+  toolCallId: string
+  approved: boolean
+  by: string
+}
+
+export interface MarkableMessage {
+  id: string
+  role: string
+  parts: Array<{ type: string; toolCallId?: string }>
+  metadata?: unknown
+}
+
+export const autoAllowedVia = (by: string, mode: TeamMode): AutoAllowedVia =>
+  by === 'grant' ? 'grant' : mode === 'manual' ? 'rule' : 'mode'
+
+/**
+ * The message with `metadata.app.autoAllowed` (tool call id to how it was let through) for the
+ * calls of this message that were auto-allowed; `undefined` when there is nothing to add.
+ */
+export function markAutoAllowed<M extends MarkableMessage>(
+  message: M,
+  auto: ReadonlyMap<string, AutoAllowedVia>,
+): M | undefined {
+  if (message.role !== 'assistant' || auto.size === 0) return undefined
+  const marks: Record<string, AutoAllowedVia> = {}
+  for (const part of message.parts) {
+    const via = part.toolCallId === undefined ? undefined : auto.get(part.toolCallId)
+    if (via !== undefined && part.toolCallId !== undefined) marks[part.toolCallId] = via
+  }
+  if (Object.keys(marks).length === 0) return undefined
+  const meta = (message.metadata ?? {}) as {
+    app?: { autoAllowed?: Record<string, AutoAllowedVia> }
+  }
+  return {
+    ...message,
+    metadata: {
+      ...meta,
+      app: { ...meta.app, autoAllowed: { ...meta.app?.autoAllowed, ...marks } },
+    },
   }
 }

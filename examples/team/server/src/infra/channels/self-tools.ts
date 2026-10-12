@@ -137,7 +137,7 @@ const recapSaveSchema = z.object({
       'The recap you wrote from the chunks: decisions, open items, who said what that matters.',
     ),
 })
-const reminderSchema = z.object({
+export const reminderSchema = z.object({
   action: z.enum(['create', 'list', 'cancel', 'update']),
   connection: scopeFields.connection,
   chat: scopeFields.chat,

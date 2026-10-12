@@ -98,6 +98,8 @@ import {
   channelVaultFromEnv,
   createChannelGateway,
 } from './infra/channels/index.ts'
+import { webReminderSession } from './infra/channels/reminders.ts'
+import { webReminderPost } from './infra/channels/web-reminders.ts'
 import { sqliteActivityStore } from './infra/db/activity-store.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
@@ -873,6 +875,41 @@ export function compose(config: ServerConfig): Server {
       routines: routineStore,
       schedule,
       ids: () => uuidv7(),
+      // a reminder made in a web chat thread: the fixed text lands in that thread as a notice (no
+      // model call) and rings the bell
+      web: {
+        deliver: async (rem, slot) => {
+          const sessionId = webReminderSession(rem)
+          const def = agents.get(rem.agentId)
+          if (sessionId === undefined || def === undefined || def.archivedAt !== null)
+            return { posted: false, reason: 'the chat of this reminder is gone' }
+          const text = webReminderPost(rem.body)
+          await factory.prepare(def)
+          await (
+            factory.openSession(def, sessionId) as unknown as {
+              inject(kind: string, data: unknown, options?: { key?: string }): Promise<unknown>
+            }
+          ).inject(
+            'eh.notice',
+            { level: 'info', code: 'EH_REMINDER', message: text },
+            { key: `reminder:${rem.id}:${slot}` },
+          )
+          events.append({
+            type: 'message-added',
+            agentId: def.id,
+            sessionId,
+            payload: { role: 'assistant', preview: text.slice(0, 120) },
+          })
+          channelNotify({
+            key: `reminder:${rem.id}:${slot}`,
+            title: 'Reminder',
+            body: text,
+            agentId: def.id,
+            link: `/a/${def.id}?t=${encodeURIComponent(sessionId)}`,
+          })
+          return { posted: true }
+        },
+      },
       maxRepeatingPerPerson:
         config.channels?.maxRepeatingReminders ??
         (Number.isInteger(Number((config.env ?? process.env).TEAM_MAX_REPEATING_REMINDERS)) &&

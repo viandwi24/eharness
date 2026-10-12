@@ -1629,6 +1629,35 @@ unchanged.
 See [P41 L6 notes](../plans/P41-team-channels.md#l6-notes-as-built) for the details and the limits.
 **Test it.** `bun test test/channels-l6.test.ts` (scripted models, mock adapter).
 
+## 28g. Reminders in web chats, and the markers the UI reads (UX follow-ups)
+
+- **`reminder` in a web thread.** The same tool as in a channel (create, list, cancel, update; `message` is
+  the reminder itself, `request` the person's words, `verbatim` for quoted text) is available to every
+  agent in a person's own chat (`infra/channels/web-reminders.ts`). The target is the thread it was made in:
+  a fire stores the fixed text as an `eh.notice` in that thread (`EH_REMINDER`) and rings the bell, with no
+  model call (`reminders.web.deliver` in `main.ts`). Rows live in `ch_reminders` with connection `web` and
+  the node `thread:<sessionId>`, scheduled as `sys:reminder:<id>` routines, so they show on the Routines page
+  next to channel reminders (`sessionId` in the view). A self-reminder needs no approval (`reminder` is a
+  rule-allowed own write); naming a chat (`chat`, `topic`, `connection`) hands the call to the channel tool
+  with its role rules. Tasks, programs, routines, heartbeats, rehearsals and delegations have no `reminder`.
+  The lead's playbook and `propose_plan` say a reminder is not a plan.
+- **Instruction marker.** The prompt of a task, program run, routine fire or rehearsal is stored with
+  `metadata.app.instruction = true` (`infra/eh/instruction-marks.ts`; `send()` has no app metadata, so the
+  caller marks the session and the message adapter stamps the next user message; routines use
+  `enqueue(..., { metadata })`). The web shows the Instructions card from the flag and keeps the
+  first-message guess only for old history.
+- **Auto-allowed marker.** The permissions plugin records calls let through without asking and stores
+  `metadata.app.autoAllowed[toolCallId] = 'grant' | 'rule' | 'mode'` on the assistant message
+  (`message.beforeSave`); the chip reads it.
+- **Escalation stand-down.** `payload.standDown` of an escalation now lists every option that a standing
+  program remembers (flagged by the agent or on the fallback word list); the card uses it.
+- **Plan cards.** The web says the schedule in words with the zone, "may touch / will not touch" without
+  tool ids, and drops sentences that point to the Decision Center from the body (also removed on the
+  server when a proposal is stored).
+- **Telegram account copy.** The login method options carry labels, the api-credentials step is short,
+  flow errors start with their own heading (`Wrong code: ...`, split by the web) and the account view
+  carries `limitDefaults` for "default N".
+
 ## 28f. The persona of an agent: editable, versioned, never above the rules (P42)
 
 Who an agent is (name, voice, tone, language) is data a person can change, from the web or by asking the agent,

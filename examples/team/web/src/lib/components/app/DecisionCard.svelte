@@ -13,7 +13,7 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { decide } from '#lib/decisions/actions.js';
-	import { type Decision, grantLines, isOpen, isStandDownChoice, KIND_INFO, optionsOf, outcomeLine, proposalBudget, statusBadge, triggerLine } from '#lib/decisions/model.js';
+	import { cleanBody, type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, standDownOptions, statusBadge, triggerLine, willNotTouchLines } from '#lib/decisions/model.js';
 	import EffectiveGrant from './EffectiveGrant.svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
@@ -26,13 +26,15 @@
 	const open = $derived(isOpen(decision));
 	const options = $derived(optionsOf(decision));
 	const grants = $derived(grantLines(decision));
+	const body = $derived(cleanBody(decision.body));
+	const wontTouch = $derived(decision.kind === 'proposal' ? willNotTouchLines(decision.payload) : []);
 	const badge = $derived(statusBadge(decision));
 	let note = $state('');
 	let rejecting = $state(false);
 	let busy = $state(false);
 	let bodyOpen = $state(false);
-	const longBody = $derived(decision.body.length > 500 || decision.body.split('\n').length > 8);
-	const rememberHint = $derived(decision.kind === 'escalation' && open && decision.programId !== null ? options.filter(isStandDownChoice) : []);
+	const longBody = $derived(body.length > 500 || body.split('\n').length > 8);
+	const rememberHint = $derived(decision.kind === 'escalation' && open && decision.programId !== null ? standDownOptions(decision) : []);
 
 	/** The DM chat a proposal came from, or the task session of a run. */
 	async function openSource(): Promise<void> {
@@ -90,10 +92,10 @@
 		</div>
 	</div>
 
-	{#if decision.body}
+	{#if body}
 		<div class="rounded-md border border-border bg-muted/40 px-3 py-2" data-testid="decision-body">
 			<div class={bodyOpen || !longBody ? '' : 'max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]'}>
-				<div class="[&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_code]:break-words"><MessageResponse content={decision.body} class="text-[13.5px]" /></div>
+				<div class="[&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_code]:break-words"><MessageResponse content={body} class="text-[13.5px]" /></div>
 			</div>
 			{#if longBody}
 				<button type="button" class="mt-1 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" aria-expanded={bodyOpen} onclick={() => (bodyOpen = !bodyOpen)}>{bodyOpen ? 'Show less' : 'Show more'}</button>
@@ -117,9 +119,9 @@
 				<dt class="text-muted-foreground">Must leave</dt>
 				<dd class="font-mono text-xs" data-testid="proposal-deliverables">{decision.payload.program.deliverables.map((d) => `${d.path} (${d.kind})`).join(', ')}</dd>
 			{/if}
-			{#if decision.payload.program.forbidden.length}
-				<dt class="text-muted-foreground">Forbidden</dt>
-				<dd class="font-mono text-xs">{decision.payload.program.forbidden.join(', ')}</dd>
+			{#if wontTouch.length}
+				<dt class="text-muted-foreground">Will not touch</dt>
+				<dd>{wontTouch.join('; ')}</dd>
 			{/if}
 		</dl>
 	{/if}
@@ -127,11 +129,11 @@
 	{#if decision.kind !== 'escalation'}
 		<div data-testid="decision-grants">
 			<div class="mb-1 text-xs font-medium text-muted-foreground">
-				{decision.kind === 'amendment' ? 'Approving adds this to the program' : 'Approving grants exactly this authority'}
+				{decision.kind === 'amendment' ? 'Approving lets the program also' : 'If you approve, it may touch'}
 			</div>
 			{#if grants.length}
 				<ul class="flex flex-col gap-0.5 text-[13px]">
-					{#each grants as line (line)}<li class="font-mono text-xs before:mr-2 before:content-['•']">{line}</li>{/each}
+					{#each grants as line (line)}<li class="before:mr-2 before:content-['•']">{line}</li>{/each}
 				</ul>
 			{:else}
 				<p class="text-[13px] text-muted-foreground">Nothing beyond finding and planning its own work.</p>

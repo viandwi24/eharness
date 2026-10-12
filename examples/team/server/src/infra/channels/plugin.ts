@@ -30,7 +30,13 @@ import { MEMORY_READ_TOOLS, memoryWriteRefusal, SMALL_TALK_MEMORY_REFUSAL } from
 import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
 import { decideTool } from './roles.ts'
-import { SELF_READ_TOOLS, SELF_TOOLS, SELF_WRITE_TOOLS, selfTools } from './self-tools.ts'
+import {
+  REMINDER_TOOL,
+  SELF_READ_TOOLS,
+  SELF_TOOLS,
+  SELF_WRITE_TOOLS,
+  selfTools,
+} from './self-tools.ts'
 import type { ActionRisk, ChannelAdapter, HistoryEntry } from './types.ts'
 
 export const CHANNEL_DESCRIBE_TOOL = 'channel_describe'
@@ -552,6 +558,9 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       // the generic self-knowledge tools (layer 1): status, topics, people, history, recaps, reminders
       const own = selfTools({ gw, sessionId, agentId, origin })
       for (const [name, def] of Object.entries(own)) {
+        // outside a chat the `reminder` tool is the web one (`web-reminders.ts`), which hands a named
+        // chat back to this implementation
+        if (!inChannel && name === REMINDER_TOOL) continue
         const writes = (SELF_WRITE_TOOLS as readonly string[]).includes(name)
         tools[name] =
           rehearsal && writes

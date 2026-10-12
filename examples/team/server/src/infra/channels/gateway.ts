@@ -92,6 +92,8 @@ import {
   readWhen,
   reminderText,
   sqliteReminderStore,
+  WEB_REMINDER_CONNECTION,
+  webReminderNode,
 } from './reminders.ts'
 import {
   isStaff,
@@ -273,6 +275,13 @@ export interface GatewayDeps {
     ids?: () => string
     /** Most active repeating reminders one person may have (default 10; 0 = no limit). */
     maxRepeatingPerPerson?: number
+    /**
+     * Reminders made in a web chat thread (`connectionId` `web`): a fire posts the fixed text into
+     * that thread and rings the bell, no model call. Absent = thread reminders are not set up.
+     */
+    web?: {
+      deliver(reminder: ReminderRow, slot: number): Promise<{ posted: boolean; reason?: string }>
+    }
   }
   /** Where `chat_recap_save` writes its note (the library). Absent = the tool cannot save. */
   library?: { write(path: string, text: string): Promise<void> }
@@ -516,8 +525,19 @@ export interface ReminderCreate {
   createdBy?: { identityId?: string; name?: string; role?: Role } | undefined
 }
 
+export interface ThreadReminderCreate {
+  /** The web chat thread (session) the reminder is delivered into. */
+  sessionId: string
+  agentId: string
+  text: string
+  when: ReminderWhen
+  createdBy?: { name?: string; role?: Role } | undefined
+}
+
 export interface RemindersApi {
   create(input: ReminderCreate): { reminder: ReminderRow } | { error: string }
+  /** A reminder that fires into a web chat thread (self-reminders of the person using the app). */
+  createInThread(input: ThreadReminderCreate): { reminder: ReminderRow } | { error: string }
   list(
     connectionId: string,
     filter?: { status?: ReminderRow['status']; nodeIds?: readonly string[]; createdBy?: string },
@@ -1755,6 +1775,69 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       reminderChanged(input.agentId, id, 'created')
       return { reminder: row }
     },
+    createInThread(input) {
+      const r = deps.reminders
+      if (r === undefined || r.web === undefined)
+        return { error: 'Reminders in a chat are not set up on this server.' }
+      const body = input.text.trim()
+      if (body === '') return { error: 'A reminder needs text.' }
+      if (body.length > 1000) return { error: 'The reminder text is over 1000 characters.' }
+      const zone = zoneNow()
+      const when = readWhen(input.when, zone, now(), (expr, after) =>
+        r.schedule.next({ kind: 'cron', expr, tz: zone }, after),
+      )
+      if ('error' in when) return when
+      const cap = r.maxRepeatingPerPerson ?? 10
+      if (cap > 0 && when.spec.kind !== 'at') {
+        const mine = reminderStore
+          .list(WEB_REMINDER_CONNECTION, { status: 'active' })
+          .filter((x) => x.schedule.kind !== 'at').length
+        if (mine >= cap)
+          return {
+            error: `There are already ${mine} repeating reminders in chats (the limit is ${cap}). Cancel one first, or make this one a single reminder.`,
+          }
+      }
+      const id = reminderId()
+      let routine: Routine
+      try {
+        r.schedule.validate(when.spec)
+        routine = r.routines.insert({
+          id: uuidv7(),
+          agentId: input.agentId,
+          name: `Reminder: ${clipLine(body, 60)}`,
+          prompt: `Reminder ${id}`,
+          schedule: when.spec,
+          sessionMode: 'task',
+          overlap: 'queue',
+          catchUpWindowMs: CATCH_UP_MS,
+          maxFailures: 5,
+          maxFires: when.spec.kind === 'at' ? 1 : null,
+          endAt: null,
+          nextFireAt: when.firstAt,
+          programId: reminderKey(id),
+          now: now(),
+        })
+      } catch (error) {
+        return { error: errorText(error) }
+      }
+      const row = reminderStore.insert({
+        id,
+        connectionId: WEB_REMINDER_CONNECTION,
+        nodeId: webReminderNode(input.sessionId),
+        agentId: input.agentId,
+        routineId: routine.id,
+        body,
+        mentions: [],
+        schedule: when.spec,
+        whenText: when.text,
+        timezone: zone,
+        createdByName: input.createdBy?.name,
+        createdByRole: input.createdBy?.role,
+        createdAt: now(),
+      })
+      reminderChanged(input.agentId, id, 'created')
+      return { reminder: row }
+    },
     list: (connectionId, filter) => reminderStore.list(connectionId, filter),
     get: (id) => reminderStore.get(id),
     cancel(id) {
@@ -1840,6 +1923,27 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       const rem = reminderStore.get(id)
       if (rem === undefined) return { posted: false, reason: 'the reminder was deleted' }
       if (rem.status !== 'active') return { posted: false, reason: `the reminder is ${rem.status}` }
+      if (rem.connectionId === WEB_REMINDER_CONNECTION) {
+        const web = deps.reminders?.web
+        if (web === undefined) return { posted: false, reason: 'reminders in chats are not set up' }
+        let out: { posted: boolean; reason?: string }
+        try {
+          out = await web.deliver(rem, slot)
+        } catch (error) {
+          reminderStore.update(id, { lastError: errorText(error).slice(0, 300) })
+          return { posted: false, reason: errorText(error) }
+        }
+        if (out.posted) {
+          reminderStore.update(rem.id, {
+            lastFiredAt: now(),
+            fired: true,
+            lastError: null,
+            ...(rem.schedule.kind === 'at' ? { status: 'done' as const } : {}),
+          })
+          reminderChanged(rem.agentId, rem.id, 'updated')
+        }
+        return out
+      }
       const node = nodes.get(rem.nodeId)
       const config = cache.get(rem.connectionId)
       if (node === undefined || config === undefined) {

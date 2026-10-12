@@ -8,7 +8,7 @@
 	import InstructionCard from './InstructionCard.svelte';
 	import InputPart from './InputPart.svelte';
 	import NoticePart from './NoticePart.svelte';
-	import { hasVisibleParts, messageKind, type PartView, viewModel, wasStopped } from './map.js';
+	import { hasVisibleParts, isInstructionMessage, messageKind, type PartView, viewModel, wasStopped } from './map.js';
 	import ReasoningPart from './ReasoningPart.svelte';
 	import SourcePart from './SourcePart.svelte';
 	import SubagentPart from './SubagentPart.svelte';
@@ -51,12 +51,13 @@
 		scratch?: boolean;
 		/** Something may still stream into this message; false for settled history. */
 		live?: boolean;
-		/** A user message the system wrote (task, program or rehearsal prompt): shown as a collapsed Instructions card. */
+		/** Old-history fallback: this is the first message of a task session, so it is the system's prompt. A server flag (`metadata.app.instruction`) decides on its own. */
 		instruction?: boolean;
 	} = $props();
 
 	const views = $derived(viewModel(message, live));
 	const kind = $derived(messageKind(message));
+	const isInstruction = $derived(isInstructionMessage(message, instruction));
 
 	// Consecutive files / sources / plain tool calls collapse into one block.
 	const blocks = $derived.by((): Block[] => {
@@ -96,7 +97,7 @@
 
 {#snippet part(v: PartView)}
 	{#if v.kind === 'text'}
-		{#if message.role === 'user' && instruction}<InstructionCard text={v.text} />{:else if message.role === 'user'}<UserText text={v.text} />{:else}<TextPart text={v.text} />{/if}
+		{#if message.role === 'user' && isInstruction}<InstructionCard text={v.text} />{:else if message.role === 'user'}<UserText text={v.text} />{:else}<TextPart text={v.text} />{/if}
 	{:else if v.kind === 'reasoning'}
 		<ReasoningPart text={v.text} streaming={v.streaming} durationMs={v.durationMs} />
 	{:else if v.kind === 'tool'}

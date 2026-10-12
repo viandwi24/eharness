@@ -26,6 +26,8 @@ import {
   uuidv7,
 } from 'eharness'
 
+import { INSTRUCTION_METADATA, isInstruction, takeInstruction } from './instruction-marks.ts'
+
 type Sqlite = Database
 type Param = string | number | bigint | boolean | null | Uint8Array
 
@@ -59,6 +61,31 @@ export function sqliteMessages(sqlite: Sqlite): MessageAdapter {
        SET role = excluded.role, parts = excluded.parts, metadata = excluded.metadata`,
   )
   const cols = 'id, role, parts, metadata'
+  const storedMeta = sqlite.query<{ metadata: string | null }, [string, string]>(
+    'SELECT metadata FROM eh_messages WHERE session_id = ? AND id = ?',
+  )
+  /**
+   * The metadata JSON of a message to store. The user message a task, program, rehearsal or
+   * heartbeat prompt became carries `metadata.app.instruction` (`instruction-marks.ts`); a later
+   * save of the same message (the in-memory copy has no flag) keeps it.
+   */
+  const stampInstruction = (sessionId: string, m: UIMessage): string | null => {
+    if (
+      m.role !== 'user' ||
+      (m.metadata as { eharness?: { kind?: string } } | undefined)?.eharness?.kind !== undefined
+    ) {
+      return m.metadata === undefined ? null : JSON.stringify(m.metadata)
+    }
+    let flagged = isInstruction(m.metadata)
+    if (!flagged) flagged = takeInstruction(sessionId)
+    if (!flagged) {
+      const row = storedMeta.get(sessionId, m.id)
+      flagged = row?.metadata != null && isInstruction(JSON.parse(row.metadata))
+    }
+    if (!flagged) return m.metadata === undefined ? null : JSON.stringify(m.metadata)
+    const base = (m.metadata ?? {}) as { app?: Record<string, unknown> }
+    return JSON.stringify({ ...base, app: { ...base.app, ...INSTRUCTION_METADATA } })
+  }
   return {
     async load({ sessionId, fromId, beforeId, limit }) {
       if (fromId !== undefined && beforeId !== undefined) {
@@ -100,7 +127,7 @@ export function sqliteMessages(sqlite: Sqlite): MessageAdapter {
             m.id,
             m.role,
             JSON.stringify(m.parts),
-            m.metadata === undefined ? null : JSON.stringify(m.metadata),
+            stampInstruction(sessionId, m),
             now,
           )
         }

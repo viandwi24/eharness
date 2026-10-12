@@ -94,20 +94,25 @@ export const ChannelBindingSchema = z
   })
   .openapi('ChannelBinding')
 
+const AccountLimitsSchema = z.object({
+  dmDailyMax: z.number().int(),
+  dailyMax: z.number().int(),
+  adminLogEveryMs: z.number().int(),
+  chatMinIntervalMs: z.number().int(),
+  groupMax: z.number().int(),
+  groupWindowMs: z.number().int(),
+  connectionMax: z.number().int(),
+  connectionWindowMs: z.number().int(),
+})
+
 export const ChannelAccountSchema = z
   .object({
     accountId: z.string().optional(),
     username: z.string().optional(),
     phone: z.string().optional().openapi({ description: 'Masked, never the full number.' }),
-    limits: z.object({
-      dmDailyMax: z.number().int(),
-      dailyMax: z.number().int(),
-      adminLogEveryMs: z.number().int(),
-      chatMinIntervalMs: z.number().int(),
-      groupMax: z.number().int(),
-      groupWindowMs: z.number().int(),
-      connectionMax: z.number().int(),
-      connectionWindowMs: z.number().int(),
+    limits: AccountLimitsSchema,
+    limitDefaults: AccountLimitsSchema.openapi({
+      description: 'The values a new account starts with, for "default N" beside each limit.',
     }),
     today: z.object({ dm: z.number().int(), all: z.number().int() }),
     floods: z.object({ lastAt: z.number().int().optional(), parkedChats: z.number().int() }),
@@ -629,7 +634,14 @@ export const ChannelReminderSchema = z
     agentId: z.string(),
     nodeId: z.string(),
     chatTitle: z.string(),
-    place: z.string().openapi({ description: '`<chat>/<topic>` where it posts.' }),
+    place: z.string().openapi({
+      description:
+        '`<chat>/<topic>` where it posts, or `This chat` for a reminder of a web chat thread.',
+    }),
+    sessionId: z.string().optional().openapi({
+      description:
+        'A reminder made in a web chat thread (`connectionId` `web`): the thread it is delivered into.',
+    }),
     nextAt: z.number().int().optional().openapi({
       description: 'The next fire of an active one-time reminder (epoch ms).',
     }),

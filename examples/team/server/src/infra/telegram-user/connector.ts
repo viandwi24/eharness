@@ -22,7 +22,7 @@ import { type AnyConnectorDefinition, defineConnector, type FlowStepDef } from '
 import { ehMeta, formSpec } from 'eharness/providers'
 import { z } from 'zod'
 import type { TgChat, TgUser } from './client.ts'
-import { classifyError, describeError } from './errors.ts'
+import { classifyError, describeError, describeErrorTitled } from './errors.ts'
 import type { LoginSessions } from './login.ts'
 
 export const TELEGRAM_USER_CONNECTOR_ID = 'telegram-user'
@@ -74,7 +74,10 @@ const MethodSchema = z.object({
       title: 'Sign in with',
       description:
         'A code Telegram sends to the account, or a QR code you scan in the Telegram app (Settings, Devices, Link Desktop Device).',
-      ...ehMeta({ group: 'auth' }),
+      ...ehMeta({
+        group: 'auth',
+        optionLabels: { code: 'A code sent by Telegram', qr: 'A QR code I scan' },
+      }),
     }),
   phone: z
     .string()
@@ -173,7 +176,7 @@ export function telegramUserConnector(options: UserConnectorOptions): AnyConnect
       view: (ctx) => ({
         type: 'form',
         title: 'Telegram API credentials',
-        description: `Telegram needs an api_id and api_hash for this app, from my.telegram.org/apps (${OBTAINING_API_ID_URL}). Set them once for the workspace; use a dedicated account, enable two-step verification, and read the terms of Telegram's API (${TERMS_URL}): signing in a user account with an API client can get the account limited or banned.`,
+        description: `Get an api_id and api_hash at my.telegram.org/apps (${OBTAINING_API_ID_URL}) and read the API terms (${TERMS_URL}). You set them once for the workspace. Use a dedicated account: Telegram may limit accounts that an API client drives.`,
         fields: fieldsOf(AppSchema),
         values: { apiId: String(ctx.scratch.appDraftId ?? '') },
         ...(ctx.notice?.errors === undefined ? {} : { errors: ctx.notice.errors }),
@@ -267,7 +270,7 @@ export function telegramUserConnector(options: UserConnectorOptions): AnyConnect
         } catch (error) {
           const k = classifyError(error)
           return {
-            error: describeError(k),
+            error: describeErrorTitled(k),
             retryable: k.kind === 'flood' || k.kind === 'transient',
           }
         }
@@ -320,11 +323,11 @@ export function telegramUserConnector(options: UserConnectorOptions): AnyConnect
               s.phoneCodeHash = sent.phoneCodeHash
               return { stay: true, message: 'That code expired. A new one is on its way.' }
             } catch (again) {
-              return { error: describeError(classifyError(again)), retryable: true }
+              return { error: describeErrorTitled(classifyError(again)), retryable: true }
             }
           }
           return {
-            error: describeError(k),
+            error: describeErrorTitled(k),
             retryable: k.kind === 'flood' || k.kind === 'transient',
           }
         }
@@ -358,7 +361,7 @@ export function telegramUserConnector(options: UserConnectorOptions): AnyConnect
         const qr = s.qr
         if (qr.error !== undefined) {
           const k = classifyError(qr.error)
-          return { error: describeError(k), retryable: true }
+          return { error: describeErrorTitled(k), retryable: true }
         }
         if (qr.user !== undefined) return { goto: 'test' }
         if (qr.needPassword) {
@@ -413,7 +416,7 @@ export function telegramUserConnector(options: UserConnectorOptions): AnyConnect
             return { stay: true, errors: { password: describeError(k) } }
           }
           return {
-            error: describeError(k),
+            error: describeErrorTitled(k),
             retryable: k.kind === 'flood' || k.kind === 'transient',
           }
         }
@@ -440,7 +443,7 @@ export function telegramUserConnector(options: UserConnectorOptions): AnyConnect
           return { next: true }
         } catch (error) {
           const k = classifyError(error)
-          return { error: describeError(k), retryable: true }
+          return { error: describeErrorTitled(k), retryable: true }
         }
       },
     },
@@ -461,7 +464,7 @@ export function telegramUserConnector(options: UserConnectorOptions): AnyConnect
           }))
           return undefined
         } catch (error) {
-          return { error: describeError(classifyError(error)), retryable: true }
+          return { error: describeErrorTitled(classifyError(error)), retryable: true }
         }
       },
       view: (ctx) => {

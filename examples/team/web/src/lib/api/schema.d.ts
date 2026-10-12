@@ -13155,8 +13155,10 @@ export interface components {
             agentId: string;
             nodeId: string;
             chatTitle: string;
-            /** @description `<chat>/<topic>` where it posts. */
+            /** @description `<chat>/<topic>` where it posts, or `This chat` for a reminder of a web chat thread. */
             place: string;
+            /** @description A reminder made in a web chat thread (`connectionId` `web`): the thread it is delivered into. */
+            sessionId?: string;
             /** @description The next fire of an active one-time reminder (epoch ms). */
             nextAt?: number;
             text: string;
@@ -13932,7 +13934,7 @@ export interface components {
             question: string;
             /** @description Answers to pick from; empty: approve or reject. */
             options: string[];
-            /** @description The options the agent flagged as "leave it for now" (a subset of `options`); a pick of one is remembered by a standing program. */
+            /** @description The options that mean "leave it for now" (a subset of `options`): the ones the agent flagged plus the server's fallback word list. A pick of one is remembered by a standing program, so a client shows the hint from this list and keeps no word list of its own. */
             standDown?: string[];
             /**
              * @description `agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`.
@@ -14409,6 +14411,17 @@ export interface components {
             /** @description Masked, never the full number. */
             phone?: string;
             limits: {
+                dmDailyMax: number;
+                dailyMax: number;
+                adminLogEveryMs: number;
+                chatMinIntervalMs: number;
+                groupMax: number;
+                groupWindowMs: number;
+                connectionMax: number;
+                connectionWindowMs: number;
+            };
+            /** @description The values a new account starts with, for "default N" beside each limit. */
+            limitDefaults: {
                 dmDailyMax: number;
                 dailyMax: number;
                 adminLogEveryMs: number;

@@ -7,7 +7,7 @@ import type { ChannelInboxPort } from '../../app/ports.ts'
 import type { ChannelPersonView, ChannelReminderView } from '../../domain/channels.ts'
 import { invalid, notFound } from '../../domain/errors.ts'
 import type { ChannelGateway, PersonView } from './gateway.ts'
-import type { ReminderRow } from './reminders.ts'
+import { type ReminderRow, WEB_REMINDER_CONNECTION, webReminderSession } from './reminders.ts'
 
 const personOf = (v: PersonView): ChannelPersonView => ({
   peerId: v.peerId,
@@ -163,11 +163,9 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
         .map(view)
     },
     async allReminders(opts) {
-      const rows = gateway
-        .connections()
-        .flatMap((c) =>
-          gateway.reminders.list(c.connectionId, opts.all ? {} : { status: 'active' }),
-        )
+      // reminders made in web chat threads ride along with the channel ones
+      const rows = [...gateway.connections().map((c) => c.connectionId), WEB_REMINDER_CONNECTION]
+        .flatMap((id) => gateway.reminders.list(id, opts.all ? {} : { status: 'active' }))
         .filter((r) => opts.agentId === undefined || r.agentId === opts.agentId)
       // active first (soonest first), then the finished ones, newest first, capped
       const active = rows
@@ -180,7 +178,7 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
       return [...active, ...finished].map(view)
     },
     async cancelReminder(id, reminderId) {
-      await known(id)
+      if (id !== WEB_REMINDER_CONNECTION) await known(id)
       const r = gateway.reminders.get(reminderId)
       if (r === undefined || r.connectionId !== id) throw notFound('reminder', reminderId)
       gateway.reminders.cancel(reminderId)
@@ -192,6 +190,30 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
   }
 
   function view(r: ReminderRow): ChannelReminderView {
+    const thread = webReminderSession(r)
+    if (thread !== undefined) {
+      const next = r.status === 'active' ? nextAtOf(r) : undefined
+      return {
+        id: r.id,
+        connectionId: r.connectionId,
+        agentId: r.agentId,
+        nodeId: r.nodeId,
+        sessionId: thread,
+        chatTitle: 'This chat',
+        place: 'This chat',
+        ...(next === undefined ? {} : { nextAt: next }),
+        text: r.body,
+        whenText: r.whenText,
+        status: r.status,
+        mentions: [],
+        ...(r.createdByName === null ? {} : { createdByName: r.createdByName }),
+        ...(r.createdByRole === null ? {} : { createdByRole: r.createdByRole }),
+        createdAt: r.createdAt,
+        ...(r.lastFiredAt === null ? {} : { lastFiredAt: r.lastFiredAt }),
+        fireCount: r.fireCount,
+        ...(r.lastError === null ? {} : { lastError: r.lastError }),
+      }
+    }
     const node = gateway.nodes.get(r.nodeId)
     const parent = node?.parentId == null ? undefined : gateway.nodes.get(node.parentId)
     const next = r.status === 'active' ? nextAtOf(r) : undefined

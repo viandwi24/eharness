@@ -52,6 +52,7 @@ import type { SqliteRoutineStore } from '../db/routines-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
 import type { SystemRunner } from './heartbeat-service.ts'
+import { INSTRUCTION_METADATA } from './instruction-marks.ts'
 
 export interface RoutineEngineConfig {
   /** Ticker interval (ms). Default 15 000; 0 = no timer (tests call `tick()`). */
@@ -295,6 +296,8 @@ export function createRoutineService(
         mode: 'queue',
         id: fireId(routine.id, run.scheduledAt),
         ...(ahead ? { availableAt: run.scheduledAt } : {}),
+        // a routine prompt is the system's: the web shows it as an Instructions card
+        metadata: INSTRUCTION_METADATA,
       })
       store.markEnqueued(run.id, {
         inboxId: result.inboxId,

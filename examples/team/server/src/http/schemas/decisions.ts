@@ -50,7 +50,7 @@ export const EscalationPayloadSchema = z
       .openapi({ description: 'Answers to pick from; empty: approve or reject.' }),
     standDown: z.array(z.string()).optional().openapi({
       description:
-        'The options the agent flagged as "leave it for now" (a subset of `options`); a pick of one is remembered by a standing program.',
+        'The options that mean "leave it for now" (a subset of `options`): the ones the agent flagged plus the server\'s fallback word list. A pick of one is remembered by a standing program, so a client shows the hint from this list and keeps no word list of its own.',
     }),
     source: z.enum(['agent', 'report']).openapi({
       description:
