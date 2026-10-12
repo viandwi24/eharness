@@ -315,6 +315,10 @@ describe('migration of the single DM', () => {
       'channel_outbox',
       'channel_approvals',
       'channel_known_chats',
+      'tgu_chats',
+      'tgu_counters',
+      'tgu_leases',
+      'tgu_settings',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(

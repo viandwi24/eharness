@@ -6,6 +6,7 @@ import type {
   ChannelBindInput,
   ChannelChatView,
   ChannelConnectionView,
+  ChannelLimitsInput,
   ChannelLinkView,
   ChannelPairingIssued,
   ChannelPolicyInput,
@@ -322,7 +323,10 @@ export interface ProgramRunner {
    */
   start(
     program: Program,
-    options: { runAt: number },
+    options: {
+      runAt: number /** A fire of the program's schedule (nobody waits for the answer). */
+      scheduled?: boolean
+    },
   ): Promise<{ sessionId: string; started: boolean; idle?: boolean }>
   /**
    * What a program of this agent, authority and budget cannot do (`ProgramWarning`): tools the run
@@ -644,6 +648,7 @@ export type RoutinePatch = Partial<
     | 'endAt'
     | 'status'
     | 'pausedReason'
+    | 'lastStatus'
     | 'nextFireAt'
     | 'failures'
   >
@@ -764,6 +769,20 @@ export interface ChannelsPort {
   resetBreaker(id: string): Promise<ChannelConnectionView>
 }
 
+/** Telegram user accounts (P41 L4): chat picker, per-chat backfill window, admin log, limits. */
+export interface ChannelAccountsPort {
+  /** Read the dialogs of the account from Telegram into the picker (needs a running connection). */
+  refreshChats(id: string): Promise<ChannelChatView[]>
+  /** Choose (or stop) ingesting a chat. A chosen chat starts as observe-only. */
+  selectChat(id: string, chatId: string, selected: boolean): Promise<ChannelChatView>
+  /** History window in days (`null` = no backfill). */
+  setBackfill(id: string, chatId: string, days: number | null): Promise<ChannelChatView>
+  setAdminLog(id: string, chatId: string, enabled: boolean): Promise<ChannelChatView>
+  /** Read the admin logs that are due now (all chats with `force`). */
+  runAdminLog(id: string, force: boolean): Promise<ChannelConnectionView>
+  setLimits(id: string, input: ChannelLimitsInput): Promise<ChannelConnectionView>
+}
+
 export interface Deps {
   agents: AgentRepo
   chat: ChatPort
@@ -779,6 +798,7 @@ export interface Deps {
   providers: ProvidersPort
   connectors: ConnectorsPort
   channels: ChannelsPort
+  channelAccounts: ChannelAccountsPort
   /** Where the browser app lives (the OAuth callback redirects back to it). */
   webUrl: string
   modes: ModePort

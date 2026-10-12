@@ -29,7 +29,8 @@ export function telegramConnector(options: { apiRoot?: string } = {}): AnyConnec
     id: TELEGRAM_CONNECTOR_ID,
     version: '1',
     name: 'Telegram bot',
-    description: 'Let an agent live in Telegram chats as a bot: groups, topics, channels and DMs.',
+    description:
+      'Bot API: the agent answers in groups and direct messages, with buttons, from the moment the bot joins a chat.',
     icon: 'telegram-logo',
     publisher: 'Telegram',
     homepage: 'https://core.telegram.org/bots',

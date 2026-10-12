@@ -3035,6 +3035,7 @@
               "ended",
               "completed",
               "agent-archived",
+              "unrunnable",
               null
             ]
           },
@@ -4997,6 +4998,48 @@
               "type": {
                 "type": "string",
                 "enum": [
+                  "qr"
+                ]
+              },
+              "viewId": {
+                "type": "string"
+              },
+              "step": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string",
+                "description": "What the QR code encodes (a login token such as `tg://login?token=...`); it may change under the same `viewId` while the view is polled."
+              },
+              "expiresAt": {
+                "type": "number"
+              },
+              "pollIntervalMs": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "viewId",
+              "step",
+              "title",
+              "url",
+              "expiresAt",
+              "pollIntervalMs"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
                   "choose"
                 ]
               },
@@ -5361,7 +5404,8 @@
               "poll",
               "back",
               "cancel",
-              "retry"
+              "retry",
+              "resend"
             ]
           },
           "data": {
@@ -6257,6 +6301,7 @@
               "ended",
               "completed",
               "agent-archived",
+              "unrunnable",
               null
             ]
           },
@@ -8564,13 +8609,13 @@
           }
         }
       },
-      "ChannelConnectionList": {
+      "ChannelChatList": {
         "type": "object",
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChannelConnection"
+              "$ref": "#/components/schemas/ChannelChat"
             }
           }
         },
@@ -8578,9 +8623,271 @@
           "items"
         ]
       },
+      "ChannelChat": {
+        "type": "object",
+        "properties": {
+          "chatId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dm",
+              "group",
+              "channel"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "forum": {
+            "type": "boolean"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "policy": {
+                  "$ref": "#/components/schemas/ChannelPolicy"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "policy"
+              ]
+            }
+          },
+          "botStatus": {
+            "type": "string"
+          },
+          "account": {
+            "$ref": "#/components/schemas/ChannelAccountChat"
+          },
+          "canPost": {
+            "type": "boolean"
+          },
+          "firstSeen": {
+            "type": "integer"
+          },
+          "lastSeen": {
+            "type": "integer"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ChannelPolicy"
+          },
+          "effective": {
+            "type": "object",
+            "properties": {
+              "allowed": {
+                "type": "boolean"
+              },
+              "wake": {
+                "type": "string",
+                "enum": [
+                  "mention",
+                  "always",
+                  "never"
+                ]
+              },
+              "delivery": {
+                "type": "string",
+                "enum": [
+                  "final_text",
+                  "message_tool"
+                ]
+              },
+              "retentionDays": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "allowed",
+              "wake",
+              "delivery",
+              "retentionDays"
+            ]
+          }
+        },
+        "required": [
+          "chatId",
+          "kind",
+          "title",
+          "forum",
+          "topics",
+          "firstSeen",
+          "lastSeen",
+          "policy",
+          "effective"
+        ]
+      },
+      "ChannelPolicy": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` takes the chat out of the allowlist."
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "wake": {
+            "type": "string",
+            "enum": [
+              "mention",
+              "always",
+              "never"
+            ]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "final_text",
+              "message_tool"
+            ]
+          },
+          "retentionDays": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "ChannelAccountChat": {
+        "type": "object",
+        "properties": {
+          "selected": {
+            "type": "boolean"
+          },
+          "admin": {
+            "type": "boolean"
+          },
+          "backfill": {
+            "type": "object",
+            "properties": {
+              "days": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "type": "string"
+              },
+              "oldestAt": {
+                "type": "integer"
+              },
+              "count": {
+                "type": "integer"
+              },
+              "error": {
+                "type": "string"
+              },
+              "parkedUntil": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "days",
+              "state",
+              "count"
+            ]
+          },
+          "adminLog": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "lastAt": {
+                "type": "integer"
+              },
+              "count": {
+                "type": "integer"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "count"
+            ]
+          }
+        },
+        "required": [
+          "selected",
+          "admin",
+          "backfill",
+          "adminLog"
+        ]
+      },
+      "ChannelSelectBody": {
+        "type": "object",
+        "properties": {
+          "selected": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "selected"
+        ]
+      },
+      "ChannelBackfillBody": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 3650,
+            "description": "History window in days; `null` = no backfill."
+          }
+        },
+        "required": [
+          "days"
+        ]
+      },
+      "ChannelAdminLogBody": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
       "ChannelConnection": {
         "type": "object",
         "properties": {
+          "transport": {
+            "type": "string",
+            "enum": [
+              "bot",
+              "user"
+            ]
+          },
+          "account": {
+            "$ref": "#/components/schemas/ChannelAccount"
+          },
           "id": {
             "type": "string",
             "description": "The connector connection id."
@@ -8619,7 +8926,8 @@
                   "needs-auth",
                   "webhook",
                   "error",
-                  "stopped"
+                  "stopped",
+                  "lease"
                 ]
               },
               "message": {
@@ -8722,6 +9030,128 @@
           "counts"
         ]
       },
+      "ChannelAccount": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Masked, never the full number."
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "dmDailyMax": {
+                "type": "integer"
+              },
+              "dailyMax": {
+                "type": "integer"
+              },
+              "adminLogEveryMs": {
+                "type": "integer"
+              },
+              "chatMinIntervalMs": {
+                "type": "integer"
+              },
+              "groupMax": {
+                "type": "integer"
+              },
+              "groupWindowMs": {
+                "type": "integer"
+              },
+              "connectionMax": {
+                "type": "integer"
+              },
+              "connectionWindowMs": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "dmDailyMax",
+              "dailyMax",
+              "adminLogEveryMs",
+              "chatMinIntervalMs",
+              "groupMax",
+              "groupWindowMs",
+              "connectionMax",
+              "connectionWindowMs"
+            ]
+          },
+          "today": {
+            "type": "object",
+            "properties": {
+              "dm": {
+                "type": "integer"
+              },
+              "all": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "dm",
+              "all"
+            ]
+          },
+          "floods": {
+            "type": "object",
+            "properties": {
+              "lastAt": {
+                "type": "integer"
+              },
+              "parkedChats": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "parkedChats"
+            ]
+          },
+          "pausedUntil": {
+            "type": "integer"
+          },
+          "source": {
+            "type": "string",
+            "description": "The big-data source id of the observe-only chats."
+          },
+          "events": {
+            "type": "object",
+            "properties": {
+              "live": {
+                "type": "integer"
+              },
+              "lastEventAt": {
+                "type": "integer"
+              },
+              "unresolvedDeletes": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "live",
+              "unresolvedDeletes"
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "limits",
+          "today",
+          "floods",
+          "source",
+          "events",
+          "warnings"
+        ]
+      },
       "ChannelBinding": {
         "type": [
           "object",
@@ -8791,6 +9221,67 @@
           "defaults"
         ]
       },
+      "ChannelAdminLogRun": {
+        "type": "object",
+        "properties": {
+          "force": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ChannelLimitsBody": {
+        "type": "object",
+        "properties": {
+          "dmDailyMax": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "dailyMax": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          },
+          "adminLogEveryMs": {
+            "type": "integer",
+            "minimum": 60000
+          },
+          "chatMinIntervalMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "groupMax": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "groupWindowMs": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "connectionMax": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "connectionWindowMs": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "ChannelConnectionList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelConnection"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
       "ChannelBindBody": {
         "type": "object",
         "properties": {
@@ -8855,161 +9346,6 @@
         },
         "required": [
           "agentId"
-        ]
-      },
-      "ChannelChatList": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChannelChat"
-            }
-          }
-        },
-        "required": [
-          "items"
-        ]
-      },
-      "ChannelChat": {
-        "type": "object",
-        "properties": {
-          "chatId": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "dm",
-              "group",
-              "channel"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "username": {
-            "type": "string"
-          },
-          "forum": {
-            "type": "boolean"
-          },
-          "topics": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "policy": {
-                  "$ref": "#/components/schemas/ChannelPolicy"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "policy"
-              ]
-            }
-          },
-          "botStatus": {
-            "type": "string"
-          },
-          "canPost": {
-            "type": "boolean"
-          },
-          "firstSeen": {
-            "type": "integer"
-          },
-          "lastSeen": {
-            "type": "integer"
-          },
-          "policy": {
-            "$ref": "#/components/schemas/ChannelPolicy"
-          },
-          "effective": {
-            "type": "object",
-            "properties": {
-              "allowed": {
-                "type": "boolean"
-              },
-              "wake": {
-                "type": "string",
-                "enum": [
-                  "mention",
-                  "always",
-                  "never"
-                ]
-              },
-              "delivery": {
-                "type": "string",
-                "enum": [
-                  "final_text",
-                  "message_tool"
-                ]
-              },
-              "retentionDays": {
-                "type": "integer"
-              }
-            },
-            "required": [
-              "allowed",
-              "wake",
-              "delivery",
-              "retentionDays"
-            ]
-          }
-        },
-        "required": [
-          "chatId",
-          "kind",
-          "title",
-          "forum",
-          "topics",
-          "firstSeen",
-          "lastSeen",
-          "policy",
-          "effective"
-        ]
-      },
-      "ChannelPolicy": {
-        "type": [
-          "object",
-          "null"
-        ],
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "`false` takes the chat out of the allowlist."
-          },
-          "agentId": {
-            "type": "string"
-          },
-          "wake": {
-            "type": "string",
-            "enum": [
-              "mention",
-              "always",
-              "never"
-            ]
-          },
-          "delivery": {
-            "type": "string",
-            "enum": [
-              "final_text",
-              "message_tool"
-            ]
-          },
-          "retentionDays": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "enabled"
         ]
       },
       "ChannelPolicyBody": {
@@ -18640,6 +18976,524 @@
           },
           "401": {
             "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/account/chats/refresh": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Read the dialogs of a Telegram account",
+        "description": "User accounts: asks Telegram for the groups and channels the account is in and adds them to the picker (people are not listed). Needs a running connection.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Chats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelChatList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The account is not running, or the chat is not chosen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/account/chats/{chatId}/selected": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Choose or stop ingesting a chat",
+        "description": "A chosen chat is stored and starts observe-only (`wake: never`): the agent never answers there until you change its policy.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelSelectBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The chat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelChat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown chat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The account is not running, or the chat is not chosen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/account/chats/{chatId}/backfill": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Set the history window of a chat",
+        "description": "Reads the history newest first down to this many days (100 messages a page, with pauses; one chat at a time). Progress is on the chat view.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelBackfillBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The chat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelChat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown chat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The account is not running, or the chat is not chosen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/account/chats/{chatId}/admin-log": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Poll the admin log of a chat",
+        "description": "Only for chats where the account is an admin. Telegram keeps the log briefly, so it is read every few hours and stored.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelAdminLogBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The chat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelChat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown chat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The account is not running, or the chat is not chosen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/account/admin-log/run": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Read the due admin logs now",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelAdminLogRun"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/account/limits": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Outbound limits of a Telegram account",
+        "description": "Daily caps (direct messages, all messages), the admin-log interval and the per-chat and per-account send rate. Defaults are strict on purpose: a user account that sends like a robot gets limited.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelLimitsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
             "content": {
               "application/json": {
                 "schema": {

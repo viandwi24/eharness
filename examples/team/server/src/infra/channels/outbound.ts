@@ -48,6 +48,8 @@ export function createOutbound(options: OutboundOptions): Outbound {
   const chatWindow = new Map<string, Window>()
   const connWindow = new Map<string, Window>()
   const parkedUntil = new Map<string, number>()
+  /** Conversations parked by a per-chat flood wait (`ChannelError.scope === 'chat'`). */
+  const chatParked = new Map<string, number>()
   const failures = new Map<string, number>()
   const open = new Map<string, { until: number; reason: string; alerted: boolean }>()
 
@@ -111,7 +113,10 @@ export function createOutbound(options: OutboundOptions): Outbound {
             'the outbound queue is backed up; the message was not sent',
           )
         }
-        const parked = (parkedUntil.get(connectionId) ?? 0) - now()
+        const parked = Math.max(
+          (parkedUntil.get(connectionId) ?? 0) - now(),
+          (chatParked.get(chatKey) ?? 0) - now(),
+        )
         const wait = Math.max(
           parked,
           waitFor(
@@ -150,8 +155,14 @@ export function createOutbound(options: OutboundOptions): Outbound {
         if (error.kind === 'rate_limit') {
           // the platform asked everyone to wait: park the connection, then try again
           const ms = Math.max(error.retryAfterMs ?? 1000, 1)
-          parkedUntil.set(connectionId, Math.max(parkedUntil.get(connectionId) ?? 0, now() + ms))
-          options.onWarn?.(`channels: ${connectionId} rate limited, parked for ${ms} ms`)
+          if (error.scope === 'chat') {
+            chatParked.set(chatKey, Math.max(chatParked.get(chatKey) ?? 0, now() + ms))
+          } else {
+            parkedUntil.set(connectionId, Math.max(parkedUntil.get(connectionId) ?? 0, now() + ms))
+          }
+          options.onWarn?.(
+            `channels: ${connectionId} rate limited${error.scope === 'chat' ? ` (one chat)` : ''}, parked for ${ms} ms`,
+          )
           if (attempt >= limits.maxAttempts) throw error
           continue
         }
@@ -189,6 +200,9 @@ export function createOutbound(options: OutboundOptions): Outbound {
       open.delete(connectionId)
       failures.set(connectionId, 0)
       parkedUntil.delete(connectionId)
+      for (const key of [...chatParked.keys()]) {
+        if (key.startsWith(`${connectionId}\n`)) chatParked.delete(key)
+      }
     },
   }
 }

@@ -69,7 +69,15 @@ export const ProgramTriggerStateSchema = z
   .object({
     status: z.enum(['active', 'paused']),
     pausedReason: z
-      .enum(['manual', 'max-failures', 'max-fires', 'ended', 'completed', 'agent-archived'])
+      .enum([
+        'manual',
+        'max-failures',
+        'max-fires',
+        'ended',
+        'completed',
+        'agent-archived',
+        'unrunnable',
+      ])
       .nullable(),
     nextFireAt: z.number().int().nullable(),
     lastFireAt: z.number().int().nullable(),

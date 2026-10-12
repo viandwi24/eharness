@@ -24,6 +24,7 @@
 		STATE_LABEL,
 		stateHint,
 		stateTone,
+		typeLabel,
 		type ChannelChat,
 		type ChannelConnection,
 		type ChannelLink,
@@ -127,6 +128,7 @@
 			<div class="flex min-w-0 flex-wrap items-center gap-2">
 				<h2 class="truncate text-sm font-medium">{conn.label}</h2>
 				{#if conn.bot}<span class="truncate text-xs text-muted-foreground">@{conn.bot.username}</span>{:else if conn.accountLabel}<span class="truncate text-xs text-muted-foreground">{conn.accountLabel}</span>{/if}
+				<Badge variant="secondary" data-testid="channel-type">{typeLabel(conn)}</Badge>
 				<Badge variant={stateTone(conn.runtime.state)} data-testid="channel-state">{STATE_LABEL[conn.runtime.state]}</Badge>
 			</div>
 			{#if hint}<p class="mt-1 text-xs text-muted-foreground">{hint}</p>{/if}

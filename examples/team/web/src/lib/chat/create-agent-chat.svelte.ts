@@ -9,6 +9,7 @@ import { harness } from '../api/index';
 import { UPLOAD_MAX_BYTES } from './constants.js';
 import { uploadErrorText } from './http.js';
 import { endsInErrorNotice } from './messages.js';
+import { shownChatStatus } from '../approval/offer.js';
 
 export type Notify = (level: 'info' | 'error', text: string) => void;
 
@@ -68,11 +69,19 @@ export class AgentChat {
 		try {
 			await this.session.refetch();
 		} catch {
+			this.chat.clearError();
 			return;
 		}
+		// `Chat` calls `onError` BEFORE it sets its status to `error`, so the clear above is a no-op;
+		// by now the status is `error` and the composer would stay red until the next send.
+		this.chat.clearError();
 		if (endsInErrorNotice(this.chat.messages)) this.#dismiss?.(text.slice(0, 80));
 	}
 
+	/** The chat status for the UI: a failed request is idle again (its failure is a notice and a toast). */
+	get status(): ReturnType<typeof shownChatStatus<Chat<UIMessage>['status']>> {
+		return shownChatStatus(this.chat.status);
+	}
 	/** History loaded (first page). */
 	get loaded(): boolean {
 		return this.#s.loaded;

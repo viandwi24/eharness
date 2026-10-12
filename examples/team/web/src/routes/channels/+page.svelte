@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import ChatCircleDotsIcon from 'phosphor-svelte/lib/ChatCircleDots';
-	import TelegramLogoIcon from 'phosphor-svelte/lib/TelegramLogo';
+	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import { api } from '#lib/api/index.js';
+	import ChannelAccountCard from '#lib/components/app/ChannelAccountCard.svelte';
+	import ChannelTypePicker from '#lib/components/app/ChannelTypePicker.svelte';
 	import ChannelConnectionCard from '#lib/components/app/ChannelConnectionCard.svelte';
 	import ConnectFlowDialog from '#lib/components/app/ConnectFlowDialog.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
@@ -10,13 +12,16 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
-	import { sortConnections, type ChannelConnection } from '#lib/channels/model.js';
+	import { channelTypes, isAccount, sortConnections, type ChannelConnection } from '#lib/channels/model.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 
 	let list = $state<ChannelConnection[] | null>(null);
 	let error = $state('');
+	let pickOpen = $state(false);
 	let connectOpen = $state(false);
+	let definitionId = $state('');
+	const types = $derived(channelTypes(connectorsStore.state.connectors));
 	let seq = 0;
 	const sorted = $derived(sortConnections(list ?? []));
 
@@ -45,8 +50,8 @@
 </script>
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-	<PageHeader title="Channels" description="Chat platforms where your agents live: Telegram bots, their chats and the people linked to them.">
-		<Button size="sm" onclick={() => (connectOpen = true)} data-testid="connect-bot"><TelegramLogoIcon class="size-4" /> Connect a Telegram bot</Button>
+	<PageHeader title="Channels" description="Chat platforms where your agents live. Connect a channel, choose the chats it may use, and see what it sends and reads.">
+		<Button size="sm" onclick={() => (pickOpen = true)} data-testid="connect-channel"><PlusIcon class="size-4" /> Connect a channel</Button>
 	</PageHeader>
 	<PageBody size="narrow" class="gap-4">
 		{#if error}
@@ -57,17 +62,20 @@
 			<Empty.Root class="border border-dashed border-border" data-testid="channels-empty">
 				<Empty.Header>
 					<Empty.Media variant="icon"><ChatCircleDotsIcon /></Empty.Media>
-					<Empty.Title>No bot connected</Empty.Title>
+					<Empty.Title>No channel connected</Empty.Title>
 					<Empty.Description>
-						Create a bot with @BotFather in Telegram (/newbot), copy its token, and connect it here. Then pick the agent that answers on it and allow the chats it may use.
+						A channel is a chat platform where an agent talks with your team or reads what is said. Pick a type next (for example a Telegram bot, or a Telegram account for chats a bot cannot join), set it up, then choose the agent and the chats.
 					</Empty.Description>
 				</Empty.Header>
-				<Button size="sm" onclick={() => (connectOpen = true)}>Connect a Telegram bot</Button>
+				<Button size="sm" onclick={() => (pickOpen = true)}>Connect a channel</Button>
 			</Empty.Root>
 		{:else}
-			{#each sorted as c (c.id)}<ChannelConnectionCard conn={c} onChange={() => void load()} />{/each}
+			{#each sorted as c (c.id)}
+				{#if isAccount(c)}<ChannelAccountCard conn={c} onChange={() => void load()} />{:else}<ChannelConnectionCard conn={c} onChange={() => void load()} />{/if}
+			{/each}
 		{/if}
 	</PageBody>
 </div>
 
-<ConnectFlowDialog bind:open={connectOpen} definitionId="telegram-bot" scope="workspace" onDone={() => void load()} />
+<ChannelTypePicker bind:open={pickOpen} {types} onPick={(id) => { definitionId = id; connectOpen = true; }} />
+<ConnectFlowDialog bind:open={connectOpen} {definitionId} scope="workspace" onDone={() => void load()} />

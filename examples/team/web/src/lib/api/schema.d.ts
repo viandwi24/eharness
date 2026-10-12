@@ -8122,6 +8122,470 @@ export interface paths {
         };
         trace?: never;
     };
+    "/channels/connections/{id}/account/chats/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read the dialogs of a Telegram account
+         * @description User accounts: asks Telegram for the groups and channels the account is in and adds them to the picker (people are not listed). Needs a running connection.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Chats */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelChatList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The account is not running, or the chat is not chosen */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/account/chats/{chatId}/selected": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Choose or stop ingesting a chat
+         * @description A chosen chat is stored and starts observe-only (`wake: never`): the agent never answers there until you change its policy.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    chatId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelSelectBody"];
+                };
+            };
+            responses: {
+                /** @description The chat */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelChat"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown chat */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The account is not running, or the chat is not chosen */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/account/chats/{chatId}/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the history window of a chat
+         * @description Reads the history newest first down to this many days (100 messages a page, with pauses; one chat at a time). Progress is on the chat view.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    chatId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelBackfillBody"];
+                };
+            };
+            responses: {
+                /** @description The chat */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelChat"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown chat */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The account is not running, or the chat is not chosen */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/account/chats/{chatId}/admin-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Poll the admin log of a chat
+         * @description Only for chats where the account is an admin. Telegram keeps the log briefly, so it is read every few hours and stored.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    chatId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelAdminLogBody"];
+                };
+            };
+            responses: {
+                /** @description The chat */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelChat"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown chat */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The account is not running, or the chat is not chosen */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/account/admin-log/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read the due admin logs now */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ChannelAdminLogRun"];
+                };
+            };
+            responses: {
+                /** @description The connection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/account/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Outbound limits of a Telegram account
+         * @description Daily caps (direct messages, all messages), the admin-log interval and the per-chat and per-account send rate. Defaults are strict on purpose: a user account that sends like a robot gets limited.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelLimitsBody"];
+                };
+            };
+            responses: {
+                /** @description The connection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/channels/connections": {
         parameters: {
             query?: never;
@@ -10070,7 +10534,7 @@ export interface components {
             /** @enum {string} */
             status: "active" | "paused";
             /** @enum {string|null} */
-            pausedReason: "manual" | "max-failures" | "max-fires" | "ended" | "completed" | "agent-archived" | null;
+            pausedReason: "manual" | "max-failures" | "max-fires" | "ended" | "completed" | "agent-archived" | "unrunnable" | null;
             nextFireAt: number | null;
             lastFireAt: number | null;
             lastStatus: string | null;
@@ -10632,6 +11096,17 @@ export interface components {
             pollIntervalMs: number;
         } | {
             /** @enum {string} */
+            type: "qr";
+            viewId: string;
+            step: string;
+            title: string;
+            description?: string;
+            /** @description What the QR code encodes (a login token such as `tg://login?token=...`); it may change under the same `viewId` while the view is polled. */
+            url: string;
+            expiresAt: number;
+            pollIntervalMs: number;
+        } | {
+            /** @enum {string} */
             type: "choose";
             viewId: string;
             step: string;
@@ -10738,7 +11213,7 @@ export interface components {
         FlowAct: {
             viewId: string;
             /** @enum {string} */
-            action: "submit" | "poll" | "back" | "cancel" | "retry";
+            action: "submit" | "poll" | "back" | "cancel" | "retry" | "resend";
             /** @description `form`: the values (a secret may be `{ keep: true }`); `choose`: `{ selected }`. */
             data?: {
                 [key: string]: unknown;
@@ -10987,7 +11462,7 @@ export interface components {
             /** @enum {string} */
             status: "active" | "paused";
             /** @enum {string|null} */
-            pausedReason: "manual" | "max-failures" | "max-fires" | "ended" | "completed" | "agent-archived" | null;
+            pausedReason: "manual" | "max-failures" | "max-fires" | "ended" | "completed" | "agent-archived" | "unrunnable" | null;
             nextFireAt: number | null;
             lastFireAt: number | null;
             lastStatus: string | null;
@@ -11575,10 +12050,78 @@ export interface components {
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
         };
-        ChannelConnectionList: {
-            items: components["schemas"]["ChannelConnection"][];
+        ChannelChatList: {
+            items: components["schemas"]["ChannelChat"][];
+        };
+        ChannelChat: {
+            chatId: string;
+            /** @enum {string} */
+            kind: "dm" | "group" | "channel";
+            title: string;
+            username?: string;
+            forum: boolean;
+            topics: {
+                id: string;
+                name: string;
+                policy: components["schemas"]["ChannelPolicy"];
+            }[];
+            botStatus?: string;
+            account?: components["schemas"]["ChannelAccountChat"];
+            canPost?: boolean;
+            firstSeen: number;
+            lastSeen: number;
+            policy: components["schemas"]["ChannelPolicy"];
+            effective: {
+                allowed: boolean;
+                /** @enum {string} */
+                wake: "mention" | "always" | "never";
+                /** @enum {string} */
+                delivery: "final_text" | "message_tool";
+                retentionDays: number;
+            };
+        };
+        ChannelPolicy: {
+            /** @description `false` takes the chat out of the allowlist. */
+            enabled: boolean;
+            agentId?: string;
+            /** @enum {string} */
+            wake?: "mention" | "always" | "never";
+            /** @enum {string} */
+            delivery?: "final_text" | "message_tool";
+            retentionDays?: number;
+        } | null;
+        ChannelAccountChat: {
+            selected: boolean;
+            admin: boolean;
+            backfill: {
+                days: number | null;
+                state: string;
+                oldestAt?: number;
+                count: number;
+                error?: string;
+                parkedUntil?: number;
+            };
+            adminLog: {
+                enabled: boolean;
+                lastAt?: number;
+                count: number;
+                error?: string;
+            };
+        };
+        ChannelSelectBody: {
+            selected: boolean;
+        };
+        ChannelBackfillBody: {
+            /** @description History window in days; `null` = no backfill. */
+            days: number | null;
+        };
+        ChannelAdminLogBody: {
+            enabled: boolean;
         };
         ChannelConnection: {
+            /** @enum {string} */
+            transport?: "bot" | "user";
+            account?: components["schemas"]["ChannelAccount"];
             /** @description The connector connection id. */
             id: string;
             /** @enum {string} */
@@ -11590,7 +12133,7 @@ export interface components {
             enabled: boolean;
             runtime: {
                 /** @enum {string} */
-                state: "unbound" | "disabled" | "starting" | "running" | "needs-auth" | "webhook" | "error" | "stopped";
+                state: "unbound" | "disabled" | "starting" | "running" | "needs-auth" | "webhook" | "error" | "stopped" | "lease";
                 message?: string;
                 since: number;
             };
@@ -11616,6 +12159,39 @@ export interface components {
                 reason: string;
             };
         };
+        ChannelAccount: {
+            accountId?: string;
+            username?: string;
+            /** @description Masked, never the full number. */
+            phone?: string;
+            limits: {
+                dmDailyMax: number;
+                dailyMax: number;
+                adminLogEveryMs: number;
+                chatMinIntervalMs: number;
+                groupMax: number;
+                groupWindowMs: number;
+                connectionMax: number;
+                connectionWindowMs: number;
+            };
+            today: {
+                dm: number;
+                all: number;
+            };
+            floods: {
+                lastAt?: number;
+                parkedChats: number;
+            };
+            pausedUntil?: number;
+            /** @description The big-data source id of the observe-only chats. */
+            source: string;
+            events: {
+                live: number;
+                lastEventAt?: number;
+                unresolvedDeletes: number;
+            };
+            warnings: string[];
+        };
         ChannelBinding: {
             agentId: string;
             /** @enum {string} */
@@ -11633,6 +12209,22 @@ export interface components {
                 retentionDays?: number;
             };
         } | null;
+        ChannelAdminLogRun: {
+            force?: boolean;
+        };
+        ChannelLimitsBody: {
+            dmDailyMax?: number;
+            dailyMax?: number;
+            adminLogEveryMs?: number;
+            chatMinIntervalMs?: number;
+            groupMax?: number;
+            groupWindowMs?: number;
+            connectionMax?: number;
+            connectionWindowMs?: number;
+        };
+        ChannelConnectionList: {
+            items: components["schemas"]["ChannelConnection"][];
+        };
         ChannelBindBody: {
             agentId: string;
             /** @enum {string} */
@@ -11650,45 +12242,6 @@ export interface components {
                 retentionDays?: number;
             };
         };
-        ChannelChatList: {
-            items: components["schemas"]["ChannelChat"][];
-        };
-        ChannelChat: {
-            chatId: string;
-            /** @enum {string} */
-            kind: "dm" | "group" | "channel";
-            title: string;
-            username?: string;
-            forum: boolean;
-            topics: {
-                id: string;
-                name: string;
-                policy: components["schemas"]["ChannelPolicy"];
-            }[];
-            botStatus?: string;
-            canPost?: boolean;
-            firstSeen: number;
-            lastSeen: number;
-            policy: components["schemas"]["ChannelPolicy"];
-            effective: {
-                allowed: boolean;
-                /** @enum {string} */
-                wake: "mention" | "always" | "never";
-                /** @enum {string} */
-                delivery: "final_text" | "message_tool";
-                retentionDays: number;
-            };
-        };
-        ChannelPolicy: {
-            /** @description `false` takes the chat out of the allowlist. */
-            enabled: boolean;
-            agentId?: string;
-            /** @enum {string} */
-            wake?: "mention" | "always" | "never";
-            /** @enum {string} */
-            delivery?: "final_text" | "message_tool";
-            retentionDays?: number;
-        } | null;
         ChannelPolicyBody: {
             enabled?: boolean;
             agentId?: string | null;

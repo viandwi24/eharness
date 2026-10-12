@@ -50,7 +50,7 @@ import {
 } from './app/decisions.ts'
 import { recheckTask } from './app/deliverables.ts'
 import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
-import type { Deps } from './app/ports.ts'
+import type { ChannelsPort, Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
@@ -60,6 +60,7 @@ import {
   listBoard,
   updateQueuedTask,
 } from './app/work-queue.ts'
+import type { Collector } from './domain/collectors.ts'
 import { areaOf } from './domain/library.ts'
 import { parseProgramSession } from './domain/programs.ts'
 import { parseRehearsalSession } from './domain/rehearsal.ts'
@@ -147,6 +148,14 @@ import {
   lazyChannelsPort,
   type TelegramChannels,
 } from './infra/telegram/service.ts'
+import type { TgClientFactory } from './infra/telegram-user/client.ts'
+import { createMtcuteClient } from './infra/telegram-user/mtcute-client.ts'
+import {
+  compositeChannelsPort,
+  createTelegramUserChannels,
+  lazyAccountsPort,
+  type TelegramUserChannels,
+} from './infra/telegram-user/service.ts'
 import { resolveWebUrl, webStatic } from './infra/web-static.ts'
 
 export interface ServerConfig {
@@ -226,6 +235,26 @@ export interface ServerConfig {
   }
   /** Telegram bot transport timers (tests shorten them). */
   telegram?: { pollTimeoutSec?: number; syncPollMs?: number; retryMs?: number }
+  /**
+   * Telegram user accounts (`infra/telegram-user`, MTProto). `client` replaces mtcute (tests pass
+   * a fake: nothing here ever reaches Telegram then); the rest are timers tests shorten.
+   */
+  telegramUser?: {
+    client?: TgClientFactory
+    syncPollMs?: number
+    retryMs?: number
+    leaseTtlMs?: number
+    qrPollMs?: number
+    settleMs?: number
+    jobs?: {
+      sleep?: (ms: number) => Promise<void>
+      random?: () => number
+      pageDelayMs?: { min: number; max: number }
+      backfillEveryMs?: number
+      adminLogTickMs?: number
+      gapWindowMs?: number
+    }
+  }
 }
 
 export interface Server {
@@ -247,6 +276,8 @@ export interface Server {
   channels: ChannelGateway
   /** The Telegram bot transport and the admin service behind the Channels page (`infra/telegram`). */
   telegram: TelegramChannels
+  /** Telegram user accounts over MTProto: runtime, admin service and the chat picker (`infra/telegram-user`). */
+  telegramUser: TelegramUserChannels
   /** Operational counters of the runtime (`config.observe`): failed spans, hook timeouts, ... */
   metrics: () => Record<string, number>
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
@@ -432,6 +463,17 @@ export function compose(config: ServerConfig): Server {
     changes,
     toolAccess: () => settings.get().toolAccess,
     instance,
+    ...(config.telegramUser?.client === undefined
+      ? {}
+      : { telegramUserClient: config.telegramUser.client }),
+    telegramUserFlow: {
+      ...(config.telegramUser?.qrPollMs === undefined
+        ? {}
+        : { qrPollMs: config.telegramUser.qrPollMs }),
+      ...(config.telegramUser?.settleMs === undefined
+        ? {}
+        : { settleMs: config.telegramUser.settleMs }),
+    },
   })
   connectorsRef = connectors
   const routineStore = sqliteRoutineStore(conn.sqlite)
@@ -444,12 +486,12 @@ export function compose(config: ServerConfig): Server {
   let workQueueIntake: WorkQueueIntake | undefined
   // the channels gateway needs the app deps too (declared with the activity store above)
   // the fixture community source is a demo: it is only there when asked for
-  const bigDataConfig: BigDataConfig = {
-    ...config.bigData,
-    collectors:
-      config.bigData?.collectors ??
-      ((config.env ?? process.env).TEAM_DEMO_COLLECTOR === '1' ? [communityFixture()] : []),
-  }
+  // a live list: Telegram user accounts add and remove their observe-only chats as sources (`ingest_source`)
+  const collectorList: Collector[] = [
+    ...(config.bigData?.collectors ??
+      ((config.env ?? process.env).TEAM_DEMO_COLLECTOR === '1' ? [communityFixture()] : [])),
+  ]
+  const bigDataConfig: BigDataConfig = { ...config.bigData, collectors: collectorList }
   const sessionModes = sqliteSessionModes(conn.sqlite)
   const chatToolsStore = sqliteChatTools(conn.sqlite)
   let routines: RoutineService | undefined
@@ -596,6 +638,8 @@ export function compose(config: ServerConfig): Server {
   })
   // the Channels page's service needs the gateway, which needs these deps: late-bound
   let telegram: TelegramChannels | undefined
+  let telegramUser: TelegramUserChannels | undefined
+  let channelsPort: ChannelsPort | undefined
   const deps: Deps = {
     agents,
     chat: createChatService(factory, { workspaceId: WORKSPACE_ID }),
@@ -613,7 +657,8 @@ export function compose(config: ServerConfig): Server {
     settings,
     providers,
     connectors,
-    channels: lazyChannelsPort(() => telegram),
+    channels: lazyChannelsPort(() => channelsPort),
+    channelAccounts: lazyAccountsPort(() => telegramUser),
     webUrl,
     modes: createModeService(factory, {
       store: sessionModes,
@@ -767,6 +812,36 @@ export function compose(config: ServerConfig): Server {
       : { syncPollMs: config.telegram.syncPollMs }),
     ...(config.telegram?.retryMs === undefined ? {} : { retryMs: config.telegram.retryMs }),
   })
+  // Telegram user accounts: one live MTProto client per connected, bound connection (`infra/telegram-user`)
+  telegramUser = createTelegramUserChannels({
+    sqlite: conn.sqlite,
+    gateway: channels,
+    connectors,
+    agents,
+    clientFactory: config.telegramUser?.client ?? createMtcuteClient(),
+    instanceId: instance,
+    collectors: {
+      add: (c) => {
+        const at = collectorList.findIndex((x) => x.id === c.id)
+        if (at >= 0) collectorList.splice(at, 1)
+        collectorList.push(c)
+      },
+      remove: (id) => {
+        const at = collectorList.findIndex((x) => x.id === id)
+        if (at >= 0) collectorList.splice(at, 1)
+      },
+    },
+    notify: (n) => channelNotify(n),
+    ...(config.telegramUser?.syncPollMs === undefined
+      ? {}
+      : { syncPollMs: config.telegramUser.syncPollMs }),
+    ...(config.telegramUser?.retryMs === undefined ? {} : { retryMs: config.telegramUser.retryMs }),
+    ...(config.telegramUser?.leaseTtlMs === undefined
+      ? {}
+      : { leaseTtlMs: config.telegramUser.leaseTtlMs }),
+    ...(config.telegramUser?.jobs === undefined ? {} : { jobs: config.telegramUser.jobs }),
+  })
+  channelsPort = compositeChannelsPort(telegram, telegramUser)
   const purgeChannels = (): void => {
     try {
       channels.purge()
@@ -776,6 +851,7 @@ export function compose(config: ServerConfig): Server {
   }
   purgeChannels()
   telegram.start()
+  telegramUser.start()
   const channelPurgeMs = config.channels?.purgeEveryMs ?? 3_600_000
   const channelPurgeTimer =
     channelPurgeMs > 0 ? setInterval(purgeChannels, channelPurgeMs) : undefined
@@ -880,6 +956,7 @@ export function compose(config: ServerConfig): Server {
     heartbeats,
     channels,
     telegram,
+    telegramUser,
     activityLog,
     metrics: observer.snapshot,
     providers,
@@ -893,6 +970,7 @@ export function compose(config: ServerConfig): Server {
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
       await telegram?.stop()
+      await telegramUser?.stop()
       await channels.stop()
       await routines?.stop()
       await ready

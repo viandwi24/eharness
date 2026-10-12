@@ -18,6 +18,7 @@ import {
   type AgentEnablement,
   type AnyConnectorDefinition,
   activateConnectors,
+  type ConnectionCredentials,
   type ConnectionRecord,
   capabilitiesOf,
   connectionStoreFromProfiles,
@@ -50,6 +51,14 @@ import type {
 import { CUSTOM_DEFINITION, isAllowedMcpUrl, slugOf, uniqueSlug } from '../../domain/connectors.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { NewEvent } from '../../domain/events.ts'
+import type { TgClientFactory } from '../telegram-user/client.ts'
+import {
+  parseTelegramApp,
+  TELEGRAM_USER_CONNECTOR_ID,
+  type TelegramApp,
+} from '../telegram-user/connector.ts'
+import { createLoginSessions } from '../telegram-user/login.ts'
+import { createMtcuteClient } from '../telegram-user/mtcute-client.ts'
 import type { ChangeFeed } from './change-feed.ts'
 import { mapConfigError } from './config-errors.ts'
 import {
@@ -97,6 +106,10 @@ export interface ConnectorsOptions {
   /** Id of this instance (its own events are ignored). */
   instance: string
   warn?: (message: string) => void
+  /** MTProto client of the "Telegram account" connector (default: mtcute; tests inject a fake). */
+  telegramUserClient?: TgClientFactory
+  /** QR poll interval and the time a 2FA or QR step waits inside one request (tests shorten them). */
+  telegramUserFlow?: { qrPollMs?: number; settleMs?: number }
 }
 
 export interface ConnectorsRuntime extends ConnectorsPort {
@@ -113,6 +126,10 @@ export interface ConnectorsRuntime extends ConnectorsPort {
   accessTokenFor(connectionId: string): Promise<string>
   /** A runtime learned that a credential no longer works (revoked bot token): the connection needs a reconnect. */
   markNeedsAuth(connectionId: string, message?: string): Promise<void>
+  /** The stored credentials of a connection, session included (server side only: a long-lived runtime). */
+  credentialsOf(connectionId: string): Promise<ConnectionCredentials | undefined>
+  /** The workspace's Telegram api_id / api_hash: the environment, else what an admin saved. */
+  telegramApp(): Promise<TelegramApp | undefined>
   /** The last activation of an agent, or undefined when it was never prepared. */
   activated(agentId: string): ActivatedConnectors | undefined
   /** A connection row changed locally (called by the profile store hook). */
@@ -140,7 +157,20 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
   const hooks: CatalogHooks = {}
   // `defer` of the remote MCP servers of the agent `doPrepare` is activating (activation is serialized)
   let deferNow: boolean | 'auto' = true
+  const telegramLogins = createLoginSessions({
+    factory: () => options.telegramUserClient ?? createMtcuteClient(),
+  })
   const definitions = createConnectorDefinitions({
+    telegramUser: {
+      logins: telegramLogins,
+      saveApp: (app) => saveTelegramApp(app),
+      ...(options.telegramUserFlow?.qrPollMs === undefined
+        ? {}
+        : { qrPollMs: options.telegramUserFlow.qrPollMs }),
+      ...(options.telegramUserFlow?.settleMs === undefined
+        ? {}
+        : { settleMs: options.telegramUserFlow.settleMs }),
+    },
     defer: () => deferNow,
     sqlite: options.sqlite,
     agentById: options.agentById,
@@ -187,6 +217,31 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     return undefined
   }
 
+  /** api_id / api_hash of the Telegram app: the environment wins over what an admin saved from the web. */
+  async function telegramApp(): Promise<TelegramApp | undefined> {
+    const fromEnv = parseTelegramApp({
+      apiId: env.TEAM_TELEGRAM_API_ID,
+      apiHash: env.TEAM_TELEGRAM_API_HASH,
+    })
+    if (fromEnv !== undefined) return fromEnv
+    const stored = await sealed.get(CLIENT_KIND, TELEGRAM_USER_CONNECTOR_ID)
+    return parseTelegramApp(stored?.settings)
+  }
+  async function saveTelegramApp(app: TelegramApp): Promise<void> {
+    await sealed.put({
+      id: TELEGRAM_USER_CONNECTOR_ID,
+      kind: CLIENT_KIND,
+      definitionId: TELEGRAM_USER_CONNECTOR_ID,
+      label: 'Telegram account',
+      settings: { apiId: String(app.apiId), apiHash: app.apiHash },
+      enabled: true,
+      updatedAt: Date.now(),
+    })
+  }
+  /** The one person of this server: the principal that Telegram sign-in flows are bound to. */
+  const principalOf = (definitionId: string | undefined): { principal?: string } =>
+    definitionId === TELEGRAM_USER_CONNECTOR_ID ? { principal: 'owner' } : {}
+
   const service = createConnectorService({
     definitions,
     connections,
@@ -208,6 +263,10 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
           clientId,
           ...(typeof secret === 'string' && secret !== '' ? { clientSecret: secret } : {}),
         }
+      }
+      if (id === TELEGRAM_USER_CONNECTOR_ID) {
+        const app = await telegramApp()
+        return app === undefined ? undefined : { apiId: app.apiId, apiHash: app.apiHash }
       }
       return (await clientSource(id))?.value
     },
@@ -808,6 +867,8 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     prepare,
     accessTokenFor: (connectionId) => service.accessToken(connectionId),
     markNeedsAuth: (connectionId, message) => service.markNeedsAuth(connectionId, message),
+    credentialsOf: (connectionId) => service.credentials(connectionId),
+    telegramApp,
     activated: (agentId) => cache.get(agentId)?.out,
     profileChanged: (kind) => {
       if (kind === 'connection') changed()
@@ -831,10 +892,15 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
       wrap(async () => {
         await checkStart(input)
         void service.sweep()
-        if (input.connectionId !== undefined)
-          return toFlow(await service.reconnect(input.connectionId))
+        if (input.connectionId !== undefined) {
+          const current = await service.get(input.connectionId)
+          return toFlow(
+            await service.reconnect(input.connectionId, principalOf(current?.definitionId)),
+          )
+        }
         return toFlow(
           await service.startConnect({
+            ...principalOf(input.definitionId),
             definitionId: input.definitionId as string,
             scope: input.scope ?? 'workspace',
             ...(input.scopeId === undefined ? {} : { scopeId: input.scopeId }),
@@ -849,7 +915,9 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     },
     act: async (id, input) =>
       wrap(async () => {
+        const flowState = await service.getFlow(id)
         const r = await service.advance(id, {
+          ...principalOf(flowState?.flow.definitionId),
           viewId: input.viewId,
           action: input.action,
           ...(input.data === undefined ? {} : { data: input.data }),

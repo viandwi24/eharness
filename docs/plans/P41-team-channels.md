@@ -124,7 +124,7 @@ template; stores only what a task needs. Operators must review these terms for t
 - [x] L1 (gateway core in `examples/team/server/src/infra/channels`, mock adapter, scripted U1/U2/U3 flows in `test/channels.test.ts`; migration 0021)
 - [x] L2 (session slot, `qr` view, `resend`, `service.credentials` / `markNeedsAuth`, spec 24; `subagent({ onPark: 'notice' })`, spec 20 §3.5)
 - [x] L3 (grammY Bot API adapter in `infra/telegram`, "Telegram bot" connector, Channels page; migration 0023; fake Bot API tests; manual check with a real bot still open)
-- [ ] L4
+- [x] L4 (MTProto user transport in `infra/telegram-user` over mtcute, "Telegram account (MTProto)" connector, account card on the Channels page; migration 0024; **no automated tests for the MTProto transport by owner decision**: manual checklist below)
 - [ ] U1, U2, U3 scripted flows green; manual checks with a real test bot and test account
 
 ## L1 notes (as built)
@@ -272,3 +272,54 @@ Against the real use cases (U1 audit, U2 publishing, U3 internal group). Migrati
 ## Requests to other phases
 
 - P40 phase M: threads carry an optional `source` and display label for channel sessions.
+
+## L4 notes (as built)
+
+- **Code:** `examples/team/server/src/infra/telegram-user/` (`client.ts` the narrow client interface,
+  `mtcute-client.ts` the real client, `login.ts` login sessions of the connect flow, `connector.ts`
+  the "Telegram account (MTProto)" connector with steps credentials, method, phone, code (with
+  `resend`), QR, 2FA, test and chat choice, `service.ts` runtime, lease and admin API, `adapter.ts`
+  live ingest and send, `backfill.ts`, `adminlog.ts`, `collector.ts`, `store.ts`, `errors.ts`).
+  Migration 0024: `tgu_chats`, `tgu_counters`, `tgu_leases`, `tgu_settings`, and `channel_messages.rev`
+  (change counter for collectors).
+- **Credentials:** api_id and api_hash come from `TEAM_TELEGRAM_API_ID` / `TEAM_TELEGRAM_API_HASH`,
+  or are entered once in the web connect flow (stored in the secret vault). The session string is
+  stored in the vault; nothing secret is logged or returned by the API (phone is masked).
+- **Safety:** one live client per session (a lease in `tgu_leases`; a second instance shows state
+  `lease` and does not start), flood waits park the chat's jobs, daily DM and total caps, spaced
+  sends, a revoked session becomes `needs-auth` with a bell. Chosen chats are observe-only until a
+  policy says otherwise.
+- **Web:** Channels page lists every connection of every type (type badge, own tabs). "Connect a
+  channel" opens a picker driven by the registered connector definitions with category `channels`
+  (`ChannelTypePicker`), then the connector's flow (`FlowRenderer`: a `qr` view drawn client-side
+  with `qrcode-generator`, and a "Send the code again" button on the code step). The account card
+  (`ChannelAccountCard`) has the warning box, agent binding, and tabs Chats (picker with refresh and
+  select; chosen chats reuse the policy row), Backfill (window in days and progress), Admin log
+  and Limits.
+- **Testing decision:** the owner decided that the MTProto transport (`infra/telegram-user/**`) is
+  **not covered by automated tests**: no fake MTProto client or account layer was written. It is
+  tested by hand with a dedicated test account. The rest of the suite (store schema migrations,
+  HTTP schemas, the web model) runs as usual. Treat L4 as unverified until the checklist passes.
+
+### Manual test checklist (dedicated test account, 2FA on)
+
+Set `TEAM_TELEGRAM_API_ID` / `TEAM_TELEGRAM_API_HASH` (from my.telegram.org/apps) or enter them in the flow.
+Run one server process. Use a throwaway group where you are admin and another where you are a member.
+
+1. Login by code: Channels, Connect a channel, Telegram account, method Code, phone; enter the code. Connection is saved.
+2. Wrong code keeps the form with an error; an expired code can be resent.
+3. Resend: press "Send the code again"; a new code arrives; signing in with it works.
+4. 2FA: an account with two-step verification asks for the password; a wrong password keeps the step.
+5. QR: method QR; scan in Telegram (Settings, Devices, Link Desktop Device); the code refreshes while waiting; 2FA step after the scan if enabled.
+6. Chat picker: pick chats in the flow, then Channels, Refresh chats lists groups and channels (no people).
+7. Live inbound: select a chat, write there from another account; the message appears in the channel log / agent tools within seconds. Edit it and delete it: edit and deletion are recorded.
+8. Wake in a wake chat: change a chosen chat's policy to wake on mention; mention the account; the agent answers; other messages stay context.
+9. Observe-only chat: a freshly chosen chat never gets an answer, even when mentioned.
+10. Backfill: set a window (for example 7 days) on a chat; progress and oldest date advance; restart the server mid-way and check it resumes from where it stopped; Stop works.
+11. Deletion ids: delete a message in a chosen channel and in a group; both are marked deleted (channel deletions carry no chat id, so they are matched by message id).
+12. Admin log: in a chat where the account is admin, enable the admin log and press Read now; entries and last-read time show; non-admin chats cannot enable it.
+13. Send with limits: have the agent send in an allowed chat; set the daily DM cap to 1 and check the second DM is refused with a clear message; the counters on the Limits tab move.
+14. Flood handling (observe only, do not provoke it): if Telegram answers with a flood wait, the chat shows "Paused by Telegram", the bell notifies, jobs resume at the stated time.
+15. Session revoke: in Telegram, Settings, Devices, end the session; the connection becomes "Needs a new login" with a bell; Sign in again works.
+16. Lease: start a second server process on a copy of the same database; its connection shows "Another instance holds it" and does not log in; stopping the first one lets the second take over after the lease TTL.
+17. Shutdown: stop the server with Ctrl-C; it exits cleanly and the lease is released (the next start is immediate).

@@ -13,7 +13,13 @@ import { join } from 'node:path'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
 import { teamStatus } from '../src/app/heartbeat.ts'
-import { buildDigest, observe } from '../src/domain/heartbeat.ts'
+import {
+  boardLine,
+  buildDigest,
+  observe,
+  parseBeatResult,
+  periodStarts,
+} from '../src/domain/heartbeat.ts'
 import type { Program } from '../src/domain/programs.ts'
 import {
   budgetWarnings,
@@ -100,7 +106,10 @@ const json = (method: string, body?: unknown): RequestInit => ({
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 })
 type TaskView = Task & { column?: string }
-type ProgramView = Program & { warnings?: Array<{ code: string; field: string; message: string }> }
+type ProgramView = Program & {
+  warnings?: Array<{ code: string; field: string; message: string }>
+  triggerState?: { status: string; pausedReason: string | null } | null
+}
 
 const BASE = {
   agentId: 'researcher',
@@ -501,7 +510,8 @@ describe('finding 4: honest numbers', () => {
     const { server } = instance({})
     const lead = server.deps.agents.getBySlug('lead')
     const status = await teamStatus(server.deps, lead?.id as string)
-    expect(status.text).toContain('Spend (from the ledger and the call log')
+    expect(status.text).toContain('Spend (from the model call log')
+    expect(status.text).toContain('Task board (counted by the server, exact)')
     expect(status.text).toContain('today $0.0000')
     expect(status.text).toContain('says nothing about money spent')
   })
@@ -637,15 +647,11 @@ describe('finding 7: channel tools of an agent bound to no channel', () => {
 
     const res = await runNow(app, p.id)
     expect(res.status).toBe(409)
-    expect(
-      ((await res.json()) as { error: { code: string; message: string } }).error,
-    ).toMatchObject({
-      code: 'PROGRAM_UNRUNNABLE',
-    })
-    const run = (await runs(app, p.id))[0]
-    expect(run?.status).toBe('failed')
-    expect(run?.summary).toContain('not bound to any channel connection')
-    expect(run?.report?.status).toBe('failed')
+    const refusal = ((await res.json()) as { error: { code: string; message: string } }).error
+    expect(refusal).toMatchObject({ code: 'PROGRAM_UNRUNNABLE' })
+    expect(refusal.message).toContain('not bound to any channel connection')
+    // a refused start is not a run: no task, so it is never a failed run in the digest or the beat
+    expect(await runs(app, p.id)).toEqual([])
     expect(models.researcher?.calls).toHaveLength(0)
   })
 })
@@ -731,5 +737,174 @@ describe('manager, worker and auditor programs with Files edit off (real client 
     )
     expect(output).toContain('Script: the island')
     expect(output).toContain('cost $0.0120')
+  })
+})
+
+describe('P40 follow-ups: honest board counts, refused runs, one calendar for spend', () => {
+  test('periodStarts: the day lies inside the month across a boundary and a timezone', () => {
+    // 2026-02-01 02:00 UTC is Feb 1 09:00 in Jakarta, but still Jan 31 in Los Angeles
+    const at = Date.UTC(2026, 1, 1, 2, 0)
+    expect(periodStarts(at, 'Asia/Jakarta')).toEqual({
+      dayStart: Date.UTC(2026, 0, 31, 17, 0),
+      monthStart: Date.UTC(2026, 0, 31, 17, 0),
+    })
+    expect(periodStarts(at, 'America/Los_Angeles')).toEqual({
+      dayStart: Date.UTC(2026, 0, 31, 8, 0),
+      monthStart: Date.UTC(2026, 0, 1, 8, 0),
+    })
+    // UTC itself, and a DST change inside the month (Los Angeles moved to PDT on Mar 8)
+    expect(periodStarts(Date.UTC(2026, 2, 9, 12, 0), 'UTC').monthStart).toBe(Date.UTC(2026, 2, 1))
+    expect(periodStarts(Date.UTC(2026, 2, 9, 12, 0), 'America/Los_Angeles')).toEqual({
+      dayStart: Date.UTC(2026, 2, 9, 7, 0),
+      monthStart: Date.UTC(2026, 2, 1, 8, 0),
+    })
+  })
+
+  test('team_status: today never exceeds the month, whatever the ledger says', async () => {
+    const { server } = instance({})
+    const lead = server.deps.agents.getBySlug('lead') as { id: string }
+    // 2026-02-01 02:00 UTC; the team timezone decides which calls are "today"
+    const now = Date.UTC(2026, 1, 1, 2, 0)
+    const calls = [
+      { at: Date.UTC(2026, 0, 20, 10, 0), usd: 0.05 },
+      { at: Date.UTC(2026, 0, 31, 20, 0), usd: 0.03 }, // Feb 1 03:00 in Jakarta
+      { at: now, usd: 0.0486 }, // exactly now: inclusive end
+    ]
+    const stats = (q: { from: number; to: number }) => ({
+      totals: {
+        costUsd: calls.filter((c) => c.at >= q.from && c.at <= q.to).reduce((n, c) => n + c.usd, 0),
+      },
+    })
+    const deps = {
+      ...server.deps,
+      modelCalls: { ...server.deps.modelCalls, stats } as never,
+      // the ledger lags the log (it only counts charged calls): it must not decide the month
+      heartbeat: {
+        ...server.deps.heartbeat,
+        budget: async () => ({ spentUsd: 0.001, limitUsd: 10 }),
+      },
+    }
+    for (const timezone of ['Asia/Jakarta', 'America/Los_Angeles', 'UTC']) {
+      const withTz = {
+        ...deps,
+        settings: {
+          ...server.deps.settings,
+          get: () => ({ ...server.deps.settings.get(), timezone }),
+        },
+      } as typeof server.deps
+      const { text } = await teamStatus(withTz, lead.id, now)
+      const month = Number(/this month \$([0-9]+\.[0-9]+)/.exec(text)?.[1])
+      const today = Number(/today \$([0-9]+\.[0-9]+)/.exec(text)?.[1])
+      expect(today).toBeLessThanOrEqual(month)
+      if (timezone === 'Asia/Jakarta') {
+        // the month began Jan 31 17:00 UTC: it holds the Jan 31 20:00 call, not the Jan 20 one
+        expect(month).toBeCloseTo(0.0786, 4)
+        expect(today).toBeCloseTo(0.0786, 4)
+      }
+      if (timezone === 'UTC') {
+        expect(month).toBeCloseTo(0.0486, 4) // Feb 1 only
+        expect(today).toBeCloseTo(0.0486, 4)
+      }
+      expect(text).toContain('of $10.00')
+    }
+  })
+
+  test('the board is counted by the server and a model item restating counts is dropped', () => {
+    const t = (status: Task['status']) => ({ status, report: null })
+    const line = boardLine([
+      t('done'),
+      t('done'),
+      t('failed'),
+      t('failed'),
+      t('needs_action'),
+      t('queued'),
+    ])
+    expect(line).toContain(
+      '6 task(s): 2 done, 2 failed, 1 waiting for the client, 0 running, 1 queued',
+    )
+    expect(line).toContain('Never restate')
+    const parsed = parseBeatResult({
+      status: 'attention',
+      items: [
+        {
+          kind: 'note',
+          title: 'Task board: 6 tasks done, none failed or waiting',
+          detail: 'All good.',
+        },
+        { kind: 'board', title: 'Board', detail: 'x' },
+        { kind: 'note', title: 'Overview', detail: '6 tasks done and nothing failed' },
+        { kind: 'program.failing', title: 'Audit run failed', detail: 'No access to the channel' },
+      ],
+    })
+    expect(parsed?.items.map((i) => i.title)).toEqual(['Audit run failed'])
+  })
+
+  test('a scheduled program that cannot run pauses its schedule at the first refusal', async () => {
+    const { app, server } = instance({})
+    const p = await createProgram(app, {
+      authority: { tools: ['channel_send'], read: [], write: [] },
+      trigger: { kind: 'schedule', spec: { kind: 'every', everyMs: 3_600_000 } },
+    })
+    const owned = server.deps.routines.getByProgram(p.id)
+    const now = Date.now()
+    const due = (at: number) =>
+      server.conn.sqlite
+        .query('UPDATE routines SET next_fire_at = ? WHERE id = ?')
+        .run(at, owned?.id as string)
+    due(now - 1000)
+    await server.routines.tick(now)
+    const row = server.deps.routines.getByProgram(p.id)
+    expect(row).toMatchObject({ status: 'paused', pausedReason: 'unrunnable', failures: 0 })
+    expect(row?.lastStatus).toContain('paused: ')
+    expect(row?.lastStatus).toContain('not bound to any channel connection')
+    expect(await runs(app, p.id)).toEqual([])
+    const view = (await (await app.request(`/programs/${p.id}`)).json()) as ProgramView
+    expect(view.triggerState).toMatchObject({ status: 'paused', pausedReason: 'unrunnable' })
+    const bell = (await (await app.request('/notifications')).json()) as {
+      notifications: Array<{ body: string }>
+    }
+    expect(bell.notifications).toHaveLength(1)
+    expect(bell.notifications[0]?.body).toContain('schedule is paused')
+    // a later tick does not fire it again
+    await server.routines.tick(now + 7_200_000)
+    expect(server.deps.routines.getByProgram(p.id)?.failures).toBe(0)
+    expect(
+      ((await (await app.request('/notifications')).json()) as { notifications: unknown[] })
+        .notifications,
+    ).toHaveLength(1)
+    // fixed: resuming works
+    await app.request(
+      `/programs/${p.id}`,
+      json('PATCH', { authority: { tools: [], read: [], write: [] } }),
+    )
+    const resumed = (await (
+      await app.request(`/programs/${p.id}/resume`, json('POST'))
+    ).json()) as ProgramView
+    expect(resumed.triggerState).toMatchObject({ status: 'active', pausedReason: null })
+  })
+
+  test('a scheduled refusal leaves no task and tells the bell once, not every tick', async () => {
+    const { app, server } = instance({})
+    const p = await createProgram(app, {
+      authority: { tools: ['channel_send'], read: [], write: [] },
+    })
+    const program = server.deps.programs.get(p.id) as never
+    for (const runAt of [1_000, 2_000, 3_000]) {
+      await expect(
+        server.deps.programRunner.start(program, { runAt, scheduled: true }),
+      ).rejects.toMatchObject({ code: 'PROGRAM_UNRUNNABLE' })
+    }
+    expect(await runs(app, p.id)).toEqual([])
+    const bell = (await (await app.request('/notifications')).json()) as {
+      notifications: Array<{ title: string; link: string | null }>
+    }
+    expect(bell.notifications).toHaveLength(1)
+    expect(bell.notifications[0]?.title).toContain('cannot run')
+    // a manual start does not notify (the caller got the 409)
+    await runNow(app, p.id)
+    const after = (await (await app.request('/notifications')).json()) as {
+      notifications: unknown[]
+    }
+    expect(after.notifications).toHaveLength(1)
   })
 })

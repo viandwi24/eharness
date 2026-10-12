@@ -114,3 +114,26 @@ describe('delivery and pairing text', () => {
 		expect(sortConnections([loose, running]).map((c) => c.id)).toEqual(['r', 'l']);
 	});
 });
+
+describe('channel types and the account card', () => {
+	test('channelTypes keeps only channel connectors', async () => {
+		const m = await import('./model');
+		const list = [
+			{ id: 'github', name: 'GitHub', description: '', category: 'dev' },
+			{ id: 'telegram-bot', name: 'Telegram bot', description: '', category: 'channels' }
+		];
+		expect(m.channelTypes(list).map((c) => c.id)).toEqual(['telegram-bot']);
+	});
+	test('limitsBody validates and converts hours', async () => {
+		const m = await import('./model');
+		expect(m.limitsBody({ dmDailyMax: '5', dailyMax: '40', adminLogHours: '2' })).toEqual({ body: { dmDailyMax: 5, dailyMax: 40, adminLogEveryMs: 7_200_000 } });
+		expect('error' in m.limitsBody({ dmDailyMax: 'x', dailyMax: '40', adminLogHours: '2' })).toBe(true);
+		expect('error' in m.limitsBody({ dmDailyMax: '5', dailyMax: '40', adminLogHours: '' })).toBe(true);
+	});
+	test('lastWindowDays', async () => {
+		const m = await import('./model');
+		expect(m.lastWindowDays('')).toBeNull();
+		expect(m.lastWindowDays('30')).toBe(30);
+		expect(m.lastWindowDays('0')).toBeUndefined();
+	});
+});

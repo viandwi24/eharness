@@ -184,6 +184,18 @@ export const FlowViewSchema = z
       pollIntervalMs: z.number(),
     }),
     z.object({
+      type: z.literal('qr'),
+      ...ViewBase,
+      title: z.string(),
+      description: z.string().optional(),
+      url: z.string().openapi({
+        description:
+          'What the QR code encodes (a login token such as `tg://login?token=...`); it may change under the same `viewId` while the view is polled.',
+      }),
+      expiresAt: z.number(),
+      pollIntervalMs: z.number(),
+    }),
+    z.object({
       type: z.literal('choose'),
       ...ViewBase,
       title: z.string(),
@@ -291,7 +303,7 @@ export const FlowIdParam = z.object({
 export const FlowActSchema = z
   .object({
     viewId: z.string().min(1),
-    action: z.enum(['submit', 'poll', 'back', 'cancel', 'retry']),
+    action: z.enum(['submit', 'poll', 'back', 'cancel', 'retry', 'resend']),
     data: z.record(z.string(), z.unknown()).optional().openapi({
       description:
         '`form`: the values (a secret may be `{ keep: true }`); `choose`: `{ selected }`.',

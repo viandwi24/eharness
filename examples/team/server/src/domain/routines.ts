@@ -25,6 +25,8 @@ export type PausedReason =
   | 'ended'
   | 'completed'
   | 'agent-archived'
+  /** A scheduled program run was refused (a configuration problem); `lastStatus` says why. */
+  | 'unrunnable'
 
 export interface Routine {
   id: string

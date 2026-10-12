@@ -439,7 +439,10 @@ All are fixed in the team example; `src/` is untouched (the per-turn `settings.m
       "stuck" for the heartbeat. `status` is unchanged (queue and claim untouched); the web board already
       mapped a parked run to Waiting through the open-decision set, so it needed no change.
 - [x] 7. Channel tools in an authority of an agent bound to no channel: warning at save and in the editor,
-      the run fails before its first model call (`PROGRAM_UNRUNNABLE`).
+      the start is refused before its first model call (`PROGRAM_UNRUNNABLE`, no task; a scheduled refusal
+      notifies the bell once). Follow-up: `team_status` states the board counts and spend itself (month and
+      today both from the call log over the team timezone, the day inside the month); a beat item that
+      only restates task counts is dropped.
 - Tests: `server/test/p40-fixes.test.ts` (scripted models, including a manager / worker / auditor scenario
   with Files edit off), web `lib/programs/form.test.ts`.
 - Not changed: tools named in an authority that the agent has through a connector turned off are only

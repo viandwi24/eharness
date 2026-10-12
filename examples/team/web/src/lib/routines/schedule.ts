@@ -165,7 +165,8 @@ const PAUSE_TEXT: Record<string, string> = {
 	'max-fires': 'finished',
 	ended: 'ended',
 	completed: 'completed',
-	'agent-archived': 'agent archived'
+	'agent-archived': 'agent archived',
+	unrunnable: 'paused: cannot run'
 };
 
 export function routineBadge(r: { status: 'active' | 'paused'; pausedReason: string | null; failures: number }): RoutineBadge {

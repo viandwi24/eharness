@@ -14,6 +14,7 @@ import {
   type BeatItem,
   type BeatRecord,
   beatPrompt,
+  boardLine,
   buildDigest,
   CHECKLIST_TEMPLATE,
   checkDigestFields,
@@ -34,6 +35,7 @@ import {
   MAX_DIGEST_BUFFER,
   observe,
   parseBeatResult,
+  periodStarts,
   pruneFingerprints,
   pushBeat,
   type RequestText,
@@ -366,12 +368,18 @@ export async function teamStatus(
       now,
     )
   }
-  const dayStart = Math.floor(now / 86_400_000) * 86_400_000
+  // one source (the call log) and one calendar (the team timezone), the day inside the month:
+  // today can never exceed the month. The ledger only supplies the limit.
+  const { dayStart, monthStart } = periodStarts(now, deps.settings.get().timezone)
+  const ledger = await deps.heartbeat.budget()
+  const monthSpent = deps.modelCalls.stats({ from: monthStart, to: now }).totals.costUsd
+  const todaySpent = deps.modelCalls.stats({ from: dayStart, to: now }).totals.costUsd
   const spend = {
-    month: await deps.heartbeat.budget(),
-    todayUsd: deps.modelCalls.stats({ from: dayStart, to: now }).totals.costUsd,
+    month: ledger === null ? null : { spentUsd: monthSpent, limitUsd: ledger.limitUsd },
+    todayUsd: Math.min(todaySpent, monthSpent),
   }
-  return { text: statusText(fresh, now, spend), findings: fresh }
+  const board = boardLine(deps.tasks.list({ limit: 300 }))
+  return { text: statusText(fresh, now, spend, board), findings: fresh }
 }
 
 // --- a beat ------------------------------------------------------------------------------------

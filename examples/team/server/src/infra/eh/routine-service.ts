@@ -303,7 +303,25 @@ export function createRoutineService(
       emitRun(routine, after, now)
       return after
     }
-    const started = await programs.runner.start(program, { runAt: run.scheduledAt })
+    let started: Awaited<ReturnType<typeof programs.runner.start>>
+    try {
+      started = await programs.runner.start(program, { runAt: run.scheduledAt, scheduled: true })
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'PROGRAM_UNRUNNABLE') throw error
+      // a configuration problem: every later tick would be refused the same way, so the schedule
+      // pauses at the first refusal (not a failure; the reason is shown, resume after fixing it)
+      const reason = error instanceof Error ? error.message : String(error)
+      store.markSkipped(run.id, reason, now)
+      store.update(
+        routine.id,
+        { status: 'paused', pausedReason: 'unrunnable', lastStatus: `paused: ${reason}` },
+        now,
+      )
+      emit('routine-changed', routine, null, { change: 'paused', reason: 'unrunnable' }, now)
+      const after = store.getRun(run.id) as RoutineRun
+      emitRun(routine, after, now)
+      return after
+    }
     if (started.idle === true) {
       // a worker program with nothing queued: not a run, nothing to report
       store.markSkipped(run.id, 'no queued tasks', now)

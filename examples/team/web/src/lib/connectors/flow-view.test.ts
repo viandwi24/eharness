@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { ConnectFlow, Connection, FlowView } from '../api/client';
 import type { FormField } from '../providers/form';
-import { choosePayload, chooseError, countdownText, deviceLink, flowSucceeded, formPayload, toggleSelected, viewTitle } from './flow-view';
+import qrcode from 'qrcode-generator';
+import { pollIntervalOf } from './flow-core';
+import { canResend, qrDataUri, choosePayload, chooseError, countdownText, deviceLink, flowSucceeded, formPayload, toggleSelected, viewTitle } from './flow-view';
 
 const f = (over: Partial<FormField> & { path: string }): FormField => ({ kind: 'string', label: over.path, required: false, secret: false, secretValues: false, group: 'auth', ...over });
 const flow = (status: ConnectFlow['status']): ConnectFlow => ({ id: 'f', definitionId: 'd', scope: 'workspace', label: 'x', status, step: 's', rev: 1, view: { type: 'status', viewId: 'v', step: 's', state: 'success', message: 'ok' }, createdAt: 0, updatedAt: 0, expiresAt: 0 });
@@ -70,5 +72,23 @@ describe('form wording', () => {
 		expect(repeatsDialogTitle('Choose what to share')).toBe(false);
 		expect(friendlyError('Invalid URL')).toContain('https://');
 		expect(friendlyError('Too short')).toBe('Too short');
+	});
+});
+
+describe('resend and qr', () => {
+	const form = { type: 'form', viewId: 'v', step: 'code', title: 't', fields: [f({ path: 'code' })], values: {}, submitLabel: 's' } as Extract<FlowView, { type: 'form' }>;
+	test('only the code step resends', () => {
+		expect(canResend(form)).toBe(true);
+		expect(canResend({ ...form, step: 'password' })).toBe(false);
+		expect(canResend({ ...form, fields: [f({ path: 'x' })] })).toBe(false);
+	});
+	test('the qr view is polled', () => {
+		const v = { type: 'qr', viewId: 'v', step: 'qr', title: 't', url: 'tg://login?token=x', expiresAt: 0, pollIntervalMs: 2000 } as Extract<FlowView, { type: 'qr' }>;
+		expect(pollIntervalOf(v)).toBe(2000);
+	});
+	test('qrDataUri encodes an svg', () => {
+		const uri = qrDataUri('tg://login?token=abc', qrcode as never);
+		expect(uri.startsWith('data:image/svg+xml')).toBe(true);
+		expect(decodeURIComponent(uri)).toContain('<svg');
 	});
 });

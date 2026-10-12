@@ -625,8 +625,9 @@ first time a real model ran programs, each with a team-level fix and none in the
 - *Tools that cannot exist.* A program whose authority lists `channel_send` or `channel_manage` while
   its agent is bound to no channel connection used to loop "running": the tool never exists. The
   same check that warns in the editor (`toolWarnings`, over `factory.toolAvailability`) now makes the
-  run fail before its first model call (`409 PROGRAM_UNRUNNABLE`, a failed task with the reason; a
-  worker run claims nothing), and `request_authority` for a tool the run can never have returns the
+  run fail before its first model call (`409 PROGRAM_UNRUNNABLE` with the reason; no task is created, so a refused start is never
+  a failed run in the digest or the heartbeat, and a scheduled refusal tells the bell once per program and
+  reason; a worker run claims nothing), and `request_authority` for a tool the run can never have returns the
   reason to the model instead of parking (a `superRefine` on the tool input, so the run is not parked
   and no decision is opened).
 
@@ -1287,7 +1288,7 @@ switcher; it can be read and continued there (what is written there is not poste
 1. In Telegram, @BotFather `/newbot`; copy the token. For groups, either make the bot a group admin
    or turn privacy mode off (`/setprivacy`, then re-add the bot), otherwise it only sees mentions,
    replies and commands.
-2. Channels page, **Connect a Telegram bot**: the connector flow takes the token and runs
+2. Channels page, **Connect a channel**, then **Telegram bot**: the connector flow takes the token and runs
    `getMe`; the connection shows `@username` and what privacy mode means for this bot.
 3. Bind the connection to an agent. Polling starts; the bot shows as *Running*.
 4. Write in a group where the bot is (or add it): the chat appears under **Chats**. Allow it and
@@ -1318,6 +1319,33 @@ switcher; it can be read and continued there (what is written there is not poste
 `PATCH|DELETE .../chats/{chatId}/policy[?topic=]`, `GET .../links`, `POST .../pairing`,
 `DELETE .../links/{peerId}`, `POST .../webhook/delete`, `.../restart`, `.../breaker/reset`
 (zod-openapi schemas, generated web types). The web page is `/channels`.
+
+## 28c. Telegram account over MTProto (P41 phase L4)
+
+**What.** A user account (not a bot) as a channel, for groups and channels a bot cannot join, with
+history backfill and the admin log
+([`infra/telegram-user`](../../examples/team/server/src/infra/telegram-user), mtcute). It plugs into
+the same gateway and Channels page as the bot. **Not covered by automated tests** (owner decision):
+the manual checklist is in [P41](../plans/P41-team-channels.md#manual-test-checklist-dedicated-test-account-2fa-on).
+
+**Before you start.** Get an `api_id` and `api_hash` at my.telegram.org/apps
+([guide](https://core.telegram.org/api/obtaining_api_id)) and set `TEAM_TELEGRAM_API_ID` and
+`TEAM_TELEGRAM_API_HASH`, or enter them once in the connect flow. Use a **dedicated account** with
+two-step verification on. Telegram may limit or ban accounts driven by API clients, especially for
+spam or flooding; read the [API terms](https://core.telegram.org/api/terms). This is not legal advice.
+
+**Setup.** Channels page, **Connect a channel** (a picker listing the registered channel types),
+**Telegram account (MTProto)**: credentials, then sign in by code (with *Send the code again*) or
+by QR (Settings, Devices, Link Desktop Device), 2FA if enabled, then pick chats. Bind the connection
+to an agent.
+
+**Account card.** *Chats*: Refresh chats, choose the ones to read (observe-only until you change
+the policy). *Backfill*: a window in days per chat with progress, resumable and flood-aware.
+*Admin log*: chats where the account is admin, read every few hours (Telegram keeps it briefly).
+*Limits*: daily DM and total caps (strict defaults), admin-log interval, today's counters.
+
+**Safety.** One live client per session (a lease; a second instance shows *Another instance holds
+it*), flood waits park jobs, a revoked session shows *Needs a new login*.
 
 ## What to change when you copy it
 

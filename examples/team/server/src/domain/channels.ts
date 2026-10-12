@@ -14,6 +14,8 @@ export type ChannelRuntimeState =
   | 'webhook'
   | 'error'
   | 'stopped'
+  /** A user account whose session another process holds (one live client per session). */
+  | 'lease'
 
 export interface ChannelPolicy {
   /** `false` takes the chat out of the allowlist. */
@@ -34,7 +36,57 @@ export interface ChannelBinding {
   defaults: Pick<ChannelPolicy, 'wake' | 'delivery' | 'retentionDays'>
 }
 
+/** What the Channels page shows about a Telegram user account (P41 L4). Never a session or a full phone number. */
+export interface ChannelAccountView {
+  accountId?: string
+  username?: string
+  /** Masked: `+62••••1234`. */
+  phone?: string
+  limits: {
+    dmDailyMax: number
+    dailyMax: number
+    adminLogEveryMs: number
+    chatMinIntervalMs: number
+    groupMax: number
+    groupWindowMs: number
+    connectionMax: number
+    connectionWindowMs: number
+  }
+  today: { dm: number; all: number }
+  floods: { lastAt?: number; parkedChats: number }
+  /** Jobs (backfill) are paused by a flood storm until this time. */
+  pausedUntil?: number
+  /** The big-data source id of this account's observe-only chats (`ingest_source`). */
+  source: string
+  events: { live: number; lastEventAt?: number; unresolvedDeletes: number }
+  warnings: string[]
+}
+
+export interface ChannelAccountChatState {
+  /** Chosen for ingest (the account reads and stores this chat). */
+  selected: boolean
+  admin: boolean
+  backfill: {
+    days: number | null
+    /** `idle` | `queued` | `running` | `parked` | `done` | `error` */
+    state: string
+    oldestAt?: number
+    count: number
+    error?: string
+    parkedUntil?: number
+  }
+  adminLog: {
+    enabled: boolean
+    lastAt?: number
+    count: number
+    error?: string
+  }
+}
+
 export interface ChannelConnectionView {
+  /** `bot` (Bot API) or `user` (a Telegram user account over MTProto). */
+  transport?: 'bot' | 'user'
+  account?: ChannelAccountView
   /** The connector connection id. */
   id: string
   platform: ChannelPlatform
@@ -73,6 +125,8 @@ export interface ChannelChatView {
   topics: ChannelTopicView[]
   /** What the bot is in the chat (`member`, `administrator`, `left`, `kicked`, ...). */
   botStatus?: string
+  /** User accounts: selection, backfill and admin-log state. */
+  account?: ChannelAccountChatState
   canPost?: boolean
   firstSeen: number
   lastSeen: number
@@ -119,4 +173,15 @@ export interface ChannelPolicyInput {
   wake?: 'mention' | 'always' | 'never' | null
   delivery?: 'final_text' | 'message_tool' | null
   retentionDays?: number | null
+}
+
+export interface ChannelLimitsInput {
+  dmDailyMax?: number
+  dailyMax?: number
+  adminLogEveryMs?: number
+  chatMinIntervalMs?: number
+  groupMax?: number
+  groupWindowMs?: number
+  connectionMax?: number
+  connectionWindowMs?: number
 }

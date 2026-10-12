@@ -7,6 +7,7 @@
 	import FlowDeviceCode from './FlowDeviceCode.svelte';
 	import FlowError from './FlowError.svelte';
 	import FlowForm from './FlowForm.svelte';
+	import FlowQr from './FlowQr.svelte';
 	import FlowOAuth from './FlowOAuth.svelte';
 	import FlowStatus from './FlowStatus.svelte';
 
@@ -54,7 +55,9 @@
 	{:else}
 		{#key view.viewId}
 			{#if view.type === 'form'}
-				<FlowForm {view} busy={st.busy} canBack={back} onSubmit={submit} onBack={goBack} onCancel={cancel} />
+				<FlowForm {view} busy={st.busy} canBack={back} onSubmit={submit} onBack={goBack} onCancel={cancel} onResend={() => session.act('resend')} />
+			{:else if view.type === 'qr'}
+				<FlowQr {session} {view} onCancel={cancel} />
 			{:else if view.type === 'oauth'}
 				<FlowOAuth {session} {view} onCancel={cancel} />
 			{:else if view.type === 'deviceCode'}

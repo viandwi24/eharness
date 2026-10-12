@@ -129,6 +129,16 @@ export interface ChannelCapabilities {
    * `action` event. Without it the gateway falls back to a link to the web app.
    */
   buttons?: boolean
+  /** Deletions arrive as `delete` events: `ids` = message ids only (no text, no actor). Default `none`. */
+  deletions?: 'none' | 'ids'
+  /** The adapter can read the platform's moderation log (`adminLog`). */
+  adminLog?: boolean
+  /** The adapter can list the chats of its identity (`listChats`). */
+  listChats?: boolean
+  /** What `members` returns: administrators only, a part of the list, or everybody. */
+  membersScope?: 'admins' | 'partial' | 'full'
+  /** How `fetchHistory` reads: `rest` = any page on request (a user account), `none` = no history. */
+  historyMode?: 'none' | 'rest'
 }
 
 export interface OutboundFile {
@@ -201,11 +211,22 @@ export type ChannelErrorKind =
 export class ChannelError extends Error {
   readonly kind: ChannelErrorKind
   readonly retryAfterMs: number | undefined
-  constructor(kind: ChannelErrorKind, message: string, retryAfterMs?: number) {
+  /**
+   * What a `rate_limit` applies to: the whole connection (default) or only the conversation of
+   * the operation (a per-chat flood wait: other chats keep sending).
+   */
+  readonly scope: 'connection' | 'chat'
+  constructor(
+    kind: ChannelErrorKind,
+    message: string,
+    retryAfterMs?: number,
+    scope: 'connection' | 'chat' = 'connection',
+  ) {
     super(message)
     this.name = 'ChannelError'
     this.kind = kind
     this.retryAfterMs = retryAfterMs
+    this.scope = scope
   }
 }
 

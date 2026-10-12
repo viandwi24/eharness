@@ -9,6 +9,7 @@ const state = z.enum([
   'webhook',
   'error',
   'stopped',
+  'lease',
 ])
 const wake = z.enum(['mention', 'always', 'never'])
 const delivery = z.enum(['final_text', 'message_tool'])
@@ -39,8 +40,61 @@ export const ChannelBindingSchema = z
   })
   .openapi('ChannelBinding')
 
+export const ChannelAccountSchema = z
+  .object({
+    accountId: z.string().optional(),
+    username: z.string().optional(),
+    phone: z.string().optional().openapi({ description: 'Masked, never the full number.' }),
+    limits: z.object({
+      dmDailyMax: z.number().int(),
+      dailyMax: z.number().int(),
+      adminLogEveryMs: z.number().int(),
+      chatMinIntervalMs: z.number().int(),
+      groupMax: z.number().int(),
+      groupWindowMs: z.number().int(),
+      connectionMax: z.number().int(),
+      connectionWindowMs: z.number().int(),
+    }),
+    today: z.object({ dm: z.number().int(), all: z.number().int() }),
+    floods: z.object({ lastAt: z.number().int().optional(), parkedChats: z.number().int() }),
+    pausedUntil: z.number().int().optional(),
+    source: z
+      .string()
+      .openapi({ description: 'The big-data source id of the observe-only chats.' }),
+    events: z.object({
+      live: z.number().int(),
+      lastEventAt: z.number().int().optional(),
+      unresolvedDeletes: z.number().int(),
+    }),
+    warnings: z.array(z.string()),
+  })
+  .openapi('ChannelAccount')
+
+export const ChannelAccountChatSchema = z
+  .object({
+    selected: z.boolean(),
+    admin: z.boolean(),
+    backfill: z.object({
+      days: z.number().int().nullable(),
+      state: z.string(),
+      oldestAt: z.number().int().optional(),
+      count: z.number().int(),
+      error: z.string().optional(),
+      parkedUntil: z.number().int().optional(),
+    }),
+    adminLog: z.object({
+      enabled: z.boolean(),
+      lastAt: z.number().int().optional(),
+      count: z.number().int(),
+      error: z.string().optional(),
+    }),
+  })
+  .openapi('ChannelAccountChat')
+
 export const ChannelConnectionSchema = z
   .object({
+    transport: z.enum(['bot', 'user']).optional(),
+    account: ChannelAccountSchema.optional(),
     id: z.string().openapi({ description: 'The connector connection id.' }),
     platform: z.enum(['telegram']),
     label: z.string(),
@@ -91,6 +145,7 @@ export const ChannelChatSchema = z
       z.object({ id: z.string(), name: z.string(), policy: ChannelPolicySchema.nullable() }),
     ),
     botStatus: z.string().optional(),
+    account: ChannelAccountChatSchema.optional(),
     canPost: z.boolean().optional(),
     firstSeen: z.number().int(),
     lastSeen: z.number().int(),
@@ -186,3 +241,40 @@ export const ChannelTopicQuery = z.object({
     .optional()
     .openapi({ description: 'A forum topic id: the policy is of the topic.' }),
 })
+
+export const ChannelSelectBodySchema = z
+  .object({ selected: z.boolean() })
+  .openapi('ChannelSelectBody')
+
+export const ChannelBackfillBodySchema = z
+  .object({
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(3650)
+      .nullable()
+      .openapi({ description: 'History window in days; `null` = no backfill.' }),
+  })
+  .openapi('ChannelBackfillBody')
+
+export const ChannelAdminLogBodySchema = z
+  .object({ enabled: z.boolean() })
+  .openapi('ChannelAdminLogBody')
+
+export const ChannelAdminLogRunSchema = z
+  .object({ force: z.boolean().optional() })
+  .openapi('ChannelAdminLogRun')
+
+export const ChannelLimitsBodySchema = z
+  .object({
+    dmDailyMax: z.number().int().min(0).max(1000).optional(),
+    dailyMax: z.number().int().min(0).max(5000).optional(),
+    adminLogEveryMs: z.number().int().min(60_000).optional(),
+    chatMinIntervalMs: z.number().int().min(0).optional(),
+    groupMax: z.number().int().min(1).optional(),
+    groupWindowMs: z.number().int().min(1).optional(),
+    connectionMax: z.number().int().min(1).optional(),
+    connectionWindowMs: z.number().int().min(1).optional(),
+  })
+  .openapi('ChannelLimitsBody')

@@ -72,6 +72,33 @@ export function postAlerts(
   return added
 }
 
+/** A one-off alert in the bell, deduplicated by `key` (a dismissed one is not posted again). */
+export function postNotice(
+  deps: Deps,
+  input: {
+    key: string
+    title: string
+    body: string
+    link: string | null
+    agentId: string | null
+    at: number
+  },
+): boolean {
+  const n = deps.notifications.insert({
+    id: deps.ids.next(),
+    kind: 'alert',
+    key: input.key,
+    title: input.title,
+    body: input.body.replace(/\s+/g, ' ').trim().slice(0, 600),
+    link: input.link,
+    agentId: input.agentId,
+    createdAt: input.at,
+  })
+  if (n === undefined) return false
+  changed(deps, 'notification-changed', { kind: 'alert', added: 1 })
+  return true
+}
+
 export function listNotifications(deps: Deps, opts: { all?: boolean; limit?: number } = {}) {
   return {
     notifications: deps.notifications.list({ open: opts.all !== true, limit: opts.limit ?? 50 }),

@@ -245,6 +245,7 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
       if (patch.endAt !== undefined) set('end_at', patch.endAt)
       if (patch.status !== undefined) set('status', patch.status)
       if (patch.pausedReason !== undefined) set('paused_reason', patch.pausedReason)
+      if (patch.lastStatus !== undefined) set('last_status', patch.lastStatus)
       if (patch.nextFireAt !== undefined) set('next_fire_at', patch.nextFireAt)
       if (patch.failures !== undefined) set('failures', patch.failures)
       set('updated_at', now)

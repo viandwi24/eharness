@@ -228,6 +228,7 @@ interface MessageDb {
   handled: number
   edited_at: number | null
   deleted_at: number | null
+  rev: number
   body: string
 }
 
@@ -289,6 +290,24 @@ export interface ChannelLog {
   /** Delete rows older than each conversation's retention; returns the number removed. */
   purge(now: number, defaultDays?: number): number
   count(connectionId?: string): number
+  /**
+   * Rows changed (inserted, edited or deleted) after change counter `afterRev`, oldest change
+   * first: the feed of collectors. `rev` of a row is the counter of its latest change.
+   */
+  changes(connectionId: string, afterRev: number, limit: number): Promise<LogChange[]>
+  /**
+   * Find logged messages by platform id (deletions arrive as ids only). With `container`, only
+   * conversations of that chat (`<container>` or `<container>/<topic>`).
+   */
+  locate(
+    connectionId: string,
+    platformIds: readonly string[],
+    container?: string,
+  ): Array<{ conversationId: string; platformId: string }>
+}
+
+export interface LogChange extends LogMessage {
+  rev: number
 }
 
 export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelLog {
@@ -326,8 +345,8 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
       const sealed = await vault.seal(JSON.stringify(bodyOf(message)), context(id))
       const res = sqlite
         .query(
-          `INSERT INTO channel_messages (id, connection_id, conversation_id, platform_id, at, self, pending, handled, body)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO channel_messages (id, connection_id, conversation_id, platform_id, at, self, pending, handled, rev, body)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(rev), 0) + 1 FROM channel_messages WHERE connection_id = ?), ?)
            ON CONFLICT (connection_id, conversation_id, platform_id) DO NOTHING`,
         )
         .run(
@@ -339,6 +358,7 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
           message.self === true ? 1 : 0,
           options.pending ? 1 : 0,
           options.handled === true ? 1 : 0,
+          message.connectionId,
           sealed,
         )
       if (res.changes > 0) return { inserted: true, handled: options.handled === true, id }
@@ -370,8 +390,11 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
       }
       const sealed = await vault.seal(JSON.stringify(body), context(r.id))
       sqlite
-        .query('UPDATE channel_messages SET body = ?, edited_at = ? WHERE id = ?')
-        .run(sealed, at, r.id)
+        .query(
+          `UPDATE channel_messages SET body = ?, edited_at = ?,
+             rev = (SELECT COALESCE(MAX(rev), 0) + 1 FROM channel_messages WHERE connection_id = ?) WHERE id = ?`,
+        )
+        .run(sealed, at, connectionId, r.id)
       return true
     },
     recordDeleted(connectionId, conversationId, platformIds, at) {
@@ -379,9 +402,11 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
       for (const platformId of platformIds) {
         n += sqlite
           .query(
-            'UPDATE channel_messages SET deleted_at = ? WHERE connection_id = ? AND conversation_id = ? AND platform_id = ? AND deleted_at IS NULL',
+            `UPDATE channel_messages SET deleted_at = ?,
+               rev = (SELECT COALESCE(MAX(rev), 0) + 1 FROM channel_messages WHERE connection_id = ?)
+               WHERE connection_id = ? AND conversation_id = ? AND platform_id = ? AND deleted_at IS NULL`,
           )
-          .run(at, connectionId, conversationId, platformId).changes
+          .run(at, connectionId, connectionId, conversationId, platformId).changes
       }
       return n
     },
@@ -434,6 +459,33 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
         removed += del.run(r.connection_id, r.conversation_id, now - days * 86_400_000).changes
       }
       return removed
+    },
+    async changes(connectionId, afterRev, limit) {
+      const rows = sqlite
+        .query<MessageDb, [string, number, number]>(
+          'SELECT * FROM channel_messages WHERE connection_id = ? AND rev > ? ORDER BY rev ASC LIMIT ?',
+        )
+        .all(connectionId, afterRev, limit)
+      return Promise.all(rows.map(async (r) => ({ ...(await open(r)), rev: r.rev })))
+    },
+    locate(connectionId, platformIds, container) {
+      const out: Array<{ conversationId: string; platformId: string }> = []
+      const q = sqlite.query<{ conversation_id: string; platform_id: string }, [string, string]>(
+        'SELECT conversation_id, platform_id FROM channel_messages WHERE connection_id = ? AND platform_id = ?',
+      )
+      for (const platformId of platformIds) {
+        for (const r of q.all(connectionId, platformId)) {
+          if (
+            container !== undefined &&
+            r.conversation_id !== container &&
+            !r.conversation_id.startsWith(`${container}/`)
+          ) {
+            continue
+          }
+          out.push({ conversationId: r.conversation_id, platformId: r.platform_id })
+        }
+      }
+      return out
     },
     count(connectionId) {
       const r =

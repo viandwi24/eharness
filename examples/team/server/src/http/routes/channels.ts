@@ -1,6 +1,9 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import {
+  ChannelAdminLogBodySchema,
+  ChannelAdminLogRunSchema,
+  ChannelBackfillBodySchema,
   ChannelBindBodySchema,
   ChannelChatListSchema,
   ChannelChatParam,
@@ -8,10 +11,12 @@ import {
   ChannelConnectionListSchema,
   ChannelConnectionSchema,
   ChannelIdParam,
+  ChannelLimitsBodySchema,
   ChannelLinkListSchema,
   ChannelLinkParam,
   ChannelPairingSchema,
   ChannelPolicyBodySchema,
+  ChannelSelectBodySchema,
   ChannelTopicQuery,
   PairingBodySchema,
 } from '../schemas/channels.ts'
@@ -196,9 +201,136 @@ const breakerReset = createRoute({
   responses: { 200: connectionOk, 404: jsonError('Unknown connection'), ...errorResponses },
 })
 
+const chatOk = { description: 'The chat', content: content(ChannelChatSchema) }
+const accountNotRunning = jsonError('The account is not running, or the chat is not chosen')
+const refresh = createRoute({
+  method: 'post',
+  path: '/channels/connections/{id}/account/chats/refresh',
+  tags,
+  summary: 'Read the dialogs of a Telegram account',
+  description:
+    'User accounts: asks Telegram for the groups and channels the account is in and adds them to the picker (people are not listed). Needs a running connection.',
+  security,
+  request: { params: ChannelIdParam },
+  responses: {
+    200: { description: 'Chats', content: content(ChannelChatListSchema) },
+    404: jsonError('Unknown connection'),
+    409: accountNotRunning,
+    ...errorResponses,
+  },
+})
+const select = createRoute({
+  method: 'put',
+  path: '/channels/connections/{id}/account/chats/{chatId}/selected',
+  tags,
+  summary: 'Choose or stop ingesting a chat',
+  description:
+    'A chosen chat is stored and starts observe-only (`wake: never`): the agent never answers there until you change its policy.',
+  security,
+  request: {
+    params: ChannelChatParam,
+    body: { required: true, content: content(ChannelSelectBodySchema) },
+  },
+  responses: {
+    200: chatOk,
+    404: jsonError('Unknown chat'),
+    409: accountNotRunning,
+    ...errorResponses,
+  },
+})
+const backfill = createRoute({
+  method: 'put',
+  path: '/channels/connections/{id}/account/chats/{chatId}/backfill',
+  tags,
+  summary: 'Set the history window of a chat',
+  description:
+    'Reads the history newest first down to this many days (100 messages a page, with pauses; one chat at a time). Progress is on the chat view.',
+  security,
+  request: {
+    params: ChannelChatParam,
+    body: { required: true, content: content(ChannelBackfillBodySchema) },
+  },
+  responses: {
+    200: chatOk,
+    404: jsonError('Unknown chat'),
+    409: accountNotRunning,
+    ...errorResponses,
+  },
+})
+const adminLogSet = createRoute({
+  method: 'put',
+  path: '/channels/connections/{id}/account/chats/{chatId}/admin-log',
+  tags,
+  summary: 'Poll the admin log of a chat',
+  description:
+    'Only for chats where the account is an admin. Telegram keeps the log briefly, so it is read every few hours and stored.',
+  security,
+  request: {
+    params: ChannelChatParam,
+    body: { required: true, content: content(ChannelAdminLogBodySchema) },
+  },
+  responses: {
+    200: chatOk,
+    404: jsonError('Unknown chat'),
+    409: accountNotRunning,
+    ...errorResponses,
+  },
+})
+const adminLogRun = createRoute({
+  method: 'post',
+  path: '/channels/connections/{id}/account/admin-log/run',
+  tags,
+  summary: 'Read the due admin logs now',
+  security,
+  request: {
+    params: ChannelIdParam,
+    body: { required: false, content: content(ChannelAdminLogRunSchema) },
+  },
+  responses: { 200: connectionOk, 404: jsonError('Unknown connection'), ...errorResponses },
+})
+const limitsSet = createRoute({
+  method: 'put',
+  path: '/channels/connections/{id}/account/limits',
+  tags,
+  summary: 'Outbound limits of a Telegram account',
+  description:
+    'Daily caps (direct messages, all messages), the admin-log interval and the per-chat and per-account send rate. Defaults are strict on purpose: a user account that sends like a robot gets limited.',
+  security,
+  request: {
+    params: ChannelIdParam,
+    body: { required: true, content: content(ChannelLimitsBodySchema) },
+  },
+  responses: { 200: connectionOk, 404: jsonError('Unknown connection'), ...errorResponses },
+})
+
 export function channelRoutes(deps: Deps) {
   const ch = deps.channels
+  const acc = deps.channelAccounts
   return new OpenAPIHono()
+    .openapi(refresh, async (c) =>
+      c.json({ items: await acc.refreshChats(c.req.valid('param').id) }, 200),
+    )
+    .openapi(select, async (c) => {
+      const { id, chatId } = c.req.valid('param')
+      return c.json(await acc.selectChat(id, chatId, c.req.valid('json').selected), 200)
+    })
+    .openapi(backfill, async (c) => {
+      const { id, chatId } = c.req.valid('param')
+      return c.json(await acc.setBackfill(id, chatId, c.req.valid('json').days), 200)
+    })
+    .openapi(adminLogSet, async (c) => {
+      const { id, chatId } = c.req.valid('param')
+      return c.json(await acc.setAdminLog(id, chatId, c.req.valid('json').enabled), 200)
+    })
+    .openapi(adminLogRun, async (c) =>
+      c.json(
+        await acc.runAdminLog(c.req.valid('param').id, c.req.valid('json')?.force === true),
+        200,
+      ),
+    )
+    .openapi(limitsSet, async (c) =>
+      c.json(await acc.setLimits(c.req.valid('param').id, c.req.valid('json')), 200),
+    )
     .openapi(list, async (c) => c.json({ items: await ch.connections() }, 200))
     .openapi(get, async (c) => c.json(await ch.connection(c.req.valid('param').id), 200))
     .openapi(bind, async (c) =>

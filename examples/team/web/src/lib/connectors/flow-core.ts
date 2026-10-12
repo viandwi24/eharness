@@ -17,7 +17,7 @@ export type FlowStart = {
 	defaultEnabled?: boolean;
 };
 
-export type FlowAction = 'submit' | 'poll' | 'back' | 'cancel' | 'retry';
+export type FlowAction = 'submit' | 'poll' | 'back' | 'cancel' | 'retry' | 'resend';
 
 export type FlowSessionState = {
 	flow: ConnectFlow | null;
@@ -33,7 +33,7 @@ export const emptyFlowSession = (): FlowSessionState => ({ flow: null, connectio
 
 /** Whether the view wants to be polled, and how often (ms). */
 export function pollIntervalOf(view: FlowView | undefined): number | null {
-	if (view?.type === 'oauth' || view?.type === 'deviceCode') return Math.max(1000, view.pollIntervalMs);
+	if (view?.type === 'oauth' || view?.type === 'deviceCode' || view?.type === 'qr') return Math.max(1000, view.pollIntervalMs);
 	return null;
 }
 

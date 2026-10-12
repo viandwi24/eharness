@@ -62,6 +62,7 @@ export function viewTitle(view: FlowView): string {
 		case 'form':
 		case 'oauth':
 		case 'deviceCode':
+		case 'qr':
 		case 'choose':
 		case 'confirm':
 			return view.title;
@@ -99,4 +100,15 @@ export const repeatsDialogTitle = (title: string): boolean => /^(re)?connect\b/i
 export function friendlyError(message: string): string {
 	if (/^invalid url$/i.test(message.trim())) return 'Enter a full address, like https://mcp.example.com/mcp';
 	return message;
+}
+
+/** A login-code form can ask for the code again (the server offers `resend` on the `code` step). */
+export const canResend = (view: View<'form'>): boolean => view.step === 'code' && view.fields.some((f) => f.path === 'code');
+
+/** The QR image of a login URL as an SVG data URI (computed here: the URL never leaves the browser). */
+export function qrDataUri(text: string, qr: (typeNumber: number, level: 'L' | 'M' | 'Q' | 'H') => { addData(d: string): void; make(): void; createSvgTag(o: { cellSize: number; margin: number; scalable?: boolean }): string }): string {
+	const code = qr(0, 'M');
+	code.addData(text);
+	code.make();
+	return `data:image/svg+xml;utf8,${encodeURIComponent(code.createSvgTag({ cellSize: 4, margin: 2, scalable: true }))}`;
 }

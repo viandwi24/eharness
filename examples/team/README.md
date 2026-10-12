@@ -105,6 +105,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_ROUTINE_RUNS_RETENTION_DAYS` / `TEAM_TASKS_RETENTION_DAYS` / `TEAM_LIBRARY_HISTORY_RETENTION_DAYS` | `30` / `90` / `180` | days kept of finished routine runs, finished tasks (their chat messages stay in the session store) and library history rows (besides the per-path cap); `0` = keep. Pruned at boot and every 10 min together with events |
 | `TEAM_CHANNEL_KEY` | dev key file | 32 bytes, base64: encrypts the channel message log at rest (its own key; dev: `data/channel.key`); `TEAM_CHANNEL_KEY_PREVIOUS` for rotation |
 | `TEAM_TELEGRAM_API_ROOT` | `https://api.telegram.org` | Bot API root of the Telegram bot (a local Bot API server, or a test fake) |
+| `TEAM_TELEGRAM_API_ID` / `TEAM_TELEGRAM_API_HASH` | - | api_id / api_hash of the Telegram account (MTProto) channel, from my.telegram.org/apps; or enter them once in the web connect flow |
 | `TEAM_WEB_DIR` | - | serve the built web (`web/build`) from the server on one port; the API then lives under `/api` (set by the Docker image) |
 | `TZ` | host timezone | team timezone default (active hours, briefing time) |
 | `TEAM_DEMO_COLLECTOR` | - | `1` = register the demo community source (5 000 deterministic chat messages) for the big-data tools |
@@ -122,7 +123,7 @@ drizzle-kit (`bun run db:generate`) and applied at boot.
    default). To let it follow a whole group (answer on every message, or observe), either make it
    a **group admin**, or send `/setprivacy` to @BotFather, choose *Disable* and **remove and re-add**
    the bot to the group. For channels, add the bot as an admin with the right to post.
-3. In the web app open **Channels** -> **Connect a Telegram bot** and paste the token (it is stored
+3. In the web app open **Channels** -> **Connect a channel** -> **Telegram bot** and paste the token (it is stored
    encrypted and never shown again). The page tells you whether privacy mode is on.
 4. **Bind** the connection to an agent. Add the bot to a group and write a message; the chat shows
    up under **Chats**. Allow it and choose when the agent wakes.
@@ -133,6 +134,18 @@ A bot can only receive updates by one method at a time: if a webhook is set the 
 remove it. Run one server process per bot. `TEAM_TELEGRAM_API_ROOT` points at a local Bot API
 server. Telegram's terms limit what may be done with chat data (platform data and AI): read the
 notes in [P41](../../docs/plans/P41-team-channels.md) and ingest only chats you own or manage.
+
+## Telegram account (MTProto)
+
+For groups and channels a bot cannot join (history backfill, admin log). Get an `api_id` and
+`api_hash` at <https://my.telegram.org/apps> ([how](https://core.telegram.org/api/obtaining_api_id)),
+set `TEAM_TELEGRAM_API_ID` / `TEAM_TELEGRAM_API_HASH` (or enter them in the web flow), then
+**Channels** -> **Connect a channel** -> **Telegram account (MTProto)** and sign in by code or QR.
+Use a **dedicated account** with two-step verification on: Telegram may limit or ban accounts driven
+by API clients, especially for spam or flooding (this app sends slowly and keeps daily caps, but the
+risk is yours). Read the [API terms](https://core.telegram.org/api/terms); this is not legal advice.
+Run one server process per session. This transport has no automated tests; see the manual checklist
+in [P41](../../docs/plans/P41-team-channels.md).
 
 ## Docker
 

@@ -849,10 +849,13 @@ export const channelMessages = sqliteTable(
     handled: integer('handled').notNull().default(0),
     editedAt: integer('edited_at'),
     deletedAt: integer('deleted_at'),
+    /** Change counter (insert, edit, delete): the cursor of collectors (`channels/store.ts`). */
+    rev: integer('rev').notNull().default(0),
     body: text('body').notNull(),
   },
   (t) => [
     uniqueIndex('channel_messages_platform').on(t.connectionId, t.conversationId, t.platformId),
+    index('channel_messages_rev').on(t.connectionId, t.rev),
     index('channel_messages_conversation').on(t.connectionId, t.conversationId, t.id),
     index('channel_messages_at').on(t.at),
   ],
@@ -910,3 +913,69 @@ export const channelKnownChats = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.connectionId, t.chatId] })],
 )
+
+/**
+ * Chats of a Telegram user account (P41 L4, `infra/telegram-user`): what the account is in, which
+ * ones were chosen for ingest, and the state of their backfill and admin-log jobs. No message text.
+ */
+export const tguChats = sqliteTable(
+  'tgu_chats',
+  {
+    connectionId: text('connection_id').notNull(),
+    chatId: text('chat_id').notNull(),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    username: text('username'),
+    forum: integer('forum').notNull().default(0),
+    /** The account is an admin (or the creator) there: the admin log can be read. */
+    admin: integer('admin').notNull().default(0),
+    selected: integer('selected').notNull().default(0),
+    /** Highest message id stored (live, backfill or gap fill): the gap fill after downtime starts here. */
+    highId: integer('high_id'),
+    /** Lowest id seen live: backfill walks below it. */
+    firstLiveId: integer('first_live_id'),
+    backfillDays: integer('backfill_days'),
+    /** idle | queued | running | parked | done | error */
+    backfillState: text('backfill_state').notNull().default('idle'),
+    /** Lowest message id the backfill reached (the resume cursor). */
+    backfillOldestId: integer('backfill_oldest_id'),
+    backfillOldestAt: integer('backfill_oldest_at'),
+    backfillCount: integer('backfill_count').notNull().default(0),
+    backfillError: text('backfill_error'),
+    /** A flood wait: the chat's jobs resume at this time (epoch ms). */
+    parkedUntil: integer('parked_until'),
+    adminLogEnabled: integer('admin_log_enabled').notNull().default(0),
+    adminLogLastId: text('admin_log_last_id'),
+    adminLogLastAt: integer('admin_log_last_at'),
+    adminLogCount: integer('admin_log_count').notNull().default(0),
+    adminLogError: text('admin_log_error'),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.connectionId, t.chatId] })],
+)
+
+/** One live client per session: the holder and when its claim lapses (AUTH_KEY_DUPLICATED protection). */
+export const tguLeases = sqliteTable('tgu_leases', {
+  connectionId: text('connection_id').primaryKey(),
+  owner: text('owner').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+})
+
+/** Per-day counters of what the account sent (daily caps): `key` is `dm` or `all`. */
+export const tguCounters = sqliteTable(
+  'tgu_counters',
+  {
+    connectionId: text('connection_id').notNull(),
+    day: text('day').notNull(),
+    key: text('key').notNull(),
+    n: integer('n').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.connectionId, t.day, t.key] })],
+)
+
+/** Account-level settings of a user connection (limits, admin-log interval). JSON, no secrets. */
+export const tguSettings = sqliteTable('tgu_settings', {
+  connectionId: text('connection_id').primaryKey(),
+  config: text('config').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})

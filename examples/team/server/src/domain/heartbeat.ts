@@ -122,6 +122,49 @@ export function localMinutes(at: number, timezone: string): number {
   return get('hour') * 60 + get('minute')
 }
 
+/** Offset of a timezone from UTC at an instant (ms, local minus UTC). */
+function tzOffsetMs(at: number, timezone: string): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(at))
+  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? 0)
+  const wall = Date.UTC(
+    get('year'),
+    get('month') - 1,
+    get('day'),
+    get('hour'),
+    get('minute'),
+    get('second'),
+  )
+  return wall - Math.floor(at / 1000) * 1000
+}
+
+/**
+ * The instants (epoch ms) at which the local day and the local month of `at` began in a timezone.
+ * Both start at local midnight, so the day always lies inside the month: a total over the day can
+ * never exceed the total over the month.
+ */
+export function periodStarts(
+  at: number,
+  timezone: string,
+): { dayStart: number; monthStart: number } {
+  const [y, m, d] = localDay(at, timezone).split('-').map(Number) as [number, number, number]
+  const midnight = (day: number): number => {
+    const wall = Date.UTC(y, m - 1, day)
+    // the offset at midnight itself (a DST change moves it by an hour at most: settle in two steps)
+    const first = wall - tzOffsetMs(wall, timezone)
+    return wall - tzOffsetMs(first, timezone)
+  }
+  return { dayStart: midnight(d), monthStart: midnight(1) }
+}
+
 /** The calendar day (`YYYY-MM-DD`) of an instant in a timezone. */
 export function localDay(at: number, timezone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -662,9 +705,12 @@ const usd = (n: number): string => `$${n >= 1 ? n.toFixed(2) : n.toFixed(4)}`
 
 /** What `team_status` returns: compact, newest findings first, capped. */
 export interface SpendNow {
-  /** The workspace budget this month (the ledger); null when none is tracked. */
+  /**
+   * The workspace budget this month: the limit comes from the ledger, the spend from the call log
+   * (the same source as `todayUsd`, over the local month); null when no budget is tracked.
+   */
   month: { spentUsd: number; limitUsd: number | null } | null
-  /** Model spend since 00:00 UTC (the model call log). */
+  /** Model spend since local midnight of the team timezone (the model call log); never above the month. */
   todayUsd: number
 }
 
@@ -675,13 +721,37 @@ export function spendLines(spend: SpendNow): string[] {
       ? 'no monthly budget is tracked'
       : `this month ${usd(spend.month.spentUsd)}${spend.month.limitUsd === null ? '' : ` of ${usd(spend.month.limitUsd)}`}`
   return [
-    `Spend (from the ledger and the call log, not an estimate): ${month}; today ${usd(spend.todayUsd)}.`,
+    `Spend (from the model call log, not an estimate): ${month}; today ${usd(spend.todayUsd)}.`,
     'A "budget used up" stop of a run means one model call could not be reserved against its limit; it says nothing about money spent. Quote only these numbers and the cost shown for a run.',
   ]
 }
 
-export function statusText(findings: readonly Finding[], now: number, spend?: SpendNow): string {
-  const spendText = spend === undefined ? '' : `\n\n${spendLines(spend).join('\n')}`
+/** The board counted by the server: the one place where task counts come from (the model never restates them). */
+export function boardLine(tasks: ReadonlyArray<Pick<Task, 'status' | 'report'>>): string {
+  const n: Record<RunBucket | 'queued', number> = {
+    done: 0,
+    failed: 0,
+    waiting: 0,
+    running: 0,
+    queued: 0,
+  }
+  for (const t of tasks) {
+    if (t.status === 'queued') n.queued++
+    else n[runBucket(t)]++
+  }
+  return `Task board (counted by the server, exact): ${tasks.length} task(s): ${n.done} done, ${n.failed} failed, ${n.waiting} waiting for the client, ${n.running} running, ${n.queued} queued. Never restate or recount these in an item: the daily digest prints them. Report only the individual tasks that need attention.`
+}
+
+export function statusText(
+  findings: readonly Finding[],
+  now: number,
+  spend?: SpendNow,
+  board?: string,
+): string {
+  const spendText = [board, ...(spend === undefined ? [] : spendLines(spend))]
+    .filter((x): x is string => x !== undefined)
+    .map((x, i) => (i === 0 ? `\n\n${x}` : `\n${x}`))
+    .join('')
   if (findings.length === 0) {
     return `Team status at ${new Date(now).toISOString()}: nothing new to report. Everything the server watches is fine or already reported.${spendText}`
   }
@@ -713,7 +783,8 @@ export function beatPrompt(input: {
     '3. Decide what deserves the client attention. A finding that is just information, or that you',
     '   cannot act on, still goes in the result as an item; routine and healthy things do not.',
     '   About money: say only what team_status states as spend, or the cost of a run. Never infer',
-    '   that a budget was burnt from a stop message.',
+    '   that a budget was burnt from a stop message. About the board: never write counts of tasks',
+    '   (done, failed, waiting) in an item; team_status states them and the digest prints them.',
     '4. Mark an item urgent only when waiting for the daily digest would cost something (a program',
     '   paused itself, a limit is about to stop all work, data may be lost). Urgent items reach',
     '   the client bell at once; you never wait for an answer, so do not ask questions.',
@@ -969,6 +1040,19 @@ export function parseSystemKey(key: string | null | undefined): SystemRoutine | 
 
 export const MAX_BEAT_ITEMS = 20
 
+/** An item that only restates task counts ("Task board: 6 tasks done, none failed"). */
+export function restatesBoardCounts(kind: string, title: string, detail: string): boolean {
+  if (/^(task\.)?board(\.summary)?$/i.test(kind)) return true
+  const text = `${title} ${detail}`
+  return (
+    /\btask board\b/i.test(title) ||
+    /\b\d+\s+(tasks?|runs?)\b[^.]{0,40}\b(done|completed|failed|waiting|running|queued)\b/i.test(
+      text,
+    ) ||
+    /\bnone\s+(failed|waiting)\b/i.test(text)
+  )
+}
+
 const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
 
 /** The validated final answer of a beat (`BEAT_SCHEMA`) as items; undefined when it is not one. */
@@ -984,6 +1068,8 @@ export function parseBeatResult(value: unknown): { items: BeatItem[] } | undefin
     const title = str(e.title, 200).trim()
     if (title === '') continue
     const kind = str(e.kind, 60).trim() || 'note'
+    // board counts are the server's: a model summary of them can only contradict the board
+    if (restatesBoardCounts(kind, title, str(e.detail, 1000))) continue
     const links = Array.isArray(e.links)
       ? e.links
           .filter((l): l is string => typeof l === 'string')

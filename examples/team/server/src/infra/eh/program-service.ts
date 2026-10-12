@@ -23,6 +23,7 @@
 import type { FileUIPart } from 'ai'
 import { errorText } from 'eharness'
 import { z } from 'zod'
+import { postNotice } from '../../app/briefings.ts'
 import { checkRun, finishRun } from '../../app/deliverables.ts'
 import type { AgentRepo, Deps, EventAppender, ProgramRunner } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
@@ -251,38 +252,31 @@ export function createProgramService(
       : `Program "${program.name}" cannot run: ${problems.join(' ')}`
   }
 
-  /** The run fails before its first model call: a failed task with the reason, and the caller throws. */
-  function failEarly(program: Program, def: AgentDef, sessionId: string, reason: string): never {
-    const t = clock()
-    const row = deps.tasks.ensure({
-      agentId: def.id,
-      sessionId,
-      parentSessionId: null,
-      origin: 'program',
-      title: `Program run: ${program.name}`,
-      startedAt: t,
-    })
-    deps.tasks.update(sessionId, {
-      status: 'failed',
-      pendingKind: null,
-      now: t,
-      summary: reason,
-      report: { status: 'failed', summary: reason, outputs: [] },
-    })
-    deps.events.append({
-      type: 'task-changed',
-      agentId: def.id,
-      sessionId,
-      payload: {
-        taskId: row.id,
-        status: 'failed',
-        pendingKind: null,
-        title: row.title,
-        parentSessionId: null,
-        created: true,
-      },
-      at: t,
-    })
+  /**
+   * A run that cannot start is refused before it exists: no task, no session, nothing on the board
+   * (a refused run is not a failed run, so it never counts in the digest or the heartbeat). A
+   * manual start gets the 409 with the reason, and the editor warned at save. A scheduled start
+   * has nobody waiting for the answer, so it tells the bell once per program and reason (the
+   * notification key), not at every tick.
+   */
+  function refuse(program: Program, def: AgentDef, reason: string, scheduled: boolean): never {
+    if (scheduled) {
+      const d = deps.app?.()
+      if (d !== undefined) {
+        try {
+          postNotice(d, {
+            key: `program-refused:${program.id}:${reason}`,
+            title: `Program "${program.name}" cannot run`.slice(0, 160),
+            body: `${reason} The schedule is paused; resume the program once this is fixed.`,
+            link: `/programs/${program.id}`,
+            agentId: def.id,
+            at: clock(),
+          })
+        } catch (error) {
+          log.warn(`refusal notice of ${program.id} not posted: ${errorText(error)}`)
+        }
+      }
+    }
     throw conflict(reason, 'PROGRAM_UNRUNNABLE')
   }
 
@@ -341,7 +335,7 @@ export function createProgramService(
   }
 
   return {
-    async start(program: Program, { runAt }) {
+    async start(program: Program, { runAt, scheduled }) {
       const def = deps.agents.get(program.agentId)
       if (def === undefined) throw notFound('agent', program.agentId)
       if (def.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
@@ -351,14 +345,14 @@ export function createProgramService(
         const reason = unrunnable(program, def)
         // nothing is claimed for a run that cannot work: the queue keeps its tasks
         if (reason !== undefined && !(await exists(sessionId)))
-          failEarly(program, def, sessionId, reason)
+          refuse(program, def, reason, scheduled === true)
         return startWorker(program, def, runAt)
       }
 
       // a recovered fire or a double click: the run exists already
       if (await exists(sessionId)) return { sessionId, started: false }
       const reason = unrunnable(program, def)
-      if (reason !== undefined) failEarly(program, def, sessionId, reason)
+      if (reason !== undefined) refuse(program, def, reason, scheduled === true)
 
       const t = clock()
       const prompt = programRunPrompt(program, {

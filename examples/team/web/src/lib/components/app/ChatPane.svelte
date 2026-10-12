@@ -40,6 +40,7 @@
 	import { toast } from 'svelte-sonner';
 	import { answerFailureText } from '#lib/approval/outcome.js';
 	import { requestFailureText } from '#lib/chat/errors.js';
+	import { approvalOffered, requestedApprovalIds } from '#lib/approval/offer.js';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import { agentChat } from '#lib/chat/chats.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -114,7 +115,30 @@
 		await followAfterAnswer();
 	}
 	/** An inline approval is offered only while the server lists it as waiting. */
-	const canAnswer = (approvalId: string): boolean => !live.state.approvalsLoaded || live.ownApproval(agentId, approvalId, sessionId) !== undefined;
+	// A card the list does not show yet is not "handled elsewhere" until a refresh made after it
+	// appeared still lacks it (the list lags the stream, and a failed earlier turn must not matter).
+	let confirmedGone = $state<Record<string, true>>({});
+	const checking = new Set<string>();
+	$effect(() => {
+		if (!live.state.approvalsLoaded) return;
+		const missing = requestedApprovalIds(chat?.messages ?? []).filter(
+			(id) => !confirmedGone[id] && !checking.has(id) && live.ownApproval(agentId, id, sessionId) === undefined
+		);
+		if (missing.length === 0) return;
+		for (const id of missing) checking.add(id);
+		void live.loadApprovals().then(() => {
+			for (const id of missing) {
+				checking.delete(id);
+				if (live.ownApproval(agentId, id, sessionId) === undefined) confirmedGone[id] = true;
+			}
+		});
+	});
+	const canAnswer = (approvalId: string): boolean =>
+		approvalOffered({
+			listLoaded: live.state.approvalsLoaded,
+			inList: live.ownApproval(agentId, approvalId, sessionId) !== undefined,
+			confirmedGone: confirmedGone[approvalId] === true
+		});
 
 	async function send(m: PromptInputMessage): Promise<void> {
 		const text = m.text.trim();
@@ -237,7 +261,7 @@
 		if (first && first.length >= 6 && first.length <= 64) out.push(`Help me with: ${first.charAt(0).toLowerCase()}${first.slice(1)}`);
 		return out;
 	});
-	const busy = $derived(chat?.status === 'submitted' || chat?.status === 'streaming');
+	const busy = $derived(ac?.status === 'submitted' || ac?.status === 'streaming');
 	// A turn the server no longer runs (it was killed, the connection went silent): resync.
 	$effect(() => {
 		// `stopping` too: a stop the server has not confirmed is settled by `checkStalled`
@@ -412,7 +436,7 @@
 								<span class="h-px flex-1 bg-border"></span>
 							</div>
 						{/if}
-						{#if chat.status === 'submitted'}
+						{#if ac.status === 'submitted'}
 							<div class="text-sm text-muted-foreground" role="status">Thinking…</div>
 						{/if}
 						{#if ac.interrupted && !busy}
@@ -489,7 +513,7 @@
 					threadId={thread.id}
 					onSend={send}
 					onStop={() => void ac.stop()}
-					status={chat.status}
+					status={ac.status}
 					stopping={ac.stopping}
 					placeholder={agent ? `Message ${agent.name}` : 'Message the agent'}
 				/>

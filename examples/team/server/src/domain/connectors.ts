@@ -361,7 +361,7 @@ export interface FlowStartInput {
 
 export interface FlowActInput {
   viewId: string
-  action: 'submit' | 'poll' | 'back' | 'cancel' | 'retry'
+  action: 'submit' | 'poll' | 'back' | 'cancel' | 'retry' | 'resend'
   data?: Record<string, unknown> | undefined
 }
 

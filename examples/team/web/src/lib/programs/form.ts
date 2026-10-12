@@ -269,6 +269,8 @@ export function programBadge(p: Pick<Program, 'status' | 'triggerState'>): Progr
 	if (p.status === 'paused') return { label: 'paused', variant: 'secondary' };
 	const t = p.triggerState;
 	if (t?.status === 'paused') {
+		// a refused run pauses the schedule; its reason is kept in lastStatus ("paused: <reason>")
+		if (t.pausedReason === 'unrunnable') return { label: t.lastStatus ?? 'paused: cannot run', variant: 'destructive' };
 		return t.pausedReason === 'max-failures'
 			? { label: 'paused: too many failures', variant: 'destructive' }
 			: { label: t.pausedReason === 'ended' || t.pausedReason === 'completed' ? 'finished' : 'paused', variant: 'secondary' };

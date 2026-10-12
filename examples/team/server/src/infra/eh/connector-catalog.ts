@@ -33,6 +33,7 @@ import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { CHANNEL_READ_TOOLS } from '../channels/index.ts'
 import { telegramConnector } from '../telegram/connector.ts'
+import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
@@ -105,6 +106,8 @@ export interface CatalogOptions {
   defer?: () => boolean | 'auto'
   /** Bot API root of the Telegram bot connector (default `https://api.telegram.org`). */
   telegramApiRoot?: string
+  /** The "Telegram account" connector (user account over MTProto); absent = not offered. */
+  telegramUser?: UserConnectorOptions
 }
 
 /** Connection label of the two memory scopes, as people and the model read them. */
@@ -432,6 +435,7 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
     telegramConnector(
       options.telegramApiRoot === undefined ? {} : { apiRoot: options.telegramApiRoot },
     ),
+    ...(options.telegramUser === undefined ? [] : [telegramUserConnector(options.telegramUser)]),
     customMcp(listTools, defer),
   ]
 }

@@ -3,7 +3,7 @@
 	import SchemaForm from '#lib/components/app/SchemaForm.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
-	import { formPayload, friendlyError, repeatsDialogTitle } from '#lib/connectors/flow-view.js';
+	import { canResend, formPayload, friendlyError, repeatsDialogTitle } from '#lib/connectors/flow-view.js';
 	import type { FlowView } from '#lib/api/index.js';
 	import { initialValues, type FormValues } from '#lib/providers/form.js';
 
@@ -13,7 +13,8 @@
 		canBack,
 		onSubmit,
 		onBack,
-		onCancel
+		onCancel,
+		onResend
 	}: {
 		view: Extract<FlowView, { type: 'form' }>;
 		busy: boolean;
@@ -21,6 +22,7 @@
 		onSubmit: (data: Record<string, unknown>) => void;
 		onBack: () => void;
 		onCancel: () => void;
+		onResend?: () => void;
 	} = $props();
 
 	// the component is keyed by viewId: a new view (server-side errors) starts from the values it carries
@@ -50,6 +52,7 @@
 	{#if view.message}<p class="text-sm text-destructive-text" role="alert">{view.message}</p>{/if}
 	<FlowFooter>
 		<Button type="button" variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
+		{#if onResend && canResend(view)}<Button type="button" variant="ghost" onclick={onResend} disabled={busy} data-testid="flow-resend">Send the code again</Button>{/if}
 		{#if canBack}<Button type="button" variant="outline" onclick={onBack} disabled={busy}>Back</Button>{/if}
 		<Button type="submit" disabled={busy}>{#if busy}<Spinner class="size-4" />{/if}{view.submitLabel}</Button>
 	</FlowFooter>
