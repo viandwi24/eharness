@@ -320,8 +320,21 @@ describe('migration of the single DM', () => {
         const columns = db.query(`PRAGMA table_info(\`${table}\`)`).all() as Array<{
           name: string
         }>
-        if (columns.some((c) => c.name === column))
-          db.run(`ALTER TABLE \`${table}\` DROP COLUMN \`${column}\``)
+        if (!columns.some((c) => c.name === column)) continue
+        // SQLite refuses to drop a column an index still uses: drop those indexes first
+        // (the replay of the migrations creates them again)
+        const indexes = db.query(`PRAGMA index_list(\`${table}\`)`).all() as Array<{
+          name: string
+          origin: string
+        }>
+        for (const index of indexes) {
+          if (index.origin !== 'c') continue
+          const used = db.query(`PRAGMA index_info(\`${index.name}\`)`).all() as Array<{
+            name: string
+          }>
+          if (used.some((u) => u.name === column)) db.run(`DROP INDEX \`${index.name}\``)
+        }
+        db.run(`ALTER TABLE \`${table}\` DROP COLUMN \`${column}\``)
       }
     }
     for (const table of [

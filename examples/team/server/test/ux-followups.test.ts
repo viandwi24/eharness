@@ -108,10 +108,11 @@ describe('reminders for web-chat agents', () => {
       )
     ).text()
     expect(wire(lead)).toContain('Reminder set (id ')
-    expect(wire(lead)).not.toContain('propose_plan')
+    // the prompt names propose_plan (to say a reminder is not a plan); what matters is it is never called
+    expect(wire(lead)).not.toContain('"toolName":"propose_plan"')
     const [rem] = server.channels.reminders.list('web')
     expect(rem?.status).toBe('active')
-    expect(webReminderSession(rem as NonNullable<typeof rem>)).toBe('dm:lead')
+    expect(webReminderSession(rem as NonNullable<typeof rem>)).toBe(`dm:${leadId}`)
     expect(rem?.agentId).toBe(leadId)
     // it is on the Routines page next to the channel reminders
     const page = (await (await server.app.request('/routines')).json()) as {
@@ -119,7 +120,7 @@ describe('reminders for web-chat agents', () => {
     }
     expect(page.reminders.find((r) => r.id === rem?.id)).toMatchObject({
       connectionId: 'web',
-      sessionId: 'dm:lead',
+      sessionId: `dm:${leadId}`,
       place: 'This chat',
     })
     const calls = lead.prompts.length

@@ -113,6 +113,19 @@ const post = (app: Server['app'], path: string, body?: unknown) =>
   app.request(path, json('POST', body))
 const settled = (t: TaskView) => !['running', 'needs_action', 'queued'].includes(t.status)
 
+/**
+ * Library edits are allowed for role agents out of the box (`appRulesOf`: the point of a writer), so
+ * a task never parks on a write unless the agent's own rules ask first. This is that rule: the
+ * "Ask first" a client sets on an agent, which a task grant lifts for exactly the granted tools.
+ */
+function askBeforeWriting(server: Server, slug: string): void {
+  const def = server.deps.agents.getBySlug(slug)
+  if (def === undefined) throw new Error('seed')
+  updateAgent(server.deps, def.id, {
+    rules: { ...def.rules, ask: [...def.rules.ask, 'write_file'] },
+  })
+}
+
 let seq = 0
 const call = (toolName: string, input: Record<string, unknown>): ScriptedStep => ({
   toolCalls: [{ toolName, input, toolCallId: `c-${toolName}-${++seq}` }],
@@ -412,6 +425,7 @@ describe('task grants', () => {
         report('wrote it'),
       ],
     })
+    askBeforeWriting(server, 'writer')
     const t = await assign(app, { agentId: 'writer', title: 'Write the note' })
     await until('it parks on the approval', async () => {
       const x = await getTask(app, t.id)
@@ -427,6 +441,7 @@ describe('task grants', () => {
         report('wrote it'),
       ],
     })
+    askBeforeWriting(server, 'writer')
     const t = await assign(app, {
       agentId: 'writer',
       title: 'Write the note',
@@ -486,6 +501,7 @@ describe('hardening (P40 review pass)', () => {
       researcher: [report('researched')],
     })
     server.deps.settings.patch({ spawnCap: 1 }, Date.now())
+    askBeforeWriting(server, 'writer')
     const parked = await assign(app, { agentId: 'writer', title: 'Needs approval' })
     await until('it parks', async () => (await getTask(app, parked.id)).status === 'needs_action')
     const same = await assign(app, { agentId: 'writer', title: 'Behind the approval' })
@@ -503,23 +519,29 @@ describe('hardening (P40 review pass)', () => {
     const t = await assign(app, { agentId: 'writer', title: 'Held first', hold: true })
     expect((await post(app, `/tasks/${t.id}/start`)).status).toBe(200)
     await until('round 1 ends', async () => settled(await getTask(app, t.id)))
-    const n = server.deps.notifications.insert({
-      id: 'n-review',
-      kind: 'alert',
-      key: `review:${t.id}:1`,
-      title: 'Ready for review',
-      body: 'x',
-      link: null,
-      agentId: t.agentId,
-      createdAt: Date.now(),
-    })
+    // the product posts this notice itself when round 1 reaches Review (keyed per round); post it
+    // here only when this path did not, so the test holds either way
+    const key = `review:${t.id}:1`
+    const n =
+      server.deps.notifications.byKey(key) ??
+      server.deps.notifications.insert({
+        id: 'n-review',
+        kind: 'alert',
+        key,
+        title: 'Ready for review',
+        body: 'x',
+        link: null,
+        agentId: t.agentId,
+        createdAt: Date.now(),
+      })
     expect(n).toBeDefined()
     const back = await post(app, `/tasks/${t.id}/send-back`, { note: 'Shorter.' })
     expect(back.status).toBe(200)
     const body = (await back.json()) as TaskView & { hint: string }
     expect(body.hold).toBe(false)
     expect(body.hint).not.toContain('hold')
-    expect(server.deps.notifications.get('n-review')?.dismissedAt).not.toBeNull()
+    expect(server.deps.notifications.byKey(key)?.dismissedAt).not.toBeNull()
+    expect(server.deps.notifications.byKey(key)?.dismissedAt).toBeDefined()
     await until('round 2 ends', async () => {
       const x = await getTask(app, t.id)
       return x.round === 2 && settled(x)

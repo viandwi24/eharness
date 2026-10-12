@@ -207,7 +207,14 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 taskOrigin(ctx) === 'program' || originOfSession(ctx.session.id) === 'task'
               const report = isProgram ? parseReport(e.output) : undefined
               const program = isProgram ? programRunOutcome(e.stop, report) : undefined
-              const status = program?.status ?? statusFromStop(e.stop)
+              // a program run is gated and never asks, so its `tool-pending` is still running work;
+              // an assigned task runs with chat authority and parks on an approval or a question
+              const parked =
+                program !== undefined &&
+                taskOrigin(ctx) !== 'program' &&
+                e.stop === 'tool-pending' &&
+                pendingKinds(e.pending) !== null
+              const status = parked ? 'needs_action' : (program?.status ?? statusFromStop(e.stop))
               const kind = status === 'needs_action' ? pendingKinds(e.pending) : null
               // a `tool-pending` turn that waits on an external wait only (the task's own park)
               // is still running work, not a thing for a person
