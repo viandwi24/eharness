@@ -55,6 +55,10 @@
 		void conn.counts.linked;
 		void conn.counts.unlinked;
 		void load();
+		const timer = setInterval(() => {
+			if (document.visibilityState === 'visible') void load();
+		}, 5000);
+		return () => clearInterval(timer);
 	});
 
 	const run = async (what: string, fn: () => Promise<unknown>, ok?: string): Promise<boolean> => {

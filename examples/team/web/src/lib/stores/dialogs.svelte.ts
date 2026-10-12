@@ -1,8 +1,10 @@
 // App-wide modal dialogs (one instance each, mounted in the root layout). Any component opens them
 // through these functions; the dialogs read the state.
 
+export type AgentTab = 'settings' | 'persona' | 'memory' | 'connectors' | 'heartbeat';
+
 /** The agent dialog: `mode: 'create'` for a new agent, `'edit'` for an existing one (`agentId`). */
-export const agentDialog = $state<{ open: boolean; mode: 'create' | 'edit'; agentId: string | null; tab: 'settings' | 'memory' | 'connectors' }>({
+export const agentDialog = $state<{ open: boolean; mode: 'create' | 'edit'; agentId: string | null; tab: AgentTab }>({
 	open: false,
 	mode: 'create',
 	agentId: null,
@@ -16,7 +18,7 @@ export function openNewAgent(): void {
 	agentDialog.open = true;
 }
 
-export function openEditAgent(agentId: string, tab: 'settings' | 'memory' | 'connectors' = 'settings'): void {
+export function openEditAgent(agentId: string, tab: AgentTab = 'settings'): void {
 	agentDialog.mode = 'edit';
 	agentDialog.agentId = agentId;
 	agentDialog.tab = tab;

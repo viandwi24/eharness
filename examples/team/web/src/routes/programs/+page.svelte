@@ -146,7 +146,7 @@
 								<Table.Head class="hidden lg:table-cell">Authority</Table.Head>
 								<Table.Head class="hidden lg:table-cell">Budget</Table.Head>
 								<Table.Head>Status</Table.Head>
-								<Table.Head class="w-24 text-right sm:w-32"><span class="sr-only">Actions</span></Table.Head>
+								<Table.Head class="w-24 text-right sm:w-auto"><span class="sr-only">Actions</span></Table.Head>
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
@@ -184,7 +184,8 @@
 												{@render iconAction('Resume', busy === p.id, () => void act(p, 'resume'), PlayIcon)}
 											{/if}
 											{@render iconAction('Run now', busy === p.id, () => void act(p, 'run'), LightningIcon)}
-											{@render iconAction('Tests and test run', false, () => void goto(`/programs/${p.id}`), FlaskIcon)}
+											<Button size="xs" variant="ghost" class="ml-1" onclick={() => openEditProgram(p.id)}>Edit</Button>
+											<Button size="xs" variant="outline" onclick={() => void goto(`/programs/${p.id}`)} title="Tests and test runs"><FlaskIcon class="size-3.5" /> Test run</Button>
 										</div>
 									</Table.Cell>
 								</Table.Row>

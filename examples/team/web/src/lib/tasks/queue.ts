@@ -60,7 +60,7 @@ export function validateTaskForm(f: TaskForm): Record<string, string> {
 	if (f.agentId === '') errors.agentId = 'Choose who does the task.';
 	if (f.title.trim() === '') errors.title = 'Give the task a title.';
 	const bad = splitLines(f.inputs).find((p) => !p.startsWith('/') || p.includes('..'));
-	if (bad !== undefined) errors.inputs = `Inputs are library paths starting with /, like /library/production/videos.md (not "${bad}").`;
+	if (bad !== undefined) errors.inputs = `Inputs are library paths starting with /, like /library/notes/inputs.md (not "${bad}").`;
 	if (f.due.trim() !== '' && dueFromInput(f.due) === null) errors.due = 'Pick a date.';
 	for (const [field, text] of [['grantRead', f.grantRead], ['grantWrite', f.grantWrite]] as const) {
 		const path = splitLines(text).find((p) => !p.startsWith('/'));

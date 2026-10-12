@@ -15,7 +15,9 @@ export const theme = (() => {
 			return mode;
 		},
 		toggle(): void {
-			mode = mode === 'dark' ? 'light' : 'dark';
+			// the page is the truth: the stored mode can lag behind a class set before hydration, which made the first click a no-op
+			const shown: ThemeMode = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+			mode = shown === 'dark' ? 'light' : 'dark';
 			document.documentElement.classList.toggle('dark', mode === 'dark');
 			document.cookie = modeCookie(mode);
 		}

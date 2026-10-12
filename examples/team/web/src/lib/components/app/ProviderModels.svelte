@@ -8,7 +8,7 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { api } from '#lib/api/index.js';
-	import { disableAllModels, enableAllModels, filterModels, formatContext, formatPricing, hasModelPolicy, isModelEnabled, setModelEnabled, type ModelPolicy, type ProviderModel } from '#lib/providers/models.js';
+	import { disableAllModels, enableAllModels, filterModels, recommendedFirst, formatContext, formatPricing, hasModelPolicy, isModelEnabled, setModelEnabled, type ModelPolicy, type ProviderModel } from '#lib/providers/models.js';
 	import { providersStore } from '#lib/providers/store.svelte.js';
 
 	/**
@@ -54,7 +54,8 @@
 	});
 
 	const shown = $derived(onlyEnabled ? models.filter((m) => m.enabled !== false) : models);
-	const matches = $derived(filterModels(shown, query, limit));
+	const ordered = $derived(query.trim() ? { items: shown, recommended: 0 } : recommendedFirst(shown));
+	const matches = $derived(filterModels(ordered.items, query, limit));
 
 	/** Store a new policy: switches update at once, the server answer replaces them (a failure puts them back). */
 	async function apply(next: ModelPolicy | null): Promise<void> {
@@ -110,8 +111,10 @@
 		<p class="px-1 py-3 text-sm text-muted-foreground">{query.trim() ? `No model matches “${query.trim()}”.` : 'No model is enabled. Switch some on, or use Enable all.'}</p>
 	{:else}
 		<ul class="divide-y divide-border overflow-hidden rounded-xl border border-border">
-			{#each matches.items as m (m.id)}
+			{#each matches.items as m, i (m.id)}
 				{@const on = m.enabled !== false}
+				{#if ordered.recommended > 0 && i === 0}<li class="bg-muted/40 px-3 py-1.5 text-[11px] font-medium text-muted-foreground" data-testid="models-recommended">Recommended</li>{/if}
+				{#if ordered.recommended > 0 && i === ordered.recommended}<li class="bg-muted/40 px-3 py-1.5 text-[11px] font-medium text-muted-foreground">All other models</li>{/if}
 				<li class="flex items-start gap-3 px-3 py-2.5" data-testid="model-row" data-enabled={on}>
 					<Switch size="sm" class="mt-0.5" checked={on} disabled={readOnly || saving} onCheckedChange={(v) => void toggle(m, v)} aria-label="{on ? 'Disable' : 'Enable'} {m.name}" />
 					<div class="flex min-w-0 flex-1 flex-col gap-1.5 {on ? '' : 'opacity-60'}">

@@ -58,6 +58,10 @@
 	$effect(() => {
 		void conn.counts.linked;
 		void load();
+		const timer = setInterval(() => {
+			if (document.visibilityState === 'visible' && editing === null) void load();
+		}, 5000);
+		return () => clearInterval(timer);
 	});
 
 	const run = async (what: string, fn: () => Promise<unknown>, ok?: string): Promise<boolean> => {

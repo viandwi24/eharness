@@ -3,6 +3,7 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Kbd } from '#lib/components/ui/kbd/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+	import { friendlyTitle } from '#lib/approval/summary.js';
 	import { ALLOW_SCOPES, DEFAULT_ALLOW_SCOPE, buildAnswer, type AllowScope, type ApprovalAnswerBody, type ApprovalChoice } from '#lib/approval/answer.js';
 
 	let {
@@ -23,6 +24,7 @@
 
 	// Approve / Always allow / Deny answer at once. "Add note" opens one text field whose text goes
 	// with the button picked next: a note for the agent on Approve, the reason on Deny.
+	const toolLabel = $derived(friendlyTitle(toolName, undefined, false));
 	let noting = $state(false);
 	let text = $state('');
 	let scope = $state<AllowScope>(DEFAULT_ALLOW_SCOPE);
@@ -95,7 +97,7 @@
 				title="Allow this tool without asking, for the scope picked next to this button"
 				onclick={() => send('remember')}
 			>
-				Always allow <span class="max-w-40 truncate">{toolName}</span>
+				Always allow <span class="whitespace-normal">{toolLabel}</span>
 				<Kbd class="ml-1 h-4 min-w-4 text-[10px]">2</Kbd>
 			</Button>
 			<NativeSelect bind:value={scope} size="sm" aria-label="Always allow for" title="How far Always allow reaches" disabled={busy}>

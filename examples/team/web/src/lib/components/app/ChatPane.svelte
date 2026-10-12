@@ -6,6 +6,7 @@
 	import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeft';
 	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimple';
 	import DotsThreeIcon from 'phosphor-svelte/lib/DotsThree';
+	import UserCircleIcon from 'phosphor-svelte/lib/UserCircle';
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimple';
 	import ArrowsInLineVerticalIcon from 'phosphor-svelte/lib/ArrowsInLineVertical';
 	import CaretRightIcon from 'phosphor-svelte/lib/CaretRight';
@@ -167,8 +168,10 @@
 		if (!text && m.files.length === 0) return;
 		// Throwing keeps the text and attachments in the composer (an upload that failed, a request the
 		// server refused); the composer shows the message once.
-		const files = await Promise.all(m.files.map((f) => ac!.upload(f)));
-		await ac?.sendChecked(text, files);
+		// Never drop a message silently: while the chat is still resolving, keep the text in the box.
+		if (!ac) throw new Error('Still opening this chat. Your message is kept: send it again in a moment.');
+		const files = await Promise.all(m.files.map((f) => ac.upload(f)));
+		await ac.sendChecked(text, files);
 	}
 
 	// Regenerate the newest reply; edit a sent message (the rest of the chat after it is replaced).
@@ -356,6 +359,9 @@
 					<DropdownMenu.Content elevation="floating" align="end" class="w-56">
 						<DropdownMenu.Item onSelect={() => agent && openEditAgent(agent.id)}>
 							<PencilSimpleIcon /> Agent settings
+						</DropdownMenu.Item>
+						<DropdownMenu.Item onSelect={() => agent && openEditAgent(agent.id, 'persona')}>
+							<UserCircleIcon /> Persona
 						</DropdownMenu.Item>
 						<DropdownMenu.Item disabled={compacting || busy} onSelect={() => void compact()}>
 							<ArrowsInLineVerticalIcon /> {compacting ? 'Compacting…' : 'Compact conversation'}

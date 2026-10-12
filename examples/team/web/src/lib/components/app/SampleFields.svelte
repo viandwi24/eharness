@@ -41,17 +41,17 @@
 		<div class="flex flex-col gap-2 rounded-md border border-border/70 p-2.5">
 			<span class="text-xs font-medium">The task it works on</span>
 			<p class="text-xs text-muted-foreground">This program takes tasks from the work queue. The sample task is a draft: nothing is queued on the board.</p>
-			<Input bind:value={form.taskTitle} placeholder="Script: the lighthouse" aria-label="Task title" aria-invalid={!!errors.taskTitle} />
+			<Input bind:value={form.taskTitle} placeholder="Weekly summary: March" aria-label="Task title" aria-invalid={!!errors.taskTitle} />
 			{#if errors.taskTitle}<span class="text-xs text-destructive-text">{errors.taskTitle}</span>{/if}
 			<Textarea bind:value={form.taskBrief} rows={3} placeholder="What to do, what the result looks like." aria-label="Task brief" />
-			<Textarea bind:value={form.taskInputs} rows={2} placeholder="/library/production/videos.md" class="font-mono text-xs" aria-label="Task inputs" aria-invalid={!!errors.taskInputs} />
+			<Textarea bind:value={form.taskInputs} rows={2} placeholder="/library/notes/inputs.md" class="font-mono text-xs" aria-label="Task inputs" aria-invalid={!!errors.taskInputs} />
 			{#if errors.taskInputs}<span class="text-xs text-destructive-text">{errors.taskInputs}</span>{:else}<span class="text-xs text-muted-foreground">Library paths the task starts from, one per line.</span>{/if}
 		</div>
 	{/if}
 
 	<label class="flex flex-col gap-1">
 		<span class="text-xs font-medium">Library files to copy in</span>
-		<Textarea bind:value={form.copy} rows={3} placeholder={'/library/data/community/\n/library/videos/titles.md'} class="font-mono text-xs" aria-invalid={!!errors.copy} />
+		<Textarea bind:value={form.copy} rows={3} placeholder={'/library/data/inbox/\n/library/notes/items.md'} class="font-mono text-xs" aria-invalid={!!errors.copy} />
 		{#if errors.copy}<span class="text-xs text-destructive-text">{errors.copy}</span>{:else}<span class="text-xs text-muted-foreground">Files or folders (ending with /), one per line. They are copied into the test run at the same paths.</span>{/if}
 	</label>
 

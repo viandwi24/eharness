@@ -72,7 +72,7 @@ export const SOURCE_LABEL: Record<PersonaVersion['source'], string> = {
 /** Who made a version, in words. */
 export function authorText(v: Pick<PersonaVersion, 'authorName' | 'authorRole' | 'source'>): string {
 	if (v.source === 'migration') return 'Made from the old instructions';
-	const name = v.authorName ?? 'the team';
+	const name = v.authorName ?? 'Someone on the team';
 	return v.authorRole ? `${name} (${v.authorRole})` : name;
 }
 

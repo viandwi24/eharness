@@ -96,7 +96,7 @@
 		void load();
 		const timer = setInterval(() => {
 			if (document.visibilityState === 'visible' && open === null) void load();
-		}, 10_000);
+		}, 5000);
 		return () => clearInterval(timer);
 	});
 </script>

@@ -4,9 +4,9 @@ import { bodyFromTaskForm, dueFromInput, dueLabel, dueToInput, emptyTaskForm, qu
 describe('task form', () => {
 	test('validation', () => {
 		expect(Object.keys(validateTaskForm(emptyTaskForm()))).toEqual(['agentId', 'title']);
-		const ok = { ...emptyTaskForm('a1'), title: 'Script: the island', inputs: '/library/production/videos.md\n\n/library/x', due: '2026-11-01' };
+		const ok = { ...emptyTaskForm('a1'), title: 'Weekly summary: March', inputs: '/library/notes/inputs.md\n\n/library/x', due: '2026-11-01' };
 		expect(validateTaskForm(ok)).toEqual({});
-		expect(validateTaskForm({ ...ok, inputs: 'videos.md' }).inputs).toContain('videos.md');
+		expect(validateTaskForm({ ...ok, inputs: 'notes.md' }).inputs).toContain('notes.md');
 		expect(validateTaskForm({ ...ok, inputs: '/library/../x' }).inputs).toBeDefined();
 		expect(validateTaskForm({ ...ok, due: 'tomorrow' }).due).toBeDefined();
 	});

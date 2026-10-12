@@ -29,6 +29,8 @@ export function approvalChip(v: { state: ToolViewState; approval?: ToolApproval 
 		if (reason && NEW_INPUT.test(reason)) return { kind: 'declined', text: 'Declined: you sent a new message' };
 		return { kind: 'declined', text: 'Declined', ...(reason ? { note: reason } : {}) };
 	}
+	// A call the permission rules let through (a read, a saved rule) was never asked: say so instead of "Approved".
+	if (a.reason && /auto|allow|rule|read.?only|bypass|saved/i.test(a.reason)) return { kind: 'approved', text: 'Auto-allowed' };
 	return { kind: 'approved', text: 'Approved' };
 }
 

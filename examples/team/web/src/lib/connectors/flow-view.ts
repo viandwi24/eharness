@@ -112,3 +112,18 @@ export function qrDataUri(text: string, qr: (typeNumber: number, level: 'L' | 'M
 	code.make();
 	return `data:image/svg+xml;utf8,${encodeURIComponent(code.createSvgTag({ cellSize: 4, margin: 2, scalable: true }))}`;
 }
+
+/**
+ * The values of a form shown again after a failed attempt: a secret the server marked as stored
+ * (`{ set: true, hint }`) was just refused, so it must not read "Saved: leave empty to keep". Pure.
+ */
+export function withoutStoredSecrets(values: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+	if (values === undefined) return undefined;
+	const walk = (v: unknown): unknown => {
+		if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
+		const o = v as Record<string, unknown>;
+		if (typeof o.set === 'boolean' && Object.keys(o).every((k) => k === 'set' || k === 'hint')) return undefined;
+		return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, walk(x)]).filter(([, x]) => x !== undefined));
+	};
+	return walk(values) as Record<string, unknown>;
+}

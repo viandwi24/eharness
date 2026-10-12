@@ -73,6 +73,13 @@
 		void conn.runtime.state;
 		void loadDetail();
 	});
+	// chats are discovered by the server as people write: look again while the card is open and visible
+	$effect(() => {
+		const timer = setInterval(() => {
+			if (document.visibilityState === 'visible') void loadDetail();
+		}, 5000);
+		return () => clearInterval(timer);
+	});
 	$effect(() => {
 		// keep the chooser on the saved binding unless the person is changing it
 		const saved = conn.binding?.agentId ?? '';
@@ -195,7 +202,7 @@
 						<Button size="sm" variant="outline" onclick={() => void resetBreaker()} disabled={busy}>Resume sending</Button>
 					</div>
 				{:else}
-					<p class="text-xs text-muted-foreground">Messages are queued, sent no faster than Telegram allows (about one per second per chat) and retried on errors. A paused breaker shows here.</p>
+					<p class="text-xs text-muted-foreground">Messages are queued, sent no faster than Telegram allows (about one per second per chat) and retried on errors. If sending keeps failing it pauses by itself and says so here.</p>
 				{/if}
 				<div class="flex justify-end"><Button size="sm" variant="outline" onclick={() => void restart()} disabled={busy}><ArrowsClockwiseIcon class="size-4" /> Restart the bot</Button></div>
 			</Tabs.Content>

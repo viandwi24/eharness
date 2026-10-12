@@ -61,7 +61,7 @@
 	});
 
 	const origin = (key: Parameters<typeof originText>[1]): string => originText(chat, key, titleOf);
-	const inheritLabel = (what: string): string => `Inherit (${what})`;
+	const inheritLabel = (what: string): string => `Same as the level above (${what})`;
 
 	async function save(): Promise<void> {
 		if (retentionProblem || proactiveProblem) return;
@@ -119,9 +119,9 @@
 			{#if chat.container}
 				<p class="text-xs text-muted-foreground">Settings set here apply to every topic below unless a topic sets its own.</p>
 			{/if}
-			<div class="grid gap-3 sm:grid-cols-2">
+			<div class="grid gap-3 sm:grid-cols-2" data-testid="essentials">
 				<label class="flex flex-col gap-1">
-					<span class="text-xs font-medium">Allow the agent <span class="font-normal text-muted-foreground">· {origin('enabled')}</span></span>
+					<span class="text-xs font-medium">Agent may be used here <span class="font-normal text-muted-foreground">· {origin('enabled')}</span></span>
 					<NativeSelect bind:value={form.allowed} aria-label="Allow the agent here">
 						<NativeSelectOption value="">{inheritLabel(chat.effective.allowed ? 'allowed' : 'not allowed')}</NativeSelectOption>
 						<NativeSelectOption value="on">Allowed</NativeSelectOption>
@@ -129,57 +129,10 @@
 					</NativeSelect>
 				</label>
 				<label class="flex flex-col gap-1">
-					<span class="text-xs font-medium">Wakes <span class="font-normal text-muted-foreground">· {origin('wake')}</span></span>
+					<span class="text-xs font-medium">Answers when <span class="font-normal text-muted-foreground">· {origin('wake')}</span></span>
 					<NativeSelect bind:value={form.wake} aria-label="When the agent wakes">
 						<NativeSelectOption value="">{inheritLabel(WAKE_OPTIONS.find((o) => o.value === chat.effective.wake)?.label ?? chat.effective.wake)}</NativeSelectOption>
 						{#each WAKE_OPTIONS as o (o.value)}<NativeSelectOption value={o.value}>{o.label}</NativeSelectOption>{/each}
-					</NativeSelect>
-				</label>
-				<label class="flex flex-col gap-1">
-					<span class="text-xs font-medium">Replies <span class="font-normal text-muted-foreground">· {origin('delivery')}</span></span>
-					<NativeSelect bind:value={form.delivery} aria-label="How answers are delivered">
-						<NativeSelectOption value="">{inheritLabel(DELIVERY_OPTIONS.find((o) => o.value === chat.effective.delivery)?.label ?? chat.effective.delivery)}</NativeSelectOption>
-						{#each DELIVERY_OPTIONS as o (o.value)}<NativeSelectOption value={o.value}>{o.label}</NativeSelectOption>{/each}
-					</NativeSelect>
-				</label>
-				<label class="flex flex-col gap-1">
-					<span class="text-xs font-medium">Keep messages (days) <span class="font-normal text-muted-foreground">· {origin('retentionDays')}</span></span>
-					<Input type="number" min="1" max="3650" placeholder="Inherit ({chat.effective.retentionDays})" bind:value={form.retention} aria-invalid={!!retentionProblem} />
-					{#if retentionProblem}<span class="text-xs text-destructive-text">{retentionProblem}</span>{/if}
-				</label>
-				<label class="flex flex-col gap-1">
-					<span class="text-xs font-medium">Full log <span class="font-normal text-muted-foreground">· {origin('observe')}</span></span>
-					<NativeSelect bind:value={form.observe} aria-label="Store every message">
-						<NativeSelectOption value="">{inheritLabel(chat.effective.observe ? 'store everything' : 'only what addresses the agent')}</NativeSelectOption>
-						<NativeSelectOption value="on">Store every message (sealed)</NativeSelectOption>
-						<NativeSelectOption value="off">Only what addresses the agent</NativeSelectOption>
-					</NativeSelect>
-				</label>
-				<label class="flex flex-col gap-1">
-					<span class="text-xs font-medium">Session <span class="font-normal text-muted-foreground">· {origin('sessionScope')}</span></span>
-					<NativeSelect bind:value={form.sessionScope} aria-label="Session scope">
-						<NativeSelectOption value="">{inheritLabel(chat.effective.sessionScope === 'room' ? 'shared with the room' : 'its own')}</NativeSelectOption>
-						<NativeSelectOption value="node">Its own session</NativeSelectOption>
-						<NativeSelectOption value="room">Shared with the room</NativeSelectOption>
-					</NativeSelect>
-				</label>
-				<label class="flex flex-col gap-1 sm:col-span-2">
-					<span class="text-xs font-medium">When a message is deleted on the platform <span class="font-normal text-muted-foreground">· {origin('redactOnDelete')}</span></span>
-					<NativeSelect bind:value={form.redactOnDelete} aria-label="Deleted messages">
-						<NativeSelectOption value="">{inheritLabel(chat.effective.redactOnDelete ? 'drop the content' : 'keep it for audit until retention')}</NativeSelectOption>
-						<NativeSelectOption value="off">Keep the content for audit until retention</NativeSelectOption>
-						<NativeSelectOption value="on">Drop the content</NativeSelectOption>
-					</NativeSelect>
-				</label>
-			</div>
-			<fieldset class="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2" data-testid="people-fields">
-				<legend class="px-1 text-xs font-medium">People and tone <span class="font-normal text-muted-foreground">· who counts as a member here, how long replies are</span></legend>
-				<label class="flex flex-col gap-1">
-					<span class="text-xs font-medium">Trusted internal group <span class="font-normal text-muted-foreground">· {origin('defaultRole')}</span></span>
-					<NativeSelect bind:value={form.defaultRole} aria-label="Trusted internal group">
-						<NativeSelectOption value="">{inheritLabel(chat.effective.defaultRole === 'member' ? 'trusted: unknown people are members' : 'unknown people are guests')}</NativeSelectOption>
-						<NativeSelectOption value="member">Trusted: unknown people here are members</NativeSelectOption>
-						<NativeSelectOption value="guest">Not trusted: unknown people are guests</NativeSelectOption>
 					</NativeSelect>
 				</label>
 				<label class="flex flex-col gap-1">
@@ -191,13 +144,62 @@
 						<NativeSelectOption value="detailed">Detailed</NativeSelectOption>
 					</NativeSelect>
 				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Trusted group <span class="font-normal text-muted-foreground">· {origin('defaultRole')}</span></span>
+					<NativeSelect bind:value={form.defaultRole} aria-label="Trusted internal group">
+						<NativeSelectOption value="">{inheritLabel(chat.effective.defaultRole === 'member' ? 'trusted: unknown people are members' : 'unknown people are guests')}</NativeSelectOption>
+						<NativeSelectOption value="member">Trusted: unknown people here are members</NativeSelectOption>
+						<NativeSelectOption value="guest">Not trusted: unknown people are guests</NativeSelectOption>
+					</NativeSelect>
+				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Reply delivery <span class="font-normal text-muted-foreground">· {origin('delivery')}</span></span>
+					<NativeSelect bind:value={form.delivery} aria-label="How answers are delivered">
+						<NativeSelectOption value="">{inheritLabel(DELIVERY_OPTIONS.find((o) => o.value === chat.effective.delivery)?.label ?? chat.effective.delivery)}</NativeSelectOption>
+						{#each DELIVERY_OPTIONS as o (o.value)}<NativeSelectOption value={o.value}>{o.label}</NativeSelectOption>{/each}
+					</NativeSelect>
+				</label>
+			</div>
+			<p class="text-xs text-muted-foreground">Owners and admins are set on the People tab. Anybody without a role is a guest, unless this chat is a trusted group.</p>
+			<details class="rounded-lg border border-border px-3 py-2" data-testid="more-settings">
+				<summary class="cursor-pointer text-xs font-medium">More settings: history, tone, unasked posts</summary>
+				<div class="mt-3 flex flex-col gap-4">
+					<div class="grid gap-3 sm:grid-cols-2">
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Keep messages (days) <span class="font-normal text-muted-foreground">· {origin('retentionDays')}</span></span>
+					<Input type="number" min="1" max="3650" placeholder="Same as above ({chat.effective.retentionDays})" bind:value={form.retention} aria-invalid={!!retentionProblem} />
+					{#if retentionProblem}<span class="text-xs text-destructive-text">{retentionProblem}</span>{/if}
+				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Record every message <span class="font-normal text-muted-foreground">· {origin('observe')}</span></span>
+					<NativeSelect bind:value={form.observe} aria-label="Store every message">
+						<NativeSelectOption value="">{inheritLabel(chat.effective.observe ? 'store everything' : 'only what addresses the agent')}</NativeSelectOption>
+						<NativeSelectOption value="on">Store every message (sealed)</NativeSelectOption>
+						<NativeSelectOption value="off">Only what addresses the agent</NativeSelectOption>
+					</NativeSelect>
+				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs font-medium">Conversation <span class="font-normal text-muted-foreground">· {origin('sessionScope')}</span></span>
+					<NativeSelect bind:value={form.sessionScope} aria-label="Session scope">
+						<NativeSelectOption value="">{inheritLabel(chat.effective.sessionScope === 'room' ? 'shared with the whole room' : 'separate for this place')}</NativeSelectOption>
+						<NativeSelectOption value="node">Separate for this place</NativeSelectOption>
+						<NativeSelectOption value="room">Shared with the room</NativeSelectOption>
+					</NativeSelect>
+				</label>
 				<label class="flex flex-col gap-1 sm:col-span-2">
-					<span class="text-xs font-medium">Persona overlay <span class="font-normal text-muted-foreground">· {origin('personaOverlay')}</span></span>
+					<span class="text-xs font-medium">When a message is deleted on the platform <span class="font-normal text-muted-foreground">· {origin('redactOnDelete')}</span></span>
+					<NativeSelect bind:value={form.redactOnDelete} aria-label="Deleted messages">
+						<NativeSelectOption value="">{inheritLabel(chat.effective.redactOnDelete ? 'drop the content' : 'keep it for audit until retention')}</NativeSelectOption>
+						<NativeSelectOption value="off">Keep the content for audit until retention</NativeSelectOption>
+						<NativeSelectOption value="on">Drop the content</NativeSelectOption>
+					</NativeSelect>
+				</label>
+				<label class="flex flex-col gap-1 sm:col-span-2">
+					<span class="text-xs font-medium">Tone for this place <span class="font-normal text-muted-foreground">· {origin('personaOverlay')}</span></span>
 					<Textarea bind:value={form.personaOverlay} rows={2} maxlength={MAX_OVERLAY} aria-label="Persona overlay" placeholder={chat.effective.personaOverlay ? `Inherited: ${chat.effective.personaOverlay}` : 'Tone, language or length for this place, e.g. “Answer in English, three sentences at most.”'} />
 					<span class="text-xs text-muted-foreground">{form.personaOverlay.length} / {MAX_OVERLAY}. Tone, language and length only: it cannot give the agent tools or loosen a rule. Inherited by the topics below; empty = inherit.</span>
 				</label>
-				<p class="text-xs text-muted-foreground sm:col-span-2">Owners and admins are always set on the People tab. Anybody you have not given a role is a guest, unless this chat is a trusted internal group. You get a notification for each new unknown person.</p>
-			</fieldset>
+					</div>
 			<fieldset class="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2" data-testid="proactive-fields">
 				<legend class="px-1 text-xs font-medium">Proactive posts <span class="font-normal text-muted-foreground">· what the agent says unasked (routines, heartbeat) · {origin('proactive')}</span></legend>
 				<label class="flex flex-col gap-1">
@@ -225,15 +227,17 @@
 				</p>
 				<label class="flex flex-col gap-1">
 					<span class="text-xs font-medium">Mentions per message</span>
-					<Input type="number" min="0" max="20" placeholder="Inherit ({chat.effective.proactive.maxMentions})" bind:value={form.maxMentions} />
+					<Input type="number" min="0" max="20" placeholder="Same as above ({chat.effective.proactive.maxMentions})" bind:value={form.maxMentions} />
 				</label>
 				{#if proactiveProblem}<span class="text-xs text-destructive-text sm:col-span-2">{proactiveProblem}</span>{/if}
 			</fieldset>
+				</div>
+			</details>
 			<p class="text-xs text-muted-foreground">
 				{wakeHint(form.wake, chat.effective.wake)}
 			</p>
 			<div class="flex justify-end gap-2">
-				<Button size="sm" variant="ghost" disabled={saving || chat.policy === null} onclick={() => void clearAll()}>Inherit everything</Button>
+				<Button size="sm" variant="ghost" disabled={saving || chat.policy === null} onclick={() => void clearAll()}>Use the settings above</Button>
 				<Button size="sm" variant="ghost" disabled={!dirty || saving} onclick={() => (form = { ...base })}>Reset</Button>
 				<Button size="sm" disabled={!dirty || saving || !!retentionProblem || !!proactiveProblem} onclick={() => void save()} data-testid="chat-save">Save</Button>
 			</div>

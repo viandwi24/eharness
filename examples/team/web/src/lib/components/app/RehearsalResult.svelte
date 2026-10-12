@@ -181,7 +181,7 @@
 			<p class="text-muted-foreground">Nothing yet.</p>
 		{:else}
 			<div class="flex flex-col gap-3">
-				{#each messages as m (m.id)}<MessageView message={m} scratch />{/each}
+				{#each messages as m, i (m.id)}<MessageView message={m} scratch instruction={m.role === 'user' && i === 0} />{/each}
 			</div>
 		{/if}
 	</Surface>

@@ -21,9 +21,9 @@ import {
 const program: Program = {
 	id: 'p1',
 	agentId: 'a1',
-	name: 'Video scripts',
+	name: 'Weekly summary',
 	brief: 'Write a script for every new title.',
-	authority: { tools: ['web_fetch'], connectors: [], read: ['/library/videos/**'], write: ['/library/reports/**'] },
+	authority: { tools: ['web_fetch'], connectors: [], read: ['/library/notes/**'], write: ['/library/reports/**'] },
 	gates: ['publishing'],
 	escalation: 'Stop when unsure.',
 	forbidden: ['Bash(rm *)'],
@@ -56,7 +56,7 @@ describe('program form', () => {
 
 	test('a program round-trips through the form and back to the API body', () => {
 		const form = formFromProgram(program, 'UTC');
-		expect(form).toMatchObject({ tools: 'web_fetch', read: '/library/videos/**', perRunUsd: '2', perDayUsd: '', triggerKind: 'schedule', report: 'digest' });
+		expect(form).toMatchObject({ tools: 'web_fetch', read: '/library/notes/**', perRunUsd: '2', perDayUsd: '', triggerKind: 'schedule', report: 'digest' });
 		expect(form.schedule).toMatchObject({ kind: 'weekdays', time: '09:00' });
 		const body = bodyFromForm(form);
 		expect(body.authority).toEqual(program.authority);

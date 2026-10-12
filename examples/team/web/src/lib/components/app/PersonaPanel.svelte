@@ -199,7 +199,8 @@
 			</p>
 		</section>
 
-		<div class="flex flex-wrap items-center gap-2">
+		<div class="sticky bottom-0 z-10 -mx-5 -mb-4 flex flex-wrap items-center gap-2 border-t border-border bg-background px-5 py-2.5" data-testid="persona-save-bar">
+			{#if dirty}<span class="flex items-center gap-1.5 text-xs text-warning-text" role="status"><span class="size-1.5 rounded-full bg-warning"></span>Unsaved changes</span>{/if}
 			<Input bind:value={form.reason} class="min-w-48 flex-1" maxlength={500} placeholder="Why (optional, shown in the history)" aria-label="Reason for the change" />
 			<Button size="sm" disabled={!dirty || saving || Object.keys(problems).length > 0} onclick={() => void save()}>{saving ? 'Saving…' : 'Save as new version'}</Button>
 			<Button size="sm" variant="ghost" disabled={!dirty || saving} onclick={() => (form = formOf(persona!.current))}>Reset</Button>
@@ -214,7 +215,7 @@
 							<Badge variant={v.version === persona.current.version ? 'success' : 'secondary'}>v{v.version}</Badge>
 							<span class="min-w-0 flex-1 truncate text-xs">
 								<span class="font-medium">{authorText(v)}</span>
-								{#if v.source !== 'migration'}<span class="text-muted-foreground"> · {SOURCE_LABEL[v.source]}{v.reason ? ` · ${v.reason}` : ''}</span>{/if}
+								{#if v.source !== 'migration' && (v.source !== 'web' || v.reason)}<span class="text-muted-foreground"> · {[v.source === 'web' ? '' : SOURCE_LABEL[v.source], v.reason].filter(Boolean).join(' · ')}</span>{/if}
 							</span>
 							<span class="shrink-0 text-[11px] text-muted-foreground">{formatTime(v.createdAt)}</span>
 						</div>

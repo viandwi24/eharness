@@ -13,7 +13,7 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { decide } from '#lib/decisions/actions.js';
-	import { type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, statusBadge, triggerLine } from '#lib/decisions/model.js';
+	import { type Decision, grantLines, isOpen, isStandDownChoice, KIND_INFO, optionsOf, outcomeLine, proposalBudget, statusBadge, triggerLine } from '#lib/decisions/model.js';
 	import EffectiveGrant from './EffectiveGrant.svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
@@ -30,6 +30,9 @@
 	let note = $state('');
 	let rejecting = $state(false);
 	let busy = $state(false);
+	let bodyOpen = $state(false);
+	const longBody = $derived(decision.body.length > 500 || decision.body.split('\n').length > 8);
+	const rememberHint = $derived(decision.kind === 'escalation' && open && decision.programId !== null ? options.filter(isStandDownChoice) : []);
 
 	/** The DM chat a proposal came from, or the task session of a run. */
 	async function openSource(): Promise<void> {
@@ -88,7 +91,14 @@
 	</div>
 
 	{#if decision.body}
-		<div class="rounded-md border border-border bg-muted/40 px-3 py-2"><MessageResponse content={decision.body} class="text-[13.5px]" /></div>
+		<div class="rounded-md border border-border bg-muted/40 px-3 py-2" data-testid="decision-body">
+			<div class={bodyOpen || !longBody ? '' : 'max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]'}>
+				<div class="[&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_code]:break-words"><MessageResponse content={decision.body} class="text-[13.5px]" /></div>
+			</div>
+			{#if longBody}
+				<button type="button" class="mt-1 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" aria-expanded={bodyOpen} onclick={() => (bodyOpen = !bodyOpen)}>{bodyOpen ? 'Show less' : 'Show more'}</button>
+			{/if}
+		</div>
 	{/if}
 
 	{#if decision.kind === 'proposal'}
@@ -157,6 +167,9 @@
 					{/if}
 					<Button size="sm" variant="ghost" disabled={busy} onclick={() => (rejecting = true)}>Reject…</Button>
 				</div>
+				{#if rememberHint.length}
+					<p class="text-xs text-muted-foreground" data-testid="remember-hint">If you answer “{rememberHint.join('” or “')}”, this answer will be remembered for 7 days: the program will not ask the same thing again. You can make it forget on the program page.</p>
+				{/if}
 			</div>
 		{/if}
 	{:else}

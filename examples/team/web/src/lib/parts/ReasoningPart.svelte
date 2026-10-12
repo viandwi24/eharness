@@ -7,9 +7,9 @@
 
 	let { text, streaming, durationMs }: { text: string; streaming: boolean; durationMs?: number } = $props();
 
-	// Open while streaming, closed once done; a click overrides either.
-	let toggled = $state<boolean | undefined>(undefined);
-	const open = $derived(toggled ?? streaming);
+	// Always collapsed until the reader opens it: never auto-expand, even while streaming.
+	let toggled = $state(false);
+	const open = $derived(toggled);
 	const label = $derived(reasoningLabel(streaming, durationMs));
 	const theme = { paragraph: { base: 'my-0' } };
 </script>

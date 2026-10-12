@@ -5,6 +5,7 @@
 		import CompactionPart from './CompactionPart.svelte';
 	import EventPart from './EventPart.svelte';
 	import FilePart from './FilePart.svelte';
+	import InstructionCard from './InstructionCard.svelte';
 	import InputPart from './InputPart.svelte';
 	import NoticePart from './NoticePart.svelte';
 	import { hasVisibleParts, messageKind, type PartView, viewModel, wasStopped } from './map.js';
@@ -33,7 +34,8 @@
 		onFocusDock,
 		onOpenSession,
 		scratch = false,
-		live = true
+		live = true,
+		instruction = false
 	}: {
 		message: UIMessage;
 		/** Author of an assistant message (multi-agent header). `id` seeds the avatar. */
@@ -49,6 +51,8 @@
 		scratch?: boolean;
 		/** Something may still stream into this message; false for settled history. */
 		live?: boolean;
+		/** A user message the system wrote (task, program or rehearsal prompt): shown as a collapsed Instructions card. */
+		instruction?: boolean;
 	} = $props();
 
 	const views = $derived(viewModel(message, live));
@@ -92,7 +96,7 @@
 
 {#snippet part(v: PartView)}
 	{#if v.kind === 'text'}
-		{#if message.role === 'user'}<UserText text={v.text} />{:else}<TextPart text={v.text} />{/if}
+		{#if message.role === 'user' && instruction}<InstructionCard text={v.text} />{:else if message.role === 'user'}<UserText text={v.text} />{:else}<TextPart text={v.text} />{/if}
 	{:else if v.kind === 'reasoning'}
 		<ReasoningPart text={v.text} streaming={v.streaming} durationMs={v.durationMs} />
 	{:else if v.kind === 'tool'}

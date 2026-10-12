@@ -1,3 +1,9 @@
+<script lang="ts" module>
+	// Unsent text survives a remount of the composer (the chat route re-resolves its thread right after
+	// opening an agent): keyed by agent and thread-less so it follows the person, cleared on send.
+	const drafts = new Map<string, string>();
+</script>
+
 <script lang="ts">
 	import PaperclipIcon from 'phosphor-svelte/lib/Paperclip';
 	import {
@@ -53,6 +59,14 @@
 		decline?: DeclineHint;
 	} = $props();
 
+	const draftKey = $derived(agentId ?? '');
+	// svelte-ignore state_referenced_locally
+	const initial = drafts.get(draftKey) ?? '';
+	async function send(m: PromptInputMessage): Promise<void> {
+		await onSend(m); // a throw keeps the text in the box and the draft
+		drafts.delete(draftKey);
+	}
+
 	let declineOpen = $state(false);
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	/** Put the cursor in the message box. */
@@ -73,7 +87,8 @@
 
 <!-- Composer: attachments are validated here (type, 10 MB) and uploaded by the owner on send. -->
 <PromptInput
-	onSubmit={onSend}
+	onSubmit={send}
+	initialInput={initial}
 	onError={(e) => toast.error(e.message, { id: e.message.slice(0, 80) })}
 	accept={UPLOAD_ACCEPT}
 	maxFileSize={UPLOAD_MAX_BYTES}
@@ -96,7 +111,7 @@
 			</PromptInputHeader>
 		{/if}
 		<PromptInputBody>
-			<PromptInputTextarea bind:ref={textarea} {placeholder} onkeydown={onKeydown} class="min-h-12 px-3 pt-2.5 pb-1" />
+			<PromptInputTextarea bind:ref={textarea} {placeholder} onkeydown={onKeydown} oninput={(e: Event) => drafts.set(draftKey, (e.currentTarget as HTMLTextAreaElement).value)} class="min-h-12 px-3 pt-2.5 pb-1" />
 		</PromptInputBody>
 		{#if decline && textInput.trim()}
 			<div class="px-3 pb-1 text-xs text-muted-foreground" data-testid="decline-hint" role="status">

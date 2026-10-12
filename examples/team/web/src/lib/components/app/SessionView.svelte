@@ -297,6 +297,7 @@
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
 									showHeader={head}
 									live={running && i === messages.length - 1}
+									instruction={m.role === 'user' && i === 0}
 									{standing}
 									onFocusDock={focusDock}
 									onOpenSession={(sid) => void openSession(sid)}

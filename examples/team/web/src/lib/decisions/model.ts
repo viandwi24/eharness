@@ -95,3 +95,10 @@ export function editBody(form: ProgramForm, runOnce: boolean): NonNullable<Appro
 export function withoutDecision(list: readonly Decision[], id: string): Decision[] {
 	return list.filter((d) => d.id !== id);
 }
+
+/** Same words as the server's stand-down check: an answer like this is remembered for a week for a program's escalation. */
+export const isStandDownChoice = (choice: string): boolean =>
+	/\b(keep\s+waiting|wait|hold|skip|ignore|dismiss|snooze|not\s+now|later|no\s+action|leave\s+(it|as)|do\s+nothing|don'?t\s+(escalate|ask)|continue\s+waiting)\b/i.test(choice);
+
+/** The remembered subject as people read it: record ids (`AB-12`) stay, a slugged title does not. */
+export const readableSubject = (subject: string): string => (/^[A-Z]{1,6}-\d{1,6}(,[A-Z]{1,6}-\d{1,6})*$/.test(subject) ? subject.replace(/,/g, ', ') : '');

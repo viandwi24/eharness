@@ -37,7 +37,7 @@
 					<span class="text-muted-foreground">{task.review ? 'assigned' : 'assigned (no review)'} by {creator}</span>
 					{#if task.grants}<Badge variant="outline" title="Pre-approved for this task">extra permissions</Badge>{/if}
 				{/if}
-				{#if task.report}<Badge variant={REPORT_LABELS[task.report.status].variant}>{REPORT_LABELS[task.report.status].label}</Badge>{/if}
+				{#if task.report && !(task.status === 'done' && task.report.status === 'done')}<Badge variant={REPORT_LABELS[task.report.status].variant}>{REPORT_LABELS[task.report.status].label}</Badge>{/if}
 			</div>
 
 			{#if waitingFor}

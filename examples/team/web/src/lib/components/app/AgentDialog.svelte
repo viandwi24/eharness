@@ -19,6 +19,7 @@
 	let loadError = $state('');
 	let saving = $state(false);
 	let valid = $state(false);
+	let dirty = $state(false);
 	// Bumped on every open so the editor remounts with fresh form state.
 	let session = $state(0);
 	let tab = $state<'settings' | 'persona' | 'memory' | 'connectors' | 'heartbeat'>('settings');
@@ -76,7 +77,7 @@
 					{/if}
 				{:else}
 					{#key session}
-						<AgentEditor {agent} bare formId={FORM_ID} bind:saving bind:valid onDone={() => closeAgentDialog()} />
+						<AgentEditor {agent} bare formId={FORM_ID} bind:saving bind:valid bind:dirty onDone={() => closeAgentDialog()} />
 					{/key}
 				{/if}
 			</div>
@@ -104,6 +105,7 @@
 			{/if}
 		</Tabs.Root>
 		<Dialog.Footer class="border-t border-border px-5 py-3">
+			{#if editing && tab === 'settings' && dirty}<span class="mr-auto flex items-center gap-1.5 text-xs text-warning-text" role="status" data-testid="agent-dirty"><span class="size-1.5 rounded-full bg-warning"></span>Unsaved changes</span>{/if}
 			<Button type="button" variant="ghost" onclick={closeAgentDialog}>{editing && tab !== 'settings' ? 'Close' : 'Cancel'}</Button>
 			<Button type="submit" form={FORM_ID} disabled={saving || !valid || (editing && !agent)} class={editing && tab !== 'settings' ? 'hidden' : ''}>
 				{saving ? 'Saving…' : editing ? 'Save changes' : 'Create agent'}

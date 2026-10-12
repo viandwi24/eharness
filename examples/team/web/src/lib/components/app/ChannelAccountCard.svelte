@@ -80,6 +80,12 @@
 		void loadDetail();
 	});
 	$effect(() => {
+		const timer = setInterval(() => {
+			if (document.visibilityState === 'visible') void loadDetail();
+		}, 5000);
+		return () => clearInterval(timer);
+	});
+	$effect(() => {
 		const l = conn.account?.limits;
 		untrack(() => {
 			if (l && !limitsDirty) limits = limitsFormOf(l);
@@ -185,9 +191,9 @@
 				<Tabs.Trigger value="people">People {#if conn.counts.unlinked}<Badge shape="number" variant="warning" title="Not linked yet">{conn.counts.unlinked}</Badge>{:else if conn.counts.linked}<Badge shape="number" variant="secondary">{conn.counts.linked}</Badge>{/if}</Tabs.Trigger>
 				<Tabs.Trigger value="inbox">Inbox</Tabs.Trigger>
 				<Tabs.Trigger value="activity">Activity</Tabs.Trigger>
-				<Tabs.Trigger value="backfill">Backfill</Tabs.Trigger>
+				<Tabs.Trigger value="backfill">History</Tabs.Trigger>
 				<Tabs.Trigger value="adminlog">Admin log</Tabs.Trigger>
-				<Tabs.Trigger value="limits">Limits</Tabs.Trigger>
+				<Tabs.Trigger value="limits">Send limits</Tabs.Trigger>
 			</Tabs.List>
 
 			<Tabs.Content value="chats" class="flex flex-col gap-3 pt-3">

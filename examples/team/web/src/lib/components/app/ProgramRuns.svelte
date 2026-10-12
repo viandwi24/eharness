@@ -55,7 +55,7 @@
 				<li class="flex flex-col gap-1 px-3 py-2 text-xs">
 					<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
 						<Badge variant={b.variant}>{b.label}</Badge>
-						{#if t.report}<Badge variant={REPORT_LABELS[t.report.status].variant}>{REPORT_LABELS[t.report.status].label}</Badge>{/if}
+						{#if t.report && REPORT_LABELS[t.report.status].label !== b.label}<Badge variant={REPORT_LABELS[t.report.status].variant}>{REPORT_LABELS[t.report.status].label}</Badge>{/if}
 						{#if t.deliverables}<Badge variant={t.deliverables.status === 'pass' ? 'success' : 'destructive'}>{t.deliverables.status === 'pass' ? 'deliverables ok' : 'deliverables failed'}</Badge>{/if}
 						<span class="flex-1"></span>
 						{#if t.costUsd > 0}<span class="font-mono text-muted-foreground">{formatUsd(t.costUsd)}</span>{/if}

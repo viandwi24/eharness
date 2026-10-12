@@ -6,6 +6,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { timeAgo } from '#lib/time.js';
+	import { readableSubject } from '#lib/decisions/model.js';
 	import type { Program } from '#lib/programs/form.js';
 
 	/**
@@ -60,7 +61,7 @@
 			{#each items as m (m.id)}
 				<li class="flex items-start gap-3 py-2" data-testid="remembered-decision">
 					<div class="min-w-0 flex-1">
-						<p class="text-[13px] font-medium break-words">{m.subject}: {m.choice}</p>
+						<p class="text-[13px] font-medium break-words">{readableSubject(m.subject) ? `${readableSubject(m.subject)}: ` : ''}{m.choice}</p>
 						<p class="text-xs text-muted-foreground break-words">{m.question}</p>
 						<p class="text-xs text-muted-foreground">Answered {timeAgo(m.decidedAt)} · valid until {until(m.expiresAt)}{m.note ? ` · ${m.note}` : ''}</p>
 					</div>

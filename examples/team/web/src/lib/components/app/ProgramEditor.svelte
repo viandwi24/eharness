@@ -11,6 +11,7 @@
 	import DeliverablesFields from './DeliverablesFields.svelte';
 	import ScheduleFields from './ScheduleFields.svelte';
 	import EffectiveGrant from './EffectiveGrant.svelte';
+	import ToolPicker from './ToolPicker.svelte';
 	import type { EffectiveGrant as Grant } from '#lib/programs/grant.js';
 
 	let {
@@ -86,13 +87,17 @@
 		};
 	});
 	$effect(() => {
-		valid = !!form.name.trim() && !!form.brief.trim() && (!!pickedAgent || !!proposed);
+		valid = !!form.name.trim() && !!form.brief.trim() && (!!pickedAgent || !!proposed) && authorityErrors.length === 0;
 	});
 
 	async function submit(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
 		errors = validateProgramForm(form);
 		formError = '';
+		if (authorityErrors.length) {
+			formError = 'Fix what this program may use before saving: ' + authorityErrors[0];
+			return;
+		}
 		if (Object.keys(errors).length) return;
 		let body;
 		try {
@@ -150,84 +155,14 @@
 	{/if}
 	<label class="flex flex-col gap-1">
 		<span class="font-medium">Name</span>
-		<Input bind:value={form.name} placeholder="Draft scripts for new video titles" aria-invalid={!!errors.name} />
+		<Input bind:value={form.name} placeholder="Draft the weekly summary" aria-invalid={!!errors.name} />
 		{#if errors.name}<span class="text-xs text-destructive-text">{errors.name}</span>{/if}
 	</label>
 	<label class="flex flex-col gap-1">
 		<span class="font-medium">Brief</span>
-		<Textarea bind:value={form.brief} rows={5} placeholder={'What to do, and the steps.\n1. Read /library/videos/titles.md\n2. For each title without a script, write /library/reports/<title>.md'} aria-invalid={!!errors.brief} />
+		<Textarea bind:value={form.brief} rows={5} placeholder={'What to do, and the steps.\n1. Read /library/notes/items.md\n2. For each item without a summary, write /library/reports/<item>.md'} aria-invalid={!!errors.brief} />
 		{#if errors.brief}<span class="text-xs text-destructive-text">{errors.brief}</span>{/if}
 	</label>
-
-	<fieldset class="flex flex-col gap-3 rounded-lg border border-border p-3">
-		<legend class="px-1 font-medium">Authority</legend>
-		<p class="text-xs text-muted-foreground">
-			What this program may do while nobody is watching. It is enforced for every run: anything not listed here is refused, never asked.
-		</p>
-		{@render lines('tools', 'Tools', 'web_fetch\nWebFetch(domain:example.com)', 'One tool name or rule per line.')}
-		{@render warn(['authority.tools'])}
-		{@render lines('connectors', 'Connectors', 'mcp-remote', 'Connector or connection ids of this agent: every tool of them is allowed. A name that matches no connector is refused when you save.')}
-		{#each authorityErrors as message (message)}
-			<p class="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive-text" role="alert" data-testid="authority-error">{message}</p>
-		{/each}
-		<EffectiveGrant {grant} />
-		<div class="grid gap-3 sm:grid-cols-2">
-			{@render lines('read', 'Read paths', '/library/videos/**', 'Library globs, one per line.')}
-			{@render lines('write', 'Write paths', '/library/reports/**', 'Library globs; writable paths can be read too.')}
-		</div>
-		{@render lines('forbidden', 'Forbidden', 'Edit(/library/reports/final/**)', 'Never allowed, even inside the authority above.')}
-	</fieldset>
-
-	<fieldset class="flex flex-col gap-3 rounded-lg border border-border p-3">
-		<legend class="px-1 font-medium">Decisions</legend>
-		{@render lines('gates', 'Needs your decision', 'Publishing anything\nSpending more than the budget', 'Actions the program must not do on its own; it reports them instead.')}
-		<label class="flex flex-col gap-1">
-			<span class="font-medium">Escalation</span>
-			<Textarea bind:value={form.escalation} rows={2} placeholder="Stop and report when a title looks harmful or the source is missing." />
-		</label>
-	</fieldset>
-
-	<DeliverablesFields bind:rows={form.deliverables} {errors} />
-
-	<fieldset class="flex flex-col gap-2 rounded-lg border border-border p-3">
-		<legend class="px-1 font-medium">Work queue</legend>
-		<label class="flex items-start gap-2">
-			<input type="checkbox" bind:checked={form.worker} class="mt-0.5" />
-			<span>
-				Work through the queued tasks of this agent
-				<span class="block text-xs text-muted-foreground">Optional, for standing orders: tasks assigned to this agent start by themselves with its normal tools and permissions, so most work needs no worker program. With this on, the program owns the agent's queue instead: each run takes the next queued tasks (highest priority, then the nearest due date) and works each under the authority above (the brief is the standing instruction; the task says what to make). Held tasks are skipped; Start now on a task still runs it at once.</span>
-			</span>
-		</label>
-		{#if form.worker}
-			<label class="flex flex-col gap-1 sm:w-48">
-				<span class="text-xs text-muted-foreground">Tasks per run</span>
-				<Input bind:value={form.maxTasks} inputmode="numeric" aria-invalid={!!errors.maxTasks} />
-				{#if errors.maxTasks}<span class="text-xs text-destructive-text">{errors.maxTasks}</span>{/if}
-			</label>
-		{/if}
-	</fieldset>
-
-	<fieldset class="flex flex-col gap-2">
-		<legend class="mb-1 font-medium">Budget</legend>
-		<div class="grid gap-3 sm:grid-cols-2">
-			<label class="flex flex-col gap-1">
-				<span class="text-xs text-muted-foreground">Per run (USD)</span>
-				<Input bind:value={form.perRunUsd} inputmode="decimal" placeholder="no limit" aria-invalid={!!errors.perRunUsd} />
-				{#if errors.perRunUsd}<span class="text-xs text-destructive-text">{errors.perRunUsd}</span>{/if}
-			</label>
-			<label class="flex flex-col gap-1">
-				<span class="text-xs text-muted-foreground">Per day (USD)</span>
-				<Input bind:value={form.perDayUsd} inputmode="decimal" placeholder="no limit" aria-invalid={!!errors.perDayUsd} />
-				{#if errors.perDayUsd}<span class="text-xs text-destructive-text">{errors.perDayUsd}</span>{/if}
-			</label>
-		</div>
-		<label class="flex flex-col gap-1 sm:w-64">
-			<span class="text-xs text-muted-foreground">Output tokens per model call (optional)</span>
-			<Input bind:value={form.maxOutputTokens} inputmode="numeric" placeholder="sized from the budget" aria-invalid={!!errors.maxOutputTokens} />
-			{#if errors.maxOutputTokens}<span class="text-xs text-destructive-text">{errors.maxOutputTokens}</span>{:else}<span class="text-xs text-muted-foreground">Every model call reserves its worst case (the whole output cap at the model price) before it runs. A small budget needs a small cap.</span>{/if}
-		</label>
-		{@render warn(['budget.perRunUsd', 'budget.perDayUsd'])}
-	</fieldset>
 
 	<fieldset class="flex flex-col gap-2">
 		<legend class="mb-1 font-medium">When it runs</legend>
@@ -240,15 +175,86 @@
 		{/if}
 	</fieldset>
 
-	<label class="flex flex-col gap-1">
-		<span class="font-medium">Where the result goes</span>
-		<NativeSelect bind:value={form.report}>
-			{#each REPORT_OPTIONS as o (o.value)}
-				<NativeSelectOption value={o.value}>{o.label}</NativeSelectOption>
-			{/each}
-		</NativeSelect>
-		<span class="text-xs text-muted-foreground">{REPORT_OPTIONS.find((o) => o.value === form.report)?.hint}</span>
-	</label>
+	<fieldset class="flex flex-col gap-3 rounded-lg border border-border p-3">
+		<legend class="px-1 font-medium">What it is allowed to do</legend>
+		<p class="text-xs text-muted-foreground">
+			It works on its own while nobody is watching, so anything not allowed here is refused, never asked.
+		</p>
+		<div class="grid gap-3 sm:grid-cols-2">
+			{@render lines('read', 'May read', '/library/notes/**', 'Library folders or files, one per line.')}
+			{@render lines('write', 'May write', '/library/reports/**', 'Library folders or files; what it may write it may also read.')}
+		</div>
+		<ToolPicker agentId={pickedAgent || proposed?.agentId || ''} bind:tools={form.tools} bind:connectors={form.connectors} />
+		{@render warn(['authority.tools'])}
+		{#each authorityErrors as message (message)}
+			<p class="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive-text" role="alert" data-testid="authority-error">{message}</p>
+		{/each}
+		<EffectiveGrant {grant} always title="Effective grant: what each run can really do" />
+	</fieldset>
+
+	<details class="rounded-lg border border-border px-3 py-2" data-testid="program-advanced">
+		<summary class="cursor-pointer text-[13px] font-medium">Advanced: limits, decisions, files, budget, results</summary>
+		<div class="mt-3 flex flex-col gap-4">
+			{@render lines('forbidden', 'Never allowed', 'Edit(/library/reports/final/**)', 'Blocked even inside what is allowed above.')}
+			{@render lines('gates', 'Needs your decision', 'Publishing anything\nSpending more than the budget', 'Things the program must not do on its own; it reports them instead.')}
+			<label class="flex flex-col gap-1">
+				<span class="font-medium">When to stop and ask</span>
+				<Textarea bind:value={form.escalation} rows={2} placeholder="Stop and report when a source is missing or something looks wrong." />
+			</label>
+
+			<DeliverablesFields bind:rows={form.deliverables} {errors} />
+
+			<fieldset class="flex flex-col gap-2 rounded-lg border border-border p-3">
+				<legend class="px-1 font-medium">Work queue</legend>
+				<label class="flex items-start gap-2">
+					<input type="checkbox" bind:checked={form.worker} class="mt-0.5" />
+					<span>
+						Work through the queued tasks of this agent
+						<span class="block text-xs text-muted-foreground">Optional. Each run takes the next queued tasks (highest priority, then nearest due date) and works them under the permissions above. Most work needs no worker program: tasks assigned to an agent start by themselves.</span>
+					</span>
+				</label>
+				{#if form.worker}
+					<label class="flex flex-col gap-1 sm:w-48">
+						<span class="text-xs text-muted-foreground">Tasks per run</span>
+						<Input bind:value={form.maxTasks} inputmode="numeric" aria-invalid={!!errors.maxTasks} />
+						{#if errors.maxTasks}<span class="text-xs text-destructive-text">{errors.maxTasks}</span>{/if}
+					</label>
+				{/if}
+			</fieldset>
+
+			<fieldset class="flex flex-col gap-2">
+				<legend class="mb-1 font-medium">Spending limit</legend>
+				<div class="grid gap-3 sm:grid-cols-2">
+					<label class="flex flex-col gap-1">
+						<span class="text-xs text-muted-foreground">Per run (USD)</span>
+						<Input bind:value={form.perRunUsd} inputmode="decimal" placeholder="no limit" aria-invalid={!!errors.perRunUsd} />
+						{#if errors.perRunUsd}<span class="text-xs text-destructive-text">{errors.perRunUsd}</span>{/if}
+					</label>
+					<label class="flex flex-col gap-1">
+						<span class="text-xs text-muted-foreground">Per day (USD)</span>
+						<Input bind:value={form.perDayUsd} inputmode="decimal" placeholder="no limit" aria-invalid={!!errors.perDayUsd} />
+						{#if errors.perDayUsd}<span class="text-xs text-destructive-text">{errors.perDayUsd}</span>{/if}
+					</label>
+				</div>
+				<label class="flex flex-col gap-1 sm:w-64">
+					<span class="text-xs text-muted-foreground">Longest answer per step (tokens, optional)</span>
+					<Input bind:value={form.maxOutputTokens} inputmode="numeric" placeholder="sized from the limit" aria-invalid={!!errors.maxOutputTokens} />
+					{#if errors.maxOutputTokens}<span class="text-xs text-destructive-text">{errors.maxOutputTokens}</span>{:else}<span class="text-xs text-muted-foreground">Each step reserves its worst case against the limit before it runs, so a small limit needs a small cap.</span>{/if}
+				</label>
+				{@render warn(['budget.perRunUsd', 'budget.perDayUsd'])}
+			</fieldset>
+
+			<label class="flex flex-col gap-1">
+				<span class="font-medium">Where the result goes</span>
+				<NativeSelect bind:value={form.report}>
+					{#each REPORT_OPTIONS as o (o.value)}
+						<NativeSelectOption value={o.value}>{o.label}</NativeSelectOption>
+					{/each}
+				</NativeSelect>
+				<span class="text-xs text-muted-foreground">{REPORT_OPTIONS.find((o) => o.value === form.report)?.hint}</span>
+			</label>
+		</div>
+	</details>
 
 	{#if formError && !Object.keys(errors).length}<p class="text-xs text-destructive-text" role="alert">{formError}</p>{/if}
 </form>

@@ -39,6 +39,17 @@ export function filterModels(models: readonly ProviderModel[], query: string, li
 	return { items: hits.slice(0, limit), total: hits.length };
 }
 
+/**
+ * The recommended set first: models that call tools (an agent needs them), reasoning ones next, then
+ * the larger context windows; the rest keep the server's order. Stable. Without a search only.
+ */
+export function recommendedFirst(models: readonly ProviderModel[]): { items: ProviderModel[]; recommended: number } {
+	const score = (m: ProviderModel): number => (m.tools ? 2 : 0) + (m.reasoning ? 1 : 0);
+	const ranked = models.map((m, i) => ({ m, i })).sort((a, b) => score(b.m) - score(a.m) || (b.m.contextWindow ?? 0) - (a.m.contextWindow ?? 0) || a.i - b.i);
+	const items = ranked.map((r) => r.m);
+	return { items, recommended: Math.min(items.filter((m) => m.tools).length, 6) };
+}
+
 // --- model policy (per-model switches) ---------------------------------------------------------
 // The server stores `models: { allow?, deny?, extra? }` on a profile. No `allow` = every model is
 // on except the `deny` ones; an `allow` list = only those are on (ids may use `*`). This mirrors the

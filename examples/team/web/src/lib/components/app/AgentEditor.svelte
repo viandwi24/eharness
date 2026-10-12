@@ -25,6 +25,7 @@
 		formId = 'agent-editor-form',
 		saving = $bindable(false),
 		valid = $bindable(false),
+		dirty = $bindable(false),
 		onDone
 	}: {
 		agent?: Agent;
@@ -34,6 +35,8 @@
 		formId?: string;
 		saving?: boolean;
 		valid?: boolean;
+		/** Something differs from the saved agent (a new agent is dirty once it has a name). */
+		dirty?: boolean;
 		/** Called after a successful create, save or archive. */
 		onDone?: (result: 'created' | 'saved' | 'archived') => void;
 	} = $props();
@@ -60,6 +63,12 @@
 	$effect(() => {
 		// an existing agent's voice and rules are the Persona tab's; a new agent starts from its instructions
 		valid = !!name.trim() && (!!agent || !!instructions.trim());
+	});
+
+	$effect(() => {
+		dirty = agent
+			? name !== agent.name || color !== agent.color || description !== agent.description || (model || null) !== (agent.model ?? null) || (modelProfile || null) !== (agent.modelProfile ?? null) || modeChoice !== agentChoiceOf(agent.permissionMode) || taskConcurrency !== String(agent.taskConcurrency ?? 1)
+			: !!name.trim() || !!instructions.trim();
 	});
 
 	const isLead = $derived(agent?.role === 'lead');

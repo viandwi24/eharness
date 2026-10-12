@@ -25,6 +25,11 @@
 	$effect(() => {
 		if (firstStep === undefined && view) firstStep = view.step;
 	});
+	// a form that follows an error view (Try again) starts clean: the refused secret is not "Saved"
+	let sawError = $state(false);
+	$effect(() => {
+		if (view?.type === 'error') sawError = true;
+	});
 	const back = $derived(view ? canGoBack(view, firstStep) : false);
 	const succeeded = $derived(flowSucceeded(flow, st.connection));
 
@@ -55,7 +60,7 @@
 	{:else}
 		{#key view.viewId}
 			{#if view.type === 'form'}
-				<FlowForm {view} busy={st.busy} canBack={back} onSubmit={submit} onBack={goBack} onCancel={cancel} onResend={() => session.act('resend')} />
+				<FlowForm {view} busy={st.busy} canBack={back} onSubmit={submit} onBack={goBack} onCancel={cancel} onResend={() => session.act('resend')} afterFailure={sawError} />
 			{:else if view.type === 'qr'}
 				<FlowQr {session} {view} onCancel={cancel} />
 			{:else if view.type === 'oauth'}

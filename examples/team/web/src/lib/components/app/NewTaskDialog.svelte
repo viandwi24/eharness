@@ -66,7 +66,7 @@
 			</label>
 			<label class="flex flex-col gap-1">
 				<span class="font-medium">Title</span>
-				<Input bind:value={form.title} placeholder="Script: the lighthouse" aria-invalid={!!errors.title} />
+				<Input bind:value={form.title} placeholder="Weekly summary: March" aria-invalid={!!errors.title} />
 				{#if errors.title}<span class="text-xs text-destructive-text">{errors.title}</span>{/if}
 			</label>
 			<label class="flex flex-col gap-1">
@@ -76,7 +76,7 @@
 			</label>
 			<label class="flex flex-col gap-1">
 				<span class="font-medium">Inputs</span>
-				<Textarea bind:value={form.inputs} rows={2} placeholder="/library/production/videos.md" class="font-mono text-xs" aria-invalid={!!errors.inputs} />
+				<Textarea bind:value={form.inputs} rows={2} placeholder="/library/notes/inputs.md" class="font-mono text-xs" aria-invalid={!!errors.inputs} />
 				{#if errors.inputs}<span class="text-xs text-destructive-text">{errors.inputs}</span>{:else}<span class="text-xs text-muted-foreground">Library paths it starts from, one per line.</span>{/if}
 			</label>
 			<div class="grid gap-3 sm:grid-cols-2">

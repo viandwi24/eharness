@@ -8,7 +8,8 @@
 	<!-- Terminal: the server answered 401 / 403 to the activity stream. Retrying will not help; the
 	     token (Settings) must change. -->
 	<div role="alert" class="fixed inset-x-0 top-0 z-50 flex h-6 items-center justify-center gap-1.5 bg-destructive-soft text-[11px] text-destructive-text" data-testid="feed-unauthorized">
-		Not authorized: the server refused the token. Set a valid token in Settings and save it.
+		Not authorized: the server refused the token.
+		<a href="/settings?section=connection" class="font-medium underline underline-offset-2">Set a valid token in Settings → Connection</a>
 	</div>
 {:else if live.state.unreachable}
 	<!-- The API keeps failing (down, wrong address, an HTML page): requests back off, this says why nothing loads. -->
