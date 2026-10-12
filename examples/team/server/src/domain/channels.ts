@@ -31,6 +31,8 @@ export interface ChannelBinding {
   groupPolicy: 'allowlist' | 'open'
   dm: 'pairing' | 'disabled'
   allowBots: boolean
+  /** Answer an unlinked person's DM with one neutral line (default off: silence). */
+  replyToUnknown: boolean
   admins: string[]
   historyLimit: number
   defaults: Pick<ChannelPolicy, 'wake' | 'delivery' | 'retentionDays'>
@@ -106,7 +108,13 @@ export interface ChannelConnectionView {
   }
   webhookUrl?: string
   binding: ChannelBinding | null
-  counts: { chats: number; linked: number; outboxPending: number; outboxFailed: number }
+  counts: {
+    chats: number
+    linked: number
+    unlinked: number
+    outboxPending: number
+    outboxFailed: number
+  }
   breaker?: { open: boolean; until: number; reason: string }
 }
 
@@ -148,19 +156,12 @@ export interface ChannelLinkView {
   linkedAt: number
 }
 
-export interface ChannelPairingIssued {
-  memberId: string
-  /** The deep link to open in Telegram; shown once. */
-  link: string
-  command: string
-  expiresAt: number
-}
-
 export interface ChannelBindInput {
   agentId: string
   groupPolicy?: 'allowlist' | 'open'
   dm?: 'pairing' | 'disabled'
   allowBots?: boolean
+  replyToUnknown?: boolean
   admins?: string[]
   historyLimit?: number
   defaults?: Pick<ChannelPolicy, 'wake' | 'delivery' | 'retentionDays'>
@@ -184,4 +185,113 @@ export interface ChannelLimitsInput {
   groupWindowMs?: number
   connectionMax?: number
   connectionWindowMs?: number
+}
+
+/** Somebody who wrote to the connection and is not linked yet (who and how often, never what). */
+export interface ChannelUnlinkedView {
+  peerId: string
+  name?: string
+  username?: string
+  firstSeen: number
+  lastSeen: number
+  messageCount: number
+  ignored: boolean
+}
+
+/** A team member an account can be linked to. */
+export interface ChannelMemberView {
+  id: string
+  name: string
+}
+
+export interface ChannelInboxConversationView {
+  conversationId: string
+  kind: 'dm' | 'group' | 'channel'
+  title: string
+  container: string
+  topic?: string
+  agentId: string
+  allowed: boolean
+  woke: number
+  observed: number
+  dropped: number
+  firstAt: number
+  lastAt: number
+  preview?: { text: string; at: number; self: boolean; sender?: string }
+  sessionId?: string
+  threadId?: string
+}
+
+export interface ChannelInboxPage {
+  items: ChannelInboxConversationView[]
+  next?: string
+}
+
+export interface ChannelLogMessageView {
+  id: string
+  platformId: string
+  at: number
+  self: boolean
+  senderId?: string
+  senderName?: string
+  text: string
+  attachments: Array<{ name?: string; mediaType?: string; size?: number }>
+  replyTo?: { messageId: string; senderName?: string; text?: string }
+  editedAt?: number
+  deletedAt?: number
+  edits?: Array<{ at: number; text: string }>
+  disposition?: 'woke' | 'observed'
+  approval?: {
+    kind: 'approval' | 'question'
+    toolName: string
+    status: 'open' | 'answered'
+    outcome?: string
+    answeredBy?: string
+    answeredAt?: number
+  }
+}
+
+export interface ChannelConversationLog {
+  conversation: ChannelInboxConversationView
+  /** Oldest first. */
+  items: ChannelLogMessageView[]
+  next?: string
+}
+
+export type ChannelEventKind =
+  | 'woke'
+  | 'observed'
+  | 'dropped'
+  | 'reply-queued'
+  | 'reply-sent'
+  | 'reply-retried'
+  | 'reply-failed'
+  | 'approval-posted'
+  | 'approval-answered'
+  | 'breaker-opened'
+  | 'needs-auth'
+
+export interface ChannelActivityView {
+  id: string
+  at: number
+  type: ChannelEventKind
+  reason?: string
+  conversationId?: string
+  conversationTitle?: string
+  peerId?: string
+  peerName?: string
+  platformId?: string
+  detail?: Record<string, string | number | boolean>
+}
+
+export interface ChannelActivityPage {
+  items: ChannelActivityView[]
+  next?: string
+}
+
+export interface ChannelActivityQuery {
+  type?: ChannelEventKind
+  conversationId?: string
+  before?: string
+  limit: number
 }

@@ -73,9 +73,14 @@ export const ConnectionConfigSchema = z.object({
   groups: z.record(z.string(), GroupPolicySchema).default({}),
   /** Defaults of every scope. */
   defaults: ScopePolicySchema.default({}),
-  /** `pairing` (default): only mapped employees reach the agent by DM. */
+  /** `pairing` (default): only linked team members reach the agent by DM (the name is kept for stored configs). */
   dm: z.enum(['pairing', 'disabled']).default('pairing'),
   allowBots: z.boolean().default(false),
+  /**
+   * Answer a direct message from somebody who is not linked with one short neutral line. Off by
+   * default: strangers get silence (they are only recorded under "Not linked yet").
+   */
+  replyToUnknown: z.boolean().default(false),
   botLoopGuard: z
     .object({
       maxEvents: z.number().int().min(1).default(20),

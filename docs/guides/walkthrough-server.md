@@ -1179,8 +1179,8 @@ resolution, the wake test, splitting text, the loop guard) are `policy.ts`.
 **One event, in order.** `gateway.handle(event)`: drop the agent's own messages and bots (unless
 `allowBots`, then the loop guard: 20 events in 300 s puts the conversation in a 600 s cooldown);
 the allowlist (`groupPolicy: allowlist` by default, per group and per topic overrides of `agentId`,
-`wake`, `delivery`, `retentionDays`); a DM only from a mapped employee (a one-time `/start <token>`
-link, `pairing.issue`, only the token's hash is stored); then **wake** or **observe**. A message
+`wake`, `delivery`, `retentionDays`); a DM only from a linked team member (linked by the owner on
+the People tab, see "Linking without links" below); then **wake** or **observe**. A message
 wakes the agent when it mentions it, replies to it, matches an alias, is in the agent's own topic,
 or the scope says `wake: 'always'`; a message that mentions somebody else and not the agent is only
 observed; `wake: 'never'` is an audit chat. Every kept message goes to the **channel log**
@@ -1204,7 +1204,7 @@ adapter's `maxTextLength` on newlines. `message_tool`: only `channel_send` posts
 addressed group message and a typing indicator while it works.
 
 **Outbound queue** ([`outbound.ts`](../../examples/team/server/src/infra/channels/outbound.ts)).
-Everything that talks to a platform (replies, `channel_send`, reactions, pairing replies) is one
+Everything that talks to a platform (replies, `channel_send`, reactions) is one
 operation in a queue per conversation: in order, at least `chatMinIntervalMs` apart (1 s), at most
 20 a minute to a group, 25 a second over a connection (all in the connection's config). A
 `rate_limit` error parks the connection for the time the platform asked and retries (never a
@@ -1293,9 +1293,9 @@ switcher; it can be read and continued there (what is written there is not poste
 3. Bind the connection to an agent. Polling starts; the bot shows as *Running*.
 4. Write in a group where the bot is (or add it): the chat appears under **Chats**. Allow it and
    choose when the agent wakes (mention, every message, observe only), how it replies and how
-   long messages are kept. For employees, **People** issues a `/start` deep link per team
-   member; only linked accounts reach the agent by DM, and only they (or an admin) answer
-   approvals pressed in a chat.
+   long messages are kept. For employees, **People** lists everybody who wrote and is not linked
+   yet: pick the team member to link them to (or ignore them). Only linked accounts reach the
+   agent by DM, and only they (or an admin) answer approvals pressed in a chat.
 
 **Transport.**
 
@@ -1316,9 +1316,43 @@ switcher; it can be read and continued there (what is written there is not poste
   (`test/telegram-channels.test.ts`). No real network.
 
 **Admin API.** `GET /channels/connections`, `PUT|DELETE .../{id}/binding`, `GET .../chats`,
-`PATCH|DELETE .../chats/{chatId}/policy[?topic=]`, `GET .../links`, `POST .../pairing`,
-`DELETE .../links/{peerId}`, `POST .../webhook/delete`, `.../restart`, `.../breaker/reset`
+`PATCH|DELETE .../chats/{chatId}/policy[?topic=]`, `GET|POST .../links`, `DELETE .../links/{peerId}`,
+`GET .../members`, `GET .../unlinked`, `PUT .../unlinked/{peerId}/ignored`, `GET .../inbox`,
+`GET .../inbox/messages?conversationId=`, `GET .../activity`, `POST .../webhook/delete`, `.../restart`, `.../breaker/reset`
 (zod-openapi schemas, generated web types). The web page is `/channels`.
+
+**Linking without links, silence, inbox and activity** (P41 follow-up after a real-bot test). There
+is no `/start` deep link and no token any more (the `channel_pairing_tokens` table stays for old
+databases and is unused). Every DM from somebody who is not linked is recorded as an *unlinked
+sender* per connection (`channel_unlinked`: platform user id, name, `@username`, first and last seen,
+message count; **no message text**). The People tab lists them under "Not linked yet": **Link to
+member…** (a pick of the team members, in this single-principal example `owner` plus the connection's
+admins) or **Ignore**; a form links by numeric Telegram user id for somebody who has not written yet.
+It works the same for a bot and for an account connection (`POST .../links`, `pairing.link`).
+
+*Silence for strangers.* An unlinked DM gets **no reply**; neither does an old `/start` token, a
+button press by somebody who may not answer an approval (the adapter only stops the button
+spinner, no text), a non-allowlisted chat, or a bot sender. Group messages from unlinked people stay
+context only. The per-connection setting `replyToUnknown` ("Reply to unknown people", default off)
+sends one short neutral line to an unlinked DM, at most once per person every few hours.
+
+*Inbox* (`GET .../inbox`, `.../inbox/messages`). One row per conversation the connection has seen
+(`channel_inbox`: the adapter's reference and woke / observed / dropped counters), listed newest
+first with kind, the agent, a preview of the last stored message (decrypted on read), counters and
+the allowlist state (a DM counts as allowed only for a linked person). A conversation opens to its
+channel log in order, paged back with `before`: incoming messages (each marked woke or observed:
+`channel_messages.disposition`), the agent's replies, approval requests with how they ended,
+edits (earlier versions) and deletions. "Open in the agent's thread" links to the thread once the
+conversation woke the agent. The log is sealed at rest and read for the holder of the web token.
+
+*Activity* (`GET .../activity`, `channel_events`, filter by `type` and `conversationId`, paged with
+`before`). Events, newest first: `woke`, `observed`, `dropped` with a reason (`unlinked-sender`,
+`chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`,
+`not-authorized`), `reply-queued`, `reply-sent`, `reply-retried`, `reply-failed`, `approval-posted`,
+`approval-answered`, `breaker-opened`, `needs-auth`. Metadata only: never a message text. They are
+pruned with the events feed retention (`TEAM_EVENTS_RETENTION_HOURS` / `TEAM_EVENTS_MAX_ROWS`). The
+web tab looks again every five seconds while it is open (there is no push channel for transport
+state either).
 
 ## 28c. Telegram account over MTProto (P41 phase L4)
 

@@ -420,6 +420,8 @@ export interface ApprovalStore {
   /** Record an announced item; undefined when this item of the session was announced already. */
   insert(input: NewApproval, now: number): ApprovalRow | undefined
   get(id: string): ApprovalRow | undefined
+  /** The announcements whose request message has one of these platform ids (inbox view). */
+  byMessages(connectionId: string, conversationId: string, messageIds: string[]): ApprovalRow[]
   setMessage(id: string, messageId: string): void
   /** Open rows of a session. */
   open(sessionId: string): ApprovalRow[]
@@ -469,6 +471,16 @@ export function sqliteApprovalStore(sqlite: Database): ApprovalStore {
         .query<ApprovalDb, [string]>('SELECT * FROM channel_approvals WHERE id = ?')
         .get(id)
       return r === null ? undefined : toApproval(r)
+    },
+    byMessages(connectionId, conversationId, messageIds) {
+      if (messageIds.length === 0) return []
+      return sqlite
+        .query<ApprovalDb, string[]>(
+          `SELECT * FROM channel_approvals WHERE connection_id = ? AND conversation_id = ?
+             AND message_id IN (${messageIds.map(() => '?').join(',')})`,
+        )
+        .all(connectionId, conversationId, ...messageIds)
+        .map(toApproval)
     },
     setMessage(id, messageId) {
       sqlite.query('UPDATE channel_approvals SET message_id = ? WHERE id = ?').run(messageId, id)

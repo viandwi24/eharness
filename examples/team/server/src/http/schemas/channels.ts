@@ -30,6 +30,10 @@ export const ChannelBindingSchema = z
     groupPolicy: z.enum(['allowlist', 'open']),
     dm: z.enum(['pairing', 'disabled']),
     allowBots: z.boolean(),
+    replyToUnknown: z.boolean().openapi({
+      description:
+        'Answer a direct message from somebody who is not linked with one short neutral line. Off (default): strangers get silence.',
+    }),
     admins: z.array(z.string()),
     historyLimit: z.number().int(),
     defaults: z.object({
@@ -121,6 +125,9 @@ export const ChannelConnectionSchema = z
     counts: z.object({
       chats: z.number().int(),
       linked: z.number().int(),
+      unlinked: z.number().int().openapi({
+        description: 'People who wrote and are not linked yet (ignored ones excluded).',
+      }),
       outboxPending: z.number().int(),
       outboxFailed: z.number().int(),
     }),
@@ -176,21 +183,13 @@ export const ChannelLinkListSchema = z
   .object({ items: z.array(ChannelLinkSchema) })
   .openapi('ChannelLinkList')
 
-export const ChannelPairingSchema = z
-  .object({
-    memberId: z.string(),
-    link: z.string().openapi({ description: 'Deep link to open in Telegram. Shown once.' }),
-    command: z.string(),
-    expiresAt: z.number().int(),
-  })
-  .openapi('ChannelPairing')
-
 export const ChannelBindBodySchema = z
   .object({
     agentId: z.string().min(1),
     groupPolicy: z.enum(['allowlist', 'open']).optional(),
     dm: z.enum(['pairing', 'disabled']).optional(),
     allowBots: z.boolean().optional(),
+    replyToUnknown: z.boolean().optional(),
     admins: z.array(z.string().min(1)).optional(),
     historyLimit: z.number().int().min(1).max(200).optional(),
     defaults: z
@@ -213,9 +212,192 @@ export const ChannelPolicyBodySchema = z
   })
   .openapi('ChannelPolicyBody')
 
-export const PairingBodySchema = z
-  .object({ memberId: z.string().min(1).max(64).default('owner') })
-  .openapi('ChannelPairingBody')
+export const ChannelMemberSchema = z
+  .object({ id: z.string(), name: z.string() })
+  .openapi('ChannelMember')
+export const ChannelMemberListSchema = z
+  .object({ items: z.array(ChannelMemberSchema) })
+  .openapi('ChannelMemberList')
+
+export const ChannelUnlinkedSchema = z
+  .object({
+    peerId: z.string().openapi({ description: 'The platform user id.' }),
+    name: z.string().optional(),
+    username: z.string().optional(),
+    firstSeen: z.number().int(),
+    lastSeen: z.number().int(),
+    messageCount: z.number().int(),
+    ignored: z.boolean(),
+  })
+  .openapi('ChannelUnlinked')
+export const ChannelUnlinkedListSchema = z
+  .object({ items: z.array(ChannelUnlinkedSchema) })
+  .openapi('ChannelUnlinkedList')
+export const ChannelUnlinkedQuery = z.object({
+  includeIgnored: z
+    .enum(['true', 'false'])
+    .optional()
+    .openapi({ description: 'Also list the people marked as ignored.' }),
+})
+
+export const ChannelLinkBodySchema = z
+  .object({
+    peerId: z
+      .string()
+      .regex(/^\d{1,20}$/, 'a numeric Telegram user id')
+      .openapi({ description: 'The numeric Telegram user id of the person.' }),
+    memberId: z.string().min(1).max(64),
+    name: z.string().min(1).max(80).optional(),
+  })
+  .openapi('ChannelLinkBody')
+
+export const ChannelIgnoreBodySchema = z
+  .object({ ignored: z.boolean() })
+  .openapi('ChannelIgnoreBody')
+
+const kind = z.enum(['dm', 'group', 'channel'])
+export const ChannelInboxConversationSchema = z
+  .object({
+    conversationId: z.string(),
+    kind,
+    title: z.string(),
+    container: z.string(),
+    topic: z.string().optional(),
+    agentId: z.string(),
+    allowed: z.boolean().openapi({ description: 'The conversation passes the allowlist now.' }),
+    woke: z.number().int().openapi({ description: 'Messages that woke the agent.' }),
+    observed: z.number().int().openapi({ description: 'Messages stored as context only.' }),
+    dropped: z.number().int().openapi({ description: 'Messages the gateway dropped.' }),
+    firstAt: z.number().int(),
+    lastAt: z.number().int(),
+    preview: z
+      .object({
+        text: z.string(),
+        at: z.number().int(),
+        self: z.boolean(),
+        sender: z.string().optional(),
+      })
+      .optional(),
+    sessionId: z.string().optional(),
+    threadId: z.string().optional().openapi({
+      description: "The agent's thread of this conversation, once it woke the agent.",
+    }),
+  })
+  .openapi('ChannelInboxConversation')
+
+export const ChannelInboxPageSchema = z
+  .object({
+    items: z.array(ChannelInboxConversationSchema),
+    next: z.string().optional().openapi({ description: 'Pass as `cursor` for the next page.' }),
+  })
+  .openapi('ChannelInboxPage')
+
+export const ChannelLogMessageSchema = z
+  .object({
+    id: z.string(),
+    platformId: z.string(),
+    at: z.number().int(),
+    self: z.boolean().openapi({ description: 'Sent by this connection (the agent).' }),
+    senderId: z.string().optional(),
+    senderName: z.string().optional(),
+    text: z.string(),
+    attachments: z.array(
+      z.object({
+        name: z.string().optional(),
+        mediaType: z.string().optional(),
+        size: z.number().int().optional(),
+      }),
+    ),
+    replyTo: z
+      .object({
+        messageId: z.string(),
+        senderName: z.string().optional(),
+        text: z.string().optional(),
+      })
+      .optional(),
+    editedAt: z.number().int().optional(),
+    deletedAt: z.number().int().optional(),
+    edits: z.array(z.object({ at: z.number().int(), text: z.string() })).optional(),
+    disposition: z.enum(['woke', 'observed']).optional(),
+    approval: z
+      .object({
+        kind: z.enum(['approval', 'question']),
+        toolName: z.string(),
+        status: z.enum(['open', 'answered']),
+        outcome: z.string().optional(),
+        answeredBy: z.string().optional(),
+        answeredAt: z.number().int().optional(),
+      })
+      .optional(),
+  })
+  .openapi('ChannelLogMessage')
+
+export const ChannelConversationLogSchema = z
+  .object({
+    conversation: ChannelInboxConversationSchema,
+    items: z.array(ChannelLogMessageSchema).openapi({ description: 'Oldest first.' }),
+    next: z
+      .string()
+      .optional()
+      .openapi({ description: 'Pass as `before` to load older messages; absent at the start.' }),
+  })
+  .openapi('ChannelConversationLog')
+
+export const ChannelInboxQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+  cursor: z.string().optional(),
+})
+export const ChannelMessagesQuery = z.object({
+  conversationId: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(100).default(40),
+  before: z.string().optional(),
+})
+
+export const CHANNEL_EVENT_TYPES = [
+  'woke',
+  'observed',
+  'dropped',
+  'reply-queued',
+  'reply-sent',
+  'reply-retried',
+  'reply-failed',
+  'approval-posted',
+  'approval-answered',
+  'breaker-opened',
+  'needs-auth',
+] as const
+
+export const ChannelActivitySchema = z
+  .object({
+    id: z.string(),
+    at: z.number().int(),
+    type: z.enum(CHANNEL_EVENT_TYPES),
+    reason: z.string().optional().openapi({
+      description:
+        'A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`), a wake reason, or a short note. Never message text.',
+    }),
+    conversationId: z.string().optional(),
+    conversationTitle: z.string().optional(),
+    peerId: z.string().optional(),
+    peerName: z.string().optional(),
+    platformId: z.string().optional(),
+    detail: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  })
+  .openapi('ChannelActivity')
+
+export const ChannelActivityPageSchema = z
+  .object({
+    items: z.array(ChannelActivitySchema).openapi({ description: 'Newest first.' }),
+    next: z.string().optional().openapi({ description: 'Pass as `before` for older events.' }),
+  })
+  .openapi('ChannelActivityPage')
+
+export const ChannelActivityQuery = z.object({
+  type: z.enum(CHANNEL_EVENT_TYPES).optional(),
+  conversationId: z.string().optional(),
+  before: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+})
 
 export const ChannelIdParam = z.object({
   id: z

@@ -1,9 +1,8 @@
 /**
  * SQLite stores of the channels gateway (plain SQL on the shared connection): connection
- * configuration, conversations, the encrypted channel log, identities and pairing tokens.
+ * configuration, conversations, the encrypted channel log, identities (the pairing token table stays for old databases, unused).
  */
 import type { Database } from 'bun:sqlite'
-import { createHash, randomBytes } from 'node:crypto'
 import { uuidv7 } from 'eharness'
 import type { SecretVault } from 'eharness/providers'
 import { type ConnectionConfig, ConnectionConfigSchema, DEFAULT_RETENTION_DAYS } from './policy.ts'
@@ -207,6 +206,8 @@ export interface LogMessage {
   deletedAt?: number
   /** Earlier texts of an edited message, oldest first. */
   edits?: Array<{ at: number; text: string }>
+  /** What the gateway did with an incoming message (absent: sent by us, or stored before this was kept). */
+  disposition?: 'woke' | 'observed'
 }
 
 interface Body {
@@ -229,6 +230,7 @@ interface MessageDb {
   edited_at: number | null
   deleted_at: number | null
   rev: number
+  disposition: string | null
   body: string
 }
 
@@ -255,7 +257,7 @@ export interface ChannelLog {
   /** Store a message once per (connection, conversation, platform id). `pending` = observed, for the next wake. */
   insert(
     message: NewLogMessage,
-    options: { pending: boolean; handled?: boolean },
+    options: { pending: boolean; handled?: boolean; disposition?: 'woke' | 'observed' },
   ): Promise<InsertResult>
   markHandled(connectionId: string, conversationId: string, platformId: string): void
   find(
@@ -283,6 +285,17 @@ export interface ChannelLog {
     conversationId: string,
     options: { limit: number; before?: string },
   ): Promise<LogMessage[]>
+  /**
+   * One page for the inbox view: `limit` messages older than our id `before` (the newest when
+   * absent), oldest first; `more` says whether older ones exist.
+   */
+  page(
+    connectionId: string,
+    conversationId: string,
+    options: { limit: number; before?: string | undefined },
+  ): Promise<{ items: LogMessage[]; more: boolean }>
+  /** The newest message of a conversation, if any. */
+  last(connectionId: string, conversationId: string): Promise<LogMessage | undefined>
   /** Observed messages not yet shown to a run, oldest first (the newest `limit`). */
   pending(connectionId: string, conversationId: string, limit: number): Promise<LogMessage[]>
   /** Messages up to our id `upTo` are shown: not pending anymore. */
@@ -334,6 +347,9 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
       ...(r.edited_at === null ? {} : { editedAt: r.edited_at }),
       ...(r.deleted_at === null ? {} : { deletedAt: r.deleted_at }),
       ...(body.edits === undefined ? {} : { edits: body.edits }),
+      ...(r.disposition === 'woke' || r.disposition === 'observed'
+        ? { disposition: r.disposition }
+        : {}),
     }
   }
   const byPlatform = sqlite.query<MessageDb, [string, string, string]>(
@@ -345,8 +361,8 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
       const sealed = await vault.seal(JSON.stringify(bodyOf(message)), context(id))
       const res = sqlite
         .query(
-          `INSERT INTO channel_messages (id, connection_id, conversation_id, platform_id, at, self, pending, handled, rev, body)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(rev), 0) + 1 FROM channel_messages WHERE connection_id = ?), ?)
+          `INSERT INTO channel_messages (id, connection_id, conversation_id, platform_id, at, self, pending, handled, rev, disposition, body)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(rev), 0) + 1 FROM channel_messages WHERE connection_id = ?), ?, ?)
            ON CONFLICT (connection_id, conversation_id, platform_id) DO NOTHING`,
         )
         .run(
@@ -359,6 +375,7 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
           options.pending ? 1 : 0,
           options.handled === true ? 1 : 0,
           message.connectionId,
+          options.disposition ?? null,
           sealed,
         )
       if (res.changes > 0) return { inserted: true, handled: options.handled === true, id }
@@ -423,6 +440,26 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
         )
         .all(connectionId, conversationId, before ?? '￿', options.limit)
       return Promise.all(rows.reverse().map(open))
+    },
+    async page(connectionId, conversationId, options) {
+      const rows = sqlite
+        .query<MessageDb, [string, string, string, number]>(
+          `SELECT * FROM channel_messages WHERE connection_id = ? AND conversation_id = ?
+             AND id < ? ORDER BY id DESC LIMIT ?`,
+        )
+        .all(connectionId, conversationId, options.before ?? '￿', options.limit + 1)
+      const more = rows.length > options.limit
+      const items = await Promise.all(rows.slice(0, options.limit).reverse().map(open))
+      return { items, more }
+    },
+    async last(connectionId, conversationId) {
+      const r = sqlite
+        .query<MessageDb, [string, string]>(
+          `SELECT * FROM channel_messages WHERE connection_id = ? AND conversation_id = ?
+             ORDER BY id DESC LIMIT 1`,
+        )
+        .get(connectionId, conversationId)
+      return r === null ? undefined : open(r)
     },
     async pending(connectionId, conversationId, limit) {
       const rows = sqlite
@@ -501,7 +538,7 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
   }
 }
 
-// --- identities and pairing --------------------------------------------------------------------
+// --- identities (linked accounts) --------------------------------------------------------------
 
 export interface PeerLink {
   connectionId: string
@@ -512,24 +549,20 @@ export interface PeerLink {
 }
 
 export interface PairingStore {
-  /** A one-time token for a member to link a platform account (the plaintext is returned once). */
-  issue(input: { connectionId: string; memberId: string; ttlMs: number; now: number }): string
-  /** Redeem a token for a peer: links them and burns the token. Undefined for a wrong, used or expired one. */
-  redeem(input: {
+  /** Link a platform account to a team member (replaces an earlier link of the same account). */
+  link(input: {
     connectionId: string
-    token: string
     peerId: string
+    memberId: string
     name: string | undefined
     now: number
-  }): PeerLink | undefined
+  }): PeerLink
   memberOf(connectionId: string, peerId: string): PeerLink | undefined
   /** The platform account of a member (the newest link), to DM them. */
   peerOf(connectionId: string, memberId: string): PeerLink | undefined
   unlink(connectionId: string, peerId: string): boolean
   list(connectionId: string): PeerLink[]
 }
-
-const hash = (token: string): string => createHash('sha256').update(token).digest('hex')
 
 interface LinkDb {
   connection_id: string
@@ -551,31 +584,13 @@ export function sqlitePairingStore(sqlite: Database): PairingStore {
     'SELECT * FROM channel_identities WHERE connection_id = ? AND peer_id = ?',
   )
   return {
-    issue({ connectionId, memberId, ttlMs, now }) {
-      const token = randomBytes(18).toString('base64url')
-      sqlite
-        .query(
-          'INSERT INTO channel_pairing_tokens (token_hash, connection_id, member_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)',
-        )
-        .run(hash(token), connectionId, memberId, now, now + ttlMs)
-      return token
-    },
-    redeem({ connectionId, token, peerId, name, now }) {
-      // burn first (atomic): two redemptions of one token cannot both win
-      const burned = sqlite
-        .query<{ member_id: string }, [number, string, string, number]>(
-          `UPDATE channel_pairing_tokens SET used_at = ?
-             WHERE token_hash = ? AND connection_id = ? AND used_at IS NULL AND expires_at > ?
-             RETURNING member_id`,
-        )
-        .get(now, hash(token), connectionId, now)
-      if (burned === null) return undefined
+    link({ connectionId, peerId, memberId, name, now }) {
       sqlite
         .query(
           `INSERT INTO channel_identities (connection_id, peer_id, member_id, name, linked_at) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT (connection_id, peer_id) DO UPDATE SET member_id = excluded.member_id, name = excluded.name, linked_at = excluded.linked_at`,
         )
-        .run(connectionId, peerId, burned.member_id, name ?? null, now)
+        .run(connectionId, peerId, memberId, name ?? null, now)
       return toLink(link.get(connectionId, peerId) as LinkDb)
     },
     memberOf(connectionId, peerId) {

@@ -1,7 +1,7 @@
 /**
  * Telegram channels end to end on a fake Bot API: connect the bot through the connector flow,
  * bind it to an agent, discover chats, allow one, wake the agent by a mention, approvals with
- * inline buttons and a human summary, employee pairing, 401 -> needs-auth + bell, webhook, and the
+ * inline buttons and a human summary, linking people without links, 401 -> needs-auth + bell, webhook, and the
  * rule that the token is never part of any response. Scripted models only.
  */
 import { afterEach, describe, expect, test } from 'bun:test'
@@ -327,48 +327,58 @@ describe('connect, bind, discover, wake', () => {
   })
 })
 
-describe('pairing employees', () => {
-  test('a link is issued, redeemed with /start in a DM, listed and revoked; a stranger is ignored', async () => {
-    const { server, fake, leadId, models } = await boot([{ text: 'Hi Ana, I am here.' }])
+describe('linking people without links', () => {
+  test('a stranger DM is silent and shows under "not linked yet"; link it, talk, unlink; link by id; ignore; the inbox and the activity tell the story', async () => {
+    const { server, fake, leadId } = await boot([{ text: 'Hi Ana, I am here.' }])
     const { id } = await connectBot(server, fake.token)
     await call(server, 'PUT', `/channels/connections/${id}/binding`, { agentId: leadId })
-    const issued = await call(server, 'POST', `/channels/connections/${id}/pairing`, {
-      memberId: 'owner',
-    })
-    expect(issued.status).toBe(200)
-    expect(issued.json.link).toStartWith('https://t.me/team_test_bot?start=')
-    const token = issued.json.link.split('start=')[1] as string
-    expect(token.length).toBeLessThanOrEqual(64)
+    // the removed pairing route is gone
+    expect((await call(server, 'POST', `/channels/connections/${id}/pairing`, {})).status).toBe(404)
 
-    // a stranger's DM does nothing
-    fake.push(
-      tg.message({ chat: tg.dm(99, 'Eve'), from: tg.user(99, 'Eve'), id: 1, text: 'hello?' }),
-    )
-    await sleep(200)
-    expect(models.lead?.prompts.length ?? 0).toBe(0)
-
+    // a stranger's DM (and an old deep link) does nothing: no reply, no model call
+    fake.push(tg.message({ chat: tg.dm(42), from: tg.user(42), id: 1, text: 'hello? SECRET-TEXT' }))
     fake.push(
       tg.message({
         chat: tg.dm(42),
         from: tg.user(42),
         id: 2,
-        text: `/start ${token}`,
+        text: '/start oldtoken',
         entities: [{ type: 'bot_command', offset: 0, length: 6 }],
       }),
     )
     await until(
-      'linked',
+      'recorded',
       async () =>
-        (await call(server, 'GET', `/channels/connections/${id}/links`)).json.items.length === 1,
+        (await call(server, 'GET', `/channels/connections/${id}/unlinked`)).json.items[0]
+          ?.messageCount === 2,
     )
-    const link = (await call(server, 'GET', `/channels/connections/${id}/links`)).json.items[0]
-    expect(link).toMatchObject({ peerId: '42', memberId: 'owner', name: 'Ana' })
+    expect(fake.callsOf('sendMessage')).toHaveLength(0)
+    const people = (await call(server, 'GET', `/channels/connections/${id}/unlinked`)).json.items
+    expect(people).toMatchObject([{ peerId: '42', name: 'Ana', messageCount: 2, ignored: false }])
+    expect(JSON.stringify(people)).not.toContain('SECRET')
+    expect((await view(server, id)).counts).toMatchObject({ linked: 0, unlinked: 1 })
+
+    // the owner links the account to a member
+    const members = (await call(server, 'GET', `/channels/connections/${id}/members`)).json.items
+    expect(members.map((m: Json) => m.id)).toContain('owner')
+    const linked = await call(server, 'POST', `/channels/connections/${id}/links`, {
+      peerId: '42',
+      memberId: 'owner',
+    })
+    expect(linked.status).toBe(200)
+    expect(linked.json).toMatchObject({ peerId: '42', memberId: 'owner', name: 'Ana' })
+    expect((await call(server, 'GET', `/channels/connections/${id}/unlinked`)).json.items).toEqual(
+      [],
+    )
+    // a bad id is refused by the schema
     expect(
-      JSON.stringify((await call(server, 'GET', `/channels/connections/${id}/links`)).json),
-    ).not.toContain(token)
-    await until('welcome', () =>
-      fake.callsOf('sendMessage').some((c) => String(c.params.text).includes('linked to the team')),
-    )
+      (
+        await call(server, 'POST', `/channels/connections/${id}/links`, {
+          peerId: 'abc',
+          memberId: 'owner',
+        })
+      ).status,
+    ).toBe(400)
 
     // the linked account can talk to the agent in a DM
     fake.push(tg.message({ chat: tg.dm(42), from: tg.user(42), id: 3, text: 'status please' }))
@@ -376,9 +386,103 @@ describe('pairing employees', () => {
       fake.callsOf('sendMessage').some((c) => String(c.params.text).includes('Hi Ana')),
     )
 
+    // link by id for somebody we never saw; ignore another stranger
+    expect(
+      (
+        await call(server, 'POST', `/channels/connections/${id}/links`, {
+          peerId: '555',
+          memberId: 'owner',
+          name: 'Zed',
+        })
+      ).json,
+    ).toMatchObject({ peerId: '555', name: 'Zed' })
+    fake.push(tg.message({ chat: tg.dm(99, 'Eve'), from: tg.user(99, 'Eve'), id: 4, text: 'psst' }))
+    await until(
+      'eve seen',
+      async () =>
+        (await call(server, 'GET', `/channels/connections/${id}/unlinked`)).json.items.length === 1,
+    )
+    expect(
+      (
+        await call(server, 'PUT', `/channels/connections/${id}/unlinked/99/ignored`, {
+          ignored: true,
+        })
+      ).status,
+    ).toBe(204)
+    expect(
+      (
+        await call(server, 'PUT', `/channels/connections/${id}/unlinked/1234/ignored`, {
+          ignored: true,
+        })
+      ).status,
+    ).toBe(404)
+    expect((await call(server, 'GET', `/channels/connections/${id}/unlinked`)).json.items).toEqual(
+      [],
+    )
+    expect(
+      (await call(server, 'GET', `/channels/connections/${id}/unlinked?includeIgnored=true`)).json
+        .items,
+    ).toHaveLength(1)
+
+    // the inbox: the DM with Ana (woke) and Eve's DM (dropped, not allowed to be answered)
+    const inbox = (await call(server, 'GET', `/channels/connections/${id}/inbox`)).json
+    const ana = inbox.items.find((c: Json) => c.conversationId === '42')
+    expect(ana).toMatchObject({ kind: 'dm', woke: 1, dropped: 2, agentId: leadId })
+    expect(ana.threadId).toBeString()
+    expect(ana.preview.text).toContain('Hi Ana')
+    const log = (
+      await call(server, 'GET', `/channels/connections/${id}/inbox/messages?conversationId=42`)
+    ).json
+    expect(log.items.map((m: Json) => [m.text, m.self])).toEqual([
+      ['status please', false],
+      ['Hi Ana, I am here.', true],
+    ])
+    expect(
+      (await call(server, 'GET', `/channels/connections/${id}/inbox/messages?conversationId=nope`))
+        .status,
+    ).toBe(404)
+    // the activity says what happened, without any message text
+    const act = (await call(server, 'GET', `/channels/connections/${id}/activity?limit=50`)).json
+    const types = act.items.map((e: Json) => e.type)
+    expect(types).toContain('woke')
+    expect(types).toContain('reply-sent')
+    expect(act.items.filter((e: Json) => e.type === 'dropped').map((e: Json) => e.reason)).toEqual([
+      'unlinked-sender',
+      'unlinked-sender',
+      'unlinked-sender',
+    ])
+    expect(JSON.stringify(act)).not.toContain('SECRET')
+    expect(
+      (await call(server, 'GET', `/channels/connections/${id}/activity?type=woke`)).json.items,
+    ).toHaveLength(1)
+    expect(
+      (await call(server, 'GET', `/channels/connections/${id}/activity?type=bogus`)).status,
+    ).toBe(400)
+
     expect((await call(server, 'DELETE', `/channels/connections/${id}/links/42`)).status).toBe(204)
     expect((await call(server, 'DELETE', `/channels/connections/${id}/links/42`)).status).toBe(404)
-    expect((await view(server, id)).counts.linked).toBe(0)
+    // an unknown connection
+    expect((await call(server, 'GET', '/channels/connections/nope/inbox')).status).toBe(404)
+  })
+
+  test('"reply to unknown people" is a per-connection switch (off by default)', async () => {
+    const { server, fake, leadId } = await boot([])
+    const { id } = await connectBot(server, fake.token)
+    const bound = await call(server, 'PUT', `/channels/connections/${id}/binding`, {
+      agentId: leadId,
+    })
+    expect(bound.json.binding.replyToUnknown).toBe(false)
+    fake.push(tg.message({ chat: tg.dm(7, 'Gus'), from: tg.user(7, 'Gus'), id: 1, text: 'hi' }))
+    await until('seen', async () => (await view(server, id)).counts.unlinked === 1)
+    expect(fake.callsOf('sendMessage')).toHaveLength(0)
+    const on = await call(server, 'PUT', `/channels/connections/${id}/binding`, {
+      agentId: leadId,
+      replyToUnknown: true,
+    })
+    expect(on.json.binding.replyToUnknown).toBe(true)
+    fake.push(tg.message({ chat: tg.dm(8, 'Hal'), from: tg.user(8, 'Hal'), id: 2, text: 'hello' }))
+    await until('neutral reply', () => fake.callsOf('sendMessage').length === 1)
+    expect(String(fake.callsOf('sendMessage')[0]?.params.text)).toContain("can't chat")
   })
 })
 
@@ -422,20 +526,10 @@ describe('approvals in a Telegram chat', () => {
       wake: 'mention',
     })
     // Ana is the owner's account
-    const issued = await call(server, 'POST', `/channels/connections/${id}/pairing`, {
+    await call(server, 'POST', `/channels/connections/${id}/links`, {
+      peerId: '42',
       memberId: 'owner',
     })
-    const token = issued.json.link.split('start=')[1]
-    fake.push(
-      tg.message({
-        chat: tg.dm(42),
-        from: tg.user(42),
-        id: 1,
-        text: `/start ${token}`,
-        entities: [{ type: 'bot_command', offset: 0, length: 6 }],
-      }),
-    )
-    await until('linked', async () => (await view(server, id)).counts.linked === 1)
 
     fake.push(mention('@team_test_bot publish the notes', 7))
     await until('the request', () =>

@@ -1,6 +1,8 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import {
+  ChannelActivityPageSchema,
+  ChannelActivityQuery,
   ChannelAdminLogBodySchema,
   ChannelAdminLogRunSchema,
   ChannelBackfillBodySchema,
@@ -10,15 +12,23 @@ import {
   ChannelChatSchema,
   ChannelConnectionListSchema,
   ChannelConnectionSchema,
+  ChannelConversationLogSchema,
   ChannelIdParam,
+  ChannelIgnoreBodySchema,
+  ChannelInboxPageSchema,
+  ChannelInboxQuery,
   ChannelLimitsBodySchema,
+  ChannelLinkBodySchema,
   ChannelLinkListSchema,
   ChannelLinkParam,
-  ChannelPairingSchema,
+  ChannelLinkSchema,
+  ChannelMemberListSchema,
+  ChannelMessagesQuery,
   ChannelPolicyBodySchema,
   ChannelSelectBodySchema,
   ChannelTopicQuery,
-  PairingBodySchema,
+  ChannelUnlinkedListSchema,
+  ChannelUnlinkedQuery,
 } from '../schemas/channels.ts'
 import { errorResponses, jsonError } from '../schemas/common.ts'
 
@@ -132,8 +142,7 @@ const links = createRoute({
   path: '/channels/connections/{id}/links',
   tags,
   summary: 'Linked accounts',
-  description:
-    'Telegram accounts paired with team members (employees who opened their /start link).',
+  description: 'Platform accounts linked to team members.',
   security,
   request: { params: ChannelIdParam },
   responses: {
@@ -142,22 +151,111 @@ const links = createRoute({
     ...errorResponses,
   },
 })
-const pair = createRoute({
-  method: 'post',
-  path: '/channels/connections/{id}/pairing',
+const members = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/members',
   tags,
-  summary: 'Issue a pairing link for a team member',
+  summary: 'Team members an account can be linked to',
+  security,
+  request: { params: ChannelIdParam },
+  responses: {
+    200: { description: 'Members', content: content(ChannelMemberListSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const unlinkedList = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/unlinked',
+  tags,
+  summary: 'People who wrote and are not linked yet',
   description:
-    'A one-time `/start` deep link (valid 24 hours). The person opens it in Telegram and the account is linked; only linked accounts reach the agent by DM. The link is shown once.',
+    'Every direct message from somebody who is not linked is recorded here (who and how often, never what they wrote) and gets no answer unless the connection replies to unknown people. Link them to a team member or ignore them.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelUnlinkedQuery },
+  responses: {
+    200: { description: 'People', content: content(ChannelUnlinkedListSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const linkCreate = createRoute({
+  method: 'post',
+  path: '/channels/connections/{id}/links',
+  tags,
+  summary: 'Link an account to a team member',
+  description:
+    'Links a platform user id to a team member (the person from "Not linked yet", or an id you know). Only linked people reach the agent by direct message.',
   security,
   request: {
     params: ChannelIdParam,
-    body: { required: true, content: content(PairingBodySchema) },
+    body: { required: true, content: content(ChannelLinkBodySchema) },
   },
   responses: {
-    200: { description: 'The link', content: content(ChannelPairingSchema) },
+    200: { description: 'The link', content: content(ChannelLinkSchema) },
     404: jsonError('Unknown connection'),
-    409: jsonError('Not bound, or the bot is not running'),
+    ...errorResponses,
+  },
+})
+const ignoreSet = createRoute({
+  method: 'put',
+  path: '/channels/connections/{id}/unlinked/{peerId}/ignored',
+  tags,
+  summary: 'Ignore (or stop ignoring) an unlinked person',
+  description: 'An ignored person is hidden from "Not linked yet" and still gets no answers.',
+  security,
+  request: {
+    params: ChannelLinkParam,
+    body: { required: true, content: content(ChannelIgnoreBodySchema) },
+  },
+  responses: {
+    204: { description: 'Done' },
+    404: jsonError('Unknown person'),
+    ...errorResponses,
+  },
+})
+const inboxList = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/inbox',
+  tags,
+  summary: 'Conversations of a connection',
+  description:
+    'Groups, topics and direct messages the connection has seen, most recently active first: title, kind, the agent, a preview of the last stored message, counters (woke / observed / dropped) and the allowlist state.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelInboxQuery },
+  responses: {
+    200: { description: 'Conversations', content: content(ChannelInboxPageSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const inboxMessages = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/inbox/messages',
+  tags,
+  summary: 'The channel log of a conversation',
+  description:
+    'The stored messages of a conversation (incoming ones including observe-only, the replies of the agent, approval requests with their outcome, edits and deletions marked), oldest first within a page, newest page first. The log is sealed at rest and decrypted here for the holder of the web token.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelMessagesQuery },
+  responses: {
+    200: { description: 'A page of the log', content: content(ChannelConversationLogSchema) },
+    404: jsonError('Unknown connection or conversation'),
+    ...errorResponses,
+  },
+})
+const activityList = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/activity',
+  tags,
+  summary: 'Activity of a connection',
+  description:
+    'Events newest first: messages received (woke the agent, observed, dropped with a reason), replies queued, sent, retried or failed, approvals posted and answered, the outbound breaker, needs-auth. Metadata only: no message text. Filter by type or conversation; page with `before`.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelActivityQuery },
+  responses: {
+    200: { description: 'Events', content: content(ChannelActivityPageSchema) },
+    404: jsonError('Unknown connection'),
     ...errorResponses,
   },
 })
@@ -306,6 +404,7 @@ const limitsSet = createRoute({
 export function channelRoutes(deps: Deps) {
   const ch = deps.channels
   const acc = deps.channelAccounts
+  const inbox = deps.channelInbox
   return new OpenAPIHono()
     .openapi(refresh, async (c) =>
       c.json({ items: await acc.refreshChats(c.req.valid('param').id) }, 200),
@@ -355,9 +454,66 @@ export function channelRoutes(deps: Deps) {
       return c.json(await ch.setChatPolicy(id, chatId, null, c.req.valid('query').topic), 200)
     })
     .openapi(links, async (c) => c.json({ items: await ch.links(c.req.valid('param').id) }, 200))
-    .openapi(pair, async (c) =>
-      c.json(await ch.issuePairing(c.req.valid('param').id, c.req.valid('json').memberId), 200),
+    .openapi(members, async (c) =>
+      c.json({ items: await inbox.members(c.req.valid('param').id) }, 200),
     )
+    .openapi(unlinkedList, async (c) =>
+      c.json(
+        {
+          items: await inbox.unlinked(c.req.valid('param').id, {
+            includeIgnored: c.req.valid('query').includeIgnored === 'true',
+          }),
+        },
+        200,
+      ),
+    )
+    .openapi(linkCreate, async (c) => {
+      const { name, ...rest } = c.req.valid('json')
+      return c.json(
+        await inbox.link(c.req.valid('param').id, {
+          ...rest,
+          ...(name === undefined ? {} : { name }),
+        }),
+        200,
+      )
+    })
+    .openapi(ignoreSet, async (c) => {
+      const { id, peerId } = c.req.valid('param')
+      await inbox.ignore(id, peerId, c.req.valid('json').ignored)
+      return c.body(null, 204)
+    })
+    .openapi(inboxList, async (c) => {
+      const { limit, cursor } = c.req.valid('query')
+      return c.json(
+        await inbox.inbox(c.req.valid('param').id, {
+          limit,
+          ...(cursor === undefined ? {} : { cursor }),
+        }),
+        200,
+      )
+    })
+    .openapi(inboxMessages, async (c) => {
+      const { conversationId, limit, before } = c.req.valid('query')
+      return c.json(
+        await inbox.conversation(c.req.valid('param').id, conversationId, {
+          limit,
+          ...(before === undefined ? {} : { before }),
+        }),
+        200,
+      )
+    })
+    .openapi(activityList, async (c) => {
+      const { type, conversationId, before, limit } = c.req.valid('query')
+      return c.json(
+        await inbox.activity(c.req.valid('param').id, {
+          limit,
+          ...(type === undefined ? {} : { type }),
+          ...(conversationId === undefined ? {} : { conversationId }),
+          ...(before === undefined ? {} : { before }),
+        }),
+        200,
+      )
+    })
     .openapi(unlink, async (c) => {
       const { id, peerId } = c.req.valid('param')
       await ch.revokeLink(id, peerId)

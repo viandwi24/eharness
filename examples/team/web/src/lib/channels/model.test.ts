@@ -1,12 +1,23 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	agentChoices,
+	ago,
+	allowlistLabel,
+	approvalOutcome,
+	eventText,
+	eventTone,
+	inboxCounts,
+	messageMarks,
+	peerIdError,
+	previewLine,
+	threadHref,
+	unlinkedDetail,
+	unlinkedLabel,
 	breakerText,
 	chatSummary,
 	formChanged,
 	formOfChat,
 	outboxSummary,
-	pairingText,
 	policyBody,
 	privacyWarning,
 	retentionError,
@@ -14,8 +25,11 @@ import {
 	sortConnections,
 	stateHint,
 	stateTone,
+	type ChannelActivity,
 	type ChannelChat,
-	type ChannelConnection
+	type ChannelConnection,
+	type InboxConversation,
+	type LogMessage
 } from './model';
 
 const chat = (over: Partial<ChannelChat> = {}): ChannelChat => ({
@@ -38,7 +52,7 @@ const conn = (over: Partial<ChannelConnection> = {}): ChannelConnection => ({
 	enabled: true,
 	runtime: { state: 'running', since: 1 },
 	binding: null,
-	counts: { chats: 0, linked: 0, outboxPending: 0, outboxFailed: 0 },
+	counts: { chats: 0, linked: 0, unlinked: 0, outboxPending: 0, outboxFailed: 0 },
 	...over
 });
 
@@ -97,19 +111,16 @@ describe('privacy mode warning', () => {
 	});
 });
 
-describe('delivery and pairing text', () => {
+describe('delivery text', () => {
 	test('outbox and breaker', () => {
 		expect(outboxSummary(conn())).toBe('Nothing waiting');
-		expect(outboxSummary(conn({ counts: { chats: 0, linked: 0, outboxPending: 2, outboxFailed: 1 } }))).toBe('2 waiting to send · 1 failed');
+		expect(outboxSummary(conn({ counts: { chats: 0, linked: 0, unlinked: 0, outboxPending: 2, outboxFailed: 1 } }))).toBe('2 waiting to send · 1 failed');
 		expect(breakerText(conn(), 0)).toBeUndefined();
 		expect(breakerText(conn({ breaker: { open: true, until: 5 * 60_000, reason: 'forbidden' } }), 0)).toContain('about 5 min');
 	});
-	test('pairing validity', () => {
-		expect(pairingText({ memberId: 'owner', link: 'x', command: '/start x', expiresAt: 24 * 3_600_000 }, 0)).toContain('24 hours');
-	});
 	test('agents and connections lists', () => {
 		expect(agentChoices([{ id: '1', name: 'a' }, { id: '2', name: 'b', archivedAt: 5 }]).map((a) => a.id)).toEqual(['1']);
-		const running = conn({ id: 'r', label: 'B', runtime: { state: 'running', since: 1 }, binding: { agentId: 'x', groupPolicy: 'allowlist', dm: 'pairing', allowBots: false, admins: [], historyLimit: 50, defaults: {} } });
+		const running = conn({ id: 'r', label: 'B', runtime: { state: 'running', since: 1 }, binding: { agentId: 'x', groupPolicy: 'allowlist', dm: 'pairing', allowBots: false, replyToUnknown: false, admins: [], historyLimit: 50, defaults: {} } });
 		const loose = conn({ id: 'l', label: 'A', runtime: { state: 'unbound', since: 1 } });
 		expect(sortConnections([loose, running]).map((c) => c.id)).toEqual(['r', 'l']);
 	});
@@ -135,5 +146,77 @@ describe('channel types and the account card', () => {
 		expect(m.lastWindowDays('')).toBeNull();
 		expect(m.lastWindowDays('30')).toBe(30);
 		expect(m.lastWindowDays('0')).toBeUndefined();
+	});
+});
+
+describe('linking without links', () => {
+	test('names, details and id validation', () => {
+		const u = { peerId: '42', name: 'Ana', username: 'ana', firstSeen: 0, lastSeen: 3 * 60_000, messageCount: 3, ignored: false };
+		expect(unlinkedLabel(u)).toBe('Ana');
+		expect(unlinkedLabel({ peerId: '7', username: 'gus' })).toBe('@gus');
+		expect(unlinkedLabel({ peerId: '7' })).toBe('Telegram 7');
+		expect(unlinkedDetail(u, 5 * 60_000)).toBe('id 42 · @ana · 3 messages · last 2 min ago');
+		expect(peerIdError('123456789')).toBeUndefined();
+		expect(peerIdError(' 42 ')).toBeUndefined();
+		expect(peerIdError('abc')).toContain('number');
+		expect(peerIdError('')).toContain('number');
+		expect(ago(0, 10_000)).toBe('just now');
+		expect(ago(0, 2 * 3_600_000)).toBe('2 h ago');
+		expect(ago(0, 30 * 86_400_000)).toBe('1970-01-01');
+	});
+});
+
+describe('inbox', () => {
+	const c = (over: Partial<InboxConversation> = {}): InboxConversation => ({
+		conversationId: 'room',
+		kind: 'group',
+		title: 'Ops',
+		container: 'room',
+		agentId: 'lead',
+		allowed: true,
+		woke: 2,
+		observed: 5,
+		dropped: 0,
+		firstAt: 1,
+		lastAt: 2,
+		...over
+	});
+	test('counters, preview, allowlist state and the thread link', () => {
+		expect(inboxCounts(c())).toBe('2 woke the agent · 5 observed');
+		expect(inboxCounts(c({ dropped: 3 }))).toContain('3 dropped');
+		expect(previewLine(c())).toBe('Nothing stored');
+		expect(previewLine(c({ preview: { text: 'hi', at: 1, self: false, sender: 'Ana' } }))).toBe('Ana: hi');
+		expect(previewLine(c({ preview: { text: 'done', at: 1, self: true } }))).toBe('Agent: done');
+		expect(allowlistLabel(c())).toBe('Allowed');
+		expect(allowlistLabel(c({ allowed: false }))).toBe('Not allowed');
+		expect(allowlistLabel(c({ allowed: false, kind: 'dm' }))).toBe('Not linked');
+		expect(threadHref(c())).toBeUndefined();
+		expect(threadHref(c({ threadId: 't 1' }))).toBe('/a/lead?t=t%201');
+	});
+	test('marks and approval outcomes of logged messages', () => {
+		const m = (over: Partial<LogMessage> = {}): LogMessage => ({ id: '1', platformId: 'p', at: 1, self: false, text: 'x', attachments: [], ...over });
+		expect(messageMarks(m({ disposition: 'observed' }))).toEqual(['Observed']);
+		expect(messageMarks(m({ disposition: 'woke', editedAt: 2 }))).toEqual(['Woke the agent', 'Edited']);
+		expect(messageMarks(m({ self: true, deletedAt: 3 }))).toEqual(['Agent', 'Deleted']);
+		const approval = { kind: 'approval' as const, toolName: 'channel_send', status: 'answered' as const, outcome: 'approved', answeredBy: 'Ana' };
+		expect(messageMarks(m({ self: true, approval }))).toEqual(['Approval request']);
+		expect(approvalOutcome(approval)).toBe('Approved by Ana');
+		expect(approvalOutcome({ ...approval, outcome: 'web', answeredBy: undefined })).toBe('Answered in the web app');
+		expect(approvalOutcome({ ...approval, status: 'open' })).toBe('Waiting for an answer');
+	});
+});
+
+describe('activity', () => {
+	const e = (over: Partial<ChannelActivity>): ChannelActivity => ({ id: '1', at: 1, type: 'woke', ...over });
+	test('tones and sentences, with readable drop reasons', () => {
+		expect(eventTone('reply-failed')).toBe('destructive');
+		expect(eventTone('dropped')).toBe('warning');
+		expect(eventTone('woke')).toBe('success');
+		expect(eventTone('observed')).toBe('secondary');
+		expect(eventText(e({ peerName: 'Ana', conversationTitle: 'Ops', reason: 'mentioned' }))).toBe('Ana in Ops (mentioned)');
+		expect(eventText(e({ peerName: 'Ana', conversationTitle: 'Ana', reason: 'DM' }))).toBe('Ana (DM)');
+		expect(eventText(e({ type: 'dropped', peerId: '9', reason: 'unlinked-sender' }))).toBe('Telegram 9 (the sender is not linked)');
+		expect(eventText(e({ type: 'reply-sent', conversationId: 'room', detail: { kind: 'reply', chunks: 2 } }))).toBe('in room 2 parts');
+		expect(eventText(e({ type: 'approval-answered', reason: 'approved', detail: { tool: 'channel_send' } }))).toBe('(approved) tool channel_send');
 	});
 });

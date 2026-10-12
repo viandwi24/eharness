@@ -50,7 +50,7 @@ import {
 } from './app/decisions.ts'
 import { recheckTask } from './app/deliverables.ts'
 import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
-import type { ChannelsPort, Deps } from './app/ports.ts'
+import type { ChannelInboxPort, ChannelsPort, Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
@@ -71,6 +71,7 @@ import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
 import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
 import { seedBuiltinSkills } from './infra/bigdata/skills.ts'
+import { createChannelInboxPort, lazyInboxPort } from './infra/channels/admin.ts'
 import { channelApprovalAnswerer, watchPendingChanges } from './infra/channels/attention.ts'
 import {
   type ChannelGateway,
@@ -640,6 +641,7 @@ export function compose(config: ServerConfig): Server {
   let telegram: TelegramChannels | undefined
   let telegramUser: TelegramUserChannels | undefined
   let channelsPort: ChannelsPort | undefined
+  let channelInboxPort: ChannelInboxPort | undefined
   const deps: Deps = {
     agents,
     chat: createChatService(factory, { workspaceId: WORKSPACE_ID }),
@@ -659,6 +661,7 @@ export function compose(config: ServerConfig): Server {
     connectors,
     channels: lazyChannelsPort(() => channelsPort),
     channelAccounts: lazyAccountsPort(() => telegramUser),
+    channelInbox: lazyInboxPort(() => channelInboxPort),
     webUrl,
     modes: createModeService(factory, {
       store: sessionModes,
@@ -842,9 +845,18 @@ export function compose(config: ServerConfig): Server {
     ...(config.telegramUser?.jobs === undefined ? {} : { jobs: config.telegramUser.jobs }),
   })
   channelsPort = compositeChannelsPort(telegram, telegramUser)
+  channelInboxPort = createChannelInboxPort({
+    gateway: channels,
+    connection: async (id) => (await channelsPort?.connection(id)) as unknown,
+  })
   const purgeChannels = (): void => {
     try {
       channels.purge()
+      // the activity of the channels follows the same retention as the events feed
+      channels.activity.prune({
+        ...(eventsRetentionMs > 0 ? { olderThan: Date.now() - eventsRetentionMs } : {}),
+        keepLast: eventsMaxRows,
+      })
     } catch (error) {
       console.warn(`team: purging the channel log failed: ${String(error)}`)
     }

@@ -26,6 +26,22 @@ import {
   sqliteApprovalStore,
   sqliteOutboxStore,
 } from './delivery-store.ts'
+import {
+  type ChannelEvent,
+  type ChannelEventType,
+  DROP_REASONS,
+  type DropReason,
+  type EventPage,
+  type EventStore,
+  type InboxOutcome,
+  type InboxStore,
+  type NewChannelEvent,
+  sqliteEventStore,
+  sqliteInboxStore,
+  sqliteUnlinkedStore,
+  type UnlinkedSender,
+  type UnlinkedStore,
+} from './inbox.ts'
 import { createOutbound, type Outbound, type OutboundOptions } from './outbound.ts'
 import {
   type ConnectionConfig,
@@ -51,6 +67,7 @@ import {
   type ConversationStore,
   type LogMessage,
   type PairingStore,
+  type PeerLink,
   sqliteChannelLog,
   sqliteConfigStore,
   sqliteConversationStore,
@@ -174,7 +191,6 @@ export type HandleResult =
   | { action: 'observe'; reason: string }
   | { action: 'drop'; reason: string }
   | { action: 'record'; reason: string }
-  | { action: 'paired'; reason: string; memberId: string }
 
 export interface ConnectionInfo {
   connectionId: string
@@ -182,6 +198,65 @@ export interface ConnectionInfo {
   agentId: string
   connected: boolean
   breaker: { open: boolean; until: number; reason: string } | undefined
+}
+
+/** One conversation of the inbox list. Metadata and a short preview; the log is read on demand. */
+export interface InboxConversation {
+  conversationId: string
+  kind: ConversationKind
+  title: string
+  container: string
+  topic?: string
+  /** The agent that answers here now (the policy's, else the connection's). */
+  agentId: string
+  /** The conversation passes the allowlist right now. */
+  allowed: boolean
+  woke: number
+  observed: number
+  dropped: number
+  firstAt: number
+  lastAt: number
+  preview?: { text: string; at: number; self: boolean; sender?: string }
+  /** The agent's session and thread, once the conversation woke the agent. */
+  sessionId?: string
+  threadId?: string
+}
+
+export interface InboxMessage {
+  id: string
+  platformId: string
+  at: number
+  self: boolean
+  senderId?: string
+  senderName?: string
+  text: string
+  attachments: Array<{ name?: string; mediaType?: string; size?: number }>
+  replyTo?: { messageId: string; senderName?: string; text?: string }
+  editedAt?: number
+  deletedAt?: number
+  edits?: Array<{ at: number; text: string }>
+  disposition?: 'woke' | 'observed'
+  /** The message is an approval request or question the agent posted, with how it ended. */
+  approval?: {
+    kind: 'approval' | 'question'
+    toolName: string
+    status: 'open' | 'answered'
+    outcome?: string
+    answeredBy?: string
+    answeredAt?: number
+  }
+}
+
+export interface InboxMessagePage {
+  conversation: InboxConversation
+  /** Oldest first. */
+  items: InboxMessage[]
+  /** Pass as `before` to load the older ones; undefined at the start of the log. */
+  next?: string
+}
+
+export interface ActivityItem extends ChannelEvent {
+  conversationTitle?: string
 }
 
 export interface TargetInput {
@@ -221,10 +296,45 @@ export interface ChannelGateway {
   /** One event of an adapter (adapters call this through the sink given to `start`). */
   handle(event: InboundEvent): Promise<HandleResult>
   pairing: {
-    /** A one-time token (plaintext, shown once) that links a platform account to `memberId`. */
-    issue(connectionId: string, memberId: string, ttlMs?: number): string
+    /**
+     * Link a platform account to a team member by hand (the account id is the platform user id).
+     * The name comes from the person's first message when we saw one.
+     */
+    link(connectionId: string, peerId: string, memberId: string, name?: string): PeerLink
     members(connectionId: string): ReturnType<PairingStore['list']>
     unlink(connectionId: string, peerId: string): boolean
+  }
+  /** People who wrote and are not linked: who and how often, never what. */
+  unlinked: {
+    list(connectionId: string, options?: { includeIgnored?: boolean }): UnlinkedSender[]
+    ignore(connectionId: string, peerId: string, ignored: boolean): boolean
+  }
+  /** The conversations of a connection and their channel logs (decrypted here, for the web token holder). */
+  inbox: {
+    conversations(
+      connectionId: string,
+      options: { limit: number; cursor?: string | undefined },
+    ): Promise<{ items: InboxConversation[]; next?: string }>
+    messages(
+      connectionId: string,
+      conversationId: string,
+      options: { limit: number; before?: string | undefined },
+    ): Promise<InboxMessagePage | undefined>
+  }
+  /** What happened on a connection (metadata only). */
+  activity: {
+    record(event: Omit<NewChannelEvent, 'at'> & { at?: number }): void
+    list(
+      connectionId: string,
+      query: {
+        type?: ChannelEventType | undefined
+        conversationId?: string | undefined
+        before?: string | undefined
+        limit: number
+      },
+    ): Omit<EventPage, 'items'> & { items: ActivityItem[] }
+    /** Delete events past the events retention (age and count). */
+    prune(options: { olderThan?: number; keepLast?: number }): number
   }
   conversations: ConversationStore
   log: ChannelLog
@@ -272,7 +382,9 @@ const EVENT_PREFIX = 'ev:'
 const MAX_ATTACHMENTS = 4
 const TYPING_EVERY_MS = 4000
 const REPLY_EXCERPT = 200
-const PAIRING_TTL_MS = 24 * 3_600_000
+/** An unlinked person is answered (when the connection replies to unknown people) at most this often. */
+const UNKNOWN_REPLY_EVERY_MS = 6 * 3_600_000
+const UNKNOWN_REPLY = "Sorry, I can't chat with you here."
 /** Chunk size of a reply queued while its connection is down (under every platform limit we know). */
 const FALLBACK_TEXT_LENGTH = 4000
 
@@ -341,6 +453,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const pairing = sqlitePairingStore(deps.sqlite)
   const outbox = sqliteOutboxStore(deps.sqlite, deps.vault)
   const approvals = sqliteApprovalStore(deps.sqlite)
+  const events: EventStore = sqliteEventStore(deps.sqlite)
+  const inbox: InboxStore = sqliteInboxStore(deps.sqlite)
+  const unlinked: UnlinkedStore = sqliteUnlinkedStore(deps.sqlite)
+  const unknownReplied = new Map<string, number>()
   const retryBaseMs = deps.delivery?.retryBaseMs ?? 5000
   const retryMaxMs = deps.delivery?.retryMaxMs ?? 300_000
   const maxDeliveryAttempts = deps.delivery?.maxAttempts ?? 10
@@ -352,6 +468,14 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const shown = new Map<string, string>()
   const collect = deps.collect ?? { quietMs: 1500, maxWaitMs: 10_000, maxItems: 20 }
 
+  /** Never breaks the work it describes. */
+  const activity = (event: Omit<NewChannelEvent, 'at'> & { at?: number }): void => {
+    try {
+      events.record({ ...event, at: event.at ?? now() })
+    } catch (error) {
+      if (!stopped) warn(`channels: could not record an activity event: ${errorText(error)}`)
+    }
+  }
   const limitsOf = (connectionId: string): RateLimits =>
     cache.get(connectionId)?.rate ?? ConnectionConfigSchema.shape.rate.parse(undefined)
   const outbound: Outbound = createOutbound({
@@ -362,6 +486,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     onBreaker: ({ connectionId, reason }) => {
       const config = cache.get(connectionId)
       warn(`channels: ${connectionId} paused: ${reason}`)
+      activity({ connectionId, type: 'breaker-opened', reason: clip(reason, 200) })
       deps.notify?.({
         key: `channel-breaker:${connectionId}:${new Date(now()).toISOString().slice(0, 13)}`,
         title: `Channel ${connectionId} stopped sending`,
@@ -595,8 +720,24 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       })
   }
 
+  const outboxEvent = (
+    row: OutboxRow,
+    type: ChannelEventType,
+    reason?: string,
+    extra: Record<string, string | number | boolean> = {},
+  ): void =>
+    activity({
+      connectionId: row.connectionId,
+      type,
+      ...(reason === undefined ? {} : { reason: clip(reason, 200) }),
+      conversationId: row.conversationId,
+      ...(row.platformId === null ? {} : { platformId: row.platformId }),
+      detail: { kind: row.kind, chunk: row.chunkIndex + 1, of: row.chunkCount, ...extra },
+    })
+
   const giveUp = (row: OutboxRow, config: ConnectionConfig, reason: string): void => {
     outbox.markFailed(row.id, reason, now())
+    outboxEvent(row, 'reply-failed', reason, { attempts: row.attempts + 1 })
     warn(`channels: a ${row.kind} to ${row.conversationId} was not delivered: ${reason}`)
     deps.notify?.({
       key: `channel-outbox:${row.id}`,
@@ -638,6 +779,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       const sent = await limitedOutbound.run(targetOf(row), () => adapter.send(row.ref, message))
       outbox.markSent(row.id, sent.messageId, now())
       logSent(config, adapter, row.ref, sent.messageId, row.text)
+      outboxEvent(
+        { ...row, platformId: sent.messageId },
+        row.kind === 'approval' ? 'approval-posted' : 'reply-sent',
+        undefined,
+        { attempts: row.attempts + 1 },
+      )
       if (row.approvalId !== undefined) {
         approvals.setMessage(row.approvalId, sent.messageId)
         const a = approvals.get(row.approvalId)
@@ -650,6 +797,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       const reason = errorText(error)
       if (mode === 'once') {
         outbox.markFailed(row.id, reason, now())
+        outboxEvent(row, 'reply-failed', reason)
         throw error
       }
       const kind = error instanceof ChannelError ? error.kind : 'transient'
@@ -658,6 +806,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         return 'failed'
       }
       outbox.retryLater(row.id, reason, now() + backoff(row.attempts + 1), now())
+      outboxEvent(row, 'reply-retried', reason, { attempt: row.attempts + 1 })
       return 'retry'
     }
   }
@@ -944,14 +1093,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       )
     const link = pairing.memberOf(config.connectionId, event.sender.id)
     const web = deps.webLink?.({ agentId: rec.agentId, sessionId: rec.sessionId })
-    if (!mayAnswer(config, rec, link?.memberId)) {
-      await reply(
-        link === undefined
-          ? `I cannot tell who you are, so I cannot take your answer here. Link your account to the team first${web === undefined ? '' : `, or answer in the web app: ${web}`}.`
-          : `Only the person who asked or a team admin can answer this${web === undefined ? '' : `. It can also be answered in the web app: ${web}`}.`,
-      )
-      return { action: 'approval', reason: 'not allowed to answer' }
-    }
+    // somebody who may not answer gets silence: no text, nothing changes (the platform's button
+    // spinner was already stopped by the adapter)
+    if (!mayAnswer(config, rec, link?.memberId)) return { action: 'drop', reason: 'not-authorized' }
     if (rec.status !== 'open') {
       await reply(`That was already answered (${outcomeText(rec)}).`)
       return { action: 'approval', reason: 'already answered' }
@@ -992,6 +1136,15 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       await resolveMessage({ ...done, outcome: 'web', answeredBy: null }, adapter, config)
       return { action: 'approval', reason: status }
     }
+    activity({
+      connectionId: config.connectionId,
+      type: 'approval-answered',
+      reason: approved ? 'approved' : 'denied',
+      conversationId: rec.conversationId,
+      peerId: event.sender.id,
+      peerName: who,
+      detail: { tool: rec.toolName, via: 'chat' },
+    })
     await resolveMessage(done, adapter, config)
     return { action: 'approval', reason: approved ? 'approved' : 'denied' }
   }
@@ -1007,6 +1160,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       const adapter = adapters.get(rec.connectionId)
       const config = cache.get(rec.connectionId)
       const done = approvals.get(rec.id)
+      activity({
+        connectionId: rec.connectionId,
+        type: 'approval-answered',
+        reason: 'web',
+        conversationId: rec.conversationId,
+        detail: { tool: rec.toolName, via: 'web' },
+      })
       if (adapter !== undefined && config !== undefined && done !== undefined)
         await resolveMessage(done, adapter, config)
     }
@@ -1045,38 +1205,29 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         : `action:${event.messageId ?? ''}:${event.name}:${event.at}`
     const link = pairing.memberOf(config.connectionId, event.sender.id)
 
-    // pairing: `/start <token>` in a DM links the sender to a team member
-    if (isDm && event.type === 'message' && event.signals.command?.name === 'start') {
-      const token = event.signals.command.args.trim()
-      const linked =
-        token === ''
-          ? undefined
-          : pairing.redeem({
-              connectionId: config.connectionId,
-              token,
-              peerId: event.sender.id,
-              name: event.sender.name ?? event.sender.username,
-              now: now(),
-            })
-      const reply =
-        linked === undefined
-          ? 'That link is not valid anymore. Ask for a new one in the team app.'
-          : 'You are linked to the team. You can talk to me here now.'
-      await sendDirect(config, adapter, ref, reply).catch((error) =>
-        warn(`channels: pairing reply failed: ${errorText(error)}`),
-      )
-      return linked === undefined
-        ? { action: 'drop', reason: 'pairing token not valid' }
-        : { action: 'paired', reason: 'linked', memberId: linked.memberId }
+    // a DM from somebody who is not linked: record who (never what) and stay silent, unless the
+    // connection is set to answer unknown people with one neutral line
+    if (isDm && link === undefined) {
+      unlinked.seen(config.connectionId, event.sender, now())
+      if (config.replyToUnknown && event.type === 'message') {
+        const key = `${config.connectionId}:${event.sender.id}`
+        const last = unknownReplied.get(key)
+        if (last === undefined || now() - last >= UNKNOWN_REPLY_EVERY_MS) {
+          unknownReplied.set(key, now())
+          await sendDirect(config, adapter, ref, UNKNOWN_REPLY).catch((error) =>
+            warn(`channels: a reply to an unknown sender failed: ${errorText(error)}`),
+          )
+        }
+      }
+      return { action: 'drop', reason: 'unlinked-sender' }
     }
-    if (isDm && link === undefined) return { action: 'drop', reason: 'unmapped DM' }
 
     let decision: { action: 'wake' | 'observe'; reason: string }
     if (isDm) decision = { action: 'wake', reason: 'DM from a team member' }
     else if (event.type === 'action') decision = { action: 'wake', reason: 'action' }
     else decision = decideWake(event, scope, adapter.self())
 
-    if (!live(scope.agentId)) return { action: 'drop', reason: 'the agent is archived or missing' }
+    if (!live(scope.agentId)) return { action: 'drop', reason: 'agent-unavailable' }
 
     // dedupe by platform message id; a redelivery of one we did not finish repeats the action
     const text = event.type === 'message' ? event.text : turnTextOfAction(event)
@@ -1108,7 +1259,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
             }
           : {}),
       },
-      { pending: decision.action === 'observe' && scope.wake !== 'never' },
+      {
+        pending: decision.action === 'observe' && scope.wake !== 'never',
+        disposition: decision.action === 'observe' ? 'observed' : 'woke',
+      },
     )
     if (!logged.inserted && logged.handled) return { action: 'drop', reason: 'duplicate' }
 
@@ -1153,7 +1307,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const turnTextOfAction = (event: Extract<InboundEvent, { type: 'action' }>): string =>
     `action ${event.name}${event.data === undefined ? '' : `: ${event.data}`}`
 
-  async function handle(event: InboundEvent): Promise<HandleResult> {
+  async function handleEvent(event: InboundEvent): Promise<HandleResult> {
     const config = cache.get(event.conversation.connectionId)
     const adapter = adapters.get(event.conversation.connectionId)
     if (config === undefined || adapter === undefined) {
@@ -1162,7 +1316,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (event.type === 'reaction') return { action: 'drop', reason: 'reactions are not stored' }
     const ref = event.conversation
     const scope = resolveScope(config, ref)
-    if (!scope.allowed) return { action: 'drop', reason: 'not allowed' }
+    if (!scope.allowed) {
+      return { action: 'drop', reason: ref.kind === 'dm' ? 'dm-disabled' : 'chat-not-allowed' }
+    }
 
     if (event.type === 'delete') {
       log.recordDeleted(config.connectionId, ref.id, event.messageIds, event.at)
@@ -1173,8 +1329,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (sender.isSelf === true || sender.id === self.id)
       return { action: 'drop', reason: 'own message' }
     if (sender.isBot === true) {
-      if (!config.allowBots) return { action: 'drop', reason: 'bot' }
-      if (!guardOf(config).admit(ref.id)) return { action: 'drop', reason: 'bot loop guard' }
+      if (!config.allowBots) return { action: 'drop', reason: 'bot-sender' }
+      if (!guardOf(config).admit(ref.id)) return { action: 'drop', reason: 'loop-guard' }
     }
     if (event.type === 'edit') {
       const known = await log.recordEdit(
@@ -1207,6 +1363,54 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       if (answered !== undefined) return answered
     }
     return handleMessageLike(event, config, adapter, scope)
+  }
+
+  /** What happened to an incoming message, as inbox counters and an activity event (metadata only). */
+  function observeResult(event: InboundEvent, result: HandleResult): void {
+    if (event.type !== 'message' && event.type !== 'action') return
+    const adapter = adapters.get(event.conversation.connectionId)
+    const sender = event.sender
+    if (sender.isSelf === true || (adapter !== undefined && sender.id === adapter.self().id)) return
+    let type: ChannelEventType
+    let outcome: InboxOutcome
+    let reason: string = result.reason
+    if (result.action === 'wake') {
+      type = 'woke'
+      outcome = 'woke'
+    } else if (result.action === 'observe') {
+      type = 'observed'
+      outcome = 'observed'
+    } else if (result.action === 'drop' && (DROP_REASONS as readonly string[]).includes(reason)) {
+      type = 'dropped'
+      outcome = 'dropped'
+      reason = reason as DropReason
+    } else return
+    const ref = event.conversation
+    inbox.touch(ref, outcome, event.at)
+    activity({
+      connectionId: ref.connectionId,
+      type,
+      reason,
+      conversationId: ref.id,
+      peerId: sender.id,
+      ...(sender.name === undefined && sender.username === undefined
+        ? {}
+        : { peerName: sender.name ?? `@${sender.username}` }),
+      ...(event.type === 'message' && event.messageId !== ''
+        ? { platformId: event.messageId }
+        : {}),
+      ...(ref.kind === 'dm' ? {} : { detail: { kind: ref.kind } }),
+    })
+  }
+
+  async function handle(event: InboundEvent): Promise<HandleResult> {
+    const result = await handleEvent(event)
+    try {
+      observeResult(event, result)
+    } catch (error) {
+      if (!stopped) warn(`channels: could not record an event: ${errorText(error)}`)
+    }
+    return result
   }
 
   // --- targets and posting (tools, delivery) ---------------------------------------------------
@@ -1348,6 +1552,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       })),
       now(),
     )
+    activity({
+      connectionId: config.connectionId,
+      type: 'reply-queued',
+      conversationId: ref.id,
+      detail: { kind: 'post', chunks: chunks.length },
+    })
     for (const [i, id] of rowIds.entries()) {
       const row = (await outbox.get(id)) as OutboxRow
       try {
@@ -1508,9 +1718,145 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         })),
         now(),
       )
+      activity({
+        connectionId: row.connectionId,
+        type: 'reply-queued',
+        conversationId: row.conversationId,
+        platformId: trigger,
+        detail: { kind: 'reply', chunks: chunks.length },
+      })
       await flush(row.connectionId)
     } catch (error) {
       warn(`channels: the reply to ${row.sessionId} was not queued: ${errorText(error)}`)
+    }
+  }
+
+  // --- the inbox: conversations and their logs -------------------------------------------------
+
+  const titleOfRow = (row: { ref: ConversationRef } | undefined): string | undefined =>
+    row === undefined ? undefined : (row.ref.title ?? row.ref.container)
+
+  const previewOf = (m: LogMessage): NonNullable<InboxConversation['preview']> => {
+    const text =
+      m.text.trim() !== ''
+        ? clip(m.text.replace(/\s+/g, ' ').trim(), 140)
+        : m.attachments.length > 0
+          ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]`
+          : ''
+    const sender = m.self ? undefined : (m.sender?.name ?? m.sender?.username)
+    return { text, at: m.at, self: m.self, ...(sender === undefined ? {} : { sender }) }
+  }
+
+  async function conversationView(
+    config: ConnectionConfig | undefined,
+    row: {
+      connectionId: string
+      conversationId: string
+      ref: ConversationRef
+      woke: number
+      observed: number
+      dropped: number
+      firstAt: number
+      lastAt: number
+    },
+  ): Promise<InboxConversation> {
+    const ref = row.ref
+    const scope = config === undefined ? undefined : resolveScope(config, ref)
+    const woke = conversations.get(row.connectionId, row.conversationId)
+    const last = await log.last(row.connectionId, row.conversationId)
+    const thread = woke === undefined ? undefined : deps.threads.getBySession(woke.sessionId)
+    return {
+      conversationId: row.conversationId,
+      kind: ref.kind,
+      title: ref.title ?? woke?.label ?? ref.container,
+      container: ref.container,
+      ...(ref.topic === undefined ? {} : { topic: ref.topic }),
+      agentId: woke?.agentId ?? scope?.agentId ?? config?.agentId ?? '',
+      // a direct message is allowed only for a linked person
+      allowed:
+        (scope?.allowed ?? false) &&
+        (ref.kind !== 'dm' || pairing.memberOf(row.connectionId, ref.container) !== undefined),
+      woke: row.woke,
+      observed: row.observed,
+      dropped: row.dropped,
+      firstAt: row.firstAt,
+      lastAt: row.lastAt,
+      ...(last === undefined ? {} : { preview: previewOf(last) }),
+      ...(woke === undefined ? {} : { sessionId: woke.sessionId }),
+      ...(thread === undefined ? {} : { threadId: thread.id }),
+    }
+  }
+
+  async function inboxConversations(
+    connectionId: string,
+    options: { limit: number; cursor?: string | undefined },
+  ): Promise<{ items: InboxConversation[]; next?: string }> {
+    const page = inbox.list(connectionId, options)
+    const config = cache.get(connectionId)
+    return {
+      items: await Promise.all(page.items.map((r) => conversationView(config, r))),
+      ...(page.next === undefined ? {} : { next: page.next }),
+    }
+  }
+
+  async function inboxMessages(
+    connectionId: string,
+    conversationId: string,
+    options: { limit: number; before?: string | undefined },
+  ): Promise<InboxMessagePage | undefined> {
+    const row = inbox.get(connectionId, conversationId)
+    if (row === undefined) return undefined
+    const page = await log.page(connectionId, conversationId, options)
+    const approvalOf = new Map(
+      approvals
+        .byMessages(
+          connectionId,
+          conversationId,
+          page.items.filter((m) => m.self).map((m) => m.platformId),
+        )
+        .map((a) => [a.messageId, a]),
+    )
+    const items: InboxMessage[] = page.items.map((m) => {
+      const a = approvalOf.get(m.platformId)
+      return {
+        id: m.id,
+        platformId: m.platformId,
+        at: m.at,
+        self: m.self,
+        ...(m.sender?.id === undefined ? {} : { senderId: m.sender.id }),
+        ...(m.sender?.name === undefined && m.sender?.username === undefined
+          ? {}
+          : { senderName: m.sender.name ?? `@${m.sender.username}` }),
+        text: m.text,
+        attachments: m.attachments.map((x) => ({
+          ...(x.name === undefined ? {} : { name: x.name }),
+          ...(x.mediaType === undefined ? {} : { mediaType: x.mediaType }),
+          ...(x.size === undefined ? {} : { size: x.size }),
+        })),
+        ...(m.replyTo === undefined ? {} : { replyTo: m.replyTo }),
+        ...(m.editedAt === undefined ? {} : { editedAt: m.editedAt }),
+        ...(m.deletedAt === undefined ? {} : { deletedAt: m.deletedAt }),
+        ...(m.edits === undefined ? {} : { edits: m.edits }),
+        ...(m.disposition === undefined ? {} : { disposition: m.disposition }),
+        ...(a === undefined
+          ? {}
+          : {
+              approval: {
+                kind: a.itemKind,
+                toolName: a.toolName,
+                status: a.status,
+                ...(a.outcome === null ? {} : { outcome: a.outcome }),
+                ...(a.answeredBy === null ? {} : { answeredBy: a.answeredBy }),
+                ...(a.answeredAt === null ? {} : { answeredAt: a.answeredAt }),
+              },
+            }),
+      }
+    })
+    const oldest = items[0]
+    return {
+      conversation: await conversationView(cache.get(connectionId), row),
+      items,
+      ...(page.more && oldest !== undefined ? { next: oldest.id } : {}),
     }
   }
 
@@ -1552,13 +1898,55 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     adapter: (id) => adapters.get(id),
     handle,
     pairing: {
-      issue: (connectionId, memberId, ttlMs = PAIRING_TTL_MS) => {
+      link: (connectionId, peerId, memberId, name) => {
         if (!cache.has(connectionId))
           throw new ChannelUserError(`No such connection: ${connectionId}`)
-        return pairing.issue({ connectionId, memberId, ttlMs, now: now() })
+        const seen = unlinked.get(connectionId, peerId)
+        const linked = pairing.link({
+          connectionId,
+          peerId,
+          memberId,
+          name: name ?? seen?.name ?? (seen?.username ? `@${seen.username}` : undefined),
+          now: now(),
+        })
+        unlinked.remove(connectionId, peerId)
+        return linked
       },
       members: (connectionId) => pairing.list(connectionId),
       unlink: (connectionId, peerId) => pairing.unlink(connectionId, peerId),
+    },
+    unlinked: {
+      // somebody who got linked in the meantime is not "not linked yet" any more
+      list: (connectionId, options) =>
+        unlinked
+          .list(connectionId, options)
+          .filter((u) => pairing.memberOf(connectionId, u.peerId) === undefined),
+      ignore: (connectionId, peerId, ignored) => unlinked.setIgnored(connectionId, peerId, ignored),
+    },
+    inbox: {
+      conversations: (connectionId, options) => inboxConversations(connectionId, options),
+      messages: (connectionId, conversationId, options) =>
+        inboxMessages(connectionId, conversationId, options),
+    },
+    activity: {
+      record: activity,
+      list(connectionId, query) {
+        const page = events.list(connectionId, query)
+        const titles = new Map<string, string | undefined>()
+        const titleOf = (conversationId: string): string | undefined => {
+          if (!titles.has(conversationId))
+            titles.set(conversationId, titleOfRow(inbox.get(connectionId, conversationId)))
+          return titles.get(conversationId)
+        }
+        return {
+          ...page,
+          items: page.items.map((e) => {
+            const title = e.conversationId === undefined ? undefined : titleOf(e.conversationId)
+            return title === undefined ? e : { ...e, conversationTitle: title }
+          }),
+        }
+      },
+      prune: (options) => events.prune(options),
     },
     conversations,
     log,

@@ -3,13 +3,18 @@ import type { AgentDef } from '../domain/agents.ts'
 import type { ApprovalView } from '../domain/approvals.ts'
 import type { Briefing, Notification, NotificationKind } from '../domain/briefings.ts'
 import type {
+  ChannelActivityPage,
+  ChannelActivityQuery,
   ChannelBindInput,
   ChannelChatView,
   ChannelConnectionView,
+  ChannelConversationLog,
+  ChannelInboxPage,
   ChannelLimitsInput,
   ChannelLinkView,
-  ChannelPairingIssued,
+  ChannelMemberView,
   ChannelPolicyInput,
+  ChannelUnlinkedView,
 } from '../domain/channels.ts'
 import type {
   AgentConnectors,
@@ -759,7 +764,6 @@ export interface ChannelsPort {
     topic?: string,
   ): Promise<ChannelChatView>
   links(id: string): Promise<ChannelLinkView[]>
-  issuePairing(id: string, memberId: string): Promise<ChannelPairingIssued>
   revokeLink(id: string, peerId: string): Promise<void>
   /** Remove the webhook of the bot so polling can start. */
   deleteWebhook(id: string): Promise<ChannelConnectionView>
@@ -767,6 +771,30 @@ export interface ChannelsPort {
   restart(id: string): Promise<ChannelConnectionView>
   /** Close the outbound breaker by hand. */
   resetBreaker(id: string): Promise<ChannelConnectionView>
+}
+
+/**
+ * People, inbox and activity of a channel connection (any transport): who is linked and who is not
+ * yet, the conversations with their channel logs (decrypted on read for the web token holder), and
+ * the activity events. Texts of messages appear only in the conversation log.
+ */
+export interface ChannelInboxPort {
+  /** Team members an account can be linked to. */
+  members(id: string): Promise<ChannelMemberView[]>
+  unlinked(id: string, options?: { includeIgnored?: boolean }): Promise<ChannelUnlinkedView[]>
+  /** Link an account by its platform user id (also for somebody we never saw). */
+  link(
+    id: string,
+    input: { peerId: string; memberId: string; name?: string },
+  ): Promise<ChannelLinkView>
+  ignore(id: string, peerId: string, ignored: boolean): Promise<void>
+  inbox(id: string, options: { limit: number; cursor?: string }): Promise<ChannelInboxPage>
+  conversation(
+    id: string,
+    conversationId: string,
+    options: { limit: number; before?: string },
+  ): Promise<ChannelConversationLog>
+  activity(id: string, query: ChannelActivityQuery): Promise<ChannelActivityPage>
 }
 
 /** Telegram user accounts (P41 L4): chat picker, per-chat backfill window, admin log, limits. */
@@ -799,6 +827,7 @@ export interface Deps {
   connectors: ConnectorsPort
   channels: ChannelsPort
   channelAccounts: ChannelAccountsPort
+  channelInbox: ChannelInboxPort
   /** Where the browser app lives (the OAuth callback redirects back to it). */
   webUrl: string
   modes: ModePort

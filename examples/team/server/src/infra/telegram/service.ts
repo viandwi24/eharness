@@ -148,6 +148,7 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
     await halt(id)
     setState(e, 'needs-auth', message)
     await options.connectors.markNeedsAuth(id, message).catch(() => undefined)
+    gateway.activity.record({ connectionId: id, type: 'needs-auth', reason: 'token-rejected' })
     options.notify?.({
       key: `channel-auth:${id}`,
       title: `Telegram bot ${record?.label ?? id} needs a new token`,
@@ -328,6 +329,7 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
               groupPolicy: config.groupPolicy,
               dm: config.dm,
               allowBots: config.allowBots,
+              replyToUnknown: config.replyToUnknown,
               admins: config.admins,
               historyLimit: config.historyLimit,
               defaults: {
@@ -343,6 +345,7 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
       counts: {
         chats: known.list(id).length,
         linked: gateway.pairing.members(id).length,
+        unlinked: gateway.unlinked.list(id).length,
         outboxPending: counts.pending + counts.sending,
         outboxFailed: counts.failed,
       },
@@ -460,6 +463,7 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
         ...(input.groupPolicy === undefined ? {} : { groupPolicy: input.groupPolicy }),
         ...(input.dm === undefined ? {} : { dm: input.dm }),
         ...(input.allowBots === undefined ? {} : { allowBots: input.allowBots }),
+        ...(input.replyToUnknown === undefined ? {} : { replyToUnknown: input.replyToUnknown }),
         ...(input.admins === undefined ? {} : { admins: input.admins }),
         ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
         ...(input.defaults === undefined
@@ -532,27 +536,6 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
         ...(l.name === null ? {} : { name: l.name }),
         linkedAt: l.linkedAt,
       }))
-    },
-    async issuePairing(id, memberId) {
-      await recordOf(id)
-      requireConfig(id)
-      const member = memberId.trim()
-      if (member === '' || member.length > 64) throw invalid('memberId must be 1 to 64 characters')
-      const username = peek(id)?.bot?.username ?? peek(id)?.adapter?.info()?.username
-      if (username === undefined || username === '') {
-        throw conflict(
-          'The bot is not running yet: connect it first, then issue the link.',
-          'NOT_RUNNING',
-        )
-      }
-      const ttl = 24 * 3_600_000
-      const token = gateway.pairing.issue(id, member, ttl)
-      return {
-        memberId: member,
-        link: `https://t.me/${username}?start=${token}`,
-        command: `/start ${token}`,
-        expiresAt: now() + ttl,
-      }
     },
     async revokeLink(id, peerId) {
       await recordOf(id)

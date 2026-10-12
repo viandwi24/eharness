@@ -310,6 +310,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     await halt(id)
     setState(e, 'needs-auth', message)
     await options.connectors.markNeedsAuth(id, message).catch(() => undefined)
+    gateway.activity.record({ connectionId: id, type: 'needs-auth', reason: fatal.kind })
     notify(
       id,
       `channel-auth:${id}`,
@@ -735,6 +736,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
               groupPolicy: config.groupPolicy,
               dm: config.dm,
               allowBots: config.allowBots,
+              replyToUnknown: config.replyToUnknown,
               admins: config.admins,
               historyLimit: config.historyLimit,
               defaults: {
@@ -750,6 +752,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       counts: {
         chats: list.filter((c) => c.selected).length,
         linked: gateway.pairing.members(id).length,
+        unlinked: gateway.unlinked.list(id).length,
         outboxPending: counts.pending + counts.sending,
         outboxFailed: counts.failed,
       },
@@ -846,6 +849,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         groupPolicy: 'allowlist',
         ...(input.dm === undefined ? {} : { dm: input.dm }),
         ...(input.allowBots === undefined ? {} : { allowBots: input.allowBots }),
+        ...(input.replyToUnknown === undefined ? {} : { replyToUnknown: input.replyToUnknown }),
         ...(input.admins === undefined ? {} : { admins: input.admins }),
         ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
         ...(input.defaults === undefined
@@ -914,27 +918,6 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         ...(l.name === null ? {} : { name: l.name }),
         linkedAt: l.linkedAt,
       }))
-    },
-    async issuePairing(id, memberId) {
-      await recordOf(id)
-      requireConfig(id)
-      const member = memberId.trim()
-      if (member === '' || member.length > 64) throw invalid('memberId must be 1 to 64 characters')
-      const username = entries.get(id)?.me?.username
-      if (entries.get(id)?.state !== 'running') {
-        throw conflict(
-          'The account is not running yet: connect it first, then issue the link.',
-          'NOT_RUNNING',
-        )
-      }
-      const ttl = 24 * 3_600_000
-      const token = gateway.pairing.issue(id, member, ttl)
-      return {
-        memberId: member,
-        link: username === undefined ? '' : `https://t.me/${username}?start=${token}`,
-        command: `/start ${token}`,
-        expiresAt: now() + ttl,
-      }
     },
     async revokeLink(id, peerId) {
       await recordOf(id)
@@ -1075,7 +1058,6 @@ export function compositeChannelsPort(
     setChatPolicy: async (id, chatId, input, topic) =>
       (await pick(id)).setChatPolicy(id, chatId, input, topic),
     links: async (id) => (await pick(id)).links(id),
-    issuePairing: async (id, memberId) => (await pick(id)).issuePairing(id, memberId),
     revokeLink: async (id, peerId) => (await pick(id)).revokeLink(id, peerId),
     deleteWebhook: async (id) => (await pick(id)).deleteWebhook(id),
     restart: async (id) => (await pick(id)).restart(id),

@@ -4,7 +4,12 @@ import type { components } from '../api/schema';
 export type ChannelConnection = components['schemas']['ChannelConnection'];
 export type ChannelChat = components['schemas']['ChannelChat'];
 export type ChannelLink = components['schemas']['ChannelLink'];
-export type ChannelPairing = components['schemas']['ChannelPairing'];
+export type ChannelUnlinked = components['schemas']['ChannelUnlinked'];
+export type ChannelMember = components['schemas']['ChannelMember'];
+export type InboxConversation = components['schemas']['ChannelInboxConversation'];
+export type LogMessage = components['schemas']['ChannelLogMessage'];
+export type ChannelActivity = components['schemas']['ChannelActivity'];
+export type ActivityType = ChannelActivity['type'];
 export type ChannelPolicy = NonNullable<components['schemas']['ChannelChat']['policy']>;
 export type ChannelPolicyBody = components['schemas']['ChannelPolicyBody'];
 export type RuntimeState = ChannelConnection['runtime']['state'];
@@ -152,12 +157,6 @@ export function breakerText(c: ChannelConnection, now: number): string | undefin
 	return `Sending is paused after errors (${c.breaker.reason}). It retries in about ${mins} min, or close it now once the cause is fixed.`;
 }
 
-/** The deep link shown once, with how long it lives. */
-export function pairingText(p: ChannelPairing, now: number): string {
-	const hours = Math.max(1, Math.round((p.expiresAt - now) / 3_600_000));
-	return `Valid for ${hours} hour${hours === 1 ? '' : 's'}. Open it in Telegram on the person's phone or desktop and press Start.`;
-}
-
 /** The agents a binding may choose (not archived). */
 export const agentChoices = <A extends { id: string; name: string; archivedAt?: number | null }>(agents: readonly A[]): A[] => agents.filter((a) => !a.archivedAt);
 
@@ -261,4 +260,137 @@ export function accountHint(c: ChannelConnection): string {
 		default:
 			return '';
 	}
+}
+
+// ---- people: linking without links ----
+
+/** What a person shows as: name, @username, else the platform id. */
+export function unlinkedLabel(u: Pick<ChannelUnlinked, 'name' | 'username' | 'peerId'>): string {
+	return u.name ?? (u.username ? `@${u.username}` : `Telegram ${u.peerId}`);
+}
+
+/** The secondary line of a not-yet-linked person: id, username, how often and when they wrote. */
+export function unlinkedDetail(u: ChannelUnlinked, now: number): string {
+	const parts = [`id ${u.peerId}`];
+	if (u.username && u.name) parts.push(`@${u.username}`);
+	parts.push(`${u.messageCount} message${u.messageCount === 1 ? '' : 's'}`, `last ${ago(u.lastSeen, now)}`);
+	return parts.join(' · ');
+}
+
+/** A Telegram user id is a whole number; undefined = valid. */
+export function peerIdError(text: string): string | undefined {
+	return /^\d{1,20}$/.test(text.trim()) ? undefined : 'A Telegram user id is a number, for example 123456789';
+}
+
+/** A short "5 min ago" for activity lists (falls back to a date after a week). */
+export function ago(at: number, now: number): string {
+	const s = Math.max(0, Math.round((now - at) / 1000));
+	if (s < 45) return 'just now';
+	const m = Math.round(s / 60);
+	if (m < 60) return `${m} min ago`;
+	const h = Math.round(m / 60);
+	if (h < 24) return `${h} h ago`;
+	const d = Math.round(h / 24);
+	return d <= 7 ? `${d} day${d === 1 ? '' : 's'} ago` : new Date(at).toISOString().slice(0, 10);
+}
+
+// ---- inbox ----
+
+/** Counters of a conversation as one line: what woke the agent, what was only read, what was dropped. */
+export function inboxCounts(c: InboxConversation): string {
+	const parts = [`${c.woke} woke the agent`, `${c.observed} observed`];
+	if (c.dropped > 0) parts.push(`${c.dropped} dropped`);
+	return parts.join(' · ');
+}
+
+/** The one-line preview of the last message ("Ana: hello", "Agent: done"). */
+export function previewLine(c: InboxConversation): string {
+	const p = c.preview;
+	if (p === undefined) return 'Nothing stored';
+	const who = p.self ? 'Agent' : p.sender;
+	return who === undefined ? p.text : `${who}: ${p.text}`;
+}
+
+export const allowlistLabel = (c: Pick<InboxConversation, 'allowed' | 'kind'>): string =>
+	c.allowed ? 'Allowed' : c.kind === 'dm' ? 'Not linked' : 'Not allowed';
+
+/** Marks on one logged message (incoming kind, edits, deletions, approvals). */
+export function messageMarks(m: LogMessage): string[] {
+	const marks: string[] = [];
+	if (m.approval) marks.push(m.approval.kind === 'question' ? 'Question' : 'Approval request');
+	else if (m.self) marks.push('Agent');
+	else if (m.disposition === 'woke') marks.push('Woke the agent');
+	else if (m.disposition === 'observed') marks.push('Observed');
+	if (m.editedAt !== undefined) marks.push('Edited');
+	if (m.deletedAt !== undefined) marks.push('Deleted');
+	return marks;
+}
+
+/** How an approval request ended, in words. */
+export function approvalOutcome(a: NonNullable<LogMessage['approval']>): string {
+	if (a.status === 'open') return 'Waiting for an answer';
+	if (a.outcome === 'approved' || a.outcome === 'denied') return `${a.outcome === 'approved' ? 'Approved' : 'Denied'}${a.answeredBy ? ` by ${a.answeredBy}` : ''}`;
+	return 'Answered in the web app';
+}
+
+export const messageSender = (m: LogMessage): string => (m.self ? 'Agent' : (m.senderName ?? (m.senderId ? `Telegram ${m.senderId}` : 'Unknown')));
+
+/** The link to the agent's own thread of a conversation (undefined before it ever woke the agent). */
+export const threadHref = (c: Pick<InboxConversation, 'agentId' | 'threadId'>): string | undefined =>
+	c.threadId === undefined || c.agentId === '' ? undefined : `/a/${c.agentId}?t=${encodeURIComponent(c.threadId)}`;
+
+// ---- activity ----
+
+export const EVENT_LABEL: Record<ActivityType, string> = {
+	woke: 'Woke the agent',
+	observed: 'Observed',
+	dropped: 'Dropped',
+	'reply-queued': 'Reply queued',
+	'reply-sent': 'Reply sent',
+	'reply-retried': 'Retrying',
+	'reply-failed': 'Failed to send',
+	'approval-posted': 'Approval asked',
+	'approval-answered': 'Approval answered',
+	'breaker-opened': 'Sending paused',
+	'needs-auth': 'Needs sign-in'
+};
+
+export const EVENT_TYPES = Object.keys(EVENT_LABEL) as ActivityType[];
+
+export const DROP_REASON_LABEL: Record<string, string> = {
+	'unlinked-sender': 'the sender is not linked',
+	'chat-not-allowed': 'the chat is not allowed',
+	'dm-disabled': 'direct messages are off',
+	'bot-sender': 'sent by a bot',
+	'loop-guard': 'bot loop guard',
+	duplicate: 'already handled (duplicate)',
+	'agent-unavailable': 'the agent is archived or missing',
+	'not-authorized': 'not allowed to answer the approval'
+};
+
+export const eventTone = (t: ActivityType): Tone =>
+	t === 'reply-failed' || t === 'breaker-opened' || t === 'needs-auth'
+		? 'destructive'
+		: t === 'reply-retried' || t === 'dropped'
+			? 'warning'
+			: t === 'woke' || t === 'reply-sent' || t === 'approval-answered'
+				? 'success'
+				: 'secondary';
+
+/** One sentence for an event: who, where and why (never message text: there is none). */
+export function eventText(e: ChannelActivity): string {
+	const who = e.peerName ?? (e.peerId ? `Telegram ${e.peerId}` : undefined);
+	const where = e.conversationTitle ?? e.conversationId;
+	const bits: string[] = [];
+	if (who) bits.push(who);
+	if (where && where !== e.peerName) bits.push(`in ${where}`);
+	const reason = e.type === 'dropped' ? (DROP_REASON_LABEL[e.reason ?? ''] ?? e.reason) : e.reason;
+	if (reason) bits.push(`(${reason})`);
+	const d = e.detail;
+	if (d !== undefined) {
+		if (typeof d.tool === 'string') bits.push(`tool ${d.tool}`);
+		if (typeof d.chunks === 'number' && d.chunks > 1) bits.push(`${d.chunks} parts`);
+		if (typeof d.attempt === 'number') bits.push(`attempt ${d.attempt}`);
+	}
+	return bits.join(' ');
 }

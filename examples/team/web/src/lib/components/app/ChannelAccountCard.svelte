@@ -12,7 +12,10 @@
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
+	import ChannelActivity from '#lib/components/app/ChannelActivity.svelte';
 	import ChannelChatRow from '#lib/components/app/ChannelChatRow.svelte';
+	import ChannelInbox from '#lib/components/app/ChannelInbox.svelte';
+	import ChannelPeople from '#lib/components/app/ChannelPeople.svelte';
 	import {
 		accountHint,
 		ACCOUNT_WARNING,
@@ -164,7 +167,7 @@
 		{#if bound}<Button size="sm" variant="ghost" onclick={() => (unbindOpen = true)} disabled={busy}>Unbind</Button>{/if}
 	</div>
 	{#if bound && conn.binding}
-		<p class="-mt-2 text-xs text-muted-foreground">{agentName(conn.binding.agentId)} owns this account. Chats you choose are stored and observe-only; the agent answers only where you change a chat's policy to answer.</p>
+		<p class="-mt-2 text-xs text-muted-foreground">{agentName(conn.binding.agentId)} owns this account. Chats you choose are stored and observe-only; the agent answers only where you change a chat's policy to answer. Direct messages only reach it from people you link on the People tab.</p>
 	{/if}
 
 	{#if bound && account}
@@ -172,8 +175,11 @@
 			<ul class="flex flex-col gap-1 text-xs text-warning-text" role="status">{#each account.warnings as w (w)}<li>{w}</li>{/each}</ul>
 		{/if}
 		<Tabs.Root bind:value={tab}>
-			<Tabs.List>
+			<Tabs.List class="max-w-full justify-start overflow-x-auto">
 				<Tabs.Trigger value="chats">Chats {#if picked.length}<Badge shape="number" variant="secondary">{picked.length}</Badge>{/if}</Tabs.Trigger>
+				<Tabs.Trigger value="people">People {#if conn.counts.unlinked}<Badge shape="number" variant="warning" title="Not linked yet">{conn.counts.unlinked}</Badge>{:else if conn.counts.linked}<Badge shape="number" variant="secondary">{conn.counts.linked}</Badge>{/if}</Tabs.Trigger>
+				<Tabs.Trigger value="inbox">Inbox</Tabs.Trigger>
+				<Tabs.Trigger value="activity">Activity</Tabs.Trigger>
 				<Tabs.Trigger value="backfill">Backfill</Tabs.Trigger>
 				<Tabs.Trigger value="adminlog">Admin log</Tabs.Trigger>
 				<Tabs.Trigger value="limits">Limits</Tabs.Trigger>
@@ -212,6 +218,12 @@
 					</ul>
 				{/if}
 			</Tabs.Content>
+
+			<Tabs.Content value="people" class="pt-3"><ChannelPeople {conn} {onChange} /></Tabs.Content>
+
+			<Tabs.Content value="inbox" class="pt-3"><ChannelInbox {conn} /></Tabs.Content>
+
+			<Tabs.Content value="activity" class="pt-3"><ChannelActivity {conn} /></Tabs.Content>
 
 			<Tabs.Content value="backfill" class="flex flex-col gap-3 pt-3">
 				<p class="text-xs text-muted-foreground">Reads the history of a chosen chat, newest first, down to the number of days you set (one chat at a time, with pauses). It resumes after a restart and obeys Telegram's flood waits.</p>

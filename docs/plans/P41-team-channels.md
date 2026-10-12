@@ -49,8 +49,9 @@ One static risk per tool (spec 11) is why the gateway tool is split by risk inst
 - Group policy: allowlist (default) · per group/topic `wake: 'mention' | 'always' | 'never'`
   (`never` = observe-only for audit chats). Implicit wakes: reply to the agent, alias patterns, the
   agent's own topic. Ignore a message that mentions others but not the agent (default on).
-- DMs: only employees mapped through a one-time `/start <token>` deep link; unmapped senders never
-  wake an agent and are context only in groups.
+- DMs: only team members the owner linked on the People tab (from the "Not linked yet" list, or by
+  platform user id); unlinked senders never wake an agent, get silence (unless the connection replies
+  to unknown people) and are context only in groups. No deep link, no token.
 - Delivery: `final_text` (default; the final answer quotes the trigger and stays in its topic) or
   `message_tool` (only `channel_send` posts; for `wake: 'always'` rooms and program-originated
   posts). `NO_REPLY` is honoured only when `wake: 'always'`.
@@ -133,7 +134,7 @@ template; stores only what a task needs. Operators must review these terms for t
   SQLite stores, `outbound.ts` queue, `gateway.ts`, `plugin.ts` tools and hooks, `mock-adapter.ts`,
   `vault.ts`). Nothing there names a platform. Wiring: `main.ts` (`Server.channels`), the plugin in
   `agent-factory.ts` (late-bound like the heartbeat), read-only tools allowed in `appRulesOf`.
-- Tables (migration 0021): `channel_connections` (config JSON, no secrets), `channel_conversations`,
+- Tables (migration 0021; the pairing token flow was removed later, see "Linking without links"): `channel_connections` (config JSON, no secrets), `channel_conversations`,
   `channel_messages` (body sealed with the channel vault: its own key `TEAM_CHANNEL_KEY`, dev file
   `channel.key`), `channel_identities`, `channel_pairing_tokens` (hash only).
 - Sessions `channel:<connectionId>:<conversation id>` are `chat_threads` rows with `source: 'channel'`
@@ -250,7 +251,7 @@ Against the real use cases (U1 audit, U2 publishing, U3 internal group). Migrati
   would fight with 409).
 - **Channels page.** Connections (state badge, next-step hint, agent binding), Chats (discovered
   from updates; allowlist switch, wake mention/always/observe-only, delivery, retention days,
-  per-topic wake), People (issue a `/start` deep link per team member, shown once; linked accounts;
+  per-topic wake), People (replaced by "Linking without links" below; linked accounts;
   revoke), Delivery (outbox waiting/failed, breaker with reset, restart). "Observe" is the
   `never` wake (messages are stored as context, the agent never answers).
 - **Part A fixes.** An approval request in a chat now shows `key: value` lines (what and where
@@ -323,3 +324,38 @@ Run one server process. Use a throwaway group where you are admin and another wh
 15. Session revoke: in Telegram, Settings, Devices, end the session; the connection becomes "Needs a new login" with a bell; Sign in again works.
 16. Lease: start a second server process on a copy of the same database; its connection shows "Another instance holds it" and does not log in; stopping the first one lets the second take over after the lease TTL.
 17. Shutdown: stop the server with Ctrl-C; it exits cleanly and the lease is released (the next start is immediate).
+
+## Linking without links, silence, inbox and activity (as built, after the real-bot test)
+
+Owner feedback after testing with a real bot. Migration 0025 (`channel_unlinked`, `channel_inbox`,
+`channel_events`, `channel_messages.disposition`).
+
+- **No links.** The `/start <token>` deep link, `pairing.issue/redeem` and the Create link UI are
+  gone (the `channel_pairing_tokens` table stays, unused, so old databases migrate). `pairing.link`
+  links a platform user id to a member by hand.
+- **Unlinked senders.** Any DM from an unlinked person is recorded per connection (id, name,
+  `@username`, first/last seen, count; no text) and the gateway returns `drop: unlinked-sender`.
+  People tab: "Not linked yet" with **Link to member…** and **Ignore**, **Add by Telegram user ID**
+  (numeric, validated by the schema and the form), linked accounts with **Unlink** (the person
+  reappears under Not linked yet when they write again). Same for the bot and the account.
+  Team members: the example has one principal, so the picker offers `owner`, the connection's
+  `admins` and members already linked (`GET .../members`).
+- **Silence.** Unlinked DM, an old token, a non-allowlisted chat, bots, and a button press by
+  somebody who may not answer: no reply (the Bot API callback is answered with no text). The
+  per-connection `replyToUnknown` (default off, "Reply to unknown people") sends one neutral line to
+  an unlinked DM, at most once per person per 6 hours (in memory). Replies to authorized
+  people about approvals (already answered) stay.
+- **Inbox tab.** Conversations with title, kind, agent, preview, woke / observed / dropped counters
+  and allowlist state; a conversation shows the sealed log decrypted server side, paged back, with
+  disposition marks, edits, deletions, approval requests with their outcome, and "Open in the
+  agent's thread". Dropped messages create an inbox row with a dropped counter and no text.
+- **Activity tab.** `channel_events`: woke / observed / dropped (+ reason), reply queued / sent /
+  retried / failed, approval posted / answered, breaker opened, needs-auth. Filter by type and
+  conversation, newest first, paged; the tab polls every 5 s (a push stream was not natural: the
+  rest of the page polls too). Retention follows the events feed settings.
+- **Tests.** `test/channels.test.ts` (silence rules, unlinked recording without text, link by id,
+  inbox listing and paging, conversation log, activity), `test/telegram-channels.test.ts` (HTTP
+  flow), web `channels/model.test.ts`. Nothing for `infra/telegram-user/**` (owner decision).
+- **Not done / open.** An inbound rate limit (the "rate limited" drop reason does not exist: the
+  loop guard is the only limiter); a conversation view does not live-update while open (Refresh);
+  the unlinked list is not purged by age.

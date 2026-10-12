@@ -37,7 +37,7 @@ docs/     architecture, API, operations
   workspace and per-agent memory.
 - **Routines**: cron / interval / one-shot prompts, safe with several instances.
 - **Connectors** (Claude style): built-in Files, Memory, Planning, Web, Ask the user and Team; GitHub and any remote MCP URL, connected once for the workspace (available to all agents, each agent may override) or for one agent; per agent each capability is Allowed, Ask first or Off. Secrets are encrypted, writes of external connectors always ask, even in Bypass mode. Custom connectors are added like in Claude: **Add custom connector** → name + remote MCP URL → the server probes it (OAuth detected or not) → choose *Sign in now*, *Sign in when needed* or *No sign in*, an optional OAuth client and request headers → each one becomes its own card. Their tool prefix is a slug of the name taken at creation, so renaming never renames tools. The composer's tools menu switches connectors per chat, and **Tool access** (Auto / On demand) decides whether third-party tools are loaded up front or found through `tool_search`.
-- **Channels** (Telegram bot): the **Channels** page connects a bot (token from @BotFather), binds it to an agent, lists the chats it was added to with a policy each (wake on mention, always, or observe only; reply or post-by-tool; retention), pairs employees with a `/start` link and shows the outbound queue. Groups, forum topics, channels and DMs; approvals with buttons. See [Telegram bot](#telegram-bot).
+- **Channels** (Telegram bot): the **Channels** page connects a bot (token from @BotFather), binds it to an agent, lists the chats it was added to with a policy each (wake on mention, always, or observe only; reply or post-by-tool; retention), lists people who wrote and are not linked yet (link them to a team member, or ignore them; strangers get silence), shows an inbox of conversations with their logs and an activity feed, and the outbound queue. Groups, forum topics, channels and DMs; approvals with buttons. See [Telegram bot](#telegram-bot).
 - **Cost controls**: a per-workspace USD budget on a shared ledger and a cap on concurrent
   delegations. Multi-agent runs cost many times a chat, see the
   [lead and role agents guide](../../docs/guides/lead-and-role-agents.md).
@@ -127,8 +127,13 @@ drizzle-kit (`bun run db:generate`) and applied at boot.
    encrypted and never shown again). The page tells you whether privacy mode is on.
 4. **Bind** the connection to an agent. Add the bot to a group and write a message; the chat shows
    up under **Chats**. Allow it and choose when the agent wakes.
-5. **People**: create a link for a team member and send it; they open it in Telegram and press
-   **Start**. Only linked accounts can message the agent directly.
+5. **People**: anybody who writes to the bot in a direct message shows up under **Not linked yet**
+   (name, id, how often; never what they wrote) and gets no answer. Press **Link to member…** to
+   link them to a team member, or **Ignore**; **Add by Telegram user ID** links somebody who has not
+   written yet. Only linked accounts can message the agent directly. "Reply to unknown people"
+   (off by default) makes the bot answer strangers with one neutral line.
+6. **Inbox** shows every conversation (groups, topics, direct messages) with counters and the
+   channel log; **Activity** shows what happened to each message and reply.
 
 A bot can only receive updates by one method at a time: if a webhook is set the page offers to
 remove it. Run one server process per bot. `TEAM_TELEGRAM_API_ROOT` points at a local Bot API

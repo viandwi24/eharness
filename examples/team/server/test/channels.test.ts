@@ -299,20 +299,17 @@ describe('channel log, pairing and retention', () => {
     expect(await i.gw.log.find('c1', 'room', 'o1')).toBeUndefined()
   })
 
-  test('pairing tokens are one time, expire and map one account', () => {
+  test('an account is linked by id (the person disappears from "not linked yet"); the link is replaced by a new one', () => {
     const i = instance({})
     i.gw.configure({ connectionId: 'c1', agentId: i.leadId })
-    const token = i.gw.pairing.issue('c1', 'owner')
-    expect(i.gw.pairing.members('c1')).toEqual([])
-    expect(token).not.toContain(' ')
-    const pairing = i.server.conn.sqlite
-      .query<{ token_hash: string }, []>('SELECT token_hash FROM channel_pairing_tokens')
-      .all()
-    expect(pairing[0]?.token_hash).not.toBe(token)
-    const expired = i.gw.pairing.issue('c1', 'owner', 1)
-    return sleep(10).then(() => {
-      expect(expired).not.toBe(token)
-    })
+    const linked = i.gw.pairing.link('c1', '42', 'owner', 'Ana')
+    expect(linked).toMatchObject({ peerId: '42', memberId: 'owner', name: 'Ana' })
+    expect(i.gw.pairing.members('c1')).toHaveLength(1)
+    // linking the same account again moves it
+    i.gw.pairing.link('c1', '42', 'carol')
+    expect(i.gw.pairing.members('c1')).toMatchObject([{ peerId: '42', memberId: 'carol' }])
+    expect(() => i.gw.pairing.link('nope', '1', 'owner')).toThrow('No such connection')
+    expect(i.gw.pairing.unlink('c1', '42')).toBe(true)
   })
 })
 
@@ -532,17 +529,20 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
   })
 })
 
-describe('DMs: only mapped employees', () => {
-  test('an unmapped DM is ignored; pairing maps the account, then the DM wakes the agent', async () => {
+describe('DMs: only linked employees; strangers get silence', () => {
+  test('an unlinked DM is recorded (who, never what) and gets no reply; a link by id makes the DM wake the agent', async () => {
     const i = instance({ lead: [textStep('Hello Ana, how can I help?')] })
     const mock = await connect(i, { groups: {} })
-    await mock.say({ chat: 'u-ana', kind: 'dm', from: ana, text: 'hi there', id: 'd1' })
+    await mock.say({ chat: 'u-ana', kind: 'dm', from: ana, text: 'hi there SECRET-TEXT', id: 'd1' })
     await sleep(100)
     expect(calls(i.models.lead)).toBe(0)
     expect(mock.sent).toEqual([])
     expect(i.gw.log.count('c1')).toBe(0) // not even stored
+    expect(i.gw.unlinked.list('c1')).toMatchObject([
+      { peerId: 'u-ana', name: 'Ana Putri', username: 'ana', messageCount: 1, ignored: false },
+    ])
 
-    // a wrong token does not link
+    // an old or made-up /start token is not special any more: silence, counted
     await mock.say({
       chat: 'u-ana',
       kind: 'dm',
@@ -551,32 +551,21 @@ describe('DMs: only mapped employees', () => {
       id: 'd2',
       command: { name: 'start', args: 'nope' },
     })
-    expect(mock.sent.at(-1)?.message.text).toContain('not valid')
+    expect(mock.sent).toEqual([])
+    expect(i.gw.unlinked.list('c1')[0]?.messageCount).toBe(2)
+    // no message text was stored anywhere for the stranger
+    const dump = JSON.stringify([
+      i.server.conn.sqlite.query('SELECT * FROM channel_unlinked').all(),
+      i.server.conn.sqlite.query('SELECT * FROM channel_events').all(),
+      i.server.conn.sqlite.query('SELECT * FROM channel_inbox').all(),
+    ])
+    expect(dump).not.toContain('SECRET-TEXT')
+    expect(dump).not.toContain('nope')
 
-    const token = i.gw.pairing.issue('c1', 'owner')
-    await mock.say({
-      chat: 'u-ana',
-      kind: 'dm',
-      from: ana,
-      text: `/start ${token}`,
-      id: 'd3',
-      command: { name: 'start', args: token },
-    })
-    expect(mock.sent.at(-1)?.message.text).toContain('linked')
+    i.gw.pairing.link('c1', 'u-ana', 'owner')
     expect(i.gw.pairing.members('c1')).toMatchObject([{ peerId: 'u-ana', memberId: 'owner' }])
+    expect(i.gw.unlinked.list('c1')).toEqual([]) // no longer "not linked yet"
 
-    // the token is one time
-    await mock.say({
-      chat: 'u2',
-      kind: 'dm',
-      from: budi,
-      text: `/start ${token}`,
-      id: 'd4',
-      command: { name: 'start', args: token },
-    })
-    expect(i.gw.pairing.members('c1')).toHaveLength(1)
-
-    mock.sent.length = 0
     await mock.say({ chat: 'u-ana', kind: 'dm', from: ana, text: 'what is on today?', id: 'd5' })
     await until('the DM reply', () => mock.sent.length === 1)
     expect(mock.sent[0]?.message.text).toBe('Hello Ana, how can I help?')
@@ -585,6 +574,24 @@ describe('DMs: only mapped employees', () => {
     expect(wire(i.models.lead as ScriptedModel)).toContain('(team member)')
     // a different DM peer never shares the session
     expect(i.gw.conversations.list('c1').map((c) => c.sessionId)).toEqual(['channel:c1:u-ana'])
+  })
+
+  test('ignore hides a person and they stay silent; "reply to unknown people" sends one neutral line, rarely', async () => {
+    const i = instance({})
+    const mock = await connect(i, { groups: {}, config: { replyToUnknown: true } })
+    await mock.say({ chat: 'u-ana', kind: 'dm', from: ana, text: 'hello', id: 'd1' })
+    expect(mock.sent).toHaveLength(1)
+    expect(mock.sent[0]?.message.text).toContain("can't chat")
+    await mock.say({ chat: 'u-ana', kind: 'dm', from: ana, text: 'hello again', id: 'd2' })
+    expect(mock.sent).toHaveLength(1) // not twice in a row
+    expect(i.gw.unlinked.ignore('c1', 'u-ana', true)).toBe(true)
+    expect(i.gw.unlinked.list('c1')).toEqual([])
+    expect(i.gw.unlinked.list('c1', { includeIgnored: true })).toHaveLength(1)
+    expect(i.gw.unlinked.ignore('c1', 'nobody', true)).toBe(false)
+    // the default of a new connection is silence
+    expect(ConnectionConfigSchema.parse({ connectionId: 'x', agentId: 'a' }).replyToUnknown).toBe(
+      false,
+    )
   })
 })
 
@@ -1112,19 +1119,11 @@ describe('approvals in channel conversations', () => {
   const approvalStep = sendTo('news', 'Release notes are live.', 'a1')
   const pair = async (
     i: Instance,
-    mock: MockAdapter,
+    _mock: MockAdapter,
     who: { id: string; name?: string; username?: string },
     memberId: string,
   ) => {
-    const token = i.gw.pairing.issue('c1', memberId)
-    await mock.say({
-      chat: `dm-${who.id}`,
-      kind: 'dm',
-      from: who,
-      text: `/start ${token}`,
-      id: `pair-${who.id}`,
-      command: { name: 'start', args: token },
-    })
+    i.gw.pairing.link('c1', who.id, memberId, who.name)
   }
   const setup = async (
     script: ScriptedStepInput[],
@@ -1194,19 +1193,25 @@ describe('approvals in channel conversations', () => {
     expect(mock.edits[0]?.text).toContain('Denied by Ana Putri')
   })
 
-  test('somebody who is neither the requester nor an admin gets a readable refusal', async () => {
+  test('somebody who is neither the requester nor an admin gets silence: nothing changes', async () => {
     const { i, mock } = await setup([approvalStep, textStep('done')])
     await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
     await until('the request', () => request(mock) !== undefined)
     const ask = request(mock) as NonNullable<ReturnType<typeof request>>
     const data = ask.message.buttons?.[0]?.data as string
     // a stranger (not linked) and a linked non-admin member both are refused
+    const before = mock.sent.length
     await mock.press({ from: stranger, name: 'approve', data, messageId: ask.messageId })
-    expect(mock.sent.at(-1)?.message.text).toContain('cannot tell who you are')
     const carol = { id: 'u-carol', name: 'Carol' }
     await pair(i, mock, carol, 'carol-member')
     await mock.press({ from: carol, name: 'approve', data, messageId: ask.messageId })
-    expect(mock.sent.at(-1)?.message.text).toContain('person who asked or a team admin')
+    expect(mock.sent).toHaveLength(before) // no refusal text to anybody
+    // both presses are in the activity as dropped (not authorized)
+    expect(
+      i.gw.activity
+        .list('c1', { type: 'dropped', limit: 10 })
+        .items.filter((e) => e.reason === 'not-authorized'),
+    ).toHaveLength(2)
     await sleep(100)
     expect(mock.sent.some((s) => s.conversationId === 'news')).toBe(false)
     expect(i.gw.approvals.open('channel:c1:room')).toHaveLength(1) // still waiting
@@ -1433,15 +1438,7 @@ describe('restart keeps state', () => {
     await mockA.say({ from: ana, text: 'context before the restart', id: 'c0' })
     await mockA.say({ from: ana, text: '@team_bot hello', id: 'w1', mentionSelf: true })
     await until('first reply', () => mockA.sent.length === 1)
-    const token = first.gw.pairing.issue('c1', 'owner')
-    await mockA.say({
-      chat: 'u-ana',
-      kind: 'dm',
-      from: ana,
-      text: `/start ${token}`,
-      id: 'd1',
-      command: { name: 'start', args: token },
-    })
+    first.gw.pairing.link('c1', 'u-ana', 'owner')
     expect(first.gw.pairing.members('c1')).toHaveLength(1)
     await first.server.close()
     servers.splice(servers.indexOf(first.server), 1)
@@ -1473,5 +1470,309 @@ describe('restart keeps state', () => {
     ).toHaveLength(1)
     // the key file of the channel vault is not the secret key file
     expect(() => readFileSync(join(dir, 'channel.key'))).toThrow()
+  })
+})
+
+describe('silence for strangers', () => {
+  test('non-allowlisted chats, bots, duplicates and unlinked DMs are never answered; each is a dropped event with a reason', async () => {
+    const i = instance({ lead: [textStep('hi')] })
+    const mock = await connect(i, { config: { replyToUnknown: false } })
+    await mock.say({ chat: 'other', from: ana, text: '@team_bot hi', id: 's1', mentionSelf: true })
+    await mock.emit({
+      type: 'message',
+      conversation: mock.ref('room'),
+      at: Date.now(),
+      messageId: 'b1',
+      sender: { id: 'other-bot', isBot: true },
+      text: '@team_bot beep',
+      attachments: [],
+      signals: { mentionedSelf: true, replyToSelf: false },
+    })
+    await mock.say({
+      chat: 'u-eve',
+      kind: 'dm',
+      from: { id: 'u-eve', name: 'Eve' },
+      text: 'psst',
+      id: 'd1',
+    })
+    await mock.say({ from: ana, text: 'context', id: 'o1' })
+    await mock.say({ from: ana, text: 'context', id: 'o1' }) // a redelivery of a finished one
+    await sleep(100)
+    expect(mock.sent).toEqual([])
+    expect(calls(i.models.lead)).toBe(0)
+    const dropped = i.gw.activity
+      .list('c1', { type: 'dropped', limit: 20 })
+      .items.map((e) => e.reason)
+      .sort()
+    expect(dropped).toEqual(['bot-sender', 'chat-not-allowed', 'duplicate', 'unlinked-sender'])
+    // the stranger's chat is in the inbox with its allowlist state, counted as dropped
+    const page = await i.gw.inbox.conversations('c1', { limit: 10 })
+    expect(page.items.find((c) => c.conversationId === 'other')).toMatchObject({
+      allowed: false,
+      dropped: 1,
+      woke: 0,
+    })
+    expect(page.items.find((c) => c.conversationId === 'u-eve')).toMatchObject({
+      kind: 'dm',
+      allowed: false, // a direct message is allowed only for a linked person
+      dropped: 1,
+    })
+    // a dropped event never carries text
+    expect(
+      JSON.stringify(i.server.conn.sqlite.query('SELECT * FROM channel_events').all()),
+    ).not.toContain('psst')
+  })
+})
+
+describe('inbox: conversations and their logs', () => {
+  const setup = async () => {
+    const i = instance({ lead: [textStep('Noted.'), textStep('Still here.')] })
+    const mock = await connect(i, {
+      groups: { room: { label: 'Ops', ack: false }, audit: { wake: 'never', label: 'Audit' } },
+      config: NO_WAIT,
+    })
+    return { i, mock }
+  }
+
+  test('lists conversations newest first with counters, preview, agent and allowlist state, paged by cursor', async () => {
+    const { i, mock } = await setup()
+    const t = Date.now()
+    await mock.say({ chat: 'audit', from: ana, text: 'first audit line', id: 'a1', at: t - 3000 })
+    await mock.say({ chat: 'audit', from: budi, text: 'second audit line', id: 'a2', at: t - 2000 })
+    await mock.say({ from: ana, text: 'some context', id: 'r1', at: t - 1500 })
+    await mock.say({
+      from: ana,
+      text: '@team_bot status?',
+      id: 'r2',
+      mentionSelf: true,
+      at: t - 1000,
+    })
+    await until('reply', () => mock.sent.length === 1)
+    i.gw.pairing.link('c1', 'u-ana', 'owner', 'Ana')
+    await mock.say({
+      chat: 'u-ana',
+      kind: 'dm',
+      from: { ...ana, id: 'u-ana' },
+      text: 'dm hello',
+      id: 'd1',
+      at: t,
+    })
+    await until('dm reply', () => mock.sent.length === 2)
+
+    const all = await i.gw.inbox.conversations('c1', { limit: 10 })
+    expect(all.next).toBeUndefined()
+    expect(all.items.map((c) => c.conversationId)).toEqual(['u-ana', 'room', 'audit'])
+    const room = all.items.find((c) => c.conversationId === 'room')
+    expect(room).toMatchObject({
+      kind: 'group',
+      title: 'Room',
+      agentId: i.leadId,
+      allowed: true,
+      woke: 1,
+      observed: 1,
+      dropped: 0,
+    })
+    expect(room?.preview).toMatchObject({ text: 'Noted.', self: true })
+    expect(room?.threadId).toBeString()
+    const audit = all.items.find((c) => c.conversationId === 'audit')
+    expect(audit).toMatchObject({ woke: 0, observed: 2, allowed: true })
+    expect(audit?.preview).toMatchObject({ text: 'second audit line', sender: 'Budi', self: false })
+    expect(audit?.threadId).toBeUndefined() // never woke the agent: no thread
+
+    // paging by cursor
+    const p1 = await i.gw.inbox.conversations('c1', { limit: 2 })
+    expect(p1.items.map((c) => c.conversationId)).toEqual(['u-ana', 'room'])
+    expect(p1.next).toBeString()
+    const p2 = await i.gw.inbox.conversations('c1', {
+      limit: 2,
+      ...(p1.next === undefined ? {} : { cursor: p1.next }),
+    })
+    expect(p2.items.map((c) => c.conversationId)).toEqual(['audit'])
+    expect(p2.next).toBeUndefined()
+    expect(await i.gw.inbox.conversations('c1', { limit: 5 }).then((r) => r.items.length)).toBe(3)
+    expect((await i.gw.inbox.conversations('nobody', { limit: 5 })).items).toEqual([])
+  })
+
+  test('the conversation view shows the log in order with replies, edits and deletions marked, paged back', async () => {
+    const { i, mock } = await setup()
+    const t = Date.now()
+    await mock.say({ from: ana, text: 'context one', id: 'm1', at: t - 5000 })
+    await mock.say({ from: budi, text: 'context two', id: 'm2', at: t - 4000 })
+    await mock.say({
+      from: ana,
+      text: '@team_bot summarise',
+      id: 'm3',
+      mentionSelf: true,
+      at: t - 3000,
+    })
+    await until('reply', () => mock.sent.length === 1)
+    await mock.emit({
+      type: 'edit',
+      conversation: mock.ref('room'),
+      at: t,
+      messageId: 'm2',
+      sender: budi,
+      text: 'context two (fixed)',
+    })
+    await mock.emit({ type: 'delete', conversation: mock.ref('room'), at: t, messageIds: ['m1'] })
+
+    const page = await i.gw.inbox.messages('c1', 'room', { limit: 10 })
+    expect(page?.next).toBeUndefined()
+    expect(page?.conversation).toMatchObject({ conversationId: 'room', woke: 1, observed: 2 })
+    expect(page?.items.map((m) => [m.platformId, m.disposition ?? 'self', m.self])).toEqual([
+      ['m1', 'observed', false],
+      ['m2', 'observed', false],
+      ['m3', 'woke', false],
+      [mock.sent[0]?.messageId as string, 'self', true],
+    ])
+    expect(page?.items[0]?.deletedAt).toBeNumber()
+    expect(page?.items[1]).toMatchObject({
+      text: 'context two (fixed)',
+      edits: [{ text: 'context two' }],
+    })
+    expect(page?.items[3]?.text).toBe('Noted.')
+
+    // paged back: the newest page first, "next" is the id to continue from
+    const newest = await i.gw.inbox.messages('c1', 'room', { limit: 2 })
+    expect(newest?.items.map((m) => m.platformId)).toEqual([
+      'm3',
+      mock.sent[0]?.messageId as string,
+    ])
+    expect(newest?.next).toBeString()
+    const older = await i.gw.inbox.messages('c1', 'room', {
+      limit: 2,
+      ...(newest?.next === undefined ? {} : { before: newest.next }),
+    })
+    expect(older?.items.map((m) => m.platformId)).toEqual(['m1', 'm2'])
+    expect(older?.next).toBeUndefined()
+    expect(await i.gw.inbox.messages('c1', 'nope', { limit: 5 })).toBeUndefined()
+  })
+
+  test('an approval request carries how it ended', async () => {
+    const i = instance({
+      lead: [sendTo('news', 'Release notes are live.', 'a1'), textStep('Posted it.')],
+    })
+    const mock = await connect(i, {
+      groups: { room: { label: 'Ops', ack: false }, news: { wake: 'never' } },
+      config: NO_WAIT,
+    })
+    i.gw.pairing.link('c1', 'u-ana', 'owner', 'Ana')
+    await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the request', () => mock.sent.some((s) => s.message.buttons !== undefined))
+    const ask = mock.sent.find((s) => s.message.buttons !== undefined) as (typeof mock.sent)[number]
+    let page = await i.gw.inbox.messages('c1', 'room', { limit: 10 })
+    expect(page?.items.find((m) => m.platformId === ask.messageId)?.approval).toMatchObject({
+      kind: 'approval',
+      toolName: 'channel_send',
+      status: 'open',
+    })
+    await mock.press({
+      from: ana,
+      name: 'approve',
+      data: ask.message.buttons?.[0]?.data as string,
+      messageId: ask.messageId,
+    })
+    await until('answered', () => i.gw.approvals.open('channel:c1:room').length === 0)
+    page = await i.gw.inbox.messages('c1', 'room', { limit: 10 })
+    expect(page?.items.find((m) => m.platformId === ask.messageId)?.approval).toMatchObject({
+      status: 'answered',
+      outcome: 'approved',
+    })
+  })
+})
+
+describe('activity events', () => {
+  test('a wake, its reply and the delivery are events, newest first, filterable and paged', async () => {
+    const i = instance({ lead: [textStep('Here.')] }, { fastSleep: true })
+    const mock = await connect(i, {
+      groups: { room: { label: 'Ops', ack: false }, audit: { wake: 'never' } },
+      config: NO_WAIT,
+    })
+    await mock.say({ chat: 'audit', from: ana, text: 'audit line', id: 'a1' })
+    await mock.say({ from: ana, text: '@team_bot hi', id: 'w1', mentionSelf: true })
+    await until('reply', () => mock.sent.length === 1)
+    await until(
+      'sent event',
+      () => i.gw.activity.list('c1', { type: 'reply-sent', limit: 5 }).items.length === 1,
+    )
+
+    const all = i.gw.activity.list('c1', { limit: 50 }).items
+    expect(all.map((e) => e.type)).toEqual(['reply-sent', 'reply-queued', 'woke', 'observed'])
+    expect(all[3]).toMatchObject({
+      conversationId: 'audit',
+      peerName: 'Ana Putri',
+      reason: 'wake is never here',
+    })
+    expect(all[2]).toMatchObject({
+      conversationId: 'room',
+      reason: 'mentioned',
+      platformId: 'w1',
+      conversationTitle: 'Room',
+    })
+    expect(all[1]?.detail).toMatchObject({ kind: 'reply', chunks: 1 })
+    expect(all[0]?.detail).toMatchObject({ kind: 'reply' })
+    // filters
+    expect(i.gw.activity.list('c1', { type: 'woke', limit: 5 }).items).toHaveLength(1)
+    expect(
+      i.gw.activity.list('c1', { conversationId: 'audit', limit: 5 }).items.map((e) => e.type),
+    ).toEqual(['observed'])
+    // paging
+    const p1 = i.gw.activity.list('c1', { limit: 3 })
+    expect(p1.items).toHaveLength(3)
+    expect(p1.next).toBeString()
+    const p2 = i.gw.activity.list('c1', {
+      limit: 3,
+      ...(p1.next === undefined ? {} : { before: p1.next }),
+    })
+    expect(p2.items.map((e) => e.type)).toEqual(['observed'])
+    expect(p2.next).toBeUndefined()
+    // retention prunes by age and count
+    expect(i.gw.activity.prune({ keepLast: 2 })).toBe(2)
+    expect(i.gw.activity.list('c1', { limit: 10 }).items).toHaveLength(2)
+    expect(i.gw.activity.prune({ olderThan: Date.now() + 1000 })).toBe(2)
+  })
+
+  test('retries, failures, approvals and the breaker show up', async () => {
+    const i = instance(
+      { lead: [sendTo('news', 'Notes.', 'a1'), textStep('Posted.')] },
+      { fastSleep: true },
+    )
+    const mock = await connect(i, {
+      groups: { room: { label: 'Ops', ack: false }, news: { wake: 'never' } },
+      config: { rate: { chatMinIntervalMs: 0, breakerFailures: 50 } },
+    })
+    i.gw.pairing.link('c1', 'u-ana', 'owner', 'Ana')
+    // the first send fails for a whole round (retry later), then the platform recovers
+    mock.failNext(new ChannelError('transient', 'glitch'), 5)
+    await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the request', () => mock.sent.some((s) => s.message.buttons !== undefined))
+    const types = () => i.gw.activity.list('c1', { limit: 100 }).items.map((e) => e.type)
+    expect(types()).toContain('reply-retried')
+    expect(types()).toContain('approval-posted')
+    const ask = mock.sent.find((s) => s.message.buttons !== undefined) as (typeof mock.sent)[number]
+    await mock.press({
+      from: ana,
+      name: 'approve',
+      data: ask.message.buttons?.[0]?.data as string,
+      messageId: ask.messageId,
+    })
+    await until('answered event', () => types().includes('approval-answered'))
+    const answered = i.gw.activity.list('c1', { type: 'approval-answered', limit: 5 }).items[0]
+    expect(answered).toMatchObject({
+      reason: 'approved',
+      peerId: 'u-ana',
+      detail: { tool: 'channel_send', via: 'chat' },
+    })
+
+    // a final failure and the breaker
+    const target = i.gw.resolveTarget(i.leadId, undefined, { conversation: 'news' })
+    mock.failNext(new ChannelError('invalid', 'chat not found'))
+    await expect(i.gw.post(target, { text: 'x' })).rejects.toThrow()
+    mock.failNext(new ChannelError('fatal', 'revoked'))
+    await expect(i.gw.post(target, { text: 'y' })).rejects.toThrow()
+    expect(types()).toContain('reply-failed')
+    expect(
+      i.gw.activity.list('c1', { type: 'breaker-opened', limit: 5 }).items[0]?.reason,
+    ).toContain('revoked')
   })
 })

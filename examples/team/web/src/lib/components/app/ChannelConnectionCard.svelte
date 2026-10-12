@@ -1,24 +1,23 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwise';
-	import CopyIcon from 'phosphor-svelte/lib/Copy';
 	import TelegramLogoIcon from 'phosphor-svelte/lib/TelegramLogo';
-	import UserPlusIcon from 'phosphor-svelte/lib/UserPlus';
 	import WarningIcon from 'phosphor-svelte/lib/Warning';
 	import { api } from '#lib/api/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
+	import ChannelActivity from '#lib/components/app/ChannelActivity.svelte';
 	import ChannelChatRow from '#lib/components/app/ChannelChatRow.svelte';
+	import ChannelInbox from '#lib/components/app/ChannelInbox.svelte';
+	import ChannelPeople from '#lib/components/app/ChannelPeople.svelte';
 	import {
 		agentChoices,
 		breakerText,
 		outboxSummary,
-		pairingText,
 		privacyWarning,
 		sortChats,
 		STATE_LABEL,
@@ -26,11 +25,8 @@
 		stateTone,
 		typeLabel,
 		type ChannelChat,
-		type ChannelConnection,
-		type ChannelLink,
-		type ChannelPairing
+		type ChannelConnection
 	} from '#lib/channels/model.js';
-	import { formatTime } from '#lib/format.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 
 	// One Telegram bot: its state, the agent it belongs to, the chats it may use, the employees
@@ -39,13 +35,8 @@
 
 	let tab = $state('chats');
 	let chats = $state<ChannelChat[]>([]);
-	let links = $state<ChannelLink[]>([]);
 	let agentId = $state(untrack(() => conn.binding?.agentId ?? ''));
 	let busy = $state(false);
-	let member = $state('owner');
-	let issued = $state<ChannelPairing | null>(null);
-	let revoke = $state<ChannelLink | null>(null);
-	let revokeOpen = $state(false);
 	let unbindOpen = $state(false);
 
 	const agents = $derived(agentChoices(agentsStore.state.agents));
@@ -59,19 +50,13 @@
 
 	async function loadDetail(): Promise<void> {
 		try {
-			const [c, l] = await Promise.all([
-				api.get('/channels/connections/{id}/chats', { params: { id: conn.id } }),
-				api.get('/channels/connections/{id}/links', { params: { id: conn.id } })
-			]);
-			chats = c.items;
-			links = l.items;
+			chats = (await api.get('/channels/connections/{id}/chats', { params: { id: conn.id } })).items;
 		} catch {
 			// the connection card still shows; detail follows on the next refresh
 		}
 	}
 	$effect(() => {
 		void conn.counts.chats;
-		void conn.counts.linked;
 		void conn.runtime.state;
 		void loadDetail();
 	});
@@ -104,21 +89,6 @@
 	const dropWebhook = (): Promise<void> => run('remove the webhook', () => api.post('/channels/connections/{id}/webhook/delete', { params: { id: conn.id } }), 'Webhook removed');
 	const resetBreaker = (): Promise<void> => run('close the breaker', () => api.post('/channels/connections/{id}/breaker/reset', { params: { id: conn.id } }), 'Sending resumed');
 
-	async function issue(): Promise<void> {
-		await run('create the link', async () => {
-			issued = await api.post('/channels/connections/{id}/pairing', { params: { id: conn.id }, body: { memberId: member.trim() || 'owner' } });
-		});
-	}
-	async function copy(text: string): Promise<void> {
-		try {
-			await navigator.clipboard.writeText(text);
-			toast.success('Copied');
-		} catch {
-			toast.error('Could not copy; select the link and copy it by hand');
-		}
-	}
-	const doRevoke = (): Promise<void> =>
-		revoke === null ? Promise.resolve() : run('revoke', () => api.delete('/channels/connections/{id}/links/{peerId}', { params: { id: conn.id, peerId: revoke!.peerId } }), 'Account unlinked');
 </script>
 
 <section class="flex flex-col gap-4 rounded-xl border border-border bg-card p-4" data-testid="channel-card" aria-label={conn.label}>
@@ -158,14 +128,16 @@
 		{#if bound}<Button size="sm" variant="ghost" onclick={() => (unbindOpen = true)} disabled={busy}>Unbind</Button>{/if}
 	</div>
 	{#if bound && conn.binding}
-		<p class="-mt-2 text-xs text-muted-foreground">{agentName(conn.binding.agentId)} answers here. Group chats must be allowed one by one below; direct messages only work for linked team members.</p>
+		<p class="-mt-2 text-xs text-muted-foreground">{agentName(conn.binding.agentId)} answers here. Group chats must be allowed one by one below; direct messages only work for people you link on the People tab.</p>
 	{/if}
 
 	{#if bound}
 		<Tabs.Root bind:value={tab}>
-			<Tabs.List>
+			<Tabs.List class="max-w-full justify-start overflow-x-auto">
 				<Tabs.Trigger value="chats">Chats {#if chats.length}<Badge shape="number" variant="secondary">{chats.length}</Badge>{/if}</Tabs.Trigger>
-				<Tabs.Trigger value="people">People {#if links.length}<Badge shape="number" variant="secondary">{links.length}</Badge>{/if}</Tabs.Trigger>
+				<Tabs.Trigger value="people">People {#if conn.counts.unlinked}<Badge shape="number" variant="warning" title="Not linked yet">{conn.counts.unlinked}</Badge>{:else if conn.counts.linked}<Badge shape="number" variant="secondary">{conn.counts.linked}</Badge>{/if}</Tabs.Trigger>
+				<Tabs.Trigger value="inbox">Inbox</Tabs.Trigger>
+				<Tabs.Trigger value="activity">Activity</Tabs.Trigger>
 				<Tabs.Trigger value="delivery">Delivery</Tabs.Trigger>
 			</Tabs.List>
 
@@ -188,45 +160,11 @@
 				{/if}
 			</Tabs.Content>
 
-			<Tabs.Content value="people" class="flex flex-col gap-4 pt-3">
-				<p class="text-xs text-muted-foreground">Only linked team members can talk to the agent in a direct message, and approvals in a chat are answered by the person who asked or an admin. Create a link, send it to the employee, and they press Start in Telegram.</p>
-				<div class="flex flex-wrap items-end gap-2">
-					<label class="flex min-w-40 flex-1 flex-col gap-1">
-						<span class="text-xs font-medium">Team member</span>
-						<Input bind:value={member} placeholder="owner" aria-label="Team member id" />
-					</label>
-					<Button size="sm" variant="outline" onclick={() => void issue()} disabled={busy || !conn.bot} data-testid="issue-link"><UserPlusIcon class="size-4" /> Create link</Button>
-				</div>
-				{#if !conn.bot}<p class="text-xs text-muted-foreground">The bot has to be running to create a link.</p>{/if}
-				{#if issued}
-					<div class="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 p-3" data-testid="pairing-link">
-						<span class="text-xs font-medium">Link for {issued.memberId} (shown once)</span>
-						<div class="flex items-center gap-2">
-							<code class="min-w-0 flex-1 truncate rounded bg-background px-2 py-1 text-xs">{issued.link}</code>
-							<Button size="icon-sm" variant="ghost" onclick={() => void copy(issued!.link)} aria-label="Copy the link"><CopyIcon class="size-4" /></Button>
-						</div>
-						<p class="text-xs text-muted-foreground">{pairingText(issued, Date.now())}</p>
-					</div>
-				{/if}
-				<div class="flex flex-col gap-2">
-					<h3 class="text-xs font-medium">Linked accounts</h3>
-					{#if links.length === 0}
-						<p class="text-sm text-muted-foreground">Nobody is linked yet.</p>
-					{:else}
-						<ul class="flex flex-col divide-y divide-border rounded-lg border border-border">
-							{#each links as l (l.peerId)}
-								<li class="flex items-center gap-3 p-3" data-testid="linked-account">
-									<div class="min-w-0 flex-1">
-										<div class="truncate text-sm">{l.name ?? `Telegram ${l.peerId}`} <span class="text-muted-foreground">→ {l.memberId}</span></div>
-										<div class="text-xs text-muted-foreground">Linked {formatTime(l.linkedAt)}</div>
-									</div>
-									<Button size="sm" variant="ghost" onclick={() => { revoke = l; revokeOpen = true; }}>Revoke</Button>
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</div>
-			</Tabs.Content>
+			<Tabs.Content value="people" class="pt-3"><ChannelPeople {conn} {onChange} /></Tabs.Content>
+
+			<Tabs.Content value="inbox" class="pt-3"><ChannelInbox {conn} /></Tabs.Content>
+
+			<Tabs.Content value="activity" class="pt-3"><ChannelActivity {conn} /></Tabs.Content>
 
 			<Tabs.Content value="delivery" class="flex flex-col gap-3 pt-3">
 				<div class="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
@@ -250,4 +188,3 @@
 </section>
 
 <ConfirmDialog bind:open={unbindOpen} title="Unbind this bot?" description="The agent stops answering on this bot and polling stops. Chats, linked accounts and stored messages stay." confirmLabel="Unbind" onConfirm={unbind} />
-<ConfirmDialog bind:open={revokeOpen} title="Unlink this account?" description="They can no longer talk to the agent in a direct message until they use a new link." confirmLabel="Unlink" onConfirm={doRevoke} />

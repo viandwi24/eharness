@@ -176,6 +176,13 @@
       "when": 1791765136363,
       "tag": "0024_massive_gauntlet",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791768016991,
+      "tag": "0025_freezing_thanos",
+      "breakpoints": true
     }
   ]
 }

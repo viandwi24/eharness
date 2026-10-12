@@ -851,6 +851,8 @@ export const channelMessages = sqliteTable(
     deletedAt: integer('deleted_at'),
     /** Change counter (insert, edit, delete): the cursor of collectors (`channels/store.ts`). */
     rev: integer('rev').notNull().default(0),
+    /** What the gateway did with an incoming message: `woke` the agent or `observed` it (null = sent by us, or older rows). */
+    disposition: text('disposition'),
     body: text('body').notNull(),
   },
   (t) => [
@@ -874,6 +876,75 @@ export const channelIdentities = sqliteTable(
   (t) => [
     primaryKey({ columns: [t.connectionId, t.peerId] }),
     index('channel_identities_member').on(t.connectionId, t.memberId),
+  ],
+)
+
+/**
+ * People who wrote to a connection and are not linked to a team member (P41 inbox). Metadata only:
+ * no message text is stored for them. `ignored` hides the row from "Not linked yet".
+ */
+export const channelUnlinked = sqliteTable(
+  'channel_unlinked',
+  {
+    connectionId: text('connection_id').notNull(),
+    peerId: text('peer_id').notNull(),
+    name: text('name'),
+    username: text('username'),
+    firstSeen: integer('first_seen').notNull(),
+    lastSeen: integer('last_seen').notNull(),
+    messageCount: integer('message_count').notNull().default(0),
+    ignored: integer('ignored').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.connectionId, t.peerId] })],
+)
+
+/**
+ * One row per conversation a connection has seen (inbox list): the reference the adapter gave and
+ * counters of what the gateway did with its messages. Metadata only; the text is in the sealed log.
+ */
+export const channelInbox = sqliteTable(
+  'channel_inbox',
+  {
+    connectionId: text('connection_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    ref: text('ref').notNull(),
+    woke: integer('woke').notNull().default(0),
+    observed: integer('observed').notNull().default(0),
+    dropped: integer('dropped').notNull().default(0),
+    firstAt: integer('first_at').notNull(),
+    lastAt: integer('last_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.connectionId, t.conversationId] }),
+    index('channel_inbox_last').on(t.connectionId, t.lastAt),
+  ],
+)
+
+/**
+ * The activity of a connection: what happened to each message and each outgoing message (woke,
+ * observed, dropped with a reason, reply queued/sent/retried/failed, approvals, breaker,
+ * needs-auth). Metadata only: never a message text. Pruned by age and count.
+ */
+export const channelEvents = sqliteTable(
+  'channel_events',
+  {
+    /** uuidv7: sorts by time, the paging cursor. */
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    at: integer('at').notNull(),
+    type: text('type').notNull(),
+    reason: text('reason'),
+    conversationId: text('conversation_id'),
+    peerId: text('peer_id'),
+    peerName: text('peer_name'),
+    platformId: text('platform_id'),
+    detail: text('detail'),
+  },
+  (t) => [
+    index('channel_events_conn').on(t.connectionId, t.id),
+    index('channel_events_type').on(t.connectionId, t.type, t.id),
+    index('channel_events_conversation').on(t.connectionId, t.conversationId, t.id),
+    index('channel_events_at').on(t.at),
   ],
 )
 

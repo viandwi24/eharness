@@ -9056,7 +9056,7 @@ export interface paths {
         };
         /**
          * Linked accounts
-         * @description Telegram accounts paired with team members (employees who opened their /start link).
+         * @description Platform accounts linked to team members.
          */
         get: {
             parameters: {
@@ -9108,25 +9108,9 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/channels/connections/{id}/pairing": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
         /**
-         * Issue a pairing link for a team member
-         * @description A one-time `/start` deep link (valid 24 hours). The person opens it in Telegram and the account is linked; only linked accounts reach the agent by DM. The link is shown once.
+         * Link an account to a team member
+         * @description Links a platform user id to a team member (the person from "Not linked yet", or an id you know). Only linked people reach the agent by direct message.
          */
         post: {
             parameters: {
@@ -9139,7 +9123,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["ChannelPairingBody"];
+                    "application/json": components["schemas"]["ChannelLinkBody"];
                 };
             };
             responses: {
@@ -9149,7 +9133,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ChannelPairing"];
+                        "application/json": components["schemas"]["ChannelLink"];
                     };
                 };
                 /** @description Invalid request */
@@ -9179,8 +9163,62 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description Not bound, or the bot is not running */
-                409: {
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Team members an account can be linked to */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Members */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelMemberList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -9190,6 +9228,366 @@ export interface paths {
                 };
             };
         };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/unlinked": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * People who wrote and are not linked yet
+         * @description Every direct message from somebody who is not linked is recorded here (who and how often, never what they wrote) and gets no answer unless the connection replies to unknown people. Link them to a team member or ignore them.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Also list the people marked as ignored. */
+                    includeIgnored?: "true" | "false";
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description People */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelUnlinkedList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/unlinked/{peerId}/ignored": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Ignore (or stop ignoring) an unlinked person
+         * @description An ignored person is hidden from "Not linked yet" and still gets no answers.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    peerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelIgnoreBody"];
+                };
+            };
+            responses: {
+                /** @description Done */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown person */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Conversations of a connection
+         * @description Groups, topics and direct messages the connection has seen, most recently active first: title, kind, the agent, a preview of the last stored message, counters (woke / observed / dropped) and the allowlist state.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    cursor?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Conversations */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelInboxPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/inbox/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The channel log of a conversation
+         * @description The stored messages of a conversation (incoming ones including observe-only, the replies of the agent, approval requests with their outcome, edits and deletions marked), oldest first within a page, newest page first. The log is sealed at rest and decrypted here for the holder of the web token.
+         */
+        get: {
+            parameters: {
+                query: {
+                    conversationId: string;
+                    limit?: number;
+                    before?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of the log */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConversationLog"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection or conversation */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Activity of a connection
+         * @description Events newest first: messages received (woke the agent, observed, dropped with a reason), replies queued, sent, retried or failed, approvals posted and answered, the outbound breaker, needs-auth. Metadata only: no message text. Filter by type or conversation; page with `before`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    type?: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
+                    conversationId?: string;
+                    before?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Events */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelActivityPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -12150,6 +12548,8 @@ export interface components {
             counts: {
                 chats: number;
                 linked: number;
+                /** @description People who wrote and are not linked yet (ignored ones excluded). */
+                unlinked: number;
                 outboxPending: number;
                 outboxFailed: number;
             };
@@ -12199,6 +12599,8 @@ export interface components {
             /** @enum {string} */
             dm: "pairing" | "disabled";
             allowBots: boolean;
+            /** @description Answer a direct message from somebody who is not linked with one short neutral line. Off (default): strangers get silence. */
+            replyToUnknown: boolean;
             admins: string[];
             historyLimit: number;
             defaults: {
@@ -12232,6 +12634,7 @@ export interface components {
             /** @enum {string} */
             dm?: "pairing" | "disabled";
             allowBots?: boolean;
+            replyToUnknown?: boolean;
             admins?: string[];
             historyLimit?: number;
             defaults?: {
@@ -12260,16 +12663,134 @@ export interface components {
             name?: string;
             linkedAt: number;
         };
-        ChannelPairing: {
-            memberId: string;
-            /** @description Deep link to open in Telegram. Shown once. */
-            link: string;
-            command: string;
-            expiresAt: number;
+        ChannelMemberList: {
+            items: components["schemas"]["ChannelMember"][];
         };
-        ChannelPairingBody: {
-            /** @default owner */
+        ChannelMember: {
+            id: string;
+            name: string;
+        };
+        ChannelUnlinkedList: {
+            items: components["schemas"]["ChannelUnlinked"][];
+        };
+        ChannelUnlinked: {
+            /** @description The platform user id. */
+            peerId: string;
+            name?: string;
+            username?: string;
+            firstSeen: number;
+            lastSeen: number;
+            messageCount: number;
+            ignored: boolean;
+        };
+        ChannelLinkBody: {
+            /** @description The numeric Telegram user id of the person. */
+            peerId: string;
             memberId: string;
+            name?: string;
+        };
+        ChannelIgnoreBody: {
+            ignored: boolean;
+        };
+        ChannelInboxPage: {
+            items: components["schemas"]["ChannelInboxConversation"][];
+            /** @description Pass as `cursor` for the next page. */
+            next?: string;
+        };
+        ChannelInboxConversation: {
+            conversationId: string;
+            /** @enum {string} */
+            kind: "dm" | "group" | "channel";
+            title: string;
+            container: string;
+            topic?: string;
+            agentId: string;
+            /** @description The conversation passes the allowlist now. */
+            allowed: boolean;
+            /** @description Messages that woke the agent. */
+            woke: number;
+            /** @description Messages stored as context only. */
+            observed: number;
+            /** @description Messages the gateway dropped. */
+            dropped: number;
+            firstAt: number;
+            lastAt: number;
+            preview?: {
+                text: string;
+                at: number;
+                self: boolean;
+                sender?: string;
+            };
+            sessionId?: string;
+            /** @description The agent's thread of this conversation, once it woke the agent. */
+            threadId?: string;
+        };
+        ChannelConversationLog: {
+            conversation: components["schemas"]["ChannelInboxConversation"];
+            /** @description Oldest first. */
+            items: components["schemas"]["ChannelLogMessage"][];
+            /** @description Pass as `before` to load older messages; absent at the start. */
+            next?: string;
+        };
+        ChannelLogMessage: {
+            id: string;
+            platformId: string;
+            at: number;
+            /** @description Sent by this connection (the agent). */
+            self: boolean;
+            senderId?: string;
+            senderName?: string;
+            text: string;
+            attachments: {
+                name?: string;
+                mediaType?: string;
+                size?: number;
+            }[];
+            replyTo?: {
+                messageId: string;
+                senderName?: string;
+                text?: string;
+            };
+            editedAt?: number;
+            deletedAt?: number;
+            edits?: {
+                at: number;
+                text: string;
+            }[];
+            /** @enum {string} */
+            disposition?: "woke" | "observed";
+            approval?: {
+                /** @enum {string} */
+                kind: "approval" | "question";
+                toolName: string;
+                /** @enum {string} */
+                status: "open" | "answered";
+                outcome?: string;
+                answeredBy?: string;
+                answeredAt?: number;
+            };
+        };
+        ChannelActivityPage: {
+            /** @description Newest first. */
+            items: components["schemas"]["ChannelActivity"][];
+            /** @description Pass as `before` for older events. */
+            next?: string;
+        };
+        ChannelActivity: {
+            id: string;
+            at: number;
+            /** @enum {string} */
+            type: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
+            /** @description A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`), a wake reason, or a short note. Never message text. */
+            reason?: string;
+            conversationId?: string;
+            conversationTitle?: string;
+            peerId?: string;
+            peerName?: string;
+            platformId?: string;
+            detail?: {
+                [key: string]: string | number | boolean;
+            };
         };
         ModelCallList: {
             items: components["schemas"]["ModelCallSummary"][];

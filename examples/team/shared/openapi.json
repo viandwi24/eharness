@@ -8985,6 +8985,10 @@
               "linked": {
                 "type": "integer"
               },
+              "unlinked": {
+                "type": "integer",
+                "description": "People who wrote and are not linked yet (ignored ones excluded)."
+              },
               "outboxPending": {
                 "type": "integer"
               },
@@ -8995,6 +8999,7 @@
             "required": [
               "chats",
               "linked",
+              "unlinked",
               "outboxPending",
               "outboxFailed"
             ]
@@ -9178,6 +9183,10 @@
           "allowBots": {
             "type": "boolean"
           },
+          "replyToUnknown": {
+            "type": "boolean",
+            "description": "Answer a direct message from somebody who is not linked with one short neutral line. Off (default): strangers get silence."
+          },
           "admins": {
             "type": "array",
             "items": {
@@ -9216,6 +9225,7 @@
           "groupPolicy",
           "dm",
           "allowBots",
+          "replyToUnknown",
           "admins",
           "historyLimit",
           "defaults"
@@ -9304,6 +9314,9 @@
             ]
           },
           "allowBots": {
+            "type": "boolean"
+          },
+          "replyToUnknown": {
             "type": "boolean"
           },
           "admins": {
@@ -9430,40 +9443,472 @@
           "linkedAt"
         ]
       },
-      "ChannelPairing": {
+      "ChannelMemberList": {
         "type": "object",
         "properties": {
-          "memberId": {
-            "type": "string"
-          },
-          "link": {
-            "type": "string",
-            "description": "Deep link to open in Telegram. Shown once."
-          },
-          "command": {
-            "type": "string"
-          },
-          "expiresAt": {
-            "type": "integer"
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelMember"
+            }
           }
         },
         "required": [
-          "memberId",
-          "link",
-          "command",
-          "expiresAt"
+          "items"
         ]
       },
-      "ChannelPairingBody": {
+      "ChannelMember": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "ChannelUnlinkedList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelUnlinked"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelUnlinked": {
+        "type": "object",
+        "properties": {
+          "peerId": {
+            "type": "string",
+            "description": "The platform user id."
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "firstSeen": {
+            "type": "integer"
+          },
+          "lastSeen": {
+            "type": "integer"
+          },
+          "messageCount": {
+            "type": "integer"
+          },
+          "ignored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "peerId",
+          "firstSeen",
+          "lastSeen",
+          "messageCount",
+          "ignored"
+        ]
+      },
+      "ChannelLinkBody": {
+        "type": "object",
+        "properties": {
+          "peerId": {
+            "type": "string",
+            "pattern": "^\\d{1,20}$",
+            "description": "The numeric Telegram user id of the person."
+          },
           "memberId": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 64,
-            "default": "owner"
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
           }
-        }
+        },
+        "required": [
+          "peerId",
+          "memberId"
+        ]
+      },
+      "ChannelIgnoreBody": {
+        "type": "object",
+        "properties": {
+          "ignored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ignored"
+        ]
+      },
+      "ChannelInboxPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelInboxConversation"
+            }
+          },
+          "next": {
+            "type": "string",
+            "description": "Pass as `cursor` for the next page."
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelInboxConversation": {
+        "type": "object",
+        "properties": {
+          "conversationId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dm",
+              "group",
+              "channel"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "container": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "allowed": {
+            "type": "boolean",
+            "description": "The conversation passes the allowlist now."
+          },
+          "woke": {
+            "type": "integer",
+            "description": "Messages that woke the agent."
+          },
+          "observed": {
+            "type": "integer",
+            "description": "Messages stored as context only."
+          },
+          "dropped": {
+            "type": "integer",
+            "description": "Messages the gateway dropped."
+          },
+          "firstAt": {
+            "type": "integer"
+          },
+          "lastAt": {
+            "type": "integer"
+          },
+          "preview": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "at": {
+                "type": "integer"
+              },
+              "self": {
+                "type": "boolean"
+              },
+              "sender": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "at",
+              "self"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string",
+            "description": "The agent's thread of this conversation, once it woke the agent."
+          }
+        },
+        "required": [
+          "conversationId",
+          "kind",
+          "title",
+          "container",
+          "agentId",
+          "allowed",
+          "woke",
+          "observed",
+          "dropped",
+          "firstAt",
+          "lastAt"
+        ]
+      },
+      "ChannelConversationLog": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "$ref": "#/components/schemas/ChannelInboxConversation"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelLogMessage"
+            },
+            "description": "Oldest first."
+          },
+          "next": {
+            "type": "string",
+            "description": "Pass as `before` to load older messages; absent at the start."
+          }
+        },
+        "required": [
+          "conversation",
+          "items"
+        ]
+      },
+      "ChannelLogMessage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "platformId": {
+            "type": "string"
+          },
+          "at": {
+            "type": "integer"
+          },
+          "self": {
+            "type": "boolean",
+            "description": "Sent by this connection (the agent)."
+          },
+          "senderId": {
+            "type": "string"
+          },
+          "senderName": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "mediaType": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "replyTo": {
+            "type": "object",
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "senderName": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "messageId"
+            ]
+          },
+          "editedAt": {
+            "type": "integer"
+          },
+          "deletedAt": {
+            "type": "integer"
+          },
+          "edits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "at",
+                "text"
+              ]
+            }
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "woke",
+              "observed"
+            ]
+          },
+          "approval": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "approval",
+                  "question"
+                ]
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "answered"
+                ]
+              },
+              "outcome": {
+                "type": "string"
+              },
+              "answeredBy": {
+                "type": "string"
+              },
+              "answeredAt": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "toolName",
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "platformId",
+          "at",
+          "self",
+          "text",
+          "attachments"
+        ]
+      },
+      "ChannelActivityPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelActivity"
+            },
+            "description": "Newest first."
+          },
+          "next": {
+            "type": "string",
+            "description": "Pass as `before` for older events."
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelActivity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "at": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "woke",
+              "observed",
+              "dropped",
+              "reply-queued",
+              "reply-sent",
+              "reply-retried",
+              "reply-failed",
+              "approval-posted",
+              "approval-answered",
+              "breaker-opened",
+              "needs-auth"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`), a wake reason, or a short note. Never message text."
+          },
+          "conversationId": {
+            "type": "string"
+          },
+          "conversationTitle": {
+            "type": "string"
+          },
+          "peerId": {
+            "type": "string"
+          },
+          "peerName": {
+            "type": "string"
+          },
+          "platformId": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "type"
+        ]
       },
       "ModelCallList": {
         "type": "object",
@@ -20031,7 +20476,7 @@
           "channels"
         ],
         "summary": "Linked accounts",
-        "description": "Telegram accounts paired with team members (employees who opened their /start link).",
+        "description": "Platform accounts linked to team members.",
         "security": [
           {
             "Bearer": []
@@ -20090,15 +20535,13 @@
             }
           }
         }
-      }
-    },
-    "/channels/connections/{id}/pairing": {
+      },
       "post": {
         "tags": [
           "channels"
         ],
-        "summary": "Issue a pairing link for a team member",
-        "description": "A one-time `/start` deep link (valid 24 hours). The person opens it in Telegram and the account is linked; only linked accounts reach the agent by DM. The link is shown once.",
+        "summary": "Link an account to a team member",
+        "description": "Links a platform user id to a team member (the person from \"Not linked yet\", or an id you know). Only linked people reach the agent by direct message.",
         "security": [
           {
             "Bearer": []
@@ -20120,7 +20563,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ChannelPairingBody"
+                "$ref": "#/components/schemas/ChannelLinkBody"
               }
             }
           }
@@ -20131,7 +20574,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelPairing"
+                  "$ref": "#/components/schemas/ChannelLink"
                 }
               }
             }
@@ -20165,9 +20608,521 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/members": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Team members an account can be linked to",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Members",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelMemberList"
+                }
+              }
+            }
           },
-          "409": {
-            "description": "Not bound, or the bot is not running",
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/unlinked": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "People who wrote and are not linked yet",
+        "description": "Every direct message from somebody who is not linked is recorded here (who and how often, never what they wrote) and gets no answer unless the connection replies to unknown people. Link them to a team member or ignore them.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Also list the people marked as ignored."
+            },
+            "required": false,
+            "description": "Also list the people marked as ignored.",
+            "name": "includeIgnored",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "People",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelUnlinkedList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/unlinked/{peerId}/ignored": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Ignore (or stop ignoring) an unlinked person",
+        "description": "An ignored person is hidden from \"Not linked yet\" and still gets no answers.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "peerId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelIgnoreBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/inbox": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Conversations of a connection",
+        "description": "Groups, topics and direct messages the connection has seen, most recently active first: title, kind, the agent, a preview of the last stored message, counters (woke / observed / dropped) and the allowlist state.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelInboxPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/inbox/messages": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "The channel log of a conversation",
+        "description": "The stored messages of a conversation (incoming ones including observe-only, the replies of the agent, approval requests with their outcome, edits and deletions marked), oldest first within a page, newest page first. The log is sealed at rest and decrypted here for the holder of the web token.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "conversationId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 40
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "before",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of the log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConversationLog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection or conversation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/activity": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Activity of a connection",
+        "description": "Events newest first: messages received (woke the agent, observed, dropped with a reason), replies queued, sent, retried or failed, approvals posted and answered, the outbound breaker, needs-auth. Metadata only: no message text. Filter by type or conversation; page with `before`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "woke",
+                "observed",
+                "dropped",
+                "reply-queued",
+                "reply-sent",
+                "reply-retried",
+                "reply-failed",
+                "approval-posted",
+                "approval-answered",
+                "breaker-opened",
+                "needs-auth"
+              ]
+            },
+            "required": false,
+            "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "conversationId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelActivityPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
             "content": {
               "application/json": {
                 "schema": {
