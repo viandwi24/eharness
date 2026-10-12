@@ -8899,6 +8899,423 @@ export interface paths {
         };
         trace?: never;
     };
+    "/channels/connections/{id}/chats/table": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chats and topics, one page
+         * @description The table behind the Chats pages: filters, sort and the count are done in the database. `level` picks chats (default), topics or both; `parentId` lists the topics of one chat; `allowed`, `admin`, `history` and `adminLog` filter on what the settings say. Returns `{ items, total, page, limit }`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Search text. */
+                    q?: string;
+                    /** @description Sort direction; the default depends on the sort column. */
+                    order?: "asc" | "desc";
+                    /** @description 1-based. */
+                    page?: number;
+                    /** @description Page size. */
+                    limit?: number;
+                    sort?: "title" | "lastSeen" | "firstSeen" | "state" | "kind" | "allowed" | "messages" | "backfill";
+                    /** @description `chat` (default): chats and channels, `topic`: forum topics, `all`: both. */
+                    level?: "chat" | "topic" | "all";
+                    /** @description Only the topics of this chat. */
+                    parentId?: string;
+                    kind?: "group" | "channel";
+                    state?: "active" | "closed" | "archived" | "left";
+                    /** @description The agent may be used here (the allowlist). */
+                    allowed?: "yes" | "no";
+                    /** @description The connection is an admin of the chat. */
+                    admin?: "yes" | "no";
+                    /** @description Accounts: a history window is set. */
+                    history?: "yes" | "no";
+                    /** @description Accounts: the admin log is read. */
+                    adminLog?: "yes" | "no";
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of chats */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelChatTablePage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/people/table": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * People, one page
+         * @description The table behind the People page: everybody the connection has seen. `role` filters on the role the team set, `linked` on the link to a team member; `q` searches name, username and platform id. Returns `{ items, total, page, limit }`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Search text. */
+                    q?: string;
+                    /** @description Sort direction; the default depends on the sort column. */
+                    order?: "asc" | "desc";
+                    /** @description 1-based. */
+                    page?: number;
+                    /** @description Page size. */
+                    limit?: number;
+                    sort?: "name" | "lastSeen" | "firstSeen" | "role" | "messages";
+                    /** @description The role the team set in the directory. */
+                    role?: "owner" | "admin" | "member" | "guest";
+                    /** @description Linked to a team member. */
+                    linked?: "yes" | "no";
+                    kind?: string;
+                    ignored?: "yes" | "no";
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of people */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelPeopleTablePage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/inbox/table": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Conversations, one page
+         * @description The table behind the Inbox page: `q` searches titles, `kind` filters, the count is exact. Returns `{ items, total, page, limit }`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Search text. */
+                    q?: string;
+                    /** @description Sort direction; the default depends on the sort column. */
+                    order?: "asc" | "desc";
+                    /** @description 1-based. */
+                    page?: number;
+                    /** @description Page size. */
+                    limit?: number;
+                    sort?: "lastAt" | "firstAt" | "title";
+                    kind?: "dm" | "group" | "channel" | "topic";
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of conversations */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelInboxTablePage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/activity/table": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Activity, one page
+         * @description The table behind the Activity pages: filter by type, conversation or person, search the reason, names and titles. Newest first by default. Metadata only. Returns `{ items, total, page, limit }`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Search text. */
+                    q?: string;
+                    /** @description Sort direction; the default depends on the sort column. */
+                    order?: "asc" | "desc";
+                    /** @description 1-based. */
+                    page?: number;
+                    /** @description Page size. */
+                    limit?: number;
+                    type?: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
+                    conversationId?: string;
+                    /** @description The platform user id of the person. */
+                    peerId?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of events */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelActivityTablePage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/reminders/table": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reminders, one page
+         * @description The table behind the Reminders page: `status`, `nodeId` and `q` filter, the count is exact. Returns `{ items, total, page, limit }`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Search text. */
+                    q?: string;
+                    /** @description Sort direction; the default depends on the sort column. */
+                    order?: "asc" | "desc";
+                    /** @description 1-based. */
+                    page?: number;
+                    /** @description Page size. */
+                    limit?: number;
+                    sort?: "createdAt" | "lastFiredAt" | "status" | "fireCount" | "text";
+                    status?: "active" | "done" | "cancelled";
+                    /** @description Only the reminders that post in this chat. */
+                    nodeId?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of reminders */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelRemindersTablePage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/channels/connections/{id}/people": {
         parameters: {
             query?: never;
@@ -9078,6 +9495,72 @@ export interface paths {
                 };
             };
         };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/people/{peerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One person */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    peerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The person */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelPerson"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown person */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -10175,6 +10658,76 @@ export interface paths {
                     };
                 };
                 /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/chats/{chatId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One chat or topic
+         * @description What the node sets itself, what is in force and where each value comes from.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    /** @description The node id of the chat or topic. */
+                    chatId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The node */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelNode"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection or node */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -14099,79 +14652,12 @@ export interface components {
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
         };
-        ChannelPersonList: {
-            items: components["schemas"]["ChannelPerson"][];
-        };
-        ChannelPerson: {
-            /** @description The platform user id. */
-            peerId: string;
-            name?: string;
-            username?: string;
-            kind: string;
-            isBot: boolean;
-            /** @enum {string} */
-            role: "owner" | "admin" | "member" | "guest";
-            /** @description `directory`, `linked-admin`, `linked-member`, `anonymous`, `bot` or `default`. */
-            roleSource: string;
-            /** @description The team set this role (a directory entry exists). */
-            explicit: boolean;
-            divisions: {
-                nodeId: string;
-                title: string;
-            }[];
-            /** @description The linked team member. */
-            memberId?: string;
-            platformAdmin: {
-                nodeId: string;
-                title: string;
-                /** @enum {string} */
-                role: "owner" | "admin";
-                customTitle?: string;
-            }[];
-            /** @description The platform lists this person as admin and the team has not decided. */
-            suggestion?: {
-                /** @enum {string} */
-                role: "owner" | "admin" | "member" | "guest";
-                reason: string;
-            };
-            /** @description What the person asked to be called or how they like answers (kept by the agent on request); never a role or a permission. */
-            note?: string;
-            firstSeen: number;
-            lastSeen: number;
-        };
-        ChannelPeopleSettings: {
-            /**
-             * @description Role of somebody who is neither in the directory nor linked to a team member.
-             * @enum {string}
-             */
-            defaultRole: "owner" | "admin" | "member" | "guest";
-            /** @description An approval nobody answers in a chat is declined after this long. */
-            approvalTtlHours: number;
-        };
-        ChannelPeopleSettingsBody: {
-            /**
-             * @description Role of somebody who is neither in the directory nor linked to a team member.
-             * @enum {string}
-             */
-            defaultRole?: "owner" | "admin" | "member" | "guest";
-            /** @description An approval nobody answers in a chat is declined after this long. */
-            approvalTtlHours?: number;
-        };
-        ChannelImportResult: {
-            chats: number;
-            people: number;
-            problems: string[];
-        };
-        ChannelRoleBody: {
-            /** @enum {string} */
-            role: "owner" | "admin" | "member" | "guest";
-            divisions?: string[];
-        };
-        ChannelReminderList: {
-            items: components["schemas"]["ChannelReminder"][];
-        };
-        ChannelNodeList: {
+        ChannelChatTablePage: {
             items: components["schemas"]["ChannelNode"][];
+            /** @description Rows that match the filters. */
+            total: number;
+            page: number;
+            limit: number;
         };
         ChannelNode: {
             /** @description The node id. */
@@ -14191,6 +14677,8 @@ export interface components {
             state: "active" | "closed" | "archived" | "deleted" | "left";
             /** @description Has child nodes (a forum). */
             container: boolean;
+            /** @description How many topics a forum has. */
+            topics?: number;
             /** @description Messages can be sent and stored here. */
             postable: boolean;
             /** @description What the connection is in the node: `member`, `admin`, `owner` or `none`. */
@@ -14354,6 +14842,159 @@ export interface components {
             /** @description Tone, language and length of this place for the agent persona (max 1000 characters). Inherited. It never widens tools or loosens rules. */
             personaOverlay?: string;
         } | null;
+        ChannelPeopleTablePage: {
+            items: components["schemas"]["ChannelPerson"][];
+            /** @description Rows that match the filters. */
+            total: number;
+            page: number;
+            limit: number;
+        };
+        ChannelPerson: {
+            /** @description The platform user id. */
+            peerId: string;
+            name?: string;
+            username?: string;
+            kind: string;
+            isBot: boolean;
+            /** @enum {string} */
+            role: "owner" | "admin" | "member" | "guest";
+            /** @description `directory`, `linked-admin`, `linked-member`, `anonymous`, `bot` or `default`. */
+            roleSource: string;
+            /** @description The team set this role (a directory entry exists). */
+            explicit: boolean;
+            divisions: {
+                nodeId: string;
+                title: string;
+            }[];
+            /** @description The linked team member. */
+            memberId?: string;
+            platformAdmin: {
+                nodeId: string;
+                title: string;
+                /** @enum {string} */
+                role: "owner" | "admin";
+                customTitle?: string;
+            }[];
+            /** @description The platform lists this person as admin and the team has not decided. */
+            suggestion?: {
+                /** @enum {string} */
+                role: "owner" | "admin" | "member" | "guest";
+                reason: string;
+            };
+            /** @description What the person asked to be called or how they like answers (kept by the agent on request); never a role or a permission. */
+            note?: string;
+            firstSeen: number;
+            lastSeen: number;
+            /** @description Hidden from "Not linked yet" (the team chose to ignore this person). */
+            ignored?: boolean;
+            /** @description Direct messages sent while not linked (a count, never a text). */
+            directMessages?: number;
+        };
+        ChannelInboxTablePage: {
+            items: components["schemas"]["ChannelInboxConversation"][];
+            /** @description Rows that match the filters. */
+            total: number;
+            page: number;
+            limit: number;
+        };
+        ChannelInboxConversation: {
+            /** @description The node id. */
+            conversationId: string;
+            /** @enum {string} */
+            kind: "dm" | "group" | "channel";
+            title: string;
+            container: string;
+            topic?: string;
+            parentId?: string;
+            parentTitle?: string;
+            agentId: string;
+            /** @description The conversation passes the allowlist now. */
+            allowed: boolean;
+            /** @description Messages that woke the agent. */
+            woke: number;
+            /** @description Messages stored as context only. */
+            observed: number;
+            /** @description Messages the gateway dropped. */
+            dropped: number;
+            firstAt: number;
+            lastAt: number;
+            preview?: {
+                text: string;
+                at: number;
+                self: boolean;
+                sender?: string;
+            };
+            sessionId?: string;
+            /** @description The agent's thread of this conversation, once it woke the agent. */
+            threadId?: string;
+        };
+        ChannelActivityTablePage: {
+            items: components["schemas"]["ChannelActivity"][];
+            /** @description Rows that match the filters. */
+            total: number;
+            page: number;
+            limit: number;
+        };
+        ChannelActivity: {
+            id: string;
+            at: number;
+            /** @enum {string} */
+            type: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
+            /** @description A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text. */
+            reason?: string;
+            conversationId?: string;
+            conversationTitle?: string;
+            peerId?: string;
+            peerName?: string;
+            platformId?: string;
+            detail?: {
+                [key: string]: string | number | boolean;
+            };
+        };
+        ChannelRemindersTablePage: {
+            items: components["schemas"]["ChannelReminder"][];
+            /** @description Rows that match the filters. */
+            total: number;
+            page: number;
+            limit: number;
+        };
+        ChannelPersonList: {
+            items: components["schemas"]["ChannelPerson"][];
+        };
+        ChannelPeopleSettings: {
+            /**
+             * @description Role of somebody who is neither in the directory nor linked to a team member.
+             * @enum {string}
+             */
+            defaultRole: "owner" | "admin" | "member" | "guest";
+            /** @description An approval nobody answers in a chat is declined after this long. */
+            approvalTtlHours: number;
+        };
+        ChannelPeopleSettingsBody: {
+            /**
+             * @description Role of somebody who is neither in the directory nor linked to a team member.
+             * @enum {string}
+             */
+            defaultRole?: "owner" | "admin" | "member" | "guest";
+            /** @description An approval nobody answers in a chat is declined after this long. */
+            approvalTtlHours?: number;
+        };
+        ChannelImportResult: {
+            chats: number;
+            people: number;
+            problems: string[];
+        };
+        ChannelRoleBody: {
+            /** @enum {string} */
+            role: "owner" | "admin" | "member" | "guest";
+            divisions?: string[];
+        };
+        ChannelReminderList: {
+            items: components["schemas"]["ChannelReminder"][];
+        };
+        ChannelNodeList: {
+            items: components["schemas"]["ChannelNode"][];
+        };
         ChannelSelectBody: {
             selected: boolean;
         };
@@ -14585,37 +15226,6 @@ export interface components {
             /** @description Pass as `cursor` for the next page. */
             next?: string;
         };
-        ChannelInboxConversation: {
-            /** @description The node id. */
-            conversationId: string;
-            /** @enum {string} */
-            kind: "dm" | "group" | "channel";
-            title: string;
-            container: string;
-            topic?: string;
-            parentId?: string;
-            parentTitle?: string;
-            agentId: string;
-            /** @description The conversation passes the allowlist now. */
-            allowed: boolean;
-            /** @description Messages that woke the agent. */
-            woke: number;
-            /** @description Messages stored as context only. */
-            observed: number;
-            /** @description Messages the gateway dropped. */
-            dropped: number;
-            firstAt: number;
-            lastAt: number;
-            preview?: {
-                text: string;
-                at: number;
-                self: boolean;
-                sender?: string;
-            };
-            sessionId?: string;
-            /** @description The agent's thread of this conversation, once it woke the agent. */
-            threadId?: string;
-        };
         ChannelConversationLog: {
             conversation: components["schemas"]["ChannelInboxConversation"];
             /** @description Oldest first. */
@@ -14666,22 +15276,6 @@ export interface components {
             items: components["schemas"]["ChannelActivity"][];
             /** @description Pass as `before` for older events. */
             next?: string;
-        };
-        ChannelActivity: {
-            id: string;
-            at: number;
-            /** @enum {string} */
-            type: "woke" | "observed" | "dropped" | "reply-queued" | "reply-sent" | "reply-retried" | "reply-failed" | "approval-posted" | "approval-answered" | "breaker-opened" | "needs-auth";
-            /** @description A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text. */
-            reason?: string;
-            conversationId?: string;
-            conversationTitle?: string;
-            peerId?: string;
-            peerName?: string;
-            platformId?: string;
-            detail?: {
-                [key: string]: string | number | boolean;
-            };
         };
         ModelCallList: {
             items: components["schemas"]["ModelCallSummary"][];

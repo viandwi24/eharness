@@ -20,7 +20,13 @@ import type {
 } from '../../domain/channels.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { ChannelGateway } from '../channels/index.ts'
-import { countChats, listNodeViews, nodeView, writePolicy } from '../channels/node-views.ts'
+import {
+  countChats,
+  listNodeViews,
+  nodeView,
+  pageNodeViews,
+  writePolicy,
+} from '../channels/node-views.ts'
 import type { ConnectionConfig, ScopePolicy } from '../channels/policy.ts'
 import {
   createTelegramAdapter,
@@ -429,6 +435,17 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
     async chats(id) {
       await recordOf(id)
       return listNodeViews(gateway, id)
+    },
+    async chatsTable(id, query) {
+      await recordOf(id)
+      return pageNodeViews(gateway, id, query)
+    },
+    async chat(id, nodeId) {
+      await recordOf(id)
+      const node = gateway.nodes.get(nodeId)
+      if (node === undefined || node.connectionId !== id || node.kind === 'direct')
+        throw notFound('chat', nodeId)
+      return nodeView(gateway, node) as NonNullable<ReturnType<typeof nodeView>>
     },
     async setChatPolicy(id, nodeId, input) {
       await recordOf(id)

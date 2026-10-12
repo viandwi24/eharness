@@ -37,7 +37,7 @@ docs/     architecture, API, operations
   workspace and per-agent memory.
 - **Routines**: cron / interval / one-shot prompts, safe with several instances.
 - **Connectors** (Claude style): built-in Files, Memory, Planning, Web, Ask the user and Team; GitHub and any remote MCP URL, connected once for the workspace (available to all agents, each agent may override) or for one agent; per agent each capability is Allowed, Ask first or Off. Secrets are encrypted, writes of external connectors always ask, even in Bypass mode. Custom connectors are added like in Claude: **Add custom connector** → name + remote MCP URL → the server probes it (OAuth detected or not) → choose *Sign in now*, *Sign in when needed* or *No sign in*, an optional OAuth client and request headers → each one becomes its own card. Their tool prefix is a slug of the name taken at creation, so renaming never renames tools. The composer's tools menu switches connectors per chat, and **Tool access** (Auto / On demand) decides whether third-party tools are loaded up front or found through `tool_search`.
-- **Channels** (Telegram bot): the **Channels** page connects a bot (token from @BotFather), binds it to an agent, lists the chats it was added to with a policy each (wake on mention, always, or observe only; reply or post-by-tool; retention), lists people who wrote and are not linked yet (link them to a team member, or ignore them; strangers get silence), shows an inbox of conversations with their logs and an activity feed, and the outbound queue. Groups, forum topics, channels and DMs; approvals with buttons. See [Telegram bot](#telegram-bot).
+- **Channels** (Telegram bot): the **Channels** page lists your connected channels as cards; open one for its own pages (overview, chats, people, inbox, activity, reminders, delivery, settings): connect a bot (token from @BotFather), bind it to an agent, see the chats it was added to with a policy each (wake on mention, always, or observe only; reply or post-by-tool; retention), the people who wrote (link them to a team member, or ignore them; strangers get silence), the conversations with their logs, an activity feed and the outbound queue, all as searchable, sortable, paged tables. Groups, forum topics, channels and DMs; approvals with buttons. See [Telegram bot](#telegram-bot).
 - **Persona**: who an agent is is editable and versioned, from the agent dialog's **Persona** tab or by asking the agent in a chat: identity, voice and preferences, admin-only operating rules, per-chat overlays (Channels page) and notes on how people like to be addressed. Owners and admins confirm a change (a button in the chat); members can only propose it; every version has its author, source and diff and can be reverted. A persona never weakens the rules: roles and approvals stay code. See [the walkthrough](../../docs/guides/walkthrough-server.md#28f-the-persona-of-an-agent-editable-versioned-never-above-the-rules-p42).
 - **Cost controls**: a per-workspace USD budget on a shared ledger and a cap on concurrent
   delegations. Multi-agent runs cost many times a chat, see the
@@ -127,14 +127,15 @@ drizzle-kit (`bun run db:generate`) and applied at boot.
 3. In the web app open **Channels** -> **Connect a channel** -> **Telegram bot** and paste the token (it is stored
    encrypted and never shown again). The page tells you whether privacy mode is on.
 4. **Bind** the connection to an agent. Add the bot to a group and write a message; the chat shows
-   up under **Chats**. Allow it and choose when the agent wakes.
-5. **People**: anybody who writes to the bot in a direct message shows up under **Not linked yet**
-   (name, id, how often; never what they wrote) and gets no answer. Press **Link to member…** to
-   link them to a team member, or **Ignore**; **Add by Telegram user ID** links somebody who has not
-   written yet. Only linked accounts can message the agent directly. "Reply to unknown people"
-   (off by default) makes the bot answer strangers with one neutral line.
-6. **Inbox** shows every conversation (groups, topics, direct messages) with counters and the
-   channel log; **Activity** shows what happened to each message and reply.
+   up on the channel's **Chats** page. Open it, allow it and choose when the agent wakes.
+5. **People**: anybody who writes to the bot in a direct message shows up in the people table (filter
+   *Not linked*: name, id, how often; never what they wrote) and gets no answer. Open the person and press
+   **Link** to link them to a team member, or **Ignore**; **Link by Telegram user ID** (under the table)
+   links somebody who has not written yet. Only linked accounts can message the agent directly. "Reply to unknown people"
+   (Settings, off by default) makes the bot answer strangers with one neutral line.
+6. **Inbox** lists every conversation (groups, topics, direct messages) with counters; open one for its
+   channel log. **Activity** shows what happened to each message and reply. Every list is a table you can
+   search, filter, sort and page; the address keeps the search and page.
 
 A bot can only receive updates by one method at a time: if a webhook is set the page offers to
 remove it. Run one server process per bot. `TEAM_TELEGRAM_API_ROOT` points at a local Bot API
@@ -145,29 +146,29 @@ notes in [P41](../../docs/plans/P41-team-channels.md) and ingest only chats you 
 
 For a company group (for example a forum supergroup with a topic per division):
 
-1. Add the bot to the group as an **administrator** (so it receives every message and topic), allow the chat on
-   **Channels** -> **Chats** (topics inherit it), and keep "Full log" on.
-2. **Channels** -> **People**: **Read the chat admins** imports the creator and administrators as
+1. Add the bot to the group as an **administrator** (so it receives every message and topic), allow the chat on the channel's
+   **Chats** page (topics inherit it), and keep "Full log" on.
+2. The channel's **People** page: **Read the chat admins** imports the creator and administrators as
    *suggestions* ("suggested: admin in TEAMKU"); press **Confirm as ...** to make one a role. Give everybody a role
    (`owner`, `admin`, `member`, `guest`) and divisions (the topics a member may read). Link yourself to the
    team member `owner` so you are the owner. Somebody who is not in the directory is a `guest` (change the
-   default on the same tab). Roles never come from chat text.
+   default on the channel's Settings page). Roles never come from chat text.
 3. What each role may do: owner and admin approve in a chat, set reminders for others, schedule and use write
    tools; a member reads and recaps the chats of their divisions and sets their own reminders; a guest only gets
    answers. Every message the agent sees carries a header with the sender's role, topic and time.
 4. **Reminders**: ask in the chat ("remind the group tomorrow at 9:00", "remind @Budi at 15:00"). The confirmation
    states the absolute time and topic in the team timezone (Settings). They post as written, without a model call,
-   and appear on the **Reminders** tab where you can cancel them.
+   and appear on the channel's **Reminders** page where you can cancel them.
 5. **Recaps**: "note today's chat" reads the allowed topics of the day in chunks and saves a note under
    `/library/recaps` with its source range; it says when the log starts after the window.
-6. **Proactive posts** (routines, heartbeat): off until you allow them per chat or topic (Chats -> Proactive posts:
+6. **Proactive posts** (routines, heartbeat): off until you allow them per chat or topic (a chat's page, Proactive posts:
    quiet hours, digest, mention limit).
-7. An approval request nobody answers expires after 24 hours (People tab); a new message from the person who asked
+7. An approval request nobody answers expires after 24 hours (channel Settings); a new message from the person who asked
    declines it with their message as the note.
-8. **Trusted internal group**: on **Chats**, "People and tone" -> *Trusted internal group* makes people who are not in
+8. **Trusted internal group**: on a chat's page, *Trusted internal group* makes people who are not in
    the directory *members* in that chat (inherited by its topics) instead of guests. Admin and owner stay explicit
-   (People tab). You get one bell notification per new unknown person and per unconfirmed platform-admin
-   suggestion, linking to the People tab. *Reply style* (brief, normal, detailed) sets the default reply length of
+   (People page). You get one bell notification per new unknown person and per unconfirmed platform-admin
+   suggestion, linking to the People page. *Reply style* (brief, normal, detailed) sets the default reply length of
    the chat; the agent's own persona wins over the default.
 9. **Who the agent is in a chat**: the persona and instructions of the agent own voice and tone. The channel layer
    adds a short per-turn *medium* reminder (where it is, default reply length) and a few non-overridable rules:

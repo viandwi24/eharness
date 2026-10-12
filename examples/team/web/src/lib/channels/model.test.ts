@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	agentChoices,
+	attentionOf,
+	channelHref,
+	isHealthy,
+	sectionOfPath,
+	sectionsOf,
 	ago,
 	allowlistLabel,
 	approvalOutcome,
@@ -11,20 +16,15 @@ import {
 	peerIdError,
 	previewLine,
 	threadHref,
-	unlinkedDetail,
-	unlinkedLabel,
 	breakerText,
-	chatSummary,
 	divisionOptions,
 	platformAdminText,
 	proactiveBody,
 	proactiveError,
 	roleLocked,
-	sortPeople,
 	type ChannelPerson,
 	formChanged,
 	formOfChat,
-	chatTree,
 	originText,
 	outboxSummary,
 	policyBody,
@@ -36,7 +36,6 @@ import {
 	quietText,
 	limitsBody,
 	lastWindowDays,
-	sortChats,
 	sortConnections,
 	stateHint,
 	stateTone,
@@ -122,7 +121,7 @@ describe('chat policy form', () => {
 		const topic = chat({ policy: { enabled: true, wake: 'never' }, inherited: { enabled: { from: 'ancestor', nodeId: 'n-0' }, wake: { from: 'node', nodeId: 'n-1' } } });
 		expect(formOfChat(topic).allowed).toBe('');
 	});
-	test('where a setting comes from, and the tree of a forum', () => {
+	test('where a setting comes from', () => {
 		const titles: Record<string, string> = { 'n-0': 'Company' };
 		const titleOf = (id: string): string => titles[id] ?? id;
 		const c = chat({ inherited: { wake: { from: 'ancestor', nodeId: 'n-0' }, delivery: { from: 'connection' }, retentionDays: { from: 'default' }, observe: { from: 'node', nodeId: 'n-1' } } });
@@ -130,16 +129,6 @@ describe('chat policy form', () => {
 		expect(originText(c, 'delivery', titleOf)).toBe('connection default');
 		expect(originText(c, 'retentionDays', titleOf)).toBe('default');
 		expect(originText(c, 'observe', titleOf)).toBe('set here');
-		const forum = chat({ id: 'f', title: 'Company', container: true, postable: false, lastSeen: 5 });
-		const general = chat({ id: 'g', parentId: 'f', title: 'General', platformType: 'telegram:forum_general' });
-		const billing = chat({ id: 'b', parentId: 'f', title: 'Billing', platformType: 'telegram:forum_topic' });
-		const roadmap = chat({ id: 'r', parentId: 'f', title: 'Roadmap', platformType: 'telegram:forum_topic' });
-		const other = chat({ id: 'o', title: 'Other', lastSeen: 9 });
-		const tree = chatTree([roadmap, other, billing, forum, general]);
-		expect(tree.map((b) => b.chat.id)).toEqual(['o', 'f']);
-		expect(tree[1]?.children.map((b) => b.chat.title)).toEqual(['General', 'Billing', 'Roadmap']);
-		// a node whose parent is not listed is a root
-		expect(chatTree([billing]).map((b) => b.chat.id)).toEqual(['b']);
 	});
 	test('retention is whole days from 1 to 3650', () => {
 		expect(retentionError('')).toBeUndefined();
@@ -148,15 +137,6 @@ describe('chat policy form', () => {
 		expect(retentionError('1.5')).toBeDefined();
 		expect(retentionError('9999')).toBeDefined();
 		expect(retentionError('abc')).toBeDefined();
-	});
-	test('summary and ordering: allowed first, then still-a-member, then newest', () => {
-		expect(chatSummary(chat())).toContain('Not allowed');
-		expect(chatSummary(chat({ effective: effective({ allowed: true, wake: 'always', retentionDays: 14 }) }))).toBe('Every message · Reply in chat · 14 days');
-		const a = chat({ id: 'a', lastSeen: 5 });
-		const b = chat({ id: 'b', lastSeen: 9 });
-		const c = chat({ id: 'c', lastSeen: 1, effective: effective({ allowed: true }) });
-		const gone = chat({ id: 'd', lastSeen: 99, state: 'left', member: 'none' });
-		expect(sortChats([a, gone, b, c]).map((x) => x.id)).toEqual(['c', 'b', 'a', 'd']);
 	});
 });
 
@@ -214,12 +194,7 @@ describe('channel types and the account card', () => {
 });
 
 describe('linking without links', () => {
-	test('names, details and id validation', () => {
-		const u = { peerId: '42', name: 'Ana', username: 'ana', firstSeen: 0, lastSeen: 3 * 60_000, messageCount: 3, ignored: false };
-		expect(unlinkedLabel(u)).toBe('Ana');
-		expect(unlinkedLabel({ peerId: '7', username: 'gus' })).toBe('@gus');
-		expect(unlinkedLabel({ peerId: '7' })).toBe('Telegram 7');
-		expect(unlinkedDetail(u, 5 * 60_000)).toBe('id 42 · @ana · 3 messages · last 2 min ago');
+	test('id validation', () => {
 		expect(peerIdError('123456789')).toBeUndefined();
 		expect(peerIdError(' 42 ')).toBeUndefined();
 		expect(peerIdError('abc')).toContain('number');
@@ -315,17 +290,7 @@ describe('proactive policy and the people directory', () => {
 		lastSeen: 1,
 		...over
 	});
-	test('the order is stable: a role change or a suggestion never moves a row; anonymous admins and bots are locked; admin status reads as the platform says', () => {
-		const people = [
-			person({ peerId: 'a', name: 'Gina', lastSeen: 9 }),
-			person({ peerId: 'b', name: 'Budi', role: 'owner', explicit: true, roleSource: 'directory', lastSeen: 1 }),
-			person({ peerId: 'c', name: 'Ana', suggestion: { role: 'admin', reason: 'admin in TEAMKU' }, lastSeen: 2 })
-		];
-		const before = sortPeople(people).map((p) => p.peerId);
-		expect(before).toEqual(['c', 'b', 'a']);
-		// Gina becomes an admin and was seen again: still after Budi
-		const changed = people.map((p) => (p.peerId === 'a' ? { ...p, role: 'admin' as const, lastSeen: 99 } : p));
-		expect(sortPeople(changed).map((p) => p.peerId)).toEqual(before);
+	test('anonymous admins and bots are locked; admin status reads as the platform says', () => {
 		expect(roleLocked(person({ roleSource: 'anonymous' }))).toBe(true);
 		expect(roleLocked(person())).toBe(false);
 		expect(platformAdminText(person({ platformAdmin: [{ nodeId: 'n', title: 'TEAMKU', role: 'owner', customTitle: 'CEO' }] }))).toBe('creator in TEAMKU (CEO)');
@@ -384,5 +349,43 @@ describe('chat row labels (U2, U3, U5)', () => {
 	test('inherited quiet hours read as the values in force', () => {
 		expect(quietText({ from: '23:00', to: '06:30' })).toBe('23:00 to 06:30');
 		expect(quietText(undefined)).toBeUndefined();
+	});
+});
+
+describe('navigation of a connection', () => {
+	const conn = (over: Record<string, unknown>) => ({ binding: { agentId: 'a' }, transport: 'bot', ...over }) as never;
+	test('an unbound connection has only the overview and the settings', () => {
+		expect(sectionsOf(conn({ binding: null })).map((s) => s.id)).toEqual(['overview', 'settings']);
+		expect(sectionsOf(null).map((s) => s.id)).toEqual(['overview', 'settings']);
+	});
+	test('a bot has reminders and delivery, an account has history and the admin log', () => {
+		expect(sectionsOf(conn({})).map((s) => s.id)).toEqual(['overview', 'chats', 'people', 'inbox', 'activity', 'reminders', 'delivery', 'settings']);
+		expect(sectionsOf(conn({ transport: 'user' })).map((s) => s.id)).toEqual(['overview', 'chats', 'people', 'inbox', 'activity', 'delivery', 'history', 'admin-log', 'settings']);
+	});
+	test('paths and sections', () => {
+		expect(channelHref('c 1', 'chats', 'n/1')).toBe('/channels/c%201/chats/n%2F1');
+		expect(channelHref('c1')).toBe('/channels/c1');
+		expect(sectionOfPath('/channels/c1/people/42', 'c1')).toBe('people');
+		expect(sectionOfPath('/channels/c1', 'c1')).toBe('overview');
+		expect(sectionOfPath('/channels/c1/unknown', 'c1')).toBe('overview');
+	});
+});
+
+describe('what needs attention', () => {
+	const base = { runtime: { state: 'running', since: 1 }, counts: { chats: 1, linked: 1, unlinked: 0, outboxPending: 0, outboxFailed: 0 }, binding: { agentId: 'a' }, transport: 'bot' };
+	test('a running connection with nothing waiting is healthy', () => {
+		expect(attentionOf(base as never)).toEqual([]);
+		expect(isHealthy(base as never)).toBe(true);
+	});
+	test('unlinked people, failed sends, an open breaker and a bad state are listed in plain words', () => {
+		const c = { ...base, runtime: { state: 'needs-auth', since: 1 }, counts: { ...base.counts, unlinked: 2, outboxFailed: 1 }, breaker: { open: true, until: 5, reason: 'x' } };
+		const list = attentionOf(c as never);
+		expect(list.length).toBe(4);
+		expect(list.join(' ')).toContain('2 people have written directly');
+		expect(list.join(' ')).toContain('1 message could not be sent');
+		expect(isHealthy(c as never)).toBe(false);
+	});
+	test('an unbound connection says so', () => {
+		expect(attentionOf({ ...base, binding: null, runtime: { state: 'unbound', since: 1 } } as never)).toEqual(['Not bound to an agent yet.']);
 	});
 });

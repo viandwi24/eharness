@@ -4,10 +4,12 @@
  * to a node. Shared by every transport service; platform neutral.
  */
 import type {
+  ChannelChatsQuery,
   ChannelNodeView,
   ChannelPolicy,
   ChannelPolicyInput,
   ChannelSettingKey,
+  TablePage,
 } from '../../domain/channels.ts'
 import { invalid } from '../../domain/errors.ts'
 import { checkOverlay } from '../../domain/persona.ts'
@@ -75,6 +77,7 @@ export function nodeView(
     ...(typeof username === 'string' ? { username } : {}),
     state: node.state,
     container: node.traits.container,
+    ...(node.traits.container ? { topics: gateway.nodes.children(node.id).length } : {}),
     postable: node.traits.postable,
     ...(access === undefined || access.member === 'unknown' ? {} : { member: access.member }),
     ...(access?.canPost === null || access?.canPost === undefined
@@ -124,6 +127,28 @@ export function listNodeViews(
     if (view !== undefined) out.push(view)
   }
   return out
+}
+
+/**
+ * One page of the chats or topics of a connection: filtered, sorted and counted in SQL, only the
+ * rows of the page are resolved into views.
+ */
+export function pageNodeViews(
+  gateway: ChannelGateway,
+  connectionId: string,
+  query: ChannelChatsQuery,
+  options: { account?: (node: NodeRow) => ChannelNodeView['account'] | undefined } = {},
+): TablePage<ChannelNodeView> {
+  const page = gateway.nodes.table(connectionId, query, {
+    allowedByDefault: gateway.config(connectionId)?.groupPolicy === 'open',
+  })
+  const items: ChannelNodeView[] = []
+  for (const node of page.items) {
+    const account = options.account?.(node)
+    const view = nodeView(gateway, node, account === undefined ? {} : { account })
+    if (view !== undefined) items.push(view)
+  }
+  return { items, total: page.total, page: query.page, limit: query.limit }
 }
 
 /** The number of chats (rooms and spaces) of a connection. */

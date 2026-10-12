@@ -3,6 +3,8 @@ import type { Deps } from '../../app/ports.ts'
 import {
   ChannelActivityPageSchema,
   ChannelActivityQuery,
+  ChannelActivityTablePageSchema,
+  ChannelActivityTableQuery,
   ChannelAdminLogBodySchema,
   ChannelAdminLogRunSchema,
   ChannelBackfillBodySchema,
@@ -10,6 +12,8 @@ import {
   ChannelChatListSchema,
   ChannelChatParam,
   ChannelChatSchema,
+  ChannelChatsTableQuery,
+  ChannelChatTablePageSchema,
   ChannelConnectionListSchema,
   ChannelConnectionSchema,
   ChannelConversationLogSchema,
@@ -18,6 +22,8 @@ import {
   ChannelImportResultSchema,
   ChannelInboxPageSchema,
   ChannelInboxQuery,
+  ChannelInboxTablePageSchema,
+  ChannelInboxTableQuery,
   ChannelLimitsBodySchema,
   ChannelLinkBodySchema,
   ChannelLinkListSchema,
@@ -27,12 +33,16 @@ import {
   ChannelMessagesQuery,
   ChannelPeopleSettingsBodySchema,
   ChannelPeopleSettingsSchema,
+  ChannelPeopleTablePageSchema,
+  ChannelPeopleTableQuery,
   ChannelPersonListSchema,
   ChannelPersonSchema,
   ChannelPolicyBodySchema,
   ChannelReminderListSchema,
   ChannelReminderParam,
   ChannelReminderQuery,
+  ChannelRemindersTablePageSchema,
+  ChannelRemindersTableQuery,
   ChannelRoleBodySchema,
   ChannelSelectBodySchema,
   ChannelUnlinkedListSchema,
@@ -108,6 +118,35 @@ const chats = createRoute({
   responses: {
     200: { description: 'Chats', content: content(ChannelChatListSchema) },
     404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const chatsTable = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/chats/table',
+  tags,
+  summary: 'Chats and topics, one page',
+  description:
+    'The table behind the Chats pages: filters, sort and the count are done in the database. `level` picks chats (default), topics or both; `parentId` lists the topics of one chat; `allowed`, `admin`, `history` and `adminLog` filter on what the settings say. Returns `{ items, total, page, limit }`.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelChatsTableQuery },
+  responses: {
+    200: { description: 'A page of chats', content: content(ChannelChatTablePageSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const chatGet = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/chats/{chatId}',
+  tags,
+  summary: 'One chat or topic',
+  description: 'What the node sets itself, what is in force and where each value comes from.',
+  security,
+  request: { params: ChannelChatParam },
+  responses: {
+    200: { description: 'The node', content: content(ChannelChatSchema) },
+    404: jsonError('Unknown connection or node'),
     ...errorResponses,
   },
 })
@@ -238,6 +277,21 @@ const inboxList = createRoute({
     ...errorResponses,
   },
 })
+const inboxTable = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/inbox/table',
+  tags,
+  summary: 'Conversations, one page',
+  description:
+    'The table behind the Inbox page: `q` searches titles, `kind` filters, the count is exact. Returns `{ items, total, page, limit }`.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelInboxTableQuery },
+  responses: {
+    200: { description: 'A page of conversations', content: content(ChannelInboxTablePageSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
 const inboxMessages = createRoute({
   method: 'get',
   path: '/channels/connections/{id}/inbox/messages',
@@ -264,6 +318,21 @@ const activityList = createRoute({
   request: { params: ChannelIdParam, query: ChannelActivityQuery },
   responses: {
     200: { description: 'Events', content: content(ChannelActivityPageSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const activityTable = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/activity/table',
+  tags,
+  summary: 'Activity, one page',
+  description:
+    'The table behind the Activity pages: filter by type, conversation or person, search the reason, names and titles. Newest first by default. Metadata only. Returns `{ items, total, page, limit }`.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelActivityTableQuery },
+  responses: {
+    200: { description: 'A page of events', content: content(ChannelActivityTablePageSchema) },
     404: jsonError('Unknown connection'),
     ...errorResponses,
   },
@@ -425,6 +494,34 @@ const peopleList = createRoute({
     ...errorResponses,
   },
 })
+const peopleTable = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/people/table',
+  tags,
+  summary: 'People, one page',
+  description:
+    'The table behind the People page: everybody the connection has seen. `role` filters on the role the team set, `linked` on the link to a team member; `q` searches name, username and platform id. Returns `{ items, total, page, limit }`.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelPeopleTableQuery },
+  responses: {
+    200: { description: 'A page of people', content: content(ChannelPeopleTablePageSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const personGet = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/people/{peerId}',
+  tags,
+  summary: 'One person',
+  security,
+  request: { params: ChannelLinkParam },
+  responses: {
+    200: { description: 'The person', content: content(ChannelPersonSchema) },
+    404: jsonError('Unknown person'),
+    ...errorResponses,
+  },
+})
 const roleSet = createRoute({
   method: 'put',
   path: '/channels/connections/{id}/people/{peerId}/role',
@@ -512,6 +609,21 @@ const remindersList = createRoute({
     ...errorResponses,
   },
 })
+const remindersTable = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/reminders/table',
+  tags,
+  summary: 'Reminders, one page',
+  description:
+    'The table behind the Reminders page: `status`, `nodeId` and `q` filter, the count is exact. Returns `{ items, total, page, limit }`.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelRemindersTableQuery },
+  responses: {
+    200: { description: 'A page of reminders', content: content(ChannelRemindersTablePageSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
 const reminderCancel = createRoute({
   method: 'delete',
   path: '/channels/connections/{id}/reminders/{reminderId}',
@@ -530,13 +642,63 @@ export function channelRoutes(deps: Deps) {
   const ch = deps.channels
   const acc = deps.channelAccounts
   const inbox = deps.channelInbox
+  const yes = (v: 'yes' | 'no' | undefined): boolean | undefined =>
+    v === undefined ? undefined : v === 'yes'
+  /** Only the keys that are set: the ports take `exactOptionalPropertyTypes`. */
+  const defined = <T extends Record<string, unknown>>(o: T): T =>
+    Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
   return new OpenAPIHono()
+    .openapi(chatsTable, async (c) => {
+      const { allowed, admin, history, adminLog, ...rest } = c.req.valid('query')
+      return c.json(
+        await ch.chatsTable(
+          c.req.valid('param').id,
+          defined({
+            ...rest,
+            allowed: yes(allowed),
+            admin: yes(admin),
+            history: yes(history),
+            adminLog: yes(adminLog),
+          }),
+        ),
+        200,
+      )
+    })
+    .openapi(peopleTable, async (c) => {
+      const { linked, ignored, ...rest } = c.req.valid('query')
+      return c.json(
+        await inbox.peopleTable(
+          c.req.valid('param').id,
+          defined({ ...rest, linked: yes(linked), ignored: yes(ignored) }),
+        ),
+        200,
+      )
+    })
+    .openapi(inboxTable, async (c) =>
+      c.json(await inbox.inboxTable(c.req.valid('param').id, defined(c.req.valid('query'))), 200),
+    )
+    .openapi(activityTable, async (c) =>
+      c.json(
+        await inbox.activityTable(c.req.valid('param').id, defined(c.req.valid('query'))),
+        200,
+      ),
+    )
+    .openapi(remindersTable, async (c) =>
+      c.json(
+        await inbox.remindersTable(c.req.valid('param').id, defined(c.req.valid('query'))),
+        200,
+      ),
+    )
     .openapi(peopleList, async (c) =>
       c.json({ items: await inbox.people(c.req.valid('param').id) }, 200),
     )
     .openapi(peopleSettingsGet, async (c) =>
       c.json(await inbox.peopleSettings(c.req.valid('param').id), 200),
     )
+    .openapi(personGet, async (c) => {
+      const { id, peerId } = c.req.valid('param')
+      return c.json(await inbox.person(id, peerId), 200)
+    })
     .openapi(peopleSettingsSet, async (c) =>
       c.json(await inbox.setPeopleSettings(c.req.valid('param').id, c.req.valid('json')), 200),
     )
@@ -605,6 +767,10 @@ export function channelRoutes(deps: Deps) {
     )
     .openapi(unbind, async (c) => c.json(await ch.unbind(c.req.valid('param').id), 200))
     .openapi(chats, async (c) => c.json({ items: await ch.chats(c.req.valid('param').id) }, 200))
+    .openapi(chatGet, async (c) => {
+      const { id, chatId } = c.req.valid('param')
+      return c.json(await ch.chat(id, chatId), 200)
+    })
     .openapi(policy, async (c) => {
       const { id, chatId } = c.req.valid('param')
       return c.json(await ch.setChatPolicy(id, chatId, c.req.valid('json') as never), 200)

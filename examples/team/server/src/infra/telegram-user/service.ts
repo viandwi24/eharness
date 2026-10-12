@@ -27,7 +27,7 @@ import type {
 import type { Collector } from '../../domain/collectors.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { ChannelGateway } from '../channels/index.ts'
-import { listNodeViews, nodeView, writePolicy } from '../channels/node-views.ts'
+import { listNodeViews, nodeView, pageNodeViews, writePolicy } from '../channels/node-views.ts'
 import { type ConnectionConfig, RateLimitsSchema, type ScopePolicy } from '../channels/policy.ts'
 import { createTelegramUserAdapter, type TelegramUserAdapter, type UserFatal } from './adapter.ts'
 import { type AdminLog, createAdminLog, eventText } from './adminlog.ts'
@@ -844,6 +844,27 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         },
       })
     },
+    async chatsTable(id, query) {
+      await recordOf(id)
+      return pageNodeViews(gateway, id, query, {
+        account: (node) => {
+          const c = node.kind === 'room' ? chats.get(id, node.nativeId) : undefined
+          return c === undefined ? undefined : accountState(c)
+        },
+      })
+    },
+    async chat(id, nodeId) {
+      await recordOf(id)
+      const node = gateway.nodes.get(nodeId)
+      if (node === undefined || node.connectionId !== id || node.kind === 'direct')
+        throw notFound('chat', nodeId)
+      const chat = node.kind === 'room' ? chats.get(id, node.nativeId) : undefined
+      return nodeView(
+        gateway,
+        node,
+        chat === undefined ? {} : { account: accountState(chat) },
+      ) as ChannelNodeView
+    },
     async setChatPolicy(id, nodeId, input) {
       await recordOf(id)
       requireConfig(id)
@@ -998,6 +1019,8 @@ export function compositeChannelsPort(
     bind: async (id, input) => (await pick(id)).bind(id, input),
     unbind: async (id) => (await pick(id)).unbind(id),
     chats: async (id) => (await pick(id)).chats(id),
+    chatsTable: async (id, query) => (await pick(id)).chatsTable(id, query),
+    chat: async (id, nodeId) => (await pick(id)).chat(id, nodeId),
     setChatPolicy: async (id, nodeId, input) => (await pick(id)).setChatPolicy(id, nodeId, input),
     links: async (id) => (await pick(id)).links(id),
     revokeLink: async (id, peerId) => (await pick(id)).revokeLink(id, peerId),

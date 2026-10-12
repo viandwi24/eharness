@@ -8,6 +8,7 @@
 import type { Database } from 'bun:sqlite'
 import type { RoutineSpec } from '../../domain/routines.ts'
 import { localTime } from './header.ts'
+import { likePattern, orderBy, windowOf } from './paging.ts'
 import { parseClock, parseLocalDateTime, wallOf } from './time.ts'
 
 /** The `connectionId` of a reminder that is delivered into a web chat thread (no channel connection). */
@@ -115,6 +116,19 @@ export interface ReminderStore {
     connectionId: string,
     filter?: { status?: ReminderStatus; nodeIds?: readonly string[]; createdBy?: string },
   ): ReminderRow[]
+  /** One page of the reminders of a connection, filtered, sorted and counted in SQL. */
+  table(
+    connectionId: string,
+    query: {
+      q?: string | undefined
+      sort?: string | undefined
+      order?: 'asc' | 'desc' | undefined
+      status?: ReminderStatus | undefined
+      nodeId?: string | undefined
+      page: number
+      limit: number
+    },
+  ): { items: ReminderRow[]; total: number }
   update(
     id: string,
     patch: Partial<
@@ -184,6 +198,47 @@ export function sqliteReminderStore(sqlite: Database): ReminderStore {
           (filter?.nodeIds === undefined || filter.nodeIds.includes(r.nodeId)) &&
           (filter?.createdBy === undefined || r.createdByIdentityId === filter.createdBy),
       )
+    },
+    table(connectionId, q) {
+      const where = ['connection_id = ?']
+      const args: Array<string | number> = [connectionId]
+      if (q.status !== undefined) {
+        where.push('status = ?')
+        args.push(q.status)
+      }
+      if (q.nodeId !== undefined) {
+        where.push('node_id = ?')
+        args.push(q.nodeId)
+      }
+      if (q.q !== undefined && q.q.trim() !== '') {
+        const like = likePattern(q.q.trim())
+        where.push(
+          `(body LIKE ? ESCAPE '\\' OR when_text LIKE ? ESCAPE '\\' OR created_by_name LIKE ? ESCAPE '\\')`,
+        )
+        args.push(like, like, like)
+      }
+      const from = `FROM ch_reminders WHERE ${where.join(' AND ')}`
+      const order = orderBy(
+        {
+          createdAt: { expr: 'created_at', defaultOrder: 'desc' },
+          lastFiredAt: { expr: 'COALESCE(last_fired_at, 0)', defaultOrder: 'desc' },
+          status: { expr: 'status', defaultOrder: 'asc' },
+          fireCount: { expr: 'fire_count', defaultOrder: 'desc' },
+          text: { expr: 'body COLLATE NOCASE', defaultOrder: 'asc' },
+        },
+        q.sort,
+        q.order,
+        'createdAt',
+        'id',
+      )
+      const total =
+        sqlite
+          .query<{ n: number }, Array<string | number>>(`SELECT COUNT(*) AS n ${from}`)
+          .get(...args)?.n ?? 0
+      const rows = sqlite
+        .query<ReminderDb, Array<string | number>>(`SELECT * ${from} ${order} LIMIT ? OFFSET ?`)
+        .all(...args, ...windowOf(q.page, q.limit))
+      return { items: rows.map(toRow), total }
     },
     update(id, patch) {
       const sets: string[] = []

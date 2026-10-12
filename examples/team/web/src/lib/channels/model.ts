@@ -231,46 +231,6 @@ export function originText(c: ChannelChat, key: keyof ChannelChat['inherited'], 
 	return `inherited from ${o.nodeId === undefined ? 'above' : titleOf(o.nodeId)}`;
 }
 
-/** One line for the chat row. */
-export function chatSummary(c: ChannelChat): string {
-	if (!c.effective.allowed) return 'Not allowed: the agent ignores this chat';
-	const parts = [wakeLabel(c.effective.wake), deliveryLabel(c.effective.delivery), `${c.effective.retentionDays} days`];
-	return parts.join(' · ');
-}
-
-/** Allowed chats first, then the ones the bot is still in, then the most recently heard from. */
-export function sortChats(chats: readonly ChannelChat[]): ChannelChat[] {
-	return [...chats].sort(
-		(a, b) => Number(b.effective.allowed) - Number(a.effective.allowed) || Number(botGone(a)) - Number(botGone(b)) || b.lastSeen - a.lastSeen
-	);
-}
-
-/** A node with its children (a forum with its topics). */
-export interface ChatBranch {
-	chat: ChannelChat;
-	children: ChatBranch[];
-}
-
-/**
- * The tree of chats and topics: roots sorted like {@link sortChats}, children by name (General
- * first). A node whose parent is not in the list is a root.
- */
-export function chatTree(chats: readonly ChannelChat[]): ChatBranch[] {
-	const ids = new Set(chats.map((c) => c.id));
-	const byParent = new Map<string, ChannelChat[]>();
-	const roots: ChannelChat[] = [];
-	for (const c of chats) {
-		if (c.parentId !== undefined && ids.has(c.parentId)) byParent.set(c.parentId, [...(byParent.get(c.parentId) ?? []), c]);
-		else roots.push(c);
-	}
-	const general = (c: ChannelChat): number => (c.platformType.endsWith('forum_general') ? 0 : 1);
-	const branch = (c: ChannelChat): ChatBranch => ({
-		chat: c,
-		children: (byParent.get(c.id) ?? []).sort((a, b) => general(a) - general(b) || a.title.localeCompare(b.title)).map(branch)
-	});
-	return sortChats(roots).map(branch);
-}
-
 export const KIND_LABEL: Record<ChannelChat['chatKind'], string> = { dm: 'Direct', group: 'Group', channel: 'Channel' };
 
 /**
@@ -330,10 +290,6 @@ export const ACCOUNT_WARNING =
 	'Use a dedicated account, never a personal one, and turn on two-step verification. Telegram may limit or ban accounts driven by API clients, especially for spam or flooding: this app sends slowly and keeps daily caps, but the risk is yours. This is not legal advice; read the API terms.';
 
 export const stateLabel = (s: RuntimeState): string => STATE_LABEL[s];
-
-/** Chats of an account (rooms, not their topics): chosen ones first, then by title. */
-export const sortAccountChats = (chats: readonly ChannelChat[]): ChannelChat[] =>
-	[...chats].sort((a, b) => Number(!!b.account?.selected) - Number(!!a.account?.selected) || a.title.localeCompare(b.title));
 
 export const BACKFILL_STATE_LABEL: Record<string, string> = {
 	idle: 'Not started',
@@ -409,19 +365,6 @@ export function accountHint(c: ChannelConnection): string {
 }
 
 // ---- people: linking without links ----
-
-/** What a person shows as: name, @username, else the platform id. */
-export function unlinkedLabel(u: Pick<ChannelUnlinked, 'name' | 'username' | 'peerId'>): string {
-	return u.name ?? (u.username ? `@${u.username}` : `Telegram ${u.peerId}`);
-}
-
-/** The secondary line of a not-yet-linked person: id, username, how often and when they wrote. */
-export function unlinkedDetail(u: ChannelUnlinked, now: number): string {
-	const parts = [`id ${u.peerId}`];
-	if (u.username && u.name) parts.push(`@${u.username}`);
-	parts.push(`${u.messageCount} message${u.messageCount === 1 ? '' : 's'}`, `last ${ago(u.lastSeen, now)}`);
-	return parts.join(' · ');
-}
 
 /** A Telegram user id is a whole number; undefined = valid. */
 export function peerIdError(text: string): string | undefined {
@@ -582,14 +525,6 @@ export function platformAdminText(p: ChannelPerson): string {
 /** The role of an anonymous admin or a bot cannot be changed. */
 export const roleLocked = (p: ChannelPerson): boolean => p.roleSource === 'anonymous' || p.roleSource === 'bot';
 
-/**
- * A stable order: by name (then id). Nothing that changes while the list is used (a role, a
- * suggestion, the last time somebody wrote) moves a row under the cursor.
- */
-export function sortPeople(people: readonly ChannelPerson[]): ChannelPerson[] {
-	return [...people].sort((a, b) => personName(a).localeCompare(personName(b), undefined, { sensitivity: 'base' }) || a.peerId.localeCompare(b.peerId));
-}
-
 /** Chats and topics a person can be given as divisions, with the room named for a topic. */
 export function divisionOptions(chats: readonly ChannelChat[]): { id: string; label: string }[] {
 	const byId = new Map(chats.map((c) => [c.id, c]));
@@ -603,3 +538,88 @@ export function divisionOptions(chats: readonly ChannelChat[]): { id: string; la
 }
 
 export const personName = (p: ChannelPerson): string => p.name ?? (p.username ? `@${p.username}` : `id ${p.peerId}`);
+
+
+// ---- navigation of the Channels pages ----
+
+export type SectionId = 'overview' | 'chats' | 'people' | 'inbox' | 'activity' | 'reminders' | 'delivery' | 'history' | 'admin-log' | 'settings';
+
+export interface Section {
+	id: SectionId;
+	label: string;
+}
+
+/**
+ * The sections of one connection, in menu order. A connection that is not bound to an agent has
+ * only the overview and the settings (there is nothing else to look at yet); a user account adds
+ * its history and admin log, a bot its reminders.
+ */
+export function sectionsOf(c: Pick<ChannelConnection, 'binding' | 'transport'> | null): Section[] {
+	const bound = c?.binding != null;
+	const account = c?.transport === 'user';
+	const all: Array<Section | false> = [
+		{ id: 'overview', label: 'Overview' },
+		bound && { id: 'chats', label: account ? 'Chats to read' : 'Chats' },
+		bound && { id: 'people', label: 'People' },
+		bound && { id: 'inbox', label: 'Inbox' },
+		bound && { id: 'activity', label: 'Activity' },
+		bound && !account && { id: 'reminders', label: 'Reminders' },
+		bound && { id: 'delivery', label: account ? 'Send limits' : 'Delivery' },
+		bound && account && { id: 'history', label: 'History' },
+		bound && account && { id: 'admin-log', label: 'Admin log' },
+		{ id: 'settings', label: 'Settings' }
+	];
+	return all.filter((x): x is Section => x !== false);
+}
+
+export const SECTION_TITLE: Record<SectionId, string> = {
+	overview: 'Overview',
+	chats: 'Chats',
+	people: 'People',
+	inbox: 'Inbox',
+	activity: 'Activity',
+	reminders: 'Reminders',
+	delivery: 'Delivery',
+	history: 'History',
+	'admin-log': 'Admin log',
+	settings: 'Settings'
+};
+
+/** `/channels/<id>[/<section>[/<detail>]]`, every part encoded. */
+export const channelHref = (id: string, ...parts: string[]): string => ['/channels', id, ...parts].map((x, i) => (i === 0 ? x : encodeURIComponent(x))).join('/');
+
+/** The section a path of a connection is in (`overview` for the connection itself). */
+export function sectionOfPath(pathname: string, id: string): SectionId {
+	const base = channelHref(id);
+	const rest = pathname.startsWith(`${base}/`) ? pathname.slice(base.length + 1).split('/')[0] : '';
+	const found = (Object.keys(SECTION_TITLE) as SectionId[]).find((s) => s === rest);
+	return found ?? 'overview';
+}
+
+/** The `@username` (or the account label) shown next to the name of a connection. */
+export const connectionHandle = (c: ChannelConnection): string | undefined => (c.bot ? `@${c.bot.username}` : c.account?.username ? `@${c.account.username}` : c.accountLabel);
+
+/** What needs a person's eye, in plain sentences (empty = all is well). */
+export function attentionOf(c: ChannelConnection): string[] {
+	const out: string[] = [];
+	const hint = isAccount(c) ? accountHint(c) : stateHint(c);
+	if (hint !== '' && c.runtime.state !== 'unbound') out.push(hint);
+	if (c.runtime.state === 'unbound') out.push('Not bound to an agent yet.');
+	if (c.counts.unlinked > 0) out.push(`${c.counts.unlinked} ${c.counts.unlinked === 1 ? 'person has' : 'people have'} written directly and ${c.counts.unlinked === 1 ? 'is' : 'are'} not linked.`);
+	if (c.counts.outboxFailed > 0) out.push(`${c.counts.outboxFailed} ${c.counts.outboxFailed === 1 ? 'message' : 'messages'} could not be sent.`);
+	if (c.breaker?.open) out.push('Sending is paused after errors.');
+	return out;
+}
+
+/** How many things need attention (the badge on a card). */
+export const attentionCount = (c: ChannelConnection): number => attentionOf(c).length;
+
+/** A connection that works: running, nothing waiting for a person. */
+export const isHealthy = (c: ChannelConnection): boolean => c.runtime.state === 'running' && attentionCount(c) === 0;
+
+/** Table filters used by several pages. */
+export const YES_NO_ALL = (yes: string, no: string): { value: string; label: string }[] => [
+	{ value: '', label: 'All' },
+	{ value: 'yes', label: yes },
+	{ value: 'no', label: no }
+];

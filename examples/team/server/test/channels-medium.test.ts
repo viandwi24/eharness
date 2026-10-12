@@ -289,7 +289,7 @@ describe('default role per chat and bell notifications', () => {
       .list({ open: true, limit: 20 })
       .filter((n) => n.title.startsWith('New person'))
     expect(bell).toHaveLength(1)
-    expect(bell[0]?.link).toBe('/channels?connection=c1&tab=people')
+    expect(bell[0]?.link).toBe('/channels/c1/people')
     expect(bell[0]?.title).toContain('Eve')
   })
 

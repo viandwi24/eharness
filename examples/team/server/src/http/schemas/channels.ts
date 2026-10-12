@@ -226,6 +226,7 @@ export const ChannelNodeSchema = z
     username: z.string().optional(),
     state: z.enum(['active', 'closed', 'archived', 'deleted', 'left']),
     container: z.boolean().openapi({ description: 'Has child nodes (a forum).' }),
+    topics: z.number().int().optional().openapi({ description: 'How many topics a forum has.' }),
     postable: z.boolean().openapi({ description: 'Messages can be sent and stored here.' }),
     member: z.string().optional().openapi({
       description: 'What the connection is in the node: `member`, `admin`, `owner` or `none`.',
@@ -603,6 +604,12 @@ export const ChannelPersonSchema = z
     }),
     firstSeen: z.number().int(),
     lastSeen: z.number().int(),
+    ignored: z.boolean().optional().openapi({
+      description: 'Hidden from "Not linked yet" (the team chose to ignore this person).',
+    }),
+    directMessages: z.number().int().optional().openapi({
+      description: 'Direct messages sent while not linked (a count, never a text).',
+    }),
   })
   .openapi('ChannelPerson')
 export const ChannelPersonListSchema = z
@@ -669,3 +676,88 @@ export const ChannelReminderQuery = z.object({
     .openapi({ description: 'Also finished and cancelled ones.' }),
 })
 export const ChannelReminderParam = z.object({ id: z.string(), reminderId: z.string() })
+
+// --- server-side tables (the Channels pages) --------------------------------------------------------
+
+const yesNo = z.enum(['yes', 'no'])
+/** What every table endpoint takes; each adds its own filters and sort columns. */
+const tableQuery = {
+  q: z.string().max(200).optional().openapi({ description: 'Search text.' }),
+  order: z.enum(['asc', 'desc']).optional().openapi({
+    description: 'Sort direction; the default depends on the sort column.',
+  }),
+  page: z.coerce.number().int().min(1).default(1).openapi({ description: '1-based.' }),
+  limit: z.coerce.number().int().min(1).max(100).default(25).openapi({ description: 'Page size.' }),
+}
+const tablePage = <T extends z.ZodType>(item: T, name: string) =>
+  z
+    .object({
+      items: z.array(item),
+      total: z.number().int().openapi({ description: 'Rows that match the filters.' }),
+      page: z.number().int(),
+      limit: z.number().int(),
+    })
+    .openapi(name)
+
+export const ChannelChatsTableQuery = z.object({
+  ...tableQuery,
+  sort: z
+    .enum(['title', 'lastSeen', 'firstSeen', 'state', 'kind', 'allowed', 'messages', 'backfill'])
+    .optional(),
+  level: z.enum(['chat', 'topic', 'all']).optional().openapi({
+    description: '`chat` (default): chats and channels, `topic`: forum topics, `all`: both.',
+  }),
+  parentId: z.string().optional().openapi({ description: 'Only the topics of this chat.' }),
+  kind: z.enum(['group', 'channel']).optional(),
+  state: z.enum(['active', 'closed', 'archived', 'left']).optional(),
+  allowed: yesNo.optional().openapi({ description: 'The agent may be used here (the allowlist).' }),
+  admin: yesNo.optional().openapi({ description: 'The connection is an admin of the chat.' }),
+  history: yesNo.optional().openapi({ description: 'Accounts: a history window is set.' }),
+  adminLog: yesNo.optional().openapi({ description: 'Accounts: the admin log is read.' }),
+})
+export const ChannelChatTablePageSchema = tablePage(ChannelNodeSchema, 'ChannelChatTablePage')
+
+export const ChannelPeopleTableQuery = z.object({
+  ...tableQuery,
+  sort: z.enum(['name', 'lastSeen', 'firstSeen', 'role', 'messages']).optional(),
+  role: role.optional().openapi({ description: 'The role the team set in the directory.' }),
+  linked: yesNo.optional().openapi({ description: 'Linked to a team member.' }),
+  kind: z.string().optional(),
+  ignored: yesNo.optional(),
+})
+export const ChannelPeopleTablePageSchema = tablePage(ChannelPersonSchema, 'ChannelPeopleTablePage')
+
+export const ChannelInboxTableQuery = z.object({
+  ...tableQuery,
+  sort: z.enum(['lastAt', 'firstAt', 'title']).optional(),
+  kind: z.enum(['dm', 'group', 'channel', 'topic']).optional(),
+})
+export const ChannelInboxTablePageSchema = tablePage(
+  ChannelInboxConversationSchema,
+  'ChannelInboxTablePage',
+)
+
+export const ChannelActivityTableQuery = z.object({
+  ...tableQuery,
+  type: z.enum(CHANNEL_EVENT_TYPES).optional(),
+  conversationId: z.string().optional(),
+  peerId: z.string().optional().openapi({ description: 'The platform user id of the person.' }),
+})
+export const ChannelActivityTablePageSchema = tablePage(
+  ChannelActivitySchema,
+  'ChannelActivityTablePage',
+)
+
+export const ChannelRemindersTableQuery = z.object({
+  ...tableQuery,
+  sort: z.enum(['createdAt', 'lastFiredAt', 'status', 'fireCount', 'text']).optional(),
+  status: z.enum(['active', 'done', 'cancelled']).optional(),
+  nodeId: z
+    .string()
+    .optional()
+    .openapi({ description: 'Only the reminders that post in this chat.' }),
+})
+export const ChannelRemindersTablePageSchema = tablePage(
+  ChannelReminderSchema,
+  'ChannelRemindersTablePage',
+)

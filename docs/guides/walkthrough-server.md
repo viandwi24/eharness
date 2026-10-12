@@ -1335,7 +1335,7 @@ storage and the contract are the generic conversation model of section 28d (node
 `allowBots`, then the loop guard: 20 events in 300 s puts the conversation in a 600 s cooldown);
 the allowlist (`groupPolicy: allowlist` by default; `enabled`, `agentId`, `wake`, `delivery`,
 `retentionDays`, ... are settings that inherit down the tree of chats and topics, see 28d); a DM only from a linked team member (linked by the owner on
-the People tab, see "Linking without links" below); then **wake** or **observe**. A message
+the People page, see "Linking without links" below); then **wake** or **observe**. A message
 wakes the agent when it mentions it, replies to it, matches an alias, is in the agent's own topic,
 or the scope says `wake: 'always'`; a message that mentions somebody else and not the agent is only
 observed; `wake: 'never'` is an audit chat. Every kept message goes to the **message store**
@@ -1450,9 +1450,9 @@ switcher; it can be read and continued there (what is written there is not poste
 2. Channels page, **Connect a channel**, then **Telegram bot**: the connector flow takes the token and runs
    `getMe`; the connection shows `@username` and what privacy mode means for this bot.
 3. Bind the connection to an agent. Polling starts; the bot shows as *Running*.
-4. Write in a group where the bot is (or add it): the chat appears under **Chats**. Allow it and
+4. Write in a group where the bot is (or add it): the chat appears on the channel's **Chats** page. Allow it and
    choose when the agent wakes (mention, every message, observe only), how it replies and how
-   long messages are kept. For employees, **People** lists everybody who wrote and is not linked
+   long messages are kept. For employees, the **People** page lists everybody who wrote (filter *Not linked*)
    yet: pick the team member to link them to (or ignore them). Only linked accounts reach the
    agent by DM, and only they (or an admin) answer approvals pressed in a chat.
 
@@ -1485,8 +1485,7 @@ switcher; it can be read and continued there (what is written there is not poste
 is no `/start` deep link and no token any more (the `channel_pairing_tokens` table stays for old
 databases and is unused). Every DM from somebody who is not linked is recorded as an *unlinked
 sender* per connection (identities of the connection with direct-message counters: platform user id, name,
-`@username`, first and last seen, message count; **no message text**). The People tab lists them under "Not linked yet": **Link to
-member…** (a pick of the team members, in this single-principal example `owner` plus the connection's
+`@username`, first and last seen, message count; **no message text**). The People page lists them (filter *Not linked*); open a person to **Link to member…** (a pick of the team members, in this single-principal example `owner` plus the connection's
 admins) or **Ignore**; a form links by numeric Telegram user id for somebody who has not written yet.
 It works the same for a bot and for an account connection (`POST .../links`, `pairing.link`).
 
@@ -1512,8 +1511,55 @@ conversation woke the agent. The log is sealed at rest and read for the holder o
 `not-authorized`), `reply-queued`, `reply-sent`, `reply-retried`, `reply-failed`, `approval-posted`,
 `approval-answered`, `breaker-opened`, `needs-auth`. Metadata only: never a message text. They are
 pruned with the events feed retention (`TEAM_EVENTS_RETENTION_HOURS` / `TEAM_EVENTS_MAX_ROWS`). The
-web tab looks again every five seconds while it is open (there is no push channel for transport
+web pages look again every five seconds while they are open and visible (there is no push channel for transport
 state either).
+
+### The Channels pages: a list, a page per channel, server-side tables
+
+The web side of the channels admin API is a small tree of routes (no tabs, accordions or modal
+editors for the main content; dialogs are only for confirmations and the connect flow):
+
+| Route | What it shows |
+|---|---|
+| `/channels` | Connected channels as cards: type (Telegram bot or account), name and `@username`, state, the agent, a few counts, the first thing that needs attention. **Connect a channel** opens the type picker and the connect flow, then the new channel's Settings. |
+| `/channels/<id>` | The page of one channel: a menu of sections (a left column on a desktop, a row you scroll on a phone). `<id>` alone redirects to `overview`. A channel without an agent has only *Overview* and *Settings*. |
+| `.../overview` | Status, hints and the buttons for a bad state (remove the webhook, retry, reconnect), key numbers, what needs attention, recent activity. |
+| `.../chats`, `.../chats/<nodeId>` | The chats table; one chat or topic with its settings (each value says where it comes from), its topics as a sub-table and its last messages. |
+| `.../people`, `.../people/<peerId>` | The people table (filters: linked, role set by the team, ignored); one person: role and divisions, the linked team member, link / ignore, their activity. |
+| `.../inbox`, `.../inbox/<conversationId>` | The conversations table; one conversation's log (newest page first, older on request) and its activity. |
+| `.../activity`, `.../reminders`, `.../delivery` | Activity table, reminders table (cancel with a confirmation), the outbox and the pause after errors (for an account: the send limits). |
+| `.../history`, `.../admin-log` | Accounts only: the history window per chat and the admin log per chat, as tables. |
+| `.../settings` | The agent, who may write (groups, direct messages, unknown people, other bots), defaults for chats, people defaults, reconnect and restart, unbind. |
+
+**One table component** (`web/src/lib/components/app/DataTable.svelte`, state in `lib/channels/table.svelte.ts`
+and the pure `table-core.ts`): a search box, filter chips or selects, sortable headers (`aria-sort`),
+a pagination bar (total, page size 10 to 100, page numbers), loading / empty / error states and a
+row click. Every change asks the server for the next page; nothing is filtered or sorted in the
+browser. The state lives in the query string (`?q=&sort=&order=&page=&limit=&<filter>=`), so a reload or
+the back button returns to the same page of the same search. The table polls while the page is
+visible (`pollWhileVisible`). On a phone a row becomes a stacked card.
+
+**Table endpoints** (all `GET /channels/connections/{id}/...`, all return `{ items, total, page, limit }`
+and take `q`, `order` (`asc`|`desc`), `page` (1-based) and `limit` (1 to 100, default 25); the `sort`
+column is a whitelist, an unknown one is a 400):
+
+| Endpoint | Sort | Filters |
+|---|---|---|
+| `chats/table` | `title`, `lastSeen`, `firstSeen`, `state`, `kind`, `allowed`, `messages`, `backfill` | `level` (`chat` default, `topic`, `all`), `parentId`, `kind` (`group`, `channel`), `state`, `allowed`, `admin`, `history`, `adminLog` (`yes`/`no`) |
+| `people/table` | `name`, `lastSeen`, `firstSeen`, `role`, `messages` | `role`, `linked`, `ignored` (`yes`/`no`), `kind` |
+| `inbox/table` | `lastAt`, `firstAt`, `title` | `kind` (`dm`, `group`, `channel`, `topic`) |
+| `activity/table` | newest first (`order`) | `type`, `conversationId`, `peerId` |
+| `reminders/table` | `createdAt`, `lastFiredAt`, `status`, `fireCount`, `text` | `status`, `nodeId` |
+
+Detail reads: `GET chats/{chatId}` (one node with `topics` for a forum), `GET people/{peerId}`.
+The filters, the sort, the search (`LIKE ... ESCAPE`, so `%` and `_` are literal), the exact `COUNT(*)` and
+`LIMIT/OFFSET` are SQL in the stores (`nodes.ts`, `identities.ts`, `events.ts`, `reminders.ts`, helpers in
+`paging.ts`); only the rows of a page are turned into views (inherited settings, roles, previews). The
+`allowed` filter follows the nearest `enabled` setting up the node path, else the connection's group
+policy. The old unpaged lists (`chats`, `people`, `inbox`, `activity`, `reminders`) stay for the agent
+tools and scripts. **Test it.** `bun test test/channels-tables.test.ts` (stores and gateway, mock
+adapter) and the HTTP test in `test/telegram-channels.test.ts`; `bun test` in `web` covers `table-core.ts`
+and the navigation helpers.
 
 ## 28c. Telegram account over MTProto (P41 phase L4)
 
@@ -1534,10 +1580,10 @@ spam or flooding; read the [API terms](https://core.telegram.org/api/terms). Thi
 by QR (Settings, Devices, Link Desktop Device), 2FA if enabled, then pick chats. Bind the connection
 to an agent.
 
-**Account card.** *Chats*: Refresh chats, choose the ones to read (observe-only until you change
-the policy). *Backfill*: a window in days per chat with progress, resumable and flood-aware.
+**Account pages.** *Chats to read*: Refresh chats, switch on the ones to read (observe-only until you change
+the policy). *History*: a window in days per chat with progress, resumable and flood-aware.
 *Admin log*: chats where the account is admin, read every few hours (Telegram keeps it briefly).
-*Limits*: daily DM and total caps (strict defaults), admin-log interval, today's counters.
+*Send limits*: daily DM and total caps (strict defaults), admin-log interval, today's counters.
 
 **Safety.** One live client per session (a lease; a second instance shows *Another instance holds
 it*), flood waits park jobs, a revoked session shows *Needs a new login*.
@@ -1604,7 +1650,7 @@ speaking, what they may ask, reminders, recaps. All of it is example code in `in
 unchanged.
 
 - **Roles come from the directory only.** Each person has a role (`owner`, `admin`, `member`, `guest`) and
-  divisions (topics) in `ch_people`, set on the People tab. The platform's admin badge is imported as a suggestion
+  divisions (topics) in `ch_people`, set on the People page. The platform's admin badge is imported as a suggestion
   with a one-click confirm; an anonymous admin or a bot is always a guest; a chat message cannot change a role.
 - **The agent sees a header** with who sent the message, their role, linked team member, chat admin status, topic,
   message id, reply-to and time in the team timezone, as data (`header.ts`).
@@ -1616,7 +1662,7 @@ unchanged.
   platform has.
 - **Mentions** only through `mention: [id]`; typed `@handles` are neutralized.
 - **Reminders** are `sys:reminder:<id>` routines whose fire posts the fixed text through the outbox without a
-  model call; the Reminders tab lists and cancels them. The text is the person's own words, posted verbatim
+  model call; the channel's Reminders page lists and cancels them. The text is the person's own words, posted verbatim
   with a single `Reminder:` label (added only when missing). A member may set reminders only for themselves
   (they name themselves in `mention`); those post as `Reminder for <name>:` with their own mention. A reminder
   for the whole chat or for other people needs an owner or admin.

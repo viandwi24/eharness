@@ -25,6 +25,8 @@ const personOf = (v: PersonView): ChannelPersonView => ({
   ...(v.note === undefined ? {} : { note: v.note }),
   firstSeen: v.firstSeen,
   lastSeen: v.lastSeen,
+  ignored: v.ignored,
+  directMessages: v.directMessages,
 })
 
 const OWNER = 'owner'
@@ -93,6 +95,11 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
       await known(id)
       return gateway.inbox.conversations(id, opts)
     },
+    async inboxTable(id, query) {
+      await known(id)
+      const page = await gateway.inbox.table(id, query)
+      return { items: page.items, total: page.total, page: query.page, limit: query.limit }
+    },
     async conversation(id, conversationId, opts) {
       await known(id)
       const page = await gateway.inbox.messages(id, conversationId, opts)
@@ -106,6 +113,27 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
     async people(id) {
       await known(id)
       return gateway.people.list(id).map(personOf)
+    },
+    async peopleTable(id, query) {
+      await known(id)
+      const page = gateway.people.table(id, query)
+      return {
+        items: page.items.map(personOf),
+        total: page.total,
+        page: query.page,
+        limit: query.limit,
+      }
+    },
+    async person(id, peerId) {
+      await known(id)
+      const p = gateway.people.get(id, peerId)
+      if (p === undefined) throw notFound('person', peerId)
+      return personOf(p)
+    },
+    async activityTable(id, query) {
+      await known(id)
+      const page = gateway.activity.table(id, query)
+      return { items: page.items, total: page.total, page: query.page, limit: query.limit }
     },
     async setRole(id, peerId, input) {
       await known(id)
@@ -161,6 +189,16 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
         .list(id, opts.all ? {} : { status: 'active' })
         .slice(0, 200)
         .map(view)
+    },
+    async remindersTable(id, query) {
+      await known(id)
+      const page = gateway.reminders.table(id, query)
+      return {
+        items: page.items.map(view),
+        total: page.total,
+        page: query.page,
+        limit: query.limit,
+      }
     },
     async allReminders(opts) {
       // reminders made in web chat threads ride along with the channel ones

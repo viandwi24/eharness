@@ -10,6 +10,7 @@
  */
 import type { Database } from 'bun:sqlite'
 import { uuidv7 } from 'eharness'
+import { likePattern, windowOf } from './paging.ts'
 
 export const GATEWAY_PREFIX = 'gateway.'
 
@@ -171,6 +172,18 @@ export interface EventQuery {
   limit: number
 }
 
+export interface EventTableQuery {
+  type?: ChannelEventType | undefined
+  conversationId?: string | undefined
+  /** The platform user id of the person the event is about. */
+  peerId?: string | undefined
+  /** Searches the reason, the name of the person and the title of the conversation. */
+  q?: string | undefined
+  order?: 'asc' | 'desc' | undefined
+  page: number
+  limit: number
+}
+
 export interface EventPage {
   items: ChannelEvent[]
   /** Pass as `before` for the next (older) page; undefined at the end. */
@@ -184,6 +197,8 @@ export interface EventStore {
   record(event: NewChannelEvent): ChannelEvent
   /** Activity newest first. */
   list(connectionId: string, query: EventQuery): EventPage
+  /** One page of activity, newest first by default, with the number of events that match. */
+  table(connectionId: string, query: EventTableQuery): { items: ChannelEvent[]; total: number }
   /** Delete events older than `olderThan` (when set) and keep at most `keepLast` rows. */
   prune(options: { olderThan?: number; keepLast?: number }): number
   /** Events that name no node yet (oldest first). */
@@ -288,6 +303,49 @@ export function sqliteEventStore(sqlite: Database): EventStore {
         .filter((e): e is ChannelEvent => e !== undefined)
       const last = rows.slice(0, query.limit).at(-1)
       return { items, ...(more && last !== undefined ? { next: last.id } : {}) }
+    },
+    table(connectionId, query) {
+      const types = EVENT_TYPES.map(gatewayType)
+      const where = ['e.connection_id = ?']
+      const args: Array<string | number> = [connectionId]
+      if (query.type !== undefined) {
+        where.push('e.type = ?')
+        args.push(gatewayType(query.type))
+      } else {
+        where.push(`e.type IN (${types.map(() => '?').join(',')})`)
+        args.push(...types)
+      }
+      if (query.conversationId !== undefined) {
+        where.push('e.node_id = ?')
+        args.push(query.conversationId)
+      }
+      if (query.peerId !== undefined) {
+        where.push("json_extract(e.payload, '$.peerId') = ?")
+        args.push(query.peerId)
+      }
+      if (query.q !== undefined && query.q.trim() !== '') {
+        const like = likePattern(query.q.trim())
+        where.push(
+          `(json_extract(e.payload, '$.reason') LIKE ? ESCAPE '\\' OR json_extract(e.payload, '$.peerName') LIKE ? ESCAPE '\\'
+             OR e.node_id IN (SELECT id FROM ch_nodes WHERE connection_id = e.connection_id AND title LIKE ? ESCAPE '\\'))`,
+        )
+        args.push(like, like, like)
+      }
+      const from = `FROM ch_events e WHERE ${where.join(' AND ')}`
+      const total =
+        sqlite
+          .query<{ n: number }, Array<string | number>>(`SELECT COUNT(*) AS n ${from}`)
+          .get(...args)?.n ?? 0
+      const dir = query.order === 'asc' ? 'ASC' : 'DESC'
+      const rows = sqlite
+        .query<EventDb, Array<string | number>>(
+          `SELECT e.* ${from} ORDER BY e.id ${dir} LIMIT ? OFFSET ?`,
+        )
+        .all(...args, ...windowOf(query.page, query.limit))
+      return {
+        items: rows.map(toActivity).filter((e): e is ChannelEvent => e !== undefined),
+        total,
+      }
     },
     prune({ olderThan, keepLast }) {
       let removed = 0

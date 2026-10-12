@@ -6,6 +6,7 @@
 import type { Database } from 'bun:sqlite'
 import { uuidv7 } from 'eharness'
 import type { z } from 'zod'
+import type { ChannelChatsQuery } from '../../domain/channels.ts'
 import {
   type MemberRole,
   type NodeAccessRow,
@@ -17,6 +18,7 @@ import {
   type NodeTraits,
   traitsOf,
 } from './model.ts'
+import { likePattern, orderBy, windowOf } from './paging.ts'
 import type { ChannelNode, NodeInfo } from './types.ts'
 
 interface NodeDb {
@@ -133,6 +135,31 @@ export interface NodeStore {
     connectionId: string,
     options: { limit: number; cursor?: string | undefined },
   ): { items: NodeRow[]; next?: string }
+  /**
+   * One page of the chats and topics of a connection (people are not listed), filtered, sorted and
+   * counted in SQL. `allowedByDefault` is what a node without an `enabled` setting anywhere above
+   * it gets (the connection's group policy is `open`).
+   */
+  table(
+    connectionId: string,
+    query: ChannelChatsQuery,
+    options: { allowedByDefault: boolean },
+  ): { items: NodeRow[]; total: number }
+  /**
+   * One page of the inbox (the nodes with messages or gateway activity), most recently active
+   * first by default; `kind` filters, `q` searches the title and the title of the forum above.
+   */
+  inboxTable(
+    connectionId: string,
+    query: {
+      q?: string | undefined
+      sort?: string | undefined
+      order?: 'asc' | 'desc' | undefined
+      kind?: 'dm' | 'group' | 'channel' | 'topic' | undefined
+      page: number
+      limit: number
+    },
+  ): { items: NodeRow[]; total: number }
   /** Is there any message or gateway activity for the node (the inbox lists it)? */
   hasActivity(nodeId: string): boolean
   /** Every agent id a node setting of the connection names. */
@@ -499,6 +526,123 @@ export function sqliteNodeStore(sqlite: Database): NodeStore {
         items,
         ...(more && last !== undefined ? { next: `${last.lastEventAt}|${last.id}` } : {}),
       }
+    },
+    table(connectionId, q, options) {
+      // the `enabled` setting in force: the nearest one on the path to the root, else the default
+      const allowedSql = `(COALESCE((SELECT s.value FROM ch_node_settings s JOIN ch_nodes an ON an.id = s.node_id
+          WHERE s.key = 'enabled' AND an.connection_id = n.connection_id
+            AND (n.path = an.path OR n.path LIKE an.path || '/%')
+          ORDER BY length(an.path) DESC LIMIT 1), '${options.allowedByDefault ? 'true' : 'false'}') = 'true')`
+      const where = ['n.connection_id = ?', "n.kind != 'direct'", "n.state != 'deleted'"]
+      const args: Array<string | number> = [connectionId]
+      const level = q.level ?? 'chat'
+      if (level === 'chat') where.push("n.kind != 'thread'")
+      else if (level === 'topic') where.push("n.kind = 'thread'")
+      if (q.parentId !== undefined) {
+        where.push('n.parent_id = ?')
+        args.push(q.parentId)
+      }
+      if (q.kind !== undefined)
+        where.push(
+          `COALESCE(json_extract(n.traits, '$.broadcast'), 0) = ${q.kind === 'channel' ? 1 : 0}`,
+        )
+      if (q.state !== undefined) {
+        where.push('n.state = ?')
+        args.push(q.state)
+      }
+      if (q.allowed !== undefined) where.push(`${allowedSql} = ${q.allowed ? 1 : 0}`)
+      if (q.admin !== undefined)
+        where.push(`COALESCE(a.member IN ('admin', 'owner'), 0) = ${q.admin ? 1 : 0}`)
+      if (q.history !== undefined)
+        where.push(`(json_extract(a.history, '$.days') IS NOT NULL) = ${q.history ? 1 : 0}`)
+      if (q.adminLog !== undefined)
+        where.push(
+          `COALESCE(json_extract(a.extra, '$.adminLog.enabled'), 0) = ${q.adminLog ? 1 : 0}`,
+        )
+      if (q.q !== undefined && q.q.trim() !== '') {
+        const like = likePattern(q.q.trim())
+        where.push(
+          `(n.title LIKE ? ESCAPE '\\' OR n.native_id LIKE ? ESCAPE '\\' OR json_extract(n.meta, '$.username') LIKE ? ESCAPE '\\')`,
+        )
+        args.push(like, like, like)
+      }
+      const from = `FROM ch_nodes n LEFT JOIN ch_node_access a ON a.node_id = n.id WHERE ${where.join(' AND ')}`
+      const order = orderBy(
+        {
+          title: { expr: 'COALESCE(n.title, n.native_id) COLLATE NOCASE', defaultOrder: 'asc' },
+          lastSeen: { expr: 'n.last_event_at', defaultOrder: 'desc' },
+          firstSeen: { expr: 'n.first_seen_at', defaultOrder: 'desc' },
+          state: { expr: 'n.state', defaultOrder: 'asc' },
+          kind: {
+            expr: "COALESCE(json_extract(n.traits, '$.broadcast'), 0)",
+            defaultOrder: 'asc',
+          },
+          allowed: { expr: allowedSql, defaultOrder: 'desc' },
+          messages: {
+            expr: "COALESCE(json_extract(a.history, '$.count'), 0)",
+            defaultOrder: 'desc',
+          },
+          backfill: {
+            expr: "COALESCE(json_extract(a.history, '$.state'), '')",
+            defaultOrder: 'asc',
+          },
+        },
+        q.sort,
+        q.order,
+        'lastSeen',
+        'n.id',
+      )
+      const total =
+        sqlite
+          .query<{ n: number }, Array<string | number>>(`SELECT COUNT(*) AS n ${from}`)
+          .get(...args)?.n ?? 0
+      const rows = sqlite
+        .query<NodeDb, Array<string | number>>(`SELECT n.* ${from} ${order} LIMIT ? OFFSET ?`)
+        .all(...args, ...windowOf(q.page, q.limit))
+      return { items: rows.map(toNode), total }
+    },
+    inboxTable(connectionId, q) {
+      const where = [
+        'n.connection_id = ?',
+        "json_extract(n.traits, '$.postable') = 1",
+        `(EXISTS (SELECT 1 FROM ch_messages m WHERE m.node_id = n.id)
+          OR EXISTS (SELECT 1 FROM ch_events e WHERE e.connection_id = n.connection_id AND e.node_id = n.id
+               AND e.type IN ('gateway.woke', 'gateway.observed', 'gateway.dropped')))`,
+      ]
+      const args: Array<string | number> = [connectionId]
+      if (q.kind === 'dm') where.push("n.kind = 'direct'")
+      else if (q.kind === 'topic') where.push("n.kind = 'thread'")
+      else if (q.kind !== undefined)
+        where.push(
+          `n.kind NOT IN ('direct', 'thread') AND COALESCE(json_extract(n.traits, '$.broadcast'), 0) = ${q.kind === 'channel' ? 1 : 0}`,
+        )
+      if (q.q !== undefined && q.q.trim() !== '') {
+        const like = likePattern(q.q.trim())
+        where.push(
+          `(n.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM ch_nodes pn WHERE pn.id = n.parent_id AND pn.title LIKE ? ESCAPE '\\'))`,
+        )
+        args.push(like, like)
+      }
+      const from = `FROM ch_nodes n WHERE ${where.join(' AND ')}`
+      const order = orderBy(
+        {
+          lastAt: { expr: 'n.last_event_at', defaultOrder: 'desc' },
+          firstAt: { expr: 'n.first_seen_at', defaultOrder: 'desc' },
+          title: { expr: 'COALESCE(n.title, n.native_id) COLLATE NOCASE', defaultOrder: 'asc' },
+        },
+        q.sort,
+        q.order,
+        'lastAt',
+        'n.id',
+      )
+      const total =
+        sqlite
+          .query<{ n: number }, Array<string | number>>(`SELECT COUNT(*) AS n ${from}`)
+          .get(...args)?.n ?? 0
+      const rows = sqlite
+        .query<NodeDb, Array<string | number>>(`SELECT n.* ${from} ${order} LIMIT ? OFFSET ?`)
+        .all(...args, ...windowOf(q.page, q.limit))
+      return { items: rows.map(toNode), total }
     },
     hasActivity(nodeId) {
       return (

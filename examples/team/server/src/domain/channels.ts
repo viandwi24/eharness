@@ -74,6 +74,10 @@ export interface ChannelPersonView {
   note?: string
   firstSeen: number
   lastSeen: number
+  /** Hidden from "Not linked yet" (an unlinked person the team chose to ignore). */
+  ignored?: boolean
+  /** Direct messages this person sent while not linked (a count, never a text). */
+  directMessages?: number
 }
 
 export interface ChannelReminderView {
@@ -239,6 +243,8 @@ export interface ChannelNodeView {
   state: 'active' | 'closed' | 'archived' | 'deleted' | 'left'
   /** Has child nodes (a forum). */
   container: boolean
+  /** How many topics a forum has (only set on a forum). */
+  topics?: number
   /** Messages can be sent and stored here (a forum parent holds none). */
   postable: boolean
   /** What the connection is in the node (`member`, `admin`, `owner`, `none`, `unknown`). */
@@ -430,4 +436,65 @@ export interface ChannelActivityQuery {
   conversationId?: string
   before?: string
   limit: number
+}
+
+// --- server-side tables (P40 channels UI) -----------------------------------------------------------
+
+/** What every table endpoint takes: a search text, a sort, a page. */
+export interface TableQuery {
+  q?: string
+  sort?: string
+  order?: 'asc' | 'desc'
+  /** 1-based. */
+  page: number
+  limit: number
+}
+
+/** What every table endpoint returns: one page and the number of rows that match the filters. */
+export interface TablePage<T> {
+  items: T[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface ChannelChatsQuery extends TableQuery {
+  /** `chat` (default): chats and channels; `topic`: forum topics; `all`: both. */
+  level?: 'chat' | 'topic' | 'all'
+  /** Only the topics of this chat. */
+  parentId?: string
+  kind?: 'group' | 'channel'
+  state?: 'active' | 'closed' | 'archived' | 'left'
+  /** The agent may be used here (the allowlist), or not. */
+  allowed?: boolean
+  /** The connection is an admin of the chat. */
+  admin?: boolean
+  /** Accounts: a history window is set. */
+  history?: boolean
+  /** Accounts: the admin log is read. */
+  adminLog?: boolean
+}
+
+export interface ChannelPeopleQuery extends TableQuery {
+  /** The role the team set in the directory. */
+  role?: ChannelRole
+  /** Linked to a team member. */
+  linked?: boolean
+  kind?: string
+  ignored?: boolean
+}
+
+export interface ChannelInboxTableQuery extends TableQuery {
+  kind?: 'dm' | 'group' | 'channel' | 'topic'
+}
+
+export interface ChannelActivityTableQuery extends TableQuery {
+  type?: ChannelEventKind
+  conversationId?: string
+  peerId?: string
+}
+
+export interface ChannelRemindersQuery extends TableQuery {
+  status?: 'active' | 'done' | 'cancelled'
+  nodeId?: string
 }

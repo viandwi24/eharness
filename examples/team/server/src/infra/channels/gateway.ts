@@ -43,6 +43,7 @@ import {
   type DropReason,
   type EventPage,
   type EventStore,
+  type EventTableQuery,
   type NewChannelEvent,
   sqliteEventStore,
 } from './events.ts'
@@ -487,10 +488,29 @@ export interface PersonView {
   note?: string
   firstSeen: number
   lastSeen: number
+  /** Hidden from "Not linked yet". */
+  ignored: boolean
+  /** Direct messages sent while not linked (a count). */
+  directMessages: number
 }
 
 export interface PeopleApi {
   list(connectionId: string): PersonView[]
+  /** One page of the directory (SQL filter, sort and count); only the page is turned into views. */
+  table(
+    connectionId: string,
+    query: {
+      q?: string | undefined
+      sort?: string | undefined
+      order?: 'asc' | 'desc' | undefined
+      role?: string | undefined
+      linked?: boolean | undefined
+      kind?: string | undefined
+      ignored?: boolean | undefined
+      page: number
+      limit: number
+    },
+  ): { items: PersonView[]; total: number }
   /** `nodeId`: the chat the question is asked in (its default role for unknown people applies). */
   get(connectionId: string, peerId: string, nodeId?: string): PersonView | undefined
   /** By platform user id, username or part of a name (the directory entry of each match). */
@@ -542,6 +562,19 @@ export interface RemindersApi {
     connectionId: string,
     filter?: { status?: ReminderRow['status']; nodeIds?: readonly string[]; createdBy?: string },
   ): ReminderRow[]
+  /** One page of the reminders of a connection (SQL filter, sort and count). */
+  table(
+    connectionId: string,
+    query: {
+      q?: string | undefined
+      sort?: string | undefined
+      order?: 'asc' | 'desc' | undefined
+      status?: ReminderRow['status'] | undefined
+      nodeId?: string | undefined
+      page: number
+      limit: number
+    },
+  ): { items: ReminderRow[]; total: number }
   get(id: string): ReminderRow | undefined
   /** The next fire of an active reminder (one-time: its time; repeating: the next slot of its routine). */
   nextAt(reminder: ReminderRow): number | undefined
@@ -614,6 +647,18 @@ export interface ChannelGateway {
       connectionId: string,
       options: { limit: number; cursor?: string | undefined },
     ): Promise<{ items: InboxConversation[]; next?: string }>
+    /** One page of the conversations (SQL filter, sort and count). */
+    table(
+      connectionId: string,
+      query: {
+        q?: string | undefined
+        sort?: string | undefined
+        order?: 'asc' | 'desc' | undefined
+        kind?: 'dm' | 'group' | 'channel' | 'topic' | undefined
+        page: number
+        limit: number
+      },
+    ): Promise<{ items: InboxConversation[]; total: number }>
     messages(
       connectionId: string,
       nodeId: string,
@@ -632,6 +677,8 @@ export interface ChannelGateway {
         limit: number
       },
     ): Omit<EventPage, 'items'> & { items: ActivityItem[] }
+    /** One page of activity (SQL filter and count), newest first by default. */
+    table(connectionId: string, query: EventTableQuery): { items: ActivityItem[]; total: number }
     /** Delete events past the events retention (age and count). */
     prune(options: { olderThan?: number; keepLast?: number }): number
   }
@@ -1207,6 +1254,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         : { note: (peopleNotes.get(id.id) as { note: string }).note }),
       firstSeen: id.firstSeenAt,
       lastSeen: id.lastSeenAt,
+      ignored: id.ignored,
+      directMessages: id.dmCount,
     }
   }
 
@@ -1264,6 +1313,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   const peopleApi: PeopleApi = {
+    table(connectionId, query) {
+      const page = identities.table(connectionId, query)
+      return { items: page.items.map((r) => viewOfIdentity(r)), total: page.total }
+    },
     list(connectionId) {
       const seen = new Map<string, IdentityRow>()
       for (const r of identities.list(connectionId, 500)) seen.set(r.id, r)
@@ -1841,6 +1894,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       return { reminder: row }
     },
     list: (connectionId, filter) => reminderStore.list(connectionId, filter),
+    table: (connectionId, query) => reminderStore.table(connectionId, query),
     get: (id) => reminderStore.get(id),
     nextAt(rem) {
       if (rem.status !== 'active') return undefined
@@ -3199,7 +3253,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (row.kind === 'bot' || row.kind === 'anonymous' || row.kind === 'channel') return
     const config = cache.get(row.connectionId)
     if (config === undefined) return
-    const link = `/channels?connection=${encodeURIComponent(row.connectionId)}&tab=people`
+    const link = `/channels/${encodeURIComponent(row.connectionId)}/people`
     const who = row.displayName ?? row.username ?? row.nativeId
     const where = node === undefined ? undefined : labelOf(roomOf(node), undefined)
     const r = resolveIdentityRole(row.connectionId, row, node)
@@ -4481,6 +4535,20 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     }
   }
 
+  async function inboxTable(
+    connectionId: string,
+    query: Parameters<NodeStore['inboxTable']>[1],
+  ): Promise<{ items: InboxConversation[]; total: number }> {
+    await migrated
+    const page = nodes.inboxTable(connectionId, query)
+    const config = cache.get(connectionId)
+    const counters = countersOf(connectionId)
+    return {
+      items: await Promise.all(page.items.map((n) => conversationView(config, n, counters))),
+      total: page.total,
+    }
+  }
+
   async function inboxMessages(
     connectionId: string,
     nodeId: string,
@@ -4767,6 +4835,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     },
     inbox: {
       conversations: (connectionId, options) => inboxConversations(connectionId, options),
+      table: (connectionId, query) => inboxTable(connectionId, query),
       messages: (connectionId, nodeId, options) => inboxMessages(connectionId, nodeId, options),
     },
     activity: {
@@ -4783,6 +4852,24 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         }
         return {
           ...page,
+          items: page.items.map((e) => {
+            const t = e.conversationId === undefined ? undefined : title(e.conversationId)
+            return t === undefined ? e : { ...e, conversationTitle: t }
+          }),
+        }
+      },
+      table(connectionId, query) {
+        const page = events.table(connectionId, query)
+        const titles = new Map<string, string | undefined>()
+        const title = (nodeId: string): string | undefined => {
+          if (!titles.has(nodeId)) {
+            const n = nodes.get(nodeId)
+            titles.set(nodeId, n === undefined ? undefined : labelOf(n, undefined))
+          }
+          return titles.get(nodeId)
+        }
+        return {
+          total: page.total,
           items: page.items.map((e) => {
             const t = e.conversationId === undefined ? undefined : title(e.conversationId)
             return t === undefined ? e : { ...e, conversationTitle: t }

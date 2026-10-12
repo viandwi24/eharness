@@ -5,20 +5,26 @@ import type { Briefing, Notification, NotificationKind } from '../domain/briefin
 import type {
   ChannelActivityPage,
   ChannelActivityQuery,
+  ChannelActivityTableQuery,
   ChannelBindInput,
+  ChannelChatsQuery,
   ChannelConnectionView,
   ChannelConversationLog,
   ChannelInboxPage,
+  ChannelInboxTableQuery,
   ChannelLimitsInput,
   ChannelLinkView,
   ChannelMemberView,
   ChannelNodeView,
+  ChannelPeopleQuery,
   ChannelPeopleSettings,
   ChannelPersonView,
   ChannelPolicyInput,
+  ChannelRemindersQuery,
   ChannelReminderView,
   ChannelRole,
   ChannelUnlinkedView,
+  TablePage,
 } from '../domain/channels.ts'
 import type {
   AgentConnectors,
@@ -847,6 +853,10 @@ export interface ChannelsPort {
   unbind(id: string): Promise<ChannelConnectionView>
   /** The chats and topics of the connection (nodes of the tree) with their own and inherited settings. */
   chats(id: string): Promise<ChannelNodeView[]>
+  /** One page of the chats (or topics) of the connection: SQL filter, sort and count. */
+  chatsTable(id: string, query: ChannelChatsQuery): Promise<TablePage<ChannelNodeView>>
+  /** One chat or topic with its own and inherited settings. */
+  chat(id: string, nodeId: string): Promise<ChannelNodeView>
   /** Write the settings of one node (a chat or a topic). `null` clears them (inherit again). */
   setChatPolicy(
     id: string,
@@ -879,14 +889,28 @@ export interface ChannelInboxPort {
   ): Promise<ChannelLinkView>
   ignore(id: string, peerId: string, ignored: boolean): Promise<void>
   inbox(id: string, options: { limit: number; cursor?: string }): Promise<ChannelInboxPage>
+  /** One page of the conversations: SQL filter, sort and count. */
+  inboxTable(
+    id: string,
+    query: ChannelInboxTableQuery,
+  ): Promise<TablePage<ChannelInboxPage['items'][number]>>
   conversation(
     id: string,
     conversationId: string,
     options: { limit: number; before?: string },
   ): Promise<ChannelConversationLog>
   activity(id: string, query: ChannelActivityQuery): Promise<ChannelActivityPage>
+  /** One page of activity: SQL filter and count, newest first by default. */
+  activityTable(
+    id: string,
+    query: ChannelActivityTableQuery,
+  ): Promise<TablePage<ChannelActivityPage['items'][number]>>
   /** The people directory (roles, divisions, suggestions from the platform's admins). */
   people(id: string): Promise<ChannelPersonView[]>
+  /** One page of the directory: SQL filter, sort and count. */
+  peopleTable(id: string, query: ChannelPeopleQuery): Promise<TablePage<ChannelPersonView>>
+  /** One person of the directory. */
+  person(id: string, peerId: string): Promise<ChannelPersonView>
   setRole(
     id: string,
     peerId: string,
@@ -900,6 +924,8 @@ export interface ChannelInboxPort {
     input: Partial<ChannelPeopleSettings>,
   ): Promise<ChannelPeopleSettings>
   reminders(id: string, options: { all: boolean }): Promise<ChannelReminderView[]>
+  /** One page of the reminders of a connection: SQL filter, sort and count. */
+  remindersTable(id: string, query: ChannelRemindersQuery): Promise<TablePage<ChannelReminderView>>
   /** Reminders of every connection (the Routines page): active ones, and with `all` the finished ones too. */
   allReminders(options: { all: boolean; agentId?: string }): Promise<ChannelReminderView[]>
   cancelReminder(id: string, reminderId: string): Promise<void>

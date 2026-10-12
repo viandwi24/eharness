@@ -8,6 +8,7 @@
 import type { Database } from 'bun:sqlite'
 import { uuidv7 } from 'eharness'
 import type { IdentityKind, IdentityRow } from './model.ts'
+import { likePattern, orderBy, windowOf } from './paging.ts'
 import type { Identity } from './types.ts'
 
 interface IdentityDb {
@@ -109,6 +110,25 @@ export interface IdentityStore {
   memberships(identityId: string): Array<{ nodeId: string; role: string }>
   /** Identities of a connection, most recently seen first (the self identity is left out). */
   list(connectionId: string, limit: number): IdentityRow[]
+  /**
+   * One page of the people of a connection (the connection itself left out): filtered, sorted and
+   * counted in SQL. `role` is the role the team set in the directory; `q` searches name, username
+   * and platform id.
+   */
+  table(
+    connectionId: string,
+    query: {
+      q?: string | undefined
+      sort?: string | undefined
+      order?: 'asc' | 'desc' | undefined
+      role?: string | undefined
+      linked?: boolean | undefined
+      kind?: string | undefined
+      ignored?: boolean | undefined
+      page: number
+      limit: number
+    },
+  ): { items: IdentityRow[]; total: number }
   /**
    * Find people by what is known about them: the platform user id (exact), a username (with or
    * without `@`), or a part of the name. Newest first, the connection's own identity left out.
@@ -342,6 +362,55 @@ export function sqliteIdentityStore(sqlite: Database): IdentityStore {
         )
         .all(connectionId, limit)
         .map(toIdentity)
+    },
+    table(connectionId, q) {
+      const where = ['i.connection_id = ?', 'i.is_self = 0']
+      const args: Array<string | number> = [connectionId]
+      if (q.role !== undefined) {
+        where.push('p.role = ?')
+        args.push(q.role)
+      }
+      if (q.linked !== undefined) where.push(`(i.person_id IS NOT NULL) = ${q.linked ? 1 : 0}`)
+      if (q.kind !== undefined) {
+        where.push('i.kind = ?')
+        args.push(q.kind)
+      }
+      if (q.ignored !== undefined) where.push(`i.ignored = ${q.ignored ? 1 : 0}`)
+      if (q.q !== undefined && q.q.trim() !== '') {
+        const like = likePattern(q.q.trim().replace(/^@/, ''))
+        where.push(
+          `(i.display_name LIKE ? ESCAPE '\\' OR i.username LIKE ? ESCAPE '\\' OR i.native_id LIKE ? ESCAPE '\\')`,
+        )
+        args.push(like, like, like)
+      }
+      const from = `FROM ch_identities i LEFT JOIN ch_people p ON p.identity_id = i.id WHERE ${where.join(' AND ')}`
+      const order = orderBy(
+        {
+          name: {
+            expr: 'COALESCE(i.display_name, i.username, i.native_id) COLLATE NOCASE',
+            defaultOrder: 'asc',
+          },
+          lastSeen: { expr: 'i.last_seen_at', defaultOrder: 'desc' },
+          firstSeen: { expr: 'i.first_seen_at', defaultOrder: 'desc' },
+          role: {
+            expr: `CASE p.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'member' THEN 2 WHEN 'guest' THEN 3 ELSE 4 END`,
+            defaultOrder: 'asc',
+          },
+          messages: { expr: 'i.dm_count', defaultOrder: 'desc' },
+        },
+        q.sort,
+        q.order,
+        'lastSeen',
+        'i.id',
+      )
+      const total =
+        sqlite
+          .query<{ n: number }, Array<string | number>>(`SELECT COUNT(*) AS n ${from}`)
+          .get(...args)?.n ?? 0
+      const rows = sqlite
+        .query<IdentityDb, Array<string | number>>(`SELECT i.* ${from} ${order} LIMIT ? OFFSET ?`)
+        .all(...args, ...windowOf(q.page, q.limit))
+      return { items: rows.map(toIdentity), total }
     },
     search(connectionId, query, limit) {
       const q = query.trim().replace(/^@/, '')

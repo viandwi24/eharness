@@ -10041,261 +10041,7 @@
           }
         }
       },
-      "ChannelPersonList": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChannelPerson"
-            }
-          }
-        },
-        "required": [
-          "items"
-        ]
-      },
-      "ChannelPerson": {
-        "type": "object",
-        "properties": {
-          "peerId": {
-            "type": "string",
-            "description": "The platform user id."
-          },
-          "name": {
-            "type": "string"
-          },
-          "username": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "isBot": {
-            "type": "boolean"
-          },
-          "role": {
-            "type": "string",
-            "enum": [
-              "owner",
-              "admin",
-              "member",
-              "guest"
-            ]
-          },
-          "roleSource": {
-            "type": "string",
-            "description": "`directory`, `linked-admin`, `linked-member`, `anonymous`, `bot` or `default`."
-          },
-          "explicit": {
-            "type": "boolean",
-            "description": "The team set this role (a directory entry exists)."
-          },
-          "divisions": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "nodeId": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "nodeId",
-                "title"
-              ]
-            }
-          },
-          "memberId": {
-            "type": "string",
-            "description": "The linked team member."
-          },
-          "platformAdmin": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "nodeId": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                },
-                "role": {
-                  "type": "string",
-                  "enum": [
-                    "owner",
-                    "admin"
-                  ]
-                },
-                "customTitle": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "nodeId",
-                "title",
-                "role"
-              ]
-            }
-          },
-          "suggestion": {
-            "type": "object",
-            "properties": {
-              "role": {
-                "type": "string",
-                "enum": [
-                  "owner",
-                  "admin",
-                  "member",
-                  "guest"
-                ]
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "role",
-              "reason"
-            ],
-            "description": "The platform lists this person as admin and the team has not decided."
-          },
-          "note": {
-            "type": "string",
-            "description": "What the person asked to be called or how they like answers (kept by the agent on request); never a role or a permission."
-          },
-          "firstSeen": {
-            "type": "integer"
-          },
-          "lastSeen": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "peerId",
-          "kind",
-          "isBot",
-          "role",
-          "roleSource",
-          "explicit",
-          "divisions",
-          "platformAdmin",
-          "firstSeen",
-          "lastSeen"
-        ]
-      },
-      "ChannelPeopleSettings": {
-        "type": "object",
-        "properties": {
-          "defaultRole": {
-            "type": "string",
-            "enum": [
-              "owner",
-              "admin",
-              "member",
-              "guest"
-            ],
-            "description": "Role of somebody who is neither in the directory nor linked to a team member."
-          },
-          "approvalTtlHours": {
-            "type": "number",
-            "minimum": 0.02,
-            "maximum": 720,
-            "description": "An approval nobody answers in a chat is declined after this long."
-          }
-        },
-        "required": [
-          "defaultRole",
-          "approvalTtlHours"
-        ]
-      },
-      "ChannelPeopleSettingsBody": {
-        "type": "object",
-        "properties": {
-          "defaultRole": {
-            "type": "string",
-            "enum": [
-              "owner",
-              "admin",
-              "member",
-              "guest"
-            ],
-            "description": "Role of somebody who is neither in the directory nor linked to a team member."
-          },
-          "approvalTtlHours": {
-            "type": "number",
-            "minimum": 0.02,
-            "maximum": 720,
-            "description": "An approval nobody answers in a chat is declined after this long."
-          }
-        }
-      },
-      "ChannelImportResult": {
-        "type": "object",
-        "properties": {
-          "chats": {
-            "type": "integer"
-          },
-          "people": {
-            "type": "integer"
-          },
-          "problems": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "chats",
-          "people",
-          "problems"
-        ]
-      },
-      "ChannelRoleBody": {
-        "type": "object",
-        "properties": {
-          "role": {
-            "type": "string",
-            "enum": [
-              "owner",
-              "admin",
-              "member",
-              "guest"
-            ]
-          },
-          "divisions": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            },
-            "maxItems": 100
-          }
-        },
-        "required": [
-          "role"
-        ]
-      },
-      "ChannelReminderList": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChannelReminder"
-            }
-          }
-        },
-        "required": [
-          "items"
-        ]
-      },
-      "ChannelNodeList": {
+      "ChannelChatTablePage": {
         "type": "object",
         "properties": {
           "items": {
@@ -10303,10 +10049,23 @@
             "items": {
               "$ref": "#/components/schemas/ChannelNode"
             }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Rows that match the filters."
+          },
+          "page": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
           }
         },
         "required": [
-          "items"
+          "items",
+          "total",
+          "page",
+          "limit"
         ]
       },
       "ChannelNode": {
@@ -10363,6 +10122,10 @@
           "container": {
             "type": "boolean",
             "description": "Has child nodes (a forum)."
+          },
+          "topics": {
+            "type": "integer",
+            "description": "How many topics a forum has."
           },
           "postable": {
             "type": "boolean",
@@ -10943,6 +10706,556 @@
           "enabled"
         ],
         "description": "What is set on this node itself; null = everything is inherited."
+      },
+      "ChannelPeopleTablePage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelPerson"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Rows that match the filters."
+          },
+          "page": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ]
+      },
+      "ChannelPerson": {
+        "type": "object",
+        "properties": {
+          "peerId": {
+            "type": "string",
+            "description": "The platform user id."
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "isBot": {
+            "type": "boolean"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "guest"
+            ]
+          },
+          "roleSource": {
+            "type": "string",
+            "description": "`directory`, `linked-admin`, `linked-member`, `anonymous`, `bot` or `default`."
+          },
+          "explicit": {
+            "type": "boolean",
+            "description": "The team set this role (a directory entry exists)."
+          },
+          "divisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "nodeId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "nodeId",
+                "title"
+              ]
+            }
+          },
+          "memberId": {
+            "type": "string",
+            "description": "The linked team member."
+          },
+          "platformAdmin": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "nodeId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "owner",
+                    "admin"
+                  ]
+                },
+                "customTitle": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "nodeId",
+                "title",
+                "role"
+              ]
+            }
+          },
+          "suggestion": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "owner",
+                  "admin",
+                  "member",
+                  "guest"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "reason"
+            ],
+            "description": "The platform lists this person as admin and the team has not decided."
+          },
+          "note": {
+            "type": "string",
+            "description": "What the person asked to be called or how they like answers (kept by the agent on request); never a role or a permission."
+          },
+          "firstSeen": {
+            "type": "integer"
+          },
+          "lastSeen": {
+            "type": "integer"
+          },
+          "ignored": {
+            "type": "boolean",
+            "description": "Hidden from \"Not linked yet\" (the team chose to ignore this person)."
+          },
+          "directMessages": {
+            "type": "integer",
+            "description": "Direct messages sent while not linked (a count, never a text)."
+          }
+        },
+        "required": [
+          "peerId",
+          "kind",
+          "isBot",
+          "role",
+          "roleSource",
+          "explicit",
+          "divisions",
+          "platformAdmin",
+          "firstSeen",
+          "lastSeen"
+        ]
+      },
+      "ChannelInboxTablePage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelInboxConversation"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Rows that match the filters."
+          },
+          "page": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ]
+      },
+      "ChannelInboxConversation": {
+        "type": "object",
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "description": "The node id."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dm",
+              "group",
+              "channel"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "container": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "parentTitle": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "allowed": {
+            "type": "boolean",
+            "description": "The conversation passes the allowlist now."
+          },
+          "woke": {
+            "type": "integer",
+            "description": "Messages that woke the agent."
+          },
+          "observed": {
+            "type": "integer",
+            "description": "Messages stored as context only."
+          },
+          "dropped": {
+            "type": "integer",
+            "description": "Messages the gateway dropped."
+          },
+          "firstAt": {
+            "type": "integer"
+          },
+          "lastAt": {
+            "type": "integer"
+          },
+          "preview": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "at": {
+                "type": "integer"
+              },
+              "self": {
+                "type": "boolean"
+              },
+              "sender": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "at",
+              "self"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string",
+            "description": "The agent's thread of this conversation, once it woke the agent."
+          }
+        },
+        "required": [
+          "conversationId",
+          "kind",
+          "title",
+          "container",
+          "agentId",
+          "allowed",
+          "woke",
+          "observed",
+          "dropped",
+          "firstAt",
+          "lastAt"
+        ]
+      },
+      "ChannelActivityTablePage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelActivity"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Rows that match the filters."
+          },
+          "page": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ]
+      },
+      "ChannelActivity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "at": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "woke",
+              "observed",
+              "dropped",
+              "reply-queued",
+              "reply-sent",
+              "reply-retried",
+              "reply-failed",
+              "approval-posted",
+              "approval-answered",
+              "breaker-opened",
+              "needs-auth"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text."
+          },
+          "conversationId": {
+            "type": "string"
+          },
+          "conversationTitle": {
+            "type": "string"
+          },
+          "peerId": {
+            "type": "string"
+          },
+          "peerName": {
+            "type": "string"
+          },
+          "platformId": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "type"
+        ]
+      },
+      "ChannelRemindersTablePage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelReminder"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Rows that match the filters."
+          },
+          "page": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "limit"
+        ]
+      },
+      "ChannelPersonList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelPerson"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelPeopleSettings": {
+        "type": "object",
+        "properties": {
+          "defaultRole": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "guest"
+            ],
+            "description": "Role of somebody who is neither in the directory nor linked to a team member."
+          },
+          "approvalTtlHours": {
+            "type": "number",
+            "minimum": 0.02,
+            "maximum": 720,
+            "description": "An approval nobody answers in a chat is declined after this long."
+          }
+        },
+        "required": [
+          "defaultRole",
+          "approvalTtlHours"
+        ]
+      },
+      "ChannelPeopleSettingsBody": {
+        "type": "object",
+        "properties": {
+          "defaultRole": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "guest"
+            ],
+            "description": "Role of somebody who is neither in the directory nor linked to a team member."
+          },
+          "approvalTtlHours": {
+            "type": "number",
+            "minimum": 0.02,
+            "maximum": 720,
+            "description": "An approval nobody answers in a chat is declined after this long."
+          }
+        }
+      },
+      "ChannelImportResult": {
+        "type": "object",
+        "properties": {
+          "chats": {
+            "type": "integer"
+          },
+          "people": {
+            "type": "integer"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "chats",
+          "people",
+          "problems"
+        ]
+      },
+      "ChannelRoleBody": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "guest"
+            ]
+          },
+          "divisions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "role"
+        ]
+      },
+      "ChannelReminderList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelReminder"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelNodeList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelNode"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
       },
       "ChannelSelectBody": {
         "type": "object",
@@ -11847,105 +12160,6 @@
           "items"
         ]
       },
-      "ChannelInboxConversation": {
-        "type": "object",
-        "properties": {
-          "conversationId": {
-            "type": "string",
-            "description": "The node id."
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "dm",
-              "group",
-              "channel"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "container": {
-            "type": "string"
-          },
-          "topic": {
-            "type": "string"
-          },
-          "parentId": {
-            "type": "string"
-          },
-          "parentTitle": {
-            "type": "string"
-          },
-          "agentId": {
-            "type": "string"
-          },
-          "allowed": {
-            "type": "boolean",
-            "description": "The conversation passes the allowlist now."
-          },
-          "woke": {
-            "type": "integer",
-            "description": "Messages that woke the agent."
-          },
-          "observed": {
-            "type": "integer",
-            "description": "Messages stored as context only."
-          },
-          "dropped": {
-            "type": "integer",
-            "description": "Messages the gateway dropped."
-          },
-          "firstAt": {
-            "type": "integer"
-          },
-          "lastAt": {
-            "type": "integer"
-          },
-          "preview": {
-            "type": "object",
-            "properties": {
-              "text": {
-                "type": "string"
-              },
-              "at": {
-                "type": "integer"
-              },
-              "self": {
-                "type": "boolean"
-              },
-              "sender": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "text",
-              "at",
-              "self"
-            ]
-          },
-          "sessionId": {
-            "type": "string"
-          },
-          "threadId": {
-            "type": "string",
-            "description": "The agent's thread of this conversation, once it woke the agent."
-          }
-        },
-        "required": [
-          "conversationId",
-          "kind",
-          "title",
-          "container",
-          "agentId",
-          "allowed",
-          "woke",
-          "observed",
-          "dropped",
-          "firstAt",
-          "lastAt"
-        ]
-      },
       "ChannelConversationLog": {
         "type": "object",
         "properties": {
@@ -12122,73 +12336,6 @@
         },
         "required": [
           "items"
-        ]
-      },
-      "ChannelActivity": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "at": {
-            "type": "integer"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "woke",
-              "observed",
-              "dropped",
-              "reply-queued",
-              "reply-sent",
-              "reply-retried",
-              "reply-failed",
-              "approval-posted",
-              "approval-answered",
-              "breaker-opened",
-              "needs-auth"
-            ]
-          },
-          "reason": {
-            "type": "string",
-            "description": "A drop reason (`unlinked-sender`, `chat-not-allowed`, `dm-disabled`, `bot-sender`, `loop-guard`, `duplicate`, `agent-unavailable`, `not-authorized`, `not-observed`), a wake reason, or a short note. Never message text."
-          },
-          "conversationId": {
-            "type": "string"
-          },
-          "conversationTitle": {
-            "type": "string"
-          },
-          "peerId": {
-            "type": "string"
-          },
-          "peerName": {
-            "type": "string"
-          },
-          "platformId": {
-            "type": "string"
-          },
-          "detail": {
-            "type": "object",
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "boolean"
-                }
-              ]
-            }
-          }
-        },
-        "required": [
-          "id",
-          "at",
-          "type"
         ]
       },
       "ModelCallList": {
@@ -22556,6 +22703,885 @@
         }
       }
     },
+    "/channels/connections/{id}/chats/table": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Chats and topics, one page",
+        "description": "The table behind the Chats pages: filters, sort and the count are done in the database. `level` picks chats (default), topics or both; `parentId` lists the topics of one chat; `allowed`, `admin`, `history` and `adminLog` filter on what the settings say. Returns `{ items, total, page, limit }`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "Search text."
+            },
+            "required": false,
+            "description": "Search text.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "description": "Sort direction; the default depends on the sort column."
+            },
+            "required": false,
+            "description": "Sort direction; the default depends on the sort column.",
+            "name": "order",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "1-based."
+            },
+            "required": false,
+            "description": "1-based.",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25,
+              "description": "Page size."
+            },
+            "required": false,
+            "description": "Page size.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "title",
+                "lastSeen",
+                "firstSeen",
+                "state",
+                "kind",
+                "allowed",
+                "messages",
+                "backfill"
+              ]
+            },
+            "required": false,
+            "name": "sort",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "chat",
+                "topic",
+                "all"
+              ],
+              "description": "`chat` (default): chats and channels, `topic`: forum topics, `all`: both."
+            },
+            "required": false,
+            "description": "`chat` (default): chats and channels, `topic`: forum topics, `all`: both.",
+            "name": "level",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only the topics of this chat."
+            },
+            "required": false,
+            "description": "Only the topics of this chat.",
+            "name": "parentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "group",
+                "channel"
+              ]
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "closed",
+                "archived",
+                "left"
+              ]
+            },
+            "required": false,
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no"
+              ],
+              "description": "The agent may be used here (the allowlist)."
+            },
+            "required": false,
+            "description": "The agent may be used here (the allowlist).",
+            "name": "allowed",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no"
+              ],
+              "description": "The connection is an admin of the chat."
+            },
+            "required": false,
+            "description": "The connection is an admin of the chat.",
+            "name": "admin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no"
+              ],
+              "description": "Accounts: a history window is set."
+            },
+            "required": false,
+            "description": "Accounts: a history window is set.",
+            "name": "history",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no"
+              ],
+              "description": "Accounts: the admin log is read."
+            },
+            "required": false,
+            "description": "Accounts: the admin log is read.",
+            "name": "adminLog",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of chats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelChatTablePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/people/table": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "People, one page",
+        "description": "The table behind the People page: everybody the connection has seen. `role` filters on the role the team set, `linked` on the link to a team member; `q` searches name, username and platform id. Returns `{ items, total, page, limit }`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "Search text."
+            },
+            "required": false,
+            "description": "Search text.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "description": "Sort direction; the default depends on the sort column."
+            },
+            "required": false,
+            "description": "Sort direction; the default depends on the sort column.",
+            "name": "order",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "1-based."
+            },
+            "required": false,
+            "description": "1-based.",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25,
+              "description": "Page size."
+            },
+            "required": false,
+            "description": "Page size.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "name",
+                "lastSeen",
+                "firstSeen",
+                "role",
+                "messages"
+              ]
+            },
+            "required": false,
+            "name": "sort",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "owner",
+                "admin",
+                "member",
+                "guest"
+              ],
+              "description": "The role the team set in the directory."
+            },
+            "required": false,
+            "description": "The role the team set in the directory.",
+            "name": "role",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no"
+              ],
+              "description": "Linked to a team member."
+            },
+            "required": false,
+            "description": "Linked to a team member.",
+            "name": "linked",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no"
+              ]
+            },
+            "required": false,
+            "name": "ignored",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of people",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPeopleTablePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/inbox/table": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Conversations, one page",
+        "description": "The table behind the Inbox page: `q` searches titles, `kind` filters, the count is exact. Returns `{ items, total, page, limit }`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "Search text."
+            },
+            "required": false,
+            "description": "Search text.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "description": "Sort direction; the default depends on the sort column."
+            },
+            "required": false,
+            "description": "Sort direction; the default depends on the sort column.",
+            "name": "order",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "1-based."
+            },
+            "required": false,
+            "description": "1-based.",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25,
+              "description": "Page size."
+            },
+            "required": false,
+            "description": "Page size.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "lastAt",
+                "firstAt",
+                "title"
+              ]
+            },
+            "required": false,
+            "name": "sort",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "dm",
+                "group",
+                "channel",
+                "topic"
+              ]
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of conversations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelInboxTablePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/activity/table": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Activity, one page",
+        "description": "The table behind the Activity pages: filter by type, conversation or person, search the reason, names and titles. Newest first by default. Metadata only. Returns `{ items, total, page, limit }`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "Search text."
+            },
+            "required": false,
+            "description": "Search text.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "description": "Sort direction; the default depends on the sort column."
+            },
+            "required": false,
+            "description": "Sort direction; the default depends on the sort column.",
+            "name": "order",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "1-based."
+            },
+            "required": false,
+            "description": "1-based.",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25,
+              "description": "Page size."
+            },
+            "required": false,
+            "description": "Page size.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "woke",
+                "observed",
+                "dropped",
+                "reply-queued",
+                "reply-sent",
+                "reply-retried",
+                "reply-failed",
+                "approval-posted",
+                "approval-answered",
+                "breaker-opened",
+                "needs-auth"
+              ]
+            },
+            "required": false,
+            "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "conversationId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The platform user id of the person."
+            },
+            "required": false,
+            "description": "The platform user id of the person.",
+            "name": "peerId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelActivityTablePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/reminders/table": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Reminders, one page",
+        "description": "The table behind the Reminders page: `status`, `nodeId` and `q` filter, the count is exact. Returns `{ items, total, page, limit }`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "Search text."
+            },
+            "required": false,
+            "description": "Search text.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "description": "Sort direction; the default depends on the sort column."
+            },
+            "required": false,
+            "description": "Sort direction; the default depends on the sort column.",
+            "name": "order",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "1-based."
+            },
+            "required": false,
+            "description": "1-based.",
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25,
+              "description": "Page size."
+            },
+            "required": false,
+            "description": "Page size.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "createdAt",
+                "lastFiredAt",
+                "status",
+                "fireCount",
+                "text"
+              ]
+            },
+            "required": false,
+            "name": "sort",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "done",
+                "cancelled"
+              ]
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only the reminders that post in this chat."
+            },
+            "required": false,
+            "description": "Only the reminders that post in this chat.",
+            "name": "nodeId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of reminders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelRemindersTablePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/channels/connections/{id}/people": {
       "get": {
         "tags": [
@@ -22752,6 +23778,81 @@
           },
           "404": {
             "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/people/{peerId}": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "One person",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "peerId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPerson"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown person",
             "content": {
               "application/json": {
                 "schema": {
@@ -23961,6 +25062,83 @@
           },
           "404": {
             "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/chats/{chatId}": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "One chat or topic",
+        "description": "What the node sets itself, what is in force and where each value comes from.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path",
+            "description": "The node id of the chat or topic."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The node",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelNode"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection or node",
             "content": {
               "application/json": {
                 "schema": {

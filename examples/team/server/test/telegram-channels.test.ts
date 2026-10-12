@@ -541,6 +541,120 @@ describe('linking people without links', () => {
   })
 })
 
+describe('the tables of the Channels pages (HTTP)', () => {
+  test('chats, people, inbox, activity and reminders come as { items, total, page, limit } with SQL filters, sort and paging', async () => {
+    const { server, fake, leadId } = await boot([{ text: 'ok' }])
+    const { id } = await connectBot(server, fake.token)
+    await call(server, 'PUT', `/channels/connections/${id}/binding`, { agentId: leadId })
+    const api = (path: string) => call(server, 'GET', `/channels/connections/${id}${path}`)
+
+    // chats: a few places, one allowed, and a forum with two topics
+    know(server, id, '-2001', 'Alpha')
+    know(server, id, '-2002', 'Beta')
+    know(server, id, '-2003', 'News', true)
+    const forum = know(server, id, '-2004', 'Forum')
+    for (const [n, t] of [
+      ['1', 'Produksi'],
+      ['2', 'Sales'],
+    ] as const)
+      server.channels.settings.ensureNode(
+        id,
+        { nativeId: `-2004/${n}`, kind: 'thread', title: t },
+        '-2004',
+      )
+    await call(
+      server,
+      'PATCH',
+      `/channels/connections/${id}/chats/${node(server, id, '-2001')}/policy`,
+      {
+        wake: 'always',
+      },
+    )
+
+    const chats = await api('/chats/table?sort=title&order=asc&limit=3')
+    expect(chats.status).toBe(200)
+    expect(chats.json).toMatchObject({ total: 4, page: 1, limit: 3 })
+    expect(chats.json.items.map((c: Json) => c.title)).toEqual(['Alpha', 'Beta', 'Forum'])
+    expect((await api('/chats/table?sort=title&order=asc&limit=3&page=2')).json.items).toHaveLength(
+      1,
+    )
+    expect((await api('/chats/table?allowed=yes')).json.items.map((c: Json) => c.title)).toEqual([
+      'Alpha',
+    ])
+    expect((await api('/chats/table?kind=channel')).json.items.map((c: Json) => c.title)).toEqual([
+      'News',
+    ])
+    expect((await api('/chats/table?q=ALP')).json.total).toBe(1)
+    const topics = await api(`/chats/table?level=topic&parentId=${forum}`)
+    expect(topics.json.items.map((c: Json) => c.title).sort()).toEqual(['Produksi', 'Sales'])
+    expect(topics.json.items[0]).toMatchObject({ kind: 'thread' })
+    expect((await api('/chats/table?level=all')).json.total).toBe(6)
+    // a forum says how many topics it has; one chat has its own address
+    const forumView = await api(`/chats/${forum}`)
+    expect(forumView.status).toBe(200)
+    expect(forumView.json).toMatchObject({ title: 'Forum', container: true, topics: 2 })
+    expect((await api('/chats/no-such-node')).status).toBe(404)
+    // the schema refuses a bad sort or a page size over 100
+    expect((await api('/chats/table?sort=title;drop')).status).toBe(400)
+    expect((await api('/chats/table?limit=101')).status).toBe(400)
+
+    // people: three strangers write directly
+    for (const [n, name] of [
+      [11, 'Cora'],
+      [12, 'Budi'],
+      [13, 'Ana'],
+    ] as const)
+      fake.push(
+        tg.message({ chat: tg.dm(n), from: tg.user(n, name), id: n, text: `hello ${name}` }),
+      )
+    await until('three people', async () => (await api('/people/table')).json.total === 3)
+    const people = await api('/people/table?sort=name&order=asc&limit=2')
+    expect(people.json).toMatchObject({ total: 3, page: 1, limit: 2 })
+    expect(people.json.items.map((p: Json) => p.name)).toEqual(['Ana', 'Budi'])
+    expect(people.json.items[0]).toMatchObject({ peerId: '13', directMessages: 1, ignored: false })
+    expect((await api('/people/table?linked=no')).json.total).toBe(3)
+    await call(server, 'POST', `/channels/connections/${id}/links`, {
+      peerId: '12',
+      memberId: 'owner',
+    })
+    expect((await api('/people/table?linked=yes')).json.items.map((p: Json) => p.peerId)).toEqual([
+      '12',
+    ])
+    await call(server, 'PUT', `/channels/connections/${id}/people/11/role`, { role: 'admin' })
+    expect((await api('/people/table?role=admin')).json.items.map((p: Json) => p.peerId)).toEqual([
+      '11',
+    ])
+    expect((await api('/people/table?q=%40cora')).json.total).toBe(1)
+    expect((await api('/people/11')).json).toMatchObject({
+      peerId: '11',
+      role: 'admin',
+      explicit: true,
+    })
+    expect((await api('/people/999')).status).toBe(404)
+
+    // inbox and activity: the DMs are conversations with events
+    await until('three conversations', async () => (await api('/inbox/table')).json.total === 3)
+    const inbox = await api('/inbox/table?kind=dm&sort=title&order=asc&limit=2')
+    expect(inbox.json).toMatchObject({ total: 3, page: 1, limit: 2 })
+    expect(inbox.json.items).toHaveLength(2)
+    expect((await api('/inbox/table?kind=group')).json.total).toBe(0)
+    expect((await api('/inbox/table?q=zzzz')).json.total).toBe(0)
+    const activity = await api('/activity/table?limit=2')
+    expect(activity.json.total).toBeGreaterThanOrEqual(3)
+    expect(activity.json.items).toHaveLength(2)
+    expect(
+      (await api('/activity/table?peerId=11&type=dropped')).json.items.every(
+        (e: Json) => e.peerId === '11' && e.type === 'dropped',
+      ),
+    ).toBe(true)
+    expect(JSON.stringify(activity.json)).not.toContain('hello')
+
+    // reminders: none yet; an unknown connection is a 404
+    expect((await api('/reminders/table')).json).toMatchObject({ items: [], total: 0, page: 1 })
+    expect((await call(server, 'GET', '/channels/connections/nope/people/table')).status).toBe(404)
+  })
+})
+
 describe('approvals in a Telegram chat', () => {
   const post: ScriptedStepInput = {
     toolCalls: [
