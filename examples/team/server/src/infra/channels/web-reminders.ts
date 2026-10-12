@@ -37,7 +37,7 @@ export interface WebRemindersOptions {
 }
 
 export const WEB_REMINDER_DESCRIPTION =
-  'Reminders at a time in the team timezone, without a model call: create (message, when), list, cancel, update. ' +
+  'Reminders at a time in the team timezone, without a model call: create (`message` is REQUIRED, plus when), list, cancel, update. Example: {"action":"create","message":"Time to leave","inMinutes":10}. ' +
   'Use it for "remind me in 3 minutes", "tomorrow at 9 remind me to ...", "every weekday at 17:00 remind me ...". ' +
   'A reminder is NOT a plan or a program: never use propose_plan or the work queue for one. ' +
   '`message` is what appears in this chat when it fires and must read as the reminder itself ("Time to leave", "Waktunya pulang"), not as the request ("remind me to ..."): put the request in `request` and write the reminder in `message`. ' +
@@ -150,7 +150,7 @@ export function webReminders(options: WebRemindersOptions): HarnessPlugin<'web-r
           }
 
           if (message === undefined || message === '')
-            return 'ERROR: create needs message (what appears when it fires, written as the reminder itself).'
+            return 'ERROR: create needs message (what appears when it fires, written as the reminder itself). Call again with message, for example {"action":"create","message":"Time to leave","inMinutes":10}.'
           if (!hasWhen) return 'ERROR: create needs when: at, inMinutes, or repeat with time.'
           const created = gw.reminders.createInThread({
             sessionId,

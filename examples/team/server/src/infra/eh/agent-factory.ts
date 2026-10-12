@@ -97,7 +97,13 @@ import type { WorkspaceSettings } from '../../domain/settings.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { taskGrantRules } from '../../domain/work-queue.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
-import { CHANNEL_TOOLS, type ChannelGateway, channels, webReminders } from '../channels/index.ts'
+import {
+  CHANNEL_TOOLS,
+  type ChannelGateway,
+  channels,
+  webPersonNote,
+  webReminders,
+} from '../channels/index.ts'
 import { nativeToolName } from '../channels/policy.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
@@ -990,6 +996,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...(deps.channels === undefined
         ? []
         : [webReminders({ gateway: deps.channels, agentOf: (slug) => deps.agentBySlug?.(slug) })]),
+      // `person_note` of a person's own chat thread, and no communication style in memory
+      ...(deps.channels === undefined ? [] : [webPersonNote({ gateway: deps.channels })]),
       sessionPermissions({
         createEngine,
         gate: gateOf,

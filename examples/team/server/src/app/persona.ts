@@ -383,5 +383,9 @@ export function noticeOf(version: PersonaVersion, agentName: string): string {
     version.source === 'revert'
       ? `reverted to version ${version.revertOf}`
       : (version.reason ?? 'changed')
-  return `Persona of ${agentName} updated by ${by}: ${what} (version ${version.version}, effective from the next message).`
+  const kept =
+    version.source === 'revert'
+      ? ' Personal notes (for example how to address someone) are kept.'
+      : ''
+  return `Persona of ${agentName} updated by ${by}: ${what} (version ${version.version}, effective from the next message).${kept}`
 }

@@ -142,12 +142,42 @@ export function systemFactIn(text: string): string | undefined {
   return undefined
 }
 
+/**
+ * Communication style and persona preferences ("call me Pak Vian", "short answers", "reply in
+ * English", "be more formal"): they belong in `person_note` (about a person) or `persona` (about the
+ * agent), never in shared memory. Deliberately simple and conservative.
+ */
+const STYLE_PATTERNS: readonly RegExp[] = [
+  /\b(call|address|greet|refer to)\s+(me|him|her|them|the user)\b/i,
+  /\b(panggil|sapa|sebut)\s+(saya|aku|dia|beliau|mereka|user|pengguna)\b/i,
+  /\b(prefers?|likes?|wants?|asked for|suka|ingin|minta|maunya)\b[^.\n]{0,40}\b(short|brief|concise|long|detailed|formal|informal|casual|friendly|polite|singkat|ringkas|panjang|detail|santai|sopan|resmi)\b[^.\n]{0,20}\b(answers?|repl(?:y|ies)|responses?|tone|style|jawaban|balasan|gaya)\b/i,
+  /\b(short|brief|concise|formal|casual)\s+(answers?|repl(?:y|ies)|responses?)\b/i,
+  /\b(jawab(?:an)?|balas(?:an)?)\s+(yang\s+)?(singkat|ringkas|panjang|santai|resmi)\b/i,
+  /\b(repl(?:y|ies)|answers?|respond|write|speak|jawab|balas)\s+(in|dalam|pakai|dengan)\s+(english|indonesian|bahasa|inggris|indonesia|dutch|german)\b/i,
+  /\b(communication|speaking|writing)\s+style\b|\bgaya\s+(bicara|bahasa|komunikasi)\b|\b(persona|personality)\b/i,
+]
+
+/** True when a text records how somebody likes to be addressed or answered. */
+export function styleNoteIn(text: string): boolean {
+  return text.split('\n').some((line) => STYLE_PATTERNS.some((p) => p.test(line)))
+}
+
+/** The redirect for a memory write about style: readable, names both homes. */
+export const STYLE_MEMORY_REFUSAL =
+  'Not saved: this note records how somebody likes to be addressed or answered (a communication style). That is not shared memory. Use person_note for a preference of a person ("call me Pak Vian", "short answers") or the persona tool when the person wants YOU to change how you talk. Do not write it to memory.'
+
 export const MEMORY_WRITE_TOOLS: readonly string[] = [
   'memory_create',
   'memory_str_replace',
   'memory_insert',
   'memory',
 ]
+
+/** The redirect when a memory write records a communication style or persona preference, else undefined. */
+export function styleMemoryRefusal(toolName: string, input: unknown): string | undefined {
+  if (!MEMORY_WRITE_TOOLS.includes(toolName)) return undefined
+  return styleNoteIn(writtenText(input)) ? STYLE_MEMORY_REFUSAL : undefined
+}
 
 /**
  * A readable refusal when a memory write in a channel session records system or state facts, else
@@ -156,6 +186,8 @@ export const MEMORY_WRITE_TOOLS: readonly string[] = [
  */
 export function memoryWriteRefusal(toolName: string, input: unknown): string | undefined {
   if (!MEMORY_WRITE_TOOLS.includes(toolName)) return undefined
+  const style = styleMemoryRefusal(toolName, input)
+  if (style !== undefined) return style
   const what = systemFactIn(writtenText(input))
   if (what === undefined) return undefined
   return `Not saved: this note records ${what}. That is system state, not memory: it changes and is always checked live (channel_status for your own rights, member_lookup or the message header for people). Do not write it down. Save only durable facts about the work or a person's stated preference. Do not mention this refusal to the people in the chat.`

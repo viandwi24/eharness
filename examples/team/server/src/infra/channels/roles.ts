@@ -107,7 +107,7 @@ export function decideTool(
         : role === 'member'
           ? 'Members can read the chats of their divisions and set their own reminders. '
           : ''
-    }Only an owner or an admin can ask for this: tell the person, in one plain sentence, to ask an admin. Do not explain where or how roles are set, do not retry and do not look for another way around it.`,
+    }Only an owner or an admin can ask for this: tell the person, in one plain sentence, to ask an admin. Do not explain where or how roles are set, do not retry and do not look for another way around it. Never offer an action you cannot do (for example "I will note it" or "I will pass it on"): offer only what a tool of yours really does.`,
   })
   if (policy.deny.includes(toolName)) return refuse()
   if (ALWAYS_ALLOWED.includes(toolName)) return { allowed: true }

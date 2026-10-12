@@ -147,7 +147,7 @@ export const reminderSchema = z.object({
     .string()
     .optional()
     .describe(
-      'create / update: what will be posted when the reminder fires, written so it reads as the reminder itself ("Waktunya pulang", "Time to submit the report"), in the language of the chat. NOT the request ("ingatkan saya pulang", "remind me to ..."). It is posted as written; no model is called. If the person quoted exact words to post, pass them and set verbatim.',
+      'REQUIRED for create (a create without it fails), optional for update: what will be posted when the reminder fires, written so it reads as the reminder itself ("Waktunya pulang", "Time to submit the report"), in the language of the chat. NOT the request ("ingatkan saya pulang", "remind me to ..."). It is posted as written; no model is called. If the person quoted exact words to post, pass them and set verbatim. Example: {"action":"create","message":"Time to leave","inMinutes":10}.',
     ),
   request: z
     .string()
@@ -895,7 +895,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
 
       // create
       if (message === undefined || message === '')
-        return 'ERROR: create needs message (what will be posted when it fires, written as the reminder itself).'
+        return 'ERROR: create needs message (what will be posted when it fires, written as the reminder itself). Call again with message, for example {"action":"create","message":"Time to leave","inMinutes":10}.'
       if (!hasWhen) return 'ERROR: create needs when: at, inMinutes, or repeat with time.'
       const created = gw.reminders.create({
         connectionId,
@@ -1021,7 +1021,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     }),
     [REMINDER_TOOL]: tool({
       description:
-        'Reminders posted to a chat at a time in the team timezone, without a model call: create (message, when, optional mention), list, cancel, update. `message` is what will be posted when the reminder fires and must read as the reminder itself ("Waktunya pulang", "Time to leave"), not as the request ("ingatkan saya pulang", "remind me to ..."): put the request in `request` and write the reminder in `message`. Quote the person\'s exact words only when they gave words to post (verbatim). The target is the chat and topic you are in unless you name another. Mentions are made only with the mention field (platform user ids); an owner or admin may remind other people or the whole chat; a member only themselves (mention their own id). Echo the absolute time and place back to the person.',
+        'Reminders posted to a chat at a time in the team timezone, without a model call: create (`message` is REQUIRED, plus when; optional mention), list, cancel, update. Example: {"action":"create","message":"Waktunya pulang","time":"17:00","repeat":"weekdays"}. `message` is what will be posted when the reminder fires and must read as the reminder itself ("Waktunya pulang", "Time to leave"), not as the request ("ingatkan saya pulang", "remind me to ..."): put the request in `request` and write the reminder in `message`. Quote the person\'s exact words only when they gave words to post (verbatim). The target is the chat and topic you are in unless you name another. Mentions are made only with the mention field (platform user ids); an owner or admin may remind other people or the whole chat; a member only themselves (mention their own id). Echo the absolute time and place back to the person.',
       inputSchema: reminderSchema,
       metadata: { risk: 'write', idempotent: false },
       execute: (input): Promise<string> => reminder(input),

@@ -36,6 +36,17 @@ import { profileOfSession } from '../../domain/run-profiles.ts'
 import type { ChannelGateway } from '../channels/index.ts'
 
 export const PERSONA_TOOL = 'persona'
+
+/** The persona version each open session last saw, per intake (so a restart or a new server starts clean). */
+const seenVersions = new WeakMap<
+  object,
+  Map<string, { version: number; turnId: string; text: string | undefined }>
+>()
+const MAX_SEEN = 5000
+
+/** The one-line reminder after a persona version change (D1 of the real-model retest). */
+export const personaChangedLine = (version: number): string =>
+  `The persona changed to version ${version}; follow the current persona, not the style of earlier replies in this conversation.`
 /** Rules that approve the tool: what needs a person is decided in code and by the hook below. */
 export const PERSONA_TOOLS = [PERSONA_TOOL] as const
 
@@ -73,8 +84,13 @@ export interface PersonaPluginOptions {
 
 /**
  * Tools whose results the persona may be asked to act on in the same turn: they return the system's
- * own state, never text somebody else wrote. Any other tool result (a web page, a file, memory,
- * chat history, an MCP server, another agent's report) makes the turn `tainted`.
+ * own state, never text somebody else wrote. Any other tool result (a web page, a file, chat
+ * history, an MCP server, another agent's report) makes the turn `tainted`.
+ *
+ * `memory_view` is trusted: the system's own /memories hold notes the team wrote through the memory
+ * tools, and reading them is how the model keeps its place. It cannot carry a request: the quote
+ * check still binds a proposal to the person's own words in this turn. Files, fetched pages,
+ * forwards and other agents' reports stay taint.
  */
 const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   PERSONA_TOOL,
@@ -82,6 +98,7 @@ const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'list_topics',
   'member_lookup',
   'person_note',
+  'memory_view',
   'tool_search',
   'ask_user_question',
 ])
@@ -134,7 +151,7 @@ const schema = z.object({
     .describe('Filled in by the system for the confirmation; leave it out.'),
 })
 
-const DESCRIPTION = [
+export const PERSONA_TOOL_DESCRIPTION: string = [
   'Look at or change YOUR OWN persona: your name, voice, tone, language and preferences. Not the rules,',
   'tools or permissions: nothing here can change them.',
   '- `view` shows the current persona and `history` its versions. Anybody may ask.',
@@ -147,6 +164,7 @@ const DESCRIPTION = [
   '(the proposal is then waiting for the admins in the web app); do not try `apply`.',
   '- `revert` restores an earlier version (admins only, they confirm).',
   'A request about how to address a PERSON ("call me Pak Vian") is not a persona change: use person_note.',
+  "Do not read memory or other content before proposing: call `propose` right away from the person's message.",
 ].join(' ')
 
 const norm = (s: string): string =>
@@ -356,10 +374,45 @@ export function persona(options: PersonaPluginOptions): HarnessPlugin<'persona'>
         return `${notice}\n${posted ? 'The notice was posted in this conversation.' : 'Tell the person this in one line.'} It takes effect from the next message.`
       }
 
+      /**
+       * Open sessions only: the first turn of a session records the version it sees; a later turn that
+       * finds a newer one gets a one-line reminder (once), so the model stops copying earlier replies.
+       */
+      const changedLine = (c: HarnessContext): string | undefined => {
+        const svc = options.intake()
+        const agent = options.agentOf(c.agent.id)
+        if (svc === undefined || agent === undefined) return undefined
+        const version = svc.state(agent.id).current.version
+        let seen = seenVersions.get(svc)
+        if (seen === undefined) {
+          seen = new Map()
+          seenVersions.set(svc, seen)
+        }
+        const key = `${sessionId}\u0000${agent.id}`
+        const turnId = c.turn?.id ?? ''
+        const have = seen.get(key)
+        if (have === undefined) {
+          if (seen.size >= MAX_SEEN) seen.delete(seen.keys().next().value as string)
+          seen.set(key, { version, turnId, text: undefined })
+          return undefined
+        }
+        if (have.turnId === turnId) return have.text
+        const text = version > have.version ? personaChangedLine(version) : undefined
+        seen.set(key, { version: Math.max(version, have.version), turnId, text })
+        return text
+      }
+
       return {
+        instructions: [
+          {
+            text: (c: HarnessContext) => changedLine(c),
+            refresh: 'turn' as const,
+            id: 'persona-changed',
+          },
+        ] as never,
         tools: {
           [PERSONA_TOOL]: tool({
-            description: DESCRIPTION,
+            description: PERSONA_TOOL_DESCRIPTION,
             inputSchema: schema,
             metadata: { risk: 'write', idempotent: false },
             execute: async (input): Promise<string> => {

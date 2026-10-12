@@ -249,6 +249,7 @@ describe('migration of the tool checklist and MCP servers', () => {
         'todo_write',
         'send_message',
         'propose_plan',
+        'person_note',
         'persona',
         'reminder',
       ].sort(),

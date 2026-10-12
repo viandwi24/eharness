@@ -83,11 +83,19 @@ Decisions taken while building (where the plan left room):
   identity and voice and keeps the current operating rules. The agent can read them (they are in its prompt), not
   change them.
 - **Provenance in code.** A turn is *tainted* by any tool result that is not system state (`TRUSTED_TOOLS` in the
-  plugin: persona, channel_status, list_topics, member_lookup, person_note, tool_search, ask_user_question), by a
+  plugin: persona, channel_status, list_topics, member_lookup, person_note, memory_view (the system's own /memories),
+  tool_search, ask_user_question), by a
   file in the turn, and by a forwarded trigger message (`Requester.forwarded`). A tainted turn cannot propose.
   `request` must be an exact quote of the turn's user text.
 - **Overlay and people notes are turn reminders**, not instructions: they are per place or per person and change
   without a new persona version. The overlay is validated when it is written (`writePolicy`).
+- **Retest fixes.** Web threads have `person_note` too (`web-person-note.ts`): the note is kept on the profile
+  `web:owner` of the connection `web` (the web app has no per-person sign-in to link to a directory person) and
+  reaches web turns as a reminder. A memory write that records a communication style or persona preference
+  ("call me Pak Vian", "short answers") is refused with a redirect to `person_note` / `persona` (`styleNoteIn`).
+  After a persona version change the next turn of an open session gets one line ("the persona changed to version
+  N; follow the current persona, not the style of earlier replies"), and the revert notice says that personal
+  notes are kept.
 - **The new tool is a plugin, not a connector.** `persona` and `person_note` are always there (like
   `propose_plan`); `persona` is in the member allow list so a member can view and propose, the tool itself refuses
   apply and revert for anybody but an owner or admin. A guest cannot use it.
