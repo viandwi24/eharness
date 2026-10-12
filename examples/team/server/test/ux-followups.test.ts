@@ -137,6 +137,31 @@ describe('reminders for web-chat agents', () => {
     expect(server.channels.reminders.get(rem?.id as string)?.status).toBe('done')
   })
 
+  test('a repeating reminder shows its next fire on the Routines page', async () => {
+    const { server } = instance([
+      call(
+        'reminder',
+        { action: 'create', message: 'Time to stand up', time: '17:00', repeat: 'weekdays' },
+        'w1',
+      ),
+      { text: 'Set.' },
+    ])
+    await (
+      await server.app.request(
+        '/sessions/dm:lead/chat',
+        postAs('dm:lead', userMessage('remind me every weekday at 17:00')),
+      )
+    ).text()
+    const [rem] = server.channels.reminders.list('web', { status: 'active' })
+    expect(rem?.schedule.kind).toBe('cron')
+    const page = (await (await server.app.request('/routines')).json()) as {
+      reminders: Array<{ id: string; nextAt?: number }>
+    }
+    const next = page.reminders.find((r) => r.id === rem?.id)?.nextAt
+    expect(typeof next).toBe('number')
+    expect(next as number).toBeGreaterThan(Date.now())
+  })
+
   test('a message that restates the request is refused, cancel works', async () => {
     const { server, lead } = instance([
       call('reminder', { action: 'create', message: 'remind me to stand up', inMinutes: 5 }, 'w1'),

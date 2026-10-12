@@ -6220,6 +6220,13 @@
                           "mode"
                         ]
                       }
+                    },
+                    "agentTools": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The names this agent calls the capability's tools by (`<connection>_<tool>` when the connection prefixes its tools). Programs name tools by these. Absent until the agent has been prepared."
                     }
                   },
                   "required": [
@@ -6339,7 +6346,7 @@
           },
           "nextAt": {
             "type": "integer",
-            "description": "The next fire of an active one-time reminder (epoch ms)."
+            "description": "The next fire of an active reminder (epoch ms; one-time or repeating)."
           },
           "text": {
             "type": "string"

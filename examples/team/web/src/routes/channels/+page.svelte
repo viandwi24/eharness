@@ -14,6 +14,7 @@
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { channelTypes, isAccount, sortConnections, type ChannelConnection } from '#lib/channels/model.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
+	import { pollWhileVisible } from '#lib/hooks/poll.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 
 	let list = $state<ChannelConnection[] | null>(null);
@@ -42,10 +43,7 @@
 		if (!agentsStore.state.loaded) void agentsStore.load();
 		void load();
 		// there is no push for transport state: look again while the page is open and visible
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void load();
-		}, 5000);
-		return () => clearInterval(timer);
+		return pollWhileVisible(() => void load());
 	});
 </script>
 

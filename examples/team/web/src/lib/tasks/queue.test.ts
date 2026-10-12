@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { bodyFromTaskForm, dueFromInput, dueLabel, dueToInput, emptyTaskForm, queueStatus, validateTaskForm } from './queue';
+import { bodyFromTaskForm, clearFixedErrors, dueFromInput, dueLabel, dueToInput, emptyTaskForm, queueStatus, validateTaskForm } from './queue';
 
 describe('task form', () => {
 	test('validation', () => {
@@ -9,6 +9,12 @@ describe('task form', () => {
 		expect(validateTaskForm({ ...ok, inputs: 'notes.md' }).inputs).toContain('notes.md');
 		expect(validateTaskForm({ ...ok, inputs: '/library/../x' }).inputs).toBeDefined();
 		expect(validateTaskForm({ ...ok, due: 'tomorrow' }).due).toBeDefined();
+	});
+
+	test('an error clears when its field becomes valid; server errors stay', () => {
+		const errs = { agentId: 'Choose who does the task.', title: 'Give the task a title.', brief: 'server says no' };
+		expect(Object.keys(clearFixedErrors(errs, { ...emptyTaskForm('a1'), title: '' }))).toEqual(['title', 'brief']);
+		expect(Object.keys(clearFixedErrors(errs, { ...emptyTaskForm('a1'), title: 'x' }))).toEqual(['brief']);
 	});
 
 	test('the API body: trimmed, inputs split, due as the end of the day', () => {

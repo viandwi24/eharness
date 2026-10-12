@@ -7,7 +7,7 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
-	import { bodyFromTaskForm, emptyTaskForm, PRIORITIES, type TaskForm, validateTaskForm } from '#lib/tasks/queue.js';
+	import { bodyFromTaskForm, clearFixedErrors, emptyTaskForm, PRIORITIES, type TaskForm, validateTaskForm } from '#lib/tasks/queue.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { closeTaskDialog, taskDialog } from '#lib/stores/dialogs.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -24,6 +24,16 @@
 			errors = {};
 			formError = '';
 			void agentsStore.load();
+		});
+	});
+
+	// an error goes away as soon as its field is valid
+	$effect(() => {
+		const f = $state.snapshot(form);
+		untrack(() => {
+			if (Object.keys(errors).length === 0) return;
+			const next = clearFixedErrors(errors, f);
+			if (Object.keys(next).length !== Object.keys(errors).length) errors = next;
 		});
 	});
 

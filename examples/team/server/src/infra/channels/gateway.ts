@@ -543,6 +543,8 @@ export interface RemindersApi {
     filter?: { status?: ReminderRow['status']; nodeIds?: readonly string[]; createdBy?: string },
   ): ReminderRow[]
   get(id: string): ReminderRow | undefined
+  /** The next fire of an active reminder (one-time: its time; repeating: the next slot of its routine). */
+  nextAt(reminder: ReminderRow): number | undefined
   cancel(id: string): ReminderRow | undefined
   update(
     id: string,
@@ -1840,6 +1842,14 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     },
     list: (connectionId, filter) => reminderStore.list(connectionId, filter),
     get: (id) => reminderStore.get(id),
+    nextAt(rem) {
+      if (rem.status !== 'active') return undefined
+      if (rem.schedule.kind === 'at') return rem.schedule.at
+      const routine =
+        rem.routineId === null ? undefined : deps.reminders?.routines.get(rem.routineId)
+      if (routine?.nextFireAt != null) return routine.nextFireAt
+      return deps.reminders?.schedule.next(rem.schedule, now()) ?? undefined
+    },
     cancel(id) {
       const rem = reminderStore.get(id)
       if (rem === undefined) return undefined

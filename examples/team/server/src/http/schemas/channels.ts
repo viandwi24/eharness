@@ -643,7 +643,7 @@ export const ChannelReminderSchema = z
         'A reminder made in a web chat thread (`connectionId` `web`): the thread it is delivered into.',
     }),
     nextAt: z.number().int().optional().openapi({
-      description: 'The next fire of an active one-time reminder (epoch ms).',
+      description: 'The next fire of an active reminder (epoch ms; one-time or repeating).',
     }),
     text: z.string(),
     whenText: z

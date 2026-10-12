@@ -390,6 +390,10 @@ export const AgentConnectorSchema = z
           description: 'Always asks, even in Bypass mode (write or destructive, not built in).',
         }),
         toolModes: z.array(ToolModeSchema),
+        agentTools: z.array(z.string()).optional().openapi({
+          description:
+            "The names this agent calls the capability's tools by (`<connection>_<tool>` when the connection prefixes its tools). Programs name tools by these. Absent until the agent has been prepared.",
+        }),
       }),
     ),
   })

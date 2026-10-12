@@ -26,7 +26,6 @@
 	import { live } from '#lib/stores/live.svelte.js';
 	import { followSessionStream } from 'eharness/client';
 	import { isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
-	import { queueStatus } from '#lib/tasks/queue.js';
 	import {
 		Conversation,
 		ConversationContent,
@@ -307,7 +306,8 @@
 							<Empty.Root class="border-0 py-16">
 								<Empty.Header>
 									<Empty.Title>{task?.status === 'queued' ? 'Waiting in the queue' : 'No messages yet'}</Empty.Title>
-									<Empty.Description>{task?.status === 'queued' ? (queueStatus(task)?.detail ?? 'It starts when its agent is free.') : 'This task has not produced anything yet.'}</Empty.Description>
+									<!-- the reason it waits is in the status line above: not repeated here -->
+									<Empty.Description>{task?.status === 'queued' ? 'Nothing has run yet.' : 'This task has not produced anything yet.'}</Empty.Description>
 								</Empty.Header>
 							</Empty.Root>
 						{/each}

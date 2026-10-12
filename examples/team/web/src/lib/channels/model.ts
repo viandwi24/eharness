@@ -1,5 +1,6 @@
 // The Channels page's view model (Telegram bot connections, chats, people, delivery). Pure.
 import type { components } from '../api/schema';
+import { stripMarkdown } from '../format';
 
 export type ChannelConnection = components['schemas']['ChannelConnection'];
 /** A place of a connection: a chat, a channel, a forum topic (a node of the tree). */
@@ -453,7 +454,9 @@ export function previewLine(c: InboxConversation): string {
 	const p = c.preview;
 	if (p === undefined) return 'Nothing stored';
 	const who = p.self ? 'Agent' : p.sender;
-	return who === undefined ? p.text : `${who}: ${p.text}`;
+	// the agent writes markdown: a one-line preview shows it as plain text
+	const text = p.self ? stripMarkdown(p.text) : p.text;
+	return who === undefined ? text : `${who}: ${text}`;
 }
 
 export const allowlistLabel = (c: Pick<InboxConversation, 'allowed' | 'kind'>): string =>

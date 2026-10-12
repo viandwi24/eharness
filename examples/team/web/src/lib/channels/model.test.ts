@@ -251,6 +251,7 @@ describe('inbox', () => {
 		expect(previewLine(c())).toBe('Nothing stored');
 		expect(previewLine(c({ preview: { text: 'hi', at: 1, self: false, sender: 'Ana' } }))).toBe('Ana: hi');
 		expect(previewLine(c({ preview: { text: 'done', at: 1, self: true } }))).toBe('Agent: done');
+		expect(previewLine(c({ preview: { text: '**What is ready**\n- a', at: 1, self: true } }))).toBe('Agent: What is ready a');
 		expect(allowlistLabel(c())).toBe('Allowed');
 		expect(allowlistLabel(c({ allowed: false }))).toBe('Not allowed');
 		expect(allowlistLabel(c({ allowed: false, kind: 'dm' }))).toBe('Not linked');

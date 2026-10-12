@@ -12,6 +12,7 @@
 	import ChannelDirectory from '#lib/components/app/ChannelDirectory.svelte';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import { peerIdError, unlinkedDetail, unlinkedLabel, type ChannelConnection, type ChannelLink, type ChannelMember, type ChannelUnlinked } from '#lib/channels/model.js';
+	import { pollWhileVisible } from '#lib/hooks/poll.js';
 	import { formatTime } from '#lib/format.js';
 
 	// People of one connection (bot or account): who wrote and is not linked yet, a manual form to
@@ -55,10 +56,7 @@
 		void conn.counts.linked;
 		void conn.counts.unlinked;
 		void load();
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void load();
-		}, 5000);
-		return () => clearInterval(timer);
+		return pollWhileVisible(() => void load());
 	});
 
 	const run = async (what: string, fn: () => Promise<unknown>, ok?: string): Promise<boolean> => {

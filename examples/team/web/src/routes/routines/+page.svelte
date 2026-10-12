@@ -14,6 +14,7 @@
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
+	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
@@ -40,6 +41,7 @@
 	// `?agentId=` preselects the filter (the agent chat's session panel links here).
 	let agentFilter = $state(page.url.searchParams.get('agentId') ?? '');
 	let busy = $state<string | null>(null);
+	let cancelling = $state<ReminderRow | null>(null);
 	let seq = 0;
 
 	const agentOf = (id: string) => agentsStore.state.agents.find((a) => a.id === id);
@@ -102,10 +104,10 @@
 <Tooltip.Provider>
 	<div class="flex min-h-0 min-w-0 flex-1 flex-col">
 		<PageHeader title="Routines" description="Scheduled prompts that run an agent at set times.">
-			<NativeSelect bind:value={kind} aria-label="Show" class="w-48" data-testid="routine-kind">
+			<NativeSelect bind:value={kind} aria-label="Show" class="w-full min-w-0 sm:w-48" data-testid="routine-kind">
 				{#each KIND_OPTIONS as o (o.value)}<NativeSelectOption value={o.value}>{o.label}</NativeSelectOption>{/each}
 			</NativeSelect>
-			<NativeSelect bind:value={agentFilter} aria-label="Filter by agent" class="w-40">
+			<NativeSelect bind:value={agentFilter} aria-label="Filter by agent" class="w-full min-w-0 sm:w-40">
 				<NativeSelectOption value="">All agents</NativeSelectOption>
 				{#each agentsStore.state.agents as a (a.id)}
 					<NativeSelectOption value={a.id}>{a.name}</NativeSelectOption>
@@ -150,25 +152,25 @@
 								{@const a = agentOf(m.agentId)}
 								{@const st = reminderStatus(m)}
 								<Table.Row data-testid="reminder-row">
-									<Table.Cell>
+									<Table.Cell class="whitespace-normal">
 										<div class="flex items-center gap-2.5">
 											{#if a}<span class="hidden sm:block"><AgentAvatar seed={a.id} color={a.color} size={28} label={a.name} /></span>{/if}
 											<div class="min-w-0">
 												<div class="flex min-w-0 items-center gap-1.5">
 													<Badge variant="secondary" class="shrink-0"><BellIcon class="size-3" /> {reminderBadge(m)}</Badge>
 												</div>
-												<div class="max-w-28 truncate text-sm font-medium sm:max-w-56" title={m.text}>{m.text}</div>
-												<div class="truncate text-xs text-muted-foreground">{a?.name ?? 'Unknown agent'}{#if m.createdByName} · set by {m.createdByName}{/if}<span class="md:hidden"> · {m.whenText}</span></div>
+												<div class="line-clamp-2 max-w-72 text-sm font-medium break-words" title={m.text}>{m.text}</div>
+												<div class="text-xs break-words text-muted-foreground">{a?.name ?? 'Unknown agent'}{#if m.createdByName} · set by {m.createdByName}{/if}<span class="md:hidden"> · {m.whenText}</span></div>
 											</div>
 										</div>
 									</Table.Cell>
-									<Table.Cell class="hidden text-muted-foreground md:table-cell">{m.whenText}</Table.Cell>
+									<Table.Cell class="hidden max-w-64 whitespace-normal text-muted-foreground md:table-cell">{m.whenText}</Table.Cell>
 									<Table.Cell class="hidden text-muted-foreground lg:table-cell">{m.status === 'active' ? relativeTime(m.nextAt) : '—'}</Table.Cell>
 									<Table.Cell class="hidden text-muted-foreground lg:table-cell">{m.lastFiredAt ? relativeTime(m.lastFiredAt) : 'Never'}</Table.Cell>
 									<Table.Cell><Badge variant={st.variant}>{st.label}</Badge></Table.Cell>
 									<Table.Cell>
 										<div class="flex justify-end">
-											{#if m.status === 'active'}{@render iconAction('Cancel reminder', busy === m.id, () => void cancelReminder(m), XIcon)}{/if}
+											{#if m.status === 'active'}{@render iconAction('Cancel reminder', busy === m.id, () => (cancelling = m), XIcon)}{/if}
 										</div>
 									</Table.Cell>
 								</Table.Row>
@@ -177,17 +179,17 @@
 								{@const a = agentOf(r.agentId)}
 								{@const b = routineBadge(r)}
 								<Table.Row class="cursor-pointer" onclick={() => openEditRoutine(r.id)}>
-									<Table.Cell>
+									<Table.Cell class="whitespace-normal">
 										<div class="flex items-center gap-2.5">
 											{#if a}<span class="hidden sm:block"><AgentAvatar seed={a.id} color={a.color} size={28} label={a.name} /></span>{/if}
 											<div class="min-w-0">
-												<button type="button" class="block max-w-28 truncate text-left font-medium outline-none focus-visible:underline sm:max-w-56" onclick={(e) => { e.stopPropagation(); openEditRoutine(r.id); }}>{r.name}</button>
-												<div class="truncate text-xs text-muted-foreground">{a?.name ?? 'Unknown agent'}<span class="md:hidden"> · {describeSpec(r.schedule)}</span></div>
+												<button type="button" class="line-clamp-2 block max-w-72 text-left font-medium break-words outline-none focus-visible:underline" onclick={(e) => { e.stopPropagation(); openEditRoutine(r.id); }}>{r.name}</button>
+												<div class="text-xs break-words text-muted-foreground">{a?.name ?? 'Unknown agent'}<span class="md:hidden"> · {describeSpec(r.schedule)}</span></div>
 												<RoutineQueue routine={r} />
 											</div>
 										</div>
 									</Table.Cell>
-									<Table.Cell class="hidden text-muted-foreground md:table-cell">{describeSpec(r.schedule)}</Table.Cell>
+									<Table.Cell class="hidden max-w-64 whitespace-normal text-muted-foreground md:table-cell">{describeSpec(r.schedule)}</Table.Cell>
 									<Table.Cell class="hidden text-muted-foreground lg:table-cell">{r.status === 'active' ? relativeTime(r.nextFireAt) : '—'}</Table.Cell>
 									<Table.Cell class="hidden text-muted-foreground lg:table-cell">
 										{@const last = r.lastFireAt ? `${relativeTime(r.lastFireAt)}${r.lastStatus ? `, ${r.lastStatus.replace('_', ' ')}` : ''}` : 'Never'}
@@ -215,3 +217,17 @@
 		</PageBody>
 	</div>
 </Tooltip.Provider>
+
+{#if cancelling}
+	<ConfirmDialog
+		open={true}
+		title="Cancel this reminder?"
+		description={`"${cancelling.text}" will not be posted. You cannot undo this.`}
+		confirmLabel="Cancel reminder"
+		onConfirm={() => {
+			const r = cancelling;
+			cancelling = null;
+			if (r) void cancelReminder(r);
+		}}
+	/>
+{/if}

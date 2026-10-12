@@ -3,8 +3,8 @@
 	import { cn } from '#lib/utils.js';
 
 	/** What an authority really gives for the agent: resolved tools per connector, and what is refused. */
-	let { grant, title = 'What this really grants', always = false }: { grant: EffectiveGrant | null | undefined; title?: string; always?: boolean } = $props();
-	const lines = $derived(grantLines(grant));
+	let { grant, title = 'What this really grants', always = false, skip = new Set<string>() }: { grant: EffectiveGrant | null | undefined; title?: string; always?: boolean; /** Names whose problem is already shown elsewhere. */ skip?: ReadonlySet<string> } = $props();
+	const lines = $derived(grantLines(grant, skip));
 </script>
 
 {#if lines.length || always}

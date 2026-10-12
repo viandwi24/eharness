@@ -9,6 +9,7 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
+	import { pollWhileVisible } from '#lib/hooks/poll.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
@@ -84,10 +85,11 @@
 		void loadDetail();
 	});
 	$effect(() => {
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void loadDetail();
-		}, 5000);
-		return () => clearInterval(timer);
+		return pollWhileVisible(() => void loadDetail());
+	});
+	// opening the Chats tab looks again at once
+	$effect(() => {
+		if (tab === 'chats') void loadDetail();
 	});
 	$effect(() => {
 		const l = conn.account?.limits;
@@ -236,9 +238,9 @@
 
 			<Tabs.Content value="people" class="pt-3"><ChannelPeople {conn} {onChange} /></Tabs.Content>
 
-			<Tabs.Content value="inbox" class="pt-3"><ChannelInbox {conn} /></Tabs.Content>
+			<Tabs.Content value="inbox" class="pt-3">{#if tab === 'inbox'}<ChannelInbox {conn} />{/if}</Tabs.Content>
 
-			<Tabs.Content value="activity" class="pt-3"><ChannelActivity {conn} /></Tabs.Content>
+			<Tabs.Content value="activity" class="pt-3">{#if tab === 'activity'}<ChannelActivity {conn} />{/if}</Tabs.Content>
 
 			<Tabs.Content value="backfill" class="flex flex-col gap-3 pt-3">
 				<p class="text-xs text-muted-foreground">Reads the history of a chosen chat, newest first, down to the number of days you set (one chat at a time, with pauses). It resumes after a restart and obeys Telegram's flood waits.</p>

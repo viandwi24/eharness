@@ -46,7 +46,7 @@
 			{#if task.status === 'running'}<CircleNotchIcon class="animate-spin" />{/if}{badge.label}
 		</Badge>
 		{#if task.status === 'queued' && task.priority !== 'normal'}<span class="shrink-0 {task.priority === 'urgent' || task.priority === 'high' ? 'text-warning-text' : ''}">{priorityLabel(task.priority)}</span>{/if}
-		{#if qs?.note}<span class="min-w-0 max-w-[55%] truncate text-warning-text" title={qs.detail} data-testid="queue-note">{qs.note}</span>{:else if qs && task.queue === 'slot'}<span class="shrink-0" title={qs.detail}>{qs.label}</span>{/if}
+		{#if qs?.note}<span class="min-w-0 max-w-[55%] truncate text-warning-text" title={qs.detail} data-testid="queue-note">{qs.note}</span>{/if}
 		{#if due}<span class="shrink-0 {due.late ? 'text-destructive-text' : ''}">{due.text}</span>{/if}
 		<span class="min-w-0 flex-1 truncate">{agent?.name ?? task.agentId}</span>
 		{#if task.costUsd > 0}<span class="shrink-0 font-mono">{formatUsd(task.costUsd)}</span>{/if}

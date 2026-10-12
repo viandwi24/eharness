@@ -20,6 +20,7 @@
 		type ChannelPerson,
 		type Role
 	} from '#lib/channels/model.js';
+	import { pollWhileVisible } from '#lib/hooks/poll.js';
 	import { formatTime } from '#lib/format.js';
 
 	// The people directory of a connection: the role and divisions the team gives each person.
@@ -58,10 +59,9 @@
 	$effect(() => {
 		void conn.counts.linked;
 		void load();
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible' && editing === null) void load();
-		}, 5000);
-		return () => clearInterval(timer);
+		return pollWhileVisible(() => {
+			if (editing === null) void load();
+		});
 	});
 
 	const run = async (what: string, fn: () => Promise<unknown>, ok?: string): Promise<boolean> => {

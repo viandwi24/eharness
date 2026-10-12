@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { emptyProgramForm } from '../programs/form';
-import { authorityLines, decisionText, type Decision, editBody, grantLines, groupDecisions, optionsOf, outcomeLine, statusBadge, triggerLine } from './model';
+import { answerToast, authorityLines, decisionText, type Decision, editBody, grantLines, groupDecisions, optionsOf, outcomeLine, statusBadge, triggerLine } from './model';
 
 const authority = { tools: ['web_fetch'], connectors: ['github'], read: ['/library/in/**'], write: ['/library/out/**'] };
 const program = {
@@ -21,6 +21,12 @@ const escalation = (options: string[] = []): Decision => ({ ...base, kind: 'esca
 const amendment: Decision = { ...base, kind: 'amendment', payload: { authority, why: 'w' } };
 
 describe('decision model', () => {
+	test('the toast names the chosen option', () => {
+		expect(answerToast('approve')).toBe('Approved');
+		expect(answerToast('approve', 'Keep draft')).toBe('Answered "Keep draft"');
+		expect(answerToast('reject')).toBe('Rejected');
+	});
+
 	test('groups by kind with runs waiting first, empty groups left out', () => {
 		const groups = groupDecisions([proposal(false), amendment, escalation(), escalation(['x'])]);
 		expect(groups.map((g) => [g.kind, g.items.length])).toEqual([['escalation', 2], ['amendment', 1], ['proposal', 1]]);
@@ -40,6 +46,8 @@ describe('decision model', () => {
 		expect(triggerLine({ program, runOnce: false })).toBe('Runs when you run it');
 		const scheduled = { ...program, trigger: { kind: 'schedule' as const, spec: { kind: 'every' as const, everyMs: 3_600_000 } } };
 		expect(triggerLine({ program: scheduled, runOnce: false })).toMatch(/^Runs /);
+		const cron = { ...program, trigger: { kind: 'schedule' as const, spec: { kind: 'cron' as const, expr: '0 8 * * 1-5', tz: 'Asia/Jakarta' } } };
+		expect(triggerLine({ program: cron, runOnce: false })).toBe('Runs every weekday at 08:00 WIB (Asia/Jakarta)');
 		expect(decisionText(proposal(false), 'Lead')).toBe('Lead proposes: T');
 		expect(decisionText(amendment, 'Writer')).toBe('Writer asks for more authority: T');
 		expect(decisionText(escalation(), 'Writer')).toBe('Writer needs a decision: T');

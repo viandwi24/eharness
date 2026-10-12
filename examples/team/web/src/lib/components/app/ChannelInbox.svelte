@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { MessageResponse } from '#lib/components/ai/message/index.js';
 	import { onMount } from 'svelte';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeft';
 	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwise';
@@ -22,6 +23,7 @@
 		type LogMessage
 	} from '#lib/channels/model.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
+	import { pollWhileVisible } from '#lib/hooks/poll.js';
 	import { formatTime } from '#lib/format.js';
 
 	// Inbox of one connection: the conversations (groups, topics, direct messages) with counters,
@@ -94,10 +96,9 @@
 
 	onMount(() => {
 		void load();
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible' && open === null) void load();
-		}, 5000);
-		return () => clearInterval(timer);
+		return pollWhileVisible(() => {
+			if (open === null) void load();
+		});
 	});
 </script>
 
@@ -105,7 +106,6 @@
 	{#if open === null}
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<p class="min-w-0 flex-1 text-xs text-muted-foreground">Every conversation this connection has seen: what woke the agent, what was only read, and what was dropped. Open one to read its log.</p>
-			<Button size="sm" variant="outline" onclick={() => void load()}><ArrowsClockwiseIcon class="size-4" /> Refresh</Button>
 		</div>
 		{#if error}
 			<p class="text-sm text-destructive-text" role="alert">{error}</p>
@@ -161,7 +161,12 @@
 						<span class="ml-auto shrink-0 text-muted-foreground">{formatTime(m.at)}</span>
 					</div>
 					{#if m.replyTo}<p class="border-l-2 border-border pl-2 text-xs text-muted-foreground">In reply to {m.replyTo.senderName ?? 'a message'}{m.replyTo.text ? `: ${m.replyTo.text}` : ''}</p>{/if}
-					<p class="whitespace-pre-wrap break-words text-sm {m.deletedAt ? 'text-muted-foreground line-through' : ''}">{m.text || (m.attachments.length ? '' : '(no text)')}</p>
+					{#if m.self && m.text && !m.deletedAt}
+						<!-- the agent writes markdown; people's messages stay as typed -->
+						<div class="text-sm break-words [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap"><MessageResponse content={m.text} class="text-sm" /></div>
+					{:else}
+						<p class="whitespace-pre-wrap break-words text-sm {m.deletedAt ? 'text-muted-foreground line-through' : ''}">{m.text || (m.attachments.length ? '' : '(no text)')}</p>
+					{/if}
 					{#if m.attachments.length > 0}<p class="text-xs text-muted-foreground">{m.attachments.length} attachment{m.attachments.length === 1 ? '' : 's'}: {m.attachments.map((a) => a.name ?? a.mediaType ?? 'file').join(', ')}</p>{/if}
 					{#if m.approval}<p class="text-xs text-muted-foreground" data-testid="approval-outcome">{m.approval.toolName}: {approvalOutcome(m.approval)}</p>{/if}
 					{#if m.edits && m.edits.length > 0}

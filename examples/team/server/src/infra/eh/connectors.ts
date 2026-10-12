@@ -668,6 +668,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
       const e = entries[r.id]
       const caps = capabilitiesOf(d, r)
       const resolved = resolveModes(caps, r, e)
+      const finalNames = cache.get(agent.id)?.out.toolNameMap
       out.push({
         connectionId: r.id,
         connectorId: d.id,
@@ -696,6 +697,14 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
             mode: resolved.toolModes[t] ?? c.defaultMode,
             ...(e?.tools?.[t] === undefined ? {} : { override: e.tools[t] }),
           })),
+          // the names the agent really calls these tools by (prefixed per connection)
+          ...(finalNames === undefined
+            ? {}
+            : {
+                agentTools: Object.entries(finalNames)
+                  .filter(([, o]) => o.capabilityId === c.id && o.connectionIds.includes(r.id))
+                  .map(([name]) => name),
+              }),
         })) as AgentConnectorView['capabilities'],
       })
     }
@@ -1104,7 +1113,11 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
       }),
     probeCustom,
     createCustom: (input) => wrap(() => createCustom(input)),
-    agentConnectors: (agent) => agentView(agent),
+    agentConnectors: async (agent) => {
+      // prepared first so the view can name the tools as the agent calls them
+      await prepare([agent]).catch(() => undefined)
+      return agentView(agent)
+    },
     setAgentConnectors: async (agent, changes) => {
       const known = new Set((await agentView(agent)).map((v) => v.connectionId))
       for (const id of Object.keys(changes)) {

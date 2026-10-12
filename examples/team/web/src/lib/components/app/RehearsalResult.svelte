@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { MessageResponse } from '#lib/components/ai/message/index.js';
 	import type { UIMessage } from 'ai';
 	import DownloadSimpleIcon from 'phosphor-svelte/lib/DownloadSimple';
 	import { api } from '#lib/api/index.js';
@@ -154,9 +155,9 @@
 				{#each rehearsal.wouldAsk as a, i (i)}
 					<li class="rounded-md border border-border/70 px-2.5 py-2">
 						<div class="flex items-center gap-2"><Badge variant="info">{a.kind === 'amendment' ? 'more authority' : a.kind === 'report' ? 'ended needing a decision' : 'question'}</Badge><span class="font-medium">{a.title}</span></div>
-						<p class="mt-1">{a.question}</p>
+						<div class="mt-1"><MessageResponse content={a.question} class="text-sm" /></div>
 						{#if a.options?.length}<p class="mt-1 text-xs text-muted-foreground">Options: {a.options.join(' · ')}</p>{/if}
-						{#if a.details}<pre class="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">{a.details}</pre>{/if}
+						{#if a.details}<div class="mt-1 text-xs text-muted-foreground [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap"><MessageResponse content={a.details} class="text-xs" /></div>{/if}
 					</li>
 				{/each}
 			</ul>

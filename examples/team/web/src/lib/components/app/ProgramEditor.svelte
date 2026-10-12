@@ -12,7 +12,7 @@
 	import ScheduleFields from './ScheduleFields.svelte';
 	import EffectiveGrant from './EffectiveGrant.svelte';
 	import ToolPicker from './ToolPicker.svelte';
-	import type { EffectiveGrant as Grant } from '#lib/programs/grant.js';
+	import { problemNames, uniqueWarnings, type EffectiveGrant as Grant } from '#lib/programs/grant.js';
 
 	let {
 		agentId = '',
@@ -135,7 +135,7 @@
 {/snippet}
 
 {#snippet warn(fields: string[])}
-	{#each warningsOf(warnings, ...fields) as w (w.message)}
+	{#each uniqueWarnings(warningsOf(warnings, ...fields), authorityErrors) as w (w.message)}
 		<p class="rounded-md border border-warning/40 bg-warning-soft px-2 py-1.5 text-xs text-warning-text" role="status" data-testid="program-warning">{w.message}</p>
 	{/each}
 {/snippet}
@@ -189,7 +189,7 @@
 		{#each authorityErrors as message (message)}
 			<p class="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive-text" role="alert" data-testid="authority-error">{message}</p>
 		{/each}
-		<EffectiveGrant {grant} always title="Effective grant: what each run can really do" />
+		<EffectiveGrant {grant} skip={problemNames(warnings, authorityErrors).all} always title="Effective grant: what each run can really do" />
 	</fieldset>
 
 	<details class="rounded-lg border border-border px-3 py-2" data-testid="program-advanced">

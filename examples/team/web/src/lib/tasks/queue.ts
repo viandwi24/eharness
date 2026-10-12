@@ -69,6 +69,16 @@ export function validateTaskForm(f: TaskForm): Record<string, string> {
 	return errors;
 }
 
+const LOCAL_FIELDS = ['agentId', 'title', 'inputs', 'due', 'grantRead', 'grantWrite'];
+
+/** The shown errors minus the fields that are valid now (an error clears as soon as its field is fixed); server errors stay. */
+export function clearFixedErrors(errors: Record<string, string>, f: TaskForm): Record<string, string> {
+	const now = validateTaskForm(f);
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(errors)) if (now[k] !== undefined || !LOCAL_FIELDS.includes(k)) out[k] = v;
+	return out;
+}
+
 export function bodyFromTaskForm(f: TaskForm): TaskCreate {
 	const grants = { tools: splitLines(f.grantTools), read: splitLines(f.grantRead), write: splitLines(f.grantWrite) };
 	const granted = grants.tools.length + grants.read.length + grants.write.length > 0;

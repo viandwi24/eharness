@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { grantLines, kindSummary, type EffectiveGrant } from './grant.js';
+import { grantLines, kindSummary, problemNames, uniqueWarnings, type EffectiveGrant } from './grant.js';
 
 const grant: EffectiveGrant = {
 	connectors: [
@@ -31,5 +31,21 @@ describe('grantLines', () => {
 	test('no grant, no lines', () => {
 		expect(grantLines(null)).toEqual([]);
 		expect(kindSummary([])).toBe('');
+	});
+});
+
+describe('showing a problem once', () => {
+	const warnings = [{ message: 'list_projects: the agent has no such tool (its connector is off or the name is wrong).' }, { message: 'other_tool: its connector mode is Off.' }];
+	const errors = ['authority.tools: the agent has no tool "list_projects". Did you mean: tracker-demo_list_projects?'];
+
+	test('a warning an error already says is dropped', () => {
+		expect(uniqueWarnings(warnings, errors).map((w) => w.message.split(':')[0])).toEqual(['other_tool']);
+	});
+	test('names with a problem elsewhere are skipped in the grant lines', () => {
+		const { all } = problemNames(warnings, errors);
+		expect(all.has('list_projects') && all.has('other_tool')).toBe(true);
+		const texts = grantLines({ ...grant, tools: [{ name: 'list_projects', kind: 'unknown', status: 'unavailable' }, { name: 'web_fetch', kind: 'read', status: 'granted' }] }, all).map((l) => l.text);
+		expect(texts).toContain('web_fetch');
+		expect(texts).not.toContain('list_projects');
 	});
 });

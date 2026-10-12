@@ -186,7 +186,7 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
   }
 
   function nextAtOf(r: ReminderRow): number | undefined {
-    return r.schedule.kind === 'at' ? r.schedule.at : undefined
+    return gateway.reminders.nextAt(r)
   }
 
   function view(r: ReminderRow): ChannelReminderView {

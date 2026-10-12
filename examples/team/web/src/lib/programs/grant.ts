@@ -21,11 +21,12 @@ export function kindSummary(tools: readonly GrantedTool[]): string {
 }
 
 /** One line per connector and per named tool: what the run can really call, and what is refused. */
-export function grantLines(grant: EffectiveGrant | null | undefined): GrantLine[] {
+export function grantLines(grant: EffectiveGrant | null | undefined, skip: ReadonlySet<string> = new Set()): GrantLine[] {
 	if (!grant) return [];
 	const out: GrantLine[] = [];
 	for (const c of grant.connectors) {
 		if (c.id === null) {
+			if (skip.has(c.requested)) continue;
 			out.push({ text: `Connector "${c.requested}" matches nothing`, tone: 'bad', detail: 'No such connector for this agent: it grants no tool.' });
 			continue;
 		}
@@ -42,10 +43,29 @@ export function grantLines(grant: EffectiveGrant | null | undefined): GrantLine[
 		});
 	}
 	for (const t of grant.tools) {
+		if (t.status !== 'granted' && skip.has(t.name)) continue;
 		if (t.status === 'granted') out.push({ text: t.name, tone: 'ok', detail: KIND_WORD[t.kind] ? `${KIND_WORD[t.kind]} tool` : 'tool' });
 		else if (t.status === 'off') out.push({ text: t.name, tone: 'warn', detail: 'its connector mode is Off: every call is refused' });
 		else if (t.status === 'gate') out.push({ text: t.name, tone: 'warn', detail: 'a change of a third-party service: asks you' });
 		else out.push({ text: t.name, tone: 'bad', detail: 'this agent has no such tool' });
 	}
 	return out;
+}
+
+/** The names an error or warning already talks about: warnings start with `<name>:`, errors quote `"<name>"`. */
+export function problemNames(warnings: readonly { message: string }[], errors: readonly string[]): { all: Set<string>; fromErrors: Set<string> } {
+	const fromErrors = new Set<string>();
+	for (const e of errors) for (const m of e.matchAll(/"([^"]+)"/g)) fromErrors.add(m[1] as string);
+	const all = new Set(fromErrors);
+	for (const w of warnings) {
+		const name = w.message.split(':')[0]?.trim();
+		if (name && !/\s/.test(name)) all.add(name);
+	}
+	return { all, fromErrors };
+}
+
+/** The warnings an error does not already say (an unknown tool is an error with a suggestion AND a warning). */
+export function uniqueWarnings<T extends { message: string }>(warnings: readonly T[], errors: readonly string[]): T[] {
+	const { fromErrors } = problemNames([], errors);
+	return warnings.filter((w) => !fromErrors.has(w.message.split(':')[0]?.trim() ?? ''));
 }

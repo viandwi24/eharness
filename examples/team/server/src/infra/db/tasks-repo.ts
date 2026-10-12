@@ -329,12 +329,14 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
           `INSERT INTO tasks (id, agent_id, session_id, parent_session_id, origin, title, state, pending_kind,
                               started_at, ended_at, summary, last_activity_at, cost_usd, tokens,
                               brief, inputs, priority, due_at, created_by, round, history, hold, review, grants)
-           VALUES (?, ?, ?, NULL, 'program', ?, 'queued', NULL, ?, NULL, NULL, ?, 0, 0, ?, ?, ?, ?, ?, 1, '[]', ?, ?, ?)`,
+           VALUES (?, ?, ?, NULL, ?, ?, 'queued', NULL, ?, NULL, NULL, ?, 0, 0, ?, ?, ?, ?, ?, 1, '[]', ?, ?, ?)`,
         )
         .run(
           id,
           t.agentId,
           queuedSessionId(id),
+          // a task the client assigned is the client's (`user`); a worker program that takes it makes it a program run
+          t.createdBy === 'client' ? 'user' : 'program',
           t.title,
           t.now,
           t.now,
@@ -397,7 +399,7 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
             : [...strings(row.history), row.session_id]
           const res = sqlite
             .query(
-              `UPDATE tasks SET state = 'running', session_id = ?, history = ?, started_at = ?,
+              `UPDATE tasks SET state = 'running', session_id = ?, origin = 'program', history = ?, started_at = ?,
                       ended_at = NULL, last_activity_at = ?, summary = NULL, report = NULL,
                       deliverables = NULL, pending_kind = NULL, accepted_at = NULL
                 WHERE id = ? AND state = 'queued'`,

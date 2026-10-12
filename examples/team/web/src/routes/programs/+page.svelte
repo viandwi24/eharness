@@ -154,12 +154,12 @@
 								{@const a = agentOf(p.agentId)}
 								{@const b = programBadge(p)}
 								<Table.Row class="cursor-pointer" onclick={() => openEditProgram(p.id)}>
-									<Table.Cell>
+									<Table.Cell class="whitespace-normal">
 										<div class="flex items-center gap-2.5">
 											{#if a}<span class="hidden sm:block"><AgentAvatar seed={a.id} color={a.color} size={28} label={a.name} /></span>{/if}
 											<div class="min-w-0">
-												<button type="button" class="block max-w-28 truncate sm:max-w-56 text-left font-medium outline-none focus-visible:underline" onclick={(e) => { e.stopPropagation(); openEditProgram(p.id); }}>{p.name}</button>
-												<div class="truncate text-xs text-muted-foreground">{a?.name ?? 'Unknown agent'}</div>
+												<button type="button" class="line-clamp-2 block max-w-72 text-left font-medium break-words outline-none focus-visible:underline" onclick={(e) => { e.stopPropagation(); openEditProgram(p.id); }}>{p.name}</button>
+												<div class="text-xs break-words text-muted-foreground">{a?.name ?? 'Unknown agent'}</div>
 											</div>
 										</div>
 									</Table.Cell>
@@ -177,14 +177,14 @@
 									<Table.Cell><Badge variant={b.variant}>{b.label}</Badge></Table.Cell>
 									<Table.Cell>
 										<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-										<div class="flex justify-end" onclick={(e) => e.stopPropagation()}>
+										<div class="flex flex-wrap items-center justify-end gap-x-0.5 gap-y-1 max-sm:max-w-28" onclick={(e) => e.stopPropagation()}>
 											{#if p.status === 'active'}
 												{@render iconAction('Pause', busy === p.id, () => void act(p, 'pause'), PauseIcon)}
 											{:else}
 												{@render iconAction('Resume', busy === p.id, () => void act(p, 'resume'), PlayIcon)}
 											{/if}
 											{@render iconAction('Run now', busy === p.id, () => void act(p, 'run'), LightningIcon)}
-											<Button size="xs" variant="ghost" class="ml-1" onclick={() => openEditProgram(p.id)}>Edit</Button>
+											<Button size="xs" variant="ghost" onclick={() => openEditProgram(p.id)}>Edit</Button>
 											<Button size="xs" variant="outline" onclick={() => void goto(`/programs/${p.id}`)} title="Tests and test runs"><FlaskIcon class="size-3.5" /> Test run</Button>
 										</div>
 									</Table.Cell>

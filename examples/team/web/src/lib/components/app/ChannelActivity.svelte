@@ -6,6 +6,7 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { ago, EVENT_LABEL, EVENT_TYPES, eventText, eventTone, type ActivityType, type ChannelActivity, type ChannelConnection, type InboxConversation } from '#lib/channels/model.js';
+	import { pollWhileVisible } from '#lib/hooks/poll.js';
 	import { formatTime } from '#lib/format.js';
 
 	// Activity of one connection, newest first: what was received and what happened to it
@@ -74,10 +75,7 @@
 			.get('/channels/connections/{id}/inbox', { params: { id: conn.id }, query: { limit: 100 } })
 			.then((r) => (conversations = r.items))
 			.catch(() => undefined);
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void load(true);
-		}, 5000);
-		return () => clearInterval(timer);
+		return pollWhileVisible(() => void load(true));
 	});
 </script>
 

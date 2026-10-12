@@ -15,3 +15,20 @@ export function discussCard(name: string, text: string): DiscussCard | undefined
 	const m = /^The client opened this chat to talk about [^:\n]+: ([^\n]*)\n*([\s\S]*)$/.exec(text.trim());
 	return m ? { label, title: m[1]!.trim(), body: m[2]!.trim() } : { label, title: '', body: text.trim() };
 }
+
+/**
+ * The outcome of a proposal the person decided in the Decision Center (`decision.proposal.approved`
+ * / `.rejected`, seeded into the agent's chat for the model) as a readable card.
+ */
+export function proposalOutcomeCard(name: string, text: string): DiscussCard | undefined {
+	const m = /^decision\.proposal\.(approved|rejected)$/.exec(name);
+	if (!m) return undefined;
+	const first = /^The client (?:approved|rejected) your proposal "(.*)"\.\s*$/m.exec(text);
+	const note = /^The client's note \(their own words\): ([\s\S]*?)(?:\n(?:It is now|Nothing was created)|$)/m.exec(text);
+	const approved = m[1] === 'approved';
+	return {
+		label: approved ? 'Proposal approved' : 'Proposal rejected',
+		title: first?.[1] ?? '',
+		body: [note ? `Your note: ${note[1]!.trim()}` : '', approved && /It is now a program/.test(text) ? 'It is now a program: follow it on the Programs page.' : '', !approved ? 'Nothing was created.' : ''].filter(Boolean).join('\n\n')
+	};
+}

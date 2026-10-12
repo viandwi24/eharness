@@ -253,6 +253,8 @@ describe('the queue on the API', () => {
       status: 'queued',
       agentId: server.deps.agents.getBySlug('writer')?.id,
       createdBy: 'client',
+      // assigned by the client through the API: the client's task, not a program run
+      origin: 'user',
       priority: 'high',
       round: 1,
       acceptedAt: null,

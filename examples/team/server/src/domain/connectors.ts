@@ -188,6 +188,8 @@ export interface AgentCapabilityView extends CapabilityView {
   /** True when the tools of this capability always ask, even in Bypass mode. */
   pinned: boolean
   toolModes: ToolModeView[]
+  /** The names this agent calls the capability's tools by (with the connection's prefix); absent until the agent is prepared. */
+  agentTools?: string[]
 }
 
 /** One connection as one agent sees it (`GET /agents/{id}/connectors`). */

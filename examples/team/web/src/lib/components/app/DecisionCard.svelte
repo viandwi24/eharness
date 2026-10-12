@@ -13,7 +13,7 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { decide } from '#lib/decisions/actions.js';
-	import { cleanBody, type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, standDownOptions, statusBadge, triggerLine, willNotTouchLines } from '#lib/decisions/model.js';
+	import { answerToast, cleanBody, type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, standDownOptions, statusBadge, triggerLine, willNotTouchLines } from '#lib/decisions/model.js';
 	import EffectiveGrant from './EffectiveGrant.svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
@@ -53,7 +53,7 @@
 			const text = note.trim() || undefined;
 			if (kind === 'approve') await decide(decision.id, 'approve', { note: text, choice });
 			else await decide(decision.id, 'reject', { note: text });
-			toast.success(kind === 'approve' ? 'Approved' : 'Rejected');
+			toast.success(answerToast(kind, choice));
 			note = '';
 			rejecting = false;
 		} catch (e) {

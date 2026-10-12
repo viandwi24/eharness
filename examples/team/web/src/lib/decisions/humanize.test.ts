@@ -20,7 +20,13 @@ describe('plan card words', () => {
 		expect(toolWords('tracker__list_issues')).toBe('list issues (tracker)');
 		const lines = mayTouchLines({ tools: ['web_fetch'], connectors: ['github'], read: ['/library/in/**'], write: ['/library/out/**'] } as never);
 		expect(lines).toEqual(['Can open web pages', 'Can use the github connection', 'Can read everything under /library/in', 'Can read and change everything under /library/out']);
-		expect(willNotTouchLines({ program: { forbidden: ['run_code', 'Never email customers'] } } as never)).toEqual(['Will not run code', 'Will not Never email customers']);
+		expect(willNotTouchLines({ program: { forbidden: ['run_code', 'Never email customers'] } } as never)).toEqual(['Will not run code', 'Never email customers']);
+		expect(willNotTouchLines({ program: { forbidden: ['Bash(rm *)', 'Edit(/library/final/**)', 'WebFetch(domain:example.com)', 'Bash(git push:*)'] } } as never)).toEqual([
+			'Will not delete files with rm',
+			'Will not edit everything under /library/final',
+			'Will not open pages on example.com',
+			'Will not run `git push` commands'
+		]);
 	});
 
 	test('no pointer to the Decision Center inside it', () => {

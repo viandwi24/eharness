@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { MessageResponse } from '#lib/components/ai/message/index.js';
-	import { discussCard } from './event.js';
+	import { discussCard, proposalOutcomeCard } from './event.js';
 
 	let { name, text }: { name: string; text: string } = $props();
 
@@ -11,7 +11,7 @@
 	const long = $derived(lines.length > PREVIEW_LINES);
 	const shown = $derived(expanded || !long ? text : lines.slice(0, PREVIEW_LINES).join('\n'));
 	// Subagent reports are long markdown; other events are one dim line.
-	const discuss = $derived(discussCard(name, text));
+	const discuss = $derived(discussCard(name, text) ?? proposalOutcomeCard(name, text));
 	const isReport = $derived(name.includes('report') || long);
 </script>
 

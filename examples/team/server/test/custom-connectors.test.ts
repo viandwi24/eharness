@@ -237,6 +237,10 @@ describe('add custom connector', () => {
         .sort()
     }
     expect(await tools()).toEqual(['docs-2_lookup', 'docs-3_lookup', 'docs_lookup'])
+    // the connector list names each capability's tools as the agent calls them (what a program grants)
+    const listed = (await call(server, 'GET', `/agents/${lead.id}/connectors`)).json.connectors
+    const docs = listed.find((c: Json) => c.connectionId === ids[0])
+    expect(docs.capabilities.flatMap((c: Json) => c.agentTools ?? [])).toContain('docs_lookup')
 
     // renaming changes the card, not the tools
     const renamed = await call(server, 'PATCH', `/connections/${ids[0]}`, { label: 'Handbook' })

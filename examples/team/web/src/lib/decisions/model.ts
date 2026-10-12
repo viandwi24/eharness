@@ -1,7 +1,7 @@
 // The Decision Center's view model. Pure.
 import type { components } from '../api/schema';
 import { budgetSummary, type ProgramForm, bodyFromForm } from '../programs/form';
-import { describeScheduleWords } from '../routines/schedule';
+import { describeScheduleWords, zoneLabel } from '../routines/schedule';
 
 export type Decision = components['schemas']['Decision'];
 export type DecisionKind = Decision['kind'];
@@ -78,7 +78,32 @@ export function mayTouchLines(a: Authority): string[] {
 
 /** The "will not touch" side: what the proposal forbids, in plain language. */
 export function willNotTouchLines(p: Proposal['payload']): string[] {
-	return p.program.forbidden.map((f) => `Will not ${/^[A-Za-z_]+$/.test(f) ? toolWords(f) : f}`);
+	return p.program.forbidden.map((f) => {
+		const what = forbiddenWords(f);
+		// a sentence the author wrote ("Never email customers") already says it
+		return /^(never|do not|don't|not)\b/i.test(what) ? what : `Will not ${what}`;
+	});
+}
+
+const RULE_VERB: Record<string, string> = { Edit: 'edit', Write: 'write to', Read: 'read', MultiEdit: 'edit' };
+
+/** One forbidden rule in words: `Bash(rm *)` is "delete files with rm", `Edit(/library/final/**)` "edit everything under /library/final". */
+export function forbiddenWords(rule: string): string {
+	const r = rule.trim();
+	if (/^[A-Za-z_]+$/.test(r)) return toolWords(r);
+	const m = /^([A-Za-z]+)\((.*)\)$/.exec(r);
+	if (!m) return r;
+	const [, tool, arg = ''] = m as unknown as [string, string, string];
+	const target = arg.endsWith('/**') ? `everything under ${arg.slice(0, -3) || '/'}` : arg.replace(/\s*\*$/, '').trim() || arg;
+	if (tool === 'Bash') {
+		const cmd = arg.replace(/:?\*$/, '').trim();
+		if (cmd === '' || cmd === '*') return 'run shell commands';
+		if (cmd === 'rm' || cmd.startsWith('rm ')) return 'delete files with rm';
+		return `run \`${cmd}\` commands`;
+	}
+	if (tool === 'WebFetch') return `open pages on ${arg.replace(/^domain:/, '')}`;
+	if (RULE_VERB[tool]) return `${RULE_VERB[tool]} ${target}`;
+	return `use ${toolWords(tool)} on ${arg}`;
 }
 
 /** A body the agent wrote, without sentences that send the reader to the Decision Center: they are already in it. */
@@ -95,7 +120,10 @@ export function cleanBody(body: string): string {
 export function triggerLine(p: Proposal['payload']): string {
 	if (p.runOnce) return 'Runs once, right after you approve';
 	const t = p.program.trigger;
-	return t.kind === 'schedule' ? `Runs ${lowerFirst(describeScheduleWords(t.spec))}` : 'Runs when you run it';
+	if (t.kind !== 'schedule') return 'Runs when you run it';
+	// the zone as people say it, with its IANA name once: the agent's own text names the IANA zone
+	const zone = t.spec.kind === 'cron' && zoneLabel(t.spec.tz) !== t.spec.tz ? ` (${t.spec.tz})` : '';
+	return `Runs ${lowerFirst(describeScheduleWords(t.spec))}${zone}`;
 }
 
 /** Budget of a proposal as one line. */
@@ -119,6 +147,12 @@ export function statusBadge(d: Pick<Decision, 'status'>): { label: string; varia
 	if (d.status === 'approved') return { label: 'Approved', variant: 'success' };
 	if (d.status === 'rejected') return { label: 'Rejected', variant: 'secondary' };
 	return { label: 'Expired', variant: 'destructive' };
+}
+
+/** The toast after answering: the chosen option for an escalation with options, else Approved / Rejected. */
+export function answerToast(kind: 'approve' | 'reject', choice?: string): string {
+	if (kind === 'reject') return 'Rejected';
+	return choice && choice.trim() !== '' && choice.trim().toLowerCase() !== 'approve' ? `Answered "${choice.trim()}"` : 'Approved';
 }
 
 /** What a decided card says happened. */

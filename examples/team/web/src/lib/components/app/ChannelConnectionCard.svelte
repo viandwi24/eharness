@@ -8,6 +8,7 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+	import { pollWhileVisible } from '#lib/hooks/poll.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import ChannelReminders from '#lib/components/app/ChannelReminders.svelte';
 	import { toast } from '#lib/components/ui/sonner/index.js';
@@ -77,10 +78,11 @@
 	});
 	// chats are discovered by the server as people write: look again while the card is open and visible
 	$effect(() => {
-		const timer = setInterval(() => {
-			if (document.visibilityState === 'visible') void loadDetail();
-		}, 5000);
-		return () => clearInterval(timer);
+		return pollWhileVisible(() => void loadDetail());
+	});
+	// opening the Chats tab looks again at once
+	$effect(() => {
+		if (tab === 'chats') void loadDetail();
 	});
 	$effect(() => {
 		// keep the chooser on the saved binding unless the person is changing it
@@ -187,9 +189,9 @@
 
 			<Tabs.Content value="reminders" class="pt-3"><ChannelReminders {conn} /></Tabs.Content>
 
-			<Tabs.Content value="inbox" class="pt-3"><ChannelInbox {conn} /></Tabs.Content>
+			<Tabs.Content value="inbox" class="pt-3">{#if tab === 'inbox'}<ChannelInbox {conn} />{/if}</Tabs.Content>
 
-			<Tabs.Content value="activity" class="pt-3"><ChannelActivity {conn} /></Tabs.Content>
+			<Tabs.Content value="activity" class="pt-3">{#if tab === 'activity'}<ChannelActivity {conn} />{/if}</Tabs.Content>
 
 			<Tabs.Content value="delivery" class="flex flex-col gap-3 pt-3">
 				<div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3">

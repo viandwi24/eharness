@@ -45,6 +45,9 @@
 	const toolSet = $derived(new Set(splitLines(tools)));
 	const connectorSet = $derived(new Set(splitLines(connectors)));
 
+	/** The names the agent really calls a capability's tools by (prefixed per connection); bare names for older servers. */
+	const namesOf = (cap: AgentConnector['capabilities'][number]): string[] => cap.agentTools ?? cap.tools;
+
 	function toggleConnector(id: string, on: boolean): void {
 		const s = new Set(connectorSet);
 		if (on) s.add(id);
@@ -83,7 +86,7 @@
 				<div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 pl-6">
 					{#each c.capabilities as cap (cap.id)}
 						<label class="flex items-center gap-1.5 text-xs" title={cap.description}>
-							<input type="checkbox" checked={cap.tools.length > 0 && cap.tools.every((t) => toolSet.has(t))} onchange={(e) => toggleTools(cap.tools, e.currentTarget.checked)} />
+							<input type="checkbox" checked={namesOf(cap).length > 0 && namesOf(cap).every((t) => toolSet.has(t))} onchange={(e) => toggleTools(namesOf(cap), e.currentTarget.checked)} />
 							{cap.title}
 						</label>
 					{/each}

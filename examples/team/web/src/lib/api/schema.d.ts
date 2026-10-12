@@ -13132,6 +13132,8 @@ export interface components {
                     mode: components["schemas"]["CapabilityMode"];
                     override?: components["schemas"]["CapabilityMode"];
                 }[];
+                /** @description The names this agent calls the capability's tools by (`<connection>_<tool>` when the connection prefixes its tools). Programs name tools by these. Absent until the agent has been prepared. */
+                agentTools?: string[];
             })[];
         };
         AgentConnectorsPut: {
@@ -13159,7 +13161,7 @@ export interface components {
             place: string;
             /** @description A reminder made in a web chat thread (`connectionId` `web`): the thread it is delivered into. */
             sessionId?: string;
-            /** @description The next fire of an active one-time reminder (epoch ms). */
+            /** @description The next fire of an active reminder (epoch ms; one-time or repeating). */
             nextAt?: number;
             text: string;
             /** @description The schedule in words with the absolute time and zone. */
