@@ -1791,6 +1791,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     connectionId: string,
     options: { limit: number; cursor?: string | undefined },
   ): Promise<{ items: InboxConversation[]; next?: string }> {
+    inbox.backfill(connectionId)
     const page = inbox.list(connectionId, options)
     const config = cache.get(connectionId)
     return {
@@ -1804,6 +1805,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     conversationId: string,
     options: { limit: number; before?: string | undefined },
   ): Promise<InboxMessagePage | undefined> {
+    inbox.backfill(connectionId)
     const row = inbox.get(connectionId, conversationId)
     if (row === undefined) return undefined
     const page = await log.page(connectionId, conversationId, options)

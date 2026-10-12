@@ -1593,6 +1593,52 @@ describe('inbox: conversations and their logs', () => {
     expect((await i.gw.inbox.conversations('nobody', { limit: 5 })).items).toEqual([])
   })
 
+  test('backfills inbox rows from the existing log (idempotent, linked DM allowed, messages open)', async () => {
+    const { i, mock } = await setup()
+    const t = Date.now()
+    await mock.say({ chat: 'audit', from: ana, text: 'audit line', id: 'a1', at: t - 3000 })
+    await mock.say({
+      from: ana,
+      text: '@team_bot status?',
+      id: 'r1',
+      mentionSelf: true,
+      at: t - 2000,
+    })
+    await until('reply', () => mock.sent.length === 1)
+    i.gw.pairing.link('c1', 'u-ana', 'owner', 'Ana')
+    await mock.say({
+      chat: 'u-ana',
+      kind: 'dm',
+      from: { ...ana, id: 'u-ana' },
+      text: 'dm hi',
+      id: 'd1',
+      at: t,
+    })
+    await until('dm reply', () => mock.sent.length === 2)
+    const before = await i.gw.inbox.conversations('c1', { limit: 10 })
+
+    // an inbox that did not exist when the chats happened
+    i.server.conn.sqlite.query('DELETE FROM channel_inbox').run()
+    const after = await i.gw.inbox.conversations('c1', { limit: 10 })
+    expect(after.items.map((c) => c.conversationId).sort()).toEqual(
+      before.items
+        .map((c) => c.conversationId)
+        .filter((id) => id !== 'audit')
+        .sort(),
+    )
+    const dm = after.items.find((c) => c.conversationId === 'u-ana')
+    expect(dm).toMatchObject({ allowed: true, woke: 1, dropped: 0 })
+    expect(dm?.preview).toMatchObject({ self: true })
+    expect(dm?.lastAt).toBeGreaterThan(0)
+    const msgs = await i.gw.inbox.messages('c1', 'u-ana', { limit: 10 })
+    expect(msgs?.items.map((m) => m.text)).toContain('dm hi')
+    // idempotent, and no text stored in the inbox table
+    expect((await i.gw.inbox.conversations('c1', { limit: 10 })).items).toEqual(after.items)
+    expect(
+      JSON.stringify(i.server.conn.sqlite.query('SELECT * FROM channel_inbox').all()),
+    ).not.toContain('dm hi')
+  })
+
   test('the conversation view shows the log in order with replies, edits and deletions marked, paged back', async () => {
     const { i, mock } = await setup()
     const t = Date.now()

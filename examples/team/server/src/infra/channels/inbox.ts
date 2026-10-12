@@ -223,6 +223,13 @@ export interface InboxStore {
   /** Most recently active first. `cursor` is the `next` of the previous page. */
   list(connectionId: string, options: { limit: number; cursor?: string | undefined }): InboxPage
   clear(connectionId: string): void
+  /**
+   * Fill inbox rows from the channel log for conversations that have none yet (idempotent: existing
+   * rows are never touched). Counts come from message dispositions; older messages without one
+   * count as woke when the agent answered later in the conversation, otherwise as nothing.
+   * Observed-only and dropped messages of the past are unknown (0). Reads metadata only.
+   */
+  backfill(connectionId: string): number
 }
 
 const CURSOR_SEP = '|'
@@ -281,6 +288,41 @@ export function sqliteInboxStore(sqlite: Database): InboxStore {
     },
     clear(connectionId) {
       sqlite.query('DELETE FROM channel_inbox WHERE connection_id = ?').run(connectionId)
+    },
+    backfill(connectionId) {
+      const missing = sqlite
+        .query<{ conversation_id: string; ref: string; created_at: number }, [string, string]>(
+          `SELECT conversation_id, ref, created_at FROM channel_conversations
+             WHERE connection_id = ? AND conversation_id NOT IN
+               (SELECT conversation_id FROM channel_inbox WHERE connection_id = ?)`,
+        )
+        .all(connectionId, connectionId)
+      let added = 0
+      for (const c of missing) {
+        const rows = sqlite
+          .query<{ at: number; self: number; disposition: string | null }, [string, string]>(
+            'SELECT at, self, disposition FROM channel_messages WHERE connection_id = ? AND conversation_id = ? ORDER BY at',
+          )
+          .all(connectionId, c.conversation_id)
+        if (rows.length === 0) continue
+        let woke = 0
+        let observed = 0
+        rows.forEach((m, i) => {
+          if (m.self === 1) return
+          if (m.disposition === 'woke') woke++
+          else if (m.disposition === 'observed') observed++
+          else if (rows.slice(i + 1).some((x) => x.self === 1)) woke++
+        })
+        const first = Math.min(c.created_at, rows[0]?.at ?? c.created_at)
+        const last = rows.at(-1)?.at ?? first
+        added += sqlite
+          .query(
+            `INSERT OR IGNORE INTO channel_inbox (connection_id, conversation_id, ref, woke, observed, dropped, first_at, last_at)
+             VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+          )
+          .run(connectionId, c.conversation_id, c.ref, woke, observed, first, last).changes
+      }
+      return added
     },
   }
 }
