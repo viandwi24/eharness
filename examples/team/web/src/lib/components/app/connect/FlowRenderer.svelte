@@ -15,7 +15,7 @@
 	 * Renders the current view of a connect flow by `type`, one component per kind. `cancel` ends the
 	 * flow (`onClose`); a successful flow calls `onDone` from its Done button.
 	 */
-	let { session, onDone, onClose }: { session: FlowSession; onDone: (connection: Connection) => void; onClose: () => void } = $props();
+	let { session, next, onDone, onClose }: { session: FlowSession; next?: string; onDone: (connection: Connection) => void; onClose: () => void } = $props();
 
 	const st = $derived(session.state);
 	const flow = $derived(st.flow);
@@ -50,11 +50,11 @@
 	{#if !view}
 		{#if st.busy}
 			<p class="py-6 text-center text-sm text-muted-foreground" role="status">Getting ready…</p>
-		{:else}
+		{:else if st.error}
 			<div class="flex justify-end"><button type="button" class="text-sm underline" onclick={onClose}>Close</button></div>
 		{/if}
 	{:else if succeeded && view.type !== 'status'}
-		<FlowStatus view={{ type: 'status', viewId: view.viewId, step: view.step, state: 'success', message: 'Agents can use it now.' }} accountLabel={st.connection?.accountLabel} onDone={done} onCancel={cancel} />
+		<FlowStatus view={{ type: 'status', viewId: view.viewId, step: view.step, state: 'success', message: next ? 'The connection is saved.' : 'Agents can use it now.' }} accountLabel={st.connection?.accountLabel} {next} onDone={done} onCancel={cancel} />
 	{:else if flowEndedBadly(flow) && view.type !== 'error'}
 		<FlowError view={{ type: 'error', viewId: view.viewId, step: view.step, message: 'This connection attempt ended.', retryable: false }} busy={false} canBack={false} onRetry={() => {}} onBack={() => {}} onCancel={onClose} />
 	{:else}
@@ -72,7 +72,7 @@
 			{:else if view.type === 'confirm'}
 				<FlowConfirm {view} busy={st.busy} canBack={back} onConfirm={() => submit()} onBack={goBack} onCancel={cancel} />
 			{:else if view.type === 'status'}
-				<FlowStatus {view} accountLabel={st.connection?.accountLabel} onDone={done} onCancel={cancel} />
+				<FlowStatus {view} accountLabel={st.connection?.accountLabel} {next} onDone={done} onCancel={cancel} />
 			{:else if view.type === 'error'}
 				<FlowError {view} busy={st.busy} canBack={back} onRetry={() => session.act('retry')} onBack={goBack} onCancel={cancel} />
 			{/if}

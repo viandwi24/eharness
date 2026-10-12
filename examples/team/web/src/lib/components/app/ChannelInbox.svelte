@@ -117,7 +117,7 @@
 			<ul class="flex flex-col divide-y divide-border rounded-lg border border-border">
 				{#each items as c (c.conversationId)}
 					<li>
-						<button type="button" class="flex w-full flex-col gap-1 p-3 text-left hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none" onclick={() => void openLog(c)} data-testid="inbox-row">
+						<button type="button" class="flex w-full flex-col gap-1 p-3 text-left hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring" onclick={() => void openLog(c)} data-testid="inbox-row">
 							<div class="flex min-w-0 flex-wrap items-center gap-2">
 								<span class="truncate text-sm font-medium">{c.parentTitle ? `${c.parentTitle} / ${c.title}` : c.title}</span>
 								<Badge variant="secondary">{KIND_LABEL[c.kind]}{c.topic ? ' · topic' : ''}</Badge>
@@ -125,7 +125,7 @@
 								<span class="ml-auto shrink-0 text-xs text-muted-foreground">{ago(c.lastAt, Date.now())}</span>
 							</div>
 							<p class="truncate text-xs text-muted-foreground">{previewLine(c)}</p>
-							<p class="text-xs text-muted-foreground">{agentName(c.agentId)} · {inboxCounts(c)}</p>
+							<p class="text-xs text-muted-foreground">Agent: {agentName(c.agentId)} · {inboxCounts(c)}</p>
 						</button>
 					</li>
 				{/each}
@@ -143,7 +143,7 @@
 		</div>
 		<div class="flex flex-col gap-1">
 			<div class="flex min-w-0 flex-wrap items-center gap-2"><h3 class="truncate text-sm font-medium">{open.title}</h3><Badge variant="secondary">{KIND_LABEL[open.kind]}</Badge><Badge variant={open.allowed ? 'success' : 'warning'}>{allowlistLabel(open)}</Badge></div>
-			<p class="text-xs text-muted-foreground">{agentName(open.agentId)} · {inboxCounts(open)}{#if !href} · the agent has no thread here yet{/if}</p>
+			<p class="text-xs text-muted-foreground">{`Agent: ${agentName(open.agentId)} · ${inboxCounts(open)}${href ? '' : ' · the agent has no thread here yet'}`}</p>
 		</div>
 		{#if logError}<p class="text-sm text-destructive-text" role="alert">{logError}</p>{/if}
 		{#if older !== undefined}

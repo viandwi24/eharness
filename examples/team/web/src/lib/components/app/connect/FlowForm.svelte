@@ -1,9 +1,10 @@
 <script lang="ts">
 	import FlowFooter from './FlowFooter.svelte';
+	import LinkedText from './LinkedText.svelte';
 	import SchemaForm from '#lib/components/app/SchemaForm.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
-	import { canResend, formPayload, friendlyError, repeatsDialogTitle, withoutStoredSecrets } from '#lib/connectors/flow-view.js';
+	import { canResend, formPayload, friendlyError, friendlyFields, repeatsDialogTitle, withoutStoredSecrets } from '#lib/connectors/flow-view.js';
 	import type { FlowView } from '#lib/api/index.js';
 	import { initialValues, type FormValues } from '#lib/providers/form.js';
 
@@ -52,13 +53,13 @@
 <form class="flex flex-col gap-4" onsubmit={submit}>
 	<div class="flex flex-col gap-1">
 		{#if !repeatsDialogTitle(view.title)}<h3 class="text-sm font-medium">{view.title}</h3>{/if}
-		{#if view.description}<p class="text-[13px] text-muted-foreground">{view.description}</p>{/if}
+		{#if view.description}<p class="text-[13px] text-muted-foreground"><LinkedText text={view.description} /></p>{/if}
 	</div>
-	<SchemaForm fields={view.fields} bind:values current={shown} {errors} idPrefix="cf" disabled={busy} />
+	<SchemaForm fields={friendlyFields(view.fields)} bind:values current={shown} {errors} idPrefix="cf" disabled={busy} />
+	{#if onResend && canResend(view)}<div><Button type="button" variant="link" size="sm" class="h-auto px-0" onclick={onResend} disabled={busy} data-testid="flow-resend">Send the code again</Button></div>{/if}
 	{#if view.message}<p class="text-sm text-destructive-text" role="alert">{view.message}</p>{/if}
 	<FlowFooter>
 		<Button type="button" variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
-		{#if onResend && canResend(view)}<Button type="button" variant="ghost" onclick={onResend} disabled={busy} data-testid="flow-resend">Send the code again</Button>{/if}
 		{#if canBack}<Button type="button" variant="outline" onclick={onBack} disabled={busy}>Back</Button>{/if}
 		<Button type="submit" disabled={busy}>{#if busy}<Spinner class="size-4" />{/if}{view.submitLabel}</Button>
 	</FlowFooter>

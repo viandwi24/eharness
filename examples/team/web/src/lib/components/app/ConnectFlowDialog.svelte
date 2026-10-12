@@ -21,6 +21,7 @@
 		defaultEnabled,
 		flowId,
 		signIn = false,
+		next,
 		onDone
 	}: {
 		open?: boolean;
@@ -38,6 +39,8 @@
 		flowId?: string;
 		/** A custom connector waiting for its sign in: "Sign in to <label>" instead of "Reconnect". */
 		signIn?: boolean;
+		/** What to do after connecting (replaces the generic hint of the success step). */
+		next?: string;
 		/** Called with the saved connection when the flow finished successfully. */
 		onDone?: (connection: Connection) => void;
 	} = $props();
@@ -77,7 +80,7 @@
 		</Dialog.Header>
 		<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
 			{#key generation}
-				<FlowRenderer {session} onDone={(c) => onDone?.(c)} onClose={() => (open = false)} />
+				<FlowRenderer {session} {next} onDone={(c) => onDone?.(c)} onClose={() => (open = false)} />
 			{/key}
 		</div>
 	</Dialog.Content>

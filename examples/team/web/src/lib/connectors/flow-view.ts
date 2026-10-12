@@ -87,6 +87,13 @@ export function countdownText(expiresAt: number, now: number): string {
 	return `Expires in ${m} min`;
 }
 
+/** QR codes rotate: "Refreshes in 25 s" instead of an expiry. */
+export function refreshText(expiresAt: number, now: number): string {
+	const s = Math.ceil((expiresAt - now) / 1000);
+	if (s <= 0) return 'Refreshing…';
+	return s < 60 ? `Refreshes in ${s} s` : `Refreshes in ${Math.ceil(s / 60)} min`;
+}
+
 /** The link to open for a device code (the one that already carries the code when there is one). */
 export const deviceLink = (view: View<'deviceCode'>): string => view.verificationUrlComplete ?? view.verificationUrl;
 
@@ -100,6 +107,31 @@ export const repeatsDialogTitle = (title: string): boolean => /^(re)?connect\b/i
 export function friendlyError(message: string): string {
 	if (/^invalid url$/i.test(message.trim())) return 'Enter a full address, like https://mcp.example.com/mcp';
 	return message;
+}
+
+/** Words for enum values a server flow sends as bare ids (`code`, `qr`), by `<field path>:<value>`. */
+const FLOW_OPTION_LABELS: Record<string, string> = {
+	'method:code': 'A code sent by Telegram',
+	'method:qr': 'A QR code I scan'
+};
+
+/** The form fields with plain-language option labels (only bare ids are replaced). */
+export function friendlyFields(fields: readonly FormField[]): FormField[] {
+	return fields.map((f) => (f.options ? { ...f, options: f.options.map((o) => (String(o.value) === o.label && FLOW_OPTION_LABELS[`${f.path}:${o.value}`] ? { ...o, label: FLOW_OPTION_LABELS[`${f.path}:${o.value}`] as string } : o)) } : f));
+}
+
+/** Splits text into plain and http(s) link parts, so a description can link the addresses it mentions. */
+export function linkParts(text: string): Array<{ text: string; href?: string }> {
+	const out: Array<{ text: string; href?: string }> = [];
+	let last = 0;
+	for (const m of text.matchAll(/https?:\/\/[^\s)]+[^\s).,;]/g)) {
+		const at = m.index ?? 0;
+		if (at > last) out.push({ text: text.slice(last, at) });
+		out.push({ text: m[0], href: m[0] });
+		last = at + m[0].length;
+	}
+	if (last < text.length) out.push({ text: text.slice(last) });
+	return out;
 }
 
 /** A login-code form can ask for the code again (the server offers `resend` on the `code` step). */

@@ -78,4 +78,4 @@
 </div>
 
 <ChannelTypePicker bind:open={pickOpen} {types} onPick={(id) => { definitionId = id; connectOpen = true; }} />
-<ConnectFlowDialog bind:open={connectOpen} {definitionId} scope="workspace" onDone={() => void load()} />
+<ConnectFlowDialog bind:open={connectOpen} {definitionId} scope="workspace" next="Next: choose the agent that uses it on its card, then the chats it may read." onDone={() => void load()} />

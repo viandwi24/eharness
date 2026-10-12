@@ -5,7 +5,7 @@
 	import type { FlowView } from '#lib/api/index.js';
 	import FlowFooter from './FlowFooter.svelte';
 
-	let { view, accountLabel, onDone, onCancel }: { view: Extract<FlowView, { type: 'status' }>; accountLabel?: string; onDone: () => void; onCancel: () => void } = $props();
+	let { view, accountLabel, next, onDone, onCancel }: { view: Extract<FlowView, { type: 'status' }>; accountLabel?: string; next?: string; onDone: () => void; onCancel: () => void } = $props();
 	const account = $derived(view.account ?? accountLabel);
 </script>
 
@@ -17,7 +17,7 @@
 			<p class="text-[13px] text-muted-foreground">{view.message}</p>
 		</div>
 		{#if account}<p class="rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium">{account}</p>{/if}
-		<p class="max-w-xs text-xs text-muted-foreground">Next: choose what it may do on its own in the connector's permissions, or turn it on per agent in an agent's Connectors tab.</p>
+		<p class="max-w-xs text-xs text-muted-foreground">{next ?? "Next: choose what it may do on its own in the connector's permissions, or turn it on per agent in an agent's Connectors tab."}</p>
 	</div>
 	<FlowFooter>
 		<Button onclick={onDone}>Done</Button>

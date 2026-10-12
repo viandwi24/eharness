@@ -4,7 +4,7 @@
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import type { FlowView } from '#lib/api/index.js';
 	import type { FlowSession } from '#lib/connectors/flow-core.js';
-	import { countdownText, qrDataUri } from '#lib/connectors/flow-view.js';
+	import { qrDataUri, refreshText } from '#lib/connectors/flow-view.js';
 	import FlowFooter from './FlowFooter.svelte';
 	import { usePolling, useNow } from './waiting.svelte.js';
 
@@ -29,7 +29,7 @@
 		<div class="flex size-52 items-center justify-center rounded-lg border border-dashed border-border"><Spinner class="size-5" /></div>
 	{/if}
 	{#if view.url}<a class="max-w-full truncate text-xs underline underline-offset-4" href={view.url}>Open the login link on this device</a>{/if}
-	<p class="flex items-center gap-2 text-xs text-muted-foreground" role="status"><Spinner class="size-3.5" />Waiting for the scan · refreshes in {countdownText(view.expiresAt, clock.value)}</p>
+	<p class="flex items-center gap-2 text-xs text-muted-foreground" role="status"><Spinner class="size-3.5" />Waiting for the scan · {refreshText(view.expiresAt, clock.value)}</p>
 </div>
 <FlowFooter>
 	<Button variant="ghost" onclick={onCancel}>Cancel</Button>

@@ -12,6 +12,7 @@
 	import ChannelReminders from '#lib/components/app/ChannelReminders.svelte';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
+	import ConnectFlowDialog from '#lib/components/app/ConnectFlowDialog.svelte';
 	import ChannelActivity from '#lib/components/app/ChannelActivity.svelte';
 	import ChannelChatRow from '#lib/components/app/ChannelChatRow.svelte';
 	import ChannelInbox from '#lib/components/app/ChannelInbox.svelte';
@@ -48,6 +49,7 @@
 	let agentId = $state(untrack(() => conn.binding?.agentId ?? ''));
 	let busy = $state(false);
 	let unbindOpen = $state(false);
+	let reconnectOpen = $state(false);
 
 	const agents = $derived(agentChoices(agentsStore.state.agents));
 	const agentName = (id: string): string => agentsStore.state.agents.find((a) => a.id === id)?.name ?? id;
@@ -118,7 +120,7 @@
 			<div class="flex min-w-0 flex-wrap items-center gap-2">
 				<h2 class="truncate text-sm font-medium">{conn.label}</h2>
 				{#if conn.bot}<span class="truncate text-xs text-muted-foreground">@{conn.bot.username}</span>{:else if conn.accountLabel}<span class="truncate text-xs text-muted-foreground">{conn.accountLabel}</span>{/if}
-				<Badge variant="secondary" data-testid="channel-type">{typeLabel(conn)}</Badge>
+				{#if conn.label !== typeLabel(conn)}<Badge variant="secondary" data-testid="channel-type">{typeLabel(conn)}</Badge>{/if}
 				<Badge variant={stateTone(conn.runtime.state)} data-testid="channel-state">{STATE_LABEL[conn.runtime.state]}</Badge>
 			</div>
 			{#if hint}<p class="mt-1 text-xs text-muted-foreground">{hint}</p>{/if}
@@ -131,7 +133,7 @@
 				<Button size="sm" variant="outline" onclick={() => void restart()} disabled={busy}><ArrowsClockwiseIcon class="size-4" /> Retry</Button>
 			{/if}
 			{#if conn.runtime.state === 'needs-auth'}
-				<Button size="sm" variant="outline" href="/connectors">Reconnect</Button>
+				<Button size="sm" variant="outline" onclick={() => (reconnectOpen = true)}>Reconnect with a new token</Button>
 			{/if}
 		</div>
 	</header>
@@ -190,9 +192,9 @@
 			<Tabs.Content value="activity" class="pt-3"><ChannelActivity {conn} /></Tabs.Content>
 
 			<Tabs.Content value="delivery" class="flex flex-col gap-3 pt-3">
-				<div class="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
-					<div class="min-w-0">
-						<div class="text-sm font-medium">Outbox</div>
+				<div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3">
+					<div class="min-w-0 flex-1">
+						<h3 class="text-sm font-medium">Outbox</h3>
 						<p class="text-xs text-muted-foreground" data-testid="outbox-summary">{outboxSummary(conn)}</p>
 					</div>
 				</div>
@@ -204,10 +206,14 @@
 				{:else}
 					<p class="text-xs text-muted-foreground">Messages are queued, sent no faster than Telegram allows (about one per second per chat) and retried on errors. If sending keeps failing it pauses by itself and says so here.</p>
 				{/if}
-				<div class="flex justify-end"><Button size="sm" variant="outline" onclick={() => void restart()} disabled={busy}><ArrowsClockwiseIcon class="size-4" /> Restart the bot</Button></div>
+				<div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3">
+					<p class="min-w-0 flex-1 text-xs text-muted-foreground">Something stuck? Restarting stops and starts polling. Queued messages and settings stay.</p>
+					<Button size="sm" variant="outline" onclick={() => void restart()} disabled={busy}><ArrowsClockwiseIcon class="size-4" /> Restart the bot</Button>
+				</div>
 			</Tabs.Content>
 		</Tabs.Root>
 	{/if}
 </section>
 
+<ConnectFlowDialog bind:open={reconnectOpen} connectionId={conn.id} label={conn.label} next="The bot starts again by itself." onDone={() => onChange()} />
 <ConfirmDialog bind:open={unbindOpen} title="Unbind this bot?" description="The agent stops answering on this bot and polling stops. Chats, linked accounts and stored messages stay." confirmLabel="Unbind" onConfirm={unbind} />

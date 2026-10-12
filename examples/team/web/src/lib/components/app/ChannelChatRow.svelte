@@ -61,7 +61,7 @@
 	});
 
 	const origin = (key: Parameters<typeof originText>[1]): string => originText(chat, key, titleOf);
-	const inheritLabel = (what: string): string => `Same as the level above (${what})`;
+	const inheritLabel = (what: string): string => `Same as above: ${what}`;
 
 	async function save(): Promise<void> {
 		if (retentionProblem || proactiveProblem) return;
@@ -147,7 +147,7 @@
 				<label class="flex flex-col gap-1">
 					<span class="text-xs font-medium">Trusted group <span class="font-normal text-muted-foreground">· {origin('defaultRole')}</span></span>
 					<NativeSelect bind:value={form.defaultRole} aria-label="Trusted internal group">
-						<NativeSelectOption value="">{inheritLabel(chat.effective.defaultRole === 'member' ? 'trusted: unknown people are members' : 'unknown people are guests')}</NativeSelectOption>
+						<NativeSelectOption value="">{inheritLabel(chat.effective.defaultRole === 'member' ? 'trusted (members)' : 'not trusted (guests)')}</NativeSelectOption>
 						<NativeSelectOption value="member">Trusted: unknown people here are members</NativeSelectOption>
 						<NativeSelectOption value="guest">Not trusted: unknown people are guests</NativeSelectOption>
 					</NativeSelect>

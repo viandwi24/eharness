@@ -12,6 +12,7 @@
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
+	import ConnectFlowDialog from '#lib/components/app/ConnectFlowDialog.svelte';
 	import ChannelActivity from '#lib/components/app/ChannelActivity.svelte';
 	import ChannelChatRow from '#lib/components/app/ChannelChatRow.svelte';
 	import ChannelInbox from '#lib/components/app/ChannelInbox.svelte';
@@ -49,6 +50,9 @@
 	let agentId = $state(untrack(() => conn.binding?.agentId ?? ''));
 	let busy = $state(false);
 	let unbindOpen = $state(false);
+	let reconnectOpen = $state(false);
+	let stopping = $state<ChannelChat | null>(null);
+	let stopOpen = $state(false);
 	let windows = $state<Record<string, string>>({});
 	let limits = $state<LimitsForm>(untrack(() => (conn.account ? limitsFormOf(conn.account.limits) : { dmDailyMax: '', dailyMax: '', adminLogHours: '' })));
 	let limitsDirty = $state(false);
@@ -152,7 +156,7 @@
 				<Button size="sm" variant="outline" onclick={() => void restart()} disabled={busy}><ArrowsClockwiseIcon class="size-4" /> Retry</Button>
 			{/if}
 			{#if conn.runtime.state === 'needs-auth'}
-				<Button size="sm" variant="outline" href="/connectors">Sign in again</Button>
+				<Button size="sm" variant="outline" onclick={() => (reconnectOpen = true)}>Sign in again</Button>
 			{/if}
 		</div>
 	</header>
@@ -186,7 +190,7 @@
 			<ul class="flex flex-col gap-1 text-xs text-warning-text" role="status">{#each account.warnings as w (w)}<li>{w}</li>{/each}</ul>
 		{/if}
 		<Tabs.Root bind:value={tab}>
-			<Tabs.List class="max-w-full justify-start overflow-x-auto">
+			<Tabs.List class="h-auto max-w-full flex-wrap justify-start">
 				<Tabs.Trigger value="chats">Chats {#if picked.length}<Badge shape="number" variant="secondary">{picked.length}</Badge>{/if}</Tabs.Trigger>
 				<Tabs.Trigger value="people">People {#if conn.counts.unlinked}<Badge shape="number" variant="warning" title="Not linked yet">{conn.counts.unlinked}</Badge>{:else if conn.counts.linked}<Badge shape="number" variant="secondary">{conn.counts.linked}</Badge>{/if}</Tabs.Trigger>
 				<Tabs.Trigger value="inbox">Inbox</Tabs.Trigger>
@@ -203,17 +207,17 @@
 				</div>
 				{#if !running}<p class="text-xs text-muted-foreground">The account has to be running to read its chats.</p>{/if}
 				{#if picked.length > 0}
-					<h3 class="text-xs font-medium">Chosen</h3>
+					<h3 class="text-xs font-medium">Being read</h3>
 					<ul class="flex flex-col gap-2">
 						{#each picked as c (c.id)}
 							<div class="flex flex-col gap-1">
 								<ChannelChatRow connectionId={conn.id} connectionLabel={conn.label} branch={branchOf(c)} {titleOf} onChange={() => { onChange(); void loadDetail(); }} />
-								<div class="flex justify-end"><Button size="sm" variant="ghost" onclick={() => void select(c, false)} disabled={busy}>Stop reading</Button></div>
+								<div class="flex justify-end"><Button size="sm" variant="ghost" onclick={() => { stopping = c; stopOpen = true; }} disabled={busy}>Stop reading</Button></div>
 							</div>
 						{/each}
 					</ul>
 				{/if}
-				<h3 class="text-xs font-medium">In the account</h3>
+				<h3 class="text-xs font-medium">Other chats in the account <span class="font-normal text-muted-foreground">· turn one on to read it</span></h3>
 				{#if others.length === 0}
 					<p class="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">{chats.length === 0 ? 'No chats yet. Press Refresh chats once the account is running.' : 'Every chat of the account is chosen.'}</p>
 				{:else}
@@ -238,14 +242,14 @@
 
 			<Tabs.Content value="backfill" class="flex flex-col gap-3 pt-3">
 				<p class="text-xs text-muted-foreground">Reads the history of a chosen chat, newest first, down to the number of days you set (one chat at a time, with pauses). It resumes after a restart and obeys Telegram's flood waits.</p>
-				{#if picked.length === 0}<p class="text-sm text-muted-foreground">Choose a chat first.</p>{/if}
+				{#if picked.length === 0}<p class="text-sm text-muted-foreground">Choose a chat on the Chats tab first.</p>{/if}
 				<ul class="flex flex-col gap-2">
 					{#each picked as c (c.id)}
 						<li class="flex flex-col gap-2 rounded-lg border border-border p-3" data-testid="backfill-row">
 							<span class="truncate text-sm font-medium">{c.title}</span>
 							<p class="text-xs text-muted-foreground">{backfillText(c, Date.now())}</p>
 							<div class="flex flex-wrap items-center gap-2">
-								<Input class="w-28" inputmode="numeric" placeholder="Days" aria-label="History window in days for {c.title}" value={windows[c.id] ?? (c.account?.backfill.days === null || c.account?.backfill.days === undefined ? '' : String(c.account.backfill.days))} oninput={(e) => (windows[c.id] = e.currentTarget.value)} />
+								<Input class="w-24" inputmode="numeric" placeholder="Days" aria-label="History window in days for {c.title}" value={windows[c.id] ?? (c.account?.backfill.days === null || c.account?.backfill.days === undefined ? '' : String(c.account.backfill.days))} oninput={(e) => (windows[c.id] = e.currentTarget.value)} />
 								<Button size="sm" variant="outline" onclick={() => void setBackfill(c, false)} disabled={busy}>Read history</Button>
 								{#if c.account?.backfill.days !== null && c.account?.backfill.days !== undefined}<Button size="sm" variant="ghost" onclick={() => void setBackfill(c, true)} disabled={busy}>Stop</Button>{/if}
 							</div>
@@ -290,4 +294,6 @@
 	{/if}
 </section>
 
+<ConnectFlowDialog bind:open={reconnectOpen} connectionId={conn.id} label={conn.label} signIn next="The account starts again by itself." onDone={() => onChange()} />
+<ConfirmDialog bind:open={stopOpen} title={`Stop reading ${stopping?.title ?? 'this chat'}?`} description="New messages from this chat are no longer stored, and its history reading stops. What is already stored stays." confirmLabel="Stop reading" onConfirm={() => (stopping ? select(stopping, false) : undefined)} />
 <ConfirmDialog bind:open={unbindOpen} title="Unbind this account?" description="The agent stops using the account and the session is closed. Chosen chats and stored messages stay." confirmLabel="Unbind" onConfirm={unbind} />
