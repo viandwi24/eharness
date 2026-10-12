@@ -83,6 +83,8 @@ export const ScopePolicySchema = z.object({
   defaultRole: z.enum(['guest', 'member']).optional(),
   /** How long the agent's replies are in a group when its persona says nothing: the medium context's default. */
   replyStyle: z.enum(['brief', 'normal', 'detailed']).optional(),
+  /** Tone, language and length of this place, for the persona (P42, layer 5). Inherited; never widens tools or rules. */
+  personaOverlay: z.string().max(1000).optional(),
 })
 export type ScopePolicy = z.infer<typeof ScopePolicySchema>
 
@@ -188,6 +190,8 @@ export interface ResolvedScope {
   /** The role of an unknown person here (`undefined` = the connection's default). */
   defaultRole: 'guest' | 'member' | undefined
   replyStyle: 'brief' | 'normal' | 'detailed' | undefined
+  /** The channel overlay of the persona (tone, language, length), inherited. */
+  personaOverlay: string | undefined
   /** The node is a thread that has its own agent entry (an "own topic" wake). */
   ownTopic: boolean
   /** Per setting, which level decided it (for the Channels page). */
@@ -268,6 +272,7 @@ export function resolveScope(config: ConnectionConfig, chain: readonly ScopeNode
     proactive: { ...DEFAULT_PROACTIVE, ...(pick('proactive') ?? fallback('proactive', {})) },
     defaultRole: pick('defaultRole'),
     replyStyle: pick('replyStyle'),
+    personaOverlay: pick('personaOverlay'),
     ownTopic: leaf?.node.kind === 'thread' && own?.agentId !== undefined,
     origin,
   }

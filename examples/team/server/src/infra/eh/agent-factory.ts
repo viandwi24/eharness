@@ -52,7 +52,7 @@ import {
   type PermissionEngine,
 } from 'eharness/permissions'
 import { subagent } from 'eharness/subagent'
-import type { EventAppender, ProgramStore } from '../../app/ports.ts'
+import type { EventAppender, PersonaStore, ProgramStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import {
@@ -72,6 +72,7 @@ import {
   type TeamMode,
   teamModeOf,
 } from '../../domain/modes.ts'
+import { nameOf, personaInstructions } from '../../domain/persona.ts'
 import {
   forbiddenReason,
   outsideAuthorityReason,
@@ -109,6 +110,7 @@ import { fileGrant } from './file-grant-plugin.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
+import { type PersonaIntake, persona } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
 import { rehearsalSessions, sessionFileSystem } from './rehearsal-registry.ts'
 import { routineOutcomes } from './routine-plugin.ts'
@@ -202,6 +204,16 @@ export interface AgentFactoryDeps {
    * reply delivery of channel sessions. Late-bound; absent = no channel tools.
    */
   channels?: () => ChannelGateway | undefined
+  /**
+   * The persona of every agent (docs/plans/P42-team-persona.md): the structured identity, the voice
+   * and the operating rules are the persona and operating-rules layers of the prompt, read from the
+   * newest version; its number is part of the cache key, so a change applies from the next turn and
+   * the prefix is byte-identical within a version. Absent (or an agent without a version) = the
+   * agent's own `instructions`, as before.
+   */
+  personas?: Pick<PersonaStore, 'latest' | 'latestNumber'>
+  /** The `persona` tool (`persona-plugin.ts`). Late-bound; absent = no persona tool. */
+  personaIntake?: () => PersonaIntake | undefined
   /** The work queue intake (`work-queue-plugin.ts`): `create_task`, `list_tasks`, `update_task`, `complete_task`. */
   workQueue?: () => WorkQueueIntake | undefined
   /** The big-data toolkit (`infra/bigdata`): sources and `run_code` limits. Needs `programs`. */
@@ -567,6 +579,14 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
   const cache = new Map<string, HarnessAgent>()
   const latest = new Map<string, string>()
+  /**
+   * Builds that a new persona version replaced, per agent id, with the sessions opened on them.
+   * A session object stays a holder of its inbox for a long time (idle eviction), so a message
+   * would still be run by the old build, with the old persona: `prepare` closes those sessions
+   * once they are idle (`closeSuperseded`).
+   */
+  const superseded = new Map<string, HarnessAgent[]>()
+  const liveSessions = new Map<HarnessAgent, Map<string, HarnessSession>>()
   const retired: HarnessAgent[] = []
 
   const leadAgent = (): HarnessAgent => {
@@ -998,16 +1018,29 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               messages: false,
             }),
           ]),
+      // the agent's own persona: view, propose, and (for admins, confirmed) apply and revert
+      ...(deps.personaIntake === undefined
+        ? []
+        : [
+            persona({
+              intake: deps.personaIntake,
+              agentOf: (slug) => deps.agentBySlug?.(slug),
+              channels: () => deps.channels?.(),
+            }),
+          ]),
       // hook only: no tools, no instructions (prompt-cache prefix untouched)
       ...(deps.activityLog === undefined ? [] : [deps.activityLog.plugin()]),
     ]
 
     const roster = deps.roster
+    // the persona of this version (layers 2 and 3); the same text for every turn of the version
+    const personaNow = deps.personas?.latest(def.id)
+    const callName = nameOf(personaNow?.identity, def.name)
     const reminder = {
       text: (): string => {
         const lines = [
           `Today's date: ${new Date().toISOString().slice(0, 10)}`,
-          `You are ${def.name}.`,
+          `You are ${callName}.`,
         ]
         if (def.role === 'lead' && roster !== undefined) {
           const others = roster().filter((a) => a.id !== def.id)
@@ -1040,7 +1073,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       instructions: [
         TEAM_PREAMBLE,
         ...(def.role === 'lead' ? [LEAD_PLAYBOOK] : [ROLE_AGENT_NOTE]),
-        def.instructions,
+        ...(personaNow === undefined
+          ? [def.instructions]
+          : personaInstructions(personaNow, def.name)),
         ...out.instructions,
         reminder,
       ],
@@ -1134,6 +1169,38 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return { id, ...(info ?? {}) }
   }
 
+  /** The persona component of a cache key (`...@p<version>`). */
+  const personaPart = (key: string): string => key.slice(key.lastIndexOf('@p'))
+
+  /**
+   * After a persona change: close the sessions of the replaced builds as soon as they are idle (no
+   * turn, nothing queued, no pending approval), so that the next message of a chat is run by the
+   * new build and its persona. A session that is busy keeps its build until it is idle.
+   */
+  async function closeSuperseded(agentId: string): Promise<void> {
+    const olds = superseded.get(agentId)
+    if (olds === undefined || olds.length === 0) return
+    for (const old of olds) {
+      const sessions = liveSessions.get(old)
+      if (sessions === undefined) continue
+      for (const [id, session] of [...sessions]) {
+        const done = (async (): Promise<void> => {
+          try {
+            await session.idle()
+            if ((await old.peek(id).pending()) !== null) return
+            await old.closeSession(id)
+          } catch {
+            // already closed or evicted: nothing left to do
+          } finally {
+            sessions.delete(id)
+          }
+        })()
+        // an idle session is closed before the caller opens the new one; a busy one finishes first
+        await Promise.race([done, new Promise<void>((resolve) => setTimeout(resolve, 100))])
+      }
+    }
+  }
+
   /**
    * `bare`: a read-only handle (`peek`) may be built without connectors when none were prepared;
    * it never runs a turn.
@@ -1149,7 +1216,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       }
       out = EMPTY_ACTIVATION
     }
-    const key = `${def.id}@${def.version}@${settings.rev}@${deps.models.rev?.() ?? 0}@${activationId(out)}`
+    const key = `${def.id}@${def.version}@${settings.rev}@${deps.models.rev?.() ?? 0}@${activationId(out)}@p${deps.personas?.latestNumber(def.id) ?? 0}`
     let agent = cache.get(key)
     if (agent === undefined) {
       // the workspace limit is a row of the shared ledger: applied by whoever builds first
@@ -1162,6 +1229,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         if (old !== undefined) {
           retired.push(old)
           cache.delete(previous)
+          if (personaPart(previous) !== personaPart(key)) {
+            superseded.set(def.id, [...(superseded.get(def.id) ?? []), old])
+          }
         }
       }
       latest.set(def.id, key)
@@ -1187,6 +1257,22 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         if (a !== undefined) all.set(a.id, a)
       }
       await deps.connectors.prepare([...all.values()])
+      // a new persona reaches the next message of a chat that an older build still holds
+      const built = def === undefined ? undefined : latest.get(def.id)
+      if (
+        def !== undefined &&
+        deps.personas !== undefined &&
+        built !== undefined &&
+        personaPart(built) !== `@p${deps.personas.latestNumber(def.id)}`
+      ) {
+        try {
+          factoryAgentFor(def, def.archivedAt !== null)
+        } catch {
+          // an agent that cannot be built yet (no provider): the caller meets that error as before
+          return
+        }
+        await closeSuperseded(def.id)
+      }
     },
     agentFor: (def) => factoryAgentFor(def, def.archivedAt !== null),
     modelInfo: (def) => modelInfoOf(def, currentSettings()),
@@ -1211,11 +1297,19 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       if (any === undefined) throw new Error('the workspace has no agent to read sessions with')
       return factoryAgentFor(any, true).peek(sessionId)
     },
-    openSession: (def, sessionId) =>
-      factoryAgentFor(def, def.archivedAt !== null).session(sessionId, {
+    openSession: (def, sessionId) => {
+      const agent = factoryAgentFor(def, def.archivedAt !== null)
+      const session = agent.session(sessionId, {
         lock,
         runtime: { workspaceId, agentId: def.id },
-      }) as HarnessSession,
+      }) as HarnessSession
+      if (deps.personas !== undefined) {
+        const known = liveSessions.get(agent) ?? new Map<string, HarnessSession>()
+        known.set(sessionId, session)
+        liveSessions.set(agent, known)
+      }
+      return session
+    },
     async close() {
       await Promise.allSettled([...cache.values(), ...retired].map((a) => a.close()))
       cache.clear()

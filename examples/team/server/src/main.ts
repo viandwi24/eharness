@@ -57,6 +57,14 @@ import {
 } from './app/decisions.ts'
 import { recheckTask } from './app/deliverables.ts'
 import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
+import {
+  applyProposal,
+  ensureAllPersonas,
+  getPersonaState,
+  personaHistory,
+  proposePersona,
+  revertPersona,
+} from './app/persona.ts'
 import type { ChannelInboxPort, ChannelsPort, Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
@@ -69,6 +77,7 @@ import {
 } from './app/work-queue.ts'
 import type { Collector } from './domain/collectors.ts'
 import { areaOf } from './domain/library.ts'
+import { nameOf } from './domain/persona.ts'
 import { parseProgramSession } from './domain/programs.ts'
 import { parseRehearsalSession } from './domain/rehearsal.ts'
 import { hostTimezone } from './domain/settings.ts'
@@ -94,6 +103,7 @@ import { sqliteHeartbeatStore } from './infra/db/heartbeat-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { sqliteBriefingStore, sqliteNotificationStore } from './infra/db/notifications-repo.ts'
+import { sqlitePersonaStore } from './infra/db/persona-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
 import { sqliteProgramTestStore, sqliteRehearsalStore } from './infra/db/rehearsal-repo.ts'
 import { pruneTables, type TableRetention } from './infra/db/retention.ts'
@@ -124,6 +134,7 @@ import { type LibraryChange, libraryFs } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
 import { createObserver } from './infra/eh/observe.ts'
+import type { PersonaIntake } from './infra/eh/persona-plugin.ts'
 import { sqliteProfileStore } from './infra/eh/profile-store.ts'
 import { createProgramService, type ProgramService } from './infra/eh/program-service.ts'
 import {
@@ -503,6 +514,9 @@ export function compose(config: ServerConfig): Server {
   // the same for the heartbeat tools (`team_status`) and the hook that records a beat
   let heartbeatIntake: HeartbeatIntake | undefined
   let workQueueIntake: WorkQueueIntake | undefined
+  // the persona tool (docs/plans/P42-team-persona.md) needs the app deps too
+  const personaStore = sqlitePersonaStore(conn.sqlite)
+  let personaIntake: PersonaIntake | undefined
   // the channels gateway needs the app deps too (declared with the activity store above)
   // the fixture community source is a demo: it is only there when asked for
   // a live list: Telegram user accounts add and remove their observe-only chats as sources (`ingest_source`)
@@ -533,6 +547,8 @@ export function compose(config: ServerConfig): Server {
     decisions: () => decisionIntake,
     heartbeat: () => heartbeatIntake,
     workQueue: () => workQueueIntake,
+    personas: personaStore,
+    personaIntake: () => personaIntake,
     channels: () => channelGateway,
     chatTools: chatToolsStore,
     // Auto blocked / paused / resumed: the web shows "auto paused" from this event
@@ -672,6 +688,7 @@ export function compose(config: ServerConfig): Server {
   let channelInboxPort: ChannelInboxPort | undefined
   const deps: Deps = {
     agents,
+    persona: personaStore,
     chat: createChatService(factory, { workspaceId: WORKSPACE_ID }),
     threads: threadStore,
     notifications: sqliteNotificationStore(conn.sqlite),
@@ -720,6 +737,15 @@ export function compose(config: ServerConfig): Server {
     escalate: (input) => createEscalation(deps, input),
     amend: (input) => createAmendment(deps, input),
     reportNeedsDecision: (input) => void createReportEscalation(deps, input),
+  }
+  personaIntake = {
+    state: (agentId) => getPersonaState(deps, agentId),
+    history: (agentId) => personaHistory(deps, agentId),
+    propose: (agentId, input, actor, sessionId) =>
+      proposePersona(deps, agentId, input, actor, sessionId),
+    getProposal: (id) => personaStore.getProposal(id),
+    apply: (id, actor) => applyProposal(deps, id, actor),
+    revert: (agentId, version, actor) => revertPersona(deps, agentId, version, actor),
   }
   workQueueIntake = {
     create: (input) => createTask(deps, input),
@@ -811,7 +837,11 @@ export function compose(config: ServerConfig): Server {
     timezone: () => settings.get().timezone,
     // who the agent is in a chat: its name and the team's, from configuration (never invented)
     identity: (agentId) => ({
-      agentName: agents.get(agentId)?.name,
+      // the name the agent goes by: its persona's display name, else the definition's
+      agentName: ((def) =>
+        def === undefined ? undefined : nameOf(personaStore.latest(agentId)?.identity, def.name))(
+        agents.get(agentId),
+      ),
       teamName: (config.env ?? process.env).TEAM_NAME?.trim() || undefined,
     }),
     // reminders created from a chat are `sys:reminder:<id>` routines
@@ -917,6 +947,8 @@ export function compose(config: ServerConfig): Server {
     channelPurgeMs > 0 ? setInterval(purgeChannels, channelPurgeMs) : undefined
   channelPurgeTimer?.unref()
   if (config.seed !== false) seedAgents(deps)
+  // every agent has a persona: the first version is made from its old instructions (idempotent)
+  ensureAllPersonas(deps)
   // agents from before threads keep their single DM as their first thread
   ensureAllFirstThreads(deps)
   // every agent with a heartbeat (the lead by default) has its routine, and the lead the digest

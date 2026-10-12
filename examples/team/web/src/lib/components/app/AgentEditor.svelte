@@ -56,7 +56,8 @@
 	let formError = $state('');
 
 	$effect(() => {
-		valid = !!name.trim() && !!instructions.trim();
+		// an existing agent's voice and rules are the Persona tab's; a new agent starts from its instructions
+		valid = !!name.trim() && (!!agent || !!instructions.trim());
 	});
 
 	const isLead = $derived(agent?.role === 'lead');
@@ -74,7 +75,6 @@
 			name: name.trim(),
 			color,
 			description,
-			instructions,
 			model: model || null,
 			modelProfile: modelProfile || null,
 			permissionMode: storedOfChoice(modeChoice) as Agent['permissionMode']
@@ -85,7 +85,7 @@
 				toast.success('Agent saved');
 				onDone?.('saved');
 			} else {
-				const created = await agentsStore.create(body);
+				const created = await agentsStore.create({ ...body, instructions });
 				toast.success(`${created.name} created`);
 				onDone?.('created');
 				await goto(`/a/${created.id}`);
@@ -142,12 +142,18 @@
 		{#if errors.description}<span class="text-xs text-destructive-text">{errors.description}</span>{/if}
 	</label>
 
-	<label class="flex flex-col gap-1">
-		<span class="font-medium">Instructions</span>
-		<Textarea bind:value={instructions} rows={compact ? 6 : 10} placeholder="What should this agent do?" aria-invalid={!!errors.instructions} />
-		{#if errors.instructions}<span class="text-xs text-destructive-text">{errors.instructions}</span>{/if}
-		{#if !agent}<span class="text-xs text-muted-foreground">After you create the agent you can choose its connectors (it starts with files (read only), memory and planning).</span>{/if}
-	</label>
+	{#if agent}
+		<p class="rounded-lg border border-border p-3 text-xs text-muted-foreground">
+			Its name, voice, preferences and operating rules are on the <span class="font-medium text-foreground">Persona</span> tab: versioned, reviewable and revertable.
+		</p>
+	{:else}
+		<label class="flex flex-col gap-1">
+			<span class="font-medium">Instructions</span>
+			<Textarea bind:value={instructions} rows={compact ? 6 : 10} placeholder="What should this agent do?" aria-invalid={!!errors.instructions} />
+			{#if errors.instructions}<span class="text-xs text-destructive-text">{errors.instructions}</span>{/if}
+			<span class="text-xs text-muted-foreground">After you create the agent you can choose its connectors (it starts with files (read only), memory and planning). The text becomes its first persona (voice) and operating rules; edit both later on the Persona tab.</span>
+		</label>
+	{/if}
 
 	<div class="flex flex-col gap-1">
 		<span class="font-medium" id="agent-model-label">Model</span>

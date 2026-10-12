@@ -11,6 +11,7 @@
 	import AgentConnectors from './AgentConnectors.svelte';
 	import HeartbeatPanel from './HeartbeatPanel.svelte';
 	import MemoryEditor from './MemoryEditor.svelte';
+	import PersonaPanel from './PersonaPanel.svelte';
 
 	const FORM_ID = 'agent-dialog-form';
 
@@ -20,7 +21,7 @@
 	let valid = $state(false);
 	// Bumped on every open so the editor remounts with fresh form state.
 	let session = $state(0);
-	let tab = $state<'settings' | 'memory' | 'connectors' | 'heartbeat'>('settings');
+	let tab = $state<'settings' | 'persona' | 'memory' | 'connectors' | 'heartbeat'>('settings');
 
 	const editing = $derived(agentDialog.mode === 'edit');
 
@@ -59,6 +60,7 @@
 			{#if editing}
 				<Tabs.List variant="line" class="h-10 shrink-0 gap-4 border-b border-border px-5">
 					<Tabs.Trigger value="settings">Settings</Tabs.Trigger>
+					<Tabs.Trigger value="persona">Persona</Tabs.Trigger>
 					<Tabs.Trigger value="memory">Memory</Tabs.Trigger>
 					<Tabs.Trigger value="connectors">Connectors</Tabs.Trigger>
 					<Tabs.Trigger value="heartbeat">Heartbeat</Tabs.Trigger>
@@ -79,6 +81,11 @@
 				{/if}
 			</div>
 			{#if editing && agent}
+				<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4" hidden={tab !== 'persona'}>
+					{#key session}
+						<PersonaPanel agentId={agent.id} visible={tab === 'persona'} />
+					{/key}
+				</div>
 				<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4" hidden={tab !== 'memory'}>
 					{#key session}
 						<MemoryEditor scope="agent" agentId={agent.id} compact />

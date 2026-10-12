@@ -1,6 +1,6 @@
 # P42 — Team example: editable persona ("soul") per agent
 
-Status: todo · Owner: maintainer · Branch: `main` (batched)
+Status: done · Owner: maintainer · Branch: `main` (batched)
 
 ## Goal
 
@@ -49,16 +49,56 @@ overlays (link to the Channels page setting), Pending proposals, History with di
 
 ## Checklist
 
-- [ ] Storage: persona versions + proposals (agent, version, fields, text, author, source, diff, status)
-- [ ] Prompt assembly with the five layers; overlay from inherited node settings; next-turn effect
-- [ ] `persona` tool + role/approval enforcement in code + injection/size validation + notices
-- [ ] People-preference notes on directory profiles (per-person "call me…")
-- [ ] Web Persona section (editor, proposals, history/diff/revert)
-- [ ] Tests (scripted): admin change from chat with confirmation, member request refused/proposed,
+- [x] Storage: persona versions + proposals (agent, version, fields, text, author, source, diff, status)
+- [x] Prompt assembly with the five layers; overlay from inherited node settings; next-turn effect
+- [x] `persona` tool + role/approval enforcement in code + injection/size validation + notices
+- [x] People-preference notes on directory profiles (per-person "call me…")
+- [x] Web Persona section (editor, proposals, history/diff/revert)
+- [x] Tests (scripted): admin change from chat with confirmation, member request refused/proposed,
       injected proposal refused, revert, overlay limits, cache prefix stable within a version
-- [ ] Docs: walkthrough + README
+- [x] Docs: walkthrough + README
 
-## Open questions
+## Notes (as built)
 
-- Should Telegram chat admins without a directory role be able to propose (not apply)? Default: yes,
-  propose only.
+Code: `domain/persona.ts` (pure: limits, injection patterns, diff, prompt layers, legacy split),
+`app/persona.ts` (use cases), `infra/db/persona-repo.ts`, `infra/eh/persona-plugin.ts` (the tool),
+`infra/channels/people-notes.ts` + the `person_note` tool, `personaOverlay` as a node setting
+(`policy.ts`), web `PersonaPanel.svelte`. Migration `0028_tiny_shatterstar`: three new tables
+(`agent_persona_versions`, `agent_persona_proposals`, `ch_people_notes`), nothing altered. Tests:
+`server/test/persona.test.ts`, `web/src/lib/persona/model.test.ts`.
+
+Decisions taken while building (where the plan left room):
+
+- **Confirmation is the harness approval, not the model's question.** The plan said "the in-chat question
+  mechanism". A question answered through `ask_user_question` is only text to the model: `apply` could not check
+  it in code. `apply` and `revert` therefore return `user-approval` from `tool.approve` (no policy, mode or session
+  grant skips it; `tool.grantScope` returns `null`), which is the same chat surface (buttons or a reply; only an
+  owner or admin can answer, `mayAnswer`) and the usual approval card in the web. `tool.before` fills a `change`
+  field with the system's own summary of the diff, so the card shows what changes, not what the model says.
+- **Operating rules are web-only.** `propose` carries identity and voice, never operating rules; a revert restores
+  identity and voice and keeps the current operating rules. The agent can read them (they are in its prompt), not
+  change them.
+- **Provenance in code.** A turn is *tainted* by any tool result that is not system state (`TRUSTED_TOOLS` in the
+  plugin: persona, channel_status, list_topics, member_lookup, person_note, tool_search, ask_user_question), by a
+  file in the turn, and by a forwarded trigger message (`Requester.forwarded`). A tainted turn cannot propose.
+  `request` must be an exact quote of the turn's user text.
+- **Overlay and people notes are turn reminders**, not instructions: they are per place or per person and change
+  without a new persona version. The overlay is validated when it is written (`writePolicy`).
+- **The new tool is a plugin, not a connector.** `persona` and `person_note` are always there (like
+  `propose_plan`); `persona` is in the member allow list so a member can view and propose, the tool itself refuses
+  apply and revert for anybody but an owner or admin. A guest cannot use it.
+- **Visible notice.** After an apply or revert the system posts the notice into the chat (`gateway.post`) and
+  the tool result tells the model; the history and the agent-changed event show it in the web.
+- **Next-turn effect in a chat that is already open.** A session object keeps claiming its inbox, so after a
+  persona version the factory closes the idle sessions of the replaced build in `prepare` (`closeSuperseded`); a
+  session with a running turn or pending approval keeps its build until idle.
+- **Name.** The persona's display name is what the reminder (`You are ...`) and the chat rules say; the agent
+  definition's name stays the team-internal name (roster, board).
+
+Open questions:
+
+- Telegram chat admins without a directory role cannot even propose (the guest role has no tool access); the
+  plan's default ("propose only") would need the tool in the guest allow list. Left as is: the safer choice.
+- Closing the idle sessions of a replaced build waits for idle and skips a session with pending state. The lead's
+  delegations are `park` children that outlive their parent session (spec 20), so they are not aborted; this was
+  read from the subagent code, not exercised with a persona change during a live delegation.

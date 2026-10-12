@@ -336,6 +336,438 @@ export interface paths {
         };
         trace?: never;
     };
+    "/agents/{id}/persona": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The persona of an agent
+         * @description The current persona (identity, voice and preferences, operating rules) and the proposals waiting for an admin. An agent that has none yet gets its first version made from its instructions.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The persona */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersonaState"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit the persona (a new version)
+         * @description A token holder is an admin: the edit is a new version at once (author "the web app", source `web`), effective from the agent next turn. Size and obvious injection patterns are checked; operating rules only by size. Nothing changes when the text is the same.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PersonaEdit"];
+                };
+            };
+            responses: {
+                /** @description The current version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersonaVersion"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The agent is archived, or the persona changed concurrently */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/agents/{id}/persona/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Versions of the persona
+         * @description Every version, newest first, with author, source, reason and the diff against the one before.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The versions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersonaHistory"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/persona/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore an earlier version as a new version
+         * @description Restores the identity and voice of a version (the history keeps everything; the operating rules stay as they are).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PersonaRevert"];
+                };
+            };
+            responses: {
+                /** @description The new version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersonaVersion"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or version */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/persona/proposals/{proposalId}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply a proposal (a new version)
+         * @description Confirms a proposal the agent opened for a member or an admin. A proposal that was written against an older persona is `stale` and refused.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                    proposalId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersonaVersion"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown proposal */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Decided already, or stale */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/persona/proposals/{proposalId}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a proposal */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                    proposalId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The proposal */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersonaProposal"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown proposal */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Decided already */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/mode": {
         parameters: {
             query?: never;
@@ -10792,6 +11224,92 @@ export interface components {
             /** @description The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`. */
             version?: number;
         };
+        PersonaState: {
+            agentId: string;
+            current: components["schemas"]["PersonaVersion"];
+            pending: components["schemas"]["PersonaProposal"][];
+            limits: {
+                voice: number;
+                operatingRules: number;
+                overlay: number;
+                reason: number;
+            };
+        };
+        PersonaVersion: {
+            id: string;
+            agentId: string;
+            version: number;
+            identity: components["schemas"]["PersonaIdentity"];
+            /** @description Free-text voice and preferences (max 6000 characters). */
+            voice: string;
+            /** @description Admin-only operating rules (max 8000 characters); edited here only. */
+            operatingRules: string;
+            /** @enum {string} */
+            source: "web" | "chat" | "migration" | "revert";
+            authorName: string | null;
+            authorRole: string | null;
+            authorRef: string | null;
+            reason: string | null;
+            /** @description Readable diff against the previous version. */
+            diff: string;
+            revertOf: number | null;
+            proposalId: string | null;
+            createdAt: number;
+        };
+        PersonaIdentity: {
+            /** @description How the agent names itself (max 60); empty = the agent name. */
+            displayName: string;
+            /** @description One short line about what it is for (max 300). */
+            about: string;
+            /** @description Default answer language (max 40); empty = the language of the person. */
+            language: string;
+            /** @description Whether it may use emoji. */
+            emoji: boolean;
+        };
+        PersonaProposal: {
+            id: string;
+            agentId: string;
+            baseVersion: number;
+            identity: components["schemas"]["PersonaIdentity"];
+            voice: string;
+            reason: string;
+            /** @description The words of the person that asked, as the agent quoted them. */
+            request: string | null;
+            diff: string;
+            /** @enum {string} */
+            source: "web" | "chat";
+            proposerName: string | null;
+            proposerRole: string | null;
+            proposerRef: string | null;
+            sessionId: string | null;
+            /** @enum {string} */
+            status: "pending" | "applied" | "rejected" | "stale";
+            decidedBy: string | null;
+            decidedAt: number | null;
+            appliedVersion: number | null;
+            createdAt: number;
+        };
+        PersonaEdit: {
+            identity?: {
+                /** @description How the agent names itself (max 60); empty = the agent name. */
+                displayName?: string;
+                /** @description One short line about what it is for (max 300). */
+                about?: string;
+                /** @description Default answer language (max 40); empty = the language of the person. */
+                language?: string;
+                /** @description Whether it may use emoji. */
+                emoji?: boolean;
+            };
+            voice?: string;
+            operatingRules?: string;
+            reason?: string;
+        };
+        PersonaHistory: {
+            items: components["schemas"]["PersonaVersion"][];
+        };
+        PersonaRevert: {
+            version: number;
+        };
         ModeState: {
             /**
              * @description The mode the next tool call runs under. `manual`: risky tools ask a person. `auto`: rules first, then a classifier model allows or blocks (3 blocks in a row or 20 in total pause it and calls ask again). `bypass`: everything runs; deny rules and protected paths still apply.
@@ -13042,6 +13560,8 @@ export interface components {
                 role: "owner" | "admin" | "member" | "guest";
                 reason: string;
             };
+            /** @description What the person asked to be called or how they like answers (kept by the agent on request); never a role or a permission. */
+            note?: string;
             firstSeen: number;
             lastSeen: number;
         };
@@ -13132,6 +13652,7 @@ export interface components {
                 defaultRole?: "guest" | "member";
                 /** @enum {string} */
                 replyStyle?: "brief" | "normal" | "detailed";
+                personaOverlay?: string;
             };
             /** @description Where each effective setting comes from. */
             inherited: {
@@ -13186,6 +13707,11 @@ export interface components {
                     nodeId?: string;
                 };
                 replyStyle?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                personaOverlay?: {
                     /** @enum {string} */
                     from: "node" | "ancestor" | "connection" | "default";
                     nodeId?: string;
@@ -13251,6 +13777,8 @@ export interface components {
              * @enum {string}
              */
             replyStyle?: "brief" | "normal" | "detailed";
+            /** @description Tone, language and length of this place for the agent persona (max 1000 characters). Inherited. It never widens tools or loosens rules. */
+            personaOverlay?: string;
         } | null;
         ChannelSelectBody: {
             selected: boolean;
@@ -13427,6 +13955,7 @@ export interface components {
             defaultRole?: "guest" | "member" | null;
             /** @enum {string|null} */
             replyStyle?: "brief" | "normal" | "detailed" | null;
+            personaOverlay?: string | null;
         };
         ChannelLinkList: {
             items: components["schemas"]["ChannelLink"][];

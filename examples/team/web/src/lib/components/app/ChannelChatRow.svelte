@@ -5,6 +5,7 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
+	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import {
@@ -16,6 +17,7 @@
 		formChanged,
 		formOfChat,
 		KIND_LABEL,
+		MAX_OVERLAY,
 		quietText,
 		wakeHint,
 		originText,
@@ -188,6 +190,11 @@
 						<NativeSelectOption value="normal">Normal</NativeSelectOption>
 						<NativeSelectOption value="detailed">Detailed</NativeSelectOption>
 					</NativeSelect>
+				</label>
+				<label class="flex flex-col gap-1 sm:col-span-2">
+					<span class="text-xs font-medium">Persona overlay <span class="font-normal text-muted-foreground">· {origin('personaOverlay')}</span></span>
+					<Textarea bind:value={form.personaOverlay} rows={2} maxlength={MAX_OVERLAY} aria-label="Persona overlay" placeholder={chat.effective.personaOverlay ? `Inherited: ${chat.effective.personaOverlay}` : 'Tone, language or length for this place, e.g. “Answer in English, three sentences at most.”'} />
+					<span class="text-xs text-muted-foreground">{form.personaOverlay.length} / {MAX_OVERLAY}. Tone, language and length only: it cannot give the agent tools or loosen a rule. Inherited by the topics below; empty = inherit.</span>
 				</label>
 				<p class="text-xs text-muted-foreground sm:col-span-2">Owners and admins are always set on the People tab. Anybody you have not given a role is a guest, unless this chat is a trusted internal group. You get a notification for each new unknown person.</p>
 			</fieldset>

@@ -22,6 +22,7 @@ const personOf = (v: PersonView): ChannelPersonView => ({
   ...(v.memberId === null ? {} : { memberId: v.memberId }),
   platformAdmin: v.platformAdmin,
   ...(v.suggestion === undefined ? {} : { suggestion: v.suggestion }),
+  ...(v.note === undefined ? {} : { note: v.note }),
   firstSeen: v.firstSeen,
   lastSeen: v.lastSeen,
 })

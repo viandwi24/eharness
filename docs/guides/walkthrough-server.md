@@ -1537,6 +1537,47 @@ unchanged.
 See [P41 L6 notes](../plans/P41-team-channels.md#l6-notes-as-built) for the details and the limits.
 **Test it.** `bun test test/channels-l6.test.ts` (scripted models, mock adapter).
 
+## 28f. The persona of an agent: editable, versioned, never above the rules (P42)
+
+Who an agent is (name, voice, tone, language) is data a person can change, from the web or by asking the agent,
+without ever weakening the rules. Example code only (`app/persona.ts`, `domain/persona.ts`,
+`infra/eh/persona-plugin.ts`, `infra/db/persona-repo.ts`); the library is unchanged.
+
+- **Five prompt layers**, static before dynamic (prompt-cache prefix): (1) system rules, code-owned and
+  immutable (`PERSONA_FRAME` and the chat `systemRules`); (2) the **persona**: structured identity (display name,
+  one line about, language, emoji on/off) plus free-text voice and preferences, at most 6,000 characters;
+  (3) **operating rules**, admin-only text (what the agent is responsible for, how it escalates); (4) **notes on
+  people** ("call me Pak Vian") kept on the directory profile, delivered as a turn reminder about the people in
+  the turn; (5) the **channel overlay**, tone, language and length of one place (at most 1,000 characters), an
+  inherited node setting, also a turn reminder. Layers 2 and 3 sit in `instructions` and change only by a new
+  version, so the prefix is byte-identical for every turn of a version.
+- **Versions.** `agent_persona_versions` is append-only: each save, applied proposal or revert is a new version with
+  its author, role, source (`web`, `chat`, `migration`, `revert`), reason and a readable diff. A revert is a new
+  version too (it restores identity and voice; the operating rules stay). The version number is part of the agent
+  cache key, and the factory closes the idle sessions of the replaced build, so a change applies from the next
+  message of a chat that was already open.
+- **The `persona` tool** (every agent): `view`, `history`, `propose`, `apply`, `revert`. Who may do what is code:
+  a web user (token holder) is an admin; in a chat the role comes from the directory (owner/admin may apply and
+  revert; a member may only propose; a guest cannot use the tool). `apply` and `revert` always ask for a
+  confirmation (`tool.approve` returns `user-approval`, no mode or session grant skips it): in a chat the question
+  shows what changes and only an owner or admin can answer it (buttons), in the web it is the usual approval card.
+  After an apply the system posts "Persona of X updated by Vian: ..." into the conversation.
+- **Provenance.** A proposal must quote the person's own words from this turn; it is refused when the turn read
+  anything but system state first (a web page, a file, memory, chat history, another agent's report), when the
+  request was forwarded or came with a file, or when the quote is not in the message. The agent never proposes
+  unprompted. Text is validated for size and obvious injection patterns ("ignore previous instructions",
+  permission or approval language, role statements, prompt tags, hidden characters); operating rules by size only.
+- **Web.** Agent dialog, **Persona** tab: Identity, Voice & preferences, Operating rules, a link to the overlay
+  setting (Channels page, *Persona overlay* on a chat or topic), **Pending proposals** (apply or reject) and
+  **History** with the diff of every version and *Revert to this*. A web edit is a new version at once.
+- **Migration.** Every agent gets persona version 1 at boot (idempotent): its name and description become the
+  identity, and the old free-text instructions are split without losing a line, see `splitLegacyInstructions`:
+  paragraphs and list items with words of tone or manner go to the voice, list items and prose with words of duty
+  or limits go to the operating rules, the opening "You are ..." paragraph is voice. The old `instructions` column
+  stays as the original; editing it through `PATCH /agents/{id}` maps the new text into a new version.
+
+**Test it.** `bun test test/persona.test.ts` (scripted models, mock adapter).
+
 ## What to change when you copy it
 
 | In the example | In your harness |

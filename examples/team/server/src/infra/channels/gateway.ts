@@ -26,6 +26,7 @@ import type { EventAppender, NewRoutine, RoutinePatch, ThreadStore } from '../..
 import { userDeclinedText } from '../../domain/approvals.ts'
 import { isAllowedMediaType, MAX_UPLOAD_BYTES, mediaTypeOfName } from '../../domain/chat.ts'
 import { reminderKey } from '../../domain/heartbeat.ts'
+import { overlayNote, personNoteLine } from '../../domain/persona.ts'
 import type { Routine, RoutineSpec } from '../../domain/routines.ts'
 import {
   type ApprovalRow,
@@ -55,6 +56,7 @@ import type { IdentityRow, NodeRow } from './model.ts'
 import { channelNodeOf, type NodeStore, sqliteNodeStore } from './nodes.ts'
 import { createOutbound, type Outbound, type OutboundOptions } from './outbound.ts'
 import { type PeopleStore, type PersonEntry, sqlitePeopleStore } from './people.ts'
+import { type PeopleNotes, sqlitePeopleNotes } from './people-notes.ts'
 import {
   type ConnectionConfig,
   type ConnectionConfigInput,
@@ -441,6 +443,8 @@ export interface Requester {
   memberId?: string
   /** Every message that started the turn only greets or thanks (no memory read is needed for it). */
   smallTalk?: boolean
+  /** A message that started the turn was forwarded: its words are somebody else's. */
+  forwarded?: boolean
 }
 
 /** One person of a connection as the People tab and `member_lookup` show them. */
@@ -468,6 +472,8 @@ export interface PersonView {
   }>
   /** Set when the platform says admin/creator and the team has not decided: one click confirms it. */
   suggestion?: { role: Role; reason: string }
+  /** What they asked to be called or how they like answers (a stated preference; P42). */
+  note?: string
   firstSeen: number
   lastSeen: number
 }
@@ -616,6 +622,8 @@ export interface ChannelGateway {
   }
   /** The people directory: roles and divisions, what the platform says about admins. */
   people: PeopleApi
+  /** Notes on directory profiles: how a person likes to be addressed (never roles or permissions). */
+  notes: PeopleNotes
   /** Reminders created from a chat. */
   reminders: RemindersApi
   /** What the agent posts without being asked. */
@@ -677,6 +685,8 @@ export interface ChannelGateway {
   sessionNote(sessionId: string): string | undefined
   /** The per-turn medium reminder (where the agent is, default reply length). */
   mediumNote(sessionId: string): string | undefined
+  /** What the people of the turn asked to be called (their directory notes), as a turn reminder. */
+  peopleNote(sessionId: string, keys?: readonly string[]): Promise<string | undefined>
   /** Rename legacy channel threads to "<chat> / <topic>" (boot, once; returns how many changed). */
   retitleThreads(): number
   /** The observed messages since the last reply, as a turn reminder (undefined when none). */
@@ -785,6 +795,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const nodes = sqliteNodeStore(deps.sqlite)
   const identities = sqliteIdentityStore(deps.sqlite)
   const people: PeopleStore = sqlitePeopleStore(deps.sqlite)
+  const peopleNotes: PeopleNotes = sqlitePeopleNotes(deps.sqlite)
   const reminderStore: ReminderStore = sqliteReminderStore(deps.sqlite)
   const proactiveStore: ProactiveStore = sqliteProactiveStore(deps.sqlite, deps.vault)
   const sessions = sqliteSessionStore(deps.sqlite)
@@ -1156,6 +1167,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       memberId: id.personId,
       platformAdmin,
       ...(suggestion === undefined ? {} : { suggestion }),
+      ...(peopleNotes.get(id.id) === undefined
+        ? {}
+        : { note: (peopleNotes.get(id.id) as { note: string }).note }),
       firstSeen: id.firstSeenAt,
       lastSeen: id.lastSeenAt,
     }
@@ -1439,10 +1453,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     let best: Requester | undefined
     let allSmall = true
     let any = false
+    let forwarded = false
     for (const key of keys) {
       const m = await triggerMessage(row, key)
       if (m !== undefined) {
         any = true
+        if (m.forwardOf !== undefined) forwarded = true
         if (!isSmallTalk(m.text) || m.attachments.length > 0) allSmall = false
       }
       if (m?.senderIdentityId === undefined) continue
@@ -1452,7 +1468,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       const r = requesterOfIdentity(id, node)
       best = best === undefined || roleRank(r.role) < roleRank(best.role) ? r : best
     }
-    return best === undefined ? undefined : any && allSmall ? { ...best, smallTalk: true } : best
+    if (best === undefined) return undefined
+    const marked = forwarded ? { ...best, forwarded: true } : best
+    return any && allSmall ? { ...marked, smallTalk: true } : marked
   }
 
   async function beginTurn(sessionId: string, keys: readonly string[] | undefined): Promise<void> {
@@ -4036,7 +4054,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (scope === undefined) return undefined
     const node = target.node
     const parent = parentOf(node)
-    return mediumContext({
+    const medium = mediumContext({
       platform: adapters.get(target.connectionId)?.platform ?? 'a chat platform',
       kind: node.kind === 'direct' ? 'dm' : 'group',
       ...(node.kind === 'direct'
@@ -4049,6 +4067,48 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           : { chat: labelOf(node, scope) }),
       ...(scope.replyStyle === undefined ? {} : { replyStyle: scope.replyStyle }),
     })
+    // layer 5 (P42): the tone, language and length the admins set for this place, inherited down the tree
+    return scope.personaOverlay === undefined
+      ? medium
+      : `${medium}\n${overlayNote(scope.personaOverlay)}`
+  }
+
+  /**
+   * What the people of this turn asked to be called (layer 4, P42): the person who asked and the
+   * senders of the messages the agent has not answered yet, from their directory notes. A turn
+   * reminder: the notes are preferences, never rules.
+   */
+  async function peopleNote(
+    sessionId: string,
+    keys?: readonly string[],
+  ): Promise<string | undefined> {
+    await migrated
+    const row = sessions.bySession(sessionId)
+    const owner = row === undefined ? undefined : nodes.get(row.nodeId)
+    if (row === undefined || owner === undefined) return undefined
+    const ids = new Set<string>()
+    // the senders of the messages that woke this turn, then whoever the turn answers to
+    for (const key of keys ?? []) {
+      if (!key.startsWith(EVENT_PREFIX)) continue
+      const m = await triggerMessage(row, key.slice(EVENT_PREFIX.length))
+      if (m?.senderIdentityId !== undefined) ids.add(m.senderIdentityId)
+    }
+    const requester = await requesterOf(sessionId)
+    if (requester !== undefined) ids.add(requester.identityId)
+    const pending = await log.pending(
+      sessionNodes(owner).map((n) => n.id),
+      cache.get(row.connectionId)?.historyLimit ?? 50,
+    )
+    for (const m of pending) if (m.senderIdentityId !== undefined) ids.add(m.senderIdentityId)
+    const lines: string[] = []
+    for (const id of ids) {
+      const note = peopleNotes.get(id)
+      const who = identities.get(id)
+      if (note === undefined || who === undefined || who.isSelf) continue
+      lines.push(personNoteLine(who.displayName ?? who.username ?? who.nativeId, note.note))
+      if (lines.length >= 6) break
+    }
+    return lines.length === 0 ? undefined : lines.join('\n')
   }
 
   function sessionNote(sessionId: string): string | undefined {
@@ -4565,6 +4625,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     nodes,
     identities,
     people: peopleApi,
+    notes: peopleNotes,
     reminders: remindersApi,
     proactive: proactiveApi,
     timezone: zoneNow,
@@ -4631,6 +4692,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     },
     sessionNote,
     mediumNote,
+    peopleNote,
     retitleThreads,
     reminder,
     turnStarted,

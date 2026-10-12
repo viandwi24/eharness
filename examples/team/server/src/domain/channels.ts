@@ -37,6 +37,8 @@ export interface ChannelPolicy {
   defaultRole?: 'guest' | 'member'
   /** Reply length in a group when the persona says nothing. Inherited. */
   replyStyle?: 'brief' | 'normal' | 'detailed'
+  /** Tone, language and length of this place for the persona (max 1000 characters). Inherited. */
+  personaOverlay?: string
 }
 
 export interface ChannelProactive {
@@ -68,6 +70,8 @@ export interface ChannelPersonView {
     customTitle?: string
   }>
   suggestion?: { role: ChannelRole; reason: string }
+  /** What the person asked to be called or how they like answers (a stated preference). */
+  note?: string
   firstSeen: number
   lastSeen: number
 }
@@ -206,6 +210,7 @@ export type ChannelSettingKey =
   | 'proactive'
   | 'defaultRole'
   | 'replyStyle'
+  | 'personaOverlay'
 
 /** Where an effective setting comes from. */
 export interface ChannelSettingOrigin {
@@ -257,6 +262,7 @@ export interface ChannelNodeView {
     /** Role of an unknown person here; absent = the connection's default. */
     defaultRole?: 'guest' | 'member'
     replyStyle?: 'brief' | 'normal' | 'detailed'
+    personaOverlay?: string
   }
   /** Where each effective setting comes from. */
   inherited: Partial<Record<ChannelSettingKey, ChannelSettingOrigin>>
@@ -296,6 +302,7 @@ export interface ChannelPolicyInput {
   proactive?: ChannelProactive | null
   defaultRole?: 'guest' | 'member' | null
   replyStyle?: 'brief' | 'normal' | 'detailed' | null
+  personaOverlay?: string | null
 }
 
 export interface ChannelLimitsInput {

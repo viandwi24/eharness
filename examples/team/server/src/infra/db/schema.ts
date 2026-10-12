@@ -1444,3 +1444,87 @@ export const chProactive = sqliteTable(
   },
   (t) => [index('ch_proactive_node').on(t.nodeId, t.status)],
 )
+
+/**
+ * One version of an agent's persona (docs/plans/P42-team-persona.md): the structured identity, the
+ * free-text voice and the admin-only operating rules, as the full snapshot. Versions are never
+ * edited or deleted: a revert is a new version. `source` is `web`, `chat`, `migration` (the first
+ * version made from the old instructions) or `revert`.
+ */
+export const agentPersonaVersions = sqliteTable(
+  'agent_persona_versions',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id').notNull(),
+    version: integer('version').notNull(),
+    identity: json<{ displayName: string; about: string; language: string; emoji: boolean }>(
+      'identity',
+    ).notNull(),
+    voice: text('voice').notNull(),
+    operatingRules: text('operating_rules').notNull(),
+    /** `web` | `chat` | `migration` | `revert`. */
+    source: text('source').notNull(),
+    /** Who made the version: the display name, the directory role (chat) and the identity id. */
+    authorName: text('author_name'),
+    authorRole: text('author_role'),
+    authorRef: text('author_ref'),
+    reason: text('reason'),
+    /** Readable diff against the previous version. */
+    diff: text('diff').notNull().default(''),
+    revertOf: integer('revert_of'),
+    proposalId: text('proposal_id'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('agent_persona_versions_agent').on(t.agentId, t.version)],
+)
+
+/**
+ * A proposed persona change waiting for an admin: the new identity and voice (never operating
+ * rules), the reason, the diff, who asked and where the request came from. `status`: `pending`,
+ * `applied`, `rejected` or `stale` (the persona moved on before it was decided).
+ */
+export const agentPersonaProposals = sqliteTable(
+  'agent_persona_proposals',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id').notNull(),
+    baseVersion: integer('base_version').notNull(),
+    identity: json<{ displayName: string; about: string; language: string; emoji: boolean }>(
+      'identity',
+    ).notNull(),
+    voice: text('voice').notNull(),
+    reason: text('reason').notNull(),
+    /** The words of the person that asked for it, as the agent quoted them. */
+    request: text('request'),
+    diff: text('diff').notNull(),
+    /** `web` | `chat`. */
+    source: text('source').notNull(),
+    proposerName: text('proposer_name'),
+    proposerRole: text('proposer_role'),
+    proposerRef: text('proposer_ref'),
+    sessionId: text('session_id'),
+    status: text('status').notNull().default('pending'),
+    decidedBy: text('decided_by'),
+    decidedAt: integer('decided_at'),
+    appliedVersion: integer('applied_version'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('agent_persona_proposals_agent').on(t.agentId, t.status)],
+)
+
+/**
+ * What a person asked to be called or how they like to be answered ("call me Pak Vian"): a short
+ * note on their directory profile, keyed by the platform identity. It never changes the persona,
+ * a role or what anybody may do.
+ */
+export const chPeopleNotes = sqliteTable(
+  'ch_people_notes',
+  {
+    identityId: text('identity_id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    note: text('note').notNull(),
+    setBy: text('set_by'),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('ch_people_notes_connection').on(t.connectionId)],
+)

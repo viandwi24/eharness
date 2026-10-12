@@ -20,6 +20,9 @@ export type ConnectFlow = components['schemas']['ConnectFlow'];
 export type FlowView = components['schemas']['FlowView'];
 export type FlowResult = components['schemas']['FlowResult'];
 export type PermissionMode = Agent['permissionMode'];
+export type PersonaState = components['schemas']['PersonaState'];
+export type PersonaVersion = components['schemas']['PersonaVersion'];
+export type PersonaProposal = components['schemas']['PersonaProposal'];
 
 type Method = 'get' | 'post' | 'patch' | 'put' | 'delete';
 

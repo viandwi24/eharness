@@ -130,6 +130,7 @@
 								{#if p.divisions.length > 0} · divisions: {p.divisions.map((d) => d.title).join(', ')}{/if}
 							</div>
 							{#if p.platformAdmin.length > 0}<div class="text-xs text-muted-foreground">Platform: {platformAdminText(p)}</div>{/if}
+							{#if p.note}<div class="text-xs text-muted-foreground" data-testid="person-note">Asked to be addressed: {p.note}</div>{/if}
 						</div>
 						<div class="flex items-center gap-1">
 							{#if p.suggestion}

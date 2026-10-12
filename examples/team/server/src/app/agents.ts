@@ -16,6 +16,7 @@ import {
 } from '../domain/connectors.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import { normalizeSelection } from '../domain/providers.ts'
+import { ensurePersona, personaFromInstructions } from './persona.ts'
 import type { Deps } from './ports.ts'
 
 const COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
@@ -130,6 +131,8 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
   }
   checkTeam(role, def.connectors)
   deps.agents.insert(def)
+  // the instructions become the first persona version (identity, voice, operating rules)
+  ensurePersona(deps, def)
   return def
 }
 
@@ -175,6 +178,10 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
   checkTeam(next.role, next.connectors)
   if (!deps.agents.update(next, current.version, { connectors: patch.connectors !== undefined })) {
     throw conflict('the agent was changed concurrently; reload and retry', 'VERSION_CONFLICT')
+  }
+  // the old `instructions` field maps into a new persona version (voice and operating rules)
+  if (patch.instructions !== undefined && patch.instructions !== current.instructions) {
+    personaFromInstructions(deps, next)
   }
   return next
 }

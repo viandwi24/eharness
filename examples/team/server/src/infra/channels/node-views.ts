@@ -9,6 +9,8 @@ import type {
   ChannelPolicyInput,
   ChannelSettingKey,
 } from '../../domain/channels.ts'
+import { invalid } from '../../domain/errors.ts'
+import { checkOverlay } from '../../domain/persona.ts'
 import type { ChannelGateway } from './gateway.ts'
 import type { NodeRow } from './model.ts'
 import type { ScopePolicy } from './policy.ts'
@@ -25,6 +27,7 @@ const KEYS: ChannelSettingKey[] = [
   'proactive',
   'defaultRole',
   'replyStyle',
+  'personaOverlay',
 ]
 
 /** The part of the settings stored on one node that the page edits. */
@@ -43,6 +46,7 @@ export function policyView(own: ScopePolicy): ChannelPolicy | null {
     ...(own.proactive === undefined ? {} : { proactive: own.proactive }),
     ...(own.defaultRole === undefined ? {} : { defaultRole: own.defaultRole }),
     ...(own.replyStyle === undefined ? {} : { replyStyle: own.replyStyle }),
+    ...(own.personaOverlay === undefined ? {} : { personaOverlay: own.personaOverlay }),
   }
 }
 
@@ -100,6 +104,7 @@ export function nodeView(
       },
       ...(scope.defaultRole === undefined ? {} : { defaultRole: scope.defaultRole }),
       ...(scope.replyStyle === undefined ? {} : { replyStyle: scope.replyStyle }),
+      ...(scope.personaOverlay === undefined ? {} : { personaOverlay: scope.personaOverlay }),
     },
     inherited,
   }
@@ -147,6 +152,10 @@ export function writePolicy(
     return
   }
   if (typeof input.agentId === 'string') checkAgent(input.agentId)
+  if (typeof input.personaOverlay === 'string') {
+    const problem = checkOverlay(input.personaOverlay)
+    if (problem !== undefined) throw invalid(problem, 'PERSONA_INVALID')
+  }
   const patch: Record<string, unknown> = {}
   for (const k of KEYS) {
     const v = (input as Record<string, unknown>)[k]

@@ -61,6 +61,7 @@ import type {
   ModelCallStats,
 } from '../domain/model-calls.ts'
 import type { AgentModeChoice, ModeSource, TeamMode } from '../domain/modes.ts'
+import type { PersonaProposal, PersonaVersion, ProposalStatus } from '../domain/persona.ts'
 import type {
   Program,
   ProgramAuthority,
@@ -850,8 +851,38 @@ export interface ChannelAccountsPort {
   setLimits(id: string, input: ChannelLimitsInput): Promise<ChannelConnectionView>
 }
 
+/** Persona versions and proposals (`infra/db/persona-repo.ts`, docs/plans/P42-team-persona.md). */
+export interface PersonaStore {
+  /** The current persona of an agent; undefined before its first version. */
+  latest(agentId: string): PersonaVersion | undefined
+  /** The number of the current version (0 = none); cheap: it is part of the agent cache key. */
+  latestNumber(agentId: string): number
+  get(agentId: string, version: number): PersonaVersion | undefined
+  /** Newest first. */
+  history(agentId: string, limit?: number): PersonaVersion[]
+  /** Write version `after + 1`; undefined when another writer took that number (re-read, retry). */
+  append(v: Omit<PersonaVersion, 'version'>, after: number): PersonaVersion | undefined
+  insertProposal(p: PersonaProposal): void
+  getProposal(id: string): PersonaProposal | undefined
+  listProposals(agentId: string, status?: ProposalStatus): PersonaProposal[]
+  /** Decide a pending proposal once; false when it was decided already. */
+  decideProposal(
+    id: string,
+    change: {
+      status: Exclude<ProposalStatus, 'pending'>
+      decidedBy: string
+      decidedAt: number
+      appliedVersion?: number | undefined
+    },
+  ): boolean
+  /** Record the version an applied proposal produced. */
+  setAppliedVersion(id: string, version: number): void
+  pendingCount(agentId: string): number
+}
+
 export interface Deps {
   agents: AgentRepo
+  persona: PersonaStore
   chat: ChatPort
   chatTools: ChatToolsPort
   threads: ThreadStore

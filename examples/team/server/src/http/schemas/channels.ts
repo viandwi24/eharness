@@ -64,6 +64,10 @@ export const ChannelPolicySchema = z
     replyStyle: z.enum(['brief', 'normal', 'detailed']).optional().openapi({
       description: 'Reply length in a group when the agent persona says nothing.',
     }),
+    personaOverlay: z.string().max(1000).optional().openapi({
+      description:
+        'Tone, language and length of this place for the agent persona (max 1000 characters). Inherited. It never widens tools or loosens rules.',
+    }),
   })
   .openapi('ChannelPolicy')
 
@@ -199,6 +203,7 @@ const settingKey = z.enum([
   'proactive',
   'defaultRole',
   'replyStyle',
+  'personaOverlay',
 ])
 
 export const ChannelNodeSchema = z
@@ -239,6 +244,7 @@ export const ChannelNodeSchema = z
       proactive: proactiveEffective,
       defaultRole: z.enum(['guest', 'member']).optional(),
       replyStyle: z.enum(['brief', 'normal', 'detailed']).optional(),
+      personaOverlay: z.string().optional(),
     }),
     inherited: z
       .partialRecord(
@@ -305,6 +311,7 @@ export const ChannelPolicyBodySchema = z
     proactive: proactiveShape.nullable().optional(),
     defaultRole: z.enum(['guest', 'member']).nullable().optional(),
     replyStyle: z.enum(['brief', 'normal', 'detailed']).nullable().optional(),
+    personaOverlay: z.string().max(1000).nullable().optional(),
   })
   .openapi('ChannelPolicyBody')
 
@@ -584,6 +591,10 @@ export const ChannelPersonSchema = z
     ),
     suggestion: z.object({ role, reason: z.string() }).optional().openapi({
       description: 'The platform lists this person as admin and the team has not decided.',
+    }),
+    note: z.string().optional().openapi({
+      description:
+        'What the person asked to be called or how they like answers (kept by the agent on request); never a role or a permission.',
     }),
     firstSeen: z.number().int(),
     lastSeen: z.number().int(),

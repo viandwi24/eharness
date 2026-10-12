@@ -342,6 +342,9 @@ describe('migration of the single DM', () => {
       'ch_people',
       'ch_reminders',
       'ch_proactive',
+      'ch_people_notes',
+      'agent_persona_versions',
+      'agent_persona_proposals',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(

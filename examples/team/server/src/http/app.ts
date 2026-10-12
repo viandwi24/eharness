@@ -21,6 +21,7 @@ import { heartbeatRoutes } from './routes/heartbeat.ts'
 import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
+import { personaRoutes } from './routes/persona.ts'
 import { programRoutes } from './routes/programs.ts'
 import { providerRoutes } from './routes/providers.ts'
 import { rehearsalRoutes } from './routes/rehearsals.ts'
@@ -60,6 +61,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
   tags: [
     { name: 'system', description: 'Health.' },
     { name: 'agents', description: 'Agent definitions (blueprints).' },
+    {
+      name: 'persona',
+      description:
+        'The editable persona of an agent: identity, voice, operating rules; versions, proposals and revert.',
+    },
     {
       name: 'chats',
       description:
@@ -257,6 +263,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
     healthRoutes(() => options.deps.clock.now()),
   )
   app.route('/', agentRoutes(options.deps))
+  app.route('/', personaRoutes(options.deps))
   app.route('/', modeRoutes(options.deps))
   app.route('/', chatRoutes(options.deps))
   app.route('/', threadRoutes(options.deps))

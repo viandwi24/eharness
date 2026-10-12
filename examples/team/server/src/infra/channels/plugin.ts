@@ -612,6 +612,15 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
             id: 'channel-medium',
           },
           {
+            text: (c: HarnessContext) =>
+              gw.peopleNote(
+                c.session.id,
+                (c.turn as { source?: { keys?: string[] } } | undefined)?.source?.keys,
+              ),
+            refresh: 'turn' as const,
+            id: 'channel-people',
+          },
+          {
             text: (c: HarnessContext) => gw.reminder(c.session.id),
             refresh: 'turn' as const,
             id: 'channel-recent',

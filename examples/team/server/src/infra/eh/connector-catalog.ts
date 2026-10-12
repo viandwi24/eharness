@@ -36,6 +36,7 @@ import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
+import { PERSONA_TOOLS } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
 import { sessionFileSystem } from './rehearsal-registry.ts'
 import { WORK_QUEUE_TOOLS } from './work-queue-plugin.ts'
@@ -76,6 +77,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       ...CHANNEL_READ_TOOLS,
       // a recap note and a reminder stay in the team's own space; roles decide who may use them
       ...CHANNEL_OWN_WRITE_TOOLS,
+      // the persona tool decides in code who may do what; apply and revert always ask the person
+      ...PERSONA_TOOLS,
     ],
     ask: [...def.rules.ask],
     deny: [...def.rules.deny],

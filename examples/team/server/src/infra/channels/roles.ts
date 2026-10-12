@@ -57,6 +57,10 @@ export const MEMBER_TOOLS: readonly string[] = [
   'chat_history',
   'chat_recap',
   'reminder',
+  // look at the persona and ask an admin for a change; the tool itself keeps apply/revert to staff
+  'persona',
+  // what to call me: a member sets their own note
+  'person_note',
 ]
 
 export const DEFAULT_ROLE_POLICY: Record<Role, Required<RolePolicy>> = {

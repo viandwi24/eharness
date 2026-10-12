@@ -19,6 +19,7 @@
 import { tool } from 'ai'
 import { errorText } from 'eharness'
 import { z } from 'zod'
+import { checkPersonNote, MAX_PERSON_NOTE } from '../../domain/persona.ts'
 import type { RunOrigin } from '../../domain/run-profiles.ts'
 import type { ChannelGateway, PersonView, Requester } from './gateway.ts'
 import { flat, localTime, personLabel, renderLinePrefix, timeLine } from './header.ts'
@@ -35,6 +36,7 @@ export const CHAT_HISTORY_TOOL = 'chat_history'
 export const CHAT_RECAP_TOOL = 'chat_recap'
 export const CHAT_RECAP_SAVE_TOOL = 'chat_recap_save'
 export const REMINDER_TOOL = 'reminder'
+export const PERSON_NOTE_TOOL = 'person_note'
 
 /** Read-risk self-knowledge tools: approved without asking (`appRulesOf`); roles still apply. */
 export const SELF_READ_TOOLS = [
@@ -45,7 +47,7 @@ export const SELF_READ_TOOLS = [
   CHAT_RECAP_TOOL,
 ] as const
 /** Writes that stay inside the team's own space (a library note, a reminder): allowed by rule; roles decide who. */
-export const SELF_WRITE_TOOLS = [CHAT_RECAP_SAVE_TOOL, REMINDER_TOOL] as const
+export const SELF_WRITE_TOOLS = [CHAT_RECAP_SAVE_TOOL, REMINDER_TOOL, PERSON_NOTE_TOOL] as const
 export const SELF_TOOLS = [...SELF_READ_TOOLS, ...SELF_WRITE_TOOLS] as const
 
 export interface SelfToolsContext {
@@ -97,6 +99,20 @@ const lookupSchema = z.object({
     .describe(
       'A platform user id, a @username (or username) or a part of a name. Omit it to list the people of the chat ("who is here").',
     ),
+})
+const personNoteSchema = z.object({
+  action: z.enum(['view', 'set', 'clear']),
+  person: z
+    .string()
+    .optional()
+    .describe(
+      'A platform user id, a @username or a name. Default: the person who is asking. Only an owner or an admin may keep a note about somebody else.',
+    ),
+  note: z
+    .string()
+    .max(MAX_PERSON_NOTE)
+    .optional()
+    .describe('set: how they like to be addressed or answered, in a short sentence.'),
 })
 const historySchema = z.object({
   ...scopeFields,
@@ -428,6 +444,9 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       v.suggestion === undefined
         ? undefined
         : `not confirmed by the team (the platform says ${v.suggestion.reason})`,
+      v.note === undefined
+        ? undefined
+        : `note on the profile (their stated preference): ${flat(v.note, 300)}`,
       v.isBot ? 'bot' : undefined,
       v.kind === 'anonymous' ? 'anonymous admin: identity unknown' : undefined,
       `last seen ${timeLine(v.lastSeen, zone)}`,
@@ -898,6 +917,61 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       }. It will post: "${clip(flat(reminderText(created.reminder.body, staff ? undefined : (requester?.name ?? 'you')), 200), 200)}". Tell the person this exact time and place.`
     })
 
+  // --- person_note --------------------------------------------------------------------------------
+
+  /** Keep a short note on a person's directory profile: how they like to be addressed. */
+  const personNote = (input: z.infer<typeof personNoteSchema>): Promise<string> =>
+    guard(async () => {
+      const requester = await gw.requesterOf(sessionId)
+      if (requester === undefined)
+        return 'Notes are kept for the people you talk to in a chat: there is nobody asking here.'
+      const staff = isStaff(requester.role)
+      let identityId = requester.identityId
+      let label = 'you'
+      if (input.person !== undefined && input.person.trim() !== '') {
+        const found = gw.people.lookup(requester.connectionId, input.person, 5, requester.nodeId)
+        const same = found.length === 1 && found[0]?.peerId === requester.nativeId
+        if (!same) {
+          if (!staff)
+            return 'Not allowed: you can keep a note only about the person who is asking. Say so plainly.'
+          if (found.length !== 1)
+            return found.length === 0
+              ? `Nobody matches "${flat(input.person, 60)}". Use member_lookup first.`
+              : `Several people match "${flat(input.person, 60)}": use their platform user id.`
+          const target = gw.identities.byNative(
+            requester.connectionId,
+            (found[0] as PersonView).peerId,
+          )
+          if (target === undefined) return 'I do not know that person.'
+          identityId = target.id
+          label = personLabel({
+            id: (found[0] as PersonView).peerId,
+            name: (found[0] as PersonView).name ?? undefined,
+            username: (found[0] as PersonView).username ?? undefined,
+          })
+        }
+      }
+      const have = gw.notes.get(identityId)
+      if (input.action === 'view')
+        return have === undefined ? `No note about ${label}.` : `Note about ${label}: ${have.note}`
+      if (input.action === 'clear') {
+        return gw.notes.clear(identityId)
+          ? `Removed the note about ${label}.`
+          : `There was no note about ${label}.`
+      }
+      const text = (input.note ?? '').trim()
+      const problem = checkPersonNote(text)
+      if (problem !== undefined) return `Not saved: ${problem}`
+      gw.notes.set(
+        requester.connectionId,
+        identityId,
+        text,
+        requester.name ?? requester.username ?? requester.nativeId,
+        Date.now(),
+      )
+      return `Saved. From now on: ${text} (a note on ${label === 'you' ? 'your' : `${label}'s`} directory profile; it changes nothing about roles or rules).`
+    })
+
   return {
     [CHANNEL_STATUS_TOOL]: tool({
       description:
@@ -947,6 +1021,13 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       inputSchema: reminderSchema,
       metadata: { risk: 'write', idempotent: false },
       execute: (input): Promise<string> => reminder(input),
+    }),
+    [PERSON_NOTE_TOOL]: tool({
+      description:
+        'Keep a short note on a person\'s profile about how they like to be addressed or answered ("call me Pak Vian", "short answers please", "reply in English"). That is a note about the PERSON, not a change of your own persona (the persona tool is for that). Anybody keeps a note about themselves; an owner or admin may keep one about somebody else. Never put roles, permissions or rules in a note.',
+      inputSchema: personNoteSchema,
+      metadata: { risk: 'write', idempotent: false },
+      execute: (input): Promise<string> => personNote(input),
     }),
   }
 }

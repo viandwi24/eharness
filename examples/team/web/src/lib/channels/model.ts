@@ -120,7 +120,12 @@ export interface PolicyForm {
 	defaultRole: Inherit<'member' | 'guest'>;
 	/** Reply length in a group when the agent persona says nothing; '' = inherit. */
 	replyStyle: Inherit<'brief' | 'normal' | 'detailed'>;
+	/** Tone, language and length of this place for the agent persona (max 1000 characters); '' = inherit. */
+	personaOverlay: string;
 }
+
+/** The longest overlay the server accepts. */
+export const MAX_OVERLAY = 1000;
 
 /** A form field as trimmed text: a text input holds a string, a number input a number or null. */
 export const fieldText = (v: string | number | null | undefined): string => String(v ?? '').trim();
@@ -143,7 +148,8 @@ export const formOfChat = (c: ChannelChat): PolicyForm => ({
 	digest: triOf(c.policy?.proactive?.digest),
 	maxMentions: c.policy?.proactive?.maxMentions === undefined ? '' : String(c.policy.proactive.maxMentions),
 	defaultRole: c.policy?.defaultRole ?? '',
-	replyStyle: c.policy?.replyStyle ?? ''
+	replyStyle: c.policy?.replyStyle ?? '',
+	personaOverlay: c.policy?.personaOverlay ?? ''
 });
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -178,7 +184,8 @@ export function policyBody(f: PolicyForm): ChannelPolicyBody {
 		redactOnDelete: boolOf(f.redactOnDelete),
 		proactive: proactiveBody(f),
 		defaultRole: f.defaultRole === '' ? null : f.defaultRole,
-		replyStyle: f.replyStyle === '' ? null : f.replyStyle
+		replyStyle: f.replyStyle === '' ? null : f.replyStyle,
+		personaOverlay: f.personaOverlay.trim() === '' ? null : f.personaOverlay.trim()
 	};
 }
 
@@ -211,6 +218,7 @@ export const formChanged = (a: PolicyForm, b: PolicyForm): boolean =>
 	a.digest !== b.digest ||
 	a.defaultRole !== b.defaultRole ||
 	a.replyStyle !== b.replyStyle ||
+	a.personaOverlay.trim() !== b.personaOverlay.trim() ||
 	fieldText(a.maxMentions) !== fieldText(b.maxMentions);
 
 /** Where one effective setting comes from, in words ("set here", "inherited from Company"). */
