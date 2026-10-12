@@ -26,7 +26,10 @@
 		typeof document === 'undefined' || !/(?:^|;\s*)sidebar_state=false\b/.test(document.cookie)
 	);
 
-	onMount(() => startLive());
+	onMount(() => {
+		document.getElementById('boot')?.remove(); // the static "Loading…" of app.html
+		return startLive();
+	});
 
 	// Mobile: list -> chat -> panel sheet. The list is the home screen; other routes replace it.
 	const isHome = $derived(page.url.pathname === '/');

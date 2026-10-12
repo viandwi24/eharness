@@ -96,3 +96,16 @@ function clip1(s: string): string {
 	const more = s.includes('\n') ? ' …' : '';
 	return (line.length > 140 ? `${line.slice(0, 140)}…` : line) + more;
 }
+
+/**
+ * A short human title for a pending call: the friendly title of a known tool ("Search the web for
+ * x"), else a sentence made of the tool name ("tracker-demo_add_comment" -> "Tracker demo add comment"),
+ * followed by the one readable argument when the name alone does not say what is touched.
+ */
+export function friendlyTitle(toolName: string, input: unknown, detail = true): string {
+	const known = toolTitle(toolName, input);
+	if (known !== toolName) return known;
+	const sentence = humanize(toolName);
+	const headline = detail ? approvalHeadline(toolName, input) : '';
+	return headline ? `${sentence} · ${headline}` : sentence;
+}

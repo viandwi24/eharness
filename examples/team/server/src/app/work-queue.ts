@@ -163,6 +163,27 @@ export function sendBackTask(deps: Deps, id: string, note: string): Task {
   return next
 }
 
+/**
+ * What the client must know after a send-back: the task is queued again, but only a worker
+ * program of its agent picks it up (D11 of the e2e pass). A scheduled worker does it at its next
+ * run; a manual one waits for "Run now"; none means nothing will run it.
+ */
+export function sendBackHint(deps: Deps, task: Task): string {
+  const workers = deps.programs
+    .list({})
+    .filter((p) => p.worker !== null && p.agentId === task.agentId && p.status === 'active')
+  const scheduled = workers.find((p) => p.trigger.kind === 'schedule')
+  if (scheduled !== undefined) {
+    return `Queued again. The worker program "${scheduled.name}" picks it up at its next scheduled run.`
+  }
+  const manual = workers[0]
+  if (manual !== undefined) {
+    return `Queued again. "${manual.name}" is a manual worker program: press Run now on the Programs page for it to pick this up.`
+  }
+  const agent = deps.agents.get(task.agentId)
+  return `Queued again, but no active worker program runs the queue of ${agent?.name ?? 'this agent'}: create one on the Programs page (with Work queue on) or the task stays queued.`
+}
+
 export interface TaskQuery {
   column?: ReturnType<typeof boardColumn> | undefined
   /** Only the runs of this program (id or name). */

@@ -39,6 +39,11 @@ export interface TaskIndexOptions {
   events: EventAppender
   /** The agent of a hook context (`ctx.agent.id` is the slug of the definition). */
   agentOf(slug: string): { id: string; name: string } | undefined
+  /**
+   * A readable text for a stop the model said nothing about (a budget cap): the preview of the
+   * chat in the sidebar and the summary of a failed run.
+   */
+  describeStop?(sessionId: string, stop: string): string | undefined
   now?: () => number
 }
 
@@ -180,7 +185,11 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                   sessionId: ctx.session.id,
                   payload: {
                     role: 'assistant',
-                    preview: previewOf(assistantText) || pendingPreview(e.pending) || `(${e.stop})`,
+                    preview:
+                      previewOf(assistantText) ||
+                      pendingPreview(e.pending) ||
+                      previewOf(options.describeStop?.(ctx.session.id, e.stop) ?? '') ||
+                      `(${e.stop})`,
                     stop: e.stop,
                     ...(e.error === undefined ? {} : { errorCode: e.error.code }),
                     ...(e.messageId === undefined ? {} : { messageId: e.messageId }),
@@ -204,14 +213,20 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 ...(report === undefined ? {} : { report }),
                 summary:
                   program?.summary != null && e.error === undefined
-                    ? previewOf(program.summary, 500)
+                    ? previewOf(
+                        (e.stop === 'cost-cap'
+                          ? options.describeStop?.(ctx.session.id, e.stop)
+                          : undefined) ?? program.summary,
+                        500,
+                      )
                     : e.error?.code === 'EH_PROVIDER_AUTH'
                       ? 'The model provider rejected the API key. Set it in Settings > Providers.'
                       : e.stop === 'error' && e.error !== undefined
                         ? // a failed run says why (a later turn's summary replaces an older one)
                           previewOf(`${e.error.code}: ${e.error.message}`, 500)
                         : assistantText === ''
-                          ? null
+                          ? previewOf(options.describeStop?.(ctx.session.id, e.stop) ?? '', 500) ||
+                            null
                           : previewOf(assistantText, 500),
                 addCostUsd: e.usage.costUsd ?? 0,
                 addTokens: e.usage.totalTokens,

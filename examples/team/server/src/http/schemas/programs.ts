@@ -91,7 +91,7 @@ export const ProgramTriggerStateSchema = z
 
 export const ProgramWarningSchema = z
   .object({
-    code: z.enum(['tool-unavailable', 'channel-not-bound', 'budget-below-minimum']),
+    code: z.enum(['tool-unavailable', 'tool-off', 'channel-not-bound', 'budget-below-minimum']),
     field: z.string().openapi({ example: 'authority.tools' }),
     message: z.string(),
   })

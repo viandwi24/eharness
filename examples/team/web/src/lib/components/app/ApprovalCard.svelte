@@ -4,7 +4,7 @@
 	import type { Approval } from '#lib/api/client.js';
 	import { answerFailureText } from '#lib/approval/outcome.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
-	import { summarizeApproval } from '#lib/approval/summary.js';
+	import { friendlyTitle, summarizeApproval } from '#lib/approval/summary.js';
 	import ApprovalActions from './ApprovalActions.svelte';
 	import { live } from '#lib/stores/live.svelte.js';
 
@@ -47,7 +47,7 @@
 
 	{#if approval.kind === 'approval'}
 		<div class="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto" data-testid="card-body">
-			<p class="font-medium break-words" data-testid="approval-title">{summary.title}</p>
+			<p class="font-medium break-words" data-testid="approval-title">{friendlyTitle(approval.toolName, approval.input, false)}</p>
 			{#if rows.length}
 				<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md bg-muted p-2 text-[12.5px]">
 					{#each rows as row (row.label)}

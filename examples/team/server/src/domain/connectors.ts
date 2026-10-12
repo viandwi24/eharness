@@ -84,6 +84,7 @@ export const LEGACY_TOOLS = [
   'delegate',
   'send_message',
   'mcp',
+  'data_work',
 ] as const
 
 /** What a new agent gets when nothing else is said: the old default checklist. */
@@ -98,6 +99,9 @@ export const DEFAULT_LEGACY_TOOLS: readonly string[] = ['library_read', 'memory'
  * - `delegate` -> Team (lead); `send_message` is part of Team and only counted with `delegate`
  *   (alone it never installed anything); a lead with `delegate` but not `send_message` keeps
  *   `agent_output` and `agent_stop` off, as before.
+ *
+ * - `data_work` -> the Data work connector (run_code, source ingest, manifests: what a program run
+ *   with a data authority needs; it only works under a program's authority).
  *
  * Unused built-ins are switched off explicitly so a later change of the workspace defaults never
  * widens an existing agent.
@@ -145,6 +149,12 @@ export function enablementFromTools(
         ...(has('send_message') ? {} : { tools: { agent_output: 'off', agent_stop: 'off' } }),
       }
     : { enabled: 'off' }
+  if (has('data_work')) {
+    out[builtinId('bigdata')] = {
+      enabled: 'on',
+      capabilities: { code: 'allow', ingest: 'allow', manifest: 'allow' },
+    }
+  }
   return out
 }
 

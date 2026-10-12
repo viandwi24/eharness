@@ -64,7 +64,9 @@ const approveRoute = createRoute({
   responses: {
     200: { description: 'The decision, decided', content: json(DecisionSchema) },
     404: unknown,
-    409: jsonError('`DECISION_CLOSED`, `DECISION_EXPIRED`, `PROGRAM_DELETED` or an archived agent'),
+    409: jsonError(
+      '`DECISION_CLOSED`, `DECISION_EXPIRED` (also a run a newer run replaced), `PROGRAM_DELETED` or an archived agent',
+    ),
     ...errorResponses,
   },
 })

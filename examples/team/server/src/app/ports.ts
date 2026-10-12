@@ -580,6 +580,23 @@ export interface ModelCallStore {
   stats(query: ModelCallFilter & { from: number; to: number; bucketMs?: number }): ModelCallStats
   /** One call with its JSON columns and the ids of its neighbours under `filter`. */
   get(id: string, filter: ModelCallFilter): ModelCallDetail | undefined
+  /**
+   * Spend of the kept calls by agent and where the session came from (`chat`, `task`, `delegated`,
+   * `routine`, `program`, `heartbeat`, `rehearsal`, `other`): the one source of truth of what was
+   * spent (the Usage page and the digest read the same rows as the Logs page).
+   */
+  usage(filter?: { from?: number; to?: number }): {
+    since: number | null
+    rows: Array<{
+      agentId: string | null
+      source: string
+      calls: number
+      turns: number
+      sessions: number
+      tokens: number
+      costUsd: number
+    }>
+  }
 }
 
 /** Appends app events to the feed from use cases (routines, settings). Never throws. */

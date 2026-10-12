@@ -93,7 +93,7 @@
 				title="Allow this tool without asking for the rest of this session"
 				onclick={() => send('remember')}
 			>
-				Always allow <span class="max-w-32 truncate font-mono text-[11.5px]">{toolName}</span>
+				Always allow <span class="max-w-40 truncate">{toolName}</span>
 				<Kbd class="ml-1 h-4 min-w-4 text-[10px]">2</Kbd>
 			</Button>
 		{/if}

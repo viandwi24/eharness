@@ -8,7 +8,7 @@ import { type ChatSession, type ChatSessionState, createChatSession, interrupted
 import { harness } from '../api/index';
 import { UPLOAD_MAX_BYTES } from './constants.js';
 import { uploadErrorText } from './http.js';
-import { endsInErrorNotice } from './messages.js';
+import { endingErrorNoticeId } from './messages.js';
 import { shownChatStatus } from '../approval/offer.js';
 
 export type Notify = (level: 'info' | 'error', text: string) => void;
@@ -36,6 +36,11 @@ export class AgentChat {
 	readonly sessionId: string;
 	#s = $state.raw<ChatSessionState>(INITIAL);
 	readonly #dismiss: ((id: string) => void) | undefined;
+	/** Errors the library reported (toasts); `sendChecked` watches it for a request the server refused. */
+	#errors = 0;
+	#lastError = '';
+	/** The error notice that already ended the chat before the request being sent: not this request's. */
+	#noticeBefore: string | undefined;
 
 	constructor(options: CreateAgentChatOptions) {
 		this.agentId = options.agentId;
@@ -48,6 +53,10 @@ export class AgentChat {
 			...(options.pageSize ? { pageSize: options.pageSize } : {}),
 			transportOptions: { ifBusy: 'steer' }, // a message sent while a turn runs joins it
 			notify: (level, text) => {
+				if (level === 'error') {
+					this.#errors++;
+					this.#lastError = text;
+				}
 				options.notify?.(level, text);
 				if (level === 'error') void this.#settleError(text);
 			}
@@ -75,7 +84,10 @@ export class AgentChat {
 		// `Chat` calls `onError` BEFORE it sets its status to `error`, so the clear above is a no-op;
 		// by now the status is `error` and the composer would stay red until the next send.
 		this.chat.clearError();
-		if (endsInErrorNotice(this.chat.messages)) this.#dismiss?.(text.slice(0, 80));
+		// only a notice this request produced replaces the toast; an older one at the end of the chat
+		// must not swallow the message of a request the server refused
+		const id = endingErrorNoticeId(this.chat.messages);
+		if (id !== undefined && id !== this.#noticeBefore) this.#dismiss?.(text.slice(0, 80));
 	}
 
 	/** The chat status for the UI: a failed request is idle again (its failure is a notice and a toast). */
@@ -139,6 +151,30 @@ export class AgentChat {
 	dismissProblem = (): void => this.session.dismissProblem();
 	/** Send a user message (with already uploaded file parts). While a turn runs it is steered into it. */
 	send = (text: string, files: FileUIPart[] = []): Promise<void> => this.session.send(text, files);
+
+	/**
+	 * Like `send`, but settles when the request was accepted (the reply started streaming, or the
+	 * message joined the running turn) and rejects with the server's message when it was refused: the
+	 * composer then keeps the draft and attachments. A failure while the reply streams is not a
+	 * refusal (the message is stored; the error shows in the chat).
+	 */
+	async sendChecked(text: string, files: FileUIPart[] = []): Promise<void> {
+		const before = this.#errors;
+		// a message sent into a turn that is already streaming (steering) has no stream of its own to wait for
+		const status = (): string => this.chat.status;
+		const steering = status() === 'streaming' || this.#s.following;
+		this.#noticeBefore = endingErrorNoticeId(this.chat.messages);
+		const t0 = Date.now();
+		let settled = false;
+		const done = this.send(text, files).then(
+			() => void (settled = true),
+			() => void (settled = true)
+		);
+		while (!settled && (steering ? Date.now() - t0 < 5000 : status() !== 'streaming') && this.#errors === before) await new Promise((r) => setTimeout(r, 25));
+		await Promise.resolve();
+		if (this.#errors !== before && (steering || status() !== 'streaming')) throw new Error(this.#lastError || 'The message was not sent');
+		void done;
+	}
 
 	/**
 	 * Answer the reply `messageId` again (spec 05 `regenerate`: the reply and what follows are hidden by

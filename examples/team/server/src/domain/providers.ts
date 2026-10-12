@@ -63,6 +63,8 @@ export interface ProfileView {
   updatedAt: number
   /** True for the profile agents without their own pick use. */
   isDefault: boolean
+  /** The model this profile uses when nothing picks one (`TEAM_MODEL` on the env default profile, else the provider's default). */
+  defaultModel?: string
 }
 
 export interface ModelView {

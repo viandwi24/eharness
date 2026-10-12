@@ -10,6 +10,7 @@
 	import { addCustomModel, filterModels, formatContext, formatPricing, hasModelPolicy, isModelEnabled, type ModelPolicy, type ProviderModel } from '#lib/providers/models.js';
 	import { api } from '#lib/api/index.js';
 	import { providersStore } from '#lib/providers/store.svelte.js';
+	import { effectiveModel, effectiveModelText, type ModelPick } from '#lib/providers/effective.js';
 
 	/**
 	 * Pick a provider profile, then a model of it: a searchable list (`GET
@@ -22,7 +23,8 @@
 		modelId = $bindable(null),
 		defaultLabel = 'Workspace default',
 		id = 'model-picker',
-		disabled = false
+		disabled = false,
+		fallback
 	}: {
 		profileId?: string | null;
 		modelId?: string | null;
@@ -30,7 +32,17 @@
 		defaultLabel?: string;
 		id?: string;
 		disabled?: boolean;
+		/** The workspace pick used when nothing is picked here; read from the settings when absent. `null` = none. */
+		fallback?: ModelPick | null;
 	} = $props();
+
+	// With nothing picked the effective profile and model are shown, so "default" is never a mystery.
+	let workspacePick = $state<ModelPick>({ profileId: null, modelId: null });
+	$effect(() => {
+		if (fallback !== undefined || profileId !== null || modelId !== null) return;
+		void api.get('/settings').then((s) => (workspacePick = { profileId: s.defaultProfile, modelId: s.defaultModel }), () => {});
+	});
+	const effective = $derived(effectiveModel(providersStore.state.profiles, { profileId, modelId }, fallback ?? workspacePick));
 
 	const profiles = $derived(providersStore.state.profiles.filter((p) => p.enabled || p.id === profileId));
 	// a legacy pick (a model with no profile) is a model of the default profile
@@ -129,6 +141,9 @@
 		{/each}
 	</NativeSelect>
 
+	{#if !showModel && effective}
+		<p class="text-xs text-muted-foreground" data-testid="effective-model">Uses <span class="font-mono">{effectiveModelText(effective)}</span></p>
+	{/if}
 	{#if showModel}
 		<Popover.Root bind:open onOpenChange={(o) => !o && (query = '')}>
 			<Popover.Trigger>

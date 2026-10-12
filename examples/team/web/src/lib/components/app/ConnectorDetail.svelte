@@ -29,7 +29,7 @@
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
-	import { connectionStatus, runTest, type TestOutcome } from '#lib/config/status.js';
+	import { connectionStatus, runTest, visibleStatusMessage, type TestOutcome } from '#lib/config/status.js';
 	import { capabilitiesOf, categoryLabel, MODE_LABEL } from '#lib/connectors/core.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
 	import { authLabel, customState, hostOf, initialsOf, toolCount } from '#lib/connectors/custom.js';
@@ -233,7 +233,7 @@
 			{/if}
 		</div>
 
-		{#if c.statusMessage && c.status !== 'connected'}<p class="px-3.5 pb-3 text-xs text-destructive-text" role="alert">{c.statusMessage}</p>{/if}
+		{#if visibleStatusMessage(c.status, c.statusMessage, res)}<p class="px-3.5 pb-3 text-xs text-destructive-text" role="alert">{visibleStatusMessage(c.status, c.statusMessage, res)}</p>{/if}
 		{#if res}<div class="px-3.5 pb-3"><TestResult result={res} /></div>{/if}
 
 		{#if !c.builtin}<AccessControl connection={c} />{/if}

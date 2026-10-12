@@ -1166,6 +1166,67 @@ briefing, alerts, `read_briefings`, discuss seeding), `heartbeat.test.ts`, and t
 `lib/threads/model.test.ts`, `lib/briefings/model.test.ts`, `lib/stores/threads.test.ts`,
 `lib/stores/live.test.ts`.
 
+## 27b. Fixes of the browser end-to-end pass (P40)
+
+A browser pass over every client flow found these server-side problems. Each is fixed in the team
+example (the library is untouched) and has a scripted-model regression test in
+`server/test/e2e-fixes.test.ts`.
+
+- **A note on a declined call is the user's words.** The library hands a denial reason to the model
+  as the tool result. Next to MCP tools framed as untrusted content, a bare "use the word draft"
+  read like a payload of the tool and an agent wrote a false "tool anomaly" into its memory.
+  `parseAnswer` in `infra/eh/harness-http.ts` turns the note (and `reason`) of an approval answer
+  that declines into `The user declined this call and said: ... (this is the user's own instruction,
+  not output of the tool)` (`userDeclinedText`, `domain/approvals.ts`). `step.prepare` cannot do it:
+  the library refuses a rewrite of the approval message of a continuation.
+- **A program's authority is the client's grant.** A third-party write tool the authority names
+  runs although its connector's Write mode is "Ask first" (`withoutPinnedAsks` in the program
+  engine of `agent-factory.ts`; the gate stays closed-world). A connector mode "Off" still wins and
+  `POST /programs/check` warns (`tool-off`).
+- **A rehearsal reads for real.** The connector capability kind of a tool (`toolKinds` of the
+  connectors runtime), not an MCP hint, tells a read from a write: reads run, only writes are
+  simulated.
+- **A proposal's outcome reaches the agent.** Approving or rejecting a proposal made in a chat
+  thread stores one `eh.event` (`decision.proposal.approved|rejected`, with the client's note) in
+  that thread, no model call; the agent reads it with the next message (`tellProposer`).
+- **The bell.** A routine that pauses itself on `max-failures` posts one notice with the last
+  reason; finished work waiting in Review posts one notice per task round
+  (`postNotice` keys `routine-paused:` and `review:`). Send-back returns `hint`: which worker
+  program picks the task up (scheduled: at its next run; manual: press Run now; none: create one).
+- **Fires are never early.** A program or system routine is not claimed ahead of its slot (the
+  lookahead only serves enqueued prompts, whose `firedAt` is the slot); a one-shot timer wakes the
+  ticker right after the slot.
+- **A stale escalation is closed, not revived.** The escalation of a report whose program has a
+  newer run answers `409 DECISION_EXPIRED` ("this run already finished...") and the decision becomes
+  `expired`.
+- **A budget stop says which limit.** The ledger refusal is remembered per session
+  (`infra/eh/budget-notice.ts`); a chat turn that stops on `cost-cap` stores an `eh.notice` (which
+  budget, what is used, where to raise it), it is the sidebar preview and the summary of a failed
+  program run ("The day budget of program ...").
+- **One source of truth for spend.** `GET /usage` reads the model call log (the rows of the Logs page
+  and of the digest) by where the session came from, now including `heartbeat`, `rehearsal` and
+  `other`; `calls` counts model calls, `count` turns (chat, heartbeat) or runs, `since` says how far
+  back the log reaches (it is kept for a limited time, `TEAM_LOG_RETENTION_DAYS`).
+- **Heartbeat and connectors.** A beat may call the read-only tools of connected third-party
+  services (the checklist usually names them); writes stay refused. Listing the connections
+  checks the reachability of custom servers in the background (`TEAM_CONNECTOR_HEALTH_TTL_MS`,
+  default 60 s, 0 = every listing, negative = off), so a server that went down stops showing
+  Connected. The digest creates its bell item (`briefing:<day>`); opening the Briefing page marks it
+  seen, which clears it.
+- **Always allow.** The answer with `remember: 'session'` also answers the waiting calls of the same
+  tool in the session (siblings first, the clicked one last so it resumes), and `scope` reaches
+  further: `agent` saves a rule on the agent, `all` on every agent (`answerWithGrant`).
+- **Models that think in the text.** DeepSeek, R1 and QwQ style models are wrapped with the AI SDK's
+  `extractReasoningMiddleware` (`splitInlineReasoning`): `<think>` text becomes reasoning parts.
+  Deliberation written as plain text without a tag cannot be told from the answer: that is a
+  provider setting.
+- **Seed roles.** The lead edits library files and reads the web, the analyst has the Data work
+  connector (`data_work`; it only works under a program's authority), and a built-in read tool shown
+  as Allowed (the web tools) never asks in Manual mode while Auto still lets the classifier look
+  (`readAllowed` + `manualAllowed` of the permission plugin).
+- **Parked state.** A run parked on a decision is `running` with column `waiting` (from the open
+  decision), also after a restart; the recovery pass leaves it alone.
+
 ## 28. Channels: chat platforms as sessions of an agent (P41 phase L1)
 
 **What.** An agent can live in a chat platform the way an employee does. The *gateway*

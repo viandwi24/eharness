@@ -13,6 +13,7 @@
 
 	let {
 		agentId = '',
+		worker = false,
 		program,
 		proposed,
 		onApply,
@@ -23,6 +24,8 @@
 	}: {
 		/** Preset agent for a new program; with none the form shows an agent picker. */
 		agentId?: string;
+		/** A new program starts as a worker of the queued tasks of its agent. */
+		worker?: boolean;
 		program?: Program | undefined;
 		/** A program an agent proposed (Decision Center): the form edits it and hands the result to `onApply` instead of saving. */
 		proposed?: ProgramShape | undefined;
@@ -34,7 +37,7 @@
 	} = $props();
 
 	// svelte-ignore state_referenced_locally
-	let form = $state<ProgramForm>(program ? formFromProgram(program) : proposed ? formFromProgram(proposed) : emptyProgramForm());
+	let form = $state<ProgramForm>(program ? formFromProgram(program) : proposed ? formFromProgram(proposed) : { ...emptyProgramForm(), worker });
 	// svelte-ignore state_referenced_locally
 	let pickedAgent = $state(program?.agentId ?? proposed?.agentId ?? agentId);
 	let errors = $state<Record<string, string>>({});

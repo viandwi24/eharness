@@ -55,6 +55,13 @@
 			if (!agentsStore.state.loaded) void agentsStore.load();
 		});
 	});
+	// opening the page checks the connections that say "Connected": a stopped server shows as an error here
+	let probed = false;
+	$effect(() => {
+		if (!store.loaded || probed) return;
+		probed = true;
+		untrack(() => void connectorsStore.probe());
+	});
 
 	// the Connect button of a card starts the flow right away (like Claude); a connector whose
 	// OAuth app is not set up yet opens its details, where the admin sets it up

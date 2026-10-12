@@ -275,8 +275,10 @@ describe('live store: threads and the bell', () => {
 		// without a thread: everything of the agent
 		expect(live.chatPending('lead').map((a) => a.id).sort()).toEqual(['c1', 'c2', 'q1', 'q2']);
 		const own = { ...appr('own', null), sessionId: 'chat:lead-id:t1' } as Approval;
-		setApprovals([own]);
+		setApprovals([own, c1]);
 		await live.loadApprovals();
+		// the dock shows the thread's own approval and the child's, never another thread's
+		expect(live.chatPending('lead', 'chat:lead-id:t1').map((a) => a.id)).toEqual(['own', 'c1']);
 		expect(live.ownApproval('lead', 'own', 'chat:lead-id:t1')?.id).toBe('own');
 		expect(live.ownApproval('lead', 'own', 'chat:lead-id:t2')).toBeUndefined();
 	});

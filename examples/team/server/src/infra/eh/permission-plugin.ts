@@ -51,6 +51,11 @@ export interface SessionPermissionsOptions<G extends SessionGate = SessionGate> 
   createEngine: (sessionId: string, gate?: G) => PermissionEngine
   /** The mode of the session of `ctx` (own, inherited from the parent, agent, workspace). */
   mode: (ctx: HarnessContext) => TeamMode
+  /**
+   * Tools shown as Allowed that Manual mode must not ask about (built-in reads): the engine's
+   * default mode asks about them, an Auto classifier or Bypass is left alone.
+   */
+  manualAllowed?: (agentId: string, toolName: string) => boolean
   /** Engines of the live sessions of this process, by session id. */
   registry: Map<string, PermissionEngine>
   /** Auto mode blocked / paused / resumed, for the event feed. */
@@ -80,13 +85,32 @@ export function sessionPermissions<G extends SessionGate = SessionGate>(
         plugin: { name: 'permissions' },
         has: { dataPart: () => false, service: () => false },
       })
-      const hooks =
+      const base =
         gate === undefined || contribution?.hooks === undefined
           ? contribution?.hooks
           : ({
               ...contribution.hooks,
               'tool.approve': gatedApprove(contribution.hooks, gate, engine),
             } as typeof contribution.hooks)
+      // Manual mode: an Allowed built-in read does not ask (a gated session has its own closed rules)
+      const engineApprove = base?.['tool.approve'] as ApproveHook | undefined
+      const hooks =
+        gate !== undefined || engineApprove === undefined || opts.manualAllowed === undefined
+          ? base
+          : ({
+              ...base,
+              'tool.approve': async (hookCtx, e) => {
+                const verdict = await engineApprove(hookCtx, e)
+                if (
+                  verdict?.type === 'user-approval' &&
+                  opts.mode(hookCtx) === 'manual' &&
+                  opts.manualAllowed?.(ctx.agent.id, e.toolName) === true
+                ) {
+                  return { type: 'approved' }
+                }
+                return verdict
+              },
+            } as typeof base)
       return {
         ...(hooks === undefined ? {} : { hooks }),
         dispose: () => {

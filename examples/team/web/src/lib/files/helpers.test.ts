@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { breadcrumbs, cleanPath, codeLanguage, fileKind, formatBytes, listFolder, parentOf, type LibraryEntry } from './helpers';
+import { breadcrumbs, cleanPath, codeLanguage, fileKind, formatBytes, listFolder, parentOf, uploadTarget, type LibraryEntry } from './helpers';
 
 const f = (path: string, extra: Partial<LibraryEntry> = {}): LibraryEntry => ({
 	path, version: 'v', size: 1, mediaType: null, binary: false, createdByAgentId: null, createdBy: null, updatedAt: 1, ...extra
@@ -41,5 +41,19 @@ describe('file helpers', () => {
 		expect(cleanPath(' library//a.md ')).toBe('/library/a.md');
 		expect(cleanPath('/library/../x')).toBeNull();
 		expect(cleanPath('  ')).toBeNull();
+	});
+});
+
+describe('uploadTarget', () => {
+	const f = (name: string, type = '', size = 100) => ({ name, type, size });
+	test('a text file goes into the open library folder', () => {
+		expect(uploadTarget('/library/inbox', f('metrics.csv', 'text/csv'))).toEqual({ mode: 'folder', path: '/library/inbox/metrics.csv' });
+		expect(uploadTarget('/library/', f('a.md'))).toEqual({ mode: 'folder', path: '/library/a.md' });
+	});
+	test('binary, large, empty files and other places use the uploads area', () => {
+		expect(uploadTarget('/library/inbox', f('x.pdf', 'application/pdf'))).toEqual({ mode: 'uploads' });
+		expect(uploadTarget('/library/inbox', f('big.txt', 'text/plain', 2_000_000))).toEqual({ mode: 'uploads' });
+		expect(uploadTarget('/', f('a.txt', 'text/plain'))).toEqual({ mode: 'uploads' });
+		expect(uploadTarget('/uploads/2026', f('a.txt', 'text/plain'))).toEqual({ mode: 'uploads' });
 	});
 });

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
-	import { fromLocalInput, SCHEDULE_PRESETS, timezones, toLocalInput, WEEKDAYS, type ScheduleForm } from '#lib/routines/schedule.js';
+	import { fromLocalInput, MIN_EVERY_SECONDS, SCHEDULE_PRESETS, timezones, toLocalInput, WEEKDAYS, type ScheduleForm } from '#lib/routines/schedule.js';
 
 	/** The schedule fields shared by routines and programs; `buildSpec` turns the form into the API shape. */
 	let { schedule = $bindable(), error = '' }: { schedule: ScheduleForm; error?: string } = $props();
@@ -29,11 +29,29 @@
 			<Input type="time" bind:value={schedule.time} aria-label="Time" class="w-32" />
 		</div>
 	{:else if schedule.kind === 'every'}
-		<label class="flex items-center gap-2">
+		<div class="flex items-center gap-2">
 			<span>Every</span>
-			<Input type="number" min="1" bind:value={schedule.everyMinutes} class="w-24" aria-label="Minutes" />
-			<span>minutes</span>
-		</label>
+			{#if schedule.everySeconds !== null}
+				<Input type="number" min={MIN_EVERY_SECONDS} bind:value={schedule.everySeconds} class="w-24" aria-label="Seconds" />
+			{:else}
+				<Input type="number" min="1" bind:value={schedule.everyMinutes} class="w-24" aria-label="Minutes" />
+			{/if}
+			<NativeSelect
+				value={schedule.everySeconds !== null ? 'seconds' : 'minutes'}
+				onchange={(e) => {
+					if (e.currentTarget.value === 'seconds') schedule.everySeconds = Math.max(MIN_EVERY_SECONDS, Math.round(schedule.everyMinutes * 60));
+					else {
+						schedule.everyMinutes = Math.max(1, Math.round((schedule.everySeconds ?? 60) / 60));
+						schedule.everySeconds = null;
+					}
+				}}
+				aria-label="Unit"
+				class="w-28"
+			>
+				<NativeSelectOption value="minutes">minutes</NativeSelectOption>
+				<NativeSelectOption value="seconds">seconds</NativeSelectOption>
+			</NativeSelect>
+		</div>
 	{:else if schedule.kind === 'custom'}
 		<Input bind:value={schedule.expr} placeholder="0 9 * * 1-5" class="font-mono text-xs" aria-label="Cron expression" />
 		<span class="text-xs text-muted-foreground">5 or 6 fields: minute hour day month weekday (second first with 6).</span>

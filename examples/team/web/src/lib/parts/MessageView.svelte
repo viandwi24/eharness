@@ -2,8 +2,7 @@
 	import type { UIMessage } from 'ai';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Message, MessageAvatar, MessageContent, MessageHeader } from '#lib/components/ai/message/index.js';
-	import ApprovalPart, { type ApprovalAnswer } from './ApprovalPart.svelte';
-	import CompactionPart from './CompactionPart.svelte';
+		import CompactionPart from './CompactionPart.svelte';
 	import EventPart from './EventPart.svelte';
 	import FilePart from './FilePart.svelte';
 	import InputPart from './InputPart.svelte';
@@ -13,10 +12,12 @@
 	import SourcePart from './SourcePart.svelte';
 	import SubagentPart from './SubagentPart.svelte';
 	import TextPart from './TextPart.svelte';
+	import UserText from './UserText.svelte';
 	import ToolGroup from './ToolGroup.svelte';
 	import ToolPart from './ToolPart.svelte';
 	import { isActivityTool, type ToolView, writtenFiles } from './activity.js';
 	import FileCard from './FileCard.svelte';
+	import type { ApprovalStanding } from '#lib/approval/chip.js';
 
 	type Block =
 		| { type: 'view'; view: PartView }
@@ -28,8 +29,8 @@
 		message,
 		agent,
 		showHeader = true,
-		onApproval,
-		canAnswer,
+		standing,
+		onFocusDock,
 		onOpenSession,
 		scratch = false,
 		live = true
@@ -39,9 +40,10 @@
 		agent?: { id: string; name: string; color?: string };
 		/** Show the avatar + name line; the chat hides it for follow-up messages of the same author. */
 		showHeader?: boolean;
-		onApproval?: (answer: ApprovalAnswer) => void;
-		/** Whether an inline approval is still waiting on the server (see ApprovalPart). */
-		canAnswer?: (approvalId: string) => boolean;
+		/** Where an approval stands (waiting in the dock, answered here or elsewhere); drives the status chip of a tool row. */
+		standing?: (approvalId: string) => ApprovalStanding;
+		/** "Waiting for your approval" was clicked: bring the dock's card into view. */
+		onFocusDock?: (approvalId: string) => void;
 		onOpenSession?: (sessionId: string) => void;
 		/** The message is from a test run: its files live in a scratch area, not in the library. */
 		scratch?: boolean;
@@ -90,17 +92,15 @@
 
 {#snippet part(v: PartView)}
 	{#if v.kind === 'text'}
-		{#if message.role === 'user'}<span class="whitespace-pre-wrap">{v.text}</span>{:else}<TextPart text={v.text} />{/if}
+		{#if message.role === 'user'}<UserText text={v.text} />{:else}<TextPart text={v.text} />{/if}
 	{:else if v.kind === 'reasoning'}
 		<ReasoningPart text={v.text} streaming={v.streaming} durationMs={v.durationMs} />
 	{:else if v.kind === 'tool'}
 		{#if v.isSubagent}
 			<SubagentPart view={v} {onOpenSession} />
 		{:else}
-			<ToolPart view={v} />
+			<ToolPart view={v} {standing} {onFocusDock} />
 		{/if}
-	{:else if v.kind === 'approval'}
-		<ApprovalPart view={v} {onApproval} {canAnswer} />
 	{:else if v.kind === 'subagentRun'}
 		<SubagentPart view={v} {onOpenSession} />
 	{:else if v.kind === 'input'}
@@ -128,7 +128,7 @@
 				{:else if b.type === 'sources'}
 					<SourcePart views={b.views} />
 				{:else if b.type === 'tools'}
-					{#if b.views.length === 1}<ToolPart view={b.views[0]} />{:else}<ToolGroup views={b.views} />{/if}
+					{#if b.views.length === 1}<ToolPart view={b.views[0]} {standing} {onFocusDock} />{:else}<ToolGroup views={b.views} {standing} {onFocusDock} />{/if}
 					{#each fileCards.get(i) ?? [] as f (f.path)}<FileCard file={f} {scratch} />{/each}
 				{:else}
 					{@render part(b.view)}

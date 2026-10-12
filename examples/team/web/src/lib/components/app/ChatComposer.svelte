@@ -25,6 +25,9 @@
 	import ChatToolsMenu from './ChatToolsMenu.svelte';
 	import ContextMeter from './ContextMeter.svelte';
 	import ModeSwitch from './ModeSwitch.svelte';
+	import type { DeclineHint } from '#lib/approval/hint.js';
+	import CaretRightIcon from 'phosphor-svelte/lib/CaretRight';
+	import { cn } from '#lib/utils.js';
 
 	let {
 		onSend,
@@ -33,7 +36,8 @@
 		stopping = false,
 		placeholder = 'Message the agent',
 		agentId,
-		threadId
+		threadId,
+		decline
 	}: {
 		onSend: (message: PromptInputMessage) => void | Promise<void>;
 		onStop?: () => void;
@@ -45,7 +49,16 @@
 		agentId?: string;
 		/** The chat thread: its own mode, connectors and context meter. */
 		threadId?: string;
+		/** Own approvals a new message would decline (shown while text is typed). */
+		decline?: DeclineHint;
 	} = $props();
+
+	let declineOpen = $state(false);
+	let textarea = $state<HTMLTextAreaElement | null>(null);
+	/** Put the cursor in the message box. */
+	export function focus(): void {
+		textarea?.focus({ preventScroll: true });
+	}
 
 	let modeSwitch = $state<ModeSwitch | undefined>();
 
@@ -61,14 +74,14 @@
 <!-- Composer: attachments are validated here (type, 10 MB) and uploaded by the owner on send. -->
 <PromptInput
 	onSubmit={onSend}
-	onError={(e) => toast.error(e.message)}
+	onError={(e) => toast.error(e.message, { id: e.message.slice(0, 80) })}
 	accept={UPLOAD_ACCEPT}
 	maxFileSize={UPLOAD_MAX_BYTES}
 	maxFiles={5}
 	multiple
 	globalDrop={false}
 >
-	{#snippet children({ files, remove, openFileDialog })}
+	{#snippet children({ files, remove, openFileDialog, textInput })}
 		{#if files.length > 0}
 			<PromptInputHeader>
 				<Attachments variant="inline">
@@ -83,8 +96,21 @@
 			</PromptInputHeader>
 		{/if}
 		<PromptInputBody>
-			<PromptInputTextarea {placeholder} onkeydown={onKeydown} class="min-h-12 px-3 pt-2.5 pb-1" />
+			<PromptInputTextarea bind:ref={textarea} {placeholder} onkeydown={onKeydown} class="min-h-12 px-3 pt-2.5 pb-1" />
 		</PromptInputBody>
+		{#if decline && textInput.trim()}
+			<div class="px-3 pb-1 text-xs text-muted-foreground" data-testid="decline-hint" role="status">
+				<button type="button" class="flex items-center gap-1 text-left hover:text-foreground" aria-expanded={declineOpen} onclick={() => (declineOpen = !declineOpen)}>
+					<CaretRightIcon class={cn('size-3 shrink-0 transition-transform', declineOpen && 'rotate-90')} />
+					<span>{decline.text}</span>
+				</button>
+				{#if declineOpen}
+					<ul class="mt-1 ml-4 list-disc">
+						{#each decline.names as n (n.toolName)}<li>{n.toolName}{n.count > 1 ? ` ×${n.count}` : ''}</li>{/each}
+					</ul>
+				{/if}
+			</div>
+		{/if}
 		<PromptInputFooter class="px-1.5 pt-0.5 pb-1.5">
 			<PromptInputTools>
 				<PromptInputButton aria-label="Attach files" title="Attach files" onclick={openFileDialog}>

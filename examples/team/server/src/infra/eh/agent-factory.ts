@@ -57,6 +57,7 @@ import type { AgentDef } from '../../domain/agents.ts'
 import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import {
   isAllowedMediaType,
+  isDmSession,
   LIBRARY_URL_PREFIX,
   libraryUrl,
   MAX_UPLOAD_BYTES,
@@ -99,6 +100,7 @@ import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { ActivityLog } from './activity-log.ts'
+import { budgetNotice, capText, trackRefusals } from './budget-notice.ts'
 import { chatTools } from './chat-tools-plugin.ts'
 import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
@@ -365,6 +367,16 @@ const TEAM_PREAMBLE = [
  * The gate of a program run: the rules the engine gets (`rules`) and the closed-world check of
  * the session (`SessionGate`).
  */
+/** The tool kinds of the connector rules without the pinned "always ask" ones (D6). */
+function withoutPinnedAsks(rules: {
+  toolKinds: Record<string, unknown>
+  pinnedAsk: readonly string[]
+}): typeof rules.toolKinds {
+  return Object.fromEntries(
+    Object.entries(rules.toolKinds).filter(([name]) => !rules.pinnedAsk.includes(name)),
+  )
+}
+
 export type ProgramGate = SessionGate & { rules: { allow: string[]; deny: string[] } }
 
 export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
@@ -377,7 +389,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   const workspaceId = deps.workspaceId ?? 'default'
   // an explicit catalog wins (tests); else the one of the provider manager (live profiles)
   const catalog = deps.catalog ?? deps.models.catalog
-  const ledger = sqliteBudgetLedger(sqlite)
+  // the ledger remembers which scope refused a reservation: a capped turn says which limit (D15)
+  const refusals = trackRefusals(sqliteBudgetLedger(sqlite))
+  const ledger = refusals.ledger
+  /** The readable reason a turn of this session stopped on a budget. */
+  const capTextOf = (sessionId: string): string =>
+    capText(refusals.peek(sessionId), { program: (id) => deps.programs?.get(id)?.name })
   const fixed = {
     childMaxTurns: deps.limits?.childMaxTurns ?? 25,
     parkTimeoutMs: deps.limits?.parkTimeoutMs ?? 24 * 60 * 60 * 1000,
@@ -660,7 +677,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         }
       }
     }
-    return { available, channelTools: CHANNEL_TOOLS, channelsBound: bound.length > 0 }
+    const off = new Set(Object.keys(out.toolNameMap).filter((t) => out.rules.deny.includes(t)))
+    return { available, channelTools: CHANNEL_TOOLS, channelsBound: bound.length > 0, off }
   }
 
   function build(
@@ -692,7 +710,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               ...gate.rules.deny,
             ],
           },
-          toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
+          // the authority is the client's explicit grant for this run, so it satisfies a connector's
+          // "Ask first" for the tools it names (`refuse` below is closed world); "Off" is a deny
+          // rule above and still wins (D6 of the e2e pass)
+          toolKinds: { ...MEMORY_TOOL_KINDS, ...withoutPinnedAsks(out.rules) },
         })
       }
       const classifier = classifierFor(sessionId, def.id)
@@ -728,9 +749,22 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           roots: [{ virtual: '/', real: '/' }],
           toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
         }
+        // the read-only tools of connected third-party services (a tracker, a CRM) are what the
+        // person's checklist usually asks a beat to look at; writes stay out (D18 of the e2e pass)
+        const kinds = deps.connectors.toolKinds(def.id) ?? {}
+        const lookups = Object.entries(out.toolNameMap)
+          .filter(
+            ([name, origin]) =>
+              kinds[name] === 'read' &&
+              !out.rules.deny.includes(name) &&
+              deps.connectors.definitions.find((d) => d.id === origin.connectorId)?.source !==
+                'builtin',
+          )
+          .map(([name]) => name)
         return {
-          rules: { allow: [...HEARTBEAT_ALLOWED], deny: [] },
+          rules: { allow: [...HEARTBEAT_ALLOWED, ...lookups], deny: [] },
           refuse: (call) =>
+            lookups.includes(call.toolName) ||
             HEARTBEAT_ALLOWED.some((rule) => matchRule(rule, call, { ...match, polarity: 'allow' }))
               ? undefined
               : heartbeatRefusal(call.toolName),
@@ -778,7 +812,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           : {
               simulate(call: { toolName: string; input: unknown; risk?: string | undefined }) {
                 const origin = out.toolNameMap[call.toolName]
-                if (!isSimulatedCall({ connectorId: origin?.connectorId, risk: call.risk })) {
+                if (
+                  !isSimulatedCall({
+                    connectorId: origin?.connectorId,
+                    risk: call.risk,
+                    kind: deps.connectors.toolKinds(def.id)?.[call.toolName],
+                  })
+                ) {
                   return undefined
                 }
                 rehearsalSessions
@@ -884,6 +924,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       sessionPermissions({
         createEngine,
         gate: gateOf,
+        manualAllowed: (_agentId, toolName) =>
+          deps.connectors.readAllowed(def.id)?.has(toolName) === true,
         registry: engines,
         mode: (ctx) =>
           resolveSessionMode(def, ctx.session.id, ctx.session.parent?.sessionId, currentSettings())
@@ -936,8 +978,14 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
                 const found = deps.agentBySlug?.(slug)
                 return found === undefined ? undefined : { id: found.id, name: found.name }
               },
+              describeStop: (sessionId, stop) =>
+                stop === 'cost-cap' ? capTextOf(sessionId) : undefined,
             }),
           ]),
+      // a chat turn that stops on a budget leaves a readable notice (which limit, where to raise it)
+      budgetNotice({
+        describe: (sessionId) => (isDmSession(sessionId) ? capTextOf(sessionId) : undefined),
+      }),
       // session events of the feed (turn-started, pending-changed, approval-decided, ...): the
       // library plugin writes them on whichever instance runs the turn
       ...(deps.activityStore === undefined

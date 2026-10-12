@@ -13,12 +13,17 @@ export type ScheduleForm = {
 	weekday: number;
 	/** Minutes between runs (every). */
 	everyMinutes: number;
+	/** Seconds between runs when the interval is not a whole number of minutes (every); null = use `everyMinutes`. */
+	everySeconds: number | null;
 	/** Raw cron (custom). */
 	expr: string;
 	/** Epoch ms (once). */
 	at: number;
 	tz: string;
 };
+
+/** The server refuses shorter intervals. */
+export const MIN_EVERY_SECONDS = 10;
 
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -44,6 +49,7 @@ export const defaultScheduleForm = (tz: string = browserTimezone()): ScheduleFor
 	time: '09:00',
 	weekday: 1,
 	everyMinutes: 30,
+	everySeconds: null,
 	expr: '0 9 * * 1-5',
 	at: Date.now() + 3_600_000,
 	tz
@@ -77,6 +83,11 @@ export function buildSpec(f: ScheduleForm): RoutineSpec {
 			return { kind: 'cron', expr: `${t.m} ${t.h} * * ${dow}`, tz: f.tz };
 		}
 		case 'every': {
+			if (f.everySeconds !== null) {
+				const sec = Math.floor(f.everySeconds);
+				if (!Number.isFinite(sec) || sec < MIN_EVERY_SECONDS) throw new Error(`Interval must be at least ${MIN_EVERY_SECONDS} seconds`);
+				return { kind: 'every', everyMs: sec * 1000 };
+			}
 			const n = Math.floor(f.everyMinutes);
 			if (!Number.isFinite(n) || n < 1) throw new Error('Interval must be at least 1 minute');
 			return { kind: 'every', everyMs: n * 60_000 };
@@ -94,7 +105,11 @@ export function buildSpec(f: ScheduleForm): RoutineSpec {
 export function parseSpec(spec: RoutineSpec, fallbackTz: string = browserTimezone()): ScheduleForm {
 	const base = defaultScheduleForm(fallbackTz);
 	if (spec.kind === 'at') return { ...base, kind: 'once', at: spec.at };
-	if (spec.kind === 'every') return { ...base, kind: 'every', everyMinutes: Math.max(1, Math.round(spec.everyMs / 60_000)) };
+	if (spec.kind === 'every') {
+		// not a whole number of minutes (10 s, 90 s): keep it in seconds, so editing never changes it
+		const exact = spec.everyMs % 60_000 === 0;
+		return { ...base, kind: 'every', everyMinutes: Math.max(1, Math.round(spec.everyMs / 60_000)), everySeconds: exact ? null : Math.round(spec.everyMs / 1000) };
+	}
 	const m = /^(\d{1,2}) (\d{1,2}) \* \* (\*|1-5|[0-6])$/.exec(spec.expr.trim());
 	if (m && Number(m[1]) < 60 && Number(m[2]) < 24) {
 		const time = `${pad(Number(m[2]))}:${pad(Number(m[1]))}`;
@@ -117,6 +132,7 @@ export function describeSpec(spec: RoutineSpec): string {
 		case 'weekly':
 			return `${WEEKDAYS[f.weekday]}s at ${f.time}`;
 		case 'every':
+			if (f.everySeconds !== null) return f.everySeconds === 1 ? 'Every second' : `Every ${f.everySeconds} seconds`;
 			return f.everyMinutes % 60 === 0
 				? f.everyMinutes === 60
 					? 'Every hour'

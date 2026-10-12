@@ -39,8 +39,12 @@
 	import PendingCard from './PendingCard.svelte';
 	import { toast } from 'svelte-sonner';
 	import { answerFailureText } from '#lib/approval/outcome.js';
-	import { requestFailureText } from '#lib/chat/errors.js';
-	import { approvalOffered, requestedApprovalIds } from '#lib/approval/offer.js';
+	import { isConnectionProblem, requestFailureText } from '#lib/chat/errors.js';
+	import { requestedApprovalIds } from '#lib/approval/offer.js';
+	import { groupPending, entryKey } from '#lib/approval/group.js';
+	import { declineHint } from '#lib/approval/hint.js';
+	import { standingOf, type ApprovalStanding } from '#lib/approval/chip.js';
+	import ApprovalGroupCard from './ApprovalGroupCard.svelte';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import { agentChat } from '#lib/chat/chats.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -48,6 +52,7 @@
 	import { live } from '#lib/stores/live.svelte.js';
 	import MessageView from '#lib/parts/MessageView.svelte';
 	import ChatComposer from './ChatComposer.svelte';
+	import { shouldFocusComposer } from '#lib/chat/typing.js';
 
 	/**
 	 * `panelOpen`: whether the session panel is shown (a column when `wide`, a popover below lg).
@@ -70,7 +75,7 @@
 	const thread = $derived(pickThread(threadParam ? allThreads : open, threadParam));
 	// a link without a thread settles on the one it resolved to, so new activity elsewhere does not switch the chat
 	$effect(() => {
-		if (!threadParam && thread) void goto(threadHref(agentId, thread.id), { replaceState: true });
+		if (!threadParam && thread) void goto(threadHref(agentId, thread.id), { replace: true, reset: false });
 	});
 	const sessionId = $derived(thread?.sessionId ?? '');
 	// One cached chat per thread (history, stream and pagination survive switching). Creating it is
@@ -90,33 +95,9 @@
 		)
 	);
 
-	/**
-	 * An inline tool approval of this agent's own message. Every answer goes through
-	 * `POST /approvals` (the server records it and runs the continuation), never through the chat
-	 * stream: one path, so an approval decided elsewhere cannot be answered twice. An approval the
-	 * server no longer lists was decided already: refresh quietly, no error.
-	 */
-	async function answerInline(a: { id: string; approved: boolean; reason?: string; note?: string; remember?: 'session' }): Promise<void> {
-		const { id, ...body } = a;
-		const item = live.ownApproval(agentId, id, sessionId);
-		if (!item) {
-			void live.loadApprovals();
-			void ac?.refetch();
-			return;
-		}
-		try {
-			await live.answer(item, body);
-		} catch (e) {
-			const text = answerFailureText(e);
-			if (text) toast.error(text);
-			else void ac?.refetch();
-			return;
-		}
-		await followAfterAnswer();
-	}
-	/** An inline approval is offered only while the server lists it as waiting. */
-	// A card the list does not show yet is not "handled elsewhere" until a refresh made after it
-	// appeared still lacks it (the list lags the stream, and a failed earlier turn must not matter).
+	// A tool row waiting for an approval says "answered elsewhere" only when this tab did not answer it
+	// and a refresh made after the row appeared still lacks it (the list lags the stream, and a failed
+	// earlier turn must not matter).
 	let confirmedGone = $state<Record<string, true>>({});
 	const checking = new Set<string>();
 	$effect(() => {
@@ -133,26 +114,61 @@
 			}
 		});
 	});
-	const canAnswer = (approvalId: string): boolean =>
-		approvalOffered({
+	const answeredDecision = (d: 'approved' | 'declined' | 'answered' | undefined): 'approved' | 'declined' | undefined => (d === 'answered' ? 'approved' : d);
+	const standing = (approvalId: string): ApprovalStanding => {
+		const st = standingOf({
+			answeredHere: answeredDecision(live.state.answeredHere[approvalId]),
 			listLoaded: live.state.approvalsLoaded,
 			inList: live.ownApproval(agentId, approvalId, sessionId) !== undefined,
 			confirmedGone: confirmedGone[approvalId] === true
 		});
+		// Siblings of the same batch still wait: this one was answered (by this tab before a reload, most
+		// likely) and the turn continues only when the rest is answered. "Elsewhere" is for a batch that is gone.
+		if (st === 'elsewhere' && live.state.approvals.some((a) => a.kind === 'approval' && a.parentSessionId === null && a.sessionId === sessionId)) return 'answered';
+		return st;
+	};
+	let dockEl = $state<HTMLElement | null>(null);
+	let composer = $state<ChatComposer | undefined>();
+
+	// SvelteKit moves focus to the page body after every navigation, and a closed dialog or the file
+	// picker hands it back to a button: text typed there was lost. A chat puts the cursor in the
+	// message box when it opens (fine pointers only: no keyboard pops up on a phone), and typing
+	// with focus on nothing useful goes to the box.
+	$effect(() => {
+		const id = thread?.id;
+		if (!id || !composer || thread?.archivedAt !== null) return;
+		if (typeof matchMedia === 'function' && !matchMedia('(pointer: fine)').matches) return;
+		const a = document.activeElement;
+		if (a && a !== document.body && a.closest('input,textarea,select,[contenteditable],[role="dialog"]')) return;
+		composer.focus();
+	});
+	function onWindowKeydown(e: KeyboardEvent): void {
+		const a = document.activeElement;
+		const tag = (a?.tagName ?? 'body').toLowerCase();
+		const ok = shouldFocusComposer(e, {
+			tag,
+			editable: a instanceof HTMLElement && a.isContentEditable,
+			inOverlay: !!a?.closest('[role="dialog"],[role="menu"],[role="listbox"],[data-slot="popover-content"],[data-testid="pending-dock"]') || !!document.querySelector('[role="dialog"][data-state="open"]')
+		});
+		if (ok) composer?.focus();
+	}
+	/** "Waiting for your approval" on a tool row: bring the dock's card into view and focus it. */
+	async function focusDock(approvalId: string): Promise<void> {
+		const at = entries.findIndex((e) => (e.kind === 'group' ? e.items.some((i) => i.id === approvalId) : e.item.id === approvalId));
+		if (at >= 0) pendingIdx = at;
+		await tick();
+		const card = dockEl?.querySelector<HTMLElement>('[data-testid="approval-card"],[data-testid="approval-group"],[data-testid="question-card"]');
+		card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		card?.focus({ preventScroll: true });
+	}
 
 	async function send(m: PromptInputMessage): Promise<void> {
 		const text = m.text.trim();
 		if (!text && m.files.length === 0) return;
-		let files;
-		try {
-			files = await Promise.all(m.files.map((f) => ac!.upload(f)));
-		} catch (e) {
-			// Throwing keeps the text and attachments in the composer for a retry.
-			toast.error(e instanceof Error ? e.message : 'Upload failed');
-			throw e;
-		}
-		// Not awaited: the composer must clear now, not when the stream ends. Errors reach `onError`.
-		void ac?.send(text, files);
+		// Throwing keeps the text and attachments in the composer (an upload that failed, a request the
+		// server refused); the composer shows the message once.
+		const files = await Promise.all(m.files.map((f) => ac!.upload(f)));
+		await ac?.sendChecked(text, files);
 	}
 
 	// Regenerate the newest reply; edit a sent message (the rest of the chat after it is replaced).
@@ -228,6 +244,9 @@
 	});
 	// Questions of this chat and approvals of the role agents it delegated to, answered inline.
 	const inline = $derived(live.chatPending(agentId, sessionId || undefined));
+	const entries = $derived(groupPending(inline));
+	// What a new message declines: this chat's own approvals (delegated children are another session).
+	const decline = $derived(declineHint(inline.filter((a) => a.kind === 'approval' && a.parentSessionId === null), inline.filter((a) => a.parentSessionId !== null).length));
 	let pendingIdx = $state(0);
 	// After an inline answer the turn continues on the server: follow it into this chat.
 	const followAfterAnswer = (): void => void ac?.follow();
@@ -261,6 +280,10 @@
 		if (first && first.length >= 6 && first.length <= 64) out.push(`Help me with: ${first.charAt(0).toLowerCase()}${first.slice(1)}`);
 		return out;
 	});
+	// the "cannot reach the server" banner clears itself once the connection is back
+	$effect(() => {
+		if (live.state.connection === 'live' && !live.state.reconnecting && !live.state.unreachable && isConnectionProblem(ac?.problem?.message)) ac?.dismissProblem();
+	});
 	const busy = $derived(ac?.status === 'submitted' || ac?.status === 'streaming');
 	// A turn the server no longer runs (it was killed, the connection went silent): resync.
 	$effect(() => {
@@ -291,6 +314,8 @@
 		<Tooltip.Content>{panelOpen ? 'Hide session panel' : 'Show session panel'} <Kbd>⌘.</Kbd></Tooltip.Content>
 	</Tooltip.Root>
 {/snippet}
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <Tooltip.Provider delayDuration={300}>
 <section class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -391,8 +416,8 @@
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
 									showHeader={head}
 									live={busy && i === messages.length - 1}
-									onApproval={(a) => void answerInline(a)}
-									{canAnswer}
+									{standing}
+										onFocusDock={focusDock}
 									onOpenSession={(sid) => void openSession(sid)}
 								/>
 								{#if m.role === 'user' && !busy && thread.archivedAt === null && editableInput(m)}
@@ -475,28 +500,32 @@
 			bind:clientHeight={dockHeight}
 		>
 			<div class="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3">
-				{#if inline.length}
-					{@const at = Math.min(pendingIdx, inline.length - 1)}
-					{@const cur = inline[at]}
-					<div class="mb-2 flex flex-col gap-1.5" role="region" aria-label="Waiting for your answer">
-						{#if inline.length > 1}
-							<div class="flex items-center justify-end gap-0.5 text-xs text-muted-foreground" data-testid="pending-pager">
-								<Button variant="ghost" size="icon-xs" aria-label="Previous request" disabled={at <= 0} onclick={() => (pendingIdx = Math.max(0, at - 1))}>
-									<CaretLeftIcon />
-								</Button>
-								<span class="tabular-nums">{at + 1} of {inline.length}</span>
-								<Button variant="ghost" size="icon-xs" aria-label="Next request" disabled={at >= inline.length - 1} onclick={() => (pendingIdx = Math.min(inline.length - 1, at + 1))}>
-									<CaretRightIcon />
-								</Button>
-							</div>
-						{/if}
-						{#if cur}
-							{#key cur.sessionId + cur.id}
-								<PendingCard approval={cur} onOpenTask={(id) => openTask(id)} onAnswered={followAfterAnswer} />
-							{/key}
-						{/if}
-					</div>
-				{/if}
+					{#if entries.length}
+						{@const at = Math.min(pendingIdx, entries.length - 1)}
+						{@const cur = entries[at]}
+						<div class="mb-2 flex flex-col gap-1.5" role="region" aria-label="Waiting for your answer" bind:this={dockEl} data-testid="pending-dock">
+							{#if entries.length > 1}
+								<div class="flex items-center justify-end gap-0.5 text-xs text-muted-foreground" data-testid="pending-pager">
+									<Button variant="ghost" size="icon-xs" aria-label="Previous request" disabled={at <= 0} onclick={() => (pendingIdx = Math.max(0, at - 1))}>
+										<CaretLeftIcon />
+									</Button>
+									<span class="tabular-nums">{at + 1} of {entries.length}</span>
+									<Button variant="ghost" size="icon-xs" aria-label="Next request" disabled={at >= entries.length - 1} onclick={() => (pendingIdx = Math.min(entries.length - 1, at + 1))}>
+										<CaretRightIcon />
+									</Button>
+								</div>
+							{/if}
+							{#if cur}
+								{#key entryKey(cur)}
+									{#if cur.kind === 'group'}
+										<ApprovalGroupCard items={cur.items} toolName={cur.toolName} onOpenTask={(id) => openTask(id)} onAnswered={followAfterAnswer} />
+									{:else}
+										<PendingCard approval={cur.item} onOpenTask={(id) => openTask(id)} onAnswered={followAfterAnswer} />
+									{/if}
+								{/key}
+							{/if}
+						</div>
+					{/if}
 				{#if ac.stopping}
 					<div class="mb-2 text-center text-xs text-muted-foreground" role="status" data-testid="chat-stopping">Stopping…</div>
 				{:else if ac.notice}
@@ -509,11 +538,13 @@
 					</div>
 				{:else}
 				<ChatComposer
+					bind:this={composer}
 					{agentId}
 					threadId={thread.id}
 					onSend={send}
 					onStop={() => void ac.stop()}
 					status={ac.status}
+						{decline}
 					stopping={ac.stopping}
 					placeholder={agent ? `Message ${agent.name}` : 'Message the agent'}
 				/>

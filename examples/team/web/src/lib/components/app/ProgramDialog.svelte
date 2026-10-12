@@ -78,6 +78,7 @@
 				{#key session}
 					<ProgramEditor
 						agentId={programDialog.agentId ?? ''}
+						worker={programDialog.worker}
 						{program}
 						formId={FORM_ID}
 						bind:saving

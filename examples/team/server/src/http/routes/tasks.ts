@@ -14,6 +14,7 @@ import {
   acceptTask,
   cancelQueuedTask,
   createTask,
+  sendBackHint,
   sendBackTask,
   updateQueuedTask,
   withColumns,
@@ -32,6 +33,7 @@ import {
   TaskMessageResultSchema,
   TaskPatchSchema,
   TaskSchema,
+  TaskSendBackResultSchema,
   TaskSendBackSchema,
   TaskStatusSchema,
 } from '../schemas/tasks.ts'
@@ -156,7 +158,10 @@ const sendBackRoute = createRoute({
   security,
   request: { params: TaskIdParam, body: { required: true, content: json(TaskSendBackSchema) } },
   responses: {
-    200: { description: 'The task, queued again', content: json(TaskSchema) },
+    200: {
+      description: 'The task, queued again, and what happens next',
+      content: json(TaskSendBackResultSchema),
+    },
     404: jsonError('Unknown task'),
     409: jsonError('`TASK_NOT_IN_REVIEW`'),
     ...errorResponses,
@@ -287,9 +292,10 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
     .openapi(acceptTaskRoute, (c) =>
       c.json(acceptTask(deps, c.req.valid('param').id) as never, 200),
     )
-    .openapi(sendBackRoute, (c) =>
-      c.json(sendBackTask(deps, c.req.valid('param').id, c.req.valid('json').note) as never, 200),
-    )
+    .openapi(sendBackRoute, (c) => {
+      const task = sendBackTask(deps, c.req.valid('param').id, c.req.valid('json').note)
+      return c.json({ ...task, hint: sendBackHint(deps, task) } as never, 200)
+    })
     .openapi(checkDeliverablesRoute, async (c) =>
       c.json((await recheckTask(deps, c.req.valid('param').id)) as never, 200),
     )

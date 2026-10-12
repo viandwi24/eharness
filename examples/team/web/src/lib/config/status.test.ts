@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { connectionStatus, profileStatuses, runTest, STATUS_BADGE, testSummary } from './status';
+import { connectionStatus, profileStatuses, runTest, STATUS_BADGE, testSummary, visibleStatusMessage } from './status';
 
 describe('shared status vocabulary', () => {
 	test('connection status', () => {
@@ -26,5 +26,17 @@ describe('shared status vocabulary', () => {
 	test('runTest turns a thrown error into a failed outcome', async () => {
 		expect(await runTest(async () => ({ ok: true }))).toEqual({ ok: true });
 		expect(await runTest(async () => Promise.reject(new Error('boom')))).toEqual({ ok: false, message: 'boom' });
+	});
+});
+
+describe('visibleStatusMessage', () => {
+	test('a test result that says the same hides the stored message', () => {
+		expect(visibleStatusMessage('error', 'Could not reach it', { ok: false, message: 'Could not reach it' })).toBeUndefined();
+		expect(visibleStatusMessage('error', 'Could not reach it', { ok: false, message: 'Could not reach the server: Could not reach it' })).toBeUndefined();
+	});
+	test('shown when nothing else says it; never for a connected one', () => {
+		expect(visibleStatusMessage('error', 'Could not reach it')).toBe('Could not reach it');
+		expect(visibleStatusMessage('error', 'x', { ok: false, busy: true })).toBe('x');
+		expect(visibleStatusMessage('connected', 'old')).toBeUndefined();
 	});
 });

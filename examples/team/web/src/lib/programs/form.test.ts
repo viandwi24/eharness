@@ -124,6 +124,7 @@ describe('program form', () => {
 		expect(authoritySummary({ tools: [], connectors: [], read: [], write: [] })).toBe('nothing granted');
 		expect(budgetSummary({ perRunUsd: 2, perDayUsd: 10 })).toBe('$2 / run, $10 / day');
 		expect(budgetSummary({ perRunUsd: 0.5, perDayUsd: null })).toBe('$0.50 / run');
+		expect(budgetSummary({ perRunUsd: 0.001, perDayUsd: 0.0085 })).toBe('$0.001 / run, $0.0085 / day');
 		expect(budgetSummary({ perRunUsd: null, perDayUsd: null })).toBe('no limit');
 	});
 

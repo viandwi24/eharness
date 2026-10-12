@@ -51,21 +51,25 @@ export function closeRoutineDialog(): void {
 }
 
 /** The program dialog: create (optionally for a preset agent) or edit one program. */
-export const programDialog = $state<{ open: boolean; programId: string | null; agentId: string | null }>({
+export const programDialog = $state<{ open: boolean; programId: string | null; agentId: string | null; worker: boolean }>({
 	open: false,
 	programId: null,
-	agentId: null
+	agentId: null,
+	worker: false
 });
 
-export function openNewProgram(agentId: string | null = null): void {
+/** `worker`: the new program starts as a worker of the agent's task queue. */
+export function openNewProgram(agentId: string | null = null, worker = false): void {
 	programDialog.programId = null;
 	programDialog.agentId = agentId;
+	programDialog.worker = worker;
 	programDialog.open = true;
 }
 
 export function openEditProgram(programId: string): void {
 	programDialog.programId = programId;
 	programDialog.agentId = null;
+	programDialog.worker = false;
 	programDialog.open = true;
 }
 

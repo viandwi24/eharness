@@ -18,6 +18,15 @@ export const emptyConnectorsState = (): ConnectorsState => ({ connectors: [], co
 export const MODE_LABEL: Record<CapabilityMode, string> = { allow: 'Allowed', ask: 'Ask first', off: 'Off' };
 export const MODES: CapabilityMode[] = ['allow', 'ask', 'off'];
 
+/**
+ * Connections whose "Connected" badge is only the result of the last test, so it may be stale: the
+ * ones that are on and last answered fine. A connection that needs sign-in or already failed has its
+ * own badge; one that is off is not probed.
+ */
+export function connectionsToProbe(connections: readonly Pick<Connection, 'id' | 'enabled' | 'status'>[]): string[] {
+	return connections.filter((c) => c.enabled && (c.status === undefined || c.status === 'connected')).map((c) => c.id);
+}
+
 /** The capabilities of a connection: the ones discovered at connect time, else the connector's. */
 export function capabilitiesOf(connector: Connector | undefined, connection: Connection | undefined): Capability[] {
 	return connection?.capabilities?.length ? connection.capabilities : (connector?.capabilities ?? []);
@@ -117,6 +126,25 @@ export function createConnectorsCore(api: ApiClient, state: ConnectorsState) {
 		async remove(id: string): Promise<void> {
 			await api.delete('/connections/{id}', { params: { id } });
 			state.connections = state.connections.filter((c) => c.id !== id);
+		},
+
+		/**
+		 * Check the connections that claim to be connected (once per call, two at a time) so a stopped
+		 * server shows as an error without anyone pressing Test. Failures are the point: they land on
+		 * the connection; nothing is thrown.
+		 */
+		async probe(): Promise<void> {
+			const queue = connectionsToProbe(state.connections);
+			const worker = async (): Promise<void> => {
+				for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+					try {
+						await core.test(id);
+					} catch {
+						// an unreachable server is reported by the connection's own status
+					}
+				}
+			};
+			await Promise.all([worker(), worker()]);
 		},
 
 		async test(id: string) {

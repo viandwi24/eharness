@@ -27,7 +27,7 @@
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { isFileExists } from '#lib/conflict.js';
-	import { basename, breadcrumbs, cleanPath, fileKind, formatBytes, listFolder, parentOf, type LibraryEntry } from '#lib/files/helpers.js';
+	import { basename, breadcrumbs, cleanPath, fileKind, formatBytes, listFolder, parentOf, uploadTarget, type LibraryEntry } from '#lib/files/helpers.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { formatTime } from '#lib/format.js';
@@ -110,11 +110,32 @@
 		if (!f) return;
 		uploading = true;
 		try {
-			const r = await uploadLibraryFile(f);
-			toast.success(`Uploaded ${r.name}`);
+			// into the folder that is open when it is a text file; otherwise the uploads area
+			const target = uploadTarget(dir, f);
+			let path: string;
+			let name: string;
+			if (target.mode === 'folder') {
+				try {
+					await api.put('/library/file', { body: { path: target.path, content: await f.text(), ifVersion: null } });
+				} catch (err) {
+					if (isFileExists(err)) {
+						toast.error(`${basename(target.path)} already exists in ${parentOf(target.path)}`);
+						return;
+					}
+					throw err;
+				}
+				path = target.path;
+				name = basename(target.path);
+			} else {
+				const r = await uploadLibraryFile(f);
+				path = r.path;
+				name = r.name;
+				if (dir !== '/' && dir !== parentOf(r.path)) toast.message('Saved in the uploads area', { description: 'Only text files up to 1 MB can go into a library folder.' });
+			}
+			toast.success(`Uploaded ${name}`);
 			search = '';
 			await load();
-			nav({ path: r.path, dir: parentOf(r.path) });
+			nav({ path, dir: parentOf(path) });
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Upload failed');
 		} finally {

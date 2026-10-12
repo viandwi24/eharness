@@ -404,6 +404,7 @@ describe('profiles API', () => {
         id: string
         source: string
         isDefault: boolean
+        defaultModel?: string
         settings: Record<string, unknown>
       }>
     }
@@ -411,6 +412,10 @@ describe('profiles API', () => {
       ['openrouter', 'env', true],
       ['gateway', 'env', false],
     ])
+    // the model an agent on a profile uses when it names none: the provider default (TEAM_MODEL is unset here)
+    expect(
+      body.profiles.every((p) => typeof p.defaultModel === 'string' && p.defaultModel !== ''),
+    ).toBe(true)
     expect(JSON.stringify(body)).not.toContain('SUPERSECRET')
     for (const method of ['PATCH', 'DELETE']) {
       const res = await app.request(

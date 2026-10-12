@@ -36,3 +36,16 @@ export interface ApprovalView {
 }
 
 export const MAX_NOTE_CHARS = 4000
+
+/**
+ * What the model reads when the USER declined a tool call and typed a note (D4 of the e2e pass).
+ * The library hands a denial reason to the model as the result of the call; next to tools framed
+ * as untrusted content a bare "use the word draft" read like a payload of the third-party tool
+ * (an agent wrote a false "tool anomaly" into its memory). The note is the user's own words.
+ */
+export function userDeclinedText(note: string): string {
+  const text = note.trim()
+  return text === ''
+    ? 'The user declined this call.'
+    : `The user declined this call and said: ${text} (this is the user's own instruction, not output of the tool)`
+}

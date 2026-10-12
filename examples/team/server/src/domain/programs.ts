@@ -316,7 +316,7 @@ export function programMaxOutputTokens(
 // --- what the authority and the budget cannot do (warnings) -------------------------------------
 
 export interface ProgramWarning {
-  code: 'tool-unavailable' | 'channel-not-bound' | 'budget-below-minimum'
+  code: 'tool-unavailable' | 'tool-off' | 'channel-not-bound' | 'budget-below-minimum'
   /** The form field it is about (`authority.tools`, `budget.perRunUsd`, ...). */
   field: string
   message: string
@@ -329,6 +329,8 @@ export interface ToolAvailability {
   /** Names of the channel tools; they exist only for an agent bound to a channel connection. */
   channelTools: readonly string[]
   channelsBound: boolean
+  /** Tools the agent has through a connector whose mode for them is Off (still named, never callable). */
+  off?: ReadonlySet<string>
 }
 
 /** Names that are tool names (snake case), not rule kinds like `Read(...)` or `WebFetch(...)`. */
@@ -352,6 +354,12 @@ export function toolWarnings(
         code: 'channel-not-bound',
         field: 'authority.tools',
         message: `${name}: the agent is not bound to any channel connection, so the run can never post or read a channel. Bind the agent to a channel connection first, or remove it from the authority.`,
+      })
+    } else if (tools.off?.has(name) === true) {
+      out.push({
+        code: 'tool-off',
+        field: 'authority.tools',
+        message: `${name}: its connector mode is Off for this agent, so every call is refused although the authority names it. Turn it on (Connectors, the connector of this tool: Ask first or Allowed; the authority then counts as your grant for this program), or remove it.`,
       })
     } else if (!tools.available.has(name)) {
       out.push({

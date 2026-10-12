@@ -20,6 +20,7 @@
 	import { cn } from '#lib/utils.js';
 	import ApprovalsPopover from './ApprovalsPopover.svelte';
 	import ThemeToggle from './ThemeToggle.svelte';
+	import { scrollFades } from '#lib/nav/fades.js';
 
 	/**
 	 * Main navigation as an icon rail (WhatsApp / Slack style): sections at the top, notifications,
@@ -46,6 +47,20 @@
 	const briefingCount = $derived(live.state.notifications.filter((n) => n.kind === 'briefing').length);
 	const main = SECTIONS.filter((s) => s.id !== 'settings');
 	const settings = SECTIONS.find((s) => s.id === 'settings')!;
+
+	// The bottom bar scrolls sideways: it fades where more tabs are hidden.
+	let strip = $state<HTMLElement | null>(null);
+	let fades = $state({ left: false, right: false });
+	function measure(): void {
+		if (strip) fades = scrollFades(strip.scrollLeft, strip.clientWidth, strip.scrollWidth);
+	}
+	$effect(() => {
+		if (!strip) return;
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(strip);
+		return () => ro.disconnect();
+	});
 </script>
 
 {#snippet item(s: (typeof SECTIONS)[number])}
@@ -84,9 +99,13 @@
 {/snippet}
 
 {#if bar}
-	<nav class="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-sidebar px-2 py-1.5" aria-label="Main">
-		{#each [...main, settings] as s (s.id)}{@render item(s)}{/each}
-	</nav>
+	<div class="relative shrink-0 border-t border-border bg-sidebar">
+		<nav bind:this={strip} onscroll={measure} class="flex items-center gap-1 overflow-x-auto px-2 py-1.5" aria-label="Main">
+			{#each [...main, settings] as s (s.id)}{@render item(s)}{/each}
+		</nav>
+		{#if fades.left}<div class="pointer-events-none absolute inset-y-0 left-0 w-8 bg-linear-to-r from-sidebar to-transparent" data-testid="bar-fade-left"></div>{/if}
+		{#if fades.right}<div class="pointer-events-none absolute inset-y-0 right-0 w-8 bg-linear-to-l from-sidebar to-transparent" data-testid="bar-fade-right"></div>{/if}
+	</div>
 {:else}
 	<nav class="flex h-full w-14 shrink-0 flex-col items-center gap-1 py-3" aria-label="Main">
 		<a href="/" class="mb-2 flex size-9 items-center justify-center rounded-xl bg-foreground font-brand text-sm text-background" aria-label="Team home">T</a>

@@ -45,7 +45,7 @@ import {
   programSessionId,
   toolWarnings,
 } from '../../domain/programs.ts'
-import type { Task } from '../../domain/tasks.ts'
+import { inReview, type Task } from '../../domain/tasks.ts'
 import { workItemPrompt } from '../../domain/work-queue.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
@@ -162,7 +162,31 @@ export function createProgramService(
       prompt,
       task === undefined ? [] : await inputFiles(task),
     )
-    return verify(program, def, sessionId, stop)
+    const out = await verify(program, def, sessionId, stop)
+    noticeReview(sessionId)
+    return out
+  }
+
+  /**
+   * Work waiting in Review tells the bell, once per task round (D11 of the e2e pass): finished work
+   * the client has not looked at is the client's turn, and no page they are not on says so.
+   */
+  function noticeReview(sessionId: string): void {
+    const app = deps.app?.()
+    const task = deps.tasks.getBySession(sessionId)
+    if (app === undefined || task === undefined || !inReview(task)) return
+    try {
+      postNotice(app, {
+        key: `review:${task.id}:${task.round}`,
+        title: `Ready for review: ${task.title}`.slice(0, 160),
+        body: task.summary ?? 'The work is done and waits for you to accept it or send it back.',
+        link: `/tasks/${task.id}`,
+        agentId: task.agentId,
+        at: clock(),
+      })
+    } catch (error) {
+      log.warn(`review notice of ${task.id} not posted: ${errorText(error)}`)
+    }
   }
 
   /**
@@ -393,6 +417,7 @@ export function createProgramService(
       const def = program === undefined ? undefined : deps.agents.get(program.agentId)
       if (program === undefined || def === undefined) return
       await verify(program, def, sessionId, 'complete')
+      noticeReview(sessionId)
     },
 
     async idle() {

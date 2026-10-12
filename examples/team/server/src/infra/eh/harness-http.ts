@@ -25,7 +25,7 @@ import { OWNER } from '../../app/chat.ts'
 import { DomainError } from '../../app/errors.ts'
 import type { Actor, AgentRepo, TaskStore, ThreadStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import { MAX_NOTE_CHARS } from '../../domain/approvals.ts'
+import { MAX_NOTE_CHARS, userDeclinedText } from '../../domain/approvals.ts'
 import { dmSessionId, isDmSession } from '../../domain/chat.ts'
 import { notFound } from '../../domain/errors.ts'
 import { parseChatSession } from '../../domain/threads.ts'
@@ -51,6 +51,11 @@ export interface TeamHttpOptions {
   checkChatBody: (body: unknown) => Promise<unknown>
   /** Largest request body (chat attachments are base64 data URLs). */
   maxBodyBytes: number
+  /**
+   * Save "always allow" as a rule of the agent (`scope: 'agent'`) or of every agent (`'all'`): the
+   * tool is allowed in all its sessions from now on (still asked where a connector pins it).
+   */
+  rememberRule?: (agent: AgentDef, toolName: string, scope: 'agent' | 'all') => void
 }
 
 const STATUS = { invalid: 400, not_found: 404, conflict: 409, forbidden: 403 } as const
@@ -102,8 +107,17 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
   const parseAnswer = (call: {
     item?: { kind: string; toolCallId: string; toolName: string; input: unknown }
     body: unknown
+    defaultParse(): AttentionAnswer
   }): AttentionAnswer | undefined => {
     const answer = isRecord(call.body) ? call.body.answer : undefined
+    if (isRecord(answer) && answer.kind === 'approval' && answer.approved === false) {
+      // a note on a declined call reaches the model as the user's own words (D4)
+      const parsed = call.defaultParse()
+      if (parsed.kind !== 'approval') return parsed
+      const note = [parsed.reason, parsed.note].filter((t): t is string => !!t?.trim()).join('\n\n')
+      const { note: _note, reason: _reason, ...rest } = parsed
+      return note === '' ? parsed : { ...rest, reason: userDeclinedText(note) }
+    }
     if (!isRecord(answer) || answer.kind !== 'question') return undefined
     const { answers } = answer
     if (answers !== null && !Array.isArray(answers)) {
@@ -125,7 +139,7 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
       : { kind: 'client-tool', errorText: out.errorText }
   }
 
-  return createHarnessHttp<Actor>(undefined, {
+  const http = createHarnessHttp<Actor>(undefined, {
     authorize: ({ request }) =>
       checkBearer(options.token, request.headers.get('authorization') ?? undefined)
         ? OWNER
@@ -217,4 +231,74 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
     },
     onFailure: (error) => console.error(error),
   })
+
+  /**
+   * "Always allow" (D3 of the e2e pass). The library records the grant for later steps; the calls
+   * of the same tool that already wait in this very batch are answered with it now, so one click
+   * clears the cards of the turn. The body may carry `scope`: `session` (default), `agent` (a rule
+   * of this agent, all its sessions) or `all` (a rule of every agent). The siblings are answered
+   * first, the answer that was sent last, so it is the one that resumes the session.
+   */
+  async function answerWithGrant(request: Request): Promise<Response> {
+    const match = /\/attention\/([^/]+)\/answer$/.exec(new URL(request.url).pathname)
+    if (request.method !== 'POST' || match === null) return http.fetch(request)
+    let body: unknown
+    try {
+      body = await request.clone().json()
+    } catch {
+      return http.fetch(request)
+    }
+    const answer = isRecord(body) ? body.answer : undefined
+    if (
+      !isRecord(body) ||
+      !isRecord(answer) ||
+      answer.kind !== 'approval' ||
+      answer.approved !== true ||
+      typeof body.sessionId !== 'string'
+    ) {
+      return http.fetch(request)
+    }
+    const scope = answer.scope
+    if (scope !== undefined && scope !== 'session' && scope !== 'agent' && scope !== 'all') {
+      return json(400, 'EH_INVALID_INPUT', "scope must be 'session', 'agent' or 'all'")
+    }
+    const wantsGrant = answer.remember === 'session' || scope === 'agent' || scope === 'all'
+    if (!wantsGrant) return http.fetch(request)
+    const sessionId = body.sessionId
+    const id = decodeURIComponent(match[1] as string)
+    // the library only knows `remember: 'session'`: a wider scope is the same grant plus a rule
+    const { scope: _scope, ...plain } = answer
+    const forward = (attentionId: string, payload: Record<string, unknown>): Request =>
+      new Request(
+        request.url.replace(
+          /\/attention\/[^/]+\/answer$/,
+          `/attention/${encodeURIComponent(attentionId)}/answer`,
+        ),
+        {
+          method: 'POST',
+          headers: request.headers,
+          body: JSON.stringify({ ...body, answer: payload }),
+        },
+      )
+    try {
+      const pending = await factory.peek(sessionId).pending()
+      const mine = pending?.approvals.find((a) => a.approvalId === id)
+      if (pending !== null && mine !== undefined) {
+        for (const sibling of pending.approvals) {
+          if (sibling.approvalId === id || sibling.toolName !== mine.toolName) continue
+          if (sibling.answer !== undefined || sibling.granted === true) continue
+          await http.fetch(forward(sibling.approvalId, { kind: 'approval', approved: true }))
+        }
+        if (scope === 'agent' || scope === 'all') {
+          const found = resolve(sessionId)
+          if (found !== undefined) options.rememberRule?.(found.def, mine.toolName, scope)
+        }
+      }
+    } catch (error) {
+      console.warn(`team: answering the siblings of an always-allow failed: ${String(error)}`)
+    }
+    return http.fetch(forward(id, { ...plain, remember: 'session' }))
+  }
+
+  return { ...http, fetch: answerWithGrant }
 }

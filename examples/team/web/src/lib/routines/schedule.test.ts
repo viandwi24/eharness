@@ -3,6 +3,22 @@ import { buildSpec, defaultScheduleForm, describeSpec, parseSpec, relativeTime, 
 
 const form = (o: Partial<ReturnType<typeof defaultScheduleForm>>) => ({ ...defaultScheduleForm('Europe/Berlin'), ...o });
 
+describe('intervals shorter than a minute', () => {
+	test('a 10 s and a 90 s interval survive the editor round trip and read as seconds', () => {
+		for (const everyMs of [10_000, 90_000]) {
+			const f = parseSpec({ kind: 'every', everyMs });
+			expect(f.everySeconds).toBe(everyMs / 1000);
+			expect(buildSpec(f)).toEqual({ kind: 'every', everyMs });
+		}
+		expect(describeSpec({ kind: 'every', everyMs: 10_000 })).toBe('Every 10 seconds');
+		expect(describeSpec({ kind: 'every', everyMs: 60_000 })).toBe('Every minute');
+		expect(parseSpec({ kind: 'every', everyMs: 120_000 }).everySeconds).toBeNull();
+	});
+	test('below the server minimum is refused', () => {
+		expect(() => buildSpec(form({ kind: 'every', everySeconds: 5 }))).toThrow(/10 seconds/);
+	});
+});
+
 describe('schedule presets', () => {
 	test('daily, weekdays and weekly become cron with the timezone', () => {
 		expect(buildSpec(form({ kind: 'daily', time: '09:00' }))).toEqual({ kind: 'cron', expr: '0 9 * * *', tz: 'Europe/Berlin' });

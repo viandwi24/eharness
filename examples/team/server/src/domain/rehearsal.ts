@@ -235,12 +235,18 @@ export const REHEARSAL_INTERNAL_CONNECTORS: readonly string[] = [
 export function isSimulatedCall(call: {
   connectorId: string | undefined
   risk: string | undefined
+  /** The kind of the connector capability of the tool (`read`, `write`, `destructive`), when known. */
+  kind?: string | undefined
 }): boolean {
   // not from a connector: the app's own tools (decisions, work queue) handle a rehearsal themselves
   if (call.connectorId === undefined) return false
   if (REHEARSAL_INTERNAL_CONNECTORS.includes(call.connectorId)) return false
-  // an unknown risk of an external tool is treated as a write: never call what we cannot classify
-  return call.risk !== 'read'
+  // reads run for real (a rehearsal on live data is still a read); a tool with a risk that says
+  // write, external or destructive is simulated, an MCP read-only hint never lowers it (D7)
+  if (call.risk === 'read') return false
+  if (call.risk === undefined && call.kind === 'read') return false
+  // an unknown risk and kind of an external tool is treated as a write: never call what we cannot classify
+  return true
 }
 
 const PREVIEW_CHARS = 600

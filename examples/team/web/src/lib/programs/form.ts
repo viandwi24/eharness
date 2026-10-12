@@ -297,9 +297,16 @@ export function authoritySummary(a: Program['authority']): string {
 	return parts.length ? parts.join(', ') : 'nothing granted';
 }
 
+/** A budget amount: cents above a cent, two significant digits below it ($0.001, $0.0085), whole dollars trimmed. */
+export function formatBudgetUsd(n: number): string {
+	if (n >= 1) return `$${String(Number(n.toFixed(2)))}`;
+	if (n >= 0.01 || n === 0) return `$${n.toFixed(2)}`;
+	return `$${String(Number(n.toPrecision(2)))}`;
+}
+
 /** Budget as one line: "$2 / run, $10 / day", or "no limit". */
 export function budgetSummary(b: Program['budget']): string {
-	const usd = (n: number) => `$${n < 1 ? n.toFixed(2) : String(Number(n.toFixed(2)))}`;
+	const usd = formatBudgetUsd;
 	const parts: string[] = [];
 	if (b.perRunUsd !== null) parts.push(`${usd(b.perRunUsd)} / run`);
 	if (b.perDayUsd !== null) parts.push(`${usd(b.perDayUsd)} / day`);

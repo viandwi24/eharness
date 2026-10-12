@@ -9,7 +9,9 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { bodyFromTaskForm, emptyTaskForm, PRIORITIES, type TaskForm, validateTaskForm } from '#lib/tasks/queue.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
-	import { closeTaskDialog, taskDialog } from '#lib/stores/dialogs.svelte.js';
+	import { closeTaskDialog, openNewProgram, taskDialog } from '#lib/stores/dialogs.svelte.js';
+	import { hasWorkerProgram } from '#lib/tasks/queue.js';
+	import type { Program } from '#lib/programs/form.js';
 	import { live } from '#lib/stores/live.svelte.js';
 
 	let form = $state<TaskForm>(emptyTaskForm());
@@ -24,8 +26,14 @@
 			errors = {};
 			formError = '';
 			void agentsStore.load();
+			programs = null;
+			void api.get('/programs').then((r) => (programs = r.programs), () => (programs = null));
 		});
 	});
+	// the programs of the team: a queued task only starts when a worker program of its agent runs
+	let programs = $state<Program[] | null>(null);
+	const noWorker = $derived(programs !== null && form.agentId !== '' && !hasWorkerProgram(programs, form.agentId));
+	const agentName = $derived(agentsStore.state.agents.find((a) => a.id === form.agentId)?.name ?? 'this agent');
 
 	async function submit(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
@@ -64,6 +72,14 @@
 				</NativeSelect>
 				{#if errors.agentId}<span class="text-xs text-destructive-text">{errors.agentId}</span>{/if}
 			</label>
+			{#if noWorker}
+				<div class="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/50 px-3 py-2.5" role="status" data-testid="no-worker">
+					<p class="text-[13px]">{agentName} has no worker program yet, so a queued task would wait. A worker program is what takes queued tasks and works them.</p>
+					<div>
+						<Button type="button" size="xs" variant="outline" onclick={() => { const id = form.agentId; closeTaskDialog(); openNewProgram(id, true); }}>Create a worker program for {agentName}</Button>
+					</div>
+				</div>
+			{/if}
 			<label class="flex flex-col gap-1">
 				<span class="font-medium">Title</span>
 				<Input bind:value={form.title} placeholder="Script: the lighthouse" aria-invalid={!!errors.title} />

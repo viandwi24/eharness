@@ -58,13 +58,19 @@ export function editableInput(message: UIMessage): { text: string; files: FileUI
 	return { text, files };
 }
 
-/** Whether an error notice (a failed turn, stored by the core) ends the chat: nothing from the person follows it. */
-export function endsInErrorNotice(messages: readonly UIMessage[]): boolean {
+/** The id of the error notice that ends the chat (nothing from the person follows it), if there is one. */
+export function endingErrorNoticeId(messages: readonly UIMessage[]): string | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i] as UIMessage;
-		if (m.role === 'user') return false;
+		if (m.role === 'user') return undefined;
 		if (kindOf(m) !== 'eh.notice') continue;
-		return m.parts.some((p) => p.type === 'data-eh.notice' && (p as { data?: { level?: unknown } }).data?.level === 'error');
+		const isError = m.parts.some((p) => p.type === 'data-eh.notice' && (p as { data?: { level?: unknown } }).data?.level === 'error');
+		return isError ? m.id : undefined;
 	}
-	return false;
+	return undefined;
+}
+
+/** Whether an error notice (a failed turn, stored by the core) ends the chat: nothing from the person follows it. */
+export function endsInErrorNotice(messages: readonly UIMessage[]): boolean {
+	return endingErrorNoticeId(messages) !== undefined;
 }

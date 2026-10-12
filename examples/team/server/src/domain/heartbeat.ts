@@ -774,12 +774,14 @@ export function beatPrompt(input: {
     `Heartbeat of ${input.agentName}: ${new Date(input.now).toISOString()} (${input.timezone}).`,
     '',
     'You are the quiet monitor of this team. Nobody is watching this turn and you are read-only:',
-    'you may read the library and call team_status, list_tasks and propose_plan, nothing else.',
+    'you may read the library, call team_status, list_tasks and propose_plan, and use the tools of',
+    'connected services that only look things up (read-only); nothing else.',
     'The client does not want noise: report only what needs their attention.',
     '',
     '## How to run',
     '1. Call team_status. It lists what the server found, with a fingerprint for each finding.',
-    '2. Work through the checklist below (read the library files it names).',
+    '2. Work through the checklist below (read the library files it names; for a line that names a',
+    '   connected service, call its read-only tools).',
     '3. Decide what deserves the client attention. A finding that is just information, or that you',
     '   cannot act on, still goes in the result as an item; routine and healthy things do not.',
     '   About money: say only what team_status states as spend, or the cost of a run. Never infer',
@@ -822,9 +824,9 @@ export const HEARTBEAT_ALLOWED = [
 
 export function heartbeatRefusal(toolName: string): string {
   return (
-    `Not available in a heartbeat: ${toolName}. A heartbeat is read-only: it reads the library, ` +
-    'calls team_status, and asks the client through propose_plan. Report what you ' +
-    'found as an item of the final answer instead.'
+    `Not available in a heartbeat: ${toolName}. A heartbeat is read-only: it reads the library and ` +
+    'the read-only tools of connected services, calls team_status, and asks the client through ' +
+    'propose_plan. Report what you found as an item of the final answer instead.'
   )
 }
 

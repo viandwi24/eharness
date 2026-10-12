@@ -61,16 +61,6 @@ export type PartView =
 			/** True when the output is a preliminary (still streaming) one. */
 			preliminary?: boolean;
 	  }
-	| {
-			kind: 'approval';
-			key: string;
-			toolCallId: string;
-			toolName: string;
-			title: string;
-			state: ToolViewState;
-			approval: ToolApproval;
-			input: unknown;
-	  }
 	| { kind: 'subagentRun'; key: string; run: SubagentRun }
 	| {
 			kind: 'input';
@@ -239,9 +229,6 @@ export function viewModel(message: UIMessage, live = true): PartView[] {
 				run: isSubagent ? runs.get(toolCallId) : undefined,
 				preliminary: part.preliminary === true ? true : undefined
 			});
-			if (approval && (state === 'approval-requested' || state === 'approval-responded' || state === 'output-denied')) {
-				out.push({ kind: 'approval', key: `${key}:approval`, toolCallId, toolName: name, title, state, approval, input: part.input });
-			}
 		} else if (type === 'data-subagent.run') {
 			// Merged into the `agent` tool view when its tool part is in the same message.
 			if (isRun(part.data) && !toolCallIds.has(part.data.toolCallId)) out.push({ kind: 'subagentRun', key, run: part.data });

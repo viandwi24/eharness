@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { editableInput, endsInErrorNotice, isEmptyAssistant, regenerateTarget, uniqueById, withoutEmptyAssistant } from './messages.ts';
+import { editableInput, endingErrorNoticeId, endsInErrorNotice, isEmptyAssistant, regenerateTarget, uniqueById, withoutEmptyAssistant } from './messages.ts';
 
 describe('uniqueById', () => {
 	test('returns the same list when ids are unique', () => {
@@ -62,5 +62,9 @@ describe('regenerateTarget / editableInput / endsInErrorNotice', () => {
 		expect(endsInErrorNotice([user('1', 'a'), asst('2'), notice('3', 'error')])).toBe(true);
 		expect(endsInErrorNotice([user('1', 'a'), notice('3', 'warning')])).toBe(false);
 		expect(endsInErrorNotice([notice('3', 'error'), user('1', 'a')])).toBe(false);
+	});
+	test('the ending notice is identified, so an old one is not mistaken for a new failure', () => {
+		expect(endingErrorNoticeId([user('1', 'a'), asst('2'), notice('3', 'error')])).toBe('3');
+		expect(endingErrorNoticeId([notice('3', 'error'), user('4', 'b')])).toBeUndefined();
 	});
 });

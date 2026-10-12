@@ -287,8 +287,11 @@ describe('workspace usage', () => {
       'delegated',
       'routine',
       'program',
+      'heartbeat',
+      'rehearsal',
+      'other',
     ])
-    expect(u.agents.find((a) => a.id === i.leadId)?.bySource).toHaveLength(5)
+    expect(u.agents.find((a) => a.id === i.leadId)?.bySource).toHaveLength(8)
   })
 })
 

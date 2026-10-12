@@ -3,6 +3,7 @@ import { USAGE_SOURCES } from '../../app/usage.ts'
 
 const TotalSchema = z.object({
   count: z.number().int(),
+  calls: z.number().int().openapi({ description: 'Model calls (the unit of the Logs page).' }),
   tokens: z.number().int(),
   costUsd: z.number(),
 })
@@ -11,12 +12,13 @@ export const SourceUsageSchema = z
   .object({
     source: z.enum(USAGE_SOURCES).openapi({
       description:
-        '`chat` (all chat threads), `task` (tasks queued by a person), `delegated` (work an agent handed to another), `routine` (routine runs), `program` (program runs).',
+        '`chat` (all chat threads), `task` (tasks started by a person), `delegated` (work an agent handed to another), `routine` (routine runs), `program` (program runs), `heartbeat` (the ambient monitor), `rehearsal` (test runs), `other` (calls without a session).',
     }),
     count: z
       .number()
       .int()
-      .openapi({ description: 'Chat: turns that ran a model step. The others: runs.' }),
+      .openapi({ description: 'Chat and heartbeat: turns that called a model. The others: runs.' }),
+    calls: z.number().int().openapi({ description: 'Model calls (the unit of the Logs page).' }),
     tokens: z.number().int(),
     costUsd: z.number(),
   })
@@ -24,6 +26,9 @@ export const SourceUsageSchema = z
 
 export const WorkspaceUsageSchema = z
   .object({
+    since: z.number().int().nullable().openapi({
+      description: 'Start of the oldest call still in the log; the totals cover from then on.',
+    }),
     total: TotalSchema,
     bySource: z.array(SourceUsageSchema),
     agents: z.array(

@@ -65,3 +65,8 @@ export function dueLabel(dueAt: number | null, now = Date.now()): { text: string
 }
 
 export const priorityLabel = (p: Priority): string => PRIORITIES.find((o) => o.value === p)?.label ?? p;
+
+/** Whether an active program works the queued tasks of `agentId`: without one, a queued task never starts. */
+export function hasWorkerProgram(programs: readonly { agentId: string; status: string; worker: unknown }[], agentId: string): boolean {
+	return programs.some((p) => p.agentId === agentId && p.status === 'active' && p.worker != null);
+}

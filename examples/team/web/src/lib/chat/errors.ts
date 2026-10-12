@@ -32,3 +32,8 @@ export function lastTurnErrorCode(messages: readonly UIMessage[]): string | unde
 	const code = meta?.eharness?.error?.code;
 	return typeof code === 'string' ? code : undefined;
 }
+
+/** Whether a chat problem banner only says the connection was lost (it clears itself when the server is back). */
+export function isConnectionProblem(message: string | undefined): boolean {
+	return message !== undefined && /cannot reach the server/i.test(message);
+}

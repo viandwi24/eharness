@@ -43,12 +43,12 @@ describe('viewModel', () => {
 		expect(v[0]).toMatchObject({ kind: 'tool', toolName: 'read_file', title: 'Read /a.md', state, isSubagent: false });
 	});
 
-	test('approval requested emits tool + approval views', () => {
+	test('approval requested is a tool view carrying its approval (the card lives in the dock)', () => {
 		const v = viewModel(
 			msg([{ type: 'tool-bash', toolCallId: 'c1', state: 'approval-requested', input: { command: 'ls -la' }, approval: { id: 'a1' } }])
 		);
-		expect(v.map((x) => x.kind)).toEqual(['tool', 'approval']);
-		expect(v[1]).toMatchObject({ kind: 'approval', approval: { id: 'a1' }, title: 'Run ls -la' });
+		expect(v.map((x) => x.kind)).toEqual(['tool']);
+		expect(v[0]).toMatchObject({ kind: 'tool', state: 'approval-requested', approval: { id: 'a1' }, title: 'Run ls -la' });
 	});
 
 	test('denied tool surfaces the reason', () => {
@@ -56,7 +56,7 @@ describe('viewModel', () => {
 			msg([{ type: 'dynamic-tool', toolName: 'mcp_x', toolCallId: 'c1', state: 'output-denied', input: {}, approval: { id: 'a1', approved: false, reason: 'no' } }])
 		);
 		expect(v[0]).toMatchObject({ kind: 'tool', toolName: 'mcp_x', state: 'output-denied', errorText: 'no' });
-		expect(v[1]).toMatchObject({ kind: 'approval', state: 'output-denied' });
+		expect(v).toHaveLength(1);
 	});
 
 	test('agent tool: progress and run merge', () => {
@@ -140,7 +140,7 @@ describe('viewModel: server parts the page must survive', () => {
 		const v = viewModel(
 			msg([{ type: 'tool-bash', toolCallId: 'c1', state: 'output-denied', input: { command: 'ls' }, approval: { id: 'a1', approved: true } }])
 		);
-		expect(v[1]).toMatchObject({ kind: 'approval', approval: { approved: false } });
+		expect(v[0]).toMatchObject({ kind: 'tool', approval: { approved: false } });
 		expect((v[0] as { errorText?: string }).errorText).toContain('denied');
 	});
 

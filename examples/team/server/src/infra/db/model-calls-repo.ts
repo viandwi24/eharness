@@ -290,6 +290,66 @@ export function sqliteModelCallStore(
       }
     },
 
+    usage(filter = {}) {
+      const where: string[] = []
+      const params: Param[] = []
+      if (filter.from !== undefined) {
+        where.push('m.started_at >= ?')
+        params.push(filter.from)
+      }
+      if (filter.to !== undefined) {
+        where.push('m.started_at <= ?')
+        params.push(filter.to)
+      }
+      const rows = sqlite
+        .query<
+          {
+            agent_id: string | null
+            source: string
+            calls: number
+            turns: number
+            sessions: number
+            tokens: number
+            cost: number
+          },
+          Param[]
+        >(
+          `SELECT m.agent_id AS agent_id,
+             CASE WHEN m.session_id IS NULL THEN 'other'
+                  WHEN m.session_id LIKE 'heartbeat:%' THEN 'heartbeat'
+                  WHEN m.session_id LIKE 'rehearsal:%' THEN 'rehearsal'
+                  WHEN m.session_id LIKE 'program:%' THEN 'program'
+                  WHEN m.session_id LIKE 'routine:%' THEN 'routine'
+                  WHEN t.origin = 'user' THEN 'task'
+                  WHEN t.origin = 'lead' OR m.session_id LIKE '%:agent:%' THEN 'delegated'
+                  ELSE 'chat' END AS source,
+             COUNT(*) AS calls,
+             COUNT(DISTINCT m.session_id || '|' || COALESCE(m.turn_id, '')) AS turns,
+             COUNT(DISTINCT m.session_id) AS sessions,
+             COALESCE(SUM(COALESCE(m.input_tokens, 0) + COALESCE(m.output_tokens, 0)), 0) AS tokens,
+             COALESCE(SUM(m.cost_usd), 0) AS cost
+           FROM model_calls m LEFT JOIN tasks t ON t.session_id = m.session_id
+           ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+           GROUP BY m.agent_id, source`,
+        )
+        .all(...params)
+      const first = sqlite
+        .query<{ at: number | null }, []>('SELECT MIN(started_at) AS at FROM model_calls')
+        .get()
+      return {
+        since: first?.at ?? null,
+        rows: rows.map((r) => ({
+          agentId: r.agent_id,
+          source: r.source,
+          calls: r.calls,
+          turns: r.turns,
+          sessions: r.sessions,
+          tokens: r.tokens,
+          costUsd: r.cost,
+        })),
+      }
+    },
+
     stats(query) {
       const { from, to } = query
       const bucketMs = query.bucketMs ?? bucketWidth(to - from)

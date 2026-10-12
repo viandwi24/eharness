@@ -39,6 +39,7 @@ import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
+import { updateAgent } from './app/agents.ts'
 import { hostAllowed, type ListenConfig, listenConfig, originOf } from './app/auth.ts'
 import { briefingsText } from './app/briefings.ts'
 import { checkChatBody, uploadFile } from './app/chat.ts'
@@ -618,6 +619,7 @@ export function compose(config: ServerConfig): Server {
     events,
     programs: { store: programStore, runner: programRunner },
     system: () => heartbeats,
+    app: () => deps,
     // a routine in `dm` mode fires into a live thread of the agent, never an archived one
     dmSession: (agentId) => {
       const agent = agents.get(agentId)
@@ -945,6 +947,20 @@ export function compose(config: ServerConfig): Server {
     ...(config.eventsPollMs === undefined ? {} : { pollMs: config.eventsPollMs }),
     maxBodyBytes: MAX_REQUEST_BYTES,
     checkChatBody: (body) => checkChatBody(deps, body),
+    // "always allow" saved as a rule of the agent, or of every agent
+    rememberRule: (agent, toolName, scope) => {
+      const targets = scope === 'agent' ? [agent] : agents.list()
+      for (const target of targets) {
+        if (target.archivedAt !== null || target.rules.allow.includes(toolName)) continue
+        try {
+          updateAgent(deps, target.id, {
+            rules: { ...target.rules, allow: [...target.rules.allow, toolName] },
+          })
+        } catch (error) {
+          console.warn(`team: saving the rule for ${target.slug} failed: ${errorText(error)}`)
+        }
+      }
+    },
   })
   const allowedOrigins = [
     ...new Set(

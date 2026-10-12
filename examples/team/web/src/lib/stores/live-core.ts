@@ -16,6 +16,8 @@ import type { AgentsStore } from './agents-core';
 export type LiveState = {
 	approvals: Approval[];
 	approvalsLoaded: boolean;
+	/** Ids of the approvals and questions this tab answered (a tool row says "answered elsewhere" only for the others). */
+	answeredHere: Record<string, 'approved' | 'declined' | 'answered'>;
 	/** Open decisions of the Decision Center (proposals, questions, requests for authority). */
 	decisions: Decision[];
 	decisionsLoaded: boolean;
@@ -38,6 +40,7 @@ export type LiveState = {
 export const emptyLiveState = (): LiveState => ({
 	approvals: [],
 	approvalsLoaded: false,
+	answeredHere: {},
 	decisions: [],
 	decisionsLoaded: false,
 	tasks: [],
@@ -322,20 +325,25 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		 */
 		async answer(a: Approval, body: ApprovalBody): Promise<void> {
 			const wire: TeamAnswer = 'answers' in body ? { kind: 'question', answers: body.answers } : { kind: 'approval', ...body };
-			await attention.answer(a, wire);
+			state.answeredHere[a.id] = 'answers' in body ? 'answered' : body.approved ? 'approved' : 'declined';
+			try {
+				await attention.answer(a, wire);
+			} catch (e) {
+				delete state.answeredHere[a.id];
+				throw e;
+			}
 			later('tasks', core.loadTasks);
 		},
 
 		/**
-		 * What one chat thread must show inline: its own questions (`ask_user_question`; its own tool
-		 * approvals render inside the message) plus every approval or question of the child sessions it
-		 * delegated to — like the coder's prompt labelled "from <agent>". `sessionId` is the thread's
-		 * session; without it, every thread of the agent.
+		 * What one chat thread shows in its dock above the composer: its own questions and tool approvals
+		 * plus every approval or question of the child sessions it delegated to — like the coder's prompt
+		 * labelled "from <agent>". `sessionId` is the thread's session; without it, every thread of the agent.
 		 */
 		chatPending(agentId: string, sessionId?: string): Approval[] {
 			const ids = agentIds(agentId);
 			const own = (a: Approval): boolean => (sessionId ? a.sessionId === sessionId : ids.includes(chatSessionAgent(a.sessionId) ?? ''));
-			return [...state.approvals.filter((a) => own(a) && a.kind === 'question'), ...core.childApprovals(agentId, sessionId)];
+			return [...state.approvals.filter((a) => own(a) && a.parentSessionId === null), ...core.childApprovals(agentId, sessionId)];
 		},
 
 		/**

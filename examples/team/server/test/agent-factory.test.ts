@@ -79,7 +79,7 @@ describe('agent factory', () => {
     expect(lock.n).toBe(0)
   })
 
-  test('the lead gets no library write; role tools follow the definition', async () => {
+  test('seed roles can do their jobs: the lead edits files and reads the web, the analyst has the data tools', async () => {
     server = compose({
       dbFile: ':memory:',
       models: scriptedModelConfig(scriptedModel([]) as never),
@@ -90,9 +90,12 @@ describe('agent factory', () => {
     await server.factory.prepare()
     const toolsOf = (id: string): string[] =>
       Object.keys(server?.connectors.activated(id)?.toolNameMap ?? {})
-    // the lead can read the library but not write it: the tool is switched off
-    expect(server.connectors.activated(lead.id)?.rules.deny).toContain('write_file')
+    // the lead edits library files and reads the web itself (small things); deleting asks
+    expect(server.connectors.activated(lead.id)?.rules.deny).not.toContain('write_file')
+    expect(toolsOf(lead.id)).toEqual(expect.arrayContaining(['write_file', 'web_fetch']))
+    // the analyst has no web, and the data tools a program with a data authority needs
     expect(toolsOf(analyst.id)).not.toContain('web_fetch')
+    expect(toolsOf(analyst.id)).toContain('run_code')
     // both build (plugin order, permissions, memory roots) without throwing
     server.factory.agentFor(lead)
     server.factory.agentFor(analyst)

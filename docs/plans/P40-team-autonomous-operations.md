@@ -449,6 +449,27 @@ All are fixed in the team example; `src/` is untouched (the per-turn `settings.m
   warned about (the run starts and the model cannot call them); only the channel case fails early,
   because that is the one that made runs loop.
 
+## Fixes of the browser end-to-end pass
+
+A browser pass (S0 to S11) found defects D1 to D18. The server-side ones are fixed in the team example
+(`src/` untouched); the web ones are another change. Details and design choices:
+[walkthrough 27b](../guides/walkthrough-server.md). Tests: `server/test/e2e-fixes.test.ts` (scripted
+models), plus changed expectations in `routines`, `threads` and `agent-factory` tests.
+
+- [x] D4 a decline note is the user's own words; D6 program authority satisfies "Ask first" (Off wins,
+      warned); D7 rehearsal runs reads; D8 proposal outcome reaches the agent; D10 routine auto-pause
+      and D11 Review in the bell, send-back hint; D12 no early fires; stale escalation expired;
+      D15 budget stop notice; D14 spend from the call log; D18 connector reachability and beats with
+      read tools; D3 always allow siblings and scope; D2 inline thinking split; seed roles.
+- Decided: a rehearsal read is a connector capability of kind read (an MCP `readOnlyHint` never
+  lowers a risk); Usage counts the call log, so it covers what the log keeps (`since`); the digest
+  already used the call log; stale = a newer run of the same program exists.
+- Not reproduced: D18 "the digest creates no bell item" (the item exists; opening the Briefing page
+  clears it) and the parked task after a restart (`running`, column `waiting`, stable across the
+  recovery pass). `pendingKind` has no `decision` value; adding one touches every task consumer.
+- Web follow-ups that need the new API: show `hint` of send-back, `scope` of Always allow, `calls`
+  and `since` of Usage (the "Turns and runs" label counts turns and runs, not calls).
+
 ## Acceptance criteria
 
 - [ ] The acceptance scenario runs end to end on an isolated instance with scripted models: the

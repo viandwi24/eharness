@@ -173,15 +173,25 @@ export function createProviderService(options: ProviderServiceOptions): Provider
     return readyPromise
   }
 
+  const modelOfProfile = (v: ProfileView): string => {
+    if (v.id === envDefaultId() && env.TEAM_MODEL) return env.TEAM_MODEL
+    const definition = definitions.find((d) => d.id === v.definitionId)
+    return (
+      definition?.defaultModel ??
+      DEFAULT_MODEL[v.definitionId] ??
+      (DEFAULT_MODEL.openrouter as string)
+    )
+  }
+
   const withDefault = (): ProfileView[] => {
     const def = defaultProfileId()
-    return views.map((v) => ({ ...v, isDefault: v.id === def }))
+    return views.map((v) => ({ ...v, isDefault: v.id === def, defaultModel: modelOfProfile(v) }))
   }
 
   const published = (id: string): ProfileView => {
     const v = views.find((p) => p.id === id)
     if (v === undefined) throw notFound('provider profile', id)
-    return { ...v, isDefault: v.id === defaultProfileId() }
+    return { ...v, isDefault: v.id === defaultProfileId(), defaultModel: modelOfProfile(v) }
   }
 
   const loadCatalogsLater = (): void => {

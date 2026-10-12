@@ -110,6 +110,10 @@ export const ProfileSchema = z
     isDefault: z.boolean().openapi({
       description: 'The profile agents without their own pick use.',
     }),
+    defaultModel: z.string().optional().openapi({
+      description:
+        'The model an agent on this profile uses when it names none (`TEAM_MODEL` on the env default profile, else the provider default).',
+    }),
   })
   .openapi('ProviderProfile')
 

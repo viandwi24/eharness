@@ -10,7 +10,7 @@
  * Keys are never logged; the profile settings stay inside the provider manager.
  */
 import { readFileSync } from 'node:fs'
-import type { LanguageModel } from 'ai'
+import { extractReasoningMiddleware, type LanguageModel, wrapLanguageModel } from 'ai'
 import type { ModelCatalog } from 'eharness'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { conflict } from '../../domain/errors.ts'
@@ -65,6 +65,24 @@ export function scriptedModelConfigFromEnv(env: Env = process.env): ModelConfig 
   if (file === undefined || file === '') return undefined
   const steps = JSON.parse(readFileSync(file, 'utf8')) as ScriptedStepInput[]
   return scriptedModelConfig(scriptedModel(steps))
+}
+
+/**
+ * Models that think out loud in the text (`<think>...</think>`) instead of the provider's separate
+ * reasoning field (DeepSeek R1 and V3.x families, QwQ, other open reasoning models): D2 of the e2e
+ * pass saw the deliberation rendered as the answer. The AI SDK's own `extractReasoningMiddleware`
+ * moves tagged text into reasoning parts; a provider that already sends the reasoning separately
+ * is unaffected (no tag, nothing to move). Reasoning written as plain text without any tag cannot
+ * be told apart from the answer: that is a provider setting, not something to guess here.
+ */
+const INLINE_THINKING = /deepseek|(^|[/:-])r1\b|qwq|reasoner/i
+
+export function splitInlineReasoning(model: LanguageModel, modelId: string): LanguageModel {
+  if (typeof model === 'string' || !INLINE_THINKING.test(modelId)) return model
+  return wrapLanguageModel({
+    model,
+    middleware: extractReasoningMiddleware({ tagName: 'think' }),
+  } as never) as LanguageModel
 }
 
 /** The model config over a provider service. */
@@ -131,7 +149,10 @@ export function providerModelConfig(service: ProviderService): ModelConfig {
     defaultModel: 'default profile',
     resolve(modelId, profileId) {
       const r = effective(modelId, profileId)
-      return manager.resolve({ profile: r.profileId, model: r.modelId })
+      return splitInlineReasoning(
+        manager.resolve({ profile: r.profileId, model: r.modelId }),
+        r.modelId,
+      )
     },
     effective: (modelId, profileId) => {
       try {

@@ -1,12 +1,26 @@
 <!doctype html>
-<html lang="en" class="%eh.mode%">
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+		<script>
+			// Light / dark before the first paint: the saved choice (edmi-mode cookie), else the system setting.
+			try {
+				var m = /(?:^|;\s*)edmi-mode=(dark|light)\b/.exec(document.cookie);
+				var dark = m ? m[1] === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+				document.documentElement.classList.toggle('dark', dark);
+			} catch (e) {}
+		</script>
+		<style>
+			#boot { background: #fbfaf7; color: #444; }
+			.dark #boot { background: #1b1a18; color: #ddd; }
+		</style>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
+		<!-- Shown until the app has mounted (the layout removes it), so a click before that is not mistaken for a dead button. -->
+		<div id="boot" aria-hidden="true" style="position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;font:13px system-ui,sans-serif;opacity:.6">Loading…</div>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

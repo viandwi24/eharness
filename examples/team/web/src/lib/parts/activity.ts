@@ -19,7 +19,7 @@ export function toolNote(v: ToolView): { text: string; tone: 'error' | 'muted' }
 	return undefined;
 }
 
-export type GroupSummary = { label: string; names: string; running: boolean; failed: number };
+export type GroupSummary = { label: string; names: string; running: boolean; failed: number; declined: number };
 
 /** "Used 3 tools · Update todos, Read agent output ×2"; while one runs: "Running Update todos…". */
 export function groupSummary(views: readonly ToolView[]): GroupSummary {
@@ -28,8 +28,9 @@ export function groupSummary(views: readonly ToolView[]): GroupSummary {
 	const names = [...counts].map(([t, n]) => (n > 1 ? `${t} ×${n}` : t)).join(', ');
 	const active = views.find(isRunning);
 	const failed = views.filter((v) => v.state === 'output-error').length;
+	const declined = views.filter((v) => v.state === 'output-denied').length;
 	const label = active ? `Running ${active.title}…` : `Used ${views.length} tools`;
-	return { label, names: active ? '' : names, running: active !== undefined, failed };
+	return { label, names: active ? '' : names, running: active !== undefined, failed, declined };
 }
 
 export function reasoningLabel(streaming: boolean, durationMs?: number): string {

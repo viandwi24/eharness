@@ -1,12 +1,6 @@
-// Whether an inline approval card is offered or shown as "Already handled". The waiting list is
-// fed by events and lags a streamed card by a debounce (or longer after a failed turn), so a card
-// missing from the list is "handled elsewhere" only once a refresh made after the card appeared
-// still does not list it. Pure, unit-tested.
+// Helpers for the approvals of a chat. The waiting list is fed by events and lags a streamed tool
+// row by a debounce (or longer after a failed turn); see `standingOf` in chip.ts. Pure, unit-tested.
 import type { UIMessage } from 'ai';
-
-export function approvalOffered(o: { listLoaded: boolean; inList: boolean; confirmedGone: boolean }): boolean {
-	return !o.listLoaded || o.inList || !o.confirmedGone;
-}
 
 /** Ids of the approvals a chat shows as waiting (tool parts in `approval-requested`). */
 export function requestedApprovalIds(messages: readonly UIMessage[]): string[] {

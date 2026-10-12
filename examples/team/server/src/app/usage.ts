@@ -1,20 +1,44 @@
-/** Workspace usage: what every agent spent, by where the work came from (chats, tasks, routines, programs). */
+/**
+ * Workspace usage: what every agent spent, by where the work came from. One source of truth (D14 of
+ * the e2e pass): the model call log, the same rows as the Logs page and the daily digest, so the
+ * pages agree and every source is counted (heartbeat and test runs included). The log is kept for
+ * `TEAM_LOG_RETENTION_DAYS` / `TEAM_LOG_MAX_ROWS`; `since` says how far back it reaches.
+ */
 import type { Deps } from './ports.ts'
-import { ensureFirstThread } from './threads.ts'
 
-export const USAGE_SOURCES = ['chat', 'task', 'delegated', 'routine', 'program'] as const
+export const USAGE_SOURCES = [
+  'chat',
+  'task',
+  'delegated',
+  'routine',
+  'program',
+  'heartbeat',
+  'rehearsal',
+  'other',
+] as const
 export type UsageSource = (typeof USAGE_SOURCES)[number]
 
 export interface SourceUsage {
   source: UsageSource
-  /** Chat: turns. Others: runs (tasks). */
+  /** Chat and heartbeat: turns that called a model. The others: runs (sessions). */
   count: number
+  /** Model calls (a turn or a run makes several; the Logs page counts these). */
+  calls: number
+  tokens: number
+  costUsd: number
+}
+
+export interface UsageTotal {
+  count: number
+  calls: number
   tokens: number
   costUsd: number
 }
 
 export interface WorkspaceUsage {
-  total: { count: number; tokens: number; costUsd: number }
+  /** Start of the oldest call still in the log (the totals cover from then on); null = no calls. */
+  since: number | null
+  total: UsageTotal
   /** Every source, in a fixed order (zero rows included). */
   bySource: SourceUsage[]
   agents: Array<{
@@ -22,68 +46,42 @@ export interface WorkspaceUsage {
     name: string
     color?: string | undefined
     bySource: SourceUsage[]
-    total: { count: number; tokens: number; costUsd: number }
+    total: UsageTotal
   }>
 }
 
-const SOURCE_OF_ORIGIN = {
-  user: 'task',
-  lead: 'delegated',
-  routine: 'routine',
-  program: 'program',
-} as const
-
 const empty = (): SourceUsage[] =>
-  USAGE_SOURCES.map((source) => ({ source, count: 0, tokens: 0, costUsd: 0 }))
+  USAGE_SOURCES.map((source) => ({ source, count: 0, calls: 0, tokens: 0, costUsd: 0 }))
 
-const sum = (rows: SourceUsage[]): { count: number; tokens: number; costUsd: number } => ({
+const sum = (rows: SourceUsage[]): UsageTotal => ({
   count: rows.reduce((n, r) => n + r.count, 0),
+  calls: rows.reduce((n, r) => n + r.calls, 0),
   tokens: rows.reduce((n, r) => n + r.tokens, 0),
   costUsd: rows.reduce((n, r) => n + r.costUsd, 0),
 })
 
-/**
- * Chat usage comes from the stats of every thread session of an agent; the rest from the task rows
- * (each task, routine run and program run is its own session with its cost and tokens).
- */
-export async function workspaceUsage(deps: Deps): Promise<WorkspaceUsage> {
+export function workspaceUsage(deps: Deps): WorkspaceUsage {
   const agents = deps.agents.list({ includeArchived: true })
-  const tasks = deps.tasks.list({ limit: 1_000_000 })
-  const perAgent = new Map<string, SourceUsage[]>()
-  for (const agent of agents) {
-    const rows = empty()
-    ensureFirstThread(deps, agent)
-    for (const thread of deps.threads.list(agent.id)) {
-      try {
-        const u = (await deps.chat.stats(agent, thread.sessionId)).usage
-        const chat = rows[0] as SourceUsage
-        chat.count += u.turns
-        chat.tokens += u.totalTokens
-        chat.costUsd += u.costUsd
-      } catch {
-        // a thread whose session cannot be read adds nothing
-      }
-    }
-    perAgent.set(agent.id, rows)
-  }
-  for (const t of tasks) {
-    const rows = perAgent.get(t.agentId)
-    if (rows === undefined) continue
-    const row = rows.find((r) => r.source === SOURCE_OF_ORIGIN[t.origin]) as SourceUsage
-    row.count += 1
-    row.tokens += t.tokens
-    row.costUsd += t.costUsd
-  }
+  const { since, rows } = deps.modelCalls.usage()
+  const perAgent = new Map<string, SourceUsage[]>(agents.map((a) => [a.id, empty()]))
   const bySource = empty()
-  for (const rows of perAgent.values()) {
-    rows.forEach((r, i) => {
-      const b = bySource[i] as SourceUsage
-      b.count += r.count
-      b.tokens += r.tokens
-      b.costUsd += r.costUsd
-    })
+  for (const r of rows) {
+    const index = USAGE_SOURCES.indexOf(r.source as UsageSource)
+    const at = index < 0 ? USAGE_SOURCES.indexOf('other') : index
+    const countsTurns = r.source === 'chat' || r.source === 'heartbeat'
+    const add = (row: SourceUsage | undefined): void => {
+      if (row === undefined) return
+      row.count += countsTurns ? r.turns : r.sessions
+      row.calls += r.calls
+      row.tokens += r.tokens
+      row.costUsd += r.costUsd
+    }
+    add(bySource[at])
+    // a call of an agent that is not in the list (deleted) still counts in the totals
+    if (r.agentId !== null) add(perAgent.get(r.agentId)?.[at])
   }
   return {
+    since,
     total: sum(bySource),
     bySource,
     agents: agents.map((a) => {

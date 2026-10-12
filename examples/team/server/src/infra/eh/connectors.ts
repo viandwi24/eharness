@@ -18,6 +18,7 @@ import {
   type AgentEnablement,
   type AnyConnectorDefinition,
   activateConnectors,
+  type CapabilityKind,
   type ConnectionCredentials,
   type ConnectionRecord,
   capabilitiesOf,
@@ -132,6 +133,14 @@ export interface ConnectorsRuntime extends ConnectorsPort {
   telegramApp(): Promise<TelegramApp | undefined>
   /** The last activation of an agent, or undefined when it was never prepared. */
   activated(agentId: string): ActivatedConnectors | undefined
+  /**
+   * The kind of each tool of the last activation of an agent (`read`, `write`, ...), from
+   * the capability of its connection. A rehearsal runs the reads for real (an MCP annotation never
+   * lowers a risk, so the call's own `risk` cannot say).
+   */
+  toolKinds(agentId: string): Record<string, CapabilityKind> | undefined
+  /** Built-in read tools shown as Allowed: they never ask in Manual mode (see `doPrepare`). */
+  readAllowed(agentId: string): ReadonlySet<string> | undefined
   /** A connection row changed locally (called by the profile store hook). */
   profileChanged(kind: string): void
   /** Create the missing built-in connections of these agents. */
@@ -297,7 +306,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     id: string
     title: string
     description: string
-    kind: 'read' | 'write' | 'destructive' | 'external'
+    kind: CapabilityKind | 'external'
     tools: string[]
     defaultMode: CapabilityMode
   }) => ({
@@ -495,7 +504,15 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
 
   // --- activation --------------------------------------------------------------------------
 
-  const cache = new Map<string, { key: string; out: ActivatedConnectors }>()
+  const cache = new Map<
+    string,
+    {
+      key: string
+      out: ActivatedConnectors
+      kinds: Record<string, CapabilityKind>
+      readAllowed: ReadonlySet<string>
+    }
+  >()
   const ensured = new Set<string>()
   let busy: Promise<void> = Promise.resolve()
   const accessOf = (d: AgentDef): ToolAccess => d.toolAccess ?? options.toolAccess?.() ?? 'auto'
@@ -554,7 +571,31 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         // a connection that still needs sign in is a normal state the UI shows, not a server problem
         if (w.code !== 'connection-unavailable') warn(`connectors (${d.slug}): ${w.message}`)
       }
-      cache.set(d.id, { key: key(d), out })
+      const kinds: Record<string, CapabilityKind> = {}
+      const readAllowed = new Set<string>()
+      for (const [tool, origin] of Object.entries(out.toolNameMap)) {
+        const record = records.find((r) => origin.connectionIds.includes(r.id))
+        const def = defs.get(origin.connectorId)
+        if (record === undefined || def === undefined) continue
+        const capability = capabilitiesOf(def, record).find((c) => c.id === origin.capabilityId)
+        if (capability !== undefined) kinds[tool] = capability.kind
+        // A built-in READ capability shown as "Allowed" runs without asking in Manual mode (D13 of
+        // the e2e pass: a researcher whose web tools are Allowed was asked for every search).
+        // The library leaves built-ins to the chat's permission mode, and Auto and Bypass keep
+        // their own handling (the classifier still looks at the call in Auto).
+        const mode = out.connections.find((c) => origin.connectionIds.includes(c.connectionId))
+          ?.modes[origin.capabilityId]
+        if (
+          def.source === 'builtin' &&
+          (capability?.kind === 'read' || capability?.kind === 'external') &&
+          mode === 'allow' &&
+          !out.rules.deny.includes(tool) &&
+          !out.rules.ask.includes(tool)
+        ) {
+          readAllowed.add(tool)
+        }
+      }
+      cache.set(d.id, { key: key(d), out, kinds, readAllowed })
     }
   }
 
@@ -565,6 +606,50 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
       () => undefined,
     )
     return run
+  }
+
+  // --- reachability -------------------------------------------------------------------------
+
+  /**
+   * A custom server that went down used to show "Connected" until somebody pressed Test (D18 of
+   * the e2e pass). Listing the connections starts a background check of each remote server whose
+   * last check is older than `TEAM_CONNECTOR_HEALTH_TTL_MS` (default 60 s, 0 = every listing, a negative value turns it off): one tool listing, never awaited, never twice at once.
+   * The result lands in the connection row (status and message), so the next listing and the
+   * connectors-changed event carry it. Built-in and other flows with their own runtimes are left
+   * alone.
+   */
+  const ttlSetting = Number(env.TEAM_CONNECTOR_HEALTH_TTL_MS ?? 60_000)
+  const HEALTH_TTL_MS = Number.isFinite(ttlSetting) ? ttlSetting : 60_000
+  const checkedAt = new Map<string, number>()
+  const probing = new Set<string>()
+  let closing = false
+  function refreshHealth(
+    list: ReadonlyArray<{ id: string; definitionId: string; status: string }>,
+  ): void {
+    if (HEALTH_TTL_MS < 0) return
+    const now = Date.now()
+    for (const c of list) {
+      if (defs.get(c.definitionId)?.source !== 'custom') continue
+      if (c.status !== 'connected' && c.status !== 'error') continue
+      if (probing.has(c.id) || now - (checkedAt.get(c.id) ?? 0) < HEALTH_TTL_MS) continue
+      checkedAt.set(c.id, now)
+      probing.add(c.id)
+      void (async () => {
+        try {
+          const before = c.status
+          const result = await service.test(c.id)
+          if (closing) return
+          const after = await service.get(c.id)
+          if (after !== undefined && after.status !== before) changed()
+          if (!result.ok && before === 'connected')
+            warn(`connectors: ${c.id} is not reachable: ${result.message ?? 'no answer'}`)
+        } catch {
+          // the next listing tries again after the TTL
+        } finally {
+          probing.delete(c.id)
+        }
+      })()
+    }
   }
 
   // --- the agent's view ----------------------------------------------------------------------
@@ -870,23 +955,26 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     credentialsOf: (connectionId) => service.credentials(connectionId),
     telegramApp,
     activated: (agentId) => cache.get(agentId)?.out,
+    toolKinds: (agentId) => cache.get(agentId)?.kinds,
+    readAllowed: (agentId) => cache.get(agentId)?.readAllowed,
     profileChanged: (kind) => {
       if (kind === 'connection') changed()
     },
     ensureBuiltins,
     stores: { connections },
-    close() {},
+    close() {
+      closing = true
+    },
 
     catalog: () => Promise.all(definitions.map(catalogEntry)),
-    connections: async (query) =>
-      withAccess(
-        (
-          await service.list({
-            ...(query?.scope === undefined ? {} : { scope: query.scope }),
-            ...(query?.scopeId === undefined ? {} : { scopeId: query.scopeId }),
-          })
-        ).map(toConnection),
-      ),
+    connections: async (query) => {
+      const listed = await service.list({
+        ...(query?.scope === undefined ? {} : { scope: query.scope }),
+        ...(query?.scopeId === undefined ? {} : { scopeId: query.scopeId }),
+      })
+      refreshHealth(listed)
+      return withAccess(listed.map(toConnection))
+    },
     setAccess: (id, input) => wrap(() => setAccess(id, input)),
     startFlow: async (input) =>
       wrap(async () => {

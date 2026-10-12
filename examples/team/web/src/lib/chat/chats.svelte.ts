@@ -3,6 +3,7 @@ import { toast } from 'svelte-sonner';
 import { live } from '../stores/live.svelte.js';
 import { chatSessionAgent } from '../threads/model.js';
 import { AgentChat } from './create-agent-chat.svelte.js';
+import { isConnectionProblem } from './errors.js';
 
 const chats = new Map<string, AgentChat>();
 
@@ -19,7 +20,11 @@ live.onChatEvent((e) => {
 // After a reconnect (server restart, network): a turn may have run, ended or been recovered while the
 // stream was down. Follow it if it still runs, else show what was stored.
 live.onResync(() => {
-	for (const c of chats.values()) if (c.loaded) void c.followServerTurn();
+	for (const c of chats.values()) {
+		// "Cannot reach the server" is over: the banner must not outlive the outage
+		if (isConnectionProblem(c.problem?.message)) c.dismissProblem();
+		if (c.loaded) void c.followServerTurn();
+	}
 });
 live.addBusyProbe(() => [...chats.values()].some((c) => c.busy));
 

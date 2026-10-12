@@ -8,6 +8,8 @@
  * or amendment resumes the parked session with `{ decision, note }`. When the effect fails the
  * decision is opened again, so nothing is half decided.
  */
+
+import { isDmSession } from '../domain/chat.ts'
 import {
   amendmentBody,
   authorityLines,
@@ -420,6 +422,38 @@ async function deliver(deps: Deps, d: Decision, answer: DecisionAnswer): Promise
   throw conflict('the run no longer waits for this decision', 'DECISION_EXPIRED')
 }
 
+/**
+ * A decision made from the final report of a run (no wait) continues that finished session with a
+ * new message. When a newer run of the same program exists the old one is superseded: answering
+ * would revive it next to the new one (D7 of the e2e pass found the old run posting again). The
+ * decision is closed as `expired` and the client reads why.
+ */
+function expireIfStale(deps: Deps, d: Decision): void {
+  if (d.waitId !== null || d.sessionId === null || d.programId === null) return
+  const mine = deps.tasks.getBySession(d.sessionId)
+  if (mine === undefined) return
+  const newer = deps.tasks
+    .list({ limit: 500 })
+    .some(
+      (t) =>
+        t.id !== mine.id &&
+        parseProgramSession(t.sessionId)?.programId === d.programId &&
+        t.startedAt > mine.startedAt,
+    )
+  if (!newer) return
+  const expired = deps.decisions.decide(d.id, {
+    status: 'expired',
+    decidedBy: CLIENT,
+    decidedAt: deps.clock.now(),
+    note: 'This run already finished and a newer run of the program replaced it.',
+  })
+  changed(deps, expired ?? d, 'decided')
+  throw conflict(
+    'This run already finished and a newer run of the program replaced it. The decision is closed; open the newer run instead.',
+    'DECISION_EXPIRED',
+  )
+}
+
 export async function approveDecision(
   deps: Deps,
   id: string,
@@ -445,6 +479,7 @@ export async function approveDecision(
       )
     }
     const decision = input.choice ?? 'approved'
+    expireIfStale(deps, d)
     const next = claim(deps, d, 'approved', note, { outcome: { decision } })
     await deliver(deps, next, { decision, note })
     changed(deps, next, 'decided')
@@ -474,6 +509,43 @@ export async function approveDecision(
   await deliver(deps, next, { decision: 'approved', note })
   changed(deps, next, 'decided')
   return next
+}
+
+/**
+ * The proposing agent learns the outcome of a proposal it made in a chat thread: one `eh.event`
+ * in that thread (no model call; the agent reads it with the next message, and the client sees
+ * it in the thread). Other origins (heartbeat) keep the outcome on the decision. Never throws: the
+ * decision stands even when the thread is gone.
+ */
+async function tellProposer(
+  deps: Deps,
+  d: Extract<Decision, { kind: 'proposal' }>,
+  outcome: 'approved' | 'rejected',
+  note: string,
+  programId?: string,
+): Promise<void> {
+  if (d.sessionId === null || !isDmSession(d.sessionId)) return
+  const agent = deps.agents.get(d.agentId)
+  if (agent === undefined) return
+  const text = [
+    `The client ${outcome} your proposal "${d.title}".`,
+    note === '' ? '' : `The client's note (their own words): ${note}`,
+    outcome === 'approved' && programId !== undefined
+      ? 'It is now a program; follow it on the Programs page.'
+      : '',
+    outcome === 'rejected' ? 'Nothing was created. Do not propose it again unless asked.' : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+  try {
+    await deps.chat.seed(agent, d.sessionId, {
+      name: `decision.proposal.${outcome}`,
+      text,
+      key: `decision:${d.id}`,
+    })
+  } catch (error) {
+    console.warn(`team: telling ${agent.slug} about the proposal outcome failed: ${String(error)}`)
+  }
 }
 
 async function approveProposal(
@@ -522,6 +594,7 @@ async function approveProposal(
     }
   }
   changed(deps, next, 'decided')
+  await tellProposer(deps, d, 'approved', note, created.id)
   return next
 }
 
@@ -533,8 +606,10 @@ export async function rejectDecision(
   const d = getDecision(deps, id)
   mustBeOpen(d)
   const note = checkNote(input.note)
+  if (d.kind === 'escalation') expireIfStale(deps, d)
   const next = claim(deps, d, 'rejected', note, { outcome: { decision: 'rejected' } })
   if (d.kind !== 'proposal') await deliver(deps, next, { decision: 'rejected', note })
+  else await tellProposer(deps, d, 'rejected', note)
   changed(deps, next, 'decided')
   return next
 }

@@ -91,3 +91,22 @@ export function cleanPath(input: string): string | null {
 	if (!parts.length || parts.some((p) => p === '..')) return null;
 	return `/${parts.join('/')}`;
 }
+
+const TEXT_EXT = new Set(['md', 'markdown', 'txt', 'csv', 'tsv', 'json', 'yaml', 'yml', 'toml', 'xml', 'html', 'css', 'log', 'ts', 'js', 'py', 'sql', 'sh']);
+/** The text write route takes up to 1 MB. */
+export const MAX_TEXT_WRITE_BYTES = 1_000_000;
+
+export type UploadTarget = { mode: 'folder'; path: string } | { mode: 'uploads' };
+
+/**
+ * Where an upload from the Files page goes: into the open library folder when it is a text file the
+ * text write route accepts (up to 1 MB), else the generic uploads area (binary files, other places).
+ */
+export function uploadTarget(dir: string, file: { name: string; type: string; size: number }): UploadTarget {
+	const folder = dir.replace(/\/+$/, '');
+	if (!folder.startsWith('/library/') && folder !== '/library') return { mode: 'uploads' };
+	const text = file.type.startsWith('text/') || file.type === 'application/json' || TEXT_EXT.has(extOf(file.name));
+	if (!text || file.size > MAX_TEXT_WRITE_BYTES || file.size === 0) return { mode: 'uploads' };
+	const name = file.name.replace(/[\\/\0]/g, '_').trim();
+	return name ? { mode: 'folder', path: `${folder}/${name}` } : { mode: 'uploads' };
+}

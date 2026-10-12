@@ -1,6 +1,6 @@
 import { HarnessHttpError } from 'eharness/client';
 import { describe, expect, test } from 'bun:test';
-import { errorHint, lastTurnErrorCode, requestFailureText } from './errors.js';
+import { errorHint, isConnectionProblem, lastTurnErrorCode, requestFailureText } from './errors.js';
 
 describe('errorHint', () => {
 	test('names the fix for a rejected key and a down lock service', () => {
@@ -26,5 +26,13 @@ describe('lastTurnErrorCode', () => {
 		] as never;
 		expect(lastTurnErrorCode(messages)).toBe('EH_PROVIDER_AUTH');
 		expect(lastTurnErrorCode([] as never)).toBeUndefined();
+	});
+});
+
+describe('isConnectionProblem', () => {
+	test('recognises the lost-connection banner only', () => {
+		expect(isConnectionProblem('Cannot reach the server. Check your connection.')).toBe(true);
+		expect(isConnectionProblem('The agent is busy with another turn.')).toBe(false);
+		expect(isConnectionProblem(undefined)).toBe(false);
 	});
 });

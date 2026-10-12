@@ -1967,7 +1967,16 @@
                     "enum": [
                       "session"
                     ],
-                    "description": "With `approved: true`: also allow this tool without asking for the rest of the session. With `approved: false`: never allow it in this session."
+                    "description": "With `approved: true`: also allow this tool without asking for the rest of the session (and answer the other waiting calls of the same tool in this session at once). With `approved: false`: never allow it in this session."
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "session",
+                      "agent",
+                      "all"
+                    ],
+                    "description": "With `approved: true`: how far \"always allow\" reaches. `session` (default with `remember`): this session. `agent`: a saved rule of this agent, all its sessions. `all`: a saved rule of every agent. Tools a connector pins to ask (writes of third-party connectors) still ask."
                   }
                 },
                 "required": [
@@ -2684,6 +2693,25 @@
             "exclusiveMinimum": 0
           }
         }
+      },
+      "TaskSendBackResult": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Task"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "hint": {
+                "type": "string",
+                "description": "What happens next: a scheduled worker program picks the task up at its next run, a manual one must be run (\"Run now\"), or no worker program runs the agent queue."
+              }
+            },
+            "required": [
+              "hint"
+            ]
+          }
+        ]
       },
       "TaskSendBack": {
         "type": "object",
@@ -3756,11 +3784,22 @@
       "WorkspaceUsage": {
         "type": "object",
         "properties": {
+          "since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Start of the oldest call still in the log; the totals cover from then on."
+          },
           "total": {
             "type": "object",
             "properties": {
               "count": {
                 "type": "integer"
+              },
+              "calls": {
+                "type": "integer",
+                "description": "Model calls (the unit of the Logs page)."
               },
               "tokens": {
                 "type": "integer"
@@ -3771,6 +3810,7 @@
             },
             "required": [
               "count",
+              "calls",
               "tokens",
               "costUsd"
             ]
@@ -3807,6 +3847,10 @@
                     "count": {
                       "type": "integer"
                     },
+                    "calls": {
+                      "type": "integer",
+                      "description": "Model calls (the unit of the Logs page)."
+                    },
                     "tokens": {
                       "type": "integer"
                     },
@@ -3816,6 +3860,7 @@
                   },
                   "required": [
                     "count",
+                    "calls",
                     "tokens",
                     "costUsd"
                   ]
@@ -3831,6 +3876,7 @@
           }
         },
         "required": [
+          "since",
           "total",
           "bySource",
           "agents"
@@ -3846,13 +3892,20 @@
               "task",
               "delegated",
               "routine",
-              "program"
+              "program",
+              "heartbeat",
+              "rehearsal",
+              "other"
             ],
-            "description": "`chat` (all chat threads), `task` (tasks queued by a person), `delegated` (work an agent handed to another), `routine` (routine runs), `program` (program runs)."
+            "description": "`chat` (all chat threads), `task` (tasks started by a person), `delegated` (work an agent handed to another), `routine` (routine runs), `program` (program runs), `heartbeat` (the ambient monitor), `rehearsal` (test runs), `other` (calls without a session)."
           },
           "count": {
             "type": "integer",
-            "description": "Chat: turns that ran a model step. The others: runs."
+            "description": "Chat and heartbeat: turns that called a model. The others: runs."
+          },
+          "calls": {
+            "type": "integer",
+            "description": "Model calls (the unit of the Logs page)."
           },
           "tokens": {
             "type": "integer"
@@ -3864,6 +3917,7 @@
         "required": [
           "source",
           "count",
+          "calls",
           "tokens",
           "costUsd"
         ]
@@ -4114,6 +4168,10 @@
           "isDefault": {
             "type": "boolean",
             "description": "The profile agents without their own pick use."
+          },
+          "defaultModel": {
+            "type": "string",
+            "description": "The model an agent on this profile uses when it names none (`TEAM_MODEL` on the env default profile, else the provider default)."
           }
         },
         "required": [
@@ -6344,6 +6402,7 @@
             "type": "string",
             "enum": [
               "tool-unavailable",
+              "tool-off",
               "channel-not-bound",
               "budget-below-minimum"
             ]
@@ -13497,11 +13556,11 @@
         },
         "responses": {
           "200": {
-            "description": "The task, queued again",
+            "description": "The task, queued again, and what happens next",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Task"
+                  "$ref": "#/components/schemas/TaskSendBackResult"
                 }
               }
             }
@@ -14927,7 +14986,7 @@
           "settings"
         ],
         "summary": "Usage of the whole workspace, by agent and by source",
-        "description": "Tokens and cost of every agent: chats (all threads), tasks, delegated work, routine runs and program runs. Chat usage is the cumulative usage of the thread sessions; the others come from the task rows.",
+        "description": "Tokens and cost of every agent by source: chats (all threads), tasks, delegated work, routine runs, program runs, the heartbeat, test runs and other calls. One source of truth: the model call log (the rows of the Logs page and the daily digest), so the numbers agree; `calls` counts model calls (a turn or a run makes several), `count` counts turns (chat, heartbeat) or runs. The log is kept for a limited time and number of rows, `since` is the start of the oldest call in it.",
         "security": [
           {
             "Bearer": []
@@ -19004,7 +19063,7 @@
             }
           },
           "409": {
-            "description": "`DECISION_CLOSED`, `DECISION_EXPIRED`, `PROGRAM_DELETED` or an archived agent",
+            "description": "`DECISION_CLOSED`, `DECISION_EXPIRED` (also a run a newer run replaced), `PROGRAM_DELETED` or an archived agent",
             "content": {
               "application/json": {
                 "schema": {

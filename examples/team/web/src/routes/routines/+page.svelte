@@ -126,9 +126,9 @@
 								<Table.Row class="cursor-pointer" onclick={() => openEditRoutine(r.id)}>
 									<Table.Cell>
 										<div class="flex items-center gap-2.5">
-											{#if a}<AgentAvatar seed={a.id} color={a.color} size={28} label={a.name} />{/if}
+											{#if a}<span class="hidden sm:block"><AgentAvatar seed={a.id} color={a.color} size={28} label={a.name} /></span>{/if}
 											<div class="min-w-0">
-												<button type="button" class="block max-w-56 truncate text-left font-medium outline-none focus-visible:underline" onclick={(e) => { e.stopPropagation(); openEditRoutine(r.id); }}>{r.name}</button>
+												<button type="button" class="block max-w-28 truncate text-left font-medium outline-none focus-visible:underline sm:max-w-56" onclick={(e) => { e.stopPropagation(); openEditRoutine(r.id); }}>{r.name}</button>
 												<div class="truncate text-xs text-muted-foreground">{a?.name ?? 'Unknown agent'}<span class="md:hidden"> · {describeSpec(r.schedule)}</span></div>
 											</div>
 										</div>
@@ -136,7 +136,9 @@
 									<Table.Cell class="hidden text-muted-foreground md:table-cell">{describeSpec(r.schedule)}</Table.Cell>
 									<Table.Cell class="hidden text-muted-foreground lg:table-cell">{r.status === 'active' ? relativeTime(r.nextFireAt) : '—'}</Table.Cell>
 									<Table.Cell class="hidden text-muted-foreground lg:table-cell">
-										{r.lastFireAt ? `${relativeTime(r.lastFireAt)}${r.lastStatus ? `, ${r.lastStatus.replace('_', ' ')}` : ''}` : 'Never'}
+										{@const last = r.lastFireAt ? `${relativeTime(r.lastFireAt)}${r.lastStatus ? `, ${r.lastStatus.replace('_', ' ')}` : ''}` : 'Never'}
+										<!-- a long failure text must not widen the table and push the actions off screen -->
+										<div class="max-w-48 truncate" title={last}>{last}</div>
 									</Table.Cell>
 									<Table.Cell><Badge variant={b.variant}>{b.label}</Badge></Table.Cell>
 									<Table.Cell>

@@ -47,3 +47,14 @@ export async function runTest(call: () => Promise<TestOutcome>): Promise<TestOut
 		return { ok: false, message: e instanceof Error ? e.message : 'Test failed' };
 	}
 }
+
+/**
+ * The stored status message of a connection, unless a test result on screen already says the same
+ * (the test updates the stored message too, so both would show the error twice).
+ */
+export function visibleStatusMessage(status: string | undefined, statusMessage: string | null | undefined, result?: TestOutcome): string | undefined {
+	if (!statusMessage || status === 'connected') return undefined;
+	const shown = result && !result.busy ? result.message : undefined;
+	if (shown && (shown === statusMessage || shown.includes(statusMessage) || statusMessage.includes(shown))) return undefined;
+	return statusMessage;
+}

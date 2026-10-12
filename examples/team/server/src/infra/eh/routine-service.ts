@@ -24,8 +24,10 @@
  * failures pause the routine (`maxFailures`).
  */
 import { errorText } from 'eharness'
+import { postNotice } from '../../app/briefings.ts'
 import type {
   AgentRepo,
+  Deps,
   EventAppender,
   ProgramRunner,
   ProgramStore,
@@ -123,6 +125,8 @@ export interface RoutineServiceDeps {
    * archived one, P40 phase M follow-up). Default: the legacy `dm:<agentId>` session.
    */
   dmSession?: (agentId: string) => string
+  /** Late-bound app deps: an auto-paused routine tells the bell (D10 of the e2e pass). */
+  app?: () => Deps | undefined
   config?: RoutineEngineConfig
   now?: () => number
   log?: { warn(message: string): void }
@@ -172,6 +176,25 @@ export function createRoutineService(
       payload: { routineId: routine.id, name: routine.name, ...payload },
       at: now,
     })
+  }
+
+  /** A routine paused itself after too many failures: one bell notice with the reason. */
+  const noticePaused = (routine: Routine, run: RoutineRun | undefined, now: number): void => {
+    const app = deps.app?.()
+    if (app === undefined) return
+    const reason = run?.reason ?? routine.lastStatus ?? 'it failed repeatedly'
+    try {
+      postNotice(app, {
+        key: `routine-paused:${routine.id}:${run?.id ?? now}`,
+        title: `Routine "${routine.name}" paused itself`.slice(0, 160),
+        body: `It failed ${routine.maxFailures} times in a row (last: ${reason}). Fix the cause, then resume it from the Routines page.`,
+        link: routine.programId === null ? '/routines' : `/programs/${routine.programId}`,
+        agentId: routine.agentId,
+        at: now,
+      })
+    } catch (error) {
+      deps.log?.warn(`pause notice of ${routine.id} not posted: ${errorText(error)}`)
+    }
   }
 
   const emitRun = (routine: Routine, run: RoutineRun, now: number): void =>
@@ -233,6 +256,7 @@ export function createRoutineService(
       const done = store.finishRun(run.id, { status: 'failed', reason }, now)
       if (done?.paused === true) {
         emit('routine-changed', routine, null, { change: 'paused', reason: 'max-failures' }, now)
+        noticePaused(done.routine, done.run, now)
       }
       const after = done?.run ?? (store.getRun(run.id) as RoutineRun)
       emitRun(routine, after, now)
@@ -264,7 +288,8 @@ export function createRoutineService(
       })
       store.markEnqueued(run.id, {
         inboxId: result.inboxId,
-        firedAt: now,
+        // a slot claimed a little ahead runs at the slot (`availableAt`), never before it
+        firedAt: ahead ? run.scheduledAt : now,
         ...(result.duplicate === true ? { reason: 'duplicate enqueue' } : {}),
       })
       const after = store.getRun(run.id) as RoutineRun
@@ -491,10 +516,31 @@ export function createRoutineService(
 
   let stopped = false
   let ticking: Promise<TickReport> | undefined
+  /** One-shot wake-ups at slots that are ahead of a tick (only while the ticker runs). */
+  const wakeups = new Map<number, ReturnType<typeof setTimeout>>()
+  function wakeAt(slot: number): void {
+    if (timer === undefined || stopped || wakeups.has(slot)) return
+    const wake = setTimeout(
+      () => {
+        wakeups.delete(slot)
+        if (stopped) return
+        void service.tick().catch((error) => log.warn(`routines: tick failed: ${errorText(error)}`))
+      },
+      Math.max(0, slot - clock()) + 5,
+    )
+    wake.unref()
+    wakeups.set(slot, wake)
+  }
   async function runTick(now: number): Promise<TickReport> {
     const report: TickReport = { fired: [], skipped: [], lost: 0, recovered: 0, swept: 0 }
     await recover(now, report).catch((e) => log.warn(`routines: recovery failed: ${errorText(e)}`))
     for (const row of store.due(now + lookaheadMs, maxPerTick)) {
+      // a run that starts at once (program, heartbeat, digest) is not claimed ahead of its slot:
+      // it fires at or after it (D12 of the e2e pass); a timer wakes the ticker at the slot
+      if (row.programId != null && row.nextFireAt !== null && row.nextFireAt > now) {
+        wakeAt(row.nextFireAt)
+        continue
+      }
       try {
         await processDue(row, now, report)
       } catch (error) {
@@ -603,13 +649,14 @@ export function createRoutineService(
             { change: 'paused', reason: 'max-failures' },
             now,
           )
+          noticePaused(done.routine, done.run, now)
         }
       }
     },
   }
 
   let timer: ReturnType<typeof setInterval> | undefined
-  return {
+  const service: RoutineService = {
     outcomes,
 
     tick(now = clock()) {
@@ -637,7 +684,7 @@ export function createRoutineService(
     start() {
       if (tickMs <= 0 || timer !== undefined) return
       timer = setInterval(() => {
-        void this.tick().catch((error) => log.warn(`routines: tick failed: ${errorText(error)}`))
+        void service.tick().catch((error) => log.warn(`routines: tick failed: ${errorText(error)}`))
       }, tickMs)
       timer.unref()
     },
@@ -646,7 +693,10 @@ export function createRoutineService(
       stopped = true
       if (timer !== undefined) clearInterval(timer)
       timer = undefined
+      for (const wake of wakeups.values()) clearTimeout(wake)
+      wakeups.clear()
       await ticking?.catch(() => undefined)
     },
   }
+  return service
 }

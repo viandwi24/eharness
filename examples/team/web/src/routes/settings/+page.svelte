@@ -212,7 +212,7 @@
 									<Field.Field data-invalid={!!errors.defaultModel}>
 										<Field.Label for="s-model">Default model</Field.Label>
 										{#if !settings}<Skeleton class="h-9 w-full max-w-sm" />{:else}
-											<ModelPicker id="s-model" bind:profileId={profile} bind:modelId={model} defaultLabel="Server default" />
+											<ModelPicker id="s-model" bind:profileId={profile} bind:modelId={model} defaultLabel="Server default" fallback={null} />
 										{/if}
 										<Field.Description>The provider profile and model of agents that do not pick their own. Profiles are managed under Providers.</Field.Description>
 										{#if errors.defaultModel}<Field.Error>{errors.defaultModel}</Field.Error>{/if}

@@ -4,8 +4,9 @@
 	import { cn } from '#lib/utils.js';
 	import { groupSummary, type ToolView } from './activity.js';
 	import ToolPart from './ToolPart.svelte';
+	import type { ApprovalStanding } from '#lib/approval/chip.js';
 
-	let { views }: { views: ToolView[] } = $props();
+	let { views, standing, onFocusDock }: { views: ToolView[]; standing?: (id: string) => ApprovalStanding; onFocusDock?: (approvalId: string) => void } = $props();
 
 	let open = $state(false);
 	const summary = $derived(groupSummary(views));
@@ -25,13 +26,14 @@
 			<span class="shrink-0">{summary.label}</span>
 		{/if}
 		{#if summary.failed}<span class="shrink-0 text-destructive-text">· {summary.failed} failed</span>{/if}
+		{#if summary.declined}<span class="shrink-0">· {summary.declined} declined</span>{/if}
 		{#if !open && summary.names}<span class="truncate text-muted-foreground/70">· {summary.names}</span>{/if}
 		<CaretRightIcon class={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-90')} />
 	</button>
 	{#if open}
 		<div class="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
 			{#each views as v (v.key)}
-				<ToolPart view={v} nested />
+				<ToolPart view={v} nested {standing} {onFocusDock} />
 			{/each}
 		</div>
 	{/if}

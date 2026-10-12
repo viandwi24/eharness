@@ -2759,13 +2759,13 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description The task, queued again */
+                /** @description The task, queued again, and what happens next */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Task"];
+                        "application/json": components["schemas"]["TaskSendBackResult"];
                     };
                 };
                 /** @description Invalid request */
@@ -3984,7 +3984,7 @@ export interface paths {
         };
         /**
          * Usage of the whole workspace, by agent and by source
-         * @description Tokens and cost of every agent: chats (all threads), tasks, delegated work, routine runs and program runs. Chat usage is the cumulative usage of the thread sessions; the others come from the task rows.
+         * @description Tokens and cost of every agent by source: chats (all threads), tasks, delegated work, routine runs, program runs, the heartbeat, test runs and other calls. One source of truth: the model call log (the rows of the Logs page and the daily digest), so the numbers agree; `calls` counts model calls (a turn or a run makes several), `count` counts turns (chat, heartbeat) or runs. The log is kept for a limited time and number of rows, `since` is the start of the oldest call in it.
          */
         get: {
             parameters: {
@@ -7720,7 +7720,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description `DECISION_CLOSED`, `DECISION_EXPIRED`, `PROGRAM_DELETED` or an archived agent */
+                /** @description `DECISION_CLOSED`, `DECISION_EXPIRED` (also a run a newer run replaced), `PROGRAM_DELETED` or an archived agent */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -10655,10 +10655,15 @@ export interface components {
                 /** @description A free-text note about this call: the model reads it right after the result (approved) or as part of the reason (denied). */
                 note?: string;
                 /**
-                 * @description With `approved: true`: also allow this tool without asking for the rest of the session. With `approved: false`: never allow it in this session.
+                 * @description With `approved: true`: also allow this tool without asking for the rest of the session (and answer the other waiting calls of the same tool in this session at once). With `approved: false`: never allow it in this session.
                  * @enum {string}
                  */
                 remember?: "session";
+                /**
+                 * @description With `approved: true`: how far "always allow" reaches. `session` (default with `remember`): this session. `agent`: a saved rule of this agent, all its sessions. `all`: a saved rule of every agent. Tools a connector pins to ask (writes of third-party connectors) still ask.
+                 * @enum {string}
+                 */
+                scope?: "session" | "agent" | "all";
             } | {
                 /** @enum {string} */
                 kind: "question";
@@ -10837,6 +10842,10 @@ export interface components {
             inputs?: string[];
             priority?: components["schemas"]["TaskPriority"];
             dueAt?: number | null;
+        };
+        TaskSendBackResult: components["schemas"]["Task"] & {
+            /** @description What happens next: a scheduled worker program picks the task up at its next run, a manual one must be run ("Run now"), or no worker program runs the agent queue. */
+            hint: string;
         };
         TaskSendBack: {
             /** @description What to change. Appended to the brief. */
@@ -11111,8 +11120,12 @@ export interface components {
             timezone?: string;
         };
         WorkspaceUsage: {
+            /** @description Start of the oldest call still in the log; the totals cover from then on. */
+            since: number | null;
             total: {
                 count: number;
+                /** @description Model calls (the unit of the Logs page). */
+                calls: number;
                 tokens: number;
                 costUsd: number;
             };
@@ -11124,6 +11137,8 @@ export interface components {
                 bySource: components["schemas"]["SourceUsage"][];
                 total: {
                     count: number;
+                    /** @description Model calls (the unit of the Logs page). */
+                    calls: number;
                     tokens: number;
                     costUsd: number;
                 };
@@ -11131,12 +11146,14 @@ export interface components {
         };
         SourceUsage: {
             /**
-             * @description `chat` (all chat threads), `task` (tasks queued by a person), `delegated` (work an agent handed to another), `routine` (routine runs), `program` (program runs).
+             * @description `chat` (all chat threads), `task` (tasks started by a person), `delegated` (work an agent handed to another), `routine` (routine runs), `program` (program runs), `heartbeat` (the ambient monitor), `rehearsal` (test runs), `other` (calls without a session).
              * @enum {string}
              */
-            source: "chat" | "task" | "delegated" | "routine" | "program";
-            /** @description Chat: turns that ran a model step. The others: runs. */
+            source: "chat" | "task" | "delegated" | "routine" | "program" | "heartbeat" | "rehearsal" | "other";
+            /** @description Chat and heartbeat: turns that called a model. The others: runs. */
             count: number;
+            /** @description Model calls (the unit of the Logs page). */
+            calls: number;
             tokens: number;
             costUsd: number;
         };
@@ -11232,6 +11249,8 @@ export interface components {
             updatedAt: number;
             /** @description The profile agents without their own pick use. */
             isDefault: boolean;
+            /** @description The model an agent on this profile uses when it names none (`TEAM_MODEL` on the env default profile, else the provider default). */
+            defaultModel?: string;
         };
         /** @description Model policy of a profile. `allow` / `deny` entries may use `*`; `extra` adds models by hand (with `contextWindow`, `pricing`). */
         ProfileModels: {
@@ -11869,7 +11888,7 @@ export interface components {
         /** @description Something the program cannot do as configured: a tool in its authority its agent never has (its connector is off, or the agent is not bound to a channel), or a budget below the cost of one model call. Warnings never block a save. */
         ProgramWarning: {
             /** @enum {string} */
-            code: "tool-unavailable" | "channel-not-bound" | "budget-below-minimum";
+            code: "tool-unavailable" | "tool-off" | "channel-not-bound" | "budget-below-minimum";
             /** @example authority.tools */
             field: string;
             message: string;

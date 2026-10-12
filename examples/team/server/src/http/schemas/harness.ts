@@ -149,7 +149,11 @@ export const AttentionAnswerSchema = z
           }),
           remember: z.literal('session').optional().openapi({
             description:
-              'With `approved: true`: also allow this tool without asking for the rest of the session. With `approved: false`: never allow it in this session.',
+              'With `approved: true`: also allow this tool without asking for the rest of the session (and answer the other waiting calls of the same tool in this session at once). With `approved: false`: never allow it in this session.',
+          }),
+          scope: z.enum(['session', 'agent', 'all']).optional().openapi({
+            description:
+              'With `approved: true`: how far "always allow" reaches. `session` (default with `remember`): this session. `agent`: a saved rule of this agent, all its sessions. `all`: a saved rule of every agent. Tools a connector pins to ask (writes of third-party connectors) still ask.',
           }),
         }),
         z.object({

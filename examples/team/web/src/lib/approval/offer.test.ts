@@ -1,19 +1,6 @@
 import type { UIMessage } from 'ai';
 import { describe, expect, test } from 'bun:test';
-import { approvalOffered, requestedApprovalIds, shownChatStatus } from './offer.js';
-
-describe('approvalOffered', () => {
-	test('a card missing from a list that was not refreshed after it appeared is still offered', () => {
-		expect(approvalOffered({ listLoaded: true, inList: false, confirmedGone: false })).toBe(true);
-	});
-	test('a card still missing after a refresh was handled elsewhere', () => {
-		expect(approvalOffered({ listLoaded: true, inList: false, confirmedGone: true })).toBe(false);
-	});
-	test('listed or not-yet-loaded is offered', () => {
-		expect(approvalOffered({ listLoaded: true, inList: true, confirmedGone: true })).toBe(true);
-		expect(approvalOffered({ listLoaded: false, inList: false, confirmedGone: true })).toBe(true);
-	});
-});
+import { requestedApprovalIds, shownChatStatus } from './offer.js';
 
 describe('requestedApprovalIds', () => {
 	test('collects approval-requested tool parts of assistant messages only', () => {

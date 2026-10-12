@@ -315,3 +315,10 @@ export const TaskSendBackSchema = z
       .openapi({ description: 'What to change. Appended to the brief.' }),
   })
   .openapi('TaskSendBack')
+
+export const TaskSendBackResultSchema = TaskSchema.extend({
+  hint: z.string().openapi({
+    description:
+      'What happens next: a scheduled worker program picks the task up at its next run, a manual one must be run ("Run now"), or no worker program runs the agent queue.',
+  }),
+}).openapi('TaskSendBackResult')

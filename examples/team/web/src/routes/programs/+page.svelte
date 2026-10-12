@@ -146,7 +146,7 @@
 								<Table.Head class="hidden lg:table-cell">Authority</Table.Head>
 								<Table.Head class="hidden lg:table-cell">Budget</Table.Head>
 								<Table.Head>Status</Table.Head>
-								<Table.Head class="w-32 text-right"><span class="sr-only">Actions</span></Table.Head>
+								<Table.Head class="w-24 text-right sm:w-32"><span class="sr-only">Actions</span></Table.Head>
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
@@ -156,9 +156,9 @@
 								<Table.Row class="cursor-pointer" onclick={() => openEditProgram(p.id)}>
 									<Table.Cell>
 										<div class="flex items-center gap-2.5">
-											{#if a}<AgentAvatar seed={a.id} color={a.color} size={28} label={a.name} />{/if}
+											{#if a}<span class="hidden sm:block"><AgentAvatar seed={a.id} color={a.color} size={28} label={a.name} /></span>{/if}
 											<div class="min-w-0">
-												<button type="button" class="block max-w-56 truncate text-left font-medium outline-none focus-visible:underline" onclick={(e) => { e.stopPropagation(); openEditProgram(p.id); }}>{p.name}</button>
+												<button type="button" class="block max-w-28 truncate sm:max-w-56 text-left font-medium outline-none focus-visible:underline" onclick={(e) => { e.stopPropagation(); openEditProgram(p.id); }}>{p.name}</button>
 												<div class="truncate text-xs text-muted-foreground">{a?.name ?? 'Unknown agent'}</div>
 											</div>
 										</div>
@@ -166,7 +166,8 @@
 									<Table.Cell class="hidden text-muted-foreground md:table-cell">
 										{#if p.trigger.kind === 'schedule'}
 											<div>{describeSpec(p.trigger.spec)}</div>
-											<div class="text-xs">{p.status === 'active' && p.triggerState?.status === 'active' ? `next ${relativeTime(p.triggerState.nextFireAt)}` : 'not scheduled'}{p.triggerState?.lastFireAt ? `, last ${relativeTime(p.triggerState.lastFireAt)}${p.triggerState.lastStatus ? ` (${p.triggerState.lastStatus.replace('_', ' ')})` : ''}` : ''}</div>
+											{@const when = `${p.status === 'active' && p.triggerState?.status === 'active' ? `next ${relativeTime(p.triggerState.nextFireAt)}` : 'not scheduled'}${p.triggerState?.lastFireAt ? `, last ${relativeTime(p.triggerState.lastFireAt)}${p.triggerState.lastStatus ? ` (${p.triggerState.lastStatus.replace('_', ' ')})` : ''}` : ''}`}
+											<div class="max-w-56 truncate text-xs" title={when}>{when}</div>
 										{:else}
 											When I run it
 										{/if}

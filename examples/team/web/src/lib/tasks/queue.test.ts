@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { bodyFromTaskForm, dueFromInput, dueLabel, dueToInput, emptyTaskForm, validateTaskForm } from './queue';
+import { bodyFromTaskForm, dueFromInput, dueLabel, dueToInput, emptyTaskForm, hasWorkerProgram, validateTaskForm } from './queue';
 
 describe('task form', () => {
 	test('validation', () => {
@@ -38,5 +38,19 @@ describe('task form', () => {
 		const late = dueLabel(Date.parse('2026-01-02T00:00:00Z'), Date.parse('2026-02-01T00:00:00Z'));
 		expect(late).toEqual({ text: 'due Jan 2', late: true });
 		expect(dueLabel(null)).toBeNull();
+	});
+});
+
+describe('hasWorkerProgram', () => {
+	test('only an active worker program of that agent counts', () => {
+		const ps = [
+			{ agentId: 'a', status: 'active', worker: { maxTasks: 3 } },
+			{ agentId: 'b', status: 'paused', worker: { maxTasks: 3 } },
+			{ agentId: 'c', status: 'active', worker: null }
+		];
+		expect(hasWorkerProgram(ps, 'a')).toBe(true);
+		expect(hasWorkerProgram(ps, 'b')).toBe(false);
+		expect(hasWorkerProgram(ps, 'c')).toBe(false);
+		expect(hasWorkerProgram(ps, 'd')).toBe(false);
 	});
 });

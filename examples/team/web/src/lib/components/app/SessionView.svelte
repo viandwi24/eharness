@@ -21,7 +21,6 @@
 	import { badgeFor } from '#lib/board/board.js';
 	import { relativeTime } from '#lib/routines/schedule.js';
 	import MessageView from '#lib/parts/MessageView.svelte';
-	import { answerFailureText } from '#lib/approval/outcome.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -37,6 +36,9 @@
 	import ChatComposer from './ChatComposer.svelte';
 	import { CONTINUE_TEXT } from 'eharness/client';
 	import PendingCard from './PendingCard.svelte';
+	import ApprovalGroupCard from './ApprovalGroupCard.svelte';
+	import { groupPending, entryKey } from '#lib/approval/group.js';
+	import type { ApprovalStanding } from '#lib/approval/chip.js';
 	import TaskInfo from './TaskInfo.svelte';
 
 	/**
@@ -194,15 +196,14 @@
 		}
 	}
 
-	function answerFromPart(a: { id: string } & Parameters<typeof live.answer>[1]): void {
-		const { id, ...body } = a;
-		const item = approvals.find((x) => x.id === id);
-		if (item) {
-			void live.answer(item, body).catch((e: unknown) => {
-				const text = answerFailureText(e);
-				if (text) toast.error(text);
-			});
-		}
+	const standing = (id: string): ApprovalStanding =>
+		approvals.some((x) => x.id === id) ? 'open' : live.state.answeredHere[id] === 'approved' ? 'approved-here' : live.state.answeredHere[id] === 'declined' ? 'declined-here' : 'answered';
+	const entries = $derived(groupPending(approvals));
+	let dockEl = $state<HTMLElement | null>(null);
+	function focusDock(): void {
+		const card = dockEl?.querySelector<HTMLElement>('[data-testid="approval-card"],[data-testid="approval-group"],[data-testid="question-card"]');
+		card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		card?.focus({ preventScroll: true });
 	}
 </script>
 
@@ -294,8 +295,8 @@
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
 									showHeader={head}
 									live={running && i === messages.length - 1}
-									onApproval={answerFromPart}
-									canAnswer={(id) => approvals.some((x) => x.id === id)}
+									{standing}
+									onFocusDock={focusDock}
 									onOpenSession={(sid) => void openSession(sid)}
 								/>
 							</ConversationItem>
@@ -330,9 +331,9 @@
 						</div>
 					{/if}
 					{#if approvals.length}
-						<div class="mb-2 flex flex-col gap-2" role="region" aria-label="Waiting for your answer">
-							{#each approvals as a (a.sessionId + a.id)}
-								<PendingCard approval={a} />
+						<div class="mb-2 flex flex-col gap-2" role="region" aria-label="Waiting for your answer" bind:this={dockEl}>
+							{#each entries as e (entryKey(e))}
+								{#if e.kind === 'group'}<ApprovalGroupCard items={e.items} toolName={e.toolName} />{:else}<PendingCard approval={e.item} />{/if}
 							{/each}
 						</div>
 					{/if}

@@ -22,7 +22,11 @@ describe('activity rows', () => {
 
 	test('group summary counts tools and repeats', () => {
 		const s = groupSummary([t('Update todos'), t('Read agent output'), t('Read agent output', 'output-error')]);
-		expect(s).toEqual({ label: 'Used 3 tools', names: 'Update todos, Read agent output ×2', running: false, failed: 1 });
+		expect(s).toEqual({ label: 'Used 3 tools', names: 'Update todos, Read agent output ×2', running: false, failed: 1, declined: 0 });
+	});
+
+	test('declined calls are counted', () => {
+		expect(groupSummary([t('A', 'output-denied'), t('B', 'output-denied'), t('C')]).declined).toBe(2);
 	});
 
 	test('a running tool names the group', () => {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { mode } from "mode-watcher";
+	import { theme } from "#lib/stores/theme.svelte.js";
 	import { Toaster as Sonner, type ToasterProps as SonnerProps } from "svelte-sonner";
 	import { cn } from "#lib/utils.js";
 	import { type Elevation, useElevation } from "#lib/components/ui/elevation/index.js";
@@ -31,7 +31,7 @@
 </script>
 
 <Sonner
-	theme={mode.current}
+	theme={theme.mode}
 	class="toaster group"
 	visibleToasts={3}
 	style="--normal-bg: var(--popover); --normal-text: var(--popover-foreground); --normal-border: var(--border); --border-radius: var(--radius-xl); --width: 360px;"
