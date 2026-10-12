@@ -10,6 +10,7 @@
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import ProgramMemory from '#lib/components/app/ProgramMemory.svelte';
 	import ProgramRehearsals from '#lib/components/app/ProgramRehearsals.svelte';
 	import ProgramTests from '#lib/components/app/ProgramTests.svelte';
 	import RehearsalDialog from '#lib/components/app/RehearsalDialog.svelte';
@@ -105,6 +106,8 @@
 				<p class="line-clamp-3 whitespace-pre-wrap">{program.brief}</p>
 				<p class="text-xs text-muted-foreground">Authority: {authoritySummary(program.authority)} · Budget: {budgetSummary(program.budget)}{program.deliverables.length ? ` · ${program.deliverables.length} deliverable${program.deliverables.length === 1 ? '' : 's'}` : ''}</p>
 			</Surface>
+
+			<ProgramMemory {program} />
 
 			<Tabs.Root bind:value={tab} class="flex flex-col gap-3">
 				<Tabs.List variant="line" class="h-10 shrink-0 gap-4 border-b border-border">

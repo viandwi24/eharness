@@ -74,6 +74,7 @@ import {
 } from '../../domain/modes.ts'
 import { nameOf, personaInstructions } from '../../domain/persona.ts'
 import {
+  type AuthoritySources,
   forbiddenReason,
   outsideAuthorityReason,
   PROGRAM_BASE_TOOLS,
@@ -285,6 +286,8 @@ export interface AgentFactory {
    * the agent is bound to a channel connection. Await `prepare(def)` first.
    */
   toolAvailability(def: AgentDef, authority: ProgramAuthority): ToolAvailability
+  /** What an authority can name for `def`: connections, connector tools with kinds, availability. */
+  authoritySources(def: AgentDef, authority: ProgramAuthority): AuthoritySources | undefined
   /** Shared storage ports (messages, state, inbox), for `agent.session(id, { lock })` callers. */
   storage: ReturnType<typeof createStorage>
   /** Cross-process turn lock; pass it as `session(id, { lock })`. */
@@ -1278,6 +1281,31 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     modelInfo: (def) => modelInfoOf(def, currentSettings()),
     toolAvailability: (def, authority) =>
       availabilityOf(def, deps.connectors.activated(def.id) ?? EMPTY_ACTIVATION, authority),
+    authoritySources(def, authority) {
+      const out = deps.connectors.activated(def.id)
+      // never prepared: nothing to check against (the HTTP layer prepares first)
+      if (out === undefined) return undefined
+      const kinds = deps.connectors.toolKinds(def.id) ?? {}
+      return {
+        connections: out.connections.map((c) => ({
+          connectionId: c.connectionId,
+          connectorId: c.connectorId,
+          slug: c.slug,
+          toolPrefix: c.toolPrefix,
+          label: c.slug,
+        })),
+        tools: Object.entries(out.toolNameMap).map(([name, origin]) => ({
+          name,
+          connectorId: origin.connectorId,
+          connectionIds: origin.connectionIds,
+          kind: kinds[name] ?? 'unknown',
+          off: out.rules.deny.includes(name),
+          pinned: out.rules.pinnedAsk.includes(name),
+        })),
+        definitionIds: deps.connectors.definitions.map((d) => d.id),
+        availability: availabilityOf(def, out, authority),
+      }
+    },
     programTurn(def, sessionId) {
       const parsed = parseProgramSession(sessionId)
       const program = parsed === undefined ? undefined : deps.programs?.get(parsed.programId)

@@ -6331,6 +6331,58 @@
           "schedule"
         ]
       },
+      "RoutineQueue": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "preview": {
+                  "type": "string"
+                },
+                "claimed": {
+                  "type": "boolean"
+                },
+                "availableAt": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "preview",
+                "claimed",
+                "availableAt"
+              ]
+            }
+          },
+          "removed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessionId",
+          "items"
+        ],
+        "description": "The inputs waiting in the session that keeps the routine from firing (overlap: an input of the session is still queued)."
+      },
       "RoutinePatch": {
         "type": "object",
         "properties": {
@@ -6585,6 +6637,131 @@
               "$ref": "#/components/schemas/ProgramWarning"
             },
             "description": "Only on the answers of create and update: see `ProgramWarning`."
+          },
+          "grant": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "connectors": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "requested": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "read",
+                              "write",
+                              "destructive",
+                              "external",
+                              "unknown"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "granted",
+                              "gate",
+                              "off",
+                              "unavailable"
+                            ],
+                            "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "kind",
+                          "status"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "requested",
+                    "id",
+                    "label",
+                    "tools"
+                  ]
+                }
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write",
+                        "destructive",
+                        "external",
+                        "unknown"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "granted",
+                        "gate",
+                        "off",
+                        "unavailable"
+                      ],
+                      "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "kind",
+                    "status"
+                  ]
+                }
+              },
+              "read": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "write": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "connectors",
+              "tools",
+              "read",
+              "write"
+            ],
+            "description": "The effective grant of the authority (null when the agent is not activated)."
           }
         },
         "required": [
@@ -6889,11 +7066,167 @@
             "items": {
               "$ref": "#/components/schemas/ProgramWarning"
             }
+          },
+          "grant": {
+            "$ref": "#/components/schemas/EffectiveGrant"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Problems that would refuse a save (unknown connector or tool), with the valid options."
+          },
+          "repaired": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            }
           }
         },
         "required": [
-          "warnings"
+          "warnings",
+          "grant",
+          "errors",
+          "repaired"
         ]
+      },
+      "EffectiveGrant": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "connectors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "requested": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write",
+                          "destructive",
+                          "external",
+                          "unknown"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "granted",
+                          "gate",
+                          "off",
+                          "unavailable"
+                        ],
+                        "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "kind",
+                      "status"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "requested",
+                "id",
+                "label",
+                "tools"
+              ]
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "write",
+                    "destructive",
+                    "external",
+                    "unknown"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "granted",
+                    "gate",
+                    "off",
+                    "unavailable"
+                  ],
+                  "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                }
+              },
+              "required": [
+                "name",
+                "kind",
+                "status"
+              ]
+            }
+          },
+          "read": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "write": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "connectors",
+          "tools",
+          "read",
+          "write"
+        ],
+        "description": "What an authority really gives: the tools each connector resolves to, read or write."
       },
       "ProgramCheck": {
         "type": "object",
@@ -7319,6 +7652,64 @@
           "started",
           "idle"
         ]
+      },
+      "ProgramMemory": {
+        "type": "object",
+        "properties": {
+          "remembered": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RememberedDecision"
+            }
+          }
+        },
+        "required": [
+          "remembered"
+        ]
+      },
+      "RememberedDecision": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "programId": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "choice": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "decisionId": {
+            "type": "string"
+          },
+          "decidedAt": {
+            "type": "integer"
+          },
+          "expiresAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "programId",
+          "subject",
+          "question",
+          "choice",
+          "note",
+          "decisionId",
+          "decidedAt",
+          "expiresAt"
+        ],
+        "description": "A stand-down answer (\"keep waiting\", \"skip\") the client gave; later runs of the program do not ask it again until it expires."
       },
       "ProgramRuns": {
         "type": "object",
@@ -8178,6 +8569,131 @@
               "createdAt": {
                 "type": "integer"
               },
+              "grant": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "connectors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "tools": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "read",
+                                  "write",
+                                  "destructive",
+                                  "external",
+                                  "unknown"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "granted",
+                                  "gate",
+                                  "off",
+                                  "unavailable"
+                                ],
+                                "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "kind",
+                              "status"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "requested",
+                        "id",
+                        "label",
+                        "tools"
+                      ]
+                    }
+                  },
+                  "tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "read",
+                            "write",
+                            "destructive",
+                            "external",
+                            "unknown"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "granted",
+                            "gate",
+                            "off",
+                            "unavailable"
+                          ],
+                          "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "kind",
+                        "status"
+                      ]
+                    }
+                  },
+                  "read": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "write": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "connectors",
+                  "tools",
+                  "read",
+                  "write"
+                ],
+                "description": "Proposals and amendments: what the authority really resolves to for the agent."
+              },
               "kind": {
                 "type": "string",
                 "enum": [
@@ -8270,6 +8786,131 @@
               "createdAt": {
                 "type": "integer"
               },
+              "grant": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "connectors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "tools": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "read",
+                                  "write",
+                                  "destructive",
+                                  "external",
+                                  "unknown"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "granted",
+                                  "gate",
+                                  "off",
+                                  "unavailable"
+                                ],
+                                "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "kind",
+                              "status"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "requested",
+                        "id",
+                        "label",
+                        "tools"
+                      ]
+                    }
+                  },
+                  "tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "read",
+                            "write",
+                            "destructive",
+                            "external",
+                            "unknown"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "granted",
+                            "gate",
+                            "off",
+                            "unavailable"
+                          ],
+                          "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "kind",
+                        "status"
+                      ]
+                    }
+                  },
+                  "read": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "write": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "connectors",
+                  "tools",
+                  "read",
+                  "write"
+                ],
+                "description": "Proposals and amendments: what the authority really resolves to for the agent."
+              },
               "kind": {
                 "type": "string",
                 "enum": [
@@ -8361,6 +9002,131 @@
               },
               "createdAt": {
                 "type": "integer"
+              },
+              "grant": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "connectors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "tools": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "read",
+                                  "write",
+                                  "destructive",
+                                  "external",
+                                  "unknown"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "granted",
+                                  "gate",
+                                  "off",
+                                  "unavailable"
+                                ],
+                                "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "kind",
+                              "status"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "requested",
+                        "id",
+                        "label",
+                        "tools"
+                      ]
+                    }
+                  },
+                  "tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "read",
+                            "write",
+                            "destructive",
+                            "external",
+                            "unknown"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "granted",
+                            "gate",
+                            "off",
+                            "unavailable"
+                          ],
+                          "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "kind",
+                        "status"
+                      ]
+                    }
+                  },
+                  "read": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "write": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "connectors",
+                  "tools",
+                  "read",
+                  "write"
+                ],
+                "description": "Proposals and amendments: what the authority really resolves to for the agent."
               },
               "kind": {
                 "type": "string",
@@ -18462,6 +19228,143 @@
         }
       }
     },
+    "/routines/{id}/queue": {
+      "get": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Inputs queued in the routine session",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutineQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/queue/clear": {
+      "post": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Clear the queued inputs of the routine session",
+        "description": "Removes the inputs that keep an \"in the agent chat\" routine skipped with \"an input of the session is still queued\". The next fire runs.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutineQueue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/routines/{id}": {
       "get": {
         "tags": [
@@ -19633,6 +20536,149 @@
           },
           "409": {
             "description": "`PROGRAM_BUSY` or archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/programs/{id}/memory": {
+      "get": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Decisions the program remembers",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Program id."
+            },
+            "required": true,
+            "description": "Program id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Remembered decisions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramMemory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/programs/{id}/memory/{memoryId}": {
+      "delete": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Forget a remembered decision",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "memoryId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Forgotten",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramMemory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
             "content": {
               "application/json": {
                 "schema": {

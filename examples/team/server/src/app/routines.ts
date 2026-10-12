@@ -159,3 +159,20 @@ export function routineRuns(deps: Deps, id: string, limit = 50): RoutineRun[] {
   getRoutine(deps, id)
   return deps.routines.runs(id, limit)
 }
+
+/** What waits in the session that keeps this routine from firing ("an input is still queued"). */
+export async function routineQueue(deps: Deps, id: string) {
+  return deps.routineEngine.queue(getRoutine(deps, id))
+}
+
+/** Clears that queue; the next fire runs. Returns how many inputs were removed. */
+export async function clearRoutineQueue(deps: Deps, id: string): Promise<number> {
+  const routine = getRoutine(deps, id)
+  const removed = await deps.routineEngine.clearQueue(routine)
+  deps.events.append({
+    type: 'routine-changed',
+    agentId: routine.agentId,
+    payload: { routineId: id, name: routine.name, change: 'queue cleared', removed },
+  })
+  return removed
+}

@@ -128,7 +128,11 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
             sessionId: ctx.session.id,
             parentSessionId: ctx.session.parent?.sessionId ?? null,
             origin: taskOrigin(ctx),
-            title: titleFromText(unframe(textOf(e.input))),
+            // a delegation carries its own short label (the `description` of the delegate call)
+            title: titleFromText(
+              (ctx.session.parent as { description?: string } | undefined)?.description?.trim() ||
+                unframe(textOf(e.input)),
+            ),
             startedAt: t,
           })
           const next = store.update(ctx.session.id, {

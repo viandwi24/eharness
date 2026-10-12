@@ -9,6 +9,8 @@
  * and ends with a structured report. Pure: validation, ids, the rules the engine gets, the text of
  * a run and the outcome of a turn.
  */
+
+import { memoryPromptSection, type RememberedDecision } from './decision-memory.ts'
 import {
   checkDeliverables,
   type Deliverable,
@@ -532,7 +534,12 @@ const bullets = (items: readonly string[], none: string): string =>
   items.length === 0 ? none : items.map((i) => `- ${i}`).join('\n')
 
 /** The text of the turn that starts a run: brief, authority, gates, escalation and the run rule. */
-export function programRunPrompt(program: Program, run?: TokenContext): string {
+export function programRunPrompt(
+  program: Program,
+  run?: TokenContext,
+  remembered: readonly RememberedDecision[] = [],
+  now = Date.now(),
+): string {
   const a = program.authority
   const tools = [
     ...a.tools,
@@ -564,6 +571,7 @@ export function programRunPrompt(program: Program, run?: TokenContext): string {
       : program.escalation.trim(),
     '',
     ...(run === undefined ? [] : deliverablesPromptSection(program.deliverables ?? [], run)),
+    ...memoryPromptSection(remembered, now),
     '## How to run',
     'Work in three steps: Execute, Verify, Report.',
     `1. Execute the brief step by step. Keep what you produce in the library paths you may write.`,
@@ -634,5 +642,203 @@ export function parseReport(value: unknown): TaskReport | undefined {
     summary: v.summary,
     outputs,
     ...(typeof v.notes === 'string' ? { notes: v.notes } : {}),
+  }
+}
+
+// --- effective grant: what an authority really gives (validation + display) ---------------------
+
+export type GrantKind = 'read' | 'write' | 'destructive' | 'external' | 'unknown'
+
+/** A connection the agent has, as the authority can name it. */
+export interface AuthorityConnectionInfo {
+  connectionId: string
+  connectorId: string
+  slug: string
+  toolPrefix: string
+  label: string
+}
+
+/** A tool the agent has through a connector. */
+export interface AuthorityToolInfo {
+  name: string
+  connectorId: string
+  connectionIds: readonly string[]
+  kind: GrantKind
+  /** Mode Off: every call is refused. */
+  off: boolean
+  /** Write / destructive tool of a third-party connector: a gate, never granted by a connector grant. */
+  pinned: boolean
+}
+
+export interface AuthoritySources {
+  connections: readonly AuthorityConnectionInfo[]
+  tools: readonly AuthorityToolInfo[]
+  /** Every connector definition id of the workspace (known, maybe not enabled for this agent). */
+  definitionIds: readonly string[]
+  availability: ToolAvailability
+}
+
+export interface GrantedTool {
+  name: string
+  kind: GrantKind
+  status: 'granted' | 'gate' | 'off' | 'unavailable'
+}
+
+export interface GrantedConnector {
+  requested: string
+  /** The resolved connector or connection id; null when it matches nothing. */
+  id: string | null
+  label: string
+  tools: GrantedTool[]
+}
+
+export interface EffectiveGrant {
+  connectors: GrantedConnector[]
+  /** Tools the authority names itself. */
+  tools: GrantedTool[]
+  read: string[]
+  write: string[]
+}
+
+export interface AuthorityInspection {
+  /** The authority with unambiguous connector names repaired to real ids. */
+  authority: ProgramAuthority
+  repaired: Array<{ from: string; to: string }>
+  /** Readable problems; saving is refused while any exist. */
+  errors: string[]
+  grant: EffectiveGrant
+}
+
+const norm = (s: string): string => s.trim().toLowerCase().replace(/_/g, '-')
+
+function levenshtein(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0] as number
+    row[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j] as number
+      row[j] = Math.min(tmp + 1, (row[j - 1] as number) + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = tmp
+    }
+  }
+  return row[b.length] as number
+}
+
+/** Tool names of the agent that look like a mistyped `name`. */
+export function similarTools(name: string, names: Iterable<string>): string[] {
+  const n = norm(name)
+  const out: string[] = []
+  for (const candidate of names) {
+    const c = norm(candidate)
+    if (c === n || c.endsWith(`-${n}`) || n.endsWith(`-${c}`) || levenshtein(c, n) <= 2) {
+      out.push(candidate)
+    }
+  }
+  return out.slice(0, 5)
+}
+
+function grantTool(t: AuthorityToolInfo, viaConnector: boolean): GrantedTool {
+  if (t.off) return { name: t.name, kind: t.kind, status: 'off' }
+  if (viaConnector && t.pinned) return { name: t.name, kind: t.kind, status: 'gate' }
+  return { name: t.name, kind: t.kind, status: 'granted' }
+}
+
+/**
+ * Checks an authority against what the agent really has. A connector name that is the slug, tool
+ * prefix or label of exactly one connection is repaired to that connection's id; one that matches
+ * nothing (or several) is an error that lists the valid ids. A tool name the agent does not have
+ * is an error only when a tool of the agent looks like it (a typo); otherwise it stays a warning
+ * (`toolWarnings`), because the connector may simply be off for now.
+ */
+export function inspectAuthority(
+  authority: ProgramAuthority,
+  sources: AuthoritySources,
+): AuthorityInspection {
+  const errors: string[] = []
+  const repaired: Array<{ from: string; to: string }> = []
+  const valid = sources.connections.map((c) => `${c.connectionId} (${c.label})`)
+  const validIds = [...new Set(sources.connections.flatMap((c) => [c.connectorId, c.connectionId]))]
+  const connectors: string[] = []
+  const grantConnectors: GrantedConnector[] = []
+
+  for (const requested of authority.connectors) {
+    const exactConnector = sources.connections.filter((c) => c.connectorId === requested)
+    const exactConnection = sources.connections.find((c) => c.connectionId === requested)
+    let id: string | null = null
+    let label = requested
+    if (exactConnection !== undefined || exactConnector.length > 0) {
+      id = requested
+      label = exactConnection?.label ?? exactConnector[0]?.label ?? requested
+    } else {
+      const n = norm(requested)
+      const matches = sources.connections.filter((c) =>
+        [c.slug, c.toolPrefix, c.label, c.connectionId, c.connectorId].some((x) => norm(x) === n),
+      )
+      if (matches.length === 1) {
+        const m = matches[0] as AuthorityConnectionInfo
+        id = m.connectionId
+        label = m.label
+        repaired.push({ from: requested, to: id })
+      } else if (matches.length > 1) {
+        errors.push(
+          `authority.connectors: "${requested}" matches several connections (${matches.map((m) => `${m.connectionId} (${m.label})`).join(', ')}). Name one connection id.`,
+        )
+      } else if (sources.definitionIds.includes(requested)) {
+        errors.push(
+          `authority.connectors: "${requested}" is a connector this agent does not have enabled. Turn it on for the agent first. Enabled: ${valid.join(', ') || 'none'}.`,
+        )
+      } else {
+        errors.push(
+          `authority.connectors: "${requested}" is not a connector or connection id of this agent. Valid: ${valid.join(', ') || 'none (no custom or third-party connector is enabled)'}${validIds.length > 0 ? `; or a connector id: ${validIds.filter((v) => !sources.connections.some((c) => c.connectionId === v)).join(', ')}` : ''}.`,
+        )
+      }
+    }
+    if (id !== null) connectors.push(id)
+    grantConnectors.push({
+      requested,
+      id,
+      label,
+      tools:
+        id === null
+          ? []
+          : sources.tools
+              .filter((t) => t.connectorId === id || t.connectionIds.includes(id as string))
+              .map((t) => grantTool(t, true)),
+    })
+  }
+
+  const byName = new Map(sources.tools.map((t) => [t.name, t]))
+  const grantTools: GrantedTool[] = []
+  for (const rule of authority.tools) {
+    const name = baseName(rule)
+    if (!isToolName(name)) continue
+    const info = byName.get(name)
+    if (info !== undefined) {
+      grantTools.push(grantTool(info, false))
+    } else if (sources.availability.available.has(name)) {
+      grantTools.push({ name, kind: 'unknown', status: 'granted' })
+    } else {
+      grantTools.push({ name, kind: 'unknown', status: 'unavailable' })
+      if (sources.availability.channelTools.includes(name)) continue
+      const near = similarTools(name, sources.availability.available)
+      if (near.length > 0) {
+        errors.push(
+          `authority.tools: the agent has no tool "${name}". Did you mean: ${near.join(', ')}?`,
+        )
+      }
+    }
+  }
+
+  return {
+    authority: { ...authority, connectors: cleanList(connectors) },
+    repaired,
+    errors,
+    grant: {
+      connectors: grantConnectors,
+      tools: grantTools,
+      read: authority.read,
+      write: authority.write,
+    },
   }
 }

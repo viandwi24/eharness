@@ -1,12 +1,15 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import {
+  authorityGrant,
   checkProgramDraft,
   createProgram,
   deleteProgram,
+  forgetProgramMemory,
   getProgram,
   listPrograms,
   pauseProgram,
+  programMemory,
   programRuns,
   programView,
   programWithWarnings,
@@ -21,6 +24,8 @@ import {
   ProgramCreateSchema,
   ProgramIdParam,
   ProgramListSchema,
+  ProgramMemoryParam,
+  ProgramMemorySchema,
   ProgramPatchSchema,
   ProgramRunStartedSchema,
   ProgramRunsSchema,
@@ -197,6 +202,34 @@ const runsRoute = createRoute({
   },
 })
 
+const memoryRoute = createRoute({
+  method: 'get',
+  path: '/programs/{id}/memory',
+  tags: ['programs'],
+  summary: 'Decisions the program remembers',
+  security,
+  request: params,
+  responses: {
+    200: { description: 'Remembered decisions', content: json(ProgramMemorySchema) },
+    404: unknown,
+    ...errorResponses,
+  },
+})
+
+const forgetRoute = createRoute({
+  method: 'delete',
+  path: '/programs/{id}/memory/{memoryId}',
+  tags: ['programs'],
+  summary: 'Forget a remembered decision',
+  security,
+  request: { params: ProgramMemoryParam },
+  responses: {
+    200: { description: 'Forgotten', content: json(ProgramMemorySchema) },
+    404: unknown,
+    ...errorResponses,
+  },
+})
+
 export function programRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(listRoute, (c) => {
@@ -206,27 +239,38 @@ export function programRoutes(deps: Deps): OpenAPIHono {
         200,
       )
     })
-    .openapi(checkRoute, async (c) =>
-      c.json({ warnings: await checkProgramDraft(deps, c.req.valid('json')) }, 200),
-    )
-    .openapi(createRoute_, async (c) =>
-      c.json(
-        (await programWithWarnings(deps, createProgram(deps, c.req.valid('json')))) as never,
-        201,
-      ),
-    )
-    .openapi(getRoute, (c) =>
-      c.json(programView(deps, getProgram(deps, c.req.valid('param').id)) as never, 200),
-    )
-    .openapi(patchRoute, async (c) =>
-      c.json(
-        (await programWithWarnings(
-          deps,
-          updateProgram(deps, c.req.valid('param').id, c.req.valid('json')),
-        )) as never,
+    .openapi(checkRoute, async (c) => {
+      const body = c.req.valid('json')
+      const inspection = await authorityGrant(deps, body.agentId, body.authority)
+      return c.json(
+        {
+          warnings: await checkProgramDraft(deps, body),
+          grant: inspection?.grant ?? null,
+          errors: inspection?.errors ?? [],
+          repaired: inspection?.repaired ?? [],
+        },
         200,
-      ),
-    )
+      )
+    })
+    .openapi(createRoute_, async (c) => {
+      const body = c.req.valid('json')
+      // activate the agent first: the authority is checked against what it really has
+      await authorityGrant(deps, body.agentId, undefined)
+      return c.json((await programWithWarnings(deps, createProgram(deps, body))) as never, 201)
+    })
+    .openapi(getRoute, async (c) => {
+      const view = programView(deps, getProgram(deps, c.req.valid('param').id))
+      const inspection = await authorityGrant(deps, view.agentId, view.authority)
+      return c.json({ ...view, grant: inspection?.grant ?? null } as never, 200)
+    })
+    .openapi(patchRoute, async (c) => {
+      const id = c.req.valid('param').id
+      await authorityGrant(deps, getProgram(deps, id).agentId, undefined)
+      return c.json(
+        (await programWithWarnings(deps, updateProgram(deps, id, c.req.valid('json')))) as never,
+        200,
+      )
+    })
     .openapi(deleteRoute_, (c) =>
       c.json(programView(deps, deleteProgram(deps, c.req.valid('param').id)) as never, 200),
     )
@@ -235,6 +279,14 @@ export function programRoutes(deps: Deps): OpenAPIHono {
     .openapi(runRoute, async (c) =>
       c.json((await runProgramNow(deps, c.req.valid('param').id)) as never, 202),
     )
+    .openapi(memoryRoute, (c) =>
+      c.json({ remembered: programMemory(deps, c.req.valid('param').id) } as never, 200),
+    )
+    .openapi(forgetRoute, (c) => {
+      const { id, memoryId } = c.req.valid('param')
+      forgetProgramMemory(deps, id, memoryId)
+      return c.json({ remembered: programMemory(deps, id) } as never, 200)
+    })
     .openapi(runsRoute, (c) => {
       const { limit } = c.req.valid('query')
       return c.json({ runs: programRuns(deps, c.req.valid('param').id, limit) } as never, 200)

@@ -1,5 +1,10 @@
 import { z } from '@hono/zod-openapi'
-import { ProgramAuthoritySchema, ProgramBudgetSchema, ProgramTriggerSchema } from './programs.ts'
+import {
+  EffectiveGrantSchema,
+  ProgramAuthoritySchema,
+  ProgramBudgetSchema,
+  ProgramTriggerSchema,
+} from './programs.ts'
 import { DeliverableSchema } from './tasks.ts'
 
 const KINDS = ['proposal', 'escalation', 'amendment'] as const
@@ -87,6 +92,9 @@ const base = {
   decisionNote: z.string().nullable(),
   outcome: DecisionOutcomeSchema.nullable(),
   createdAt: z.number().int(),
+  grant: EffectiveGrantSchema.nullable().optional().openapi({
+    description: 'Proposals and amendments: what the authority really resolves to for the agent.',
+  }),
 }
 
 export const DecisionSchema = z

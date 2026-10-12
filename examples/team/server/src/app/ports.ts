@@ -37,6 +37,7 @@ import type {
   FlowResult,
   FlowStartInput,
 } from '../domain/connectors.ts'
+import type { RememberedDecision } from '../domain/decision-memory.ts'
 import type {
   Decision,
   DecisionAnswer,
@@ -63,6 +64,7 @@ import type {
 import type { AgentModeChoice, ModeSource, TeamMode } from '../domain/modes.ts'
 import type { PersonaProposal, PersonaVersion, ProposalStatus } from '../domain/persona.ts'
 import type {
+  AuthorityInspection,
   Program,
   ProgramAuthority,
   ProgramBudget,
@@ -324,6 +326,15 @@ export interface ProgramStore {
   delete(id: string): boolean
 }
 
+/** Decisions a program's client already settled (stand-down answers), per program. */
+export interface ProgramMemoryStore {
+  list(programId: string): RememberedDecision[]
+  /** Stores an answer; one per subject (a newer one replaces the older). */
+  remember(item: RememberedDecision): void
+  forget(programId: string, id: string, now: number): boolean
+  deleteByProgram(programId: string): void
+}
+
 /** Starts program runs (`infra/eh/program-service.ts`). */
 export interface ProgramRunner {
   /**
@@ -342,6 +353,13 @@ export interface ProgramRunner {
    * What a program of this agent, authority and budget cannot do (`ProgramWarning`): tools the run
    * can never have and a budget below the cost of one model call. Nothing is stored.
    */
+  /**
+   * Checks an authority against what the agent really has (`inspectAuthority`): repaired connector
+   * names, readable errors and the effective grant. Sync, from the last activation; undefined when
+   * the agent was never prepared. `prepare` activates it first.
+   */
+  inspect(agentId: string, authority: ProgramAuthority): AuthorityInspection | undefined
+  prepare(agentId: string): Promise<void>
   check(input: {
     agentId: string
     authority: ProgramAuthority
@@ -702,7 +720,29 @@ export interface ScheduleCalc {
 }
 
 /** Fires routines (`infra/eh/routine-service.ts`); every instance runs a ticker. */
+/** One input waiting in the inbox of a session. */
+export interface QueuedInput {
+  id: string
+  kind: string
+  /** First text of the input, shortened ('' when it has none). */
+  preview: string
+  /** A holder is working on it right now. */
+  claimed: boolean
+  availableAt: number | null
+}
+
+/** The inbox of a session, as far as the owner needs to see and clear it. */
+export interface SessionQueue {
+  queued(sessionId: string): Promise<QueuedInput[]>
+  /** Removes every waiting input of the session; returns how many. */
+  clear(sessionId: string): Promise<number>
+}
+
 export interface RoutineEngine {
+  /** The session whose inbox decides the overlap of this routine's next fire, and what waits in it. */
+  queue(routine: Routine): Promise<{ sessionId: string | null; items: QueuedInput[] }>
+  /** Clears the waiting inputs of that session (a stuck input that skips every fire). */
+  clearQueue(routine: Routine): Promise<number>
   /** Fire `routine` now (a manual run); it respects `overlap: 'skip'`. */
   runNow(routine: Routine): Promise<RoutineRun>
 }
@@ -908,6 +948,7 @@ export interface Deps {
   programRunner: ProgramRunner
   rehearsals: RehearsalStore
   programTests: ProgramTestStore
+  programMemory: ProgramMemoryStore
   rehearsalRunner: RehearsalRunner
   decisions: DecisionStore
   decisionResolver: DecisionResolver

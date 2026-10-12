@@ -485,6 +485,23 @@ models), plus changed expectations in `routines`, `threads` and `agent-factory` 
 
 (none yet)
 
+## Value pass (after the value evaluation)
+
+Done in `examples/team`, no library change, no migration:
+
+1. Program authority is validated and repaired against the agent's real connections and tools; the
+   effective grant is shown in the editor and on decision cards (walkthrough 18, "Value pass").
+2. Stand-down answers ("keep waiting") are remembered per program and subject for 7 days and fed to
+   later runs; the program page lists them with Forget.
+3. Routines: queued input of the session is visible and clearable; the default mode is a task.
+4. Approval noise: reads of custom connectors default to Allowed (on test); readable approve-all
+   rows; big-data tools only in program runs.
+5. The Analyst seed has library write (new workspaces; an existing Analyst gets it by turning Files
+   edit on in its settings). 6. Task titles are short labels.
+
+Not done here: the work queue / Review redesign (a later phase); existing connections keep their
+stored Ask modes for reads.
+
 ## Requests to other phases
 
 - Library (optional, not blocking): `createChatSession` of `eharness/client` has `send`, `retryTurn` and

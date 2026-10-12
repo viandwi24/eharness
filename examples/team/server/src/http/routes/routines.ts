@@ -2,12 +2,14 @@ import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import { getAgent } from '../../app/agents.ts'
 import type { Deps } from '../../app/ports.ts'
 import {
+  clearRoutineQueue,
   createRoutine,
   deleteRoutine,
   getRoutine,
   listRoutines,
   pauseRoutine,
   resumeRoutine,
+  routineQueue,
   routineRuns,
   runRoutineNow,
   updateRoutine,
@@ -18,6 +20,7 @@ import {
   RoutineIdParam,
   RoutineListSchema,
   RoutinePatchSchema,
+  RoutineQueueSchema,
   RoutineRunSchema,
   RoutineRunsSchema,
   RoutineSchema,
@@ -175,6 +178,36 @@ const runsRoute = createRoute({
   },
 })
 
+const queueRoute = createRoute({
+  method: 'get',
+  path: '/routines/{id}/queue',
+  tags: ['routines'],
+  summary: 'Inputs queued in the routine session',
+  security,
+  request: params,
+  responses: {
+    200: { description: 'Queue', content: json(RoutineQueueSchema) },
+    404: unknown,
+    ...errorResponses,
+  },
+})
+
+const clearQueueRoute = createRoute({
+  method: 'post',
+  path: '/routines/{id}/queue/clear',
+  tags: ['routines'],
+  summary: 'Clear the queued inputs of the routine session',
+  description:
+    'Removes the inputs that keep an "in the agent chat" routine skipped with "an input of the session is still queued". The next fire runs.',
+  security,
+  request: params,
+  responses: {
+    200: { description: 'Cleared', content: json(RoutineQueueSchema) },
+    404: unknown,
+    ...errorResponses,
+  },
+})
+
 export function routineRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(listRoute, async (c) => {
@@ -207,6 +240,14 @@ export function routineRoutes(deps: Deps): OpenAPIHono {
         }) as never,
         201,
       )
+    })
+    .openapi(queueRoute, async (c) =>
+      c.json((await routineQueue(deps, c.req.valid('param').id)) as never, 200),
+    )
+    .openapi(clearQueueRoute, async (c) => {
+      const id = c.req.valid('param').id
+      const removed = await clearRoutineQueue(deps, id)
+      return c.json({ ...(await routineQueue(deps, id)), removed } as never, 200)
     })
     .openapi(getRoute, (c) => c.json(getRoutine(deps, c.req.valid('param').id) as never, 200))
     .openapi(patchRoute, (c) => {

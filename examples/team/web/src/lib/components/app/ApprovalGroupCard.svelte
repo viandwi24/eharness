@@ -4,7 +4,7 @@
 	import CaretRightIcon from 'phosphor-svelte/lib/CaretRight';
 	import type { Approval } from '#lib/api/client.js';
 	import { answerFailureText } from '#lib/approval/outcome.js';
-	import { friendlyTitle, summarizeApproval } from '#lib/approval/summary.js';
+	import { friendlyTitle, readableInput, summarizeApproval } from '#lib/approval/summary.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { ALLOW_SCOPES, DEFAULT_ALLOW_SCOPE, type AllowScope } from '#lib/approval/answer.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -95,7 +95,12 @@
 			{@const raw = summarizeApproval(a.toolName, a.input).raw}
 			<li class="flex flex-col gap-1 px-2 py-1.5" data-testid="group-item">
 				<div class="flex items-start gap-2">
-					<p class="min-w-0 flex-1 text-[13px] break-words">{friendlyTitle(a.toolName, a.input)}</p>
+					<div class="min-w-0 flex-1">
+						<p class="text-[13px] break-words">{friendlyTitle(a.toolName, a.input, false)}</p>
+						{#if readableInput(a.toolName, a.input)}
+							<p class="text-xs text-muted-foreground break-words" data-testid="group-item-summary">{readableInput(a.toolName, a.input)}</p>
+						{/if}
+					</div>
 					<div class="flex shrink-0 items-center gap-1">
 						<Button size="xs" disabled={busy} onclick={() => void answerOne(a, true)}>Approve</Button>
 						<Button size="xs" variant="outline" disabled={busy} onclick={() => void answerOne(a, false)}>Deny</Button>
@@ -108,7 +113,7 @@
 						aria-expanded={open[a.id] === true}
 						onclick={() => (open[a.id] = !open[a.id])}
 					>
-						<CaretRightIcon class={cn('size-3 transition-transform', open[a.id] && 'rotate-90')} /> Input
+						<CaretRightIcon class={cn('size-3 transition-transform', open[a.id] && 'rotate-90')} /> Details
 					</button>
 					{#if open[a.id]}
 						<pre class="max-h-40 overflow-auto rounded-md bg-card p-2 font-mono text-[11.5px] whitespace-pre-wrap">{raw}</pre>

@@ -33,6 +33,7 @@ import type {
   ProgramStore,
   RoutineEngine,
   ScheduleCalc,
+  SessionQueue,
 } from '../../app/ports.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import type { EventType } from '../../domain/events.ts'
@@ -127,6 +128,8 @@ export interface RoutineServiceDeps {
   dmSession?: (agentId: string) => string
   /** Late-bound app deps: an auto-paused routine tells the bell (D10 of the e2e pass). */
   app?: () => Deps | undefined
+  /** The inbox of sessions: shows and clears what keeps a routine from firing. */
+  queue?: SessionQueue
   config?: RoutineEngineConfig
   now?: () => number
   log?: { warn(message: string): void }
@@ -221,6 +224,13 @@ export function createRoutineService(
       slot = schedule.next(spec, slot)
     }
     return latest
+  }
+
+  /** The session whose inbox keeps this routine from firing: its chat (`dm`) or its last run's. */
+  function queueSessionOf(routine: Routine): string | null {
+    if (routine.programId != null) return null
+    if (routine.sessionMode === 'dm') return sessionOf(routine, clock())
+    return store.runs(routine.id, 1)[0]?.sessionId ?? null
   }
 
   /** Why the previous fire is still in the way (`overlap: 'skip'`), or undefined. */
@@ -674,6 +684,18 @@ export function createRoutineService(
         ticking = undefined
       })
       return ticking
+    },
+
+    async queue(routine) {
+      const sessionId = queueSessionOf(routine)
+      if (sessionId === null || deps.queue === undefined) return { sessionId, items: [] }
+      return { sessionId, items: await deps.queue.queued(sessionId) }
+    },
+
+    async clearQueue(routine) {
+      const sessionId = queueSessionOf(routine)
+      if (sessionId === null || deps.queue === undefined) return 0
+      return deps.queue.clear(sessionId)
     },
 
     async runNow(routine) {

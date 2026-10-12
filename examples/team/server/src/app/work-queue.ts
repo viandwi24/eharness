@@ -6,7 +6,13 @@
  */
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import { parseProgramSession } from '../domain/programs.ts'
-import { boardColumn, isWorkItem, type Task, type TaskPriority } from '../domain/tasks.ts'
+import {
+  boardColumn,
+  isWorkItem,
+  type Task,
+  type TaskPriority,
+  titleFromText,
+} from '../domain/tasks.ts'
 import {
   checkTaskFields,
   cleanInputs,
@@ -74,7 +80,11 @@ export function createTask(deps: Deps, draft: TaskDraft & { createdBy?: string }
   checkTaskFields(draft)
   const task = deps.tasks.enqueue({
     agentId: agent.id,
-    title: draft.title.trim(),
+    // a title is a short human label: a pasted prompt is shortened to its first line
+    title:
+      draft.title.trim().length > 80 || draft.title.includes('\n')
+        ? titleFromText(draft.title)
+        : draft.title.trim(),
     brief: draft.brief === undefined || draft.brief.trim() === '' ? null : draft.brief.trim(),
     inputs: cleanInputs(draft.inputs ?? []),
     priority: draft.priority ?? 'normal',

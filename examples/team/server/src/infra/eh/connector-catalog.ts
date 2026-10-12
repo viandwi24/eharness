@@ -137,6 +137,14 @@ interface RemoteSettings {
 const hasHeaders = (s: RemoteSettings): boolean =>
   s.headers !== undefined && Object.keys(s.headers).length > 0
 
+/**
+ * Reads of custom and third-party servers default to Allowed: asking for every lookup of a tracker
+ * is noise that trains the owner to click through (P40 value pass). Writes and destructive tools
+ * keep Ask first and stay pinned to ask.
+ */
+const readsAllowed = <T extends { kind: string; defaultMode: string }>(caps: T[]): T[] =>
+  caps.map((c) => (c.kind === 'read' ? { ...c, defaultMode: 'allow' } : c))
+
 /** A field only the migration sets (never shown: the condition can not hold). */
 const NEVER = { field: 'authMode', in: [] as unknown[] }
 
@@ -206,7 +214,9 @@ function customMcp(
         return {
           ok: true,
           message: `Found ${tools.length} tools.`,
-          capabilities: capabilitiesFromTools(tools as RemoteToolInfo[]),
+          // reads of a custom server default to Allowed (a tracker's lookups asked on every call);
+          // writes and destructive tools keep Ask first (P40 value pass)
+          capabilities: readsAllowed(capabilitiesFromTools(tools as RemoteToolInfo[])),
         }
       } catch (error) {
         return {
@@ -336,7 +346,7 @@ function github(
         return {
           ok: true,
           ...(accountLabel === undefined ? {} : { accountLabel }),
-          capabilities: capabilitiesFromTools(tools as RemoteToolInfo[]),
+          capabilities: readsAllowed(capabilitiesFromTools(tools as RemoteToolInfo[])),
         }
       } catch (error) {
         return {

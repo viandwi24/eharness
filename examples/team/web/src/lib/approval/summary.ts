@@ -109,3 +109,27 @@ export function friendlyTitle(toolName: string, input: unknown, detail = true): 
 	const headline = detail ? approvalHeadline(toolName, input) : '';
 	return headline ? `${sentence} · ${headline}` : sentence;
 }
+
+/**
+ * A readable line for one row of an approve-all card: what the call is about as `key value` pairs
+ * of its scalar fields (an id, an assignee, a short comment), never raw JSON. Falls back to the
+ * headline (path, command, URL) when there is one. Empty when the input has nothing readable.
+ */
+export function readableInput(toolName: string, input: unknown): string {
+	const headline = approvalHeadline(toolName, input);
+	if (headline) return headline;
+	if (typeof input !== 'object' || input === null || Array.isArray(input)) return '';
+	const parts: string[] = [];
+	for (const [key, v] of Object.entries(input as Record<string, unknown>)) {
+		if (v === undefined || v === null || v === '') continue;
+		let value: string;
+		if (typeof v === 'string') value = v.replace(/\s+/g, ' ').trim();
+		else if (typeof v === 'number' || typeof v === 'boolean') value = String(v);
+		else if (Array.isArray(v) && v.every((x) => typeof x === 'string' || typeof x === 'number')) value = v.join(', ');
+		else continue;
+		if (!value) continue;
+		parts.push(`${humanize(key).toLowerCase()}: ${value.length > 90 ? `${value.slice(0, 89)}…` : value}`);
+		if (parts.length >= 4) break;
+	}
+	return parts.join(' · ');
+}

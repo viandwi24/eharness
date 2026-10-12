@@ -4,11 +4,15 @@
  * keeps the overlap, recovery and failure rules, and starts the run through the program runner.
  * Every run is a task session, so the run history is the tasks of the program.
  */
+
+import { activeMemory, type RememberedDecision } from '../domain/decision-memory.ts'
 import { normalizeDeliverables } from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import {
+  type AuthorityInspection,
   checkProgramFields,
   cleanList,
+  type EffectiveGrant,
   normalizeAuthority,
   normalizeWorker,
   type Program,
@@ -101,6 +105,27 @@ function ensureScheduleRoutine(deps: Deps, program: Program): void {
   }
 }
 
+/**
+ * Checks an authority against what the agent really has: unambiguous connector names are repaired
+ * to real ids, anything else that cannot work is refused with the valid options. Returns the
+ * authority to store. Skipped (returned as given) when the agent was never activated.
+ */
+export function enforceAuthority(
+  deps: Deps,
+  agentId: string,
+  authority: ProgramAuthority,
+): ProgramAuthority {
+  const inspection = deps.programRunner.inspect(agentId, authority)
+  if (inspection === undefined) return authority
+  if (inspection.errors.length > 0) {
+    throw invalid(
+      `The authority names things this agent does not have. ${inspection.errors.join(' ')}`,
+      'INVALID_PROGRAM',
+    )
+  }
+  return inspection.authority
+}
+
 export function createProgram(
   deps: Deps,
   draft: ProgramDraft & { createdBy?: string | undefined },
@@ -116,7 +141,7 @@ export function createProgram(
     agentId: agent.id,
     name: draft.name.trim(),
     brief: draft.brief.trim(),
-    authority: normalizeAuthority(draft.authority),
+    authority: enforceAuthority(deps, agent.id, normalizeAuthority(draft.authority)),
     gates: cleanList(draft.gates ?? []),
     escalation: (draft.escalation ?? '').trim(),
     forbidden: cleanList(draft.forbidden ?? []),
@@ -156,7 +181,13 @@ export function updateProgram(deps: Deps, id: string, update: ProgramUpdate): Pr
     ...(update.brief === undefined ? {} : { brief: update.brief.trim() }),
     ...(update.authority === undefined
       ? {}
-      : { authority: normalizeAuthority({ ...current.authority, ...update.authority }) }),
+      : {
+          authority: enforceAuthority(
+            deps,
+            current.agentId,
+            normalizeAuthority({ ...current.authority, ...update.authority }),
+          ),
+        }),
     ...(update.gates === undefined ? {} : { gates: cleanList(update.gates) }),
     ...(update.escalation === undefined ? {} : { escalation: update.escalation.trim() }),
     ...(update.forbidden === undefined ? {} : { forbidden: cleanList(update.forbidden) }),
@@ -202,6 +233,7 @@ export function deleteProgram(deps: Deps, id: string): Program {
   // its rehearsals and test cases go with it
   deps.rehearsals.deleteByProgram(id)
   deps.programTests.deleteByProgram(id)
+  deps.programMemory.deleteByProgram(id)
   changed(deps, program, 'deleted')
   return program
 }
@@ -294,10 +326,62 @@ export async function checkProgramDraft(
   })
 }
 
-/** A saved program with its warnings (`POST` / `PATCH` answers). */
+/** The effective grant of an authority (resolved tools per connector), for the editor and cards. */
+export async function authorityGrant(
+  deps: Deps,
+  agentId: string,
+  authority: Partial<ProgramAuthority> | undefined,
+): Promise<AuthorityInspection | null> {
+  const agent = getAgent(deps, agentId)
+  await deps.programRunner.prepare(agent.id)
+  return deps.programRunner.inspect(agent.id, normalizeAuthority(authority)) ?? null
+}
+
+/** A saved program with its warnings and effective grant (`POST` / `PATCH` / `GET` answers). */
 export async function programWithWarnings(
   deps: Deps,
   view: ProgramView,
-): Promise<ProgramView & { warnings: ProgramWarning[] }> {
-  return { ...view, warnings: await checkProgramDraft(deps, view) }
+): Promise<ProgramView & { warnings: ProgramWarning[]; grant: EffectiveGrant | null }> {
+  const inspection = await authorityGrant(deps, view.agentId, view.authority)
+  return {
+    ...view,
+    warnings: await checkProgramDraft(deps, view),
+    grant: inspection?.grant ?? null,
+  }
+}
+
+/**
+ * Boot repair: connector names of stored programs that map to exactly one real connection
+ * (`tracker-demo` for the connection whose tool prefix it is) are rewritten to its id. Anything
+ * ambiguous or unknown is left alone. Idempotent; never throws.
+ */
+export async function repairProgramAuthorities(deps: Deps): Promise<number> {
+  let n = 0
+  for (const program of deps.programs.list({})) {
+    try {
+      if (program.authority.connectors.length === 0) continue
+      await deps.programRunner.prepare(program.agentId)
+      const inspection = deps.programRunner.inspect(program.agentId, program.authority)
+      if (inspection === undefined || inspection.repaired.length === 0) continue
+      deps.programs.update(program.id, { authority: inspection.authority }, deps.clock.now())
+      changed(deps, program, 'authority repaired')
+      n++
+    } catch {
+      // a repair is best effort
+    }
+  }
+  return n
+}
+
+/** What the client already settled for this program (not expired): the program page lists it. */
+export function programMemory(deps: Deps, id: string): RememberedDecision[] {
+  getProgram(deps, id)
+  return activeMemory(deps.programMemory.list(id), deps.clock.now())
+}
+
+export function forgetProgramMemory(deps: Deps, id: string, memoryId: string): void {
+  getProgram(deps, id)
+  if (!deps.programMemory.forget(id, memoryId, deps.clock.now())) {
+    throw notFound('remembered decision', memoryId)
+  }
 }

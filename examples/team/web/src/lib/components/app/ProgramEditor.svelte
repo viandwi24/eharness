@@ -10,6 +10,8 @@
 	import { bodyFromForm, checkFromForm, emptyProgramForm, formFromProgram, REPORT_OPTIONS, validateProgramForm, warningsOf, type Program, type ProgramForm, type ProgramShape, type ProgramWarning } from '#lib/programs/form.js';
 	import DeliverablesFields from './DeliverablesFields.svelte';
 	import ScheduleFields from './ScheduleFields.svelte';
+	import EffectiveGrant from './EffectiveGrant.svelte';
+	import type { EffectiveGrant as Grant } from '#lib/programs/grant.js';
 
 	let {
 		agentId = '',
@@ -48,6 +50,9 @@
 	// What the program cannot do as configured (tools its agent never has, a budget below one model call):
 	// the server checks the form while the client types, and the warnings sit next to the fields.
 	let warnings = $state<ProgramWarning[]>([]);
+	// svelte-ignore state_referenced_locally
+	let grant = $state<Grant | null>(program?.grant ?? null);
+	let authorityErrors = $state<string[]>([]);
 	$effect(() => {
 		let request;
 		try {
@@ -63,10 +68,16 @@
 		const timer = setTimeout(() => {
 			api.post('/programs/check', { body: request })
 				.then((r) => {
-					if (!stale) warnings = r.warnings;
+					if (stale) return;
+					warnings = r.warnings;
+					grant = r.grant;
+					authorityErrors = r.errors;
 				})
 				.catch(() => {
-					if (!stale) warnings = [];
+					if (!stale) {
+						warnings = [];
+						authorityErrors = [];
+					}
 				});
 		}, 400);
 		return () => {
@@ -155,7 +166,11 @@
 		</p>
 		{@render lines('tools', 'Tools', 'web_fetch\nWebFetch(domain:example.com)', 'One tool name or rule per line.')}
 		{@render warn(['authority.tools'])}
-		{@render lines('connectors', 'Connectors', 'github', 'Connector or connection ids: every tool of them is allowed.')}
+		{@render lines('connectors', 'Connectors', 'mcp-remote', 'Connector or connection ids of this agent: every tool of them is allowed. A name that matches no connector is refused when you save.')}
+		{#each authorityErrors as message (message)}
+			<p class="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive-text" role="alert" data-testid="authority-error">{message}</p>
+		{/each}
+		<EffectiveGrant {grant} />
 		<div class="grid gap-3 sm:grid-cols-2">
 			{@render lines('read', 'Read paths', '/library/videos/**', 'Library globs, one per line.')}
 			{@render lines('write', 'Write paths', '/library/reports/**', 'Library globs; writable paths can be read too.')}

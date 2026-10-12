@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { approvalHeadline, summarizeApproval } from './summary.js';
+import { approvalHeadline, readableInput, summarizeApproval } from './summary.js';
 
 describe('summarizeApproval', () => {
 	test('friendly title and one row per field', () => {
@@ -40,5 +40,17 @@ describe('approvalHeadline', () => {
 		expect(approvalHeadline('bash', { command: 'a\nb' })).toBe('Command: a …');
 		expect(approvalHeadline('x', { n: 1 })).toBe('');
 		expect(approvalHeadline('x', undefined)).toBe('');
+	});
+});
+
+describe('readableInput', () => {
+	test('key value pairs of the scalar fields, never JSON', () => {
+		expect(readableInput('update_task', { id: 'T-05', assignee: 'dimas', priority: 'urgent' })).toBe('id: T-05 · assignee: dimas · priority: urgent');
+		expect(readableInput('add_comment', { task_id: 'T-01', text: 'Reminder:\n  due 3 days ago' })).toBe('task id: T-01 · text: Reminder: due 3 days ago');
+	});
+	test('a path or command headline wins; nothing readable is empty', () => {
+		expect(readableInput('write_file', { path: 'a.md', content: 'x' })).toBe('Path: a.md (1 characters)');
+		expect(readableInput('x', { opts: { a: 1 } })).toBe('');
+		expect(readableInput('x', undefined)).toBe('');
 	});
 });

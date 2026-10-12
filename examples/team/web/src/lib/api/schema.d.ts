@@ -6058,6 +6058,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/routines/{id}/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inputs queued in the routine session */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Queue */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RoutineQueue"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/routines/{id}/queue/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear the queued inputs of the routine session
+         * @description Removes the inputs that keep an "in the agent chat" routine skipped with "an input of the session is still queued". The next fire runs.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Cleared */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RoutineQueue"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/routines/{id}": {
         parameters: {
             query?: never;
@@ -7134,6 +7269,138 @@ export interface paths {
             };
         };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/programs/{id}/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Decisions the program remembers */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Remembered decisions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProgramMemory"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/programs/{id}/memory/{memoryId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Forget a remembered decision */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    memoryId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Forgotten */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProgramMemory"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -12814,6 +13081,18 @@ export interface components {
             maxFires?: number | null;
             endAt?: number | null;
         };
+        /** @description The inputs waiting in the session that keeps the routine from firing (overlap: an input of the session is still queued). */
+        RoutineQueue: {
+            sessionId: string | null;
+            items: {
+                id: string;
+                kind: string;
+                preview: string;
+                claimed: boolean;
+                availableAt: number | null;
+            }[];
+            removed?: number;
+        };
         RoutinePatch: {
             name?: string;
             prompt?: string;
@@ -12887,6 +13166,36 @@ export interface components {
             triggerState: components["schemas"]["ProgramTriggerState"];
             /** @description Only on the answers of create and update: see `ProgramWarning`. */
             warnings?: components["schemas"]["ProgramWarning"][];
+            /** @description The effective grant of the authority (null when the agent is not activated). */
+            grant?: {
+                connectors: {
+                    requested: string;
+                    id: string | null;
+                    label: string;
+                    tools: {
+                        name: string;
+                        /** @enum {string} */
+                        kind: "read" | "write" | "destructive" | "external" | "unknown";
+                        /**
+                         * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                         * @enum {string}
+                         */
+                        status: "granted" | "gate" | "off" | "unavailable";
+                    }[];
+                }[];
+                tools: {
+                    name: string;
+                    /** @enum {string} */
+                    kind: "read" | "write" | "destructive" | "external" | "unknown";
+                    /**
+                     * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                     * @enum {string}
+                     */
+                    status: "granted" | "gate" | "off" | "unavailable";
+                }[];
+                read: string[];
+                write: string[];
+            } | null;
         };
         ProgramAuthority: {
             /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
@@ -12958,7 +13267,44 @@ export interface components {
         };
         ProgramCheckResult: {
             warnings: components["schemas"]["ProgramWarning"][];
+            grant: components["schemas"]["EffectiveGrant"];
+            /** @description Problems that would refuse a save (unknown connector or tool), with the valid options. */
+            errors: string[];
+            repaired: {
+                from: string;
+                to: string;
+            }[];
         };
+        /** @description What an authority really gives: the tools each connector resolves to, read or write. */
+        EffectiveGrant: {
+            connectors: {
+                requested: string;
+                id: string | null;
+                label: string;
+                tools: {
+                    name: string;
+                    /** @enum {string} */
+                    kind: "read" | "write" | "destructive" | "external" | "unknown";
+                    /**
+                     * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                     * @enum {string}
+                     */
+                    status: "granted" | "gate" | "off" | "unavailable";
+                }[];
+            }[];
+            tools: {
+                name: string;
+                /** @enum {string} */
+                kind: "read" | "write" | "destructive" | "external" | "unknown";
+                /**
+                 * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                 * @enum {string}
+                 */
+                status: "granted" | "gate" | "off" | "unavailable";
+            }[];
+            read: string[];
+            write: string[];
+        } | null;
         ProgramCheck: {
             /** @description Agent id or slug. */
             agentId: string;
@@ -13068,6 +13414,21 @@ export interface components {
             started: boolean;
             /** @description true: a worker program found no queued task for its agent. */
             idle: boolean;
+        };
+        ProgramMemory: {
+            remembered: components["schemas"]["RememberedDecision"][];
+        };
+        /** @description A stand-down answer ("keep waiting", "skip") the client gave; later runs of the program do not ask it again until it expires. */
+        RememberedDecision: {
+            id: string;
+            programId: string;
+            subject: string;
+            question: string;
+            choice: string;
+            note: string;
+            decisionId: string;
+            decidedAt: number;
+            expiresAt: number;
         };
         ProgramRuns: {
             /** @description Task sessions of the program, newest first. */
@@ -13290,6 +13651,36 @@ export interface components {
             decisionNote: string | null;
             outcome: components["schemas"]["DecisionOutcome"];
             createdAt: number;
+            /** @description Proposals and amendments: what the authority really resolves to for the agent. */
+            grant?: {
+                connectors: {
+                    requested: string;
+                    id: string | null;
+                    label: string;
+                    tools: {
+                        name: string;
+                        /** @enum {string} */
+                        kind: "read" | "write" | "destructive" | "external" | "unknown";
+                        /**
+                         * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                         * @enum {string}
+                         */
+                        status: "granted" | "gate" | "off" | "unavailable";
+                    }[];
+                }[];
+                tools: {
+                    name: string;
+                    /** @enum {string} */
+                    kind: "read" | "write" | "destructive" | "external" | "unknown";
+                    /**
+                     * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                     * @enum {string}
+                     */
+                    status: "granted" | "gate" | "off" | "unavailable";
+                }[];
+                read: string[];
+                write: string[];
+            } | null;
             /** @enum {string} */
             kind: "proposal";
             payload: components["schemas"]["ProposalPayload"];
@@ -13311,6 +13702,36 @@ export interface components {
             decisionNote: string | null;
             outcome: components["schemas"]["DecisionOutcome"];
             createdAt: number;
+            /** @description Proposals and amendments: what the authority really resolves to for the agent. */
+            grant?: {
+                connectors: {
+                    requested: string;
+                    id: string | null;
+                    label: string;
+                    tools: {
+                        name: string;
+                        /** @enum {string} */
+                        kind: "read" | "write" | "destructive" | "external" | "unknown";
+                        /**
+                         * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                         * @enum {string}
+                         */
+                        status: "granted" | "gate" | "off" | "unavailable";
+                    }[];
+                }[];
+                tools: {
+                    name: string;
+                    /** @enum {string} */
+                    kind: "read" | "write" | "destructive" | "external" | "unknown";
+                    /**
+                     * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                     * @enum {string}
+                     */
+                    status: "granted" | "gate" | "off" | "unavailable";
+                }[];
+                read: string[];
+                write: string[];
+            } | null;
             /** @enum {string} */
             kind: "escalation";
             payload: components["schemas"]["EscalationPayload"];
@@ -13332,6 +13753,36 @@ export interface components {
             decisionNote: string | null;
             outcome: components["schemas"]["DecisionOutcome"];
             createdAt: number;
+            /** @description Proposals and amendments: what the authority really resolves to for the agent. */
+            grant?: {
+                connectors: {
+                    requested: string;
+                    id: string | null;
+                    label: string;
+                    tools: {
+                        name: string;
+                        /** @enum {string} */
+                        kind: "read" | "write" | "destructive" | "external" | "unknown";
+                        /**
+                         * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                         * @enum {string}
+                         */
+                        status: "granted" | "gate" | "off" | "unavailable";
+                    }[];
+                }[];
+                tools: {
+                    name: string;
+                    /** @enum {string} */
+                    kind: "read" | "write" | "destructive" | "external" | "unknown";
+                    /**
+                     * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                     * @enum {string}
+                     */
+                    status: "granted" | "gate" | "off" | "unavailable";
+                }[];
+                read: string[];
+                write: string[];
+            } | null;
             /** @enum {string} */
             kind: "amendment";
             payload: components["schemas"]["AmendmentPayload"];

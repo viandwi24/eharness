@@ -636,6 +636,37 @@ authority would only be "not allowed by mode", with the generic reason; the agen
 that it should report instead of retrying. *Without `dontAsk`:* the first out-of-authority write of
 a 3 a.m. run parks on an approval nobody answers.
 
+### Value pass: authority that is checked, decisions that are remembered
+
+- **Authority is validated** against what the agent really has, on every save, in `propose_plan` and
+  when an amendment is approved (`inspectAuthority`, `domain/programs.ts`). A connector name that is
+  the slug or tool prefix of exactly one connection (`tracker-demo` for the custom connector whose id
+  is `mcp-remote`) is repaired to that connection's id; a name that matches nothing, or several, is
+  refused with the valid ids. A tool name that looks like a mistyped tool of the agent is refused with
+  the suggestion; other unknown tools stay warnings (their connector may be off for now). A boot pass
+  (`repairProgramAuthorities`) rewrites unambiguous names of stored programs once; ambiguous ones are
+  left as they are.
+- **The effective grant is shown**: `POST /programs/check`, `GET /programs/{id}` and open proposal and
+  amendment decisions carry `grant` (tools each connector resolves to with read or write kind;
+  third-party writes show as "asks you"; tools switched Off or missing are called out). The program
+  editor and the decision card render it.
+- **Decisions are remembered.** A "keep waiting / skip / ignore / later" answer to an escalation of a
+  program is stored per program and subject (the record id in the title, else the title) for seven
+  days (`domain/decision-memory.ts`, in the `settings` table under `program-memory:<id>`, no
+  migration). Later runs get a "Decisions the client already made" section in their prompt.
+  `GET /programs/{id}/memory` lists them; `DELETE /programs/{id}/memory/{memoryId}` forgets one (the
+  program page has a Forget button).
+- **Routine queue.** `GET /routines/{id}/queue` shows the inputs waiting in the session that makes an
+  "in the agent chat" routine skip ("an input of the session is still queued");
+  `POST /routines/{id}/queue/clear` removes them. New routines default to "As a task on the board".
+- **Less approval noise**: reads of custom and third-party connectors default to Allowed when the
+  connector is tested (writes and destructive tools keep Ask first; connections that were tested
+  earlier keep their stored modes). Approve-all rows show `key: value` summaries, raw input only
+  under Details. `run_code`, `ingest_source` and the manifest tools are offered in program runs
+  only, so a chat never asks for an approval of a tool that would answer "no program authority".
+- **Titles**: delegated and queued tasks get a short title (the delegate call's description, a
+  `Title:` or `Task:` line, else the first sentence, at most 80 characters), never the raw prompt.
+
 ## 19. Decision Center: proposals, escalations and amendments
 
 **What.** Some things only the client can settle. They live in one table, `decisions`

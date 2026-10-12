@@ -66,6 +66,7 @@ import {
   revertPersona,
 } from './app/persona.ts'
 import type { ChannelInboxPort, ChannelsPort, Deps } from './app/ports.ts'
+import { repairProgramAuthorities } from './app/programs.ts'
 import { seedAgents } from './app/seed.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
@@ -104,6 +105,7 @@ import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { sqliteBriefingStore, sqliteNotificationStore } from './infra/db/notifications-repo.ts'
 import { sqlitePersonaStore } from './infra/db/persona-repo.ts'
+import { sqliteProgramMemory } from './infra/db/program-memory-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
 import { sqliteProgramTestStore, sqliteRehearsalStore } from './infra/db/rehearsal-repo.ts'
 import { pruneTables, type TableRetention } from './infra/db/retention.ts'
@@ -150,6 +152,7 @@ import {
   type RoutineService,
 } from './infra/eh/routine-service.ts'
 import { teamVaultFromEnv } from './infra/eh/secret-vault.ts'
+import { sqliteSessionQueue } from './infra/eh/session-queue.ts'
 import { setBudgetLimit, sqliteBudgetLedger, sqliteLock } from './infra/eh/storage.ts'
 import {
   createTeamService,
@@ -646,6 +649,7 @@ export function compose(config: ServerConfig): Server {
   })
   routines = createRoutineService(factory, {
     agents,
+    queue: sqliteSessionQueue(conn.sqlite),
     routines: routineStore,
     schedule,
     tasks,
@@ -719,6 +723,7 @@ export function compose(config: ServerConfig): Server {
     programRunner,
     rehearsals: rehearsalStore,
     programTests: programTestStore,
+    programMemory: sqliteProgramMemory(conn.sqlite),
     rehearsalRunner: rehearsalService,
     decisions: decisionStore,
     decisionResolver: decisionService,
@@ -1049,6 +1054,8 @@ export function compose(config: ServerConfig): Server {
   ]
   const app = createApp({ deps, token: config.token, harness, allowedOrigins })
   routines.start()
+  // phantom connector names of stored programs (a tool prefix instead of the id) are repaired once
+  void repairProgramAuthorities(deps)
   return {
     app,
     deps,

@@ -337,6 +337,18 @@ describe('tools outside a program run', () => {
     expect(await fs.list('/')).toHaveLength(0)
   })
 
+  test('programOnly: a session without a program is not offered the tools at all', async () => {
+    const plugin = bigData({
+      fs: inMemoryFs(),
+      access: () => undefined,
+      collectors: () => [],
+      runner: createCodeRunner(),
+      programOnly: true,
+    })
+    const contribution = await plugin['~def'].session?.({ session: { id: 'dm:x' } } as never)
+    expect(Object.keys(contribution?.tools ?? {})).toEqual([])
+  })
+
   test('the connector capabilities choose the tools', async () => {
     const plugin = bigData({
       fs: inMemoryFs(),

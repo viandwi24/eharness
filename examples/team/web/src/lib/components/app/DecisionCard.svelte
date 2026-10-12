@@ -14,6 +14,7 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { decide } from '#lib/decisions/actions.js';
 	import { type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, statusBadge, triggerLine } from '#lib/decisions/model.js';
+	import EffectiveGrant from './EffectiveGrant.svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -124,6 +125,9 @@
 				</ul>
 			{:else}
 				<p class="text-[13px] text-muted-foreground">Nothing beyond finding and planning its own work.</p>
+			{/if}
+			{#if open && decision.grant}
+				<div class="mt-2"><EffectiveGrant grant={decision.grant} /></div>
 			{/if}
 		</div>
 	{/if}

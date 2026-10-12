@@ -53,6 +53,7 @@ export function createBigDataHook(deps: {
         collectors: () => deps.config?.collectors ?? [],
         runner,
         tools: input.tools,
+        programOnly: true,
       })
     // a rehearsal session gets the same tools over its overlay (a read-only view once it ended)
     return wrapPlugin(build(library), {

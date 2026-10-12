@@ -100,6 +100,34 @@ export const ProgramWarningSchema = z
       'Something the program cannot do as configured: a tool in its authority its agent never has (its connector is off, or the agent is not bound to a channel), or a budget below the cost of one model call. Warnings never block a save.',
   })
 
+const GrantedToolSchema = z.object({
+  name: z.string(),
+  kind: z.enum(['read', 'write', 'destructive', 'external', 'unknown']),
+  status: z.enum(['granted', 'gate', 'off', 'unavailable']).openapi({
+    description:
+      '`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.',
+  }),
+})
+
+export const EffectiveGrantSchema = z
+  .object({
+    connectors: z.array(
+      z.object({
+        requested: z.string(),
+        id: z.string().nullable(),
+        label: z.string(),
+        tools: z.array(GrantedToolSchema),
+      }),
+    ),
+    tools: z.array(GrantedToolSchema),
+    read: z.array(z.string()),
+    write: z.array(z.string()),
+  })
+  .openapi('EffectiveGrant', {
+    description:
+      'What an authority really gives: the tools each connector resolves to, read or write.',
+  })
+
 export const ProgramSchema = z
   .object({
     id: z.string(),
@@ -131,6 +159,9 @@ export const ProgramSchema = z
     triggerState: ProgramTriggerStateSchema.nullable(),
     warnings: z.array(ProgramWarningSchema).optional().openapi({
       description: 'Only on the answers of create and update: see `ProgramWarning`.',
+    }),
+    grant: EffectiveGrantSchema.nullable().optional().openapi({
+      description: 'The effective grant of the authority (null when the agent is not activated).',
     }),
   })
   .openapi('Program')
@@ -195,7 +226,15 @@ export const ProgramCheckSchema = z
   .openapi('ProgramCheck')
 
 export const ProgramCheckResultSchema = z
-  .object({ warnings: z.array(ProgramWarningSchema) })
+  .object({
+    warnings: z.array(ProgramWarningSchema),
+    grant: EffectiveGrantSchema.nullable(),
+    errors: z.array(z.string()).openapi({
+      description:
+        'Problems that would refuse a save (unknown connector or tool), with the valid options.',
+    }),
+    repaired: z.array(z.object({ from: z.string(), to: z.string() })),
+  })
   .openapi('ProgramCheckResult')
 
 export const ProgramRunStartedSchema = z
@@ -227,4 +266,36 @@ export const ProgramIdParam = z.object({
     .string()
     .min(1)
     .openapi({ param: { name: 'id', in: 'path' }, description: 'Program id.' }),
+})
+
+export const RememberedDecisionSchema = z
+  .object({
+    id: z.string(),
+    programId: z.string(),
+    subject: z.string(),
+    question: z.string(),
+    choice: z.string(),
+    note: z.string(),
+    decisionId: z.string(),
+    decidedAt: z.number().int(),
+    expiresAt: z.number().int(),
+  })
+  .openapi('RememberedDecision', {
+    description:
+      'A stand-down answer ("keep waiting", "skip") the client gave; later runs of the program do not ask it again until it expires.',
+  })
+
+export const ProgramMemorySchema = z
+  .object({ remembered: z.array(RememberedDecisionSchema) })
+  .openapi('ProgramMemory')
+
+export const ProgramMemoryParam = z.object({
+  id: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: 'id', in: 'path' } }),
+  memoryId: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: 'memoryId', in: 'path' } }),
 })

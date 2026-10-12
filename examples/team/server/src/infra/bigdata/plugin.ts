@@ -53,6 +53,11 @@ export interface BigDataOptions {
   /** Tool names to offer (the connector's capabilities that are not off). Default: all. */
   tools?: readonly string[]
   now?: () => number
+  /**
+   * true: the tools exist only in sessions with a program (`access` answers). In a chat they would
+   * only ever answer "works inside a program run only", after the owner approved the call.
+   */
+  programOnly?: boolean
 }
 
 export const BIGDATA_TOOLS = {
@@ -577,6 +582,9 @@ export function bigData(options: BigDataOptions): HarnessPlugin<'bigdata'> {
               .join('\n')
           },
         })
+      }
+      if (options.programOnly === true && options.access(sessionId) === undefined) {
+        return { tools: {} }
       }
       return { tools }
     },

@@ -1,6 +1,7 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import {
   approveDecision,
+  decisionGrant,
   getDecision,
   listDecisions,
   openDecisionCount,
@@ -90,17 +91,28 @@ const rejectRoute = createRoute({
 
 export function decisionRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
-    .openapi(listRoute, (c) => {
+    .openapi(listRoute, async (c) => {
       const q = c.req.valid('query')
+      const found = listDecisions(deps, q)
+      const decisions = await Promise.all(
+        found.map(async (d) =>
+          d.status === 'open' && d.kind !== 'escalation'
+            ? { ...d, grant: await decisionGrant(deps, d) }
+            : d,
+        ),
+      )
       return c.json(
         {
-          decisions: listDecisions(deps, q),
+          decisions,
           open: openDecisionCount(deps),
         } as never,
         200,
       )
     })
-    .openapi(getRoute, (c) => c.json(getDecision(deps, c.req.valid('param').id) as never, 200))
+    .openapi(getRoute, async (c) => {
+      const d = getDecision(deps, c.req.valid('param').id)
+      return c.json({ ...d, grant: await decisionGrant(deps, d) } as never, 200)
+    })
     .openapi(approveRoute, async (c) => {
       const body = c.req.valid('json') ?? {}
       return c.json((await approveDecision(deps, c.req.valid('param').id, body)) as never, 200)

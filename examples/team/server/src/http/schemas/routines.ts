@@ -157,3 +157,22 @@ export const RoutineIdParam = z.object({
     .min(1)
     .openapi({ param: { name: 'id', in: 'path' }, description: 'Routine id.' }),
 })
+
+export const RoutineQueueSchema = z
+  .object({
+    sessionId: z.string().nullable(),
+    items: z.array(
+      z.object({
+        id: z.string(),
+        kind: z.string(),
+        preview: z.string(),
+        claimed: z.boolean(),
+        availableAt: z.number().int().nullable(),
+      }),
+    ),
+    removed: z.number().int().optional(),
+  })
+  .openapi('RoutineQueue', {
+    description:
+      'The inputs waiting in the session that keeps the routine from firing (overlap: an input of the session is still queued).',
+  })

@@ -10,6 +10,7 @@
  */
 
 import { isDmSession } from '../domain/chat.ts'
+import { isStandDownChoice, MEMORY_TTL_MS, subjectOf } from '../domain/decision-memory.ts'
 import {
   amendmentBody,
   authorityLines,
@@ -35,6 +36,7 @@ import { type DeliverableCheck, deliverableLine } from '../domain/deliverables.t
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import { jaccard, requestTokens } from '../domain/heartbeat.ts'
 import {
+  type EffectiveGrant,
   normalizeAuthority,
   type Program,
   type ProgramAuthority,
@@ -43,7 +45,14 @@ import {
 import type { Task, TaskReport } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
 import type { Deps } from './ports.ts'
-import { createProgram, getProgram, runProgramNow, updateProgram } from './programs.ts'
+import {
+  authorityGrant,
+  createProgram,
+  enforceAuthority,
+  getProgram,
+  runProgramNow,
+  updateProgram,
+} from './programs.ts'
 
 export const CLIENT = 'client'
 
@@ -130,7 +139,9 @@ export function createProposal(deps: Deps, input: ProposeInput): Decision {
   const asker = getAgent(deps, input.agentId)
   const runner = getAgent(deps, input.runner ?? asker.id)
   if (runner.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
-  const program = normalizeProposedProgram({ ...input.program, agentId: runner.id })
+  const parsed = normalizeProposedProgram({ ...input.program, agentId: runner.id })
+  // unambiguous connector names are repaired, phantom ones are refused with the valid options
+  const program = { ...parsed, authority: enforceAuthority(deps, runner.id, parsed.authority) }
   if (program.trigger.kind === 'schedule') deps.schedule.validate(program.trigger.spec)
   const payload: ProposalPayload = { program, runOnce: input.runOnce }
   const d = deps.decisions.insert({
@@ -482,6 +493,7 @@ export async function approveDecision(
     expireIfStale(deps, d)
     const next = claim(deps, d, 'approved', note, { outcome: { decision } })
     await deliver(deps, next, { decision, note })
+    rememberStandDown(deps, next, decision, note)
     changed(deps, next, 'decided')
     return next
   }
@@ -495,6 +507,7 @@ export async function approveDecision(
       ? d.payload.authority
       : normalizeAmendmentAuthority(input.authority)
   const program = getProgram(deps, d.programId)
+  await deps.programRunner.prepare(program.agentId)
   if (isEmptyAuthority(granted)) throw invalid('nothing to grant', 'INVALID_DECISION')
   const next = claim(deps, d, 'approved', note, {
     outcome: { decision: 'approved', programId: program.id },
@@ -560,7 +573,9 @@ async function approveProposal(
   // validate everything before the decision is claimed
   const runner = getAgent(deps, merged.agentId)
   if (runner.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
-  const program = normalizeProposedProgram({ ...merged, agentId: runner.id })
+  await deps.programRunner.prepare(runner.id)
+  const parsed = normalizeProposedProgram({ ...merged, agentId: runner.id })
+  const program = { ...parsed, authority: enforceAuthority(deps, runner.id, parsed.authority) }
   if (program.trigger.kind === 'schedule') deps.schedule.validate(program.trigger.spec)
   const payload: ProposalPayload = { program, runOnce }
 
@@ -612,4 +627,53 @@ export async function rejectDecision(
   else await tellProposer(deps, d, 'rejected', note)
   changed(deps, next, 'decided')
   return next
+}
+
+/**
+ * The effective grant shown on the card of an open proposal or amendment: what the authority
+ * really resolves to for the agent that will run it (resolved tools per connector, read or write).
+ * An amendment shows the program's authority with the extra grant merged in.
+ */
+export async function decisionGrant(deps: Deps, d: Decision): Promise<EffectiveGrant | null> {
+  try {
+    if (d.kind === 'proposal') {
+      return (
+        (await authorityGrant(deps, d.payload.program.agentId, d.payload.program.authority))
+          ?.grant ?? null
+      )
+    }
+    if (d.kind === 'amendment' && d.programId !== null) {
+      const program = deps.programs.get(d.programId)
+      if (program === undefined) return null
+      return (await authorityGrant(deps, program.agentId, d.payload.authority))?.grant ?? null
+    }
+  } catch {
+    // a card without a grant block is still a card
+  }
+  return null
+}
+
+/**
+ * A "keep waiting / skip" style answer to an escalation of a program is remembered per program and
+ * subject for a week, so the next runs do not ask the same thing again.
+ */
+function rememberStandDown(deps: Deps, d: Decision, choice: string, note: string): void {
+  if (d.kind !== 'escalation' || d.programId === null || d.payload.options.length === 0) return
+  if (!isStandDownChoice(choice) || deps.programs.get(d.programId) === undefined) return
+  const now = deps.clock.now()
+  try {
+    deps.programMemory.remember({
+      id: deps.ids.next(),
+      programId: d.programId,
+      subject: subjectOf(d.title, d.payload.question),
+      question: d.payload.question.slice(0, 500),
+      choice,
+      note: note.slice(0, 300),
+      decisionId: d.id,
+      decidedAt: now,
+      expiresAt: now + MEMORY_TTL_MS,
+    })
+  } catch (error) {
+    console.warn(`team: remembering the decision failed: ${String(error)}`)
+  }
 }

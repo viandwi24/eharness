@@ -33,7 +33,7 @@
 	let name = $state('');
 	let prompt = $state('');
 	let schedule = $state<ScheduleForm>(defaultScheduleForm());
-	let sessionMode = $state<'dm' | 'task'>('dm');
+	let sessionMode = $state<'dm' | 'task'>('task');
 	let overlap = $state<'skip' | 'queue'>('skip');
 	let catchUp = $state('null');
 	let maxFailures = $state(3);
@@ -49,7 +49,7 @@
 	// svelte-ignore state_referenced_locally
 	schedule = routine ? parseSpec(routine.schedule) : defaultScheduleForm();
 	// svelte-ignore state_referenced_locally
-	sessionMode = routine?.sessionMode ?? 'dm';
+	sessionMode = routine?.sessionMode ?? 'task';
 	// svelte-ignore state_referenced_locally
 	overlap = routine?.overlap ?? 'skip';
 	// svelte-ignore state_referenced_locally
@@ -129,8 +129,8 @@
 				<label class="flex flex-col gap-1">
 					<span class="font-medium">Where it runs</span>
 					<NativeSelect bind:value={sessionMode}>
-						<NativeSelectOption value="dm">In the agent chat</NativeSelectOption>
 						<NativeSelectOption value="task">As a task on the board</NativeSelectOption>
+						<NativeSelectOption value="dm">In the agent chat</NativeSelectOption>
 					</NativeSelect>
 				</label>
 				<label class="flex flex-col gap-1">

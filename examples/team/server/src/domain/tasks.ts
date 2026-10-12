@@ -151,15 +151,29 @@ export function deriveTaskStatus(facts: SessionFacts): {
   return { status: statusFromStop(facts.lastStop), pendingKind: null }
 }
 
-/** One-line title from the first text of a prompt. */
+/**
+ * One-line title from a prompt: never the raw prompt. Role boilerplate ("You are ...") and markdown
+ * marks are skipped, a "Title:" / "Task:" / "Goal:" line wins, and the first sentence is used when
+ * it is short enough. At most `max` characters.
+ */
 export function titleFromText(text: string, max = 80): string {
-  const line =
-    text
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l !== '') ?? ''
+  const lines = text
+    .split('\n')
+    .map((l) =>
+      l
+        .trim()
+        .replace(/^[#>*\-\s]+/, '')
+        .replace(/[*_`]+/g, '')
+        .trim(),
+    )
+    .filter((l) => l !== '')
+  const labelled = lines.find((l) => /^(title|task|goal)\s*:/i.test(l))
+  const first = lines.find((l) => !/^you are\b/i.test(l)) ?? lines[0] ?? ''
+  const line = (labelled ?? first).replace(/^(title|task|goal)\s*:\s*/i, '')
   const clean = line.replace(/\s+/g, ' ')
-  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean === '' ? 'Task' : clean
+  const sentence = /^(.{12,}?[.!?:])(\s|$)/.exec(clean)?.[1]?.replace(/[:.]$/, '')
+  const picked = sentence !== undefined && sentence.length <= max ? sentence : clean
+  return picked.length > max ? `${picked.slice(0, max - 1)}…` : picked === '' ? 'Task' : picked
 }
 
 /** Short preview of a message body for the sidebar and the feed. */

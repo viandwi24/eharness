@@ -38,6 +38,7 @@ import { conflict, notFound } from '../../domain/errors.ts'
 import { UPLOADS_ROOT } from '../../domain/library.ts'
 import {
   budgetWarnings,
+  inspectAuthority,
   PROGRAM_RUN_MAX_STEPS,
   type Program,
   parseProgramSession,
@@ -379,11 +380,12 @@ export function createProgramService(
       if (reason !== undefined) refuse(program, def, reason, scheduled === true)
 
       const t = clock()
-      const prompt = programRunPrompt(program, {
-        title: program.name,
-        programId: program.id,
-        runAt,
-      })
+      const prompt = programRunPrompt(
+        program,
+        { title: program.name, programId: program.id, runAt },
+        deps.app?.()?.programMemory.list(program.id) ?? [],
+        t,
+      )
       const before = deps.tasks.getBySession(sessionId)
       const row = deps.tasks.ensure({
         agentId: def.id,
@@ -396,6 +398,18 @@ export function createProgramService(
       if (before === undefined) announce(def, sessionId, row, true)
       track(runChecked(program, def, sessionId, prompt))
       return { sessionId, started: true }
+    },
+
+    inspect(agentId, authority) {
+      const def = deps.agents.get(agentId)
+      if (def === undefined) return undefined
+      const sources = factory.authoritySources(def, authority)
+      return sources === undefined ? undefined : inspectAuthority(authority, sources)
+    },
+
+    async prepare(agentId) {
+      const def = deps.agents.get(agentId)
+      if (def !== undefined) await factory.prepare(def)
     },
 
     async check({ agentId, authority, budget }) {

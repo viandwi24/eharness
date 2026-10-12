@@ -9,6 +9,7 @@
 	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import { api } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
+	import RoutineQueue from '#lib/components/app/RoutineQueue.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
@@ -182,6 +183,7 @@
 											<div class="min-w-0">
 												<button type="button" class="block max-w-28 truncate text-left font-medium outline-none focus-visible:underline sm:max-w-56" onclick={(e) => { e.stopPropagation(); openEditRoutine(r.id); }}>{r.name}</button>
 												<div class="truncate text-xs text-muted-foreground">{a?.name ?? 'Unknown agent'}<span class="md:hidden"> · {describeSpec(r.schedule)}</span></div>
+												<RoutineQueue routine={r} />
 											</div>
 										</div>
 									</Table.Cell>
