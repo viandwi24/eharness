@@ -3,6 +3,7 @@
  * grammY + the runner, normalization, outbound, rate limits, 401, webhook, file cap, privacy).
  */
 import { afterEach, describe, expect, test } from 'bun:test'
+import { mentionToken } from '../src/infra/channels/mentions.ts'
 import { traitsOf } from '../src/infra/channels/model.ts'
 import type {
   AdapterHost,
@@ -444,6 +445,20 @@ describe('outbound', () => {
         ],
       },
     })
+  })
+
+  test('golden: a mention token goes out as a tg://user link by id with the readable name, never as a raw token', async () => {
+    const { fake, adapter, start } = setup()
+    await start()
+    await adapter.send(ref('-1001', '30'), {
+      text: `Reminder for ${mentionToken('6148484116', 'vh vh')}: call the vendor. Also ${mentionToken('chat:5', 'Odd <b>')}`,
+    })
+    const params = fake.callsOf('sendMessage')[0]?.params
+    expect(params).toMatchObject({
+      parse_mode: 'HTML',
+      text: 'Reminder for <a href="tg://user?id=6148484116">vh vh</a>: call the vendor. Also Odd &lt;b&gt;',
+    })
+    expect(String(params?.text)).not.toMatch(/%20|[\uE000-\uE002]/)
   })
 
   test('a long reply is split under 4096 characters after escaping, buttons only on the last part', async () => {

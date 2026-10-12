@@ -433,7 +433,9 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
   const describePerson = (v: PersonView, zone: string): string => {
     const bits = [
       `${personLabel({ id: v.peerId, name: v.name ?? undefined, username: v.username ?? undefined })} · platform user id ${flat(v.peerId, 40)}`,
-      `role ${v.role} (${v.roleSource === 'directory' ? 'directory' : v.roleSource === 'default' ? 'default: not in the directory' : v.roleSource})`,
+      v.role === 'member' && v.roleSource === 'default'
+        ? 'role member (chat default)'
+        : `role ${v.role} (${v.roleSource === 'directory' ? 'directory' : v.roleSource === 'default' ? 'default: not in the directory' : v.roleSource})`,
       v.divisions.length > 0
         ? `divisions ${v.divisions.map((d) => `"${flat(d.title, 40)}"`).join(', ')}`
         : undefined,
@@ -492,7 +494,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       ...lines,
       ...(all.length > 40 ? [`... and ${all.length - 40} more.`] : []),
       undecided > 0
-        ? `${undecided} of them have no role set by the team yet: an owner can complete the roles in the team web app (Channels, People).`
+        ? `${undecided} of them have no role set by the team yet. Do not tell the people in the chat where roles are set; if somebody asks for more rights, they should ask an admin.`
         : 'Everybody listed has a role set by the team.',
     ].join('\n')
   }

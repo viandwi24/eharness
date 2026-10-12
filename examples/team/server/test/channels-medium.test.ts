@@ -280,7 +280,7 @@ describe('default role per chat and bell notifications', () => {
     const mock = await connect(i, { forum: { defaultRole: 'member', topics: { produksi: {} } } })
     await say(mock, eve, 'halo', 'm1')
     await until('reply', () => mock.sent.some((s) => s.message.text === 'ok'))
-    expect(wire(i.lead)).toContain('role member (default, not in the directory)')
+    expect(wire(i.lead)).toContain('role member (chat default)')
     expect(i.gw.people.get('c1', eve.id)?.role).toBe('guest')
     expect(i.gw.people.get('c1', eve.id, i.gw.nodeOf('c1', 'forum')?.id)?.role).toBe('member')
     await say(mock, eve, 'halo lagi', 'm2')
@@ -291,6 +291,18 @@ describe('default role per chat and bell notifications', () => {
     expect(bell).toHaveLength(1)
     expect(bell[0]?.link).toBe('/channels?connection=c1&tab=people')
     expect(bell[0]?.title).toContain('Eve')
+  })
+
+  test('the chat default role is never shown as a plain member role; the medium note says to answer only the latest message', async () => {
+    const i = instance([call('member_lookup', { query: 'Eve' }, 'l1'), text('ok')])
+    const mock = await connect(i, { forum: { defaultRole: 'member', topics: { produksi: {} } } })
+    await say(mock, eve, 'siapa saya', 'm1')
+    await until('reply', () => mock.sent.some((s) => s.message.text === 'ok'))
+    const w = wire(i.lead)
+    expect(w).not.toMatch(/role member \((?!chat default)/)
+    expect(w).toContain('role member (chat default)')
+    expect(w).toContain('Answer only the latest message')
+    expect(w).not.toContain('team web app (Channels, People)')
   })
 
   test('a platform admin without a role is one suggestion notification', async () => {

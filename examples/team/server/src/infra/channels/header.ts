@@ -114,7 +114,11 @@ const sourceNote = (m: MessageMeta): string => {
 /** The compact header of one message. */
 export function renderHeader(m: MessageMeta): string {
   const from: string[] = [personLabel(m.sender), `id ${flat(m.sender.id, 40)}`]
-  from.push(`role ${m.role} (${sourceNote(m)})`)
+  from.push(
+    m.role === 'member' && m.roleSource === 'default'
+      ? 'role member (chat default)'
+      : `role ${m.role} (${sourceNote(m)})`,
+  )
   if (m.divisions !== undefined && m.divisions.length > 0)
     from.push(`divisions ${m.divisions.map((d) => `"${flat(d, 40)}"`).join(', ')}`)
   from.push(m.member === undefined ? 'no team member linked' : `team member ${flat(m.member, 40)}`)

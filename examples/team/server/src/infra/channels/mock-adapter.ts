@@ -5,6 +5,7 @@
  *
  * Node ids: a chat is `<chat>`, a topic of it `<chat>/<topic>` (the topic is a child thread node).
  */
+import { readableMentions } from './mentions.ts'
 import {
   type AdapterHost,
   type ChannelAdapter,
@@ -49,6 +50,8 @@ export interface MockSent {
   /** The native id of the message. */
   messageId: string
   message: OutboundMessage
+  /** `message.text` with mention tokens shown as `@name`, for logs and assertions that read the text. */
+  rendered: string
 }
 
 export interface MockSay {
@@ -256,6 +259,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
         at: clock(),
         messageId,
         message,
+        rendered: readableMentions(message.text),
       }
       adapter.sent.push(record)
       keep(node.nativeId, {
