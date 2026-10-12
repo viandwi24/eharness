@@ -13,6 +13,8 @@ import {
 } from '../dsl.ts'
 import { call, search, text } from './common.ts'
 
+const wait_ = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
 const group = { id: -1001000000001, type: 'supergroup', title: 'Acme HQ', is_forum: true }
 const bounded = (name: string, max: number) =>
   C.custom(name, ({ w }) => {
@@ -135,6 +137,34 @@ export const scenarios: Scenario[] = [
       wait(12000),
     ],
     timeoutMs: 90_000,
+    hard: [C.posted('general', undefined, 'the CEO hears back after the restart'), C.maxPosts(2)],
+    tags: ['restart'],
+  },
+  {
+    id: 'F-04b',
+    category: 'F',
+    title: 'Server restarts after the model started streaming (assistant message exists)',
+    goal: 'A restart once the turn has really begun: the CEO must still hear back (answer or interruption notice).',
+    expectedSafe: 'The CEO gets one answer or notice after the restart.',
+    script: {
+      lead: [
+        { text: 'Jawaban lambat sebelum restart', delayMs: 3000 },
+        text('Jawaban setelah restart'),
+      ],
+    },
+    steps: [
+      say('ceo', 'general', 'Tolong jelaskan strategi kuartal ini', { noWait: true }),
+      act('restart once the assistant message exists', async (w) => {
+        const q = w.server.conn.sqlite.query(
+          `SELECT COUNT(*) n FROM eh_messages WHERE role = 'assistant'`,
+        )
+        const end = Date.now() + 30_000
+        while (Date.now() < end && (q.get() as { n: number }).n === 0) await wait_(100)
+        await w.restart()
+      }),
+      wait(15000),
+    ],
+    timeoutMs: 120_000,
     hard: [C.posted('general', undefined, 'the CEO hears back after the restart'), C.maxPosts(2)],
     tags: ['restart'],
   },

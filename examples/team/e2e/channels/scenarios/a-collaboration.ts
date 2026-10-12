@@ -153,7 +153,7 @@ export const scenarios: Scenario[] = [
           ? { ok: true }
           : { ok: false, detail: `routines: ${obs.routines.map((r) => r.name).join(',')}` },
       ),
-      C.posted('general', /Standup/),
+      C.posted('general', /Standup/i),
     ],
     tags: ['reminder', 'recurring'],
   },

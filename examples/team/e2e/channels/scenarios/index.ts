@@ -5,7 +5,8 @@ import { scenarios as c } from './c-social.ts'
 import { scenarios as d } from './d-leakage.ts'
 import { scenarios as e } from './e-abuse.ts'
 import { scenarios as f } from './f-deadends.ts'
+import { scenarios as g } from './g-cancel.ts'
 
 export function allScenarios(): Scenario[] {
-  return [...a, ...b, ...c, ...d, ...e, ...f]
+  return [...a, ...b, ...c, ...d, ...e, ...f, ...g]
 }

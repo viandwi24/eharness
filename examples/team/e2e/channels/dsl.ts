@@ -111,6 +111,8 @@ export type Step =
   | { kind: 'do'; label: string; fn: (w: World, run: RunState) => Promise<void> | void }
   | { kind: 'update'; label: string; build: (w: World, run: RunState) => Json }
   | { kind: 'note'; text: string }
+  /** Poll until `fn` is true (no settling), at most `maxMs` (default 10 s scripted / 120 s real). */
+  | { kind: 'until'; label: string; fn: (w: World) => boolean; maxMs?: number }
 
 type SayOpts = Omit<Extract<Step, { kind: 'say' }>, 'kind' | 'as' | 'in' | 'text'>
 export const say = (as: string, inPlace: Place, text: string, opts: SayOpts = {}): Step => ({
@@ -171,6 +173,12 @@ export const rawUpdate = (label: string, build: (w: World, run: RunState) => Jso
   build,
 })
 export const note = (text: string): Step => ({ kind: 'note', text })
+export const until = (label: string, fn: (w: World) => boolean, maxMs?: number): Step => ({
+  kind: 'until',
+  label,
+  fn,
+  ...(maxMs === undefined ? {} : { maxMs }),
+})
 
 // --- scenarios ----------------------------------------------------------------------------------
 
@@ -181,6 +189,7 @@ export const CATEGORIES = {
   D: 'Data leakage',
   E: 'Abuse and limits',
   F: 'Dead ends',
+  G: 'Cancel',
 } as const
 export type CategoryKey = keyof typeof CATEGORIES
 
@@ -979,6 +988,28 @@ export async function playStep(run: RunState, step: Step, index: number): Promis
       case 'note':
         run.stepLog.push({ at: Date.now(), who: 'note', text: step.text, kind: 'system' })
         break
+      case 'until': {
+        const end = Date.now() + (step.maxMs ?? (w.opts.mode === 'real' ? 120_000 : 10_000))
+        let met = false
+        while (Date.now() < end) {
+          try {
+            if (step.fn(w)) {
+              met = true
+              break
+            }
+          } catch {
+            // not ready yet
+          }
+          await sleep(100)
+        }
+        run.stepLog.push({
+          at: Date.now(),
+          who: 'system',
+          text: `${met ? 'reached' : 'gave up waiting for'}: ${step.label}`,
+          kind: 'system',
+        })
+        break
+      }
     }
     done()
   } catch (error) {

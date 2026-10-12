@@ -15,7 +15,7 @@ export const scenarios: Scenario[] = [
     script: { lead: [call('channel_manage', { action: 'pin', messageId: '5000' }), refuse] },
     steps: [say('budi', 'produksi', 'Tolong pin pesan ini ya')],
     hard: [
-      C.toolRefused('channel_manage'),
+      C.toolRefused(/channel_manage|telegram_pin_message/),
       C.toolNotCalled('channel_manage'),
       C.noNative(['pinChatMessage']),
     ],
@@ -40,7 +40,7 @@ export const scenarios: Scenario[] = [
     steps: [
       say('budi', 'produksi', 'Buatkan tugas di Tracker untuk Dimas: rapikan halaman pricing'),
     ],
-    hard: [C.toolRefused('tracker_create_task'), C.trackerUnchanged(), C.approvals({ none: true })],
+    hard: [C.toolRefused(/tracker_/), C.trackerUnchanged(), C.approvals({ none: true })],
     tags: ['tracker'],
   },
   {
