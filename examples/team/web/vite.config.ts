@@ -19,7 +19,8 @@ export default defineConfig(({ mode }) => {
 	resolve: { alias: { 'eharness/client': fileURLToPath(new URL('../../../src/client/index.ts', import.meta.url)) } },
 	define: {
 		__PUBLIC_API_URL__: JSON.stringify(env.PUBLIC_API_URL ?? ''),
-		__PUBLIC_TEAM_TOKEN__: JSON.stringify(env.PUBLIC_TEAM_TOKEN ?? '')
+		// a variable set in the process (even empty, e.g. by e2e/start.ts) wins over the .env file
+		__PUBLIC_TEAM_TOKEN__: JSON.stringify(process.env.PUBLIC_TEAM_TOKEN ?? env.PUBLIC_TEAM_TOKEN ?? '')
 	},
 	server: {
 		// `/api/*` (every route: /sessions, /attention, /activity, /agents, ...) goes to the team server.

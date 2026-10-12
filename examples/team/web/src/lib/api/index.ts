@@ -9,14 +9,18 @@ declare const __PUBLIC_TEAM_TOKEN__: string;
 
 const TOKEN_KEY = 'team.token';
 
-/** Token: `PUBLIC_TEAM_TOKEN` wins, else the one saved from the Settings page (localStorage). */
+/**
+ * Token: the one saved from the Settings page (localStorage) wins, else the build-time
+ * `PUBLIC_TEAM_TOKEN` (a dev convenience). Saving a token on Settings must always take effect.
+ */
 export function getToken(): string | null {
-	if (__PUBLIC_TEAM_TOKEN__) return __PUBLIC_TEAM_TOKEN__;
 	try {
-		return localStorage.getItem(TOKEN_KEY);
+		const saved = localStorage.getItem(TOKEN_KEY);
+		if (saved) return saved;
 	} catch {
-		return null;
+		// storage unavailable: fall back to the build-time token
 	}
+	return __PUBLIC_TEAM_TOKEN__ || null;
 }
 
 export function setToken(token: string): void {

@@ -63,6 +63,8 @@ if (withTeam && (args.has('--build') || !existsSync(join(buildDir, 'index.html')
   console.log('Building the web (bun run build in examples/team/web)...')
   const b = Bun.spawnSync(['bun', 'run', 'build'], {
     cwd: webDir,
+    // never inline a dev token from examples/team/.env: the e2e token is pasted on Settings
+    env: { ...process.env, PUBLIC_TEAM_TOKEN: '' },
     stdout: 'inherit',
     stderr: 'inherit',
   })
