@@ -425,3 +425,51 @@ presence: `edit`, `delete`, `react`, `typing`, `fetchHistory`, `listMembers`, `l
 - L5.3 bot adapter on the contract with golden fixtures (anonymized real payload shapes per chat type);
   L5.4 MTProto adapter on the contract (manual tests only, owner decision).
 - Acceptance: U1–U3 flows unchanged for the client; a new platform needs an adapter and fixtures only.
+
+## L6 — Internal groups: identity, roles, context, reminders, recaps (decided 2026-10-12; after L5)
+
+Use case: a company supergroup with forum topics per division; the founder/CEO, admins and employees
+talk; the bot is tagged to take notes, set reminders for the group or one person, and reminds
+proactively. Findings from a real test: the admin bot claimed it was not admin and could not read other
+topics (it guessed instead of checking; admins always receive every topic, but unaddressed messages were
+not logged), it pinged people with free-text @usernames, and a chat claim ("I am the founder") was believed.
+
+Decisions:
+- **People directory** on the L5 identities: keyed by platform user id (never username); person ↔ team
+  member link created only by an authorized action (People tab, admin import), never by chat text; roles
+  `owner | admin | member | guest` plus divisions (topic nodes); Telegram creator/admin status is imported as
+  a suggestion, not a role. Anonymous admins (`sender_chat` = the chat) are "admin, identity unknown" with
+  guest rights.
+- **Complete metadata in every inbound turn** (rendered as data, never instructions): sender name, @username,
+  platform user id, directory role and divisions, team member link, chat admin status/title, bot,
+  anonymous; chat title/type/id, topic name/id, message id, reply-to (id, sender), time in the team
+  timezone, edited, forwarded-from. The agent is told roles come only from this header.
+- **Authorization by code on the current requester**: deny-wins tool policy per role (e.g. approvals,
+  reminders for others, schedules, writes: owner/admin; members: own reminders, read/recap of their
+  divisions; guests: answers only), plus division scope for recaps and reads.
+- **Observe = full log** for allowed chats/topics (every message stored, sealed), so recaps and "who said
+  what" work; topic nodes learned from `forum_topic_created/edited` and incoming messages; optional one-time
+  MTProto topic list/backfill when an account connection exists.
+- **Self-knowledge tools** (read): `channel_status` (am I admin, rights, privacy, log coverage since when),
+  `list_topics`, `member_lookup` (by id/name/username → directory entry), `chat_history` (time window,
+  topic filter).
+- **Mentions**: only the gateway builds mention entities, from structured `mention: [personId|userId]`
+  (Telegram `text_mention` by id, works without username); free-text `@handles` in model output are
+  neutralized (Discord `allowed_mentions` model).
+- **Reminders from chat**: one `reminder` tool (`create | list | cancel | update`) stored as routines with the
+  team timezone; targets the current topic by default; mentions by id; confirmation echoes the absolute time
+  and topic; fixed-text reminders are sent without a model call; role rules decide who may remind whom;
+  delivery through the outbox with retries and a fallback when a topic is closed.
+- **Recaps**: `chat_recap` (window in the team timezone, one topic or all allowed topics, chunked), saves a
+  note to the library with its source range, respects division scope, says plainly when the log starts after
+  the window.
+- **Proactive policy** per node (inherited settings): allowed targets, quiet hours, one digest per topic
+  instead of many pings, mention limits, silent when nothing to say, no reminder-from-reminder recursion.
+- **New input while an approval is pending** (web parity): a wake message from the requester declines
+  pending approvals with the user-note wording and is processed; others stay context; the approval message
+  is edited to "Cancelled: a new message arrived"; unanswered approvals expire (default 24 h).
+
+Acceptance (real bot, owner's group): CEO tag → correct role in the header; employee claims to be the
+founder → still employee; "note today's chat" → recap of all allowed topics saved; "remind the group at
+15:00" and "remind <person> tomorrow 9:00" → delivered with an id mention; proactive overdue digest in the
+right topic; no accidental @pings.
