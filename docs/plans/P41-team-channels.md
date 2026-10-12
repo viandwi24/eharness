@@ -359,3 +359,69 @@ Owner feedback after testing with a real bot. Migration 0025 (`channel_unlinked`
 - **Not done / open.** An inbound rate limit (the "rate limited" drop reason does not exist: the
   loop guard is the only limiter); a conversation view does not live-update while open (Refresh);
   the unlinked list is not purged by age.
+
+## L5 — Generic conversation model (design, decided 2026-10-12; build after the e2e browser run)
+
+Research: mautrix bridgev2 (portal model, network-connector interface), mautrix-telegram/-slack/-discord,
+Matrix spaces/threads/relations, Vercel Chat SDK, and the official structures of Telegram (Bot API 10.3 +
+MTProto), Discord, Slack and WhatsApp. Goal: one storage model and adapter contract for every platform;
+no per-platform tables or columns (the L4 `tgu_chats` table and the flat `{space, container, thread, kind}`
+ref are replaced).
+
+### Model
+
+- **Node** — a place, in a single-parent tree with a materialized `path`: `kind` is one of
+  `space | room | thread | direct`; structural `traits` are the only thing core logic branches on
+  (`multiUser`, `broadcast`, `container`, `threading: none|relation|node`, `postable`, `ephemeral`,
+  `external`, `threadsOnly`); `platformType` is display/debug only; `meta` is JSON validated by the adapter's
+  schema (versioned). Unique `(connectionId, nativeId)`; native ids are opaque, composed by the adapter.
+- **A thread is a node only when the platform gives it its own id and lifecycle**: Telegram forum topics
+  (General = topic 0 child of the forum space), Discord threads and forum posts. Slack `thread_ts`,
+  Telegram reply chains and WhatsApp replies are message relations (`threadRoot`, `replyTo`).
+- **Node links** for non-hierarchical relations: `discussion_of` (channel ↔ discussion group),
+  `monoforum_of`, `follows`, `alias_of` (the same chat seen by the bot and the user account: one node per
+  connection, linked; the Inbox can merge them), `migrated_from` (basic group → supergroup id change).
+- **Node access** per connection: membership role, `canPost`/`canRead` (a broadcast channel is postable
+  only by admins), read marker, backfill cursor.
+- **Settings inherit down the tree** (`resolve(node, key)` walks node → ancestors → connection default →
+  product default): agent binding, wake rule, delivery, observe, retention, session scope, redaction.
+- **Identity** per connection with `personId` (the linked team member, never auto-merged), aliases for ids
+  that change (phone/LID/username), and per-space profiles (Discord guild nick, Slack workspace name,
+  Telegram admin title); memberships.
+- **Message**: key `(node, nativeId)`, sender, platform time + sort key, direction, kind
+  (message/service/system), content as UIMessage-compatible parts (text, file refs) plus normalized entities
+  (mentions, links, formatting) in meta, sealed at rest; `replyTo`/`threadRoot` as plain references that may
+  be unresolved; edits kept as revisions; deletions as tombstones (content kept for audit until retention
+  unless the node setting `redactOnDelete` is on); `sendTxnId` for echo dedupe; reactions table.
+- **Event log**: append-only normalized events (`message.created/edited/deleted`, `reaction.*`,
+  `node.created/updated/state_changed/migrated`, `member.*`, `identity.*`, `action`, `backfill.batch`) with a
+  unique `(connection, dedupeKey)`, optional prunable raw payload and a normalizer version, so data can be
+  re-normalized. Events with an unknown node (MTProto private/basic-group deletions carry no chat id) are
+  stored unresolved and resolved later. Inbox and Activity are views over nodes, messages and events.
+
+### Adapter contract (bridgev2-shaped)
+
+Required: `platform`, meta schemas, documented id formats, `connect/disconnect`, `isSelf`, an event stream
+(normalized `RemoteEvent`s with the node chain leaf → root), `getNodeInfo` (patch semantics),
+`getIdentityInfo`, per-node `getCapabilities` (support levels + limits: text length, edit max age, files),
+`send` (with `sendTxnId`; thread/topic expressed by the target node or relations). Optional, discovered by
+presence: `edit`, `delete`, `react`, `typing`, `fetchHistory`, `listMembers`, `listNodes`,
+`resolveIdentifier`, `adminLog`, native actions. The gateway never branches on the platform name.
+
+### Decisions on the open questions
+
+- Telegram forum General topic: a child thread node (topic 0); the forum itself is a non-postable space.
+- One node per connection, joined by `alias_of` links (permissions differ per connection).
+- Default session scope: the node where the message was posted (a thread node has its own session;
+  relation threads share their room's session); DMs per peer; configurable through inherited settings.
+- Content: UIMessage-compatible parts + normalized entities; raw kept separately and prunable.
+- Deleted content: kept for audit until the node's retention, unless `redactOnDelete`.
+
+### Phases
+
+- L5.1 schema + migration of `channel_conversations`, `channel_messages`, `channel_inbox`,
+  `channel_events`, `channel_known_chats` and `tgu_*` into nodes/links/access/identities/messages/events.
+- L5.2 gateway and Inbox/Activity on the new model; inherited settings replace per-chat/per-topic overrides.
+- L5.3 bot adapter on the contract with golden fixtures (anonymized real payload shapes per chat type);
+  L5.4 MTProto adapter on the contract (manual tests only, owner decision).
+- Acceptance: U1–U3 flows unchanged for the client; a new platform needs an adapter and fixtures only.
