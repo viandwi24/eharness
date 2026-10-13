@@ -120,7 +120,15 @@ const personNoteSchema = z.object({
 const historySchema = z.object({
   ...scopeFields,
   ...windowFields,
-  limit: z.number().int().min(1).max(200).optional().describe('Messages per page (default 50).'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe(
+      'Messages per page (default 50, up to 500: use large pages to read long windows in few calls).',
+    ),
   page: z.string().optional().describe('The `next` of the previous page.'),
 })
 const recapSchema = z.object({
@@ -195,6 +203,9 @@ const clip = (text: string, max: number): string =>
 
 const CHUNK_CHARS = 12_000
 const LINE_CHARS = 700
+
+/** Backfills the history tools asked for (`<connection>:<room>:<days>` -> when), this process. */
+const backfillAsked = new Map<string, number>()
 
 export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
   const { gw, sessionId, agentId } = ctx
@@ -641,11 +652,41 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     return `${prefix}${m.self ? ' (me)' : ''} ${clip(flat(m.text.replace(/\n/g, ' ⏎ '), LINE_CHARS), LINE_CHARS)}${files}`
   }
 
-  const coverageNote = (nodes: NodeRow[], w: TimeWindow, zone: string): string | undefined => {
+  /**
+   * The window starts before the log: the platform is asked to fill the gap (a backfill), when it
+   * can and the person asking may (owner, admin, or the web app's client). Asked at most once per
+   * chat and range every 10 minutes; the history fills in over minutes, so the model reads again.
+   */
+  const backfillFor = (p: Place, from: number): string | undefined => {
+    const adapter = gw.adapter(p.connectionId)
+    if (adapter?.requestBackfill === undefined) return undefined
+    if (p.requester !== undefined && !isStaff(p.requester.role)) return undefined
+    const room = gw.roomOf(p.base)
+    const days = Math.min(3650, Math.max(1, Math.ceil((Date.now() - from) / 86_400_000) + 1))
+    const key = `${p.connectionId}:${room.id}:${days}`
+    const asked = backfillAsked.get(key)
+    if (asked !== undefined && Date.now() - asked < 600_000) {
+      return `A backfill of ${days} day(s) of "${nameOf(room)}" was started ${Math.round((Date.now() - asked) / 60_000)} minute(s) ago and is still filling in: read again in a few minutes.`
+    }
+    backfillAsked.set(key, Date.now())
+    void adapter.requestBackfill(gw.viewOf(room), days).catch(() => undefined)
+    return `I asked ${adapter.platform} for the older history of "${nameOf(room)}" (back ${days} day(s)). It fills in over minutes through the rate-limit queue: read this window again later (a long audit is best left to your worker).`
+  }
+
+  const coverageNote = (
+    nodes: NodeRow[],
+    w: TimeWindow,
+    zone: string,
+    p?: Place,
+  ): string | undefined => {
     const stats = gw.log.stats(nodes.map((n) => n.id))
-    if (stats.count === 0) return 'The log of these places is empty: nothing was seen.'
+    const backfill = (): string => {
+      const asked = p === undefined ? undefined : backfillFor(p, w.from)
+      return asked === undefined ? '' : ` ${asked}`
+    }
+    if (stats.count === 0) return `The log of these places is empty: nothing was seen.${backfill()}`
     if ((stats.firstAt as number) > w.from)
-      return `NOTE: my log starts at ${timeLine(stats.firstAt as number, zone)}, after the start of the window (${timeLine(w.from, zone)}): what was said before that is missing.`
+      return `NOTE: my log starts at ${timeLine(stats.firstAt as number, zone)}, after the start of the window (${timeLine(w.from, zone)}): what was said before that is missing.${backfill()}`
     return undefined
   }
 
@@ -660,7 +701,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       `Window: ${w.label}: ${timeLine(w.from, zone)} to ${timeLine(w.to, zone)} (team timezone ${zone}).`,
       `Places: ${nodes.map(nameOf).join('; ') || 'none'}.`,
     ]
-    const cov = coverageNote(nodes, w, zone)
+    const cov = coverageNote(nodes, w, zone, p)
     if (cov !== undefined) out.push(cov)
     if (refused.length > 0)
       out.push(
@@ -1092,7 +1133,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     }),
     [CHAT_HISTORY_TOOL]: tool({
       description:
-        "Messages of a chat (one topic or all allowed topics) in a time window of the team timezone (today, yesterday, a date, from/to), oldest first, paged. Every line says who wrote it and their role. Limited to the chats of the asking person's divisions unless they are an owner or admin. Read-only.",
+        "Messages of a chat (one topic or ALL allowed topics at once) in a time window of the team timezone (today, yesterday, a date, from/to), oldest first, paged (up to 500 per page). Every line says who wrote it and their role. The tool for reading a whole group over days or weeks (audits, recaps): when the window starts before the stored log, the older history is requested from the platform automatically. Limited to the chats of the asking person's divisions unless they are an owner or admin. Read-only.",
       inputSchema: historySchema,
       metadata: { risk: 'read', idempotent: true },
       execute: (input): Promise<string> => history(input),

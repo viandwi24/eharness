@@ -61,6 +61,8 @@ export const MEMBER_TOOLS: readonly string[] = [
   'persona',
   // what to call me: a member sets their own note
   'person_note',
+  // hand a long job to the agent's background worker: it acts with the member's own scope
+  'agent',
 ]
 
 export const DEFAULT_ROLE_POLICY: Record<Role, Required<RolePolicy>> = {

@@ -900,3 +900,33 @@ Decisions and open points:
 - If a file-backed store is ever added it must live under `data/telegram/<connectionId>/` — one folder
   per connection, never the working directory. `.gitignore` blocks databases, `*.session`, `.mtcute/`
   and example `data/` folders anywhere.
+
+## Long work in chats (production feedback, as built)
+
+An owner asked the agent in a forum group to audit every repeated mistake since the group began. The
+agent read 2 of 13 topics page by page with `channel_read`, hit its 25-step budget, and the chat got
+"I ran out of steps"; later messages typed in the web view of that chat thread were answered only in
+the web app. Fixes:
+
+- **Step budget** (`infra/eh/step-budget-plugin.ts`): `turn.beforeEnd` extends a turn's base budget by
+  30 while it makes progress (the library's stuck detection still stops loops), up to 120 steps for a
+  chat turn, 200 for a delegated child or task, `TEAM_MAX_WORKER_STEPS` (400) for a worker. Programs,
+  rehearsals, heartbeats and routines keep their runner's budget.
+- **Wrap-up reaches the chat**: on `max-steps`, `stuck` or `length` the gateway posts the model's last
+  words (the library's tool-less wrap-up summary: what was done, what is left), not a canned notice.
+- **Background worker for every agent** (`agent-factory.ts`): the `agent` tool offers `worker`, a copy of
+  the agent with the same tools and chats, in the background (lead: next to its role agents; other agents:
+  their own subagent plugin, which keeps the child side towards the lead). Worker sessions are
+  `<parent>:worker:<call>` (library: `childSessionId` now receives the catalog key) and open on a worker
+  variant whose child side reports to the main agent (`agentFor(def, sessionId)`, `openSession`,
+  reconcile). The report wakes the chat session, which answers in the chat (existing delegation path).
+- **The worker acts for the asker**: `gateway.adoptChild` gives a child of a channel session the requester
+  of the parent turn (role, divisions); kept in `ch_meta` (`child-asker:<child>`) so it survives a
+  restart; a child of an unidentified sender is a guest. Members may start a worker (it has their scope).
+- **Reading a whole group**: `chat_history` reads all allowed topics per window, up to 500 lines a page;
+  when a window starts before the stored log and the platform can (`ChannelAdapter.requestBackfill`, the
+  Telegram account), the older history is requested automatically for owners, admins and the web client
+  (once per chat and range per 10 minutes). `channel_read` pages go to 200 (the platform gives 100).
+- **Web turns in a chat thread**: the medium reminder tells the model that a message typed in the web app
+  is answered only there and that posting needs `channel_send`.
+

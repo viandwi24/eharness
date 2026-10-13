@@ -76,6 +76,11 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       READ_BRIEFINGS_TOOL,
       // the clock is read-only
       DATETIME_TOOL,
+      // an agent's own background worker (a copy of itself): its tool calls keep their own rules;
+      // the lead's Team connector modes still win for the lead (most restrictive)
+      'agent',
+      'agent_output',
+      'agent_stop',
       // reading and describing chat channels is read-only; posting keeps its own risk (`infra/channels`)
       ...CHANNEL_READ_TOOLS,
       // a recap note and a reminder stay in the team's own space; roles decide who may use them

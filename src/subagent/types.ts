@@ -231,8 +231,11 @@ export interface SubagentOptions {
   ) => Promise<SubagentApprovalAnswer> | SubagentApprovalAnswer
   /** For `'policy'`: `'deny'` (default) or `'approve'` every child approval. */
   policy?: 'deny' | 'approve'
-  /** Child session id. Default `<parentId>:agent:<toolCallId>`. */
-  childSessionId?: (parentSessionId: string, toolCallId: string) => string
+  /**
+   * Child session id. Default `<parentId>:agent:<toolCallId>`. `agent` is the catalog key of the
+   * child (so an app can tell its kinds of children apart by id).
+   */
+  childSessionId?: (parentSessionId: string, toolCallId: string, agent: string) => string
   /**
    * The agent that owns this plugin's sessions. With `'park'` and when set, `session.start`
    * reconciles the session's pending subagent waits in the background ({@link reconcileSubagentWaits}, children

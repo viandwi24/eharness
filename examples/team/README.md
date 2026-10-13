@@ -100,6 +100,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `PORT` | `4000` | HTTP port of the server |
 | `TEAM_BUDGET_USD` | unset | monthly USD limit of the workspace ledger (also in Settings) |
 | `TEAM_SPAWN_CAP` | `4` | role agents the lead runs at once (also in Settings) |
+| `TEAM_MAX_WORKER_STEPS` | `400` | hard cap of one background worker turn (every agent can hand long jobs to its `worker`; chat turns stop at 120 steps) |
 | `TEAM_ROUTINE_TICK_MS` | `15000` | routine ticker interval (`0` = off) |
 | `TEAM_LOG_MAX_ROWS` | `5000` | model call log (Logs page): rows kept |
 | `TEAM_LOG_RETENTION_DAYS` | `7` | model call log: days kept |

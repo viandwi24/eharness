@@ -413,6 +413,12 @@ export interface ChannelAdapter {
   status?(node: ChannelNode): { readsEverything?: boolean; notes?: string[] }
   /** The nodes of the identity (dialog sync). With `parent`, only its children. */
   listNodes?(parent?: ChannelNode): Promise<NodeInfo[]>
+  /**
+   * Fill the stored log of a chat back `days` days from the platform's history (a background job
+   * that goes through the rate limits). Optional: platforms without history (a bot) leave it out.
+   * Resolves with a sentence for the model.
+   */
+  requestBackfill?(node: ChannelNode, days: number): Promise<string>
   resolveIdentifier?(query: string): Promise<IdentityInfo | undefined>
   /** Download an attachment of a message the gateway logged earlier. */
   fetchAttachment?(

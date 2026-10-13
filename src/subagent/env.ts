@@ -56,7 +56,7 @@ export interface Env {
    * so a single shared cap could be filled by waiting parents and starve their children.
    */
   semaphoreFor(depth: number): Semaphore
-  childIdOf(parentId: string, toolCallId: string): string
+  childIdOf(parentId: string, toolCallId: string, agent: string): string
   /** Session options that hand the root's directory to a child session (no module-level state). */
   directoryOptions(dir: AgentDirectory | undefined): { runtime?: Record<string, unknown> }
   /** `childSession` options of an open (never `parent`), merged over `base`. */
@@ -139,8 +139,8 @@ export function createEnv(options: SubagentOptions): Env {
       }
       return s
     },
-    childIdOf: (parentId, toolCallId) =>
-      options.childSessionId?.(parentId, toolCallId) ?? `${parentId}:agent:${toolCallId}`,
+    childIdOf: (parentId, toolCallId, agent) =>
+      options.childSessionId?.(parentId, toolCallId, agent) ?? `${parentId}:agent:${toolCallId}`,
     directoryOptions(dir) {
       if (dir === undefined || park) return {}
       return { runtime: { [DIRECTORY_RUNTIME_KEY]: dir } }

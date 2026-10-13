@@ -36,7 +36,7 @@ import { deriveTaskStatus, type Task } from '../../domain/tasks.ts'
 import { isThreadSession, legacyThreadSessionId, parseChatSession } from '../../domain/threads.ts'
 import { parseAssignedSession } from '../../domain/work-queue.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
-import type { AgentFactory } from './agent-factory.ts'
+import { type AgentFactory, WORKER_TYPE } from './agent-factory.ts'
 
 /** A turn whose heartbeat is older than this is dead (core default `recovery.staleMs`). */
 const STALE_TURN_MS = 120_000
@@ -234,6 +234,8 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         const session = factory.openSession(def, sessionId)
         const entries = await reconcileSubagentWaits(session as never, {
           openChild: (childSessionId, info) => {
+            // a background worker runs on its parent's agent (worker variant, by session id)
+            if (info.agent === WORKER_TYPE) return factory.openSession(def, childSessionId) as never
             const bySlug = info.agent === undefined ? undefined : defBySlug(info.agent)
             const task = deps.tasks.getBySession(childSessionId)
             const child = bySlug ?? (task === undefined ? undefined : defById(task.agentId))
@@ -259,8 +261,15 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     }
     for (const task of deps.tasks.active()) {
       if (task.parentSessionId === null) continue
-      const owner = dmOwner(task.parentSessionId)
-      if (owner !== undefined) parents.set(task.parentSessionId, owner)
+      // any agent can start a background worker: chat, channel and task sessions are parents too
+      const p = task.parentSessionId
+      const thread = deps.threads.getBySession(p)
+      const parentTask = deps.tasks.getBySession(p)
+      const owner =
+        dmOwner(p) ??
+        (thread === undefined ? undefined : defById(thread.agentId)) ??
+        (parentTask === undefined ? undefined : defById(parentTask.agentId))
+      if (owner !== undefined) parents.set(p, owner)
     }
     return parents
   }
@@ -306,6 +315,8 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         const session = factory.openSession(def, sessionId)
         const entries = await reconcileBackgroundChildren(session as never, {
           openChild: (childSessionId, info) => {
+            // a background worker runs on its parent's agent (worker variant, by session id)
+            if (info.agent === WORKER_TYPE) return factory.openSession(def, childSessionId) as never
             const bySlug = info.agent === undefined ? undefined : defBySlug(info.agent)
             const task = deps.tasks.getBySession(childSessionId)
             const child = bySlug ?? (task === undefined ? undefined : defById(task.agentId))

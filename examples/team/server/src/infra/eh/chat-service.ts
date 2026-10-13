@@ -17,7 +17,7 @@ export function createChatService(
   /** Connectors are activated asynchronously (`factory.prepare`); the agent itself is synchronous. */
   const sessionFor = async (def: AgentDef, sessionId: string): Promise<HarnessSession> => {
     await factory.prepare(def)
-    return factory.agentFor(def).session(sessionId, {
+    return factory.agentFor(def, sessionId).session(sessionId, {
       lock: factory.lock,
       runtime: { workspaceId: deps.workspaceId, agentId: def.id },
     }) as HarnessSession

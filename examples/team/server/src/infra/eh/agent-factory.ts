@@ -125,6 +125,7 @@ import type { ModelConfig } from './provider.ts'
 import { rehearsalSessions, sessionFileSystem } from './rehearsal-registry.ts'
 import { routineOutcomes } from './routine-plugin.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
+import { stepBudget } from './step-budget-plugin.ts'
 import {
   setBudgetLimit,
   sqliteBudgetLedger,
@@ -145,6 +146,8 @@ export interface TeamLimits {
   maxChildren?: number
   /** Steps a role agent may take per delegated run. Default 25. */
   childMaxTurns?: number
+  /** Hard cap of a background worker turn (the step budget extends up to it). Default 400. */
+  maxWorkerSteps?: number
   /** How long the lead stays parked on a task before the wait times out (ms). Default 24 h. */
   parkTimeoutMs?: number
   /** A background delegation running longer than this gets one "timed out" report. Default 2 h; 0 = never. */
@@ -290,8 +293,11 @@ export interface AgentFactory {
    * have changed; cheap when nothing did.
    */
   prepare(def?: AgentDef): Promise<void>
-  /** The agent of a definition version (built once per version on this instance). Needs `prepare`. */
-  agentFor(def: AgentDef): HarnessAgent
+  /**
+   * The agent of a definition version (built once per version on this instance). Needs `prepare`.
+   * With a session id, a worker session (`isWorkerSession`) gets the worker variant.
+   */
+  agentFor(def: AgentDef, sessionId?: string): HarnessAgent
   /** The model an agent runs on and what the catalog knows about it (window, prices). */
   modelInfo(def: AgentDef): ModelInfoOf
   /**
@@ -398,6 +404,50 @@ const TEAM_PREAMBLE = [
   'through a chat app. The shared library of files is under /library; memory notes live under',
   '/memories (see the memory tools). Say what you did and where you saved files.',
 ].join(' ')
+
+/**
+ * Long work in the background (production feedback: an audit of a whole group ran out of steps
+ * in the chat turn). Every agent can hand a long job to `worker`, a copy of itself with the same
+ * tools and chats that runs as a background child; the chat stays free and the report wakes the
+ * agent, which then answers. Worker sessions are `<parent>:worker:<call>`, so the server opens them
+ * on the worker variant (`isWorkerSession`).
+ */
+export const WORKER_TYPE = 'worker'
+const WORKER_MARK = ':worker:'
+export const isWorkerSession = (sessionId: string): boolean => sessionId.includes(WORKER_MARK)
+/** The child session id: workers are told apart from role agents by id. */
+const childIdFor = (parentId: string, toolCallId: string, agent: string): string =>
+  agent === WORKER_TYPE
+    ? `${parentId}${WORKER_MARK}${toolCallId}`
+    : `${parentId}:agent:${toolCallId}`
+/** Base step budget of a worker turn (the step budget plugin extends it while it progresses). */
+const WORKER_BASE_STEPS = 60
+const WORKER_DESCRIPTION =
+  'A copy of you with all your tools, connections and chats, running in the background. Use it for long work: reading or auditing many messages or a whole chat, research over many sources, anything that needs many tool calls or would fill this conversation. Give it the complete brief (goal, scope, time range, what the result looks like, who asked; for a chat its id or exact title, and the topic if one), because it starts with an empty context; it reports back and the report wakes you.'
+
+/** What the agent itself should know about its worker (static: part of the instructions). */
+const WORKER_PLAYBOOK = [
+  '## Long work',
+  '',
+  'When a request needs many tool calls or a lot of reading (an audit of a chat over weeks, research,',
+  'a big summary), hand it to your `worker` with the `agent` tool (subagent_type "worker") instead of',
+  'doing it in this turn: it is a copy of you with the same tools and chats and runs in the background.',
+  'Tell the person in one short sentence that you started it, then end your turn. When its report',
+  'wakes you, check it and answer the person who asked (in a chat, your reply goes to that chat).',
+  'One worker per job; do not start the same job twice; `agent_stop` stops one when the person cancels.',
+].join('\n')
+
+/** What a worker should know (static: part of the worker variant's instructions). */
+const WORKER_NOTE = [
+  '## You are a background worker',
+  '',
+  'You run a job handed to you by your main session; nobody watches this conversation. Work through the',
+  'whole job, use the tools that cover the most ground per call (for chats: chat_history over all topics',
+  'with time windows and large pages; ask for a backfill when the range is older than the log), and save',
+  'long intermediate results to files under /library when they are worth keeping. Finish with one report:',
+  'what you did, the result itself (complete enough to post), gaps, and the paths of files you wrote.',
+  'Do not post to chats yourself unless the brief says so; your main session answers the person.',
+].join('\n')
 
 /**
  * The gate of a program run: the rules the engine gets (`rules`) and the closed-world check of
@@ -651,10 +701,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     if (input.modes.delegate === undefined || input.modes.delegate === 'off') return undefined
     const has = (tool: string): boolean => input.tools.includes(tool)
     return subagent({
-      agents: () =>
-        Object.fromEntries(
+      agents: () => ({
+        ...Object.fromEntries(
           (deps.roster?.() ?? [])
-            .filter((a) => a.id !== def.id && a.archivedAt === null)
+            .filter((a) => a.id !== def.id && a.archivedAt === null && a.slug !== WORKER_TYPE)
             .map((a) => [
               a.slug,
               {
@@ -664,7 +714,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               },
             ]),
         ),
+        // a copy of the lead for long jobs (the same tools and chats)
+        [WORKER_TYPE]: workerEntry(def),
+      }),
       approvals: 'park',
+      childSessionId: childIdFor,
       // the user's uploads can be handed to the role agent that works on them
       files: { resolve: resolveDelegatedFile },
       // durable background delegation (ADR-0046): the lead stays free to chat while the
@@ -678,7 +732,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       parkTimeoutMs: limits.parkTimeoutMs,
       maxConcurrent: limits.spawnCap,
       ...(limits.maxChildren === undefined ? {} : { maxChildren: limits.maxChildren }),
-      childSession: childSessionOptions,
+      childSession: (info) =>
+        info.agent === WORKER_TYPE
+          ? { lock, runtime: { workspaceId, agentId: def.id } }
+          : childSessionOptions(info),
       parentSession: parentSessionOptions,
       // role agents are leaves: a delegation is one level deep
       maxDepth: 1,
@@ -734,8 +791,15 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     def: AgentDef,
     settings: ReturnType<typeof currentSettings>,
     out: ActivatedConnectors,
+    variant: 'main' | 'worker' = 'main',
   ): HarnessAgent {
-    const self = (): HarnessAgent => selves.get(def.id) as HarnessAgent
+    const worker = variant === 'worker'
+    // the main variant is `self`; a worker variant reports to it
+    const main = (): HarnessAgent => selves.get(def.id) as HarnessAgent
+    let workerSelf: HarnessAgent | undefined
+    const self = (): HarnessAgent => (worker ? (workerSelf as HarnessAgent) : main())
+    // a worker never delegates (the lead's Team plugin is left out of its connector plugins)
+    if (worker) out = { ...out, plugins: out.plugins.filter((p) => p.name !== 'subagent') }
     const pluginNames = new Set(out.plugins.map((p) => p.name))
 
     // one engine per live session (Auto mode counters are per conversation); the mode is read
@@ -993,6 +1057,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           ]),
       // one clock for the team: the `datetime` tool reads the team timezone at every call
       clock({ timezone: () => currentSettings().timezone }),
+      // long turns: the base step budget grows while the turn makes progress (hook only)
+      stepBudget({
+        isWorker: isWorkerSession,
+        ...(deps.limits?.maxWorkerSteps === undefined
+          ? {}
+          : { maxWorkerSteps: deps.limits.maxWorkerSteps }),
+      }),
       ...(deps.heartbeat === undefined ? [] : [heartbeat({ intake: deps.heartbeat })]),
       ...(deps.channels === undefined
         ? []
@@ -1041,24 +1112,57 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       }),
       // child side of subagents for every agent but the lead: send_message to main, reports of
       // resumed turns, reconcile on open
-      ...(def.role === 'lead'
-        ? []
-        : [
+      ...(worker
+        ? [
+            // a worker is the child of its main session: reports and waits go back to `main`
             subagent({
               agents: {},
               approvals: 'park',
-              parentAgent: leadAgent,
+              parentAgent: main,
               childSession: childSessionOptions,
               parentSession: parentSessionOptions,
               selfAgent: self,
               messageTool: true,
               outputTool: false,
               stopTool: false,
-              // "waiting for the client" is a stored notice, not an extra lead model call; the
-              // role agent's final report still wakes the lead
               onPark: 'notice',
             }),
-          ]),
+          ]
+        : // a lead with the Team connector has its worker next to its role agents (`teamPlugin`)
+          def.role === 'lead' && pluginNames.has('subagent')
+          ? []
+          : [
+              subagent({
+                // its own background worker (long jobs); for a role agent also the child side
+                // towards the lead (a lead without the Team connector has no parent)
+                agents: () => ({ [WORKER_TYPE]: workerEntry(def) }),
+                approvals: 'park',
+                ...(def.role === 'lead' ? {} : { parentAgent: leadAgent }),
+                childSessionId: childIdFor,
+                childSession: (info) =>
+                  info.agent === WORKER_TYPE
+                    ? { lock, runtime: { workspaceId, agentId: def.id } }
+                    : childSessionOptions(info),
+                parentSession: parentSessionOptions,
+                selfAgent: self,
+                background: {
+                  default: true,
+                  ...(backgroundTuning.timeoutMs > 0
+                    ? { timeoutMs: backgroundTuning.timeoutMs }
+                    : {}),
+                  startGraceMs: backgroundTuning.startGraceMs,
+                  waitingReminderMs: backgroundTuning.waitingReminderMs,
+                },
+                parkTimeoutMs: fixed.parkTimeoutMs,
+                maxConcurrent: 2,
+                messageTool: def.role !== 'lead',
+                outputTool: true,
+                stopTool: true,
+                // "waiting for the client" is a stored notice, not an extra lead model call; the
+                // role agent's final report still wakes the lead
+                onPark: 'notice',
+              }),
+            ]),
       ...(deps.routineOutcomes === undefined
         ? []
         : [
@@ -1153,7 +1257,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...(deps.debug === undefined ? {} : { debug: deps.debug }),
       instructions: [
         TEAM_PREAMBLE,
-        ...(def.role === 'lead' ? [LEAD_PLAYBOOK] : [ROLE_AGENT_NOTE]),
+        // a worker does one job for its main session: no team playbook, no delegation
+        ...(worker
+          ? [WORKER_NOTE]
+          : [def.role === 'lead' ? LEAD_PLAYBOOK : ROLE_AGENT_NOTE, WORKER_PLAYBOOK]),
         ...(personaNow === undefined
           ? [def.instructions]
           : personaInstructions(personaNow, def.name)),
@@ -1173,7 +1280,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       },
       ...(out.mcpSources.length > 0 ? { mcp: out.mcpSources } : {}),
       // role agents are bounded by the same cap as a delegated run (also when a chat opens them directly)
-      loop: { maxSteps: def.role === 'lead' ? 40 : fixed.childMaxTurns },
+      // a base budget per turn; `stepBudget` extends it while the turn makes progress
+      loop: {
+        maxSteps: worker ? WORKER_BASE_STEPS : def.role === 'lead' ? 40 : fixed.childMaxTurns,
+      },
       // uploads are checked by the chat route; the core caps data URLs at the same size
       inputFiles: {
         protocols: ['data:', 'https:', 'library:'],
@@ -1197,9 +1307,31 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
     }) as unknown as HarnessAgent
-    selves.set(def.id, agent)
+    if (worker) workerSelf = agent
+    else selves.set(def.id, agent)
     return agent
   }
+
+  /** The worker variant of an agent (same version key as the main one, built once). */
+  const workers = new Map<string, HarnessAgent>()
+  function workerAgentFor(def: AgentDef): HarnessAgent {
+    factoryAgentFor(def, def.archivedAt !== null)
+    const key = `${latest.get(def.id) ?? def.id}#worker`
+    let agent = workers.get(key)
+    if (agent === undefined) {
+      const out = deps.connectors.activated(def.id) ?? EMPTY_ACTIVATION
+      agent = build(def, currentSettings(), out, 'worker')
+      for (const k of [...workers.keys()]) if (k.startsWith(`${def.id}@`)) workers.delete(k)
+      workers.set(key, agent)
+    }
+    return agent
+  }
+  /** The catalog entry of an agent's worker. */
+  const workerEntry = (def: AgentDef) => ({
+    agent: workerAgentFor(def),
+    description: WORKER_DESCRIPTION,
+    maxTurns: WORKER_BASE_STEPS,
+  })
 
   /**
    * The pick of an agent as `ModelConfig.resolve` takes it: the model id and the profile. An agent
@@ -1385,7 +1517,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         await closeSuperseded(def.id)
       }
     },
-    agentFor: (def) => factoryAgentFor(def, def.archivedAt !== null),
+    agentFor: (def, sessionId) =>
+      sessionId !== undefined && isWorkerSession(sessionId)
+        ? workerAgentFor(def)
+        : factoryAgentFor(def, def.archivedAt !== null),
     modelInfo: (def) => modelInfoOf(def, currentSettings()),
     toolAvailability: (def, authority) =>
       availabilityOf(def, deps.connectors.activated(def.id) ?? EMPTY_ACTIVATION, authority),
@@ -1434,7 +1569,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       return factoryAgentFor(any, true).peek(sessionId)
     },
     openSession: (def, sessionId) => {
-      const agent = factoryAgentFor(def, def.archivedAt !== null)
+      const agent = isWorkerSession(sessionId)
+        ? workerAgentFor(def)
+        : factoryAgentFor(def, def.archivedAt !== null)
       const session = agent.session(sessionId, {
         lock,
         runtime: { workspaceId, agentId: def.id },

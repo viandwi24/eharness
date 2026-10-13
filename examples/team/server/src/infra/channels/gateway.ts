@@ -733,8 +733,15 @@ export interface ChannelGateway {
    * message started (web, program) are unrestricted by design and are not flagged.
    */
   unresolvedChatTurn(sessionId: string): boolean
+  /**
+   * A child session (worker, delegated agent) of a channel session opens: it acts for the person
+   * who asked in the parent turn (their role and scope). Call when the child session opens.
+   */
+  adoptChild(childSessionId: string, parentSessionId: string): void
   /** The room a node belongs to: itself, or the nearest ancestor that is not a thread. */
   roomOf(node: NodeRow): NodeRow
+  /** The adapter's view of a stored node (for optional adapter operations). */
+  viewOf(node: NodeRow): ChannelNode
   /** May this requester read what was said in the node? Staff: any node; a member: their own node and their divisions; a guest: none. */
   canRead(requester: Requester, node: NodeRow): boolean
   /** Resolve who to mention: a team member id, a platform user id or an identity id. */
@@ -783,8 +790,14 @@ export interface ChannelGateway {
   capabilities(connectionId: string, node: NodeRow): ChannelCapabilities | undefined
   /** Instructions of a channel session (static for the session). */
   sessionNote(sessionId: string): string | undefined
-  /** The per-turn medium reminder (where the agent is, default reply length). */
-  mediumNote(sessionId: string): string | undefined
+  /**
+   * The per-turn medium reminder (where the agent is, default reply length). `turn` tells a turn the
+   * web app started (no chat message behind it) from a chat turn: its reply is not posted.
+   */
+  mediumNote(
+    sessionId: string,
+    turn?: { kind?: string; keys?: readonly string[] | undefined },
+  ): string | undefined
   /** What the people of the turn asked to be called (their directory notes), as a turn reminder. */
   peopleNote(sessionId: string, keys?: readonly string[]): Promise<string | undefined>
   /** Rename legacy channel threads to "<chat> / <topic>" (boot, once; returns how many changed). */
@@ -869,7 +882,17 @@ const FAILURE_NOTICE: Record<string, string> = {
   'cost-cap': 'I cannot answer right now: my spending limit is used up.',
   'max-steps':
     'I ran out of steps before I could finish that. Please ask again, or split it into smaller parts.',
+  stuck:
+    'I got stuck on this and stopped instead of repeating myself. Please rephrase it or give me more detail.',
+  length: 'My answer got cut off. Please ask me to continue.',
 }
+
+/** A turn the web app started in a chat thread: nothing it answers reaches the chat by itself. */
+const WEB_TURN_NOTE =
+  'THIS message was typed in the web app by a team member looking at this chat thread, not sent in the chat. Your reply here is shown only in the web app; nothing reaches the chat unless you call channel_send (or another posting tool). When the person asks you to send, post or forward something to the chat, do it with the tool and say what you posted; never claim it was sent otherwise.'
+
+/** Stops whose last words (the wrap-up summary) are worth more than a generic notice. */
+const SAY_WHAT_WAS_DONE: ReadonlySet<string> = new Set(['max-steps', 'stuck', 'length'])
 
 const clip = (text: string, max: number): string =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text
@@ -1725,7 +1748,73 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     else unresolvedTurns.delete(sessionId)
   }
 
+  /**
+   * A child session (a background worker, a delegated agent) of a channel session acts for the
+   * person whose message started it: it gets that requester, so its tools have the same rights as
+   * the asker's (a member's worker reads only the member's divisions). Taken when the child opens,
+   * while the parent turn that started it runs; a child of a chat turn whose asker is unknown is
+   * treated as an unidentified sender.
+   */
+  const childRequesters = new Map<string, Requester | null>()
+  /** Who a child acts for, kept across restarts: `{ parent, trigger }` (`trigger` null = unknown sender). */
+  const CHILD_KEY = 'child-asker:'
+  const saveChild = (child: string, parent: string, trigger: string | null): void => {
+    deps.sqlite
+      .query('INSERT OR REPLACE INTO ch_meta (key, value) VALUES (?, ?)')
+      .run(`${CHILD_KEY}${child}`, JSON.stringify({ parent, trigger }))
+  }
+  const loadChild = (child: string): { parent: string; trigger: string | null } | undefined => {
+    const row = deps.sqlite
+      .query<{ value: string }, [string]>('SELECT value FROM ch_meta WHERE key = ?')
+      .get(`${CHILD_KEY}${child}`)
+    if (row === null) return undefined
+    try {
+      return JSON.parse(row.value) as { parent: string; trigger: string | null }
+    } catch {
+      return undefined
+    }
+  }
+  function adoptChild(childSessionId: string, parentSessionId: string): void {
+    if (childRequesters.has(childSessionId)) return
+    // a grandchild acts for whoever its parent acts for
+    const inherited = childRequesters.get(parentSessionId)
+    const stored = loadChild(parentSessionId)
+    if (inherited !== undefined || stored !== undefined) {
+      if (inherited !== undefined) childRequesters.set(childSessionId, inherited)
+      if (stored !== undefined) saveChild(childSessionId, stored.parent, stored.trigger)
+      return
+    }
+    if (sessions.bySession(parentSessionId) === undefined) return // not a chat: the web app's client
+    if (loadChild(childSessionId) !== undefined) return // re-opened after a restart: requesterOf reads it
+    const r = requesters.get(parentSessionId)
+    const trigger =
+      turnTriggers.get(parentSessionId) ??
+      approvals.activeTrigger(parentSessionId)?.triggerId ??
+      delegations.get(parentSessionId)
+    if (r !== undefined && trigger != null) {
+      childRequesters.set(childSessionId, r)
+      saveChild(childSessionId, parentSessionId, trigger)
+    } else if (unresolvedTurns.has(parentSessionId)) {
+      childRequesters.set(childSessionId, null)
+      saveChild(childSessionId, parentSessionId, null)
+    }
+    // a parent turn of the web app (no chat requester) leaves the child unrestricted, like its parent
+  }
+
   async function requesterOf(sessionId: string): Promise<Requester | undefined> {
+    const adopted = childRequesters.get(sessionId)
+    if (adopted !== undefined) return adopted ?? undefined
+    // a child re-opened after a restart: the asker it was started for, from the stored trigger
+    const stored = sessions.bySession(sessionId) === undefined ? loadChild(sessionId) : undefined
+    if (stored !== undefined) {
+      const parentRow = sessions.bySession(stored.parent)
+      const r =
+        stored.trigger === null || parentRow === undefined
+          ? undefined
+          : await requesterFromKeys(parentRow, [stored.trigger])
+      childRequesters.set(sessionId, r ?? null)
+      return r
+    }
     const known = requesters.get(sessionId)
     if (known !== undefined) return known
     const row = sessions.bySession(sessionId)
@@ -4416,7 +4505,21 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   /** The medium reminder of a turn: where the agent is and the default length of a reply (see `medium.ts`). */
-  function mediumNote(sessionId: string): string | undefined {
+  function mediumNote(
+    sessionId: string,
+    turn?: { kind?: string; keys?: readonly string[] | undefined },
+  ): string | undefined {
+    const base = mediumBase(sessionId)
+    if (base === undefined) return undefined
+    // a person typed in the web app's view of this chat thread: the answer stays in the app
+    const fromWeb =
+      turn !== undefined &&
+      (turn.kind === 'send' || turn.kind === 'edit' || turn.kind === 'regenerate') &&
+      !(turn.keys ?? []).some((k) => k.startsWith(EVENT_PREFIX))
+    return fromWeb ? `${base}\n${WEB_TURN_NOTE}` : base
+  }
+
+  function mediumBase(sessionId: string): string | undefined {
     const row = sessions.bySession(sessionId)
     const target = row === undefined ? undefined : sessionTarget(row)
     if (target === undefined) return undefined
@@ -4703,11 +4806,20 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (scope === undefined || scope.delivery !== 'final_text') return
     // a failed turn must not leave the person waiting in silence: one short, generic notice
     // (never the provider error text, which can carry platform or account details)
-    const rawText = end.stop === 'complete' ? finalAssistantText(end.messages) : (failure as string)
+    // a turn that ran out of steps (or stopped repeating itself) ends with a summary of what was
+    // done and what is left (the library's wrap-up step): that goes to the chat, not a notice
+    const said = SAY_WHAT_WAS_DONE.has(end.stop) ? finalAssistantText(end.messages) : ''
+    const modelText = end.stop === 'complete' || said !== ''
+    const rawText =
+      end.stop === 'complete'
+        ? finalAssistantText(end.messages)
+        : said !== ''
+          ? said
+          : (failure as string)
     if (rawText === '') return
     // a model cannot ping anybody by typing a handle: only the mention parameter of a tool can
-    const text = end.stop === 'complete' ? neutralizeHandles(rawText) : rawText
-    if (end.stop !== 'complete' && scope.wake === 'always') return // never noise in an always-on room
+    const text = modelText ? neutralizeHandles(rawText) : rawText
+    if (!modelText && scope.wake === 'always') return // never noise in an always-on room
     if (scope.wake === 'always' && rawText === NO_REPLY) return
     try {
       // persist before sending: a crash after this point loses nothing (the outbox is flushed on boot)
@@ -5175,8 +5287,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     proactive: proactiveApi,
     timezone: zoneNow,
     requesterOf,
-    unresolvedChatTurn: (sessionId) => unresolvedTurns.has(sessionId),
+    unresolvedChatTurn: (sessionId) =>
+      unresolvedTurns.has(sessionId) ||
+      childRequesters.get(sessionId) === null ||
+      (!childRequesters.has(sessionId) && loadChild(sessionId)?.trigger === null),
+    adoptChild,
     roomOf,
+    viewOf,
     canRead,
     resolveMentions,
     expireApprovals,

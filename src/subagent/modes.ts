@@ -344,7 +344,7 @@ export function runTool(scope: Scope, description: string, inputSchema: unknown)
         }
         files = resolved.files
       }
-      const sessionId = env.childIdOf(ctx.session.id, toolCallId)
+      const sessionId = env.childIdOf(ctx.session.id, toolCallId, subagent_type)
       if (options.maxChildren !== undefined) {
         const refused = await claimSpawn(scope, sessionId)
         if (refused !== undefined) {
@@ -727,7 +727,7 @@ export function parkTool(
         if ('error' in resolved) return failNow(resolved.error)
         files = resolved.files
       }
-      const sessionId = env.childIdOf(ctx.session.id, event.toolCallId)
+      const sessionId = env.childIdOf(ctx.session.id, event.toolCallId, subagent_type)
       const refused =
         options.maxChildren === undefined ? undefined : await claimSpawn(scope, sessionId)
       if (refused !== undefined) return failNow(refused)
@@ -870,7 +870,7 @@ export function parkMarkers(
         'run',
         {
           toolCallId: call.toolCallId,
-          sessionId: env.childIdOf(ctx.session.id, call.toolCallId),
+          sessionId: env.childIdOf(ctx.session.id, call.toolCallId, input.subagent_type),
           agent: input.subagent_type,
           status: 'running',
           ...(input.name === undefined ? {} : { name: input.name }),

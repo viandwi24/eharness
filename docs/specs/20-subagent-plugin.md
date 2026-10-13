@@ -43,7 +43,7 @@ subagent({
   answer?: (request: SubagentApprovalRequest, signal: AbortSignal)
             => Promise<SubagentApprovalAnswer> | SubagentApprovalAnswer   // required for 'inline'
   policy?: 'deny' | 'approve'                  // 'policy': default 'deny'
-  childSessionId?: (parentSessionId: string, toolCallId: string) => string   // `${parent}:agent:${toolCallId}`
+  childSessionId?: (parentSessionId: string, toolCallId: string, agent: string) => string   // `${parent}:agent:${toolCallId}`; `agent` = catalog key
   parkTimeoutMs?: number                       // 'park': timeout of the parent's wait (default none)
   onPark?: 'step' | 'notice'                   // 'park' + background: how the "child waits for the user" notice reaches a running parent (§3.5); default 'step'
   parentAgent?: () => HarnessAgent             // see §3.1 (the agent is itself a child of a 'park' parent)

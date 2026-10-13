@@ -113,9 +113,11 @@ const readSchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(100)
+    .max(200)
     .optional()
-    .describe('history / members: how many (default 20).'),
+    .describe(
+      'history / members: how many (default 20; the platform gives at most 100 per call). For a long window or all topics of a forum use chat_history.',
+    ),
   before: z.string().optional().describe('history: a platform message id to page back from.'),
   source: z
     .enum(['log', 'platform'])
@@ -180,6 +182,9 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       const agent = options.agentOf(ctx.agent.id)
       if (agent === undefined) return {}
       const agentId = agent.id
+      // a worker or delegated agent of a chat session acts for the person who asked there
+      const parentSessionId = ctx.session.parent?.sessionId
+      if (parentSessionId !== undefined) gw.adoptChild(sessionId, parentSessionId)
       const inChannel = gw.conversationOf(sessionId) !== undefined
       const bound = gw.connectionsOf(agentId)
       if (!inChannel && bound.length === 0) return {}
@@ -411,7 +416,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           gw.capabilities(t.config.connectionId, t.node)?.history === true
         ) {
           const got: HistoryEntry[] = await t.adapter.fetchHistory(t.view, {
-            limit,
+            limit: Math.min(limit, 100),
             ...(input.before === undefined ? {} : { before: input.before }),
           })
           rows = got.map((m) => ({
@@ -679,7 +684,13 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         instructions: [
           (c: HarnessContext) => gw.sessionNote(c.session.id),
           {
-            text: (c: HarnessContext) => gw.mediumNote(c.session.id),
+            text: (c: HarnessContext) => {
+              const turn = c.turn as { kind?: string; source?: { keys?: string[] } } | undefined
+              return gw.mediumNote(
+                c.session.id,
+                turn === undefined ? undefined : { kind: turn.kind, keys: turn.source?.keys },
+              )
+            },
             refresh: 'turn' as const,
             id: 'channel-medium',
           },

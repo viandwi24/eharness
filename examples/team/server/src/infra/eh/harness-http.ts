@@ -75,6 +75,12 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
 
   /** The agent that runs a session, and the canonical id (`dm:<slug>` is accepted for `dm:<id>`). */
   const resolve = (sessionId: string): { def: AgentDef; id: string } | undefined => {
+    // a background worker belongs to the agent of the session that started it
+    const worker = sessionId.lastIndexOf(':worker:')
+    if (worker > 0) {
+      const parent = resolve(sessionId.slice(0, worker))
+      return parent === undefined ? undefined : { def: parent.def, id: sessionId }
+    }
     const chat = parseChatSession(sessionId)
     if (chat !== undefined && !chat.child && chat.threadId !== null) {
       // a `chat:` id of a thread that was never created is not a session
@@ -156,7 +162,7 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
     peek: async (id) => {
       const { def, id: sessionId } = need(id)
       await factory.prepare(def)
-      return factory.agentFor(def).peek(sessionId)
+      return factory.agentFor(def, sessionId).peek(sessionId)
     },
 
     chat: {

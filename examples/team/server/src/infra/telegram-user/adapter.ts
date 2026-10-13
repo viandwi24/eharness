@@ -688,6 +688,11 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
       }
       return (await dialogs(true)).map((d) => chatNode(d))
     },
+    // the generic history tools ask for older messages when a window starts before the log
+    async requestBackfill(node, days) {
+      if (hooks.backfill === undefined) return 'Backfill is not available for this account.'
+      return hooks.backfill(targetOf(node).chat, days)
+    },
     async fetchAttachment(node, messageNativeId) {
       return guarded(node, () => client.download(targetOf(node).chat, Number(messageNativeId)))
     },
