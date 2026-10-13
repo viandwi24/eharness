@@ -54,6 +54,7 @@ Update this table in the same commit that changes a phase's status.
 | P42 | [Team example: editable persona](P42-team-persona.md) — per-agent persona ("soul") editable from the web and from chat by owners/admins, with proposals, confirmation, versions and revert; immutable system rules; channel overlays | done | P41 | — |
 | P43 | [Team example: People directory](P43-team-people.md) — one person, many platform accounts (labels, stable ids), dynamic fields and notes, role and divisions on the person, linking only by the owner or a pairing code, People page, `people_find`/`people`/`people_link` tools | in progress (phases 1–3 done) | P41 | — |
 | P44 | [Code sandbox over the virtual file system](P44-code-sandbox.md) — `eharness/code`: Python runs over synced virtual files (incremental, compare-and-set write-back), packages as a cached environment plus an approved extra list, `denyRead` for the local sandbox, "Files & Sandbox" connector | in progress | P39 | P41 |
+| P45 | [Team example: artifacts](P45-team-artifacts.md) — generated documents, web pages, images, code and data as artifacts: kind registry (one definition + one viewer per kind), versions, sandboxed HTML viewer on an optional separate content origin, markdown WYSIWYG, private/public sharing changeable by the agent, share links as channel replies | in progress | P43 | P44 |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next
