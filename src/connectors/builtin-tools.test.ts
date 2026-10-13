@@ -35,7 +35,7 @@ describe('BUILTIN_TOOLS match the shipped plugins', () => {
     expect(BUILTIN_TOOLS.filesInstall).toEqual([INSTALL_PACKAGES_TOOL])
   })
 
-  test('files code capabilities exist only when asked for, defaulting to ask', () => {
+  test('files code capabilities exist only when asked for: run allowed, install asks', () => {
     const files = (code?: boolean | { install?: boolean }) =>
       builtinConnectors({ files: { plugin: () => [], ...(code === undefined ? {} : { code }) } })[0]
         ?.capabilities ?? []
@@ -43,7 +43,7 @@ describe('BUILTIN_TOOLS match the shipped plugins', () => {
     expect(files(false).map((c) => c.id)).toEqual(['read', 'edit', 'delete'])
     const run = files(true)
     expect(run.map((c) => c.id)).toEqual(['read', 'edit', 'delete', 'run'])
-    expect(run[3]).toMatchObject({ kind: 'external', tools: ['run_python'], defaultMode: 'ask' })
+    expect(run[3]).toMatchObject({ kind: 'write', tools: ['run_python'], defaultMode: 'allow' })
     const both = files({ install: true })
     expect(both[4]).toMatchObject({
       id: 'install',

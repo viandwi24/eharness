@@ -45,7 +45,7 @@ code({
   access?: (path: string, op: 'read' | 'write' | 'delete', ctx: HarnessContext) => boolean | Promise<boolean>
   /** Refuse to run when the sandbox does not declare isolation (§6). Default false. */
   requireIsolation?: boolean
-  risk?: ToolRisk                                    // default 'external'
+  risk?: ToolRisk                                    // default 'write' on an isolated sandbox (§6), else 'external'
   installRisk?: ToolRisk                             // default 'external'
 }): HarnessPlugin<'code'>
 

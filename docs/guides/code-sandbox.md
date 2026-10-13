@@ -235,7 +235,9 @@ olderThanMs })` clears leftovers of crashed processes at boot.
 
 In a product where people enable capabilities per agent, code execution is a capability of the
 built-in **Files** connector. The connector offers `run` (Run Python) and, with `install: true`,
-`install` (Install packages); both default to `ask`.
+`install` (Install packages). Run Python defaults to `allow` (an isolated sandbox has no network and its
+only effect is files written back under the file policy, like `write_file`); Install packages
+defaults to `ask` (it needs the network).
 
 ```ts
 builtinConnectors({

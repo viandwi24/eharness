@@ -120,7 +120,10 @@ export interface CodeOptions {
   ) => boolean | Promise<boolean>
   /** Refuse to run when the sandbox does not declare isolation. Default `false`. */
   requireIsolation?: boolean
-  /** `metadata.risk` of `run_python`. Default `'external'`. */
+  /**
+   * `metadata.risk` of `run_python`. Default: `'write'` when the sandbox is isolated (no network;
+   * its only effect is files written back under the file policy), else `'external'`.
+   */
   risk?: ToolRisk
   /** `metadata.risk` of `install_packages`. Default `'external'`. */
   installRisk?: ToolRisk
@@ -254,7 +257,6 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
   }
   const writeBack = options.writeBack ?? 'success'
   const sync = options.sync ?? true
-  const risk = options.risk ?? 'external'
   const installRisk = options.installRisk ?? 'external'
   const exampleMount = (mounts.find((m) => m.readonly !== true) ?? mounts[0])?.virtual ?? '/'
   const exampleScript = `${exampleMount}analyze.py`
@@ -302,6 +304,7 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
         policy = undefined // no filePolicy service: the file tools' policy is not shared
       }
       const iso = isolationOf(sandbox)
+      const risk: ToolRisk = options.risk ?? (iso.isolated ? 'write' : 'external')
       let currentPython = python
       const userAccess = options.access
       const access = async (path: string, op: 'read' | 'write' | 'delete'): Promise<boolean> => {

@@ -229,7 +229,7 @@ with `install: 'off'`.
 ## Phase E — Connector
 
 - [x] Built-in `files` connector: when `files.code` is configured, capabilities `run`
-      ("Run Python", `run_python`, default `ask`) and `install` ("Install packages",
+      ("Run Python", `run_python`, default `allow` since 2026-10-14, owner) and `install` ("Install packages",
       `install_packages`, default `ask`, only with `install` ≠ `'off'`). Name via `labels`
       (the team sets "Files & Sandbox").
 - [x] Activation: the code plugin is installed only with at least one code capability on; file

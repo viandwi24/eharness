@@ -229,10 +229,10 @@ export function builtinConnectors(options: BuiltinConnectorsOptions = {}): Conne
           'run',
           'Run Python',
           'Run Python scripts over the files in a sandbox.',
-          'external',
+          'write',
           BUILTIN_TOOLS.filesRun,
           L.files?.capabilities?.run,
-          'ask',
+          'allow',
         ),
       )
     }

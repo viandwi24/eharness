@@ -103,9 +103,9 @@ export function remoteSandboxConnector(
         title: 'Run Python remotely',
         description:
           'Run Python scripts over library files on the sandbox server; files the script creates or changes are saved to the library.',
-        kind: 'external',
+        kind: 'write',
         tools: ['run_python'],
-        defaultMode: 'ask',
+        defaultMode: 'allow',
       },
     ],
     scopeDefaults: { workspace: { defaultEnabled: false } },
