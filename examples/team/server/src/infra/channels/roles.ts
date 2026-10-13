@@ -61,9 +61,14 @@ export const MEMBER_TOOLS: readonly string[] = [
   'persona',
   // what to call me: a member sets their own note
   'person_note',
-  // hand a long job to the agent's background worker: it acts with the member's own scope
-  'agent',
 ]
+
+/**
+ * A member may start the agent's own background worker (it acts with the member's scope), never a
+ * delegation to another agent (that spends money and reaches what the member cannot): checked on
+ * the call's input by the channels plugin.
+ */
+export const MEMBER_WORKER_TYPE = 'worker'
 
 export const DEFAULT_ROLE_POLICY: Record<Role, Required<RolePolicy>> = {
   owner: { risks: [...TOOL_RISKS], allow: [], deny: [] },

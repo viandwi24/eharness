@@ -391,7 +391,8 @@ export async function buildWorld(opts: WorldOptions): Promise<World> {
   // directory: roles and divisions are set by the team, never by chat text
   const actors: Record<string, ActorDef> = {}
   for (const a of ACTORS) {
-    actors[a.key] = a
+    // a copy: a scenario that renames somebody must not rename them in the next scenario
+    actors[a.key] = { ...a }
     if (a.linkedMember !== undefined)
       await api('POST', `/channels/connections/${connectionId}/links`, {
         peerId: String(a.id),

@@ -2038,6 +2038,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     sender: IdentityRow
     triggerId: string
     text: string
+    /** The message as the person typed it (no header): what a "ya" / "tidak" is read from. */
+    typed: string
   }): Promise<'none' | 'continued' | 'context' | 'failed' | 'answered'> {
     const open = openFor(input.session.sessionId, input.node.id).filter(
       (a) => a.itemKind === 'approval',
@@ -2045,7 +2047,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (open.length === 0) return 'none'
     // "ya" / "tidak" from somebody who may answer is the answer (platforms without buttons, and
     // people who type instead of pressing): who may is decided by their id and directory role
-    const verdict = approvalWord(input.text)
+    const verdict = approvalWord(input.typed)
     if (verdict !== undefined) {
       // a "ya" typed long after the request is about something else: only fresh requests
       const answerable = open.filter(
@@ -3940,6 +3942,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         sender,
         triggerId: logged.id,
         text: input.text,
+        typed: event.message.text,
       })
       if (outcome === 'context') {
         log.demote(node.id, nativeId)

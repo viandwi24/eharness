@@ -321,7 +321,7 @@ export function sqliteModelCallStore(
                   WHEN m.session_id LIKE 'program:%' THEN 'program'
                   WHEN m.session_id LIKE 'routine:%' THEN 'routine'
                   WHEN t.origin = 'user' THEN 'task'
-                  WHEN t.origin = 'lead' OR m.session_id LIKE '%:agent:%' THEN 'delegated'
+                  WHEN t.origin = 'lead' OR m.session_id LIKE '%:agent:%' OR m.session_id LIKE '%:worker:%' THEN 'delegated'
                   ELSE 'chat' END AS source,
              COUNT(*) AS calls,
              COUNT(DISTINCT m.session_id || '|' || COALESCE(m.turn_id, '')) AS turns,

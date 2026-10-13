@@ -29,7 +29,7 @@ import {
 import { MEMORY_READ_TOOLS, memoryWriteRefusal, SMALL_TALK_MEMORY_REFUSAL } from './medium.ts'
 import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
-import { decideTool, isStaff } from './roles.ts'
+import { decideTool, isStaff, MEMBER_WORKER_TYPE } from './roles.ts'
 import {
   PERSON_NOTE_TOOL,
   REMINDER_TOOL,
@@ -762,6 +762,16 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
                 : { type: 'denied', reason: guest.reason ?? 'Not allowed.' }
             }
             const config = gw.config(requester.connectionId)
+            // the agent's own background worker acts with the asker's scope: a member may start it
+            if (
+              e.toolName === 'agent' &&
+              !isStaff(requester.role) &&
+              requester.role !== 'guest' &&
+              (e.input as { subagent_type?: unknown } | undefined)?.subagent_type ===
+                MEMBER_WORKER_TYPE
+            ) {
+              return undefined
+            }
             const decision = decideTool(
               requester.role,
               e.toolName,
