@@ -11,7 +11,11 @@ kind message — so any `MessageAdapter` stores it without knowing what compacti
 
 ```ts
 export interface CompactionConfig {
-  /** Summarize when projected context exceeds this ratio of contextWindow. Default 0.75. */
+  /**
+   * Summarize when projected context exceeds this ratio of contextWindow. Default 0.75. The
+   * effective threshold is at most 95% of the guard's hard limit (§6), so a large output reserve
+   * never leaves the guard trimming every request while the summary never triggers.
+   */
   summarizeAt?: number
   /** Most recent COMPLETED turns kept verbatim (the current turn is always kept). Default 4. */
   keepLast?: number
@@ -388,7 +392,11 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    `out.messages` holds copies of the messages being summarized (read-only input, e.g. to carry
    state that lives in them across the compaction). `out.instructions` is the focus text of a
    manual `compact({ instructions })`; the core appends it to `context` after the hooks.
-3. `generateText({ model, instructions: prompt, prompt: transcript + context, maxOutputTokens: maxSummaryTokens })`;
+3. `generateText({ model, instructions: prompt, prompt: transcript + context, maxOutputTokens })`,
+   `maxOutputTokens` = the agent's `settings.maxOutputTokens`, else `maxSummaryTokens + 12_000`
+   (`SUMMARY_REASONING_HEADROOM`), never below `maxSummaryTokens`: reasoning models count their
+   thinking against the output limit, and a summary cut by it is a failure (§5.5). The prompt still
+   asks for a summary of at most `maxSummaryTokens`;
    the prompt wraps the transcript in `<transcript>…</transcript>` and lists the context lines
    after it. The summarizer window is `config.contextWindow` of `CompactionConfig`, else the agent
    window of the summarizer model.
@@ -443,7 +451,8 @@ Summarizer error, empty output, or a summary cut by the output limit (`finishRea
 on any chunk: a truncated brief would silently lose the end of the work state, so it is not
 used — no retry) → warning `W_COMPACTION_FAILED` (`details: { trigger, reason? }`, `reason:
 'length' | 'empty'`), no marker, continue with the guard. Manual `compact()` rejects with
-`EH_COMPACTION_FAILED` (same `details.reason`). Raise `maxSummaryTokens` when this happens.
+`EH_COMPACTION_FAILED` (same `details.reason`). Raise `settings.maxOutputTokens` (the summarizer's
+output cap) or `maxSummaryTokens` when this happens.
 
 ## 6. Guard (always on, not configurable away)
 

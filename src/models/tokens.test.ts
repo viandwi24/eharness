@@ -165,6 +165,17 @@ describe('window and limits', () => {
     ).toBe(7_200)
   })
 
+  test('summarizeAt never lies above the hard limit: a 32k output cap on a 128k window', () => {
+    const limits = contextLimits(
+      { compaction: { summarizeAt: 0.8 }, settings: { maxOutputTokens: 32_768 } },
+      128_000,
+    )
+    // 128k × 0.9 − 32 768 = 82 432; summarizing at 102 400 would leave the guard trimming every call
+    expect(limits.hardLimit).toBe(82_432)
+    expect(limits.summarizeAt).toBe(Math.floor(82_432 * 0.95))
+    expect(limits.summarizeAt).toBeLessThan(limits.hardLimit)
+  })
+
   test('stats are calibrated', () => {
     const k = createCalibration()
     k.overflow(100, 200)

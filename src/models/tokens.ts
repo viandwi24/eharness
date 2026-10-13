@@ -29,6 +29,9 @@ export const DEFAULT_MAX_CONTEXT_RATIO = 0.9
 /** Share of the window used as `reserveTokens` when neither it nor `maxOutputTokens` is set. */
 const DEFAULT_RESERVE_SHARE = 0.08
 
+/** The effective `summarizeAt` is at most this share of the hard limit (spec 06 §1). */
+const SUMMARIZE_BELOW_HARD = 0.95
+
 /** Fixed estimate of one file / image part (real costs depend on the provider). */
 export const FILE_TOKENS = 1_500
 
@@ -344,10 +347,17 @@ export function contextLimits(
     options.maxOutputTokens ??
     config.settings?.maxOutputTokens ??
     Math.floor(window * DEFAULT_RESERVE_SHARE)
+  const hardLimit = Math.floor(window * ratio - reserve)
   return {
     window,
-    summarizeAt: Math.floor(window * summarizeAt),
-    hardLimit: Math.floor(window * ratio - reserve),
+    // summarize before the guard starts dropping turns from the request: a large output reserve
+    // (a 32k cap on a 128k window) puts the hard limit below `window × summarizeAt`, and the
+    // guard then trims every call silently while the summary never triggers (spec 06 §1)
+    summarizeAt: Math.max(
+      1,
+      Math.min(Math.floor(window * summarizeAt), Math.floor(hardLimit * SUMMARIZE_BELOW_HARD)),
+    ),
+    hardLimit,
   }
 }
 

@@ -12,6 +12,13 @@ import { summarizerInput } from './prompt.ts'
 /** Share of the summarizer window a single transcript chunk may use (spec 06 §5.3). */
 export const CHUNK_SHARE = 0.6
 
+/**
+ * Output tokens a summarizer call may spend on top of `maxSummaryTokens` when no output cap is
+ * configured: reasoning models count their thinking against the output limit, and a summary cut
+ * by that limit is a failure (spec 06 §5.3).
+ */
+export const SUMMARY_REASONING_HEADROOM = 12_000
+
 /** Input of {@link summarize}. */
 export interface SummarizeInput {
   model: LanguageModel
@@ -22,6 +29,11 @@ export interface SummarizeInput {
   /** `compaction.prompt` context lines. */
   context: readonly string[]
   maxSummaryTokens: number
+  /**
+   * `maxOutputTokens` of each call. Default `maxSummaryTokens + SUMMARY_REASONING_HEADROOM`; never
+   * below `maxSummaryTokens`. The summary text itself is still asked to fit `maxSummaryTokens`.
+   */
+  maxOutputTokens?: number
   /** Summarizer context window (tokens). */
   window: number
   count: CountTokens
@@ -110,7 +122,10 @@ export async function summarize(input: SummarizeInput): Promise<SummarizeResult>
       model: input.model,
       instructions: input.prompt,
       prompt: summarizerInput(entries.join('\n\n'), last ? input.context : []),
-      maxOutputTokens: input.maxSummaryTokens,
+      maxOutputTokens: Math.max(
+        input.maxSummaryTokens,
+        input.maxOutputTokens ?? input.maxSummaryTokens + SUMMARY_REASONING_HEADROOM,
+      ),
       ...(input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal }),
     })
     usage.push(result.usage)
@@ -118,7 +133,7 @@ export async function summarize(input: SummarizeInput): Promise<SummarizeResult>
     if (result.finishReason === 'length') {
       throw new SummarizeError(
         'length',
-        `The summary was cut at maxSummaryTokens (${input.maxSummaryTokens}).`,
+        `The summary was cut at the output limit (maxOutputTokens of the summarizer call).`,
       )
     }
     const text = result.text.trim()

@@ -5,7 +5,7 @@ import { createKindMessage } from '../messages/kinds.ts'
 import { createCoreMessageRegistry } from '../messages/registry.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { defaultCountTokens } from '../models/tokens.ts'
-import { chunkEntries, summarize } from './summarize.ts'
+import { chunkEntries, SUMMARY_REASONING_HEADROOM, summarize } from './summarize.ts'
 import { summarizerModel, summarizerPromptText } from './test-kit.ts'
 import { renderTranscript, renderTranscriptEntries } from './transcript.ts'
 
@@ -125,6 +125,22 @@ describe('transcript (spec 06 §5.3)', () => {
 })
 
 describe('summarize', () => {
+  test('an explicit output cap (the agent maxOutputTokens) is used, never below the summary budget', async () => {
+    const model = summarizerModel(['brief', 'brief'])
+    const base = {
+      model,
+      prompt: 'PROMPT',
+      entries: ['USER: a'],
+      context: [],
+      maxSummaryTokens: 4_000,
+      window: 128_000,
+      count: defaultCountTokens,
+    }
+    await summarize({ ...base, maxOutputTokens: 32_768 })
+    await summarize({ ...base, maxOutputTokens: 1_000 })
+    expect(model.calls.map((c) => c.maxOutputTokens)).toEqual([32_768, 4_000])
+  })
+
   test('one call: instructions, transcript and hook context, maxOutputTokens', async () => {
     const model = summarizerModel(['  the brief  '])
     const { summary } = await summarize({
@@ -139,7 +155,8 @@ describe('summarize', () => {
     expect(summary).toBe('the brief')
     expect(model.calls).toHaveLength(1)
     const call = model.calls[0] as (typeof model.calls)[number]
-    expect(call.maxOutputTokens).toBe(300)
+    // room for a reasoning model's thinking on top of the summary itself
+    expect(call.maxOutputTokens).toBe(300 + SUMMARY_REASONING_HEADROOM)
     expect(call.prompt[0]).toMatchObject({ role: 'system', content: 'PROMPT' })
     const text = summarizerPromptText(call)
     expect(text).toContain('<transcript>\nUSER: a\n\nASSISTANT: b\n</transcript>')
