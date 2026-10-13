@@ -344,6 +344,20 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         })
         return events.map(adminEventOf)
       },
+      async forumTopics(chatId, o) {
+        await ready()
+        const ids = o?.ids ?? []
+        const list =
+          ids.length > 0
+            ? await tg.getForumTopicsById(Number(chatId), ids)
+            : await tg.getForumTopics(Number(chatId), { limit: o?.limit ?? 100 })
+        return list
+          .filter((t) => t !== null && !t.titleMissing)
+          .map((t) => {
+            const topic = t as NonNullable<typeof t>
+            return { id: topic.id, title: topic.title, closed: topic.isClosed }
+          })
+      },
       async members(chatId, limit) {
         const list = await tg.getChatMembers(Number(chatId), { limit, type: 'recent' })
         return list.map((m) => userOf(m.user))

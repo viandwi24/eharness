@@ -413,6 +413,8 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       const adapter = createTelegramUserAdapter({
         connectionId: id,
         client,
+        // topic titles are background reads: through the governor, like the backfill
+        topicClient: governJobClient(client, gateway.governor, id),
         me,
         chats,
         counters,

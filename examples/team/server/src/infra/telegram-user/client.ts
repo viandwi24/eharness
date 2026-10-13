@@ -41,6 +41,8 @@ export interface TgMessage {
   id: number
   /** The forum topic (its root message id), when the message is in one. */
   topicId?: number
+  /** Its title, when the adapter knows it (filled from the topic cache, never by the client). */
+  topicTitle?: string
   /** Epoch ms. */
   at: number
   editedAt?: number
@@ -59,6 +61,13 @@ export interface TgMessage {
 }
 
 /** A deletion: ids only. A channel (or supergroup) deletion names the chat; the common box does not. */
+/** A forum topic of a supergroup. */
+export interface TgTopic {
+  id: number
+  title: string
+  closed: boolean
+}
+
 export interface TgDelete {
   ids: number[]
   chatId?: string
@@ -144,6 +153,11 @@ export interface TgUserClient {
     options: { minId?: string; maxId?: string; limit: number },
   ): Promise<TgAdminEvent[]>
   members(chatId: string, limit: number): Promise<TgUser[]>
+  /**
+   * Forum topics of a supergroup: the ones named by `ids`, else the first `limit` (default 100).
+   * Optional: a client without it leaves topics untitled.
+   */
+  forumTopics?(chatId: string, options?: { ids?: number[]; limit?: number }): Promise<TgTopic[]>
   sendText(chatId: string, text: string, options?: TgSendOptions): Promise<{ id: number }>
   sendFiles(
     chatId: string,

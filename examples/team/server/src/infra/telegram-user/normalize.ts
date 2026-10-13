@@ -77,12 +77,14 @@ export function chatNode(chat: ChatLike): NodeInfo {
   }
 }
 
-export function topicNode(chatId: string, topicId: number): NodeInfo {
+/** A forum topic; without a title the stored one stays (the adapter fetches it, `adapter.ts`). */
+export function topicNode(chatId: string, topicId: number, title?: string): NodeInfo {
+  const named = topicId === 0 ? 'General' : title
   return {
     nativeId: nativeIdOf(chatId, topicId),
     kind: 'thread',
     platformType: topicId === 0 ? 'telegram-user:forum_general' : 'telegram-user:forum_topic',
-    ...(topicId === 0 ? { title: 'General' } : {}),
+    ...(named === undefined || named === '' ? {} : { title: named }),
     parent: chatId,
     traits: { multiUser: true, threading: 'relation' },
     meta: { chatId, topicId },
@@ -93,7 +95,7 @@ export function topicNode(chatId: string, topicId: number): NodeInfo {
 export function chainOfMessage(m: TgMessage): NodeInfo[] {
   const room = chatNode({ ...m.chat })
   if (!m.chat.forum) return [room]
-  return [topicNode(m.chat.id, m.topicId ?? 0), room]
+  return [topicNode(m.chat.id, m.topicId ?? 0, m.topicTitle), room]
 }
 
 export const refOfMessage = (m: TgMessage): NodeRef => {

@@ -28,7 +28,7 @@ import {
   type RemoteEvent,
   type SentMessage,
 } from '../channels/types.ts'
-import type { TgChat, TgDelete, TgMessage, TgUser, TgUserClient } from './client.ts'
+import type { TgChat, TgDelete, TgMessage, TgTopic, TgUser, TgUserClient } from './client.ts'
 import { classifyError, describeError, type TgErrorKind } from './errors.ts'
 import {
   chatNode,
@@ -38,6 +38,7 @@ import {
   normalizeEdit,
   normalizeMessage,
   splitNativeId,
+  topicNode,
 } from './normalize.ts'
 import type { AccountSettings, ChatStore, CounterStore } from './store.ts'
 
@@ -99,6 +100,13 @@ export interface UserAdapterOptions {
   floodBreaker?: { count: number; windowMs: number }
   /** How long the dialog list is trusted before a DM target is checked again (ms, default 60 000). */
   dialogsTtlMs?: number
+  /**
+   * The client topic titles are read with (`governJobClient`: the connection's API governor, so a
+   * flood wait parks it like any read). Default `client`.
+   */
+  topicClient?: TgUserClient
+  /** How long a topic title is trusted before it is read again (ms, default 6 hours). */
+  topicTtlMs?: number
 }
 
 export interface TelegramUserAdapter extends ChannelAdapter {
@@ -140,6 +148,12 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
   const parks = new Map<string, number>()
   const floods: number[] = []
   let dialogCache: { at: number; list: TgChat[] } | undefined
+  const topicClient = options.topicClient ?? client
+  const topicTtl = options.topicTtlMs ?? 6 * 3_600_000
+  /** Forum topic titles per chat: `<chat>` -> topic id -> title and when it was read. */
+  const topicTitles = new Map<string, Map<number, { title: string; at: number }>>()
+  /** Topic reads in flight or failed lately (`<chat>/<topic>` or `<chat>/*` -> when), so a busy topic asks once. */
+  const topicAsked = new Map<string, number>()
 
   const remember = (key: string): boolean => {
     if (seen.has(key)) return false
@@ -200,21 +214,81 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     return own ? { ...m, replyTo: { ...r, senderId: selfId, senderName: self.name ?? 'me' } } : m
   }
 
+  // --- forum topic titles ----------------------------------------------------------------------
+  // MTProto updates carry only the topic id; the title is read from the forum (`forumTopics`) and
+  // given to the gateway as `node.updated`, so chats, tools and the agent see "Clipping", not `/19480`.
+
+  const knownTopic = (chatId: string, topicId: number): string | undefined =>
+    topicTitles.get(chatId)?.get(topicId)?.title
+
+  /** Record titles; a new or renamed one goes to the gateway (in the chat's lane, after its messages). */
+  function learnTopics(
+    chat: { id: string; kind: TgChat['kind']; title: string; forum: boolean },
+    list: TgTopic[],
+  ): void {
+    const at = now()
+    const known = topicTitles.get(chat.id) ?? new Map<number, { title: string; at: number }>()
+    topicTitles.set(chat.id, known)
+    for (const t of list) {
+      if (t.id === 0 || t.title.trim() === '') continue
+      const before = known.get(t.id)
+      known.set(t.id, { title: t.title, at })
+      if (before?.title === t.title) continue
+      const topic = topicNode(chat.id, t.id, t.title)
+      inLane(chat.id, () =>
+        deliver({
+          type: 'node.updated',
+          dedupeKey: `tgu:topic:${topic.nativeId}:${t.title}`,
+          at,
+          node: { nativeId: topic.nativeId, chain: [topic, chatNode({ ...chat })] },
+        }),
+      )
+    }
+  }
+
+  /** Read the titles of a forum chat (`ids`, else all of it) unless that was asked lately. Never throws. */
+  async function readTopics(
+    chat: { id: string; kind: TgChat['kind']; title: string; forum: boolean },
+    ids?: number[],
+  ): Promise<void> {
+    if (topicClient.forumTopics === undefined || stopped) return
+    const key = ids === undefined ? `${chat.id}/*` : `${chat.id}/${ids.join(',')}`
+    const asked = topicAsked.get(key)
+    // one read per topic per 10 minutes, success or not: a busy chat never floods the API
+    if (asked !== undefined && now() - asked < 600_000) return
+    topicAsked.set(key, now())
+    try {
+      learnTopics(chat, await topicClient.forumTopics(chat.id, ids === undefined ? {} : { ids }))
+    } catch (error) {
+      if (!stopped) warn(`telegram-user: topic titles of ${chat.id} not read: ${String(error)}`)
+    }
+  }
+
+  /** The cached title of a message's topic; an unknown or old one is read in the background. */
+  function withTopicTitle(m: TgMessage): TgMessage {
+    if (!m.chat.forum || m.topicId === undefined || m.topicId === 0) return m
+    const cached = topicTitles.get(m.chat.id)?.get(m.topicId)
+    if (cached === undefined || now() - cached.at > topicTtl) void readTopics(m.chat, [m.topicId])
+    return cached === undefined ? m : { ...m, topicTitle: cached.title }
+  }
+
   function onMessage(raw: TgMessage): void {
     const m = withReplyOwner(raw)
     if (m.service || !accepts(m)) return
     if (!remember(`m:${m.chat.id}:${m.id}`)) return
+    const titled = withTopicTitle(m)
     inLane(m.chat.id, async () => {
       if (m.chat.kind !== 'dm') chats.noteMessage(connectionId, m.chat.id, m.id, true)
-      await deliver(normalizeMessage(m, nopts))
+      await deliver(normalizeMessage(titled, nopts))
     })
   }
 
   function onEdit(m: TgMessage): void {
     if (m.service || !accepts(m)) return
     if (!remember(`e:${m.chat.id}:${m.id}:${m.editedAt ?? 0}`)) return
+    const titled = withTopicTitle(m)
     inLane(m.chat.id, async () => {
-      await deliver(normalizeEdit(m, nopts))
+      await deliver(normalizeEdit(titled, nopts))
     })
   }
 
@@ -545,6 +619,15 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
         },
         { catchUp: true },
       )
+      // titles of the topics of every chosen forum, once per start (topics seen before this
+      // version have none), one chat after the other through the governor
+      void (async () => {
+        for (const c of chats.selected(connectionId)) {
+          if (stopped) return
+          if (!c.forum) continue
+          await readTopics({ id: c.chatId, kind: c.kind, title: c.title, forum: true })
+        }
+      })()
     },
     async stop() {
       stopped = true
@@ -584,7 +667,21 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
         })),
       }
     },
-    async listNodes(): Promise<NodeInfo[]> {
+    async listNodes(parent?: ChannelNode): Promise<NodeInfo[]> {
+      // the topics of a forum chat, with their titles
+      if (
+        parent !== undefined &&
+        parent.kind !== 'thread' &&
+        topicClient.forumTopics !== undefined
+      ) {
+        const chat = targetOf(parent).chat
+        const d = (await dialogs()).find((x) => x.id === chat)
+        if (d?.forum === true) {
+          const list = await topicClient.forumTopics(chat, { limit: 100 })
+          learnTopics(d, list)
+          return list.map((t) => topicNode(chat, t.id, t.title))
+        }
+      }
       return (await dialogs(true)).map((d) => chatNode(d))
     },
     async fetchAttachment(node, messageNativeId) {

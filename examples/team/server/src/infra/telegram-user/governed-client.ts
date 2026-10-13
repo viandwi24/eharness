@@ -30,6 +30,8 @@ export function governJobClient(
           return (...args: unknown[]) => job('read', 'history', () => fn.apply(target, args))
         case 'messagesById':
           return (...args: unknown[]) => job('read', 'messages', () => fn.apply(target, args))
+        case 'forumTopics':
+          return (...args: unknown[]) => job('read', 'forum_topics', () => fn.apply(target, args))
         case 'listChats':
           return (...args: unknown[]) => job('read', 'list_chats', () => fn.apply(target, args))
         case 'adminLog':
