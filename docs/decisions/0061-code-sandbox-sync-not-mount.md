@@ -1,6 +1,6 @@
 # ADR-0061: Code sandbox over the virtual file system: sync, not mount
 
-Status: **Proposed** · Date: 2026-10-13 · Related: [ADR-0034](0034-deployment-profiles.md), [ADR-0036](0036-node-only-modules.md), [ADR-0008](0008-plugins-adapters-dogfooding.md) · Plan: [P42](../plans/P42-code-sandbox.md)
+Status: **Accepted** · Date: 2026-10-13 · Related: [ADR-0034](0034-deployment-profiles.md), [ADR-0036](0036-node-only-modules.md), [ADR-0008](0008-plugins-adapters-dogfooding.md) · Plan: [P44](../plans/P44-code-sandbox.md)
 
 ## Context
 

@@ -1,6 +1,6 @@
-# P42 — Code sandbox over the virtual file system (`eharness/code`, Python first)
+# P44 — Code sandbox over the virtual file system (`eharness/code`, Python first)
 
-Status: todo · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
+Status: in progress · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
