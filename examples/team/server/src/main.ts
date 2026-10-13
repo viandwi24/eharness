@@ -72,7 +72,7 @@ import {
   proposePersona,
   revertPersona,
 } from './app/persona.ts'
-import type { ChannelInboxPort, ChannelsPort, Deps } from './app/ports.ts'
+import type { ChannelInboxPort, ChannelsPort, Deps, PeoplePort } from './app/ports.ts'
 import { programNoteAction, repairProgramAuthorities } from './app/programs.ts'
 import { seedAgents } from './app/seed.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
@@ -107,6 +107,7 @@ import {
   channelVaultFromEnv,
   createChannelGateway,
 } from './infra/channels/index.ts'
+import { createPeoplePort, lazyPeoplePort } from './infra/channels/people-admin.ts'
 import { webReminderSession } from './infra/channels/reminders.ts'
 import { webReminderPost } from './infra/channels/web-reminders.ts'
 import { sqliteActivityStore } from './infra/db/activity-store.ts'
@@ -724,6 +725,7 @@ export function compose(config: ServerConfig): Server {
   let telegramUser: TelegramUserChannels | undefined
   let channelsPort: ChannelsPort | undefined
   let channelInboxPort: ChannelInboxPort | undefined
+  let peoplePort: PeoplePort | undefined
   const deps: Deps = {
     agents,
     persona: personaStore,
@@ -745,6 +747,7 @@ export function compose(config: ServerConfig): Server {
     channels: lazyChannelsPort(() => channelsPort),
     channelAccounts: lazyAccountsPort(() => telegramUser),
     channelInbox: lazyInboxPort(() => channelInboxPort),
+    people: lazyPeoplePort(() => peoplePort),
     webUrl,
     modes: createModeService(factory, {
       store: sessionModes,
@@ -1068,6 +1071,7 @@ export function compose(config: ServerConfig): Server {
     gateway: channels,
     connection: async (id) => (await channelsPort?.connection(id)) as unknown,
   })
+  peoplePort = createPeoplePort({ gateway: channels, now: () => Date.now() })
   const purgeChannels = (): void => {
     try {
       channels.purge()

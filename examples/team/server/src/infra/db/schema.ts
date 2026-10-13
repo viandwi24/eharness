@@ -1540,3 +1540,90 @@ export const chPeopleNotes = sqliteTable(
   },
   (t) => [index('ch_people_notes_connection').on(t.connectionId)],
 )
+
+/**
+ * A person of the team directory (docs/plans/P43-team-people.md): one human with any number of
+ * platform accounts. Role and divisions live here, not per account: every account of the person
+ * gets the same rights. `role` null = the connection or chat default.
+ */
+export const people = sqliteTable(
+  'people',
+  {
+    id: text('id').primaryKey(),
+    displayName: text('display_name').notNull(),
+    nickname: text('nickname'),
+    /** `active` | `suspended` | `left`: anything but active acts as a guest. */
+    status: text('status').notNull().default('active'),
+    role: text('role'),
+    /** Node ids (topics or rooms) the person belongs to (JSON array). */
+    divisions: text('divisions').notNull().default('[]'),
+    /** Free key/value fields (JSON object): position, branch, phone, ... */
+    fields: text('fields').notNull().default('{}'),
+    /** Staff notes about the person (never shown to members). */
+    notes: text('notes').notNull().default(''),
+    /** The web team member this person is, when any. */
+    memberId: text('member_id'),
+    createdBy: text('created_by'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('people_name').on(t.displayName)],
+)
+
+/**
+ * A platform account of a person, keyed by the platform's stable user id (never a username). One
+ * linked row per (platform, native id): an account belongs to one person at a time.
+ */
+export const peopleAccounts = sqliteTable(
+  'people_accounts',
+  {
+    id: text('id').primaryKey(),
+    personId: text('person_id').notNull(),
+    /** Platform family: `telegram` (bot and user account alike), `whatsapp`, `slack`, `discord`, ... */
+    platform: text('platform').notNull(),
+    nativeId: text('native_id').notNull(),
+    /** What this account is for ("admin account of the group"). */
+    label: text('label'),
+    /** `linked` | `revoked`. */
+    status: text('status').notNull().default('linked'),
+    /** `owner` | `pairing` | `migration`. */
+    linkedVia: text('linked_via').notNull(),
+    linkedBy: text('linked_by'),
+    linkedAt: integer('linked_at').notNull(),
+    revokedAt: integer('revoked_at'),
+  },
+  (t) => [
+    index('people_accounts_person').on(t.personId),
+    index('people_accounts_native').on(t.platform, t.nativeId),
+  ],
+)
+
+/** Append-only audit of the directory: who changed what about a person. */
+export const peopleEvents = sqliteTable(
+  'people_events',
+  {
+    id: text('id').primaryKey(),
+    personId: text('person_id').notNull(),
+    /** `create` | `update` | `role` | `status` | `link` | `unlink` | `pair`. */
+    kind: text('kind').notNull(),
+    actor: text('actor'),
+    detail: text('detail').notNull().default('{}'),
+    at: integer('at').notNull(),
+  },
+  (t) => [index('people_events_person').on(t.personId, t.at)],
+)
+
+/** Pairing codes: a person links another account of theirs by sending the code from it. */
+export const peopleLinkCodes = sqliteTable(
+  'people_link_codes',
+  {
+    id: text('id').primaryKey(),
+    personId: text('person_id').notNull(),
+    /** SHA-256 of the code; the code itself is never stored. */
+    codeHash: text('code_hash').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    usedAt: integer('used_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('people_link_codes_person').on(t.personId)],
+)

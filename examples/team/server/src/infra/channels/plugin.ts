@@ -31,6 +31,8 @@ import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
 import { decideTool, isStaff, MEMBER_WORKER_TYPE } from './roles.ts'
 import {
+  PEOPLE_LINK_TOOL,
+  PEOPLE_TOOL,
   PERSON_NOTE_TOOL,
   REMINDER_TOOL,
   SELF_READ_TOOLS,
@@ -66,7 +68,7 @@ export const CHANNEL_READ_TOOLS = [
  */
 /** Own writes allowed by rule; changing somebody's role always asks first (a "ya" in the chat). */
 export const CHANNEL_OWN_WRITE_TOOLS: readonly string[] = SELF_WRITE_TOOLS.filter(
-  (t) => t !== 'person_role',
+  (t) => t !== 'person_role' && t !== PEOPLE_LINK_TOOL,
 )
 
 export interface ChannelsPluginOptions {
@@ -807,6 +809,21 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
                 MEMBER_WORKER_TYPE
             ) {
               return undefined
+            }
+            // the people directory: pairing is for anybody, edits for staff, links for the owner;
+            // denied here so a request that would be refused never reaches an approval card
+            if (e.toolName === PEOPLE_TOOL || e.toolName === PEOPLE_LINK_TOOL) {
+              const action = (e.input as { action?: unknown } | undefined)?.action
+              const needsOwner = e.toolName === PEOPLE_LINK_TOOL
+              const needsStaff = needsOwner || action !== 'pair'
+              if (
+                (needsOwner && requester.role !== 'owner') ||
+                (needsStaff && !isStaff(requester.role))
+              )
+                return {
+                  type: 'denied',
+                  reason: `Not allowed: only ${needsOwner ? 'the owner' : 'an owner or an admin'} can do that. Say so in one plain sentence.`,
+                }
             }
             const decision = decideTool(
               requester.role,

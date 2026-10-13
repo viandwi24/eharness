@@ -876,6 +876,83 @@ export interface ChannelsPort {
   resetBreaker(id: string): Promise<ChannelConnectionView>
 }
 
+/** One person of the directory (P43) as the People page lists it. */
+export interface PersonListItem {
+  id: string
+  displayName: string
+  nickname: string | null
+  status: 'active' | 'suspended' | 'left'
+  /** null = the connection or chat default. */
+  role: 'owner' | 'admin' | 'member' | 'guest' | null
+  divisions: Array<{ nodeId: string; title: string }>
+  fields: Record<string, string>
+  accountCount: number
+  accounts: Array<{ platform: string; label: string | null; username: string | null }>
+  updatedAt: number
+}
+
+export interface PersonAccountView {
+  id: string
+  platform: string
+  nativeId: string
+  label: string | null
+  /** The connection where the account was seen (absent: never seen). */
+  connectionId: string | null
+  name: string | null
+  username: string | null
+}
+
+export interface PersonDetail extends PersonListItem {
+  notes: string
+  memberId: string | null
+  createdAt: number
+  accountViews: PersonAccountView[]
+  events: Array<{
+    id: string
+    kind: string
+    actor: string | null
+    detail: Record<string, unknown>
+    at: number
+  }>
+}
+
+export interface UnassignedAccountView {
+  connectionId: string
+  platform: string
+  peerId: string
+  name: string | null
+  username: string | null
+}
+
+export interface PersonPatchInput {
+  displayName?: string
+  nickname?: string | null
+  status?: 'active' | 'suspended' | 'left'
+  role?: 'owner' | 'admin' | 'member' | 'guest' | null
+  divisions?: string[]
+  fields?: Record<string, string | null>
+  notes?: string
+}
+
+/** The people directory for the web app (P43): persons, accounts, pairing codes. The actor is always `web`. */
+export interface PeoplePort {
+  list(query: { q?: string; page: number; limit: number }): Promise<TablePage<PersonListItem>>
+  get(id: string): Promise<PersonDetail>
+  create(input: PersonPatchInput & { displayName: string }): Promise<PersonDetail>
+  update(id: string, patch: PersonPatchInput): Promise<PersonDetail>
+  link(
+    id: string,
+    input: { connectionId: string; peerId: string; label?: string },
+  ): Promise<PersonDetail>
+  setLabel(id: string, accountId: string, label: string | null): Promise<PersonDetail>
+  unlink(id: string, accountId: string): Promise<PersonDetail>
+  pairingCode(id: string): Promise<{ code: string; expiresAt: number }>
+  unassigned(limit: number): Promise<UnassignedAccountView[]>
+  fromAccount(input: { connectionId: string; peerId: string }): Promise<PersonDetail>
+  /** Chats and topics a person can be given as divisions, across connections. */
+  nodes(): Promise<Array<{ id: string; connectionId: string; label: string }>>
+}
+
 /**
  * People, inbox and activity of a channel connection (any transport): who is linked and who is not
  * yet, the conversations with their channel logs (decrypted on read for the web token holder), and
@@ -1001,6 +1078,7 @@ export interface Deps {
   channels: ChannelsPort
   channelAccounts: ChannelAccountsPort
   channelInbox: ChannelInboxPort
+  people: PeoplePort
   /** Where the browser app lives (the OAuth callback redirects back to it). */
   webUrl: string
   modes: ModePort

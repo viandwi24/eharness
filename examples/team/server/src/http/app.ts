@@ -25,6 +25,7 @@ import { heartbeatRoutes } from './routes/heartbeat.ts'
 import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
+import { peopleRoutes } from './routes/people.ts'
 import { personaRoutes } from './routes/persona.ts'
 import { programRoutes } from './routes/programs.ts'
 import { providerRoutes } from './routes/providers.ts'
@@ -349,6 +350,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', decisionRoutes(options.deps))
   app.route('/', heartbeatRoutes(options.deps))
   app.route('/', channelRoutes(options.deps))
+  app.route('/', peopleRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)

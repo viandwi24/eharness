@@ -54,6 +54,9 @@ export const MEMBER_TOOLS: readonly string[] = [
   'channel_read',
   'list_topics',
   'member_lookup',
+  'people_find',
+  // pairing (own person only); directory edits and links are checked in code on the requester
+  'people',
   'chat_history',
   'chat_recap',
   'reminder',

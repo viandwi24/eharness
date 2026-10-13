@@ -23,6 +23,15 @@ export interface MessageMeta {
   }
   role: Role
   roleSource: RoleSource
+  /** The directory's person behind this account (P43): full name, nickname, the account's label. */
+  person?:
+    | {
+        name: string
+        nickname?: string | undefined
+        account?: string | undefined
+        suspended?: boolean
+      }
+    | undefined
   divisions?: string[] | undefined
   /** The team member the identity is linked to. */
   member?: string | undefined
@@ -114,6 +123,11 @@ const sourceNote = (m: MessageMeta): string => {
 /** The compact header of one message. */
 export function renderHeader(m: MessageMeta): string {
   const from: string[] = [personLabel(m.sender), `id ${flat(m.sender.id, 40)}`]
+  if (m.person !== undefined) {
+    from.push(
+      `person "${flat(m.person.name, 60)}"${m.person.nickname === undefined ? '' : ` (call them "${flat(m.person.nickname, 40)}")`}${m.person.account === undefined ? '' : `, this account: ${flat(m.person.account, 60)}`}${m.person.suspended === true ? ', SUSPENDED' : ''}`,
+    )
+  }
   from.push(
     m.role === 'member' && m.roleSource === 'default'
       ? 'role member (chat default)'

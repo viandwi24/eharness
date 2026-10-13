@@ -66,6 +66,13 @@ import { createOutbound, type Outbound, type OutboundOptions } from './outbound.
 import { type PeopleStore, type PersonEntry, sqlitePeopleStore } from './people.ts'
 import { type PeopleNotes, sqlitePeopleNotes } from './people-notes.ts'
 import {
+  type Person,
+  type PersonAccount,
+  PersonError,
+  type PersonStore,
+  sqlitePersonStore,
+} from './persons.ts'
+import {
   type ConnectionConfig,
   type ConnectionConfigInput,
   ConnectionConfigSchema,
@@ -460,6 +467,38 @@ export interface SessionTarget {
 }
 
 /** Who a turn answers to: the sender of the message(s) that woke the agent, with the directory role. */
+/** The people directory as the web app and the agent tools use it (P43). */
+export interface PeopleDirectory {
+  persons: PersonStore
+  /** The platform family of a connection (`telegram` for a bot and a user account alike). */
+  platformOf(connectionId: string): string | undefined
+  /** The linked person of a platform user of a connection. */
+  personOfPeer(
+    connectionId: string,
+    peerId: string,
+  ): { person: Person; account: PersonAccount } | undefined
+  /** The identities seen on any connection for a person's linked accounts. */
+  identitiesOf(personId: string): Array<{
+    accountId: string
+    platform: string
+    nativeId: string
+    label: string | null
+    connectionId: string | undefined
+    name: string | undefined
+    username: string | undefined
+  }>
+  /** Observed people (any connection) whose account is linked to nobody: candidates to attach. */
+  unassigned(limit: number): Array<{
+    connectionId: string
+    platform: string
+    peerId: string
+    name: string | undefined
+    username: string | undefined
+  }>
+  /** The person of a platform user, created from what the account shows when none exists (an owner action). */
+  ensureFor(connectionId: string, peerId: string, actor: string): Person | undefined
+}
+
 export interface Requester {
   connectionId: string
   /** The node the message was written in. */
@@ -761,6 +800,8 @@ export interface ChannelGateway {
   viewOf(node: NodeRow): ChannelNode
   /** " Chats: …" listing the allowed group chats of a connection (a hint for a call that named none). */
   chatsHint(connectionId: string): string
+  /** The people directory (P43): persons, their accounts, and how a platform user resolves to one. */
+  directory: PeopleDirectory
   /**
    * A Decision Center question of a run that belongs to a chat (the program was proposed there) is
    * asked in that chat too: owners and admins answer with an option number, its text, or ya/tidak.
@@ -1081,6 +1122,85 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const nodes = sqliteNodeStore(deps.sqlite)
   const identities = sqliteIdentityStore(deps.sqlite)
   const people: PeopleStore = sqlitePeopleStore(deps.sqlite)
+  // the directory of persons (P43): one human, many accounts; role and divisions live there
+  const persons: PersonStore = sqlitePersonStore(deps.sqlite, { next: uuidv7 })
+
+  /** The platform family of a connection: a bot and a user account of Telegram are both `telegram`. */
+  const platformFamily = (platform: string): string =>
+    platform === 'telegram-user' ? 'telegram' : platform
+  const PLATFORM_KEY = 'conn-platform:'
+  const platforms = new Map<string, string>()
+  const platformOf = (connectionId: string): string | undefined => {
+    const known = platforms.get(connectionId)
+    if (known !== undefined) return known
+    const row = deps.sqlite
+      .query<{ value: string }, [string]>('SELECT value FROM ch_meta WHERE key = ?')
+      .get(`${PLATFORM_KEY}${connectionId}`)
+    if (row !== null) platforms.set(connectionId, row.value)
+    return row?.value ?? undefined
+  }
+  const rememberPlatform = (connectionId: string, platform: string): void => {
+    const family = platformFamily(platform)
+    platforms.set(connectionId, family)
+    deps.sqlite
+      .query('INSERT OR REPLACE INTO ch_meta (key, value) VALUES (?, ?)')
+      .run(`${PLATFORM_KEY}${connectionId}`, family)
+  }
+  /** The person an identity's account is linked to (never by username or name). */
+  const personOf = (id: Pick<IdentityRow, 'connectionId' | 'nativeId' | 'kind' | 'isSelf'>) => {
+    if (id.isSelf || id.kind === 'bot' || id.kind === 'anonymous' || id.kind === 'channel')
+      return undefined
+    const platform = platformOf(id.connectionId)
+    return platform === undefined ? undefined : persons.byAccount(platform, id.nativeId)
+  }
+  /**
+   * The person of an identity, created from what the identity shows when it has none yet and an
+   * authorized change needs one (a role set on the People tab). Linked by the owner.
+   */
+  const ensurePerson = (
+    id: IdentityRow,
+    actor: string | null,
+    via: 'owner' | 'migration',
+  ): Person | undefined => {
+    const found = personOf(id)
+    if (found !== undefined) return found.person
+    const platform = platformOf(id.connectionId)
+    if (platform === undefined || id.isSelf || id.kind !== 'human') return undefined
+    const person = persons.create(
+      {
+        displayName: id.displayName ?? id.username ?? id.nativeId,
+        ...(id.personId === null ? {} : { memberId: id.personId }),
+      },
+      actor,
+      now(),
+    )
+    persons.link(person.id, { platform, nativeId: id.nativeId }, via, actor, now())
+    return person
+  }
+
+  /**
+   * Boot / connect: the per-connection directory entries and the linked identities of before P43
+   * become persons (idempotent: an identity whose account is already linked is left alone).
+   */
+  const adoptLegacyPeople = (connectionId: string): void => {
+    for (const entry of people.list(connectionId)) {
+      const id = identities.get(entry.identityId)
+      if (id === undefined || personOf(id) !== undefined) continue
+      const person = ensurePerson(id, 'migration', 'migration')
+      if (person !== undefined && person.role === null) {
+        persons.update(
+          person.id,
+          { role: entry.role, divisions: entry.divisions },
+          'migration',
+          now(),
+        )
+      }
+    }
+    for (const id of identities.linked(connectionId)) {
+      if (personOf(id) !== undefined) continue
+      ensurePerson(id, 'migration', 'migration')
+    }
+  }
   const peopleNotes: PeopleNotes = sqlitePeopleNotes(deps.sqlite)
   const reminderStore: ReminderStore = sqliteReminderStore(deps.sqlite)
   const proactiveStore: ProactiveStore = sqliteProactiveStore(deps.sqlite, deps.vault)
@@ -1401,9 +1521,25 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     connectionId: string,
     id: IdentityRow,
     node?: NodeRow,
-  ): RoleResolution & { entry: PersonEntry | undefined } => {
+  ): RoleResolution & { entry: PersonEntry | undefined; person?: Person | undefined } => {
     const config = cache.get(connectionId)
-    const entry = people.get(id.id)
+    const linked = personOf(id)
+    // a suspended person (or one who left) acts as a guest on every account, never more
+    if (linked !== undefined && linked.person.status !== 'active') {
+      return { role: 'guest', source: 'directory', entry: undefined, person: linked.person }
+    }
+    // the person's role and divisions win over the per-account entry of before P43
+    const entry: PersonEntry | undefined =
+      linked !== undefined && linked.person.role !== null
+        ? {
+            identityId: id.id,
+            connectionId,
+            role: linked.person.role,
+            divisions: linked.person.divisions,
+            setBy: null,
+            updatedAt: linked.person.updatedAt,
+          }
+        : people.get(id.id)
     const r = resolveRole({
       kind: id.kind,
       isBot: id.kind === 'bot',
@@ -1416,7 +1552,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         config?.people.defaultRole ??
         'guest',
     })
-    return { ...r, entry }
+    return { ...r, entry, person: linked?.person }
   }
 
   /** What the platform says this identity is in the node or one of its ancestors (creator or administrator). */
@@ -1613,12 +1749,24 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         }
       }
       people.set(connectionId, id.id, { role: input.role, divisions, setBy: by }, now())
+      // the role belongs to the person: every account of theirs gets it (P43)
+      const person = ensurePerson(identities.get(id.id) as IdentityRow, by, 'owner')
+      if (person !== undefined) {
+        persons.update(
+          person.id,
+          { role: input.role, ...(divisions === undefined ? {} : { divisions }) },
+          by,
+          now(),
+        )
+      }
       return viewOfIdentity(identities.get(id.id) as IdentityRow)
     },
     clearRole(connectionId, peerId) {
       const id = identities.byNative(connectionId, peerId)
       if (id === undefined) return undefined
       people.remove(id.id)
+      const linked = personOf(id)
+      if (linked !== undefined) persons.update(linked.person.id, { role: null }, null, now())
       return viewOfIdentity(id)
     },
     async importAdmins(connectionId, nodeId) {
@@ -1753,6 +1901,19 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       },
       role: r.role,
       roleSource: r.source,
+      ...(r.person === undefined
+        ? {}
+        : {
+            person: {
+              name: r.person.displayName,
+              ...(r.person.nickname === null ? {} : { nickname: r.person.nickname }),
+              ...((): { account?: string } => {
+                const label = personOf(input.sender)?.account.label
+                return label == null ? {} : { account: label }
+              })(),
+              ...(r.person.status === 'active' ? {} : { suspended: true }),
+            },
+          }),
       ...(r.entry === undefined || r.entry.divisions.length === 0
         ? {}
         : { divisions: r.entry.divisions.map(nodeTitle) }),
@@ -2141,6 +2302,67 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       ).catch(() => undefined)
     }
     return true
+  }
+
+  // --- pairing (P43): a person links another account of theirs with a one-time code ------------
+
+  /** Failed `/link` tries per sender identity in the current hour (5 locks pairing for that hour). */
+  const pairingFailures = new Map<string, number[]>()
+  const PAIRING_MAX_FAILURES = 5
+
+  async function redeemPairing(input: {
+    config: ConnectionConfig
+    adapter: ChannelAdapter
+    node: NodeRow
+    sender: IdentityRow
+    code: string
+    replyTo: string
+  }): Promise<void> {
+    const say = (text: string): Promise<void> =>
+      sendDirect(input.config, input.adapter, input.node, text, input.replyTo).catch(
+        () => undefined,
+      )
+    const at = now()
+    const fails = (pairingFailures.get(input.sender.id) ?? []).filter((t) => at - t < 3_600_000)
+    if (fails.length >= PAIRING_MAX_FAILURES) {
+      await say('Too many wrong codes from this account: try again in an hour.')
+      return
+    }
+    const platform = platformOf(input.config.connectionId)
+    if (platform === undefined || input.sender.kind !== 'human') {
+      await say('This account cannot be linked.')
+      return
+    }
+    const personId = await persons.redeemCode(input.code, at)
+    if (personId === undefined) {
+      fails.push(at)
+      pairingFailures.set(input.sender.id, fails)
+      await say(
+        'That code is not valid or has expired. Ask for a new one from an account that is already yours.',
+      )
+      return
+    }
+    try {
+      const account = persons.link(
+        personId,
+        { platform, nativeId: input.sender.nativeId, label: null },
+        'pairing',
+        `pairing:${input.sender.nativeId}`,
+        at,
+      )
+      const person = persons.get(account.personId)
+      activity({
+        connectionId: input.config.connectionId,
+        type: 'action',
+        reason: 'account linked by pairing',
+        conversationId: input.node.id,
+        peerId: input.sender.nativeId,
+        detail: { person: personId },
+      })
+      await say(`Linked: this account now belongs to ${person?.displayName ?? 'you'}.`)
+    } catch (error) {
+      await say(error instanceof PersonError ? error.message : 'The account could not be linked.')
+    }
   }
 
   /** The allowed group chats of a connection, as a hint for a call that named none (saves a step). */
@@ -3957,9 +4179,14 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         : `action:${event.messageNativeId ?? ''}:${event.name}:${event.at}`
     const memberId = sender.personId ?? undefined
 
-    // a DM from somebody who is not linked: record who (never what) and stay silent, unless the
+    // a DM from somebody who is neither a linked team member nor an active person of the People
+    // directory with a role above guest: record who (never what) and stay silent, unless the
     // connection is set to answer unknown people with one neutral line
-    if (isDm && memberId === undefined) {
+    const knownPerson = (): boolean => {
+      const r = resolveIdentityRole(config.connectionId, sender, node)
+      return r.person !== undefined && r.person.status === 'active' && r.role !== 'guest'
+    }
+    if (isDm && memberId === undefined && !knownPerson()) {
       identities.noteDirect(sender.id, now())
       if (config.replyToUnknown && event.type === 'message.created') {
         const key = `${config.connectionId}:${sender.nativeId}`
@@ -4532,6 +4759,23 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       if (!guardOf(config).admit(node.id)) return { action: 'drop', reason: 'loop-guard' }
     }
     const sender = identityOfSender(connectionId, senderDto, node, adapter)
+
+    // `/link <code>`: a person links this account to themselves with a code they asked for from an
+    // account already theirs (P43). Handled here, before any model sees it; never a wake.
+    if (event.type === 'message.created') {
+      const pairing = /^\/link(?:@\S+)?\s+([A-Za-z0-9-]{6,16})\s*$/i.exec(event.message.text.trim())
+      if (pairing !== null) {
+        await redeemPairing({
+          config,
+          adapter,
+          node,
+          sender,
+          code: pairing[1] as string,
+          replyTo: event.message.nativeId,
+        })
+        return { action: 'record', reason: 'pairing code' }
+      }
+    }
 
     if (event.type === 'message.edited') {
       const known = await log.recordEdit(
@@ -5661,6 +5905,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       recovered.delete(adapter.connectionId)
       selfIdentities.delete(adapter.connectionId)
       selfIdentity(adapter.connectionId, adapter)
+      rememberPlatform(adapter.connectionId, adapter.platform)
+      try {
+        adoptLegacyPeople(adapter.connectionId)
+      } catch (error) {
+        warn(`channels: people of ${adapter.connectionId} were not adopted: ${errorText(error)}`)
+      }
       await adapter.start(async (event) => {
         try {
           await handle(adapter.connectionId, event)
@@ -5762,6 +6012,66 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     viewOf,
     chatsHint,
     announceDecision,
+    directory: {
+      persons,
+      platformOf,
+      personOfPeer(connectionId, peerId) {
+        const platform = platformOf(connectionId)
+        return platform === undefined ? undefined : persons.byAccount(platform, peerId)
+      },
+      identitiesOf(personId) {
+        return persons.accounts(personId).map((a) => {
+          let seen: IdentityRow | undefined
+          for (const connectionId of cache.keys()) {
+            if (platformOf(connectionId) !== a.platform) continue
+            seen = identities.byNative(connectionId, a.nativeId)
+            if (seen !== undefined) break
+          }
+          return {
+            accountId: a.id,
+            platform: a.platform,
+            nativeId: a.nativeId,
+            label: a.label,
+            connectionId: seen?.connectionId,
+            name: seen?.displayName ?? undefined,
+            username: seen?.username ?? undefined,
+          }
+        })
+      },
+      unassigned(limit) {
+        const out: Array<{
+          connectionId: string
+          platform: string
+          peerId: string
+          name: string | undefined
+          username: string | undefined
+        }> = []
+        const seen = new Set<string>()
+        for (const connectionId of cache.keys()) {
+          const platform = platformOf(connectionId)
+          if (platform === undefined) continue
+          for (const id of identities.list(connectionId, 1000)) {
+            if (out.length >= limit) return out
+            if (id.isSelf || id.kind !== 'human') continue
+            const key = `${platform}:${id.nativeId}`
+            if (seen.has(key) || persons.byAccount(platform, id.nativeId) !== undefined) continue
+            seen.add(key)
+            out.push({
+              connectionId,
+              platform,
+              peerId: id.nativeId,
+              name: id.displayName ?? undefined,
+              username: id.username ?? undefined,
+            })
+          }
+        }
+        return out
+      },
+      ensureFor(connectionId, peerId, actor) {
+        const id = identities.byNative(connectionId, peerId)
+        return id === undefined ? undefined : ensurePerson(id, actor, 'owner')
+      },
+    },
     canRead,
     resolveMentions,
     expireApprovals,

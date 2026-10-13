@@ -199,6 +199,7 @@ export const CATEGORIES = {
   F: 'Dead ends',
   G: 'Cancel',
   H: 'Approvals and long work',
+  I: 'Identity and people',
 } as const
 export type CategoryKey = keyof typeof CATEGORIES
 
