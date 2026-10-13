@@ -14083,6 +14083,13 @@ export interface components {
             install: "off" | "allowlist" | "any";
             /** @description One line for people. */
             label: string;
+            /** @description The Remote sandbox connector when one is connected (host of its URL, never the token); null when it is not reachable. */
+            remote?: {
+                host: string;
+                python: string | null;
+                isolated: boolean;
+                label: string;
+            } | null;
         };
         SettingsPatch: {
             /**

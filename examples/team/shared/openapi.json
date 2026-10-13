@@ -4232,6 +4232,36 @@
           "label": {
             "type": "string",
             "description": "One line for people."
+          },
+          "remote": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "python": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "isolated": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "host",
+              "python",
+              "isolated",
+              "label"
+            ],
+            "description": "The Remote sandbox connector when one is connected (host of its URL, never the token); null when it is not reachable."
           }
         },
         "required": [

@@ -33,6 +33,7 @@ import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { CHANNEL_OWN_WRITE_TOOLS, CHANNEL_READ_TOOLS } from '../channels/index.ts'
 import { CODE_LIST_PATH, type CodeRuntime } from '../code/index.ts'
+import { remoteSandboxConnector } from '../code/remote.ts'
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
 import { DATETIME_TOOL } from './clock-plugin.ts'
@@ -104,6 +105,11 @@ export interface CatalogHooks {
   team?: (agent: AgentDef, input: BuiltinInput) => ConnectorActivation
   /** The big-data toolkit plugin (`infra/bigdata`); undefined = the connector offers nothing. */
   bigdata?: BigDataHook
+  /**
+   * True while activating an agent whose Remote sandbox runs `run_python` (plan P44 D13): the
+   * Files & Sandbox connector then leaves `code()` to the remote connector (one `run_python`).
+   */
+  remoteRun?: () => boolean
 }
 
 export interface CatalogOptions {
@@ -452,7 +458,9 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
           ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
         })
         // `code()` reads the `fs` service of the plugin before it, so a rehearsal overlay applies
-        return options.code !== undefined && tools.includes('run_python')
+        return options.code !== undefined &&
+          tools.includes('run_python') &&
+          options.hooks.remoteRun?.() !== true
           ? [files, options.code.plugin({ tools })]
           : files
       },
@@ -485,6 +493,7 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
   return [
     ...builtins,
     bigDataConnector(() => options.hooks.bigdata),
+    remoteSandboxConnector(() => options.code),
     github(listTools, defer),
     telegramConnector(
       options.telegramApiRoot === undefined ? {} : { apiRoot: options.telegramApiRoot },

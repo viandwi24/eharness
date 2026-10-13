@@ -110,6 +110,13 @@
 				? 'Code sandbox: off'
 				: `Code sandbox: ${codeSandbox.python ? `Python ${codeSandbox.python}` : 'Python (version unknown)'} · ${codeSandbox.driver} · ${codeSandbox.isolated ? 'isolated' : 'not isolated'}${codeSandbox.install === 'off' ? '' : ` · installs: ${codeSandbox.install}`}`
 	);
+	const remoteSummary = $derived(
+		codeSandbox?.remote
+			? `Remote sandbox: ${codeSandbox.remote.host} · ${codeSandbox.remote.python ? `Python ${codeSandbox.remote.python}` : 'Python (version unknown)'} · ${codeSandbox.remote.label}`
+			: codeSandbox?.remote === null
+				? 'Remote sandbox: connected but not reachable right now'
+				: ''
+	);
 	async function loadCodeSandbox(): Promise<void> {
 		try {
 			codeSandbox = await api.get('/settings/code');
@@ -307,12 +314,13 @@
 						<Card.Root>
 							<Card.Header>
 								<Card.Title>Code sandbox</Card.Title>
-								<Card.Description>Where agents with "Run Python" (Files &amp; Sandbox) run their scripts. Set by the server's TEAM_CODE_* variables.</Card.Description>
+								<Card.Description>Where agents with "Run Python" (Files &amp; Sandbox) run their scripts. Set by the server's TEAM_CODE_* variables. A connected Remote sandbox (Connectors) takes over "Run Python" for the agents that have it on.</Card.Description>
 							</Card.Header>
 							<Card.Content>
 								{#if codeSandbox}
 									<p class="text-sm" data-testid="code-sandbox">{codeSummary}</p>
 									<p class="mt-1 text-xs text-muted-foreground">{codeSandbox.label}</p>
+									{#if remoteSummary}<p class="mt-3 text-sm" data-testid="remote-sandbox">{remoteSummary}</p>{/if}
 								{:else}
 									<p class="text-sm text-muted-foreground">Loading…</p>
 								{/if}

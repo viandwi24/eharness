@@ -31,6 +31,7 @@ COPY package.json bun.lock ./
 COPY examples/coder/package.json ./examples/coder/
 COPY examples/team/package.json ./examples/team/
 COPY examples/team/server/package.json ./examples/team/server/
+COPY examples/sandbox-server/package.json ./examples/sandbox-server/
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
 # ─── runtime ─────────────────────────────────────────────────────────────────
@@ -51,6 +52,8 @@ COPY --from=deps /app ./
 COPY tsconfig.json ./
 COPY src ./src
 COPY examples/team/server ./examples/team/server
+# the client of the Remote sandbox connector (`@eharness-examples/sandbox-server/client`)
+COPY examples/sandbox-server/src ./examples/sandbox-server/src
 COPY --from=web /app/examples/team/web/build ./examples/team/web/build
 # `eharness` resolves to the library source: a package whose exports mirror the published ones,
 # with ./dist/*.js mapped to ./src/*.ts (the image never builds dist/)

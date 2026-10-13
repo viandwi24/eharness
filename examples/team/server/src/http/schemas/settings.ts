@@ -65,5 +65,18 @@ export const CodeSandboxSchema = z
     }),
     install: z.enum(['off', 'allowlist', 'any']).openapi({ description: '`TEAM_CODE_INSTALL`.' }),
     label: z.string().openapi({ description: 'One line for people.' }),
+    remote: z
+      .object({
+        host: z.string(),
+        python: z.string().nullable(),
+        isolated: z.boolean(),
+        label: z.string(),
+      })
+      .nullable()
+      .optional()
+      .openapi({
+        description:
+          'The Remote sandbox connector when one is connected (host of its URL, never the token); null when it is not reachable.',
+      }),
   })
   .openapi('CodeSandbox')

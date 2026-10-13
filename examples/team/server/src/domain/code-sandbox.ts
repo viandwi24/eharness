@@ -11,4 +11,6 @@ export interface CodeSandboxInfo {
   install: CodeInstall
   /** One line for people. */
   label: string
+  /** The Remote sandbox connector, when one is connected (never the token). */
+  remote?: { host: string; python: string | null; isolated: boolean; label: string } | null
 }

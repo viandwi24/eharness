@@ -53,6 +53,7 @@ import { CUSTOM_DEFINITION, isAllowedMcpUrl, slugOf, uniqueSlug } from '../../do
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { NewEvent } from '../../domain/events.ts'
 import type { CodeRuntime } from '../code/index.ts'
+import { probeStatus, REMOTE_SANDBOX_ID } from '../code/remote.ts'
 import type { TgClientFactory } from '../telegram-user/client.ts'
 import {
   parseTelegramApp,
@@ -132,6 +133,10 @@ export interface ConnectorsRuntime extends ConnectorsPort {
   markNeedsAuth(connectionId: string, message?: string): Promise<void>
   /** The stored credentials of a connection, session included (server side only: a long-lived runtime). */
   credentialsOf(connectionId: string): Promise<ConnectionCredentials | undefined>
+  /** The connected Remote sandbox (host, Python, isolation; never the token), null when unreachable, undefined when none. */
+  remoteSandboxStatus(): Promise<
+    { host: string; python: string | null; isolated: boolean; label: string } | null | undefined
+  >
   /** The workspace's Telegram api_id / api_hash: the environment, else what an admin saved. */
   telegramApp(): Promise<TelegramApp | undefined>
   /** The last activation of an agent, or undefined when it was never prepared. */
@@ -167,6 +172,9 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
   const env = options.env ?? process.env
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
   const hooks: CatalogHooks = {}
+  // does the agent `doPrepare` is activating run `run_python` on a Remote sandbox? (serialized)
+  let remoteRunNow = false
+  hooks.remoteRun = () => remoteRunNow
   // `defer` of the remote MCP servers of the agent `doPrepare` is activating (activation is serialized)
   let deferNow: boolean | 'auto' = true
   const telegramLogins = createLoginSessions({
@@ -559,6 +567,21 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     const records = await connections.list()
     for (const d of need) {
       deferNow = await deferOf(d)
+      // D13: with Remote sandbox on (run not off) the Files & Sandbox connector adds no `run_python`
+      const remoteDef = defs.get(REMOTE_SANDBOX_ID)
+      const remoteRecords = records.filter((r) => r.definitionId === REMOTE_SANDBOX_ID)
+      remoteRunNow = false
+      if (remoteDef !== undefined && remoteRecords.length > 0) {
+        const pre = await activateConnectors({
+          definitions: [remoteDef],
+          connections: remoteRecords,
+          enablement: await enablement.get(d.id),
+          agent: { id: d.id },
+          accessToken: (id) => service.accessToken(id),
+          ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+        })
+        remoteRunNow = pre.plugins.length > 0
+      }
       const out = await activateConnectors({
         definitions,
         connections: records,
@@ -966,6 +989,20 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     accessTokenFor: (connectionId) => service.accessToken(connectionId),
     markNeedsAuth: (connectionId, message) => service.markNeedsAuth(connectionId, message),
     credentialsOf: (connectionId) => service.credentials(connectionId),
+    async remoteSandboxStatus() {
+      const record = (await connections.list()).find(
+        (r) => r.definitionId === REMOTE_SANDBOX_ID && r.status === 'connected',
+      )
+      if (record === undefined) return undefined
+      const { url, token } = record.settings as { url?: string; token?: string }
+      if (typeof url !== 'string' || typeof token !== 'string') return undefined
+      try {
+        const { python, host, isolated, label } = await probeStatus({ url, token }, options.fetch)
+        return { host, python, isolated, label }
+      } catch {
+        return null
+      }
+    },
     telegramApp,
     activated: (agentId) => cache.get(agentId)?.out,
     toolKinds: (agentId) => cache.get(agentId)?.kinds,

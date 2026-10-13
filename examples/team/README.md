@@ -102,7 +102,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_SPAWN_CAP` | `4` | role agents the lead runs at once (also in Settings) |
 | `TEAM_CONTEXT_CAP` | `128000` | working context window: the model's own window, at most this; history is summarized at 80 % of it (a 1 M-token model would otherwise carry ~800 k tokens into every call) |
 | `TEAM_MAX_WORKER_STEPS` | `400` | hard cap of one background worker turn (every agent can hand long jobs to its `worker`; chat turns stop at 120 steps) |
-| `TEAM_CODE_DRIVER` | `local` when the interpreter is found, else `off` | where agents run Python (`run_python` of the **Files & Sandbox** connector): `off` or `local` (a scratch directory under an OS sandbox: no network, the data directory and your home are unreadable); remote drivers come later |
+| `TEAM_CODE_DRIVER` | `local` when the interpreter is found, else `off` | where agents run Python (`run_python` of the **Files & Sandbox** connector): `off` or `local` (a scratch directory under an OS sandbox: no network, the data directory and your home are unreadable); for a separate machine use the **Remote sandbox** connector (below) |
 | `TEAM_CODE_PYTHON` | `python3` | interpreter of `local` (the Docker image sets `/opt/eh-python/bin/python`) |
 | `TEAM_CODE_INSTALL` | `off` | `off`, `allowlist` or `any`: agents may add packages with `install_packages` (asks first; wheels only) |
 | `TEAM_CODE_ALLOW` | - | comma list of package names (optional `==version`) for `allowlist` |
@@ -280,6 +280,30 @@ before it runs by default. Settings shows the driver, the Python version and whe
   `python/requirements.txt`): code runs with `local` inside the container. An optional pip cache
   volume only speeds up `TEAM_CODE_INSTALL`; nothing depends on it.
 - The JavaScript `run_code` of the Data work connector (programs) is unchanged.
+
+### Remote sandbox
+
+The **Remote sandbox** connector runs `run_python` on a separate sandbox server
+([`examples/sandbox-server`](../sandbox-server/README.md)) instead of this machine: the container is
+the isolation boundary, packages live in its image, and the app only holds a URL and a token.
+
+```bash
+# from the repository root
+docker build -f examples/sandbox-server/Dockerfile -t eharness-sandbox-server .
+docker run -d --name sandbox -p 4100:4100 -e SANDBOX_TOKEN=change-me-please \
+  --read-only --tmpfs /tmp:size=1g,mode=1777 --memory 4g --cpus 2 --pids-limit 512 \
+  eharness-sandbox-server
+```
+
+Then open **Connectors**, choose **Remote sandbox**, enter the URL (`http://localhost:4100`, or the
+service name in compose) and the token (stored encrypted); the connection test shows the Python
+version and the isolation. Switch it on for an agent (it is off by default; its capability "Run
+Python remotely" asks first). An agent that has it on gets `run_python` from the remote: the
+Files & Sandbox "Run Python" of that agent is not registered as well, so there is always one tool.
+Keep **Files & Sandbox** on for the files themselves. Settings shows `Remote sandbox: <host> ·
+Python x · <isolation>`. `examples/sandbox-server/docker-compose.example.yml` runs the team example
+next to a sandbox on an `internal` network (no internet egress for scripts). The team image
+contains the sandbox client (`examples/sandbox-server/src`), nothing else of it.
 
 ## Scripts and checks
 

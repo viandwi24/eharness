@@ -767,7 +767,13 @@ export function compose(config: ServerConfig): Server {
     channelInbox: lazyInboxPort(() => channelInboxPort),
     people: lazyPeoplePort(() => peoplePort),
     webUrl,
-    codeSandbox: codeRuntime,
+    codeSandbox: {
+      info: async () => {
+        const info = await codeRuntime.info()
+        const remote = await connectors.remoteSandboxStatus()
+        return remote === undefined ? info : { ...info, remote }
+      },
+    },
     modes: createModeService(factory, {
       store: sessionModes,
       workspaceDefault: () => settings.get().defaultPermissionMode,

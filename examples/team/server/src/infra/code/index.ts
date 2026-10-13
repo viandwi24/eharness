@@ -81,6 +81,12 @@ export interface CodeRuntime {
   readonly filesOption: { install: boolean } | undefined
   /** The plugin of one session of a files connection with these tools on. */
   plugin(input: { tools: readonly string[] }): HarnessPlugin
+  /** The plugin of the Remote sandbox connector (same mounts and path authority). */
+  remotePlugin(input: {
+    sandbox: () => Promise<CodeSandbox>
+    pythonCommand: string
+    tools: readonly string[]
+  }): HarnessPlugin
   info(): Promise<CodeSandboxInfo>
   /** Remove scratch directories left by a crashed server (`local`). Call at start. */
   start(): Promise<void>
@@ -111,6 +117,51 @@ export const CODE_MOUNTS = [
 /** The stored requirement list: never editable with the file tools. */
 export const CODE_LIST_PATH = '/library/.eharness/requirements.txt'
 
+/**
+ * The path authority of `code()` (local and remote alike): a program run works under the program's
+ * authority, otherwise the connection's file capabilities decide.
+ */
+export function codeAccess(
+  programs: () => Pick<ProgramStore, 'get'> | undefined,
+  tools: readonly string[],
+): NonNullable<Parameters<typeof code>[0]['access']> {
+  let access: ReturnType<typeof programPathAccess> | undefined
+  const may = (tool: string): boolean => tools.includes(tool)
+  return (path, op, ctx) => {
+    access ??= programPathAccess(programs() ?? { get: () => undefined })
+    // a program run (or its rehearsal) works under the program's authority
+    const authority = access(ctx.session.id)
+    if (authority !== undefined) {
+      return op === 'read' ? authority.canRead(path) : authority.canWrite(path)
+    }
+    // otherwise the connection's file capabilities decide
+    if (op === 'read') return may('read_file')
+    if (op === 'write') return may('write_file') || may('edit_file')
+    return may('delete_file')
+  }
+}
+
+/**
+ * `code()` over a remote sandbox server (the Remote sandbox connector, plan P44 D13): one session
+ * on the server per chat session (disposed at close), the server's own interpreter, isolation
+ * required, no package installs (packages live in the server image).
+ */
+export function remoteCodePlugin(input: {
+  sandbox: () => Promise<CodeSandbox>
+  pythonCommand: string
+  tools: readonly string[]
+  programs: () => Pick<ProgramStore, 'get'> | undefined
+}): HarnessPlugin {
+  return code({
+    sandbox: () => input.sandbox(),
+    mounts: [...CODE_MOUNTS],
+    python: { command: input.pythonCommand },
+    packages: { install: 'off', listPath: CODE_LIST_PATH },
+    requireIsolation: true,
+    access: codeAccess(input.programs, input.tools),
+  })
+}
+
 export function createCodeRuntime(
   config: CodeConfig,
   deps: { programs: () => Pick<ProgramStore, 'get'> | undefined; warn?: (message: string) => void },
@@ -124,7 +175,6 @@ export function createCodeRuntime(
   const building =
     config.driver === 'local' && (config.install !== 'off' || requirements.length > 0)
   const detected = detectOsSandbox().kind !== 'none'
-  let access: ReturnType<typeof programPathAccess> | undefined
   let installer: ReturnType<typeof localSandbox> | undefined
 
   // the interpreter may live under the home directory (pyenv, a virtualenv): reading it stays allowed
@@ -169,9 +219,9 @@ export function createCodeRuntime(
 
   return {
     config,
+    remotePlugin: (input) => remoteCodePlugin({ ...input, programs: deps.programs }),
     filesOption: on ? { install: config.install !== 'off' } : undefined,
     plugin(input) {
-      const may = (tool: string): boolean => input.tools.includes(tool)
       return code({
         sandbox: (ctx) => createCodeSandbox(ctx),
         mounts: [...CODE_MOUNTS],
@@ -190,18 +240,7 @@ export function createCodeRuntime(
                 listPath: CODE_LIST_PATH,
               },
             }),
-        access: (path, op, ctx) => {
-          access ??= programPathAccess(deps.programs() ?? { get: () => undefined })
-          // a program run (or its rehearsal) works under the program's authority
-          const authority = access(ctx.session.id)
-          if (authority !== undefined) {
-            return op === 'read' ? authority.canRead(path) : authority.canWrite(path)
-          }
-          // otherwise the connection's file capabilities decide
-          if (op === 'read') return may('read_file')
-          if (op === 'write') return may('write_file') || may('edit_file')
-          return may('delete_file')
-        },
+        access: codeAccess(deps.programs, input.tools),
       })
     },
     async info() {
