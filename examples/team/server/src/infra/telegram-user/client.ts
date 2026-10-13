@@ -170,6 +170,11 @@ export interface TgSendOptions {
   topicId?: number
   silent?: boolean
   mentions?: TgMention[]
+  /**
+   * The text is Telegram HTML (bold, italic, code, links, `tg://user` mentions); `handles` are
+   * `@username` mentions in it that get a mention entity. Bad HTML falls back to the plain text.
+   */
+  html?: { handles: string[] }
   /** Stable per message: Telegram dedupes a send with the same key (`random_id`). */
   key?: string
 }
@@ -295,7 +300,8 @@ export interface TgUserClient {
     caption: string,
     options?: TgSendOptions,
   ): Promise<{ id: number }>
-  editText(chatId: string, id: number, text: string): Promise<void>
+  /** `html` = the text is Telegram HTML (as `TgSendOptions.html`). */
+  editText(chatId: string, id: number, text: string, html?: { handles: string[] }): Promise<void>
   deleteMessages(chatId: string, ids: number[]): Promise<void>
   pin(chatId: string, id: number, pinned: boolean): Promise<void>
   react(chatId: string, id: number, emoji: string): Promise<void>

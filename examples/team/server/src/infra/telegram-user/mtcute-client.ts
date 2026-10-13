@@ -18,6 +18,7 @@ import {
   type Message,
   type Peer,
   TelegramClient,
+  thtml,
   type User,
 } from '@mtcute/bun'
 import type {
@@ -81,6 +82,43 @@ const withMentions = (
               },
         ) as never[],
       }
+
+/** Telegram HTML as text + entities; each `@handle` given gets a mention entity. Plain text when it does not parse. */
+function fromHtml(
+  source: string,
+  handles: readonly string[],
+): string | { text: string; entities: never[] } {
+  try {
+    const parsed = thtml(source)
+    const entities = [...(parsed.entities ?? [])] as unknown[]
+    // bare URLs get an entity too: with explicit entities Telegram links nothing on its own
+    const taken = (o: number, l: number): boolean =>
+      (entities as Array<{ offset: number; length: number }>).some(
+        (e) => o < e.offset + e.length && e.offset < o + l,
+      )
+    for (const u of parsed.text.matchAll(/https?:\/\/[^\s<>"]+/g)) {
+      const url = u[0].replace(/[.,;:!?)\]]+$/, '')
+      const at = u.index as number
+      if (!taken(at, url.length))
+        entities.push({ _: 'messageEntityUrl', offset: at, length: url.length })
+    }
+    let from = 0
+    for (const h of handles) {
+      const at = parsed.text.indexOf(`@${h}`, from)
+      if (at < 0) continue
+      entities.push({ _: 'messageEntityMention', offset: at, length: h.length + 1 })
+      from = at + h.length + 1
+    }
+    return { text: parsed.text, entities: entities as never[] }
+  } catch {
+    return source
+      .replace(/<[^>]+>/g, '')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+  }
+}
 
 /** A person reference: a numeric id, or a username (with or without `@`). */
 const peerRef = (ref: string): number | string => {
@@ -608,7 +646,9 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         return list.map((m) => userOf(m.user))
       },
       async sendText(chatId, text, o) {
-        const m = await tg.sendText(Number(chatId), withMentions(text, o?.mentions), {
+        const input =
+          o?.html !== undefined ? fromHtml(text, o.html.handles) : withMentions(text, o?.mentions)
+        const m = await tg.sendText(Number(chatId), input, {
           ...(o?.replyTo === undefined ? {} : { replyTo: o.replyTo }),
           ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
           ...(o?.silent === true ? { silent: true } : {}),
@@ -644,8 +684,12 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         const list = await tg.sendMediaGroup(Number(chatId), [first, ...media.slice(1)], common)
         return { id: (list[0] as Message).id }
       },
-      async editText(chatId, id, text) {
-        await tg.editMessage({ chatId: Number(chatId), message: id, text })
+      async editText(chatId, id, text, html) {
+        await tg.editMessage({
+          chatId: Number(chatId),
+          message: id,
+          text: html === undefined ? text : fromHtml(text, html.handles),
+        })
       },
       async deleteMessages(chatId, ids) {
         await tg.deleteMessagesById(Number(chatId), ids, { revoke: true })

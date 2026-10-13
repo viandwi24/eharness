@@ -29,16 +29,9 @@ import {
   type RemoteEvent,
   type SentMessage,
 } from '../channels/types.ts'
+import { toTelegramHtml } from '../telegram/format.ts'
 import { accountActions } from './actions.ts'
-import type {
-  TgChat,
-  TgDelete,
-  TgMention,
-  TgMessage,
-  TgTopic,
-  TgUser,
-  TgUserClient,
-} from './client.ts'
+import type { TgChat, TgDelete, TgMessage, TgTopic, TgUser, TgUserClient } from './client.ts'
 import { classifyError, describeError, type TgErrorKind } from './errors.ts'
 import {
   chatNode,
@@ -526,36 +519,29 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
   })
 
   /**
-   * The gateway's mention tokens as Telegram mentions: a person with a username becomes `@handle`
-   * (Telegram pings and links it), anybody else their name linked to their id (a text mention).
+   * What the model wrote, as Telegram HTML: the same Markdown subset the bot transport renders
+   * (bold, italic, code, links, lists), and the gateway's mention tokens as `@handle` when the person
+   * has a username (Telegram pings and links it) or a `tg://user` link by id otherwise.
    */
-  function renderMentions(text: string): { text: string; mentions: TgMention[] } {
-    const found = parseMentions(text)
-    if (found.length === 0) return { text, mentions: [] }
+  function renderForTelegram(text: string): { html: string; handles: string[] } {
+    const handles: string[] = []
     let out = ''
     let at = 0
-    const mentions: TgMention[] = []
-    for (const m of found) {
-      out += text.slice(at, m.start)
+    for (const m of parseMentions(text)) {
       const handle = host?.usernameOf?.(m.id)
-      const shown = handle === undefined || handle === '' ? m.name : `@${handle}`
-      mentions.push({
-        offset: out.length,
-        length: shown.length,
-        userId: m.id,
-        byHandle: shown !== m.name,
-      })
-      out += shown
+      if (handle === undefined || handle === '') continue
+      out += `${text.slice(at, m.start)}@${handle}`
+      handles.push(handle)
       at = m.end
     }
-    return { text: out + text.slice(at), mentions }
+    return { html: toTelegramHtml(out + text.slice(at)), handles }
   }
 
   async function send(node: ChannelNode, message: OutboundMessage): Promise<SentMessage> {
     await guardSend(node)
     const chat = targetOf(node).chat
     try {
-      const rendered = renderMentions(message.text)
+      const rendered = renderForTelegram(message.text)
       const sent =
         message.files !== undefined && message.files.length > 0
           ? await client.sendFiles(
@@ -564,9 +550,9 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
               plainMentions(message.text),
               sendOptions(node, message),
             )
-          : await client.sendText(chat, rendered.text, {
+          : await client.sendText(chat, rendered.html, {
               ...sendOptions(node, message),
-              ...(rendered.mentions.length === 0 ? {} : { mentions: rendered.mentions }),
+              html: { handles: rendered.handles },
             })
       sentIds.add(`${chat}:${sent.id}`)
       if (sentIds.size > DEDUPE_MAX) {
@@ -687,9 +673,12 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     },
     send,
     edit: (node, nativeId, text) =>
-      guarded(node, () =>
-        client.editText(targetOf(node).chat, Number(nativeId), plainMentions(text)),
-      ),
+      guarded(node, () => {
+        const rendered = renderForTelegram(text)
+        return client.editText(targetOf(node).chat, Number(nativeId), rendered.html, {
+          handles: rendered.handles,
+        })
+      }),
     delete: (node, nativeId) =>
       guarded(node, () => client.deleteMessages(targetOf(node).chat, [Number(nativeId)])),
     pin: (node, nativeId, pinned) =>

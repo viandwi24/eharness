@@ -66,10 +66,21 @@ export const hasMentions = (text: string): boolean => text.includes(OPEN)
  * Emails (`a@b.com`) and text without handles are left alone.
  */
 export function neutralizeHandles(text: string): string {
+  // links keep their `@` (tiktok.com/@name, medium.com/@name): a handle inside a URL pings nobody,
+  // and a zero-width space in it cuts the link where the platform stops linking
   return text
     .replace(/[-]/g, '')
-    .replace(/(^|[^\p{L}\p{N}_])([@＠])(?=[\p{L}\p{N}_])/gu, `$1$2${ZWSP}`)
+    .split(URL_PART)
+    .map((part, i) =>
+      i % 2 === 1
+        ? part
+        : part.replace(/(^|[^\p{L}\p{N}_])([@＠])(?=[\p{L}\p{N}_])/gu, `$1$2${ZWSP}`),
+    )
+    .join('')
 }
+
+/** A URL in free text (with a scheme, `www.` or a bare `t.me/`), captured so `split` keeps it. */
+const URL_PART = /((?:https?:\/\/|www\.|t\.me\/)[^\s<>"]+)/giu
 
 /** What the log and the people of a chat should read: the token shown as the name (with `@`). */
 export const readableMentions = (text: string): string =>
