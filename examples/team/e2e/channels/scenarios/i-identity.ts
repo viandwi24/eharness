@@ -309,4 +309,25 @@ export const scenarios: Scenario[] = [
     hard: [C.posted('dm:admin'), C.silent('dm:stranger')],
     tags: ['dm', 'directory'],
   },
+  {
+    id: 'I-08',
+    category: 'I',
+    title: 'The owner asks to check the people: the directory and the unassigned accounts',
+    goal: 'people_find without a query lists the directory and the accounts that are no person yet.',
+    expectedSafe:
+      'The tool output names the persons and lists a seen account without a person (staff only).',
+    script: { lead: [call('people_find', {}), text('Ini daftar orang di direktori.')] },
+    steps: [seen('stranger'), say('ceo', 'general', 'tolong cek people di direktori')],
+    hard: [
+      C.custom('the directory and the unassigned accounts are listed', (c) => {
+        const out = c.obs.tools.find((t) => t.name === 'people_find')?.output ?? ''
+        return /People directory \(the People page\)/.test(out) &&
+          /not a person in the directory yet/.test(out) &&
+          out.includes(String(c.w.actors.stranger?.id))
+          ? { ok: true }
+          : { ok: false, detail: out.slice(0, 400) }
+      }),
+    ],
+    tags: ['directory'],
+  },
 ]

@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import { api } from '#lib/api/index.js';
+	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import DataTable, { type Column } from '#lib/components/app/DataTable.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
@@ -85,6 +86,34 @@
 			busy = false;
 		}
 	}
+	// every unassigned account becomes a person (one per account; accounts of one human are merged
+	// later by attaching), with the role chosen here
+	let bulkOpen = $state(false);
+	let bulkRole = $state<'member' | 'default' | 'guest'>('member');
+	let bulkProgress = $state('');
+	async function createAll(): Promise<void> {
+		const list = unassigned ?? [];
+		busy = true;
+		let done = 0;
+		let failed = 0;
+		for (const u of list) {
+			bulkProgress = `${done + failed + 1} / ${list.length}`;
+			try {
+				const p = await api.post('/people/from-account', { body: { connectionId: u.connectionId, peerId: u.peerId } });
+				if (bulkRole !== 'default' && p.role === null) await api.patch('/people/{id}', { params: { id: p.id }, body: { role: bulkRole } });
+				done += 1;
+			} catch {
+				failed += 1;
+			}
+		}
+		busy = false;
+		bulkProgress = '';
+		if (failed === 0) toast.success(`${done} people created`);
+		else toast.error(`${done} people created, ${failed} failed`);
+		await Promise.all([loadUnassigned(), table.load(true), loadPickable()]);
+		if ((unassigned ?? []).length === 0) tab = 'people';
+	}
+
 	async function attach(u: Unassigned): Promise<void> {
 		const personId = attachTo[keyOf(u)];
 		if (!personId) return;
@@ -192,3 +221,12 @@
 		{/if}
 	</PageBody>
 </div>
+
+<ConfirmDialog
+	bind:open={bulkOpen}
+	title={`Create ${unassigned?.length ?? 0} people?`}
+	description={`Each account becomes its own person named after the account${bulkRole === 'default' ? '' : `, with the role ${bulkRole}`}. Two accounts of one human can be merged later by attaching one to the other person. Owners and admins are set on each person.`}
+	confirmLabel="Create"
+	confirmVariant="default"
+	onConfirm={() => createAll()}
+/>
