@@ -20,6 +20,7 @@
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
  *   TEAM_SEARCH_MODEL   model of web_search, same format
  *   TEAM_INSTANCE_ID  stable id of this instance (default team-<PORT>): a restarted instance recovers its own interrupted turns at boot
+ *   TEAM_SEED_AGENTS  0 = start an empty workspace without the example agents (default: seed them once)
  *   TEAM_DEMO_COLLECTOR   1 = register the fixture community source (`ingest_source` of the Data work connector; 5 000 deterministic messages)
  *   TEAM_DEBUG_INVARIANTS   1 = debug.invariants on every agent (tests set it; a broken session invariant fails the turn)
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
@@ -191,6 +192,8 @@ export interface ServerConfig {
   token?: string | undefined
   /** Skip seeding (tests that start empty). */
   seed?: boolean
+  /** Seed the example agents into an empty workspace (default true; `TEAM_SEED_AGENTS=0` turns it off). */
+  seedAgents?: boolean
   /** Model config override (tests); default from the environment. */
   models?: ModelConfig
   /** Context windows and prices of models; default: the catalog of the provider manager. */
@@ -1037,7 +1040,7 @@ export function compose(config: ServerConfig): Server {
   const channelPurgeTimer =
     channelPurgeMs > 0 ? setInterval(purgeChannels, channelPurgeMs) : undefined
   channelPurgeTimer?.unref()
-  if (config.seed !== false) seedAgents(deps)
+  if (config.seed !== false && config.seedAgents !== false) seedAgents(deps)
   // every agent has a persona: the first version is made from its old instructions (idempotent)
   ensureAllPersonas(deps)
   // agents from before threads keep their single DM as their first thread
@@ -1224,6 +1227,7 @@ if (import.meta.main) {
   const listenPort = Number(process.env.PORT ?? 4000)
   const server = compose({
     dbFile,
+    seedAgents: process.env.TEAM_SEED_AGENTS !== '0',
     instanceId: process.env.TEAM_INSTANCE_ID ?? `team-${listenPort}`,
     token,
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
