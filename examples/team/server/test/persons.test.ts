@@ -63,4 +63,21 @@ describe('people directory (P43)', () => {
     await s.issueCode(adi.id, 3000)
     expect('error' in (await s.issueCode(adi.id, 3000))).toBe(true)
   })
+
+  test('delete: the person and its accounts go, the account is free, the history stays', async () => {
+    const s = store()
+    const adi = s.create({ displayName: 'Adi', role: 'admin' }, 'web', 1)
+    s.link(adi.id, { platform: 'telegram', nativeId: '111' }, 'owner', 'web', 2)
+    await s.issueCode(adi.id, 3)
+    expect(s.delete(adi.id, 'web', 4)).toBe(true)
+    expect(s.get(adi.id)).toBeUndefined()
+    expect(s.byAccount('telegram', '111')).toBeUndefined()
+    expect(s.events(adi.id)[0]?.kind).toBe('delete')
+    expect(s.delete(adi.id, 'web', 5)).toBe(false)
+    // the account can belong to somebody else now
+    const budi = s.create({ displayName: 'Budi' }, 'web', 6)
+    expect(
+      s.link(budi.id, { platform: 'telegram', nativeId: '111' }, 'owner', 'web', 7).personId,
+    ).toBe(budi.id)
+  })
 })

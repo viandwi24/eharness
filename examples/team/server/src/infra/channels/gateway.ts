@@ -1123,7 +1123,33 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const identities = sqliteIdentityStore(deps.sqlite)
   const people: PeopleStore = sqlitePeopleStore(deps.sqlite)
   // the directory of persons (P43): one human, many accounts; role and divisions live there
-  const persons: PersonStore = sqlitePersonStore(deps.sqlite, { next: uuidv7 })
+  const personRows: PersonStore = sqlitePersonStore(deps.sqlite, { next: uuidv7 })
+  /**
+   * The per-account role entries of before P43 of a platform user, on every connection of the
+   * platform: dropped when the account leaves its person, so an unlinked account is a guest again.
+   */
+  const dropLegacyRole = (platform: string, nativeId: string): void => {
+    for (const connectionId of cache.keys()) {
+      if (platformOf(connectionId) !== platform) continue
+      const id = identities.byNative(connectionId, nativeId)
+      if (id !== undefined) people.remove(id.id)
+    }
+  }
+  // every path (web, agent tools, pairing) changes the directory through this store
+  const persons: PersonStore = {
+    ...personRows,
+    unlink(accountId, actor, at) {
+      const a = personRows.unlink(accountId, actor, at)
+      if (a !== undefined) dropLegacyRole(a.platform, a.nativeId)
+      return a
+    },
+    delete(id, actor, at) {
+      const accounts = personRows.accounts(id)
+      const ok = personRows.delete(id, actor, at)
+      if (ok) for (const a of accounts) dropLegacyRole(a.platform, a.nativeId)
+      return ok
+    },
+  }
 
   /** The platform family of a connection: a bot and a user account of Telegram are both `telegram`. */
   const platformFamily = (platform: string): string =>
@@ -1166,16 +1192,19 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (found !== undefined) return found.person
     const platform = platformOf(id.connectionId)
     if (platform === undefined || id.isSelf || id.kind !== 'human') return undefined
+    // a role the account had before P43 moves to the person (only the person's role counts now)
+    const legacy = people.get(id.id)
     const person = persons.create(
       {
         displayName: id.displayName ?? id.username ?? id.nativeId,
         ...(id.personId === null ? {} : { memberId: id.personId }),
+        ...(legacy === undefined ? {} : { role: legacy.role, divisions: legacy.divisions }),
       },
       actor,
       now(),
     )
     persons.link(person.id, { platform, nativeId: id.nativeId }, via, actor, now())
-    return person
+    return persons.get(person.id) ?? person
   }
 
   /**
@@ -1528,17 +1557,20 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (linked !== undefined && linked.person.status !== 'active') {
       return { role: 'guest', source: 'directory', entry: undefined, person: linked.person }
     }
-    // the person's role and divisions win over the per-account entry of before P43
+    // a linked account takes the person's role and divisions only (no role: the chat default); the
+    // per-account entry of before P43 counts only for an account that belongs to no person
     const entry: PersonEntry | undefined =
-      linked !== undefined && linked.person.role !== null
-        ? {
-            identityId: id.id,
-            connectionId,
-            role: linked.person.role,
-            divisions: linked.person.divisions,
-            setBy: null,
-            updatedAt: linked.person.updatedAt,
-          }
+      linked !== undefined
+        ? linked.person.role === null
+          ? undefined
+          : {
+              identityId: id.id,
+              connectionId,
+              role: linked.person.role,
+              divisions: linked.person.divisions,
+              setBy: null,
+              updatedAt: linked.person.updatedAt,
+            }
         : people.get(id.id)
     const r = resolveRole({
       kind: id.kind,

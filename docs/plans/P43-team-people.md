@@ -29,7 +29,8 @@ OWASP LLM06: authorization is code at the tool boundary, never the model.
   timestamps. One linked row per (platform, native id): an account belongs to one person; moving it
   needs an explicit unlink first. Every connection of the same platform family resolves through it
   (a bot and a user account of Telegram see the same user id).
-- `people_events` — append-only audit: create, update, role, link, unlink, status.
+- `people_events` — append-only audit: create, update, role, link, unlink, status, delete (kept
+  after the person is deleted).
 - `people_link_codes` — pairing: hashed 8-character code, person, expiry (1 h), attempts, used.
 
 ## Resolution (code, every turn and every tool call)
@@ -52,14 +53,26 @@ member; else the connection or chat default. Message text never takes part. The 
 ## Agent tools
 
 - `member_lookup` (existing) also shows the person (full name, nickname, label of the account).
-- `people_find` (read; members and staff, never guests): name, nickname, role, accounts; staff also
-  see status, divisions, fields and notes.
+- `people_find` (read; members and staff, never guests): without a query the whole directory (50 per
+  page, `page`), with a query a search (name, nickname, field, account id), with `id` one person.
+  Staff also see status, divisions, fields, notes, the recent changes of one person, and the accounts
+  seen in chats that are no person yet (also searched by a query).
 - `people` (allowed by rule, checked in code): `create`/`update` (owner or admin: name, nickname,
   fields, notes, divisions); `pair` (anybody with an active linked person, own person only, direct
   chat only: returns the code to send as `/link CODE` from the other account).
-- `people_link` (`link`/`unlink`, owner only, asks first: the approval card names account and person).
-- Roles stay with `person_role` (owner only, asks first); it writes the role on the person.
-- The `tool.approve` hook denies `people`/`people_link` for the wrong role before any approval card.
+- `people_admin` (owner only, asks first: the approval card names the action and the person):
+  `link`/`unlink` an account, `create_from_account`, `create_all` (a person for every unassigned
+  account, optional role), `role` (admin, member, guest, default), `status` (active, suspended,
+  left), `delete`. Owners and the owner themself are changed on the People page only.
+- `person_role` (owner only, asks first) sets a role by platform user id; it writes the person.
+- The `tool.approve` hook denies `people`/`people_admin` for the wrong role before any approval card.
+
+## Roles of accounts
+
+Only the person's role counts for a linked account (no role: the chat default). The per-account
+entries of before P43 count only for an account that belongs to no person; they move to the person
+when one is created from the account, and they are dropped when the account is unlinked or its
+person is deleted (an unlinked account is a guest again until it is linked).
 
 ## Direct chats
 
@@ -79,9 +92,9 @@ whose role is above guest. Anybody else is recorded (who, never what) and gets n
    `gateway.directory`; every web change has the actor `web`; a `PersonError` is a 409 (404 for a
    missing person, 400 for invalid input) with its readable message. The list has two views: People
    (search, paging) and Unassigned accounts (create a person, or attach to one).
-3. Tools and pairing command; e2e scenarios I-01..I-07 (impersonation, linking with approval,
+3. Tools and pairing command; e2e scenarios I-01..I-13 (impersonation, linking with approval,
    suspended person, one role for two accounts, `/link` pairing, `pair` only in a direct chat, direct
-   chats from directory people).
+   chats from directory people, listing, delete, suspend, role, create all).
 4. Later: manager role with division scope; task claims verified by another person.
 
 ## Open questions

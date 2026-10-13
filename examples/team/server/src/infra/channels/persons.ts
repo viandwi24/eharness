@@ -106,6 +106,11 @@ export interface PersonStore {
     actor: string | null,
     now: number,
   ): PersonAccount | undefined
+  /**
+   * Remove a person: its accounts belong to nobody again (their rows go), pending pairing codes
+   * go; the events stay as the audit trail with a final `delete` event. False when unknown.
+   */
+  delete(id: string, actor: string | null, now: number): boolean
   events(personId: string, limit?: number): PersonEvent[]
   /** A pairing code for the person (stored hashed); the plain code is returned once. */
   issueCode(
@@ -427,6 +432,27 @@ export function sqlitePersonStore(sqlite: Database, ids: { next(): string }): Pe
       sqlite.query('UPDATE people SET updated_at = ? WHERE id = ?').run(now, r.person_id)
       event(r.person_id, 'unlink', actor, { platform: r.platform, nativeId: r.native_id }, now)
       return toAccount(accountQ.get(accountId) as AccountDb)
+    },
+    delete(id, actor, now) {
+      const p = get(id)
+      if (p === undefined) return false
+      const accounts = store.accounts(id)
+      sqlite.transaction(() => {
+        sqlite.query('DELETE FROM people_accounts WHERE person_id = ?').run(id)
+        sqlite.query('DELETE FROM people_link_codes WHERE person_id = ?').run(id)
+        sqlite.query('DELETE FROM people WHERE id = ?').run(id)
+        event(
+          id,
+          'delete',
+          actor,
+          {
+            displayName: p.displayName,
+            accounts: accounts.map((a) => ({ platform: a.platform, nativeId: a.nativeId })),
+          },
+          now,
+        )
+      })()
+      return true
     },
     setLabel(accountId, label, actor, now) {
       const r = accountQ.get(accountId)

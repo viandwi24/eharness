@@ -31,7 +31,7 @@ import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
 import { decideTool, isStaff, MEMBER_WORKER_TYPE } from './roles.ts'
 import {
-  PEOPLE_LINK_TOOL,
+  PEOPLE_ADMIN_TOOL,
   PEOPLE_TOOL,
   PERSON_NOTE_TOOL,
   REMINDER_TOOL,
@@ -68,7 +68,7 @@ export const CHANNEL_READ_TOOLS = [
  */
 /** Own writes allowed by rule; changing somebody's role always asks first (a "ya" in the chat). */
 export const CHANNEL_OWN_WRITE_TOOLS: readonly string[] = SELF_WRITE_TOOLS.filter(
-  (t) => t !== 'person_role' && t !== PEOPLE_LINK_TOOL,
+  (t) => t !== 'person_role' && t !== PEOPLE_ADMIN_TOOL,
 )
 
 export interface ChannelsPluginOptions {
@@ -810,11 +810,11 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
             ) {
               return undefined
             }
-            // the people directory: pairing is for anybody, edits for staff, links for the owner;
+            // the people directory: pairing is for anybody, edits for staff, owner decisions for the owner;
             // denied here so a request that would be refused never reaches an approval card
-            if (e.toolName === PEOPLE_TOOL || e.toolName === PEOPLE_LINK_TOOL) {
+            if (e.toolName === PEOPLE_TOOL || e.toolName === PEOPLE_ADMIN_TOOL) {
               const action = (e.input as { action?: unknown } | undefined)?.action
-              const needsOwner = e.toolName === PEOPLE_LINK_TOOL
+              const needsOwner = e.toolName === PEOPLE_ADMIN_TOOL
               const needsStaff = needsOwner || action !== 'pair'
               if (
                 (needsOwner && requester.role !== 'owner') ||
