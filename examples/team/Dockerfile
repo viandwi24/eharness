@@ -20,6 +20,8 @@ RUN cd examples/team/web && bun install --frozen-lockfile --ignore-scripts
 COPY tsconfig.json ./
 COPY src ./src
 COPY examples/team/web ./examples/team/web
+# the artifact kind registry is shared by the web and the server
+COPY examples/team/shared ./examples/team/shared
 # `eharness/client` is aliased to src/client, whose only runtime import (`ai`) must resolve from there
 RUN ln -s /app/examples/team/web/node_modules /app/node_modules \
   && cd examples/team/web && bun run build
@@ -52,6 +54,7 @@ COPY --from=deps /app ./
 COPY tsconfig.json ./
 COPY src ./src
 COPY examples/team/server ./examples/team/server
+COPY examples/team/shared ./examples/team/shared
 # the client of the Remote sandbox connector (`@eharness-examples/sandbox-server/client`)
 COPY examples/sandbox-server/src ./examples/sandbox-server/src
 COPY --from=web /app/examples/team/web/build ./examples/team/web/build
