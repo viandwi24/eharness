@@ -49,7 +49,7 @@ compare; 401 otherwise). Errors are `{ "error": "..." }`.
 | Endpoint | Meaning |
 |---|---|
 | `GET /healthz` | `{ ok: true }`, no auth |
-| `GET /v1/info` | `{ version: 1, python, pythonCommand, packages: [[name, version]], isolation: { isolated: true, label: "sandbox-server container" }, limits }` |
+| `GET /v1/info` | `{ version: 1, python, pythonCommand, packages: [[name, version]], isolation: { isolated, label }, limits }` |
 | `POST /v1/sessions` | `201 { id }` (128-bit hex). `429` at `SANDBOX_MAX_SESSIONS` |
 | `DELETE /v1/sessions/:id` | `204`; kills running commands, removes the directory |
 | `GET /v1/sessions/:id/files?path=` | file bytes; `404 file not found` when missing |
@@ -85,6 +85,7 @@ token, no query string).
 | `SANDBOX_MAX_FILE_MB` | 64 | largest upload/download through the API |
 | `SANDBOX_MAX_SESSIONS` | 32 | |
 | `SANDBOX_IDLE_MINUTES` | 30 | |
+| `SANDBOX_UID_BASE` | 20000 | first uid of the per-session pool (size `SANDBOX_MAX_SESSIONS`) |
 | `SANDBOX_OS` | auto | `off` skips the bubblewrap probe |
 
 ## Isolation notes
@@ -93,9 +94,28 @@ token, no query string).
   memory/cpu/pids limits, and on a network without internet egress (compose: `internal: true`).
   The OS sandbox (bubblewrap, no network) is probed at start and used only if the container allows
   user namespaces; otherwise the log says so and the container alone isolates.
-- Commands see only a safe subset of the environment (not `SANDBOX_TOKEN`), but a script runs as
-  the same user as the server, so it can read the server process's environment through `/proc`.
-  The token only grants more sandbox sessions inside the same container; do not reuse it elsewhere.
+- **One Linux user per session.** The image runs the server as root on purpose. Each session gets
+  a uid from a pool (`SANDBOX_UID_BASE`, default 20000, one per allowed session); its directory is
+  `0700` and owned by that uid, files written through `PUT /files` are chowned to it, and every
+  command runs through `setpriv --reuid --regid --clear-groups --no-new-privs`. A script of
+  session A therefore cannot read or write session B's directory, and cannot read the server's
+  environment (`/proc/1/environ` needs the same uid), so `SANDBOX_TOKEN` stays secret. On dispose
+  every process of the uid is killed before the directory is removed and the uid is reused.
+  Every process of the uid is also killed when a run ends (no background process survives a run),
+  and `PUT /files` is refused with 409 while a command runs, so the server never writes into a
+  directory a script can change at the same time.
+  Commands also get only a safe environment (`inheritEnv` is off), never the server's variables.
+- Root needs capabilities for this (compose: `cap_drop: ALL` plus `CHOWN SETUID SETGID KILL
+  DAC_OVERRIDE FOWNER`). Not root (dev on macOS, a container started with `--user`)? The server
+  logs `uid isolation off: sessions share one user ...`, and `/v1/info` reports
+  `isolation: { isolated: false, label: "sandbox-server, shared user (not isolated between
+  sessions)" }` (or `isolated: true` with an OS-sandbox label when bubblewrap works). The team's
+  `requireIsolation` refuses such a server.
+- The container is still the outer boundary. Run it with `--read-only`, a tmpfs for `/tmp`,
+  memory/cpu/pids limits, and on a network without internet egress (compose: `internal: true`).
+  The OS sandbox (bubblewrap, no network) is probed at start and used only if the container allows
+  user namespaces; otherwise per-session users and the container isolate. All sessions still share
+  the container's CPU, memory and network.
 - Packages come from `requirements.txt` at image build; there is no install endpoint (no
   network for scripts). Edit the list and rebuild to change the toolbox.
 

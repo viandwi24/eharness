@@ -35,7 +35,8 @@ describe('sandbox server', () => {
     expect((await fetch(`${server.url}/v1/info`)).status).toBe(401)
     const info = await probeRemoteSandbox(opts())
     expect(info.version).toBe(1)
-    expect(info.isolation.isolated).toBe(true)
+    // no OS sandbox here: only root on Linux (uid isolation) may claim isolation
+    expect(info.isolation.isolated).toBe(process.getuid?.() === 0 && process.platform === 'linux')
   })
 
   test('auth failure is readable', async () => {

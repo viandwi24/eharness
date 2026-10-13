@@ -34,7 +34,10 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=2g,mode=1777
+    # The server runs as root and gives each session its own Linux user (setpriv); it needs only
+    # these capabilities for that. Scripts run unprivileged (uid 20000+, no-new-privs).
     cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, KILL, DAC_OVERRIDE, FOWNER]
     security_opt: ['no-new-privileges:true']
     networks: [sandbox]
 

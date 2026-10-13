@@ -6,8 +6,19 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { chmod, lchown, lstat, mkdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { removeStaleScratch, type ScratchSandbox, scratchSandbox } from 'eharness/shell'
+
+import {
+  canIsolateUids,
+  createUidPool,
+  isolationInfo,
+  killUidArgv,
+  SHARED_USER_WARNING,
+  UID_ENV,
+} from './isolation.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -36,6 +47,15 @@ export interface ServerOptions {
   osSandbox?: boolean
   /** Paths commands cannot read (the server's own source). */
   denyRead?: string[]
+  /**
+   * One Linux user per session (needs root on Linux). Default: on when running as root on Linux.
+   * `false` forces the shared-user mode.
+   */
+  uidIsolation?: boolean
+  /** First uid of the per-session pool. Default 20000. */
+  uidBase?: number
+  /** The wrapper script (see wrapperScript). Default `/usr/local/lib/eh-sandbox/bash` (the image). */
+  shellWrapper?: string
   /** Idle sweep period. Default 30 s. */
   sweepMs?: number
   log?: (line: string) => void
@@ -101,6 +121,7 @@ async function probePython(
 
 interface Session {
   sandbox: ScratchSandbox
+  uid?: number
   lastUsed: number
   running: number
 }
@@ -111,7 +132,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const dataDir = options.dataDir ?? '/tmp/eh-sandboxes'
   const python = options.python ?? 'python3'
   const log = options.log ?? ((line: string) => console.log(line))
-  const { mkdir } = await import('node:fs/promises')
   await mkdir(dataDir, { recursive: true })
   const removed = await removeStaleScratch({ parent: dataDir, prefix: PREFIX, olderThanMs: 0 })
   if (removed > 0) log(`removed ${removed} stale scratch directories`)
@@ -144,12 +164,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     )
   }
 
+  // Per-session Linux users: only as root on Linux (setpriv drops privileges per command).
+  const shellWrapper = options.shellWrapper ?? '/usr/local/lib/eh-sandbox/bash'
+  const uidIsolation =
+    (options.uidIsolation ?? true) &&
+    canIsolateUids(process.platform, process.getuid?.()) &&
+    existsSync(shellWrapper)
+  const uidPool = createUidPool(options.uidBase ?? 20_000, limits.maxSessions)
+  if (uidIsolation) {
+    // 0711: sessions' uids may traverse (their own directory is 0700), nobody may list it.
+    await chmod(dataDir, 0o711)
+    log('uid isolation: on (one Linux user per session, privileges dropped with setpriv)')
+  } else {
+    log(SHARED_USER_WARNING)
+  }
+
   const info = {
     version: 1,
     python: probe.python,
     pythonCommand: python,
     packages: probe.packages,
-    isolation: { isolated: true, label: 'sandbox-server container' },
+    isolation: isolationInfo({ uids: uidIsolation, osSandbox }),
     limits: {
       cpuSeconds: limits.cpuSeconds,
       memoryMb: limits.memoryMb,
@@ -162,11 +197,37 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   }
 
+  const killUid = async (uid: number): Promise<void> => {
+    const [cmd, ...args] = killUidArgv(uid)
+    // two passes: a process may fork between the first signal and its death
+    for (let i = 0; i < 2; i++) await execFileAsync(cmd as string, args).catch(() => {})
+  }
+
+  /** Give a file and the directories above it (up to the root) to the session uid. */
+  const chownChain = async (s: Session, path: string): Promise<void> => {
+    if (s.uid === undefined) return
+    let p = join(s.sandbox.root, path)
+    while (p.length > s.sandbox.root.length) {
+      const st = await lstat(p)
+      if (st.isSymbolicLink()) throw new Error(`refusing to follow a symbolic link: ${path}`)
+      await lchown(p, s.uid, s.uid)
+      p = dirname(p)
+    }
+  }
+
   const dispose = async (id: string): Promise<boolean> => {
     const s = sessions.get(id)
     if (!s) return false
     sessions.delete(id)
-    await s.sandbox.dispose().catch(() => {})
+    if (s.uid !== undefined) {
+      // kill every process of the uid before the directory goes and before the uid is reused
+      await killUid(s.uid)
+      await s.sandbox.dispose().catch(() => {})
+      await killUid(s.uid)
+      uidPool.release(s.uid)
+    } else {
+      await s.sandbox.dispose().catch(() => {})
+    }
     return true
   }
 
@@ -184,33 +245,58 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   async function createSession(): Promise<Response> {
     if (sessions.size >= limits.maxSessions) return fail(429, 'too many sessions')
     const id = randomBytes(16).toString('hex')
+    let uid: number | undefined
+    let shell: string | undefined
+    if (uidIsolation) {
+      const got = uidPool.acquire()
+      if (got === null) return fail(429, 'too many sessions')
+      uid = got
+      shell = shellWrapper
+    }
     const env: Record<string, string> = {
+      // HOME, TMPDIR and MPLCONFIGDIR are set below, inside the session directory
       HOME: '/tmp',
-      TMPDIR: '/tmp',
-      MPLCONFIGDIR: '/tmp/.mpl',
+      ...(uid !== undefined ? { [UID_ENV]: String(uid) } : {}),
       MPLBACKEND: 'Agg',
       PYTHONDONTWRITEBYTECODE: '1',
       LANG: 'C.UTF-8',
       PATH: `${pyDir ? `${pyDir}:` : ''}${process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin'}`,
     }
     if (pyDir) env.VIRTUAL_ENV = pyDir.replace(/\/bin$/, '')
-    const sandbox = await scratchSandbox({
-      parent: dataDir,
-      prefix: PREFIX,
-      env,
-      os: {
-        enabled: osSandbox,
-        network: false,
-        denyRead: (options.denyRead ?? []).filter((p) => existsSync(p)),
-      },
-      limits: {
-        cpuSeconds: limits.cpuSeconds,
-        fileBytes: limits.fileMb * 1024 * 1024,
-        memoryBytes: limits.memoryMb * 1024 * 1024,
-        processes: limits.processes,
-      },
-    })
-    sessions.set(id, { sandbox, lastUsed: Date.now(), running: 0 })
+    let sandbox: ScratchSandbox
+    try {
+      sandbox = await scratchSandbox({
+        parent: dataDir,
+        prefix: PREFIX,
+        env,
+        shell,
+        // the server's own environment (SANDBOX_TOKEN) never reaches commands
+        inheritEnv: false,
+        os: {
+          enabled: osSandbox,
+          network: false,
+          denyRead: (options.denyRead ?? []).filter((p) => existsSync(p)),
+        },
+        limits: {
+          cpuSeconds: limits.cpuSeconds,
+          fileBytes: limits.fileMb * 1024 * 1024,
+          memoryBytes: limits.memoryMb * 1024 * 1024,
+          processes: limits.processes,
+        },
+      })
+      // `env` is read at every spawn: point the per-session paths at the (random) directory
+      env.HOME = sandbox.root
+      env.TMPDIR = sandbox.root
+      env.MPLCONFIGDIR = join(sandbox.root, '.mpl')
+      if (uid !== undefined) {
+        await lchown(sandbox.root, uid, uid)
+        await chmod(sandbox.root, 0o700)
+      }
+    } catch (error) {
+      if (uid !== undefined) uidPool.release(uid)
+      throw error
+    }
+    sessions.set(id, { sandbox, uid, lastUsed: Date.now(), running: 0 })
     return json(201, { id })
   }
 
@@ -225,12 +311,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           headers: { 'content-type': 'application/octet-stream' },
         })
       }
+      // uploads only between runs (see the kill at the end of `run`)
+      if (s.uid !== undefined && s.running > 0) return fail(409, 'a command is running')
       const max = limits.maxFileMb * 1024 * 1024
       const declared = Number(req.headers.get('content-length') ?? 0)
       if (declared > max) return fail(413, `file larger than ${limits.maxFileMb} MB`)
       const bytes = new Uint8Array(await req.arrayBuffer())
       if (bytes.byteLength > max) return fail(413, `file larger than ${limits.maxFileMb} MB`)
       await s.sandbox.writeBinaryFile({ path: checked.path, content: bytes })
+      await chownChain(s, checked.path)
       return new Response(null, { status: 204 })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -266,6 +355,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       env = {}
       for (const [k, v] of Object.entries(body.env)) {
         if (typeof v !== 'string') return fail(400, 'env must be an object of strings')
+        if (k === UID_ENV) return fail(400, `env ${UID_ENV} is reserved`)
         env[k] = v
       }
     }
@@ -328,6 +418,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           req.signal.removeEventListener('abort', onAbort)
           s.running--
           s.lastUsed = Date.now()
+          // no process of the session may outlive its run: the server writes and chowns files in
+          // the session directory between runs, and a leftover process could swap a directory
+          // for a symlink meanwhile
+          if (s.uid !== undefined && s.running === 0) await killUid(s.uid)
           try {
             controller.close()
           } catch {

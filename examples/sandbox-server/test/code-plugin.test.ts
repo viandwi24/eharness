@@ -51,7 +51,8 @@ describe.skipIf(!hasPython)('code() over the remote sandbox', () => {
         filesystem({ fs }),
         code({
           sandbox: () => remoteSandbox({ url: server.url, token: TOKEN }),
-          requireIsolation: true,
+          // the test server is not root/bubblewrap: it honestly reports isolated: false
+          requireIsolation: false,
         }),
       ],
     })

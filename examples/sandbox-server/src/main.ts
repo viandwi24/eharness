@@ -22,6 +22,7 @@ const server = await startServer({
   dataDir: process.env.SANDBOX_DATA ?? '/tmp/eh-sandboxes',
   python: process.env.PYTHON ?? 'python3',
   osSandbox: process.env.SANDBOX_OS !== 'off',
+  uidBase: num('SANDBOX_UID_BASE', 20_000),
   denyRead: [process.env.SANDBOX_APP_DIR ?? '/app'],
   limits: {
     cpuSeconds: num('SANDBOX_CPU_SECONDS', DEFAULT_LIMITS.cpuSeconds),
