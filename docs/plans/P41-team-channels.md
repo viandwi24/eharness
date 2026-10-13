@@ -853,3 +853,15 @@ Decisions and open points:
   `resolveIdentifier`) are charged but never held, so inbound handling is not delayed by a park.
 - Bucket sizes are conservative guesses; tune `rate.governor` on the real account and report the numbers.
 
+
+### Local state and isolation (repo hygiene)
+
+- Telegram login state is never a file: the MTProto client (mtcute) runs on `MemoryStorage`; the
+  session string lives only in the connection's sealed credential slot in the database; in-flight
+  logins are in memory per flow id. grammY keeps no files. The only file the channels code writes is
+  the dev `channel.key` next to the database (`data/`, git-ignored, mode 0600).
+- Every connection has its own client instance and storage, guarded by a DB lease, so two accounts
+  (or two bots) running at once never share state; a second process for the same session is refused.
+- If a file-backed store is ever added it must live under `data/telegram/<connectionId>/` — one folder
+  per connection, never the working directory. `.gitignore` blocks databases, `*.session`, `.mtcute/`
+  and example `data/` folders anywhere.

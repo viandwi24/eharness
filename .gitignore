@@ -43,3 +43,15 @@ examples/team/server/data/
 
 # eval run reports (examples/team/evals)
 examples/team/evals/results/
+
+# never commit local state of any example: databases, session/login caches, keys
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.session
+*.session-journal
+.mtcute/
+examples/*/server/data/
+examples/*/data/
