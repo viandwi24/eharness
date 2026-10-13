@@ -244,6 +244,30 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
       }
       return me
     }
+    // The session lives in memory only (no peer files): after a start, or for a chat joined since
+    // the dialogs were last read, mtcute knows no access hash for a chat id and refuses it ("not
+    // found in local cache"). Reading the dialogs fills the cache; at most once a minute.
+    let dialogsReadAt = 0
+    const readDialogs = async (): Promise<boolean> => {
+      if (Date.now() - dialogsReadAt < 60_000) return false
+      dialogsReadAt = Date.now()
+      await ready()
+      for await (const d of tg.iterDialogs({ archived: 'keep', limit: 1000 })) void d
+      return true
+    }
+    const peerUnknown = (error: unknown): boolean =>
+      /not found in local cache|PEER_ID_INVALID|CHANNEL_INVALID|CHAT_ID_INVALID/i.test(
+        error instanceof Error ? `${error.name} ${error.message}` : String(error),
+      )
+    /** Run `op`; a chat unknown to the peer cache gets one retry after the dialogs were read. */
+    const withPeer = async <T>(op: () => Promise<T>): Promise<T> => {
+      try {
+        return await op()
+      } catch (error) {
+        if (peerUnknown(error) && (await readDialogs())) return op()
+        throw error
+      }
+    }
     const client: TgUserClient = {
       async sendCode(phone) {
         const r = await tg.sendCode({ phone })
@@ -289,6 +313,7 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
       exportSession: () => tg.exportSession(),
       async listChats() {
         await ready()
+        dialogsReadAt = Date.now()
         const out: TgChat[] = []
         for await (const d of tg.iterDialogs({ archived: 'keep', limit: 1000 })) {
           const p = d.peer
@@ -427,6 +452,26 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
           ...(meta?.name === undefined ? {} : { name: meta.name }),
         }
       },
+    }
+    // every call that names a chat: a cache miss is healed once (nothing was sent when it failed)
+    const byChat = [
+      'history',
+      'messagesById',
+      'adminLog',
+      'forumTopics',
+      'members',
+      'sendText',
+      'sendFiles',
+      'editText',
+      'deleteMessages',
+      'pin',
+      'react',
+      'download',
+    ] as const
+    const methods = client as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>
+    for (const name of byChat) {
+      const op = methods[name] as (...args: unknown[]) => Promise<unknown>
+      methods[name] = (...args: unknown[]) => withPeer(() => op.apply(client, args))
     }
     return client
   }

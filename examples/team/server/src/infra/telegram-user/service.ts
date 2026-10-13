@@ -429,6 +429,34 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
             warn(`telegram-user: ${id} flood wait ${info.seconds}s (${info.text})`)
           },
           adminLogText: (chatId, limit) => adminLogText(id, chatId, limit),
+          // agent tools of the account (`list_dialogs`, `choose_chat`, `backfill`): the same
+          // effect as the Channels page, chosen chats stay observe-only
+          dialogsSeen: (list) => {
+            for (const d of list) if (d.kind !== 'dm') chats.upsertDialog(id, d, now())
+          },
+          chooseChat: async (chatId, days) => {
+            const d = (await adapter.dialogs(true)).find((x) => x.id === chatId)
+            if (d === undefined) {
+              return `ERROR: ${chatId} is not a group or channel of this account. list_dialogs shows the ones it is in; a chat joined seconds ago may need a moment.`
+            }
+            if (d.kind === 'dm') {
+              return 'ERROR: that is a person, not a group or channel. People reach the agent through linking on the Channels page.'
+            }
+            chats.upsertDialog(id, d, now())
+            const was = chats.isSelected(id, chatId)
+            if (!was) chats.setSelected(id, chatId, true, now())
+            if (days > 0) chats.setBackfillDays(id, chatId, days, now())
+            void e.backfill?.runUntilIdle().catch(() => undefined)
+            return `${was ? 'Already chosen' : 'Chosen'}: "${d.title}" (${chatId}), observe-only (stored and readable; no wake, no posting on its own).${days > 0 ? ` Reading its history back ${days} day(s) in the background through the rate-limit queue: it fills in over minutes, check with channel_read or chat_history.` : ' No history is read: only messages from now on.'}`
+          },
+          backfill: async (chatId, days) => {
+            if (!chats.isSelected(id, chatId)) {
+              return `ERROR: ${chatId} is not chosen for ingest. Choose it first with choose_chat (with backfill_days).`
+            }
+            chats.setBackfillDays(id, chatId, days, now())
+            void e.backfill?.runUntilIdle().catch(() => undefined)
+            return `Reading the history of ${chats.get(id, chatId)?.title ?? chatId} back ${days} day(s) in the background through the rate-limit queue. It fills in over minutes; check with channel_read or chat_history.`
+          },
           warn,
         },
       })
@@ -484,6 +512,14 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         ...(j.random === undefined ? {} : { random: j.random }),
       })
       e.backfill.queueGapFill()
+      // chats joined while the server was down are listed on the Channels page (not chosen); this
+      // also fills mtcute's peer cache, which lives in memory only
+      void adapter
+        .dialogs(true)
+        .then((list) => {
+          for (const d of list) if (d.kind !== 'dm') chats.upsertDialog(id, d, now())
+        })
+        .catch((error) => warn(`telegram-user: dialogs of ${id} not read: ${String(error)}`))
       if (j.backfillEveryMs !== 0) e.backfill.start(j.backfillEveryMs)
       if (j.adminLogTickMs !== 0) e.adminLog.start(j.adminLogTickMs)
       e.leaseTimer = setInterval(

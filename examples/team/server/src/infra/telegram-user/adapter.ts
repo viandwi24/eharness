@@ -81,6 +81,12 @@ export interface UserAdapterHooks {
   onFlood?(info: { chatId: string | undefined; seconds: number; until: number; text: string }): void
   /** The admin log of a chat, as text (the `admin_log` action). */
   adminLogText?(chatId: string, limit: number): string
+  /** The live dialog list was read: record the chats (not chosen) so the Channels page lists them. */
+  dialogsSeen?(list: TgChat[]): void
+  /** Choose a chat for ingest (observe-only) and back-fill `days` (0 = none); a sentence for the model. */
+  chooseChat?(chatId: string, days: number): Promise<string>
+  /** Back-fill a chosen chat for `days`; a sentence for the model. */
+  backfill?(chatId: string, days: number): Promise<string>
   warn?(message: string): void
 }
 
@@ -545,13 +551,100 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     }
   }
 
+  const daysField = z
+    .number()
+    .int()
+    .min(0)
+    .max(3650)
+    .describe(
+      'REQUIRED: how many days back to read the history (0 = none, from now on only). Ask the person when they did not say.',
+    )
+  const chatField = z
+    .string()
+    .min(1)
+    .describe('The chat id, as `list_dialogs` shows it (e.g. -1001234567890).')
+
   const actions: NativeAction[] = [
+    {
+      name: 'list_dialogs',
+      risk: 'read',
+      summary:
+        'Every chat, group and channel this Telegram account is a member of, read live from Telegram (also ones joined just now), with whether each is chosen for ingest. Only chosen chats can be read; choose one with choose_chat.',
+      schema: z.object({
+        query: z
+          .string()
+          .max(100)
+          .optional()
+          .describe('Only titles or usernames containing this text.'),
+        kind: z
+          .enum(['group', 'channel', 'all'])
+          .optional()
+          .describe('Default all (people are left out).'),
+      }),
+      run: async (input) => {
+        const list = await dialogs(true)
+        hooks.dialogsSeen?.(list)
+        const q = typeof input.query === 'string' ? input.query.trim().toLowerCase() : ''
+        const kind = input.kind ?? 'all'
+        const rows = list
+          .filter((d) => d.kind !== 'dm')
+          .filter((d) => kind === 'all' || d.kind === kind)
+          .filter(
+            (d) =>
+              q === '' ||
+              d.title.toLowerCase().includes(q) ||
+              (d.username ?? '').toLowerCase().includes(q),
+          )
+        if (rows.length === 0) {
+          return q === ''
+            ? 'This account is in no groups or channels.'
+            : `No group or channel of this account matches "${input.query}".`
+        }
+        const shown = rows.slice(0, 200)
+        return [
+          `${rows.length} group(s) and channel(s)${rows.length > shown.length ? ` (first ${shown.length})` : ''}:`,
+          ...shown.map(
+            (d) =>
+              `${d.id}  ${d.title}${d.username === undefined ? '' : ` @${d.username}`} (${d.kind}${d.forum ? ', forum' : ''}${d.admin ? ', admin' : ''}${d.members === undefined ? '' : `, ${d.members} members`}) ${chats.isSelected(connectionId, d.id) ? 'CHOSEN' : 'not chosen'}`,
+          ),
+        ].join('\n')
+      },
+    },
+    {
+      name: 'choose_chat',
+      risk: 'write',
+      summary:
+        'Choose a group or channel of this account for ingest (observe-only: messages are stored and readable, the agent never wakes or posts there on its own), and read its history back `backfill_days` days. Both the chat and the range are required.',
+      schema: z.object({ chat: chatField, backfill_days: daysField }),
+      run: async (input) => {
+        if (hooks.chooseChat === undefined) return 'ERROR: choosing chats is not available here.'
+        return hooks.chooseChat(String(input.chat).trim(), Number(input.backfill_days))
+      },
+    },
+    {
+      name: 'backfill',
+      risk: 'write',
+      summary:
+        'Read the history of a chosen chat back `days` days (into the stored log, then readable with channel_read and chat_history). Runs in the background through the rate-limit queue.',
+      schema: z.object({
+        chat: chatField,
+        days: daysField
+          .min(1)
+          .describe(
+            'REQUIRED: how many days back (1 to 3650). Ask the person when they did not say.',
+          ),
+      }),
+      run: async (input) => {
+        if (hooks.backfill === undefined) return 'ERROR: backfill is not available here.'
+        return hooks.backfill(String(input.chat).trim(), Number(input.days))
+      },
+    },
     {
       name: 'list_chats',
       risk: 'read',
       local: true,
       summary:
-        'List the chats this account has chosen for ingest (and whether it is an admin there).',
+        'List the chats this account has chosen for ingest (and whether it is an admin there). For every chat the account is in, use list_dialogs.',
       schema: z.object({}),
       run: async () => {
         const list = chats.selected(connectionId)

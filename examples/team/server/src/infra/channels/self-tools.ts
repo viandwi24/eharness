@@ -25,6 +25,7 @@ import type { ChannelGateway, PersonView, Requester } from './gateway.ts'
 import { flat, localTime, personLabel, renderLinePrefix, timeLine } from './header.ts'
 import type { LogMessage } from './messages.ts'
 import type { NodeRow } from './model.ts'
+import { nativeToolName } from './policy.ts'
 import { absoluteTime, misusedMessage, reminderText } from './reminders.ts'
 import { isStaff } from './roles.ts'
 import { resolveWindow, type TimeWindow } from './time.ts'
@@ -237,8 +238,18 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     let base: NodeRow | undefined
     if (input.chat !== undefined) {
       base = gw.nodeOf(connectionId, input.chat)
-      if (base === undefined)
-        return `"${input.chat}" is not a chat of ${connectionId}. Use channel_describe to list them.`
+      if (base === undefined) {
+        // a platform that can list every chat of the account (a Telegram account) says how to add one
+        const adapter = gw.adapter(connectionId)
+        const lists = adapter?.actions?.some((a) => a.name === 'list_dialogs') === true
+        const chooses = adapter?.actions?.some((a) => a.name === 'choose_chat') === true
+        const platform = adapter?.platform ?? 'channel'
+        return `"${input.chat}" is not a chat of ${connectionId} that I ingest. Use channel_describe to list them.${
+          lists
+            ? ` The account may be in it without it being chosen: ${nativeToolName(platform, 'list_dialogs')} lists every chat of the account${chooses ? `, and ${nativeToolName(platform, 'choose_chat')} adds one (with backfill_days)` : ''} (find them with tool_search if they are not loaded).`
+            : ''
+        }`
+      }
     } else if (current !== undefined && current.connectionId === connectionId) {
       base = gw.roomOf(current.node)
     } else {

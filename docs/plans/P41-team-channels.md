@@ -843,6 +843,14 @@ Built (example only, `src/` of the library unchanged):
 - `channel_describe` / `channel_status` print the park and the limits.
 - Tests (written, not run): `server/test/channels-governor.test.ts`. No tests for `infra/telegram-user/**`
   (manual only).
+- Account discovery (production feedback): the account's native actions also include `list_dialogs`
+  (read, governed: every group and channel of the account, live, chosen or not), `choose_chat` (write:
+  choose for ingest, observe-only, with a REQUIRED `backfill_days`) and `backfill` (write, REQUIRED `days`):
+  the same effect as the Channels page. Dialogs are read once per start (new chats listed, not chosen).
+  The mtcute session keeps peers in memory only, so a call naming a chat whose access hash is unknown
+  reads the dialogs once (at most once a minute) and retries. Forum topic titles are read from the forum
+  (`forumTopics`, governed, once per topic per 10 minutes) and given to the gateway as `node.updated`.
+  An unknown chat in a generic tool points the model to `list_dialogs` / `choose_chat`.
 
 Decisions and open points:
 
