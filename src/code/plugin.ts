@@ -11,6 +11,7 @@ import { z } from 'zod/v4'
 import {
   definePlugin,
   errorText,
+  foldSegment,
   type HarnessContext,
   HarnessError,
   type HarnessPlugin,
@@ -36,6 +37,7 @@ import {
   DEFAULT_CODE_IGNORE,
   DEFAULT_CODE_LIMITS,
   type FilePolicyLike,
+  SandboxListingError,
   type SkippedFile,
   type SyncOutReport,
   sandboxPath,
@@ -84,7 +86,7 @@ export interface CodeOptions {
   /** Prefixes of the virtual file system that are synced. Default `[{ virtual: '/work/' }]`. */
   mounts?: CodeMount[]
   python?: {
-    /** Interpreter inside the sandbox when no environment is built. Default `'python3'`. */
+    /** Interpreter inside the sandbox when no environment is built: ONE executable (name or path, quoted as a whole; no arguments). Default `'python3'`. */
     command?: string
     /** Build a base environment from these requirement lines (needs `envRoot` and `installer`). */
     requirements?: string[]
@@ -157,6 +159,11 @@ function isolationOf(sandbox: CodeSandbox): { isolated: boolean; label: string }
 function osSandboxOn(sandbox: CodeSandbox): boolean {
   const state = (sandbox as { state?: () => { enabled: boolean } }).state
   return typeof state === 'function' && state.call(sandbox).enabled
+}
+
+/** Case-insensitive, NFC-folded form of a path (the filePolicy folding rule). */
+function foldedPath(path: string): string {
+  return path.split('/').filter(Boolean).map(foldSegment).join('/')
 }
 
 function list(items: readonly string[], max = 20): string {
@@ -295,7 +302,9 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
       let currentPython = python
       const userAccess = options.access
       const access = async (path: string, op: 'read' | 'write' | 'delete'): Promise<boolean> => {
-        if (path === listPath && op !== 'read') return false
+        if (op !== 'read' && listPath !== undefined && foldedPath(path) === foldedPath(listPath)) {
+          return false
+        }
         return userAccess === undefined ? true : await userAccess(path, op, context)
       }
       const envs = createEnvironments(
@@ -412,10 +421,13 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
           } catch (error) {
             return stopped(error)
           }
+          // `./` keeps a script name that starts with `-` from being parsed as an option; HOME is
+          // absolute (a relative HOME breaks as soon as a script changes directory).
           const command = [
+            `mkdir -p -- ${shellQuote(HOME_DIR)}; HOME="$PWD/${HOME_DIR}"`,
             shellQuote(env.python),
             '-E -s -B -u',
-            shellQuote(scriptPath),
+            shellQuote(`./${scriptPath}`),
             ...(input.args ?? []).map(shellQuote),
           ].join(' ')
           const result = await bridge.run(command, {
@@ -423,7 +435,6 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
               PYTHONDONTWRITEBYTECODE: '1',
               MPLBACKEND: 'Agg',
               PYTHONUNBUFFERED: '1',
-              HOME: HOME_DIR,
             },
             timeoutMs: timeout,
             ...(abortSignal === undefined ? {} : { signal: abortSignal }),
@@ -440,6 +451,9 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
               report = await bridge.syncOut(succeeded || writeBack === 'always')
             } catch (error) {
               bridge.reset()
+              if (error instanceof SandboxListingError) {
+                return `ERROR: listing the sandbox files failed; nothing was saved. (${error.message})`
+              }
               return stopped(error)
             }
           }

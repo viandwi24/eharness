@@ -82,7 +82,9 @@ export function fakeSandbox(init: Partial<FakeSandbox> = {}): FakeSandbox {
       sb.files.set(path, enc.encode(content))
       if (!path.startsWith('.eh-code/')) sb.uploads.push(path)
     },
-    run: async ({ command }) => {
+    run: async (call) => {
+      // installer commands start with `mkdir -p -- <envRoot> && cd <envRoot> && `
+      const command = call.command.replace(/^mkdir -p -- '[^']*' && cd '[^']*' && /, '')
       sb.commands.push(command)
       const tokens = split(command)
       if (command.includes('.eh-code/list.py')) {
@@ -103,6 +105,7 @@ export function fakeSandbox(init: Partial<FakeSandbox> = {}): FakeSandbox {
           .map(([path, b]) => ({ path, size: b.length, sha1: sha1(b) }))
         return { exitCode: 0, stdout: JSON.stringify(rows), stderr: '' }
       }
+      if (tokens[0] === 'find') return { exitCode: 0, stdout: '', stderr: '' }
       if (tokens[0] === 'rm' && tokens[1] === '-f') {
         for (const p of tokens.slice(3)) sb.files.delete(p)
         return { exitCode: 0, stdout: '', stderr: '' }
@@ -124,11 +127,11 @@ export function fakeSandbox(init: Partial<FakeSandbox> = {}): FakeSandbox {
         delete sb.failSpawn
         throw error
       }
-      const t = split(command)
+      const t = split(command.replace(/^mkdir -p -- \S+; HOME="[^"]*" /, ''))
       const flagsEnd = t.findIndex((x, i) => i > 0 && !x.startsWith('-'))
       const call: ScriptCall = {
         python: t[0] as string,
-        script: t[flagsEnd] as string,
+        script: (t[flagsEnd] as string).replace(/^\.\//, ''),
         args: t.slice(flagsEnd + 1),
         env: env ?? {},
         command,
@@ -166,4 +169,16 @@ export function fakeSandbox(init: Partial<FakeSandbox> = {}): FakeSandbox {
 export const text = (sb: FakeSandbox, path: string): string | undefined => {
   const b = sb.files.get(path)
   return b === undefined ? undefined : dec.decode(b)
+}
+
+/** Wrap `run` of a fake: `fn` gets the options and the original `run`. */
+export function wrapRun(
+  sb: FakeSandbox,
+  fn: (
+    options: { command: string },
+    original: FakeSandbox['run'],
+  ) => ReturnType<FakeSandbox['run']>,
+): void {
+  const original = sb.run.bind(sb)
+  Object.assign(sb, { run: (options: { command: string }) => fn(options, original) })
 }

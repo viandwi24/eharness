@@ -202,6 +202,9 @@ export interface SyncedSandboxOptions {
   listCommand?: string | (() => string)
 }
 
+/** The listing of the sandbox's files failed (sync-out): no file was written back. */
+export class SandboxListingError extends Error {}
+
 /** Quote a string for a POSIX shell. */
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
@@ -326,22 +329,30 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
     return best
   }
 
+  /** Remove files in the sandbox; a failed removal marks the bridge dirty (full wipe on the next sync-in). */
   async function removeInSandbox(paths: string[]): Promise<void> {
     for (let i = 0; i < paths.length; i += 50) {
       const batch = paths.slice(i, i + 50)
-      await sandbox.run({
-        command: `rm -f -- ${batch.map((p) => shellQuote(sandboxPath(p))).join(' ')}`,
-      })
+      try {
+        const result = await sandbox.run({
+          command: `rm -f -- ${batch.map((p) => shellQuote(sandboxPath(p))).join(' ')}`,
+        })
+        if (result.exitCode !== 0) dirty = true
+      } catch {
+        dirty = true
+      }
     }
   }
 
-  async function ensureMarker(): Promise<void> {
+  /** Returns true when the marker did not match (first run or a replaced sandbox). */
+  async function ensureMarker(): Promise<boolean> {
     const found = await sandbox.readTextFile({ path: MARKER_PATH })
-    if (markerId !== undefined && found === markerId) return
+    if (markerId !== undefined && found === markerId) return false
     manifest.clear()
     markerId = crypto.randomUUID()
     await sandbox.writeTextFile({ path: LIST_SCRIPT_PATH, content: LIST_SCRIPT })
     await sandbox.writeTextFile({ path: MARKER_PATH, content: markerId })
+    return true
   }
 
   /** Files of the sandbox under the mounts (or only `only`), ignore patterns applied by the helper. */
@@ -359,6 +370,9 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
         }
       }
     } else {
+      // The helper and its arguments live in a directory the script can write: rewrite both before
+      // every listing so a forged lister never runs, and run it isolated (`-I`).
+      await sandbox.writeTextFile({ path: LIST_SCRIPT_PATH, content: LIST_SCRIPT })
       await sandbox.writeTextFile({
         path: LIST_ARGS_PATH,
         content: JSON.stringify({
@@ -368,20 +382,16 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
         }),
       })
       const result = await sandbox.run({
-        command: `${listCommand()} -E -s ${shellQuote(LIST_SCRIPT_PATH)} ${shellQuote(LIST_ARGS_PATH)}`,
+        command: `${shellQuote(listCommand())} -I ${shellQuote(LIST_SCRIPT_PATH)} ${shellQuote(LIST_ARGS_PATH)}`,
       })
       if (result.exitCode !== 0) {
-        // plain-error: sandbox I/O failure, caught by run_python and reported as `ERROR: …`
-        throw new Error(
-          `listing the sandbox files failed: ${(result.stderr || result.stdout).slice(-300)}`,
-        )
+        throw new SandboxListingError((result.stderr || result.stdout).slice(-300))
       }
       let rows: unknown
       try {
         rows = JSON.parse(result.stdout)
       } catch {
-        // plain-error: sandbox I/O failure, caught by run_python and reported as `ERROR: …`
-        throw new Error('listing the sandbox files failed: the helper printed no JSON')
+        throw new SandboxListingError('the helper printed no JSON')
       }
       for (const row of rows as Array<{ path: string; size: number; sha1: string }>) {
         out.set(`/${row.path}`, { size: row.size, sha1: row.sha1 })
@@ -396,13 +406,23 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
   }
 
   async function syncIn(): Promise<SyncInReport> {
-    await ensureMarker()
+    if (await ensureMarker()) dirty = true
     if (dirty) {
-      dirty = false
       manifest.clear()
       const dirs = mounts.filter((m) => m.virtual !== '/').map((m) => shellQuote(mountDir(m)))
       if (dirs.length > 0) await sandbox.run({ command: `rm -rf -- ${dirs.join(' ')}` })
+      if (mounts.some((m) => m.virtual === '/')) {
+        await sandbox.run({
+          command: 'find . -mindepth 1 -maxdepth 1 ! -name .eh-code -exec rm -rf {} +',
+        })
+      }
+      dirty = false
     }
+    // Symlinks are never syncable: a script may have planted one that points out of the root.
+    // Remove them before anything is uploaded (the host-side writes must not follow them).
+    await sandbox.run({
+      command: `find ${mounts.map((m) => shellQuote(mountDir(m))).join(' ')} -type l -delete 2>/dev/null; true`,
+    })
     const full = manifest.size === 0
     const notCopied: SkippedFile[] = []
     const wanted: CodeFileMeta[] = []
@@ -519,13 +539,22 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
     }
     let count = 0
     for (const { path, op } of work) {
+      try {
+        await writeBackOne(path, op)
+      } catch (error) {
+        skip(path, `could not be saved: ${errorText(error)}`)
+      }
+    }
+    return report
+
+    async function writeBackOne(path: string, op: 'write' | 'delete'): Promise<void> {
       if (count >= limits.maxWriteBackFiles) {
         skip(path, `too many files changed (limit ${limits.maxWriteBackFiles})`)
-        continue
+        return
       }
       count++
       const mount = mountOf(path)
-      if (mount === undefined) continue
+      if (mount === undefined) return
       if (op === 'delete') {
         if (mount.readonly === true || policy?.isReadonly(path) === true) {
           skip(path, 'read-only')
@@ -546,7 +575,7 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
             skip(path, 'changed in the file system while the code ran')
           }
         }
-        continue
+        return
       }
       const now = listing.get(path) as { size: number; sha1: string }
       if (!nameSupported(path)) {
@@ -561,7 +590,7 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
         skip(path, `larger than ${megabytes(limits.maxFileBytes)}`)
       } else {
         const content = await sandbox.readBinaryFile({ path: sandboxPath(path) })
-        if (content === null) continue
+        if (content === null) return
         const text = textOf(content)
         const ifVersion = manifest.get(path)?.fsVersion ?? null
         let result: Awaited<ReturnType<CodeFileSystem['write']>>
@@ -569,7 +598,7 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
           result = await fs.write(path, text, { ifVersion })
         } else if (fs.writeBytes === undefined) {
           skip(path, 'binary files are not supported by this file system')
-          continue
+          return
         } else {
           const mediaType = mediaTypeOf(path)
           result = await fs.writeBytes(path, content, {
@@ -585,7 +614,6 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
         }
       }
     }
-    return report
   }
 
   async function run(command: string, opts: SandboxRunOptions): Promise<SandboxRunResult> {

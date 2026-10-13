@@ -9,7 +9,7 @@ import { localSandbox } from '../shell/sandbox-local.ts'
 import { type ScriptedStep, scriptedModel } from '../testing/index.ts'
 import { code } from './index.ts'
 import type { CodeOptions, CodeSandboxService } from './plugin.ts'
-import { type FakeSandbox, fakeSandbox, text } from './test-kit.ts'
+import { type FakeSandbox, fakeSandbox, text, wrapRun } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const enc = new TextEncoder()
@@ -86,7 +86,6 @@ describe('run_python', () => {
       expect(c.env).toMatchObject({
         MPLBACKEND: 'Agg',
         PYTHONDONTWRITEBYTECODE: '1',
-        HOME: '.eh-code/home',
       })
       const csv = new TextDecoder().decode(files.get('work/a.csv'))
       files.set('work/out.txt', enc.encode(`rows=${csv.trim().split('\n').length}`))
@@ -111,7 +110,7 @@ describe('run_python', () => {
     expect(r.out).toHaveLength(2)
     expect(sandbox.uploads).toEqual(['work/a.py', 'work/d.csv'])
     expect(
-      sandbox.commands.filter((c) => c.startsWith("'python3' -E -s -B -u 'work/a.py'")),
+      sandbox.commands.filter((c) => c.includes(`'python3' -E -s -B -u './work/a.py'`)),
     ).toHaveLength(2)
   })
 
@@ -681,5 +680,37 @@ describe.skipIf(!python)('real localSandbox', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('hardening (review findings)', () => {
+  test('the script is passed as ./path, so a leading dash is never an option; HOME is absolute', async () => {
+    const sandbox = fakeSandbox()
+    const r = await exec(
+      [run({ file: '/work/-x.py' }), run({ code: 'print(1)' })],
+      { sandbox },
+      { '/work/-x.py': 'pass' },
+    )
+    expect(r.out).toHaveLength(2)
+    const runs = sandbox.commands.filter((c) => c.includes('-E -s -B -u'))
+    expect(runs[0]).toContain(`-E -s -B -u './work/-x.py'`)
+    expect(runs[1]).toContain(`-E -s -B -u './.eh-code/inline.py'`)
+    expect(runs[0]).toContain(`HOME="$PWD/.eh-code/home"`)
+  })
+
+  test('a listing failure after the run reports that nothing was saved, with the cause', async () => {
+    const sandbox = fakeSandbox()
+    let started = false
+    sandbox.onScript = () => {
+      started = true
+      return { exitCode: 0, output: '' }
+    }
+    wrapRun(sandbox, async (o, orig) =>
+      started && o.command.includes('list.py')
+        ? { exitCode: 1, stdout: '', stderr: 'no python' }
+        : orig(o as never),
+    )
+    const r = await exec([run({ code: 'pass' })], { sandbox })
+    expect(r.out[0]).toBe('ERROR: listing the sandbox files failed; nothing was saved. (no python)')
   })
 })

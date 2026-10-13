@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { inMemoryFs } from '../filesystem/memory.ts'
 import { type FilePolicyLike, type SyncedSandbox, syncedSandbox } from './sync.ts'
-import { fakeSandbox, text } from './test-kit.ts'
+import { fakeSandbox, text, wrapRun } from './test-kit.ts'
 
 const enc = new TextEncoder()
 
@@ -323,4 +323,94 @@ test('exclusive sections run one at a time', async () => {
   })
   await Promise.all([slow, fast])
   expect(order).toEqual(['a-start', 'a-end', 'b'])
+})
+
+describe('hardening (review findings)', () => {
+  test('sync-in removes symlinks under the mount dirs before uploading', async () => {
+    const { sandbox, bridge } = setup({ '/work/a.txt': '1' }, { mounts: [{ virtual: '/work/' }] })
+    await bridge.syncIn()
+    const find = sandbox.commands.find((c) => c.startsWith('find '))
+    expect(find).toBe("find 'work' -type l -delete 2>/dev/null; true")
+    expect(sandbox.commands.indexOf(find as string)).toBeLessThan(
+      sandbox.commands.length, // ran, and before the listing that follows the upload
+    )
+  })
+
+  test('the lister and its args are rewritten before every listing; run isolated and quoted', async () => {
+    const { sandbox, bridge } = setup(
+      { '/work/a.txt': '1' },
+      { listCommand: '/opt/my py/bin/python' },
+    )
+    await bridge.syncIn()
+    sandbox.files.set('.eh-code/list.py', enc.encode('print("forged")'))
+    await cycle(bridge)
+    expect(text(sandbox, '.eh-code/list.py')).toContain('hashlib')
+    const listing = sandbox.commands.filter((c) => c.includes('.eh-code/list.py'))
+    expect(listing.length).toBeGreaterThan(0)
+    for (const c of listing)
+      expect(c.startsWith("'/opt/my py/bin/python' -I '.eh-code/list.py'")).toBe(true)
+  })
+
+  test('marker mismatch wipes the mount dirs: stale files are not resurrected as created', async () => {
+    const { sandbox, bridge } = setup({ '/work/a.txt': '1' })
+    await bridge.syncIn()
+    sandbox.files.set('.eh-code/marker', enc.encode('another-sandbox'))
+    sandbox.files.set('work/stale.txt', enc.encode('old'))
+    const { out } = await cycle(bridge)
+    expect(sandbox.files.has('work/stale.txt')).toBe(false)
+    expect(out.saved).toEqual([])
+  })
+
+  test('a "/" mount wipes everything except .eh-code', async () => {
+    const { sandbox, bridge } = setup({}, { mounts: [{ virtual: '/' }] })
+    await bridge.syncIn()
+    expect(sandbox.commands).toContain(
+      'find . -mindepth 1 -maxdepth 1 ! -name .eh-code -exec rm -rf {} +',
+    )
+  })
+
+  test('a failed write of one file does not hide the others; nothing is claimed unsaved after a write', async () => {
+    const { fs, sandbox, bridge } = setup({ '/work/a.txt': '1' })
+    await bridge.syncIn()
+    sandbox.files.set('work/b.txt', enc.encode('b'))
+    sandbox.files.set('work/c.txt', enc.encode('c'))
+    const write = fs.write.bind(fs)
+    fs.write = async (path, content, opts) => {
+      if (path === '/work/b.txt') throw new Error('disk full')
+      return write(path, content, opts)
+    }
+    const out = await bridge.syncOut(true)
+    expect(out.saved).toEqual(['/work/c.txt'])
+    expect(out.notSaved).toEqual([{ path: '/work/b.txt', reason: 'could not be saved: disk full' }])
+  })
+
+  test('a failing listing throws the dedicated error', async () => {
+    const { sandbox, bridge } = setup({ '/work/a.txt': '1' })
+    await bridge.syncIn()
+    sandbox.onCommand = undefined
+    wrapRun(sandbox, async (o, orig) =>
+      o.command.includes('list.py')
+        ? { exitCode: 1, stdout: '', stderr: 'boom' }
+        : orig(o as never),
+    )
+    await expect(bridge.syncOut(true)).rejects.toThrow('boom')
+  })
+
+  test('a failed removal marks the bridge dirty: the next sync-in wipes the mount dirs', async () => {
+    const { fs, sandbox, bridge } = setup({ '/work/a.txt': '1', '/work/b.txt': '2' })
+    await bridge.syncIn()
+    await fs.delete('/work/b.txt')
+    let failing = true
+    wrapRun(sandbox, async (o, orig) =>
+      failing && o.command.startsWith('rm -f')
+        ? { exitCode: 1, stdout: '', stderr: 'denied' }
+        : orig(o as never),
+    )
+    await bridge.syncIn()
+    failing = false
+    sandbox.commands.length = 0
+    const r = await bridge.syncIn()
+    expect(sandbox.commands).toContain("rm -rf -- 'work'")
+    expect(r.full).toBe(true)
+  })
 })

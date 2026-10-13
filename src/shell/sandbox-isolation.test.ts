@@ -72,13 +72,53 @@ describe('read policy and generation', () => {
     expect(joined).toContain(`--ro-bind /dev/null ${file}`)
     const tmpfs = argv.indexOf('--tmpfs', argv.indexOf('--tmpfs') + 1)
     expect(argv[tmpfs + 1]).toBe(home)
-    expect(argv.indexOf('--bind')).toBeGreaterThan(tmpfs)
-    expect(argv.indexOf('--bind')).toBeGreaterThan(argv.indexOf('/dev/null'))
-    expect(argv.slice(argv.indexOf('--bind'), argv.indexOf('--bind') + 3)).toEqual([
-      '--bind',
+    // the root is re-bound (writable) after the deny that hides its parent
+    const rebind = argv.lastIndexOf('--bind')
+    expect(rebind).toBeGreaterThan(tmpfs)
+    expect(rebind).toBeGreaterThan(argv.indexOf('/dev/null'))
+    expect(argv.slice(rebind, rebind + 3)).toEqual(['--bind', root, root])
+  })
+
+  test('bubblewrap: a deny inside the root or allowWrite comes after the writable binds', async () => {
+    const base = await temp()
+    const root = join(base, 'proj')
+    const extra = join(base, 'extra')
+    await mkdir(join(root, 'secret'), { recursive: true })
+    await mkdir(join(extra, 'keys'), { recursive: true })
+    const argv = wrapCommand('true', {
       root,
+      allowWrite: [extra],
+      network: false,
+      kind: 'bubblewrap',
+      toolPath: 'bwrap',
+      denyRead: [join(root, 'secret'), join(extra, 'keys'), join(base, 'missing')],
+    })
+    const at = (flag: string, path: string): number =>
+      argv.findIndex((a, i) => a === flag && argv[i + 1] === path)
+    expect(at('--tmpfs', join(root, 'secret'))).toBeGreaterThan(at('--bind', root))
+    expect(at('--tmpfs', join(extra, 'keys'))).toBeGreaterThan(at('--bind', extra))
+    expect(argv).not.toContain(join(base, 'missing'))
+  })
+
+  test('bubblewrap: re-allowed paths that do not exist are skipped', async () => {
+    const base = await temp()
+    const home = join(base, 'home')
+    const root = join(home, 'proj')
+    await mkdir(root, { recursive: true })
+    const argv = wrapCommand('true', {
       root,
-    ])
+      allowWrite: [],
+      network: false,
+      kind: 'bubblewrap',
+      toolPath: 'bwrap',
+      denyReadHome: true,
+      allowRead: [join(home, 'nope')],
+      home,
+    })
+    expect(argv).not.toContain(join(home, 'nope'))
+    expect(argv.lastIndexOf('--bind')).toBeGreaterThan(
+      argv.indexOf('--tmpfs', argv.indexOf('--tmpfs') + 1),
+    )
   })
 })
 
@@ -220,5 +260,19 @@ describe('scratch sandboxes', () => {
     expect(existsSync(join(parent, 'eh-code-new'))).toBe(true)
     expect(existsSync(join(parent, 'other-old'))).toBe(true)
     expect(await removeStaleScratch({ parent: join(parent, 'missing') })).toBe(0)
+  })
+})
+
+describe('scratch sandbox disposal', () => {
+  test('after dispose, file operations and spawn throw', async () => {
+    const sb = await scratchSandbox({ parent: await temp() })
+    await sb.writeTextFile({ path: 'a.txt', content: 'x' })
+    await sb.dispose()
+    await expect(sb.writeTextFile({ path: 'b.txt', content: 'x' })).rejects.toThrow(
+      'sandbox disposed',
+    )
+    await expect(sb.readTextFile({ path: 'a.txt' })).rejects.toThrow('sandbox disposed')
+    await expect(sb.spawn({ command: 'true' })).rejects.toThrow('sandbox disposed')
+    await sb.dispose()
   })
 })

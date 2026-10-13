@@ -131,7 +131,16 @@ export function createEnvironments(
     cmd: string,
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     try {
-      return await sandbox.run({ command: cmd, abortSignal: AbortSignal.timeout(15 * 60_000) })
+      // Installer commands run with envRoot as the working directory, so files of the work
+      // directory (or whatever the installer's cwd is) cannot be picked up by pip or Python.
+      const cwd =
+        sandbox === installer && envRoot !== undefined
+          ? `mkdir -p -- ${shellQuote(envRoot)} && cd ${shellQuote(envRoot)} && `
+          : ''
+      return await sandbox.run({
+        command: `${cwd}${cmd}`,
+        abortSignal: AbortSignal.timeout(15 * 60_000),
+      })
     } catch (error) {
       throw new EnvironmentError(errorText(error))
     }
@@ -159,7 +168,7 @@ export function createEnvironments(
     if (baseKey !== undefined) return baseKey
     const { installer: ins } = requireBuilder()
     const version = (
-      await must(ins, `${shellQuote(command)} -c ${shellQuote(VERSION_SCRIPT)}`)
+      await must(ins, `${shellQuote(command)} -I -c ${shellQuote(VERSION_SCRIPT)}`)
     ).trim()
     baseKey = (await sha1Hex(`${version}\n${baseLines.join('\n')}`)).slice(0, 16)
     return baseKey
@@ -175,7 +184,7 @@ export function createEnvironments(
         `uv pip install --python ${shellQuote(python)} --only-binary :all:${index} ${args}`,
       )
     } else {
-      await must(ins, `${shellQuote(python)} -m pip install --only-binary=:all:${index} ${args}`)
+      await must(ins, `${shellQuote(python)} -I -m pip install --only-binary=:all:${index} ${args}`)
     }
   }
 
@@ -194,7 +203,7 @@ export function createEnvironments(
     } else {
       await must(
         ins,
-        `${shellQuote(python)} -m venv ${systemSitePackages ? '--system-site-packages ' : ''}${shellQuote(dir)}`,
+        `${shellQuote(python)} -I -m venv ${systemSitePackages ? '--system-site-packages ' : ''}${shellQuote(dir)}`,
       )
     }
   }
@@ -242,9 +251,11 @@ export function createEnvironments(
     }
     await makeVenv(ins, base.python, dir, true)
     if (baseLines.length > 0) {
-      const own = (await must(ins, `${shellQuote(python)} -c ${shellQuote(PURELIB_SCRIPT)}`)).trim()
+      const own = (
+        await must(ins, `${shellQuote(python)} -I -c ${shellQuote(PURELIB_SCRIPT)}`)
+      ).trim()
       const parent = (
-        await must(ins, `${shellQuote(base.python)} -c ${shellQuote(PURELIB_SCRIPT)}`)
+        await must(ins, `${shellQuote(base.python)} -I -c ${shellQuote(PURELIB_SCRIPT)}`)
       ).trim()
       await ins.writeTextFile({ path: `${own}/eh-base.pth`, content: `${parent}\n` })
     }
@@ -276,7 +287,7 @@ export function createEnvironments(
     if (cached !== undefined) return cached
     try {
       const r = await runtime.run({
-        command: `${shellQuote(env.python)} -E -s -c ${shellQuote(PROBE_SCRIPT)}`,
+        command: `${shellQuote(env.python)} -I -c ${shellQuote(PROBE_SCRIPT)}`,
       })
       if (r.exitCode !== 0) return undefined
       const parsed = JSON.parse(r.stdout.trim().split('\n').pop() ?? '') as ProbeResult

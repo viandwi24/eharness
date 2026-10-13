@@ -96,7 +96,7 @@ describe('environments', () => {
     expect(first.python).toMatch(/^\/envs\/base-[0-9a-f]{16}\/bin\/python$/)
     expect(first.rebuilt?.packages).toBe(2)
     const joined = installer.commands.join('\n')
-    expect(joined).toContain("'python3' -m venv '/envs/base-")
+    expect(joined).toContain("'python3' -I -m venv '/envs/base-")
     expect(joined).toContain(
       "-m pip install --only-binary=:all: --index-url 'https://idx.test/simple' 'numpy' 'pandas==2.2.1'",
     )
@@ -152,7 +152,7 @@ describe('environments', () => {
     const ws = await env.ensure(['scipy>=1.11', 'pandas-ta'])
     expect(ws.python).toMatch(/^\/envs\/ws-[0-9a-f]{16}\/bin\/python$/)
     const joined = installer.commands.join('\n')
-    expect(joined).toContain('-m venv --system-site-packages')
+    expect(joined).toContain('-I -m venv --system-site-packages')
     expect(joined).toContain("--only-binary=:all: 'pandas-ta' 'scipy>=1.11'")
     expect([...installer.files.keys()]).toContain('/envs/ws/lib/site-packages/eh-base.pth')
     const again = await env.ensure(['pandas-ta', 'scipy>=1.11'])
@@ -174,7 +174,7 @@ describe('environments', () => {
     const ws = await env.ensure(['x'])
     expect(ws.python).toMatch(/\/ws-/)
     expect([...installer.files.keys()].some((k) => k.endsWith('.pth'))).toBe(false)
-    expect(installer.commands.join('\n')).toContain("'python3' -m venv --system-site-packages")
+    expect(installer.commands.join('\n')).toContain("'python3' -I -m venv --system-site-packages")
   })
 
   test('uv is used when present', async () => {

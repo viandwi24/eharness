@@ -108,6 +108,19 @@ Design and the options that were rejected: [ADR-0061](../decisions/0061-code-san
   takes phase D (`denyRead`, limits) for its `bash` and, optionally, the package environment; it
   does not enable `run_python` by default, which would duplicate `bash`.
 
+- **D13 — Two ways to run code in the team example: local and remote** (maintainer, 2026-10-14).
+  - **Files & Sandbox** (built-in): Python on the team server's own machine through
+    `scratchSandbox` — OS sandbox without network, `denyReadHome` plus the data directory denied,
+    CPU, memory (ulimit on Linux, an RSS watchdog elsewhere), file-size and process limits.
+  - **Remote sandbox** (a connector with a URL and a token): Python on a separate sandbox server,
+    `examples/sandbox-server` — its own package and Dockerfile, listens on one port, protocol `/v1`
+    (sessions, files, NDJSON run stream, bearer token), a `remoteSandbox()` client that implements
+    `CodeSandbox` over `fetch`. The container is the boundary (no egress through an internal
+    network, memory/CPU/pids limits). When an agent has Remote sandbox on, its `run_python` runs
+    there instead of locally (one `run_python` per agent).
+  - The docker-CLI-per-session driver of the first draft is dropped: a server that any deployment
+    can run next to the app is simpler to operate and to secure.
+
 ## Packages: how libraries get into the sandbox
 
 Three layers, from most to least preferred. The model learns which packages exist from the tool
@@ -157,70 +170,84 @@ with `install: 'off'`.
 
 ## Phase A — Spec and ADR
 
-- [ ] ADR-0061 accepted (status from Proposed to Accepted after review of this plan).
-- [ ] `docs/specs/28-code-plugin.md`: API (`code({ sandbox, mounts, python, packages, limits,
+- [x] ADR-0061 accepted (status from Proposed to Accepted after review of this plan).
+- [x] `docs/specs/28-code-plugin.md`: API (`code({ sandbox, mounts, python, packages, limits,
       writeBack, access, requireIsolation })`, `syncedSandbox()`), tool texts and every result
       format (model-visible, api-stability), sync algorithm (D2–D4), manifest rules, conflict and
       skip reporting, limits, ignore list, environment key and probe, install policy, events.
-- [ ] Spec 08: `filePolicy` service. Spec 19: `denyRead`, `limits`. Spec 24: code capabilities.
-- [ ] CLAUDE.md layout and hard rule 4 list `src/code/**`; `scripts/check-imports.ts` updated.
+- [x] Spec 08: `filePolicy` service. Spec 19: `denyRead`, `limits`. Spec 24: code capabilities.
+- [x] CLAUDE.md layout and hard rule 4 list `src/code/**`; `scripts/check-imports.ts` updated.
 
 ## Phase B — Sync bridge (`syncedSandbox`)
 
-- [ ] Manifest and sync-in: `list(mount)` → upload changed versions (`writeBinaryFile` for binary,
+- [x] Manifest and sync-in: `list(mount)` → upload changed versions (`writeBinaryFile` for binary,
       `writeTextFile` for text), delete sandbox files whose virtual file is gone, caps
       (`maxSyncFiles` default 2 000, `maxSyncBytes` default 200 MB, `maxFileBytes` default 50 MB);
       skipped files are reported, never silently dropped.
-- [ ] Listing helper (embedded Python, JSON out, sha1) and the driver `list` fast path.
-- [ ] Sync-out: diff against the baseline → new / changed / deleted; compare-and-set writes;
+- [x] Listing helper (embedded Python, JSON out, sha1) and the driver `list` fast path.
+- [x] Sync-out: diff against the baseline → new / changed / deleted; compare-and-set writes;
       binary through `writeBytes` (adapter without bytes: binary outputs are listed as not saved);
       default ignore list `__pycache__/`, `*.pyc`, `.ipynb_checkpoints/`, `.eharness/env*`;
       `PYTHONDONTWRITEBYTECODE=1`.
-- [ ] Policy on both directions (D5) through `filePolicy`, permissions and `access`.
-- [ ] One run per session at a time (mutex); the work directory is removed at session close;
+- [x] Policy on both directions (D5) through `filePolicy`, permissions and `access`.
+- [x] One run per session at a time (mutex); the work directory is removed at session close;
       leftovers of a crashed process are removed on the next start (local driver).
-- [ ] Disposable sandbox (D11): detect a missing or replaced work directory (a marker file with the
+- [x] Disposable sandbox (D11): detect a missing or replaced work directory (a marker file with the
       manifest id) and fall back to a full sync-in; a sandbox that dies during a run is a failed
       run with nothing written back.
-- [ ] Identity bridge (D12) for disk adapters whose root is the work directory.
-- [ ] Tests with an in-memory fake driver: zero uploads on the second run, conflict, failed run saves
+- [x] Identity bridge (D12) for disk adapters whose root is the work directory.
+- [x] Tests with an in-memory fake driver: zero uploads on the second run, conflict, failed run saves
       nothing, deletion propagation, hidden and read-only prefixes, caps, binary, odd file names,
       a wiped work directory between two runs (full sync-in, same result), a sandbox killed
       mid-run (nothing saved).
 
 ## Phase C — `run_python` and environments
 
-- [ ] Tool `run_python`: `file` or `code`, `args`, `timeoutSeconds` (default 60, max 300); runs
+- [x] Tool `run_python`: `file` or `code`, `args`, `timeoutSeconds` (default 60, max 300); runs
       `python -E -s <file>` in the work directory with `MPLBACKEND=Agg`, `HOME` = scratch, the
       stripped environment; output capped like `bash` (spec 19 §2); result footer lists saved,
       deleted, conflicting and skipped files.
-- [ ] Hints: `ModuleNotFoundError` (installed list or `install_packages`), absolute-path
+- [x] Hints: `ModuleNotFoundError` (installed list or `install_packages`), absolute-path
       `FileNotFoundError` (D6), OS sandbox denials (as `bash` does).
-- [ ] Environment: base build from a requirements list for `localSandbox` (venv; `uv` when found),
+- [x] Environment: base build from a requirements list for `localSandbox` (venv; `uv` when found),
       key, probe (`importlib.metadata`), description line, cache directory option.
-- [ ] `install_packages` with `installer` session, `--only-binary=:all:`, allowlist, index URL,
+- [x] `install_packages` with `installer` session, `--only-binary=:all:`, allowlist, index URL,
       the stored extra list and the lazy rebuild from it when the workspace environment is
       missing (D11), reported in the result.
-- [ ] Tests: scripted model over the fake driver; real `localSandbox` runs where `python3` exists
+- [x] Tests: scripted model over the fake driver; real `localSandbox` runs where `python3` exists
       (skipped otherwise), including pandas only when the test environment has it.
 
 ## Phase D — Local isolation
 
-- [ ] `localSandbox({ os: { denyRead } })`: Seatbelt `(deny file-read* (subpath …))` and bubblewrap
+- [x] `localSandbox({ os: { denyRead } })`: Seatbelt `(deny file-read* (subpath …))` and bubblewrap
       `--tmpfs` over denied directories; default denies the home directory except the work and
       environment directories. Closes the open item recorded in P40.
-- [ ] `limits`: CPU seconds and file size (`ulimit -t`, `ulimit -f`), memory (`ulimit -v`, Linux
+- [x] `limits`: CPU seconds and file size (`ulimit -t`, `ulimit -f`), memory (`ulimit -v`, Linux
       only; documented as not enforced on macOS), process count where supported.
-- [ ] Tests on both profiles (argv/profile generation; real runs where the tool exists).
+- [x] Tests on both profiles (argv/profile generation; real runs where the tool exists).
 
 ## Phase E — Connector
 
-- [ ] Built-in `files` connector: when `files.code` is configured, capabilities `run`
+- [x] Built-in `files` connector: when `files.code` is configured, capabilities `run`
       ("Run Python", `run_python`, default `ask`) and `install` ("Install packages",
       `install_packages`, default `ask`, only with `install` ≠ `'off'`). Name via `labels`
       (the team sets "Files & Sandbox").
-- [ ] Activation: the code plugin is installed only with at least one code capability on; file
+- [x] Activation: the code plugin is installed only with at least one code capability on; file
       capabilities alone behave exactly as today.
+
+Decided while building phases A–E (spec 28 records them):
+
+- Runs use `python -E -s -B -u` (`-E` ignores `PYTHONDONTWRITEBYTECODE` / `PYTHONUNBUFFERED`).
+- Environments are built lazily on the first `run_python`, never at session open; the description
+  probes only a ready environment (`packages unknown` otherwise).
+- `parseRequirement` accepts a name and an optional specifier only (no extras, markers, URLs); an
+  allowlist entry with a specifier requires exactly that specifier.
+- `packages.listPath` is never written back by a script; every path that is not saved is dropped
+  from the manifest so the file system's version comes back on the next sync-in.
+- After a sandbox error the bridge is dirty: the next sync-in clears the mount directories and
+  uploads everything. After a failed run the files it created are removed from the sandbox.
+- `eharness/code` reimplements `looksBinary` and a small media-type map (it may not import
+  `eharness/filesystem`).
 
 ## Phase F — Team example and docs
 

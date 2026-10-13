@@ -5,10 +5,20 @@
  * every command runs in an OS sandbox: writes only in the root, `allowWrite` and temp dirs.
  * File tools (`readFile`/`writeFile`) are unaffected: they run in this process.
  */
-import { type ChildProcess, spawn as spawnChild } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { type ChildProcess, execFile, spawn as spawnChild } from 'node:child_process'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import type {
   Experimental_SandboxProcess as SandboxProcess,
@@ -197,6 +207,23 @@ function checkLimit(name: string, value: number | undefined): void {
   }
 }
 
+const WATCHDOG_MS = 500
+
+/** Total RSS in bytes of a process group (`ps`), or `undefined` when it cannot be sampled. */
+function groupRss(pgid: number): Promise<number | undefined> {
+  return new Promise((done) => {
+    execFile('ps', ['-A', '-o', 'pgid=,rss='], { timeout: 5000 }, (error, stdout) => {
+      if (error) return done(undefined)
+      let kib = 0
+      for (const line of stdout.split('\n')) {
+        const [g, r] = line.trim().split(/\s+/)
+        if (Number(g) === pgid) kib += Number(r) || 0
+      }
+      done(kib * 1024)
+    })
+  })
+}
+
 /** `ulimit` prefix of a command; `''` without limits. */
 function limitsPrefix(limits: SandboxLimits | undefined, shell: string): string {
   if (!limits) return ''
@@ -217,6 +244,8 @@ function limitsPrefix(limits: SandboxLimits | undefined, shell: string): string 
 
 /** Pids of the commands of each local sandbox (for {@link scratchSandbox}'s dispose). */
 const ownGroups = new WeakMap<object, Set<number>>()
+/** Marks a local sandbox disposed (file operations and spawn throw afterwards). */
+const markDisposed = new WeakMap<object, () => void>()
 
 /**
  * Create a sandbox that runs commands in `root` (default working directory) with the user's
@@ -269,13 +298,65 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
     signal?.throwIfAborted()
   }
 
+  let disposedSandbox = false
+  const ensureLive = (): void => {
+    // plain-error: programmer error, a disposed sandbox is not usable
+    if (disposedSandbox) throw new Error('sandbox disposed')
+  }
+
+  /**
+   * File operations never leave the root (or an `allowWrite` directory) and never follow a
+   * symlink at the final component: a script that plants `ln -s ~/.ssh work/k` must not make
+   * the host read or write through it. The nearest existing ancestor is resolved with `realpath`.
+   */
+  async function guard(path: string): Promise<string> {
+    ensureLive()
+    const target = abs(path)
+    const allowed = await Promise.all(
+      [root, ...os.allowWrite.map(abs)].map(async (d) => {
+        try {
+          return await realpath(d)
+        } catch {
+          return d
+        }
+      }),
+    )
+    try {
+      if ((await lstat(target)).isSymbolicLink()) {
+        // plain-error: host-side refusal, surfaced to the caller as an I/O failure
+        throw new Error(`refusing to follow a symbolic link: ${path}`)
+      }
+    } catch (error) {
+      if (!isMissing(error)) throw error
+    }
+    let probe = dirname(target)
+    for (;;) {
+      try {
+        const resolved = await realpath(probe)
+        if (
+          !allowed.some((d) => resolved === d || resolved.startsWith(d.endsWith(sep) ? d : d + sep))
+        ) {
+          // plain-error: host-side refusal, surfaced to the caller as an I/O failure
+          throw new Error(`refusing a path outside the sandbox root: ${path}`)
+        }
+        return target
+      } catch (error) {
+        if (!isMissing(error)) throw error
+        const parent = dirname(probe)
+        if (parent === probe) throw error
+        probe = parent
+      }
+    }
+  }
+
   async function readBytes(
     path: string,
     signal: AbortSignal | undefined,
   ): Promise<Uint8Array | null> {
     throwIfAborted(signal)
+    const target = await guard(path)
     try {
-      return new Uint8Array(await readFile(abs(path)))
+      return new Uint8Array(await readFile(target))
     } catch (error) {
       if (isMissing(error)) return null
       throw error
@@ -288,13 +369,14 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
     signal: AbortSignal | undefined,
   ): Promise<void> {
     throwIfAborted(signal)
-    const target = abs(path)
+    const target = await guard(path)
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, content)
   }
 
   async function spawn(options: ProcessOptions): Promise<SandboxProcess> {
     const signal = options.abortSignal
+    ensureLive()
     throwIfAborted(signal)
     const command = limitsPrefix(opts.limits, shellBin) + options.command
     const [cmd, ...args] = active()
@@ -344,6 +426,28 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
       killTimer = setTimeout(() => signalGroup('SIGKILL'), KILL_GRACE_MS)
     }
 
+    // Where `ulimit -v` is not applied (not Linux), a sampled RSS watchdog enforces memoryBytes.
+    const memoryLimit = opts.limits?.memoryBytes
+    let watchdog: ReturnType<typeof setInterval> | undefined
+    if (memoryLimit !== undefined && process.platform !== 'linux' && groupPid !== undefined) {
+      let sampling = false
+      watchdog = setInterval(() => {
+        if (sampling || exited) return
+        sampling = true
+        void groupRss(groupPid).then((rss) => {
+          sampling = false
+          if (exited || rss === undefined || rss <= memoryLimit) return
+          child.stderr?.push(
+            Buffer.from(
+              `Killed: memory limit of ${Math.round(memoryLimit / (1024 * 1024))} MB exceeded.\n`,
+            ),
+          )
+          signalGroup('SIGKILL')
+        })
+      }, WATCHDOG_MS)
+      watchdog.unref()
+    }
+
     let aborted = false
     const onAbort = (): void => {
       aborted = true
@@ -363,12 +467,14 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
           own.delete(groupPid)
         }
         if (killTimer) clearTimeout(killTimer)
+        if (watchdog) clearInterval(watchdog)
         if (drainTimer) clearTimeout(drainTimer)
         signal?.removeEventListener('abort', onAbort)
         if (aborted) fail(signal?.reason ?? new Error('Aborted'))
         else ok({ exitCode: code ?? 128 + (SIGNAL_NUMBERS[sig ?? ''] ?? 1) })
       }
       child.once('error', (e) => {
+        if (watchdog) clearInterval(watchdog)
         if (groupPid !== undefined) {
           liveGroups.delete(groupPid)
           own.delete(groupPid)
@@ -379,6 +485,9 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
       // (setsid, detached) can hold them open forever. Resolve from `exit` after a grace period
       // and destroy the pipes so the tool cannot hang.
       child.once('exit', (code, sig) => {
+        // the group id is no longer ours to signal (pids get reused)
+        if (groupPid !== undefined) own.delete(groupPid)
+        if (watchdog) clearInterval(watchdog)
         drainTimer = setTimeout(() => {
           for (const pipe of [child.stdout, child.stderr]) {
             if (!pipe) continue
@@ -480,6 +589,9 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
     },
   }
   ownGroups.set(sandbox, own)
+  markDisposed.set(sandbox, () => {
+    disposedSandbox = true
+  })
   return sandbox
 }
 
@@ -512,6 +624,7 @@ export async function scratchSandbox(options: ScratchSandboxOptions = {}): Promi
   let disposed: Promise<void> | undefined
   const dispose = (): Promise<void> => {
     disposed ??= (async () => {
+      markDisposed.get(sandbox)?.()
       for (const pid of [...(ownGroups.get(sandbox) ?? [])]) signalGroupPid(pid, 'SIGKILL')
       await rm(root, { recursive: true, force: true })
     })()

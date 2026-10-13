@@ -211,7 +211,11 @@ Typical configurations:
 `localSandbox({ root })` implements the AI SDK `SandboxSession`: `spawn`, `run`, `readFile`,
 `readTextFile` (line ranges), `readBinaryFile`, `writeFile`, `writeTextFile`, `writeBinaryFile`,
 and a `description` that states whether commands are sandboxed. Relative file paths resolve against
-`root`; file operations run in the calling process (they are **not** covered by the OS sandbox).
+`root`; file operations run in the calling process (they are **not** covered by the OS sandbox),
+but they never leave the root: the nearest existing ancestor of the target is resolved with
+`realpath` and must lie inside the real root (or an `allowWrite` directory), and a symlink at the
+final component (`lstat`) is refused, for reads and writes; both throw. A command that plants a
+symlink therefore cannot make a later host-side read or write follow it.
 
 - Each command runs in its own **process group** (`detached`); `kill()`, an abort or a timeout
   sends SIGTERM to the group and SIGKILL after 2 s. `wait()` rejects with the abort reason when the
@@ -228,14 +232,18 @@ and a `description` that states whether commands are sandboxed. Relative file pa
   SIGKILL follows after 2 s from an unref'd timer, which cannot run inside `process.exit`.
 - `limits` prefixes every command with `ulimit` in the spawned shell: `cpuSeconds` → `-t`;
   `fileBytes` → `-f` (rounded up to the shell's block: 1024 bytes for `bash`, 512 for other shells);
-  `memoryBytes` → `-v` (KiB), **Linux only, not applied on macOS**; `processes` → `-u`, best
+  `memoryBytes` → `-v` (KiB) on Linux; elsewhere (macOS) a watchdog samples the total RSS of the
+  command's process group every 500 ms (`ps -A -o pgid=,rss=`) and SIGKILLs the group above the
+  limit, writing `Killed: memory limit of <n> MB exceeded.` to stderr (exit 137); sampled, best
+  effort, a fast allocation can overshoot between samples; `processes` → `-u`, best
   effort (a failing `ulimit -u` is ignored; the others abort the command with exit 126). Values
   must be integers ≥ 1, else `localSandbox` throws `EH_CONFIG_INVALID`. Limits apply with or
   without the OS sandbox.
 - `scratchSandbox(options)` creates a directory with `mkdtemp` under `parent` (default
   `os.tmpdir()`, name prefix default `eh-code-`) and returns a `localSandbox` rooted there, plus
   `root` and `dispose()`: it SIGKILLs the process groups of that sandbox's commands, then removes
-  the directory recursively; idempotent. `removeStaleScratch({ parent, prefix, olderThanMs })`
+  the directory recursively; idempotent. A disposed sandbox throws `sandbox disposed` from file
+  operations and `spawn`; a pid is dropped from the tracked set when its process exits (pid reuse). `removeStaleScratch({ parent, prefix, olderThanMs })`
   removes directories of that prefix not modified for `olderThanMs` (default 24 h), returns the
   count; for leftovers of crashed processes.
 - `state()` is `{ enabled, kind, network, writableRoots, denyRead }`: `enabled` is true only when requested **and** the
@@ -262,13 +270,15 @@ empty when the sandbox is not active).
 - **Linux** bubblewrap (`bwrap`): `--ro-bind / /`, `--dev /dev`, `--proc /proc`, `--tmpfs /tmp`
   (before the binds, the root may live in `/tmp`), `--bind` for root and `allowWrite`,
   denied directories become `--tmpfs <p>`, denied files `--ro-bind /dev/null <p>` (missing paths
-  are skipped), then re-allowed paths are `--ro-bind` back and root/`allowWrite` `--bind` (after
-  the tmpfs, so a root inside a denied directory stays visible); `--unshare-pid --unshare-ipc --new-session` (no view of or signals to host processes),
+  are skipped); the order is: `--tmpfs /tmp`, the writable `--bind`s, the denies (so a deny inside
+  the root or an `allowWrite` directory wins), then the re-allows (`--bind` for the root and
+  `allowWrite`, `--ro-bind` for `allowRead`; missing paths are skipped), so a root inside a denied
+  directory stays visible; `--unshare-pid --unshare-ipc --new-session` (no view of or signals to host processes),
   `--unshare-net` unless network, `--die-with-parent`, `--chdir <root>`.
 - Other platforms or a missing tool: `kind: 'none'`, the command runs unwrapped.
 
 Not covered: reads outside `denyRead` (secrets under `$HOME` stay readable unless `denyReadHome`),
-memory limits on macOS, local unix-socket IPC on macOS. It is defence in depth, not a jail for hostile code: use a container or
+exact memory limits on macOS (sampled watchdog only), local unix-socket IPC on macOS. It is defence in depth, not a jail for hostile code: use a container or
 VM driver for that.
 
 ## 7. Errors and warnings

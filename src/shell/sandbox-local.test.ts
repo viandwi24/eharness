@@ -1,7 +1,7 @@
 /** The local sandbox: run, file access and process-group kill. */
 import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -208,3 +208,63 @@ describe.skipIf(process.platform === 'win32')('a grandchild holding the pipes', 
     expect(result.stdout).toContain('after')
   }, 15_000)
 })
+
+describe('file operations stay inside the root', () => {
+  test('a symlink at the final component is refused for reads and writes', async () => {
+    const root = await temp()
+    const outside = await temp()
+    await writeFile(join(outside, 'secret.txt'), 'top secret')
+    await symlink(join(outside, 'secret.txt'), join(root, 'link.txt'))
+    const sb = localSandbox({ root })
+    await expect(sb.readTextFile({ path: 'link.txt' })).rejects.toThrow(/symbolic link/)
+    await expect(sb.readBinaryFile({ path: 'link.txt' })).rejects.toThrow(/symbolic link/)
+    await expect(sb.writeTextFile({ path: 'link.txt', content: 'x' })).rejects.toThrow(
+      /symbolic link/,
+    )
+    expect(await readFile(join(outside, 'secret.txt'), 'utf8')).toBe('top secret')
+  })
+
+  test('a symlinked directory pointing out of the root is refused (write plants nothing)', async () => {
+    const root = await temp()
+    const outside = await temp()
+    await symlink(outside, join(root, 'k'))
+    const sb = localSandbox({ root })
+    await expect(
+      sb.writeTextFile({ path: 'k/authorized_keys', content: 'ssh-rsa AAA' }),
+    ).rejects.toThrow(/outside the sandbox root/)
+    await expect(sb.writeTextFile({ path: 'k/new/deep.txt', content: 'x' })).rejects.toThrow(
+      /outside the sandbox root/,
+    )
+    await expect(sb.readTextFile({ path: 'k/authorized_keys' })).rejects.toThrow()
+    expect(existsSync(join(outside, 'authorized_keys'))).toBe(false)
+    expect(existsSync(join(outside, 'new'))).toBe(false)
+  })
+
+  test('absolute and ../ paths outside the root are refused; normal paths still work', async () => {
+    const root = await temp()
+    const outside = await temp()
+    const sb = localSandbox({ root })
+    await expect(sb.writeTextFile({ path: join(outside, 'x.txt'), content: 'x' })).rejects.toThrow(
+      /outside the sandbox root/,
+    )
+    await expect(sb.readTextFile({ path: '../etc-passwd' })).rejects.toThrow(/outside/)
+    await sb.writeTextFile({ path: 'a/b/c.txt', content: 'ok' })
+    expect(await sb.readTextFile({ path: 'a/b/c.txt' })).toBe('ok')
+    expect(await sb.readTextFile({ path: 'missing.txt' })).toBeNull()
+  })
+})
+
+describe.skipIf(process.platform === 'linux' || Bun.spawnSync(['python3', '-V']).exitCode !== 0)(
+  'memory watchdog (not Linux)',
+  () => {
+    test('a group over memoryBytes is killed with a message and exit 137', async () => {
+      const root = await temp()
+      const sb = localSandbox({ root, limits: { memoryBytes: 100 * 1024 * 1024 } })
+      const r = await sb.run({
+        command: `python3 -c "import time; b = bytearray(300*1024*1024); b[::4096] = b'x' * len(b[::4096]); time.sleep(20)"`,
+      })
+      expect(r.exitCode).toBe(137)
+      expect(r.stderr).toContain('Killed: memory limit of 100 MB exceeded.')
+    }, 30_000)
+  },
+)

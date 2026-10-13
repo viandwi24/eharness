@@ -1,6 +1,6 @@
 /**
  * Helper scripts of the code plugin (internal). They are written into the sandbox under
- * `.eh-code/` and run with the sandbox's Python. Python 3.6+ standard library only.
+ * `.eh-code/` and run with the sandbox's Python. Python 3.6+ standard library only. Helpers run with `-I` (isolated mode).
  *
  * @see docs/specs/28-code-plugin.md
  */
@@ -19,11 +19,11 @@ export const INLINE_SCRIPT_PATH: string = `${CODE_DIR}/inline.py`
 export const HOME_DIR: string = `${CODE_DIR}/home`
 
 /**
- * Lists regular files (symlinks skipped) under the directories of the JSON file given as the
+ * Lists regular files (symlinks, hard-linked files and non-regular files skipped; always run with `python -I`) under the directories of the JSON file given as the
  * first argument: `{ dirs: string[], ignore: string[] (regex sources over the relative path), only?: string[] }`.
  * Prints one JSON array of `{ path, size, sha1 }`, paths relative to the current directory.
  */
-export const LIST_SCRIPT = `import hashlib, json, os, re, sys
+export const LIST_SCRIPT = `import hashlib, json, os, re, stat, sys
 
 cfg = json.load(open(sys.argv[1]))
 ignore = [re.compile(p) for p in cfg.get("ignore", [])]
@@ -38,13 +38,15 @@ def skipped(rel):
 
 def entry(rel):
     try:
-        if os.path.islink(rel) or not os.path.isfile(rel):
+        # lstat: symlinks, devices, fifos and hard-linked files (st_nlink > 1) are not syncable
+        st = os.lstat(rel)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
             return None
         h = hashlib.sha1()
         with open(rel, "rb") as f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)
-        return {"path": rel, "size": os.path.getsize(rel), "sha1": h.hexdigest()}
+        return {"path": rel, "size": st.st_size, "sha1": h.hexdigest()}
     except OSError:
         return None
 

@@ -190,6 +190,9 @@ export function wrapCommand(command: string, opts: WrapOptions): string[] {
       '--tmpfs',
       '/tmp', // before the binds: the root may live under /tmp
     ]
+    // Order matters (later mounts win): writable binds first, then the denies (so a deny inside
+    // the root or an allowWrite directory is not lost), then the re-allows.
+    for (const d of dirs) argv.push('--bind', d, d)
     const { deny, reallow } = readPolicy(opts)
     for (const p of deny) {
       let isDir: boolean
@@ -201,9 +204,11 @@ export function wrapCommand(command: string, opts: WrapOptions): string[] {
       if (isDir) argv.push('--tmpfs', p)
       else argv.push('--ro-bind', '/dev/null', p)
     }
-    // Re-allowed paths come back after the tmpfs; the root and allowWrite stay writable.
-    for (const d of reallow) if (!dirs.includes(d)) argv.push('--ro-bind', d, d)
-    for (const d of dirs) argv.push('--bind', d, d)
+    // Re-allowed paths come back after the denies; the root and allowWrite stay writable.
+    for (const d of reallow) {
+      if (!existsSync(d)) continue // bwrap fails on a missing mount source
+      argv.push(dirs.includes(d) ? '--bind' : '--ro-bind', d, d)
+    }
     // Own PID and IPC namespaces and a new session (no TIOCSTI / signals to the host's processes).
     argv.push('--unshare-pid', '--unshare-ipc', '--new-session')
     if (!opts.network) argv.push('--unshare-net')

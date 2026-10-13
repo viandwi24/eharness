@@ -60,6 +60,7 @@ New here? Read [getting started](getting-started.md); unfamiliar terms are in th
 | [Group chat](group-chat.md) | `group()`: answer only when addressed, history of missed messages, bot-to-bot loop limit |
 | [Subagents](subagents.md) | the `subagent()` plugin: child sessions, approvals inline / parked / by policy, background children, the manual pattern |
 | [Chunked work](chunked-work.md) | process thousands of items without filling the context: collector and ingest, code pre-filter, manifest and resume, findings per chunk, reduce, report |
+| [Code sandbox](code-sandbox.md) | `eharness/code`: `run_python` over the virtual file system, incremental sync and compare-and-set write-back, drivers and isolation, packages, disposable sandboxes, connector, `sync: false` |
 | [Lead and role agents](lead-and-role-agents.md) | a lead that hands work to role agents: roster from definitions, delegation briefs, park vs inline, follow-ups, limits, budgets, cost, when not to use it |
 
 ## Products: providers, connectors, HTTP and browser

@@ -22,7 +22,7 @@ code({
   /** Prefixes of the virtual file system that are synced. Default [{ virtual: '/work/' }]. */
   mounts?: Array<{ virtual: string; readonly?: boolean }>
   python?: {
-    /** Interpreter inside the sandbox when no environment is built. Default 'python3'. */
+    /** Interpreter inside the sandbox when no environment is built. ONE executable (name or path, quoted as a whole, no arguments). Default 'python3'. */
     command?: string
     /** Build a base environment from these requirement lines (needs `envRoot` and `installer`). */
     requirements?: string[]
@@ -114,10 +114,10 @@ description is computed when the session's tools are resolved and cached per env
 it changes only when the environment changes (prompt-cache prefix, spec 02 §5). It recommends
 writing the script with `write_file` and running it with `file`.
 
-Run: sync-in (§4.2), then the interpreter (§5) runs `-E -s -B -u <script> <args…>` (`-B` and `-u`
+Run: sync-in (§4.2), then the interpreter (§5) runs `-E -s -B -u ./<script> <args…>` (the script is always passed as `./<path>` so a name that starts with `-` is never an option; `-B` and `-u`
 because `-E` ignores the matching environment variables, which are passed too) in the root with the
 environment `PYTHONDONTWRITEBYTECODE=1`, `MPLBACKEND=Agg`, `PYTHONUNBUFFERED=1`,
-`HOME=.eh-code/home`, plus what the driver adds; then sync-out (§4.3). One run per session at a time
+and an **absolute** `HOME` (`HOME="$PWD/.eh-code/home"`, the directory is created first), plus what the driver adds; then sync-out (§4.3). One run per session at a time
 (a second call waits for the first).
 
 Result (always a string, never a throw):
@@ -177,7 +177,7 @@ full one. The manifest describes the sandbox's files as of the last sync.
 
 ### 4.2 Sync-in
 
-1. Marker check (§4.5).
+1. Marker check (§4.5); a mismatch also wipes the mount directories in the sandbox, like a dirty bridge.
 2. For every mount: `fs.list(mount.virtual)` (metadata only). Hidden paths (`filePolicy`, §7) and
    paths `access(path, 'read')` refuses are excluded. Files over `maxFileBytes` are excluded and
    reported (`Not copied in`). When the mount set exceeds `maxSyncFiles` / `maxSyncBytes` the files
@@ -185,9 +185,12 @@ full one. The manifest describes the sandbox's files as of the last sync.
 3. Upload every included path whose `fsVersion` differs from the manifest (or is absent): binary
    (`FileMeta.binary`) through `readBytes` + `writeBinaryFile`, text through `read` +
    `writeTextFile`. A file read as `null` (deleted in between) is treated as absent.
-4. Paths in the manifest that are no longer included (deleted in the file system, now hidden or
+4. Before anything is uploaded every symlink under the mount directories is removed inside the
+   sandbox (`find <dirs> -type l -delete`, quoted): a symlink is never syncable, and a script may
+   have planted one that points out of the root (the host-side writes must not follow it).
+5. Paths in the manifest that are no longer included (deleted in the file system, now hidden or
    refused) are removed in the sandbox (`rm -f` through `run`, batched) and from the manifest.
-5. The baseline for sync-out is the manifest after this step; uploaded files get the sandbox's sha1
+6. The baseline for sync-out is the manifest after this step; uploaded files get the sandbox's sha1
    from one listing (§4.3 step 1) restricted to the uploaded paths, so no hashing runs on the host.
 
 A second run over unchanged files uploads nothing.
@@ -195,8 +198,14 @@ A second run over unchanged files uploads nothing.
 ### 4.3 Sync-out
 
 1. List the sandbox files under every mount: `listFiles` when the driver has it, else the embedded
-   helper (`.eh-code/list.py`, run with the base interpreter; prints one JSON array of
-   `{ path, size, sha1 }`, skips the ignore patterns and symlinks).
+   helper (`.eh-code/list.py`, run as `<python> -I list.py list-args.json`; prints one JSON array of
+   `{ path, size, sha1 }`, skips the ignore patterns, symlinks, hard-linked files (`st_nlink > 1`)
+   and anything that is not a regular file, using `lstat`). `.eh-code/` is writable by scripts, so
+   the helper and its arguments are **rewritten before every listing**, never only on a marker
+   mismatch, and run isolated (`-I`). The rows are untrusted: the host side must not follow
+   symlinks when it reads a file back (see §6, driver requirement). A failing listing after a
+   successful run is reported as `ERROR: listing the sandbox files failed; nothing was saved.
+   (<message>)`.
 2. Diff against the baseline: new (not in the manifest), changed (sha1 differs), deleted (in the
    manifest, missing now). Ignored paths (§4.4) are never written back.
 3. With `writeBack: 'success'` and a failed run (non-zero exit, timeout, abort, sandbox error):
@@ -211,7 +220,10 @@ A second run over unchanged files uploads nothing.
    other bytes through `writeBytes` with `detectMediaType` (no `writeBytes`: not saved, reason
    `binary files are not supported…`). A conflict or `exists` result is not saved (reason
    `changed in the file system while the code ran`) and the path is dropped from the manifest so
-   the next sync-in brings the file system's version back. The same holds for every path that is
+   the next sync-in brings the file system's version back. An error while saving one file (a file
+   system or sandbox failure) is caught per file and reported as `could not be saved: <message>`;
+   the other files are still written, and the report never claims that nothing was saved after a
+   write happened. The same holds for every path that is
    not saved for another reason (read-only, not allowed, …). `packages.listPath` is never written
    back (`not allowed`): a script cannot change the stored requirement list.
 5. The manifest takes the new `fsVersion` and sha1 of every saved path.
@@ -227,8 +239,8 @@ virtual path.
 The first sync of a session writes `.eh-code/marker` with a random id and keeps it in the manifest.
 Every sync-in reads it (`readTextFile`): missing or different (the directory was wiped, the
 container restarted, another instance) → the manifest is cleared, a new marker written, and the
-sync-in is full. After a sandbox error during a run (§3) the bridge is marked dirty: the next
-sync-in removes the mount directories in the sandbox (`rm -rf`, not for a `/` mount) and uploads
+sync-in is full. A failed removal of files in step 5 of §4.2 marks the bridge dirty too. After a sandbox error during a run (§3) the bridge is marked dirty: the next
+sync-in removes the mount directories in the sandbox (`rm -rf`; for a `/` mount everything at the root except `.eh-code/`: `find . -mindepth 1 -maxdepth 1 ! -name .eh-code -exec rm -rf {} +`) and uploads
 everything. The base environment and the workspace environment are probed the same way
 (§5.3). No volume is required; the result of a run that was in flight when the sandbox died is
 `ERROR: the sandbox stopped during the run; nothing was saved.`
@@ -248,11 +260,15 @@ runs the script directly on the files (no manifest, no write-back reports).
 - No `requirements`: the base interpreter is `python.command` (a container image with its
   packages, or the host's `python3`).
 - `requirements`: the plugin builds `<envRoot>/base-<key>` with the installer the first time it is
-  needed (the first `run_python`, reported as a rebuild; never at session open) (`<command> -m venv <dir>`, then `<dir>/bin/python -m pip install --only-binary=:all:
+  needed (the first `run_python`, reported as a rebuild; never at session open) (`<command> -I -m venv <dir>`, then `<dir>/bin/python -I -m pip install --only-binary=:all:
   [--index-url <url>] <lines…>`; `uv venv` + `uv pip install` when `uv` is on the installer's PATH).
   `key` = first 16 hex of SHA-1 over `<python version>\n<sorted requirement lines>`. An existing
   directory with a `.eh-ok` file is reused (built by an earlier session or process); building
-  writes `.eh-ok` last, so a half-built environment is rebuilt.
+  writes `.eh-ok` last, so a half-built environment is rebuilt. Every installer command runs with
+  `envRoot` as its working directory (`mkdir -p` + `cd`) and every Python call uses `-I`, so files
+  of the work directory cannot be picked up. The installer's own root must therefore not be the
+  work directory (it is a separate sandbox, or at least a different directory). All interpreter
+  paths (`python.command`, environment interpreters) are shell-quoted as one executable.
 
 ### 5.2 Extra packages (workspace environment)
 
@@ -263,7 +279,7 @@ runs the script directly on the files (no manifest, no write-back reports).
   warning at session open. On every rebuild the lines are validated again (`parseRequirement`, the
   allowlist).
 - The workspace environment is `<envRoot>/ws-<key>` (key over the base key and the extra lines):
-  `<base python> -m venv --system-site-packages <dir>`, a `.pth` file in its site-packages that
+  `<base python> -I -m venv --system-site-packages <dir>`, a `.pth` file in its site-packages that
   points at the base environment's site-packages (when the base is itself a venv), then the extras
   installed as in §5.1. `run_python` uses it when the stored list is non-empty.
 - `run_python` with a stored list whose environment is missing (`.eh-ok` absent) rebuilds it
@@ -272,7 +288,7 @@ runs the script directly on the files (no manifest, no write-back reports).
 
 ### 5.3 Probe
 
-`<python> -c <probe>` prints `{ version, packages: [[name, version], …] }` from
+`<python> -I -c <probe>` prints `{ version, packages: [[name, version], …] }` from
 `importlib.metadata`. Cached per environment key (plugin instance, process lifetime). Only an environment that is
 already built is probed for the description (otherwise `packages unknown`). Used for the
 description (§3) and the `ModuleNotFoundError` hint.
@@ -283,6 +299,13 @@ The plugin never claims isolation it does not get. Isolated when: the sandbox ha
 local sandbox) with `enabled: true` and `network: false`, or `isolation.isolated === true`. The
 `codeSandbox` service reports it (§7). `requireIsolation: true` refuses runs otherwise (§3). The
 installer is never used for model code.
+
+**Driver requirement (symlinks).** The sandbox's file operations (`readBinaryFile`,
+`writeBinaryFile`, …) are used by the bridge with paths a script influenced. A driver must not
+follow symlinks out of the root: `localSandbox` resolves the nearest existing ancestor with
+`realpath`, refuses a path outside the root (or `allowWrite`) and refuses a symlink at the final
+component (spec 19 §6); other drivers must give the same guarantee. The bridge removes symlinks
+before sync-in and the lister skips them, as defence in depth.
 
 ## 7. Service `codeSandbox` and the `filePolicy` service
 
