@@ -174,6 +174,9 @@ export function createPeoplePort(options: PeopleAdminOptions): PeoplePort {
       dir.persons.unlink(a.id, ACTOR, now())
       return detailOf(id)
     },
+    async remove(id) {
+      if (!dir.persons.delete(id, ACTOR, now())) throw notFound('Person', id)
+    },
     async pairingCode(id) {
       if (dir.persons.get(id) === undefined) throw notFound('Person', id)
       const r = await dir.persons.issueCode(id, now())

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import KeyIcon from 'phosphor-svelte/lib/Key';
 	import LinkIcon from 'phosphor-svelte/lib/Link';
@@ -152,6 +153,19 @@
 		const a = unlinking;
 		if (!a) return;
 		if (await run('unlink the account', () => api.delete('/people/{id}/accounts/{accountId}', { params: { id, accountId: a.id } }), 'Account unlinked')) void loadUnassigned();
+	}
+	let deleteOpen = $state(false);
+	async function remove(): Promise<void> {
+		busy = true;
+		try {
+			await api.delete('/people/{id}', { params: { id } });
+			toast.success('Person deleted');
+			void goto('/people');
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not delete the person');
+		} finally {
+			busy = false;
+		}
 	}
 	async function pair(): Promise<void> {
 		busy = true;
@@ -308,6 +322,14 @@
 				<div class="flex justify-end"><Button size="sm" onclick={() => void saveNotes()} disabled={busy || draftNotes === person.notes} data-testid="save-notes">Save notes</Button></div>
 			</section>
 
+			<section class="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/40 p-4" aria-label="Delete" data-testid="person-delete">
+				<div class="flex min-w-60 flex-1 flex-col gap-0.5">
+					<h2 class="text-sm font-medium">Delete this person</h2>
+					<p class="text-xs text-muted-foreground">Their accounts belong to nobody again and act as guests until linked. The history of changes is kept.</p>
+				</div>
+				<Button size="sm" variant="destructive" onclick={() => (deleteOpen = true)} disabled={busy} data-testid="delete-person">Delete</Button>
+			</section>
+
 			<section class="flex flex-col gap-2" aria-label="Activity of this person" data-testid="person-activity">
 				<h2 class="text-sm font-medium">Activity</h2>
 				{#if person.events.length === 0}
@@ -334,4 +356,12 @@
 	description="The account stays known in the chats but belongs to nobody: it is a guest again until it is linked."
 	confirmLabel="Unlink"
 	onConfirm={() => unlink()}
+/>
+
+<ConfirmDialog
+	bind:open={deleteOpen}
+	title={`Delete ${person?.displayName ?? 'this person'}?`}
+	description={`${person?.role === 'owner' ? 'This person is an OWNER: they lose the owner rights on every account. ' : ''}${person?.accountViews.length ?? 0} account(s) will belong to nobody and act as guests until they are linked again. The history of changes is kept.`}
+	confirmLabel="Delete"
+	onConfirm={() => remove()}
 />

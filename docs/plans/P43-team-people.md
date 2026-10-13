@@ -87,14 +87,14 @@ whose role is above guest. Anybody else is recorded (who, never what) and gets n
    Web (as built): top-level section **People** (`/people`, `/people/[id]`). API: `GET/POST /people`
    (server paging by `page`/`limit`, `q`), `GET/PATCH /people/{id}`, `POST /people/{id}/accounts`,
    `PATCH/DELETE /people/{id}/accounts/{accountId}`, `POST /people/{id}/pairing-code` (code shown once),
-   `GET /people/unassigned`, `GET /people/nodes` (chats and topics for divisions),
+   `DELETE /people/{id}` (204; the history stays), `GET /people/unassigned`, `GET /people/nodes` (chats and topics for divisions),
    `POST /people/from-account`. Port `PeoplePort` (`infra/channels/people-admin.ts`) over
    `gateway.directory`; every web change has the actor `web`; a `PersonError` is a 409 (404 for a
    missing person, 400 for invalid input) with its readable message. The list has two views: People
    (search, paging) and Unassigned accounts (create a person, or attach to one).
-3. Tools and pairing command; e2e scenarios I-01..I-13 (impersonation, linking with approval,
+3. Tools and pairing command; e2e scenarios I-01..I-14 (impersonation, linking with approval,
    suspended person, one role for two accounts, `/link` pairing, `pair` only in a direct chat, direct
-   chats from directory people, listing, delete, suspend, role, create all).
+   chats from directory people, listing, delete, suspend, role, create all, web delete).
 4. Later: manager role with division scope; task claims verified by another person.
 
 ## Open questions

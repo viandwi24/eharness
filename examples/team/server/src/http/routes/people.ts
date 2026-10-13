@@ -145,6 +145,17 @@ const unlink = createRoute({
   request: { params: PersonAccountParam },
   responses: { 200: detail, 404: unknown, ...errorResponses },
 })
+const remove = createRoute({
+  method: 'delete',
+  path: '/people/{id}',
+  tags,
+  summary: 'Delete a person',
+  description:
+    'The person goes; their accounts belong to nobody again (guests until linked) and their per-account roles of before go too. The history of changes is kept.',
+  security,
+  request: { params: PersonIdParam },
+  responses: { 204: { description: 'Deleted' }, 404: unknown, ...errorResponses },
+})
 const pairing = createRoute({
   method: 'post',
   path: '/people/{id}/pairing-code',
@@ -197,6 +208,10 @@ export function peopleRoutes(deps: Deps) {
     .openapi(unlink, async (c) => {
       const { id, accountId } = c.req.valid('param')
       return c.json(await people.unlink(id, accountId), 200)
+    })
+    .openapi(remove, async (c) => {
+      await people.remove(c.req.valid('param').id)
+      return c.body(null, 204)
     })
     .openapi(pairing, async (c) => c.json(await people.pairingCode(c.req.valid('param').id), 200))
 }

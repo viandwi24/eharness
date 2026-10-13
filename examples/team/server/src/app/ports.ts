@@ -983,6 +983,8 @@ export interface PeoplePort {
   ): Promise<PersonDetail>
   setLabel(id: string, accountId: string, label: string | null): Promise<PersonDetail>
   unlink(id: string, accountId: string): Promise<PersonDetail>
+  /** Delete a person: their accounts belong to nobody (guests until linked), the history stays. */
+  remove(id: string): Promise<void>
   pairingCode(id: string): Promise<{ code: string; expiresAt: number }>
   unassigned(limit: number): Promise<UnassignedAccountView[]>
   fromAccount(input: { connectionId: string; peerId: string }): Promise<PersonDetail>

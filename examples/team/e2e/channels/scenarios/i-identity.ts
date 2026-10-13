@@ -500,4 +500,39 @@ export const scenarios: Scenario[] = [
     ],
     tags: ['onboarding', 'approvals'],
   },
+  (() => {
+    let personId = ''
+    let status = 0
+    let after = 0
+    return {
+      id: 'I-14',
+      category: 'I',
+      title: 'The web app deletes a person: 204, the person is gone, the account is unassigned',
+      goal: 'DELETE /people/{id} removes the person with its accounts and keeps the history.',
+      expectedSafe:
+        'The delete answers 204; reading the person is a 404; the account is unassigned.',
+      script: { lead: [text('unused')] },
+      steps: [
+        act('delete Dodi through the API', async (w) => {
+          personId = personIdOf(w, '1005')
+          status = (await w.api('DELETE', `/people/${personId}`)).status
+          after = (await w.api('GET', `/people/${personId}`)).status
+        }),
+      ],
+      hard: [
+        C.custom('204 then 404', () =>
+          status === 204 && after === 404
+            ? { ok: true }
+            : { ok: false, detail: `${status} / ${after}` },
+        ),
+        C.custom('the account is unassigned', async (c) => {
+          const r = await c.w.api('GET', '/people/unassigned?limit=200')
+          return r.text.includes('"1005"')
+            ? { ok: true }
+            : { ok: false, detail: r.text.slice(0, 200) }
+        }),
+      ],
+      tags: ['delete', 'web'],
+    } satisfies Scenario
+  })(),
 ]
