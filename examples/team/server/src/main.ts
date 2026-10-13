@@ -3,6 +3,8 @@
  *
  *   TEAM_DB     database file (default ./data/team.db; `:memory:` works)
  *   TEAM_TOKEN  bearer token; unset = open, and the server then listens on loopback only
+ *   BASIC_AUTH_PASSWORD   password login (a `team_session` cookie) for the web; the bearer token keeps working for scripts. With it and no TEAM_TOKEN a non-loopback bind needs a password of 12+ characters
+ *   TEAM_TRUST_PROXY   `1` = believe X-Forwarded-For / -Proto (login throttle per client, Secure cookie behind a TLS proxy)
  *   TEAM_HOST   bind address (default 127.0.0.1); a non-loopback host requires TEAM_TOKEN
  *   TEAM_ALLOWED_HOSTS   extra Host header names to accept (comma separated; loopback, TEAM_HOST and the TEAM_PUBLIC_URL host always are)
  *   PORT        default 4000
@@ -192,6 +194,8 @@ export interface ServerConfig {
   token?: string | undefined
   /** Skip seeding (tests that start empty). */
   seed?: boolean
+  /** `BASIC_AUTH_PASSWORD`: password login for every route (a session cookie, or the bearer token). Empty = no login. */
+  loginPassword?: string | undefined
   /** Seed the example agents into an empty workspace (compose default true for tests; the server entry seeds only with `TEAM_SEED_AGENTS=1`). */
   seedAgents?: boolean
   /** Model config override (tests); default from the environment. */
@@ -1161,7 +1165,21 @@ export function compose(config: ServerConfig): Server {
         .filter((o): o is string => o !== undefined),
     ),
   ]
-  const app = createApp({ deps, token: config.token, harness, allowedOrigins })
+  const app = createApp({
+    deps,
+    token: config.token,
+    harness,
+    allowedOrigins,
+    login: config.loginPassword
+      ? {
+          password: config.loginPassword,
+          // the session signing key mixes in the server secret (`TEAM_SECRET_KEY`, else the key id of the dev key)
+          secret: `${(config.env ?? process.env).TEAM_SECRET_KEY ?? ''}|${vault.keyId ?? ''}`,
+          publicUrl,
+          trustProxy: (config.env ?? process.env).TEAM_TRUST_PROXY === '1',
+        }
+      : undefined,
+  })
   routines.start()
   // phantom connector names of stored programs (a tool prefix instead of the id) are repaired once
   // (after the connectors are prepared: the repair itself never opens a connection)
@@ -1230,6 +1248,7 @@ if (import.meta.main) {
     seedAgents: process.env.TEAM_SEED_AGENTS === '1',
     instanceId: process.env.TEAM_INSTANCE_ID ?? `team-${listenPort}`,
     token,
+    loginPassword: process.env.BASIC_AUTH_PASSWORD,
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
     ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { limits: { spawnCap } } : {}),
     logs: {
@@ -1298,7 +1317,7 @@ if (import.meta.main) {
     },
   })
   console.log(
-    `team server on http://${listen.hostname}:${http.port} (${web ? 'web at /, API and docs under /api' : 'docs at /docs'}, ${token ? 'token auth' : 'no TEAM_TOKEN: open, loopback only'})`,
+    `team server on http://${listen.hostname}:${http.port} (${web ? 'web at /, API and docs under /api' : 'docs at /docs'}, ${[token ? 'token auth' : '', process.env.BASIC_AUTH_PASSWORD ? 'password login' : ''].filter(Boolean).join(' + ') || 'no TEAM_TOKEN: open, loopback only'})`,
   )
   let shuttingDown = false
   const shutdown = async (): Promise<void> => {

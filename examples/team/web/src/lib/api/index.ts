@@ -1,5 +1,6 @@
 import { createHarnessClient } from 'eharness/client';
 import { createBackoff } from './backoff';
+import { createAuthFetch, goToLogin } from './auth-fetch';
 import { createClient, toApiError } from './client';
 
 export * from './client';
@@ -39,7 +40,10 @@ export function setToken(token: string): void {
 /** Shared gate: the live store shows "cannot reach the server" while it is down, and Retry opens it. */
 export const reachability = createBackoff();
 
-export const api = createClient({ baseUrl: __PUBLIC_API_URL__ || '/api', getToken, reachability });
+/** Every API call: sends the session cookie and redirects to /login on 401 AUTH_REQUIRED. */
+export const authFetch: typeof fetch = createAuthFetch((input, init) => globalThis.fetch(input, init), goToLogin);
+
+export const api = createClient({ baseUrl: __PUBLIC_API_URL__ || '/api', getToken, reachability, fetch: authFetch });
 
 export const apiBase: string = __PUBLIC_API_URL__ || '/api';
 
@@ -50,6 +54,7 @@ export const apiBase: string = __PUBLIC_API_URL__ || '/api';
  */
 export const harness = createHarnessClient({
 	baseUrl: apiBase,
+	fetch: authFetch,
 	headers: () => {
 		const token = getToken();
 		return { authorization: token ? `Bearer ${token}` : undefined };
@@ -63,7 +68,7 @@ export const harness = createHarnessClient({
 export async function fetchLibraryBlob(path: string, o: { inline?: boolean; signal?: AbortSignal } = {}): Promise<Blob> {
 	const q = new URLSearchParams({ path, ...(o.inline ? { inline: 'true' } : { raw: 'true' }) });
 	const token = getToken();
-	const res = await fetch(`${apiBase.replace(/\/+$/, '')}/library/file?${q}`, {
+	const res = await authFetch(`${apiBase.replace(/\/+$/, '')}/library/file?${q}`, {
 		headers: token ? { authorization: `Bearer ${token}` } : {},
 		signal: o.signal
 	});
@@ -78,7 +83,7 @@ export async function uploadLibraryFile(file: File): Promise<UploadedFile> {
 	const form = new FormData();
 	form.set('file', file);
 	const token = getToken();
-	const res = await fetch(`${apiBase.replace(/\/+$/, '')}/library/files`, {
+	const res = await authFetch(`${apiBase.replace(/\/+$/, '')}/library/files`, {
 		method: 'POST',
 		headers: token ? { authorization: `Bearer ${token}` } : {},
 		body: form

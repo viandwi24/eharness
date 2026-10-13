@@ -10,6 +10,7 @@
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
 	import PulseIcon from 'phosphor-svelte/lib/Pulse';
+	import SignOutIcon from 'phosphor-svelte/lib/SignOut';
 	import StrategyIcon from 'phosphor-svelte/lib/Strategy';
 	import type { Component } from 'svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -20,6 +21,8 @@
 	import { cn } from '#lib/utils.js';
 	import ApprovalsPopover from './ApprovalsPopover.svelte';
 	import ThemeToggle from './ThemeToggle.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { auth, signOut } from '#lib/stores/auth.svelte.js';
 	import { scrollFades } from '#lib/nav/fades.js';
 
 	/**
@@ -112,6 +115,9 @@
 		{#each main as s (s.id)}{@render item(s)}{/each}
 		<div class="mt-auto flex flex-col items-center gap-1">
 			<ThemeToggle />
+			{#if auth.required}
+				<Button variant="ghost" size="icon-sm" aria-label="Log out" title="Log out" onclick={() => void signOut()}><SignOutIcon class="size-4" /></Button>
+			{/if}
 			<ApprovalsPopover side="right" align="end" />
 			{@render item(settings)}
 		</div>

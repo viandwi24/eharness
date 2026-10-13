@@ -1795,6 +1795,15 @@ without ever weakening the rules. Example code only (`app/persona.ts`, `domain/p
 
 **Test it.** `bun test test/persona.test.ts` (scripted models, mock adapter).
 
+## Optional password login
+
+`BASIC_AUTH_PASSWORD` turns on a sign-in page (`examples/team/server/src/app/login.ts`,
+`http/routes/auth.ts`, web `/login`). It is one middleware in front of every route: a valid
+`team_session` cookie (stateless HMAC-SHA256 token, key derived from the password and the server
+secret) or the existing bearer `TEAM_TOKEN` passes; `/health` and `/auth/*` are exempt; the docs,
+OpenAPI document, SSE streams and OAuth callback are protected. The web redirects a 401
+`AUTH_REQUIRED` to `/login?next=...`. Unset, nothing changes.
+
 ## What to change when you copy it
 
 | In the example | In your harness |

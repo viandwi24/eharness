@@ -76,6 +76,8 @@ export function originOf(url: string): string | undefined {
 
 /** Shortest token accepted on a non-loopback bind. */
 export const MIN_TOKEN_CHARS = 16
+/** Shortest `BASIC_AUTH_PASSWORD` accepted on a non-loopback bind without a token. */
+export const MIN_PASSWORD_CHARS = 12
 
 export interface ListenConfig {
   hostname: string
@@ -94,16 +96,26 @@ export function listenConfig(
     TEAM_TOKEN?: string | undefined
     TEAM_ALLOWED_HOSTS?: string | undefined
     TEAM_PUBLIC_URL?: string | undefined
+    BASIC_AUTH_PASSWORD?: string | undefined
   },
 ): ListenConfig {
   const hostname = env.TEAM_HOST?.trim() || '127.0.0.1'
   const hasToken = env.TEAM_TOKEN !== undefined && env.TEAM_TOKEN !== ''
+  const password = env.BASIC_AUTH_PASSWORD ?? ''
   if (!hasToken && !isLoopbackHost(hostname)) {
-    throw new Error(
-      `TEAM_HOST=${hostname} is not a loopback address and TEAM_TOKEN is not set: refusing to start an open server on the network. Set TEAM_TOKEN, or bind to 127.0.0.1.`,
-    )
+    if (password === '') {
+      throw new Error(
+        `TEAM_HOST=${hostname} is not a loopback address and neither TEAM_TOKEN nor BASIC_AUTH_PASSWORD is set: refusing to start an open server on the network. Set one of them, or bind to 127.0.0.1.`,
+      )
+    }
+    // the login password alone guards the server: it must not be guessable
+    if (password.length < MIN_PASSWORD_CHARS) {
+      throw new Error(
+        `TEAM_HOST=${hostname} is not a loopback address: BASIC_AUTH_PASSWORD must be at least ${MIN_PASSWORD_CHARS} characters (generate one with: openssl rand -base64 18).`,
+      )
+    }
   }
-  if (!isLoopbackHost(hostname)) {
+  if (!isLoopbackHost(hostname) && hasToken) {
     const token = env.TEAM_TOKEN ?? ''
     if (token.length < MIN_TOKEN_CHARS || token.startsWith('dev-')) {
       throw new Error(

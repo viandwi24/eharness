@@ -51,7 +51,7 @@ RUN mkdir -p node_modules/eharness && ln -s /app/src node_modules/eharness/src \
   && mkdir -p /data && chown bun:bun /data
 
 # Container defaults; everything else comes from the env file (see .env.example).
-# A non-loopback bind requires TEAM_TOKEN (16+ characters): the server refuses to start without it.
+# A non-loopback bind requires TEAM_TOKEN (16+ characters) or BASIC_AUTH_PASSWORD (12+ characters, web login): the server refuses to start without one.
 ENV NODE_ENV=production \
     TEAM_HOST=0.0.0.0 \
     PORT=4000 \

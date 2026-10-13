@@ -5,11 +5,15 @@
  */
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { Scalar } from '@scalar/hono-api-reference'
+import type { Context } from 'hono'
+import { getCookie } from 'hono/cookie'
 import { HTTPException } from 'hono/http-exception'
 import { checkBearer, originAllowed } from '../app/auth.ts'
 import { DomainError } from '../app/errors.ts'
+import { createLoginAuth, createLoginThrottle, SESSION_COOKIE } from '../app/login.ts'
 import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
+import { authRoutes } from './routes/auth.ts'
 import { briefingRoutes } from './routes/briefings.ts'
 import { channelRoutes } from './routes/channels.ts'
 import { chatRoutes } from './routes/chat.ts'
@@ -43,6 +47,22 @@ export interface AppOptions {
   allowedOrigins?: readonly string[] | undefined
   /** `eharness/http` (`infra/eh/harness-http.ts`): chat, sessions, attention answers, activity. */
   harness: HarnessFetch
+  /**
+   * Password login (`BASIC_AUTH_PASSWORD`). Set: every route except `/health` and `/auth/*` needs
+   * the `team_session` cookie or the bearer `token`. Unset: no login, behaviour unchanged.
+   */
+  login?:
+    | {
+        password: string
+        /** Server secret mixed into the session signing key. */
+        secret: string
+        /** `TEAM_PUBLIC_URL`: an https URL makes the cookie `Secure`. */
+        publicUrl?: string | undefined
+        /** Believe `X-Forwarded-For` / `X-Forwarded-Proto` (a reverse proxy in front). */
+        trustProxy?: boolean | undefined
+        now?: (() => number) | undefined
+      }
+    | undefined
 }
 
 export const OPENAPI_INFO = {
@@ -149,6 +169,13 @@ const EH_STATUS: Record<string, number> = {
 /** Paths that need no token. */
 const PUBLIC = new Set(['/health', '/openapi.json', '/docs', '/oauth/callback'])
 
+/**
+ * Paths that stay open when password login is on: the probe and the login endpoints. The docs, the
+ * OpenAPI document and the OAuth callback are protected (the callback is a top-level GET
+ * navigation, so the SameSite=Lax session cookie still reaches it).
+ */
+const PUBLIC_WITH_LOGIN = new Set(['/health', '/auth/login', '/auth/logout', '/auth/session'])
+
 export function createApp(options: AppOptions): OpenAPIHono {
   const app = new OpenAPIHono({
     // request validation failures use the same error shape
@@ -189,7 +216,37 @@ export function createApp(options: AppOptions): OpenAPIHono {
     return next()
   })
 
+  const login = options.login?.password
+    ? createLoginAuth({
+        password: options.login.password,
+        secret: options.login.secret,
+        ...(options.login.now ? { now: options.login.now } : {}),
+      })
+    : undefined
+  const trustProxy = options.login?.trustProxy === true
+  const bearerOk = (c: Context): boolean =>
+    options.token !== undefined &&
+    options.token !== '' &&
+    checkBearer(options.token, c.req.header('authorization'))
+  const clientOf = (c: Context): string => {
+    if (trustProxy) {
+      const first = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
+      if (first) return first
+    }
+    const env = c.env as { requestIP?: (r: Request) => { address: string } | null } | undefined
+    return env?.requestIP?.(c.req.raw)?.address ?? 'unknown'
+  }
+  const secure = (c: Context): boolean =>
+    options.login?.publicUrl?.startsWith('https:') === true ||
+    new URL(c.req.url).protocol === 'https:' ||
+    (trustProxy && c.req.header('x-forwarded-proto') === 'https')
+
   app.use('*', async (c, next) => {
+    if (login) {
+      if (PUBLIC_WITH_LOGIN.has(c.req.path)) return next()
+      if (bearerOk(c) || (await login.verify(getCookie(c, SESSION_COOKIE)))) return next()
+      return c.json({ error: { code: 'AUTH_REQUIRED', message: 'Sign in to continue.' } }, 401)
+    }
     if (PUBLIC.has(c.req.path)) return next()
     if (!checkBearer(options.token, c.req.header('authorization'))) {
       return c.json(
@@ -258,6 +315,16 @@ export function createApp(options: AppOptions): OpenAPIHono {
     ),
   )
 
+  app.route(
+    '/',
+    authRoutes({
+      login,
+      throttle: createLoginThrottle(options.login?.now),
+      clientOf,
+      secure,
+      bearerOk,
+    }),
+  )
   app.route(
     '/',
     healthRoutes(() => options.deps.clock.now()),

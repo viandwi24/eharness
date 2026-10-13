@@ -28,6 +28,17 @@ non-loopback `TEAM_HOST`. The `Host` header must be loopback, `TEAM_HOST`, the h
 `TEAM_PUBLIC_URL` or listed in `TEAM_ALLOWED_HOSTS` (else `403 FORBIDDEN_HOST`; DNS rebinding guard). There is one token and one user (`actor` = `owner`); a browser `<img>` cannot send
 the header, so the web fetches library bytes with `fetch` and uses object URLs.
 
+### Password login
+
+With `BASIC_AUTH_PASSWORD` set, every route except `GET /health` and `/auth/*` needs the
+`team_session` cookie or the bearer `TEAM_TOKEN`; `/docs`, `/openapi.json` and `/oauth/callback` are
+protected too (the callback is a top-level GET, so the `SameSite=Lax` cookie reaches it). A missing
+session is `401 AUTH_REQUIRED` (a wrong bearer token without login stays `UNAUTHORIZED`).
+`GET /auth/session` -> `{ required, authenticated }`; `POST /auth/login { password }` sets the cookie
+(`401 INVALID_PASSWORD`, `429 LOGIN_LOCKED` with `Retry-After` after 5 failures);
+`POST /auth/logout` clears it. State-changing requests still pass the Origin check. These endpoints
+are not in `openapi.json`.
+
 ## Errors
 
 One shape for every failure, including request validation:

@@ -8,6 +8,7 @@
 	import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheck';
 	import SlidersIcon from 'phosphor-svelte/lib/Sliders';
 	import { api, fieldErrors, getToken, setToken } from '#lib/api/index.js';
+	import { auth, signOut } from '#lib/stores/auth.svelte.js';
 	import type { components } from '#lib/api/schema.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import MemoryEditor from '#lib/components/app/MemoryEditor.svelte';
@@ -432,7 +433,13 @@
 								<Field.Field>
 									<Field.Label for="s-token">Server token</Field.Label>
 									<Input id="s-token" type="password" bind:value={token} placeholder="TEAM_TOKEN (empty if the server is open)" autocomplete="off" class="max-w-md" />
-									<Field.Description>Stored in this browser only. PUBLIC_TEAM_TOKEN overrides it.</Field.Description>
+									<Field.Description>
+										{#if auth.required}
+											This server asks for a login, so the browser does not need a token. It is only for scripts and API clients (they send it as a Bearer token). Stored in this browser only.
+										{:else}
+											Stored in this browser only. PUBLIC_TEAM_TOKEN overrides it.
+										{/if}
+									</Field.Description>
 								</Field.Field>
 							</Card.Content>
 							<Card.Footer class="justify-end gap-2 border-t border-border pt-4">
@@ -440,6 +447,17 @@
 							</Card.Footer>
 						</Card.Root>
 					</form>
+					{#if auth.required}
+						<Card.Root class="mt-4">
+							<Card.Header>
+								<Card.Title>Session</Card.Title>
+								<Card.Description>You are signed in with the workspace password. The session lasts 30 days in this browser.</Card.Description>
+							</Card.Header>
+							<Card.Footer class="justify-end border-t border-border pt-4">
+								<Button type="button" variant="outline" size="sm" onclick={() => void signOut()}>Log out</Button>
+							</Card.Footer>
+						</Card.Root>
+					{/if}
 				{/if}
 		</PageBody>
 	</div>

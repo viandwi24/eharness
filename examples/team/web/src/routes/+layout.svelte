@@ -16,6 +16,9 @@
 	import ReconnectingBar from '#lib/components/app/ReconnectingBar.svelte';
 	import TaskDrawer from '#lib/components/app/TaskDrawer.svelte';
 	import { startLive } from '#lib/stores/live.svelte.js';
+	import { checkSession } from '#lib/stores/auth.svelte.js';
+	import { goToLogin } from '#lib/api/auth-fetch.js';
+	import { isLoginPath, mustSignIn } from '#lib/auth.js';
 	import { onMount } from 'svelte';
 	import type { LayoutProps } from './$types';
 
@@ -26,9 +29,24 @@
 		typeof document === 'undefined' || !/(?:^|;\s*)sidebar_state=false\b/.test(document.cookie)
 	);
 
+	// The login page is a bare page: no rail, no live connection.
+	const isLogin = $derived(isLoginPath(page.url.pathname));
+
 	onMount(() => {
 		document.getElementById('boot')?.remove(); // the static "Loading…" of app.html
-		return startLive();
+		if (isLoginPath(location.pathname)) return;
+		let stop: (() => void) | undefined;
+		let gone = false;
+		// with a login, ask the server first: a signed-out browser goes to /login instead of opening streams
+		void checkSession().then((s) => {
+			if (gone) return;
+			if (mustSignIn(s)) goToLogin();
+			else stop = startLive();
+		});
+		return () => {
+			gone = true;
+			stop?.();
+		};
 	});
 
 	// Mobile: list -> chat -> panel sheet. The list is the home screen; other routes replace it.
@@ -44,6 +62,10 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+{#if isLogin}
+	{@render children()}
+	<Toaster />
+{:else}
 	<Sidebar.Provider bind:open={sidebarOpen} class="h-svh min-h-0 flex-col bg-background text-foreground md:flex-row md:bg-sidebar">
 		<div class="hidden md:flex"><AppRail /></div>
 		<div class="flex min-h-0 min-w-0 flex-1">
@@ -76,3 +98,4 @@
 	<ProgramDialog />
 	<NewTaskDialog />
 	<Toaster />
+{/if}
