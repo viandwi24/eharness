@@ -11,6 +11,8 @@
  * waits), a circuit breaker on PEER_FLOOD or a storm of floods. It never marks anything as read,
  * never types, never touches presence.
  */
+
+import { parseMentions, plainMentions } from '../channels/mentions.ts'
 import {
   type AdapterHost,
   type ChannelAdapter,
@@ -28,7 +30,15 @@ import {
   type SentMessage,
 } from '../channels/types.ts'
 import { accountActions } from './actions.ts'
-import type { TgChat, TgDelete, TgMessage, TgTopic, TgUser, TgUserClient } from './client.ts'
+import type {
+  TgChat,
+  TgDelete,
+  TgMention,
+  TgMessage,
+  TgTopic,
+  TgUser,
+  TgUserClient,
+} from './client.ts'
 import { classifyError, describeError, type TgErrorKind } from './errors.ts'
 import {
   chatNode,
@@ -64,6 +74,8 @@ export const USER_CAPABILITIES: ChannelCapabilities = {
   membersScope: 'partial',
   upload: true,
   deletions: 'ids',
+  // mention tokens are rendered as @handle or a mention by id (`renderMentions`)
+  mentions: 'id',
 }
 
 /** Why the adapter wants the whole session stopped. */
@@ -513,14 +525,49 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     ...(message.sendTxnId === undefined ? {} : { key: message.sendTxnId }),
   })
 
+  /**
+   * The gateway's mention tokens as Telegram mentions: a person with a username becomes `@handle`
+   * (Telegram pings and links it), anybody else their name linked to their id (a text mention).
+   */
+  function renderMentions(text: string): { text: string; mentions: TgMention[] } {
+    const found = parseMentions(text)
+    if (found.length === 0) return { text, mentions: [] }
+    let out = ''
+    let at = 0
+    const mentions: TgMention[] = []
+    for (const m of found) {
+      out += text.slice(at, m.start)
+      const handle = host?.usernameOf?.(m.id)
+      const shown = handle === undefined || handle === '' ? m.name : `@${handle}`
+      mentions.push({
+        offset: out.length,
+        length: shown.length,
+        userId: m.id,
+        byHandle: shown !== m.name,
+      })
+      out += shown
+      at = m.end
+    }
+    return { text: out + text.slice(at), mentions }
+  }
+
   async function send(node: ChannelNode, message: OutboundMessage): Promise<SentMessage> {
     await guardSend(node)
     const chat = targetOf(node).chat
     try {
+      const rendered = renderMentions(message.text)
       const sent =
         message.files !== undefined && message.files.length > 0
-          ? await client.sendFiles(chat, message.files, message.text, sendOptions(node, message))
-          : await client.sendText(chat, message.text, sendOptions(node, message))
+          ? await client.sendFiles(
+              chat,
+              message.files,
+              plainMentions(message.text),
+              sendOptions(node, message),
+            )
+          : await client.sendText(chat, rendered.text, {
+              ...sendOptions(node, message),
+              ...(rendered.mentions.length === 0 ? {} : { mentions: rendered.mentions }),
+            })
       sentIds.add(`${chat}:${sent.id}`)
       if (sentIds.size > DEDUPE_MAX) {
         const oldest = sentIds.values().next().value
@@ -640,7 +687,9 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     },
     send,
     edit: (node, nativeId, text) =>
-      guarded(node, () => client.editText(targetOf(node).chat, Number(nativeId), text)),
+      guarded(node, () =>
+        client.editText(targetOf(node).chat, Number(nativeId), plainMentions(text)),
+      ),
     delete: (node, nativeId) =>
       guarded(node, () => client.deleteMessages(targetOf(node).chat, [Number(nativeId)])),
     pin: (node, nativeId, pinned) =>
@@ -648,13 +697,18 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     react: (node, nativeId, emoji) =>
       guarded(node, () => client.react(targetOf(node).chat, Number(nativeId), emoji)),
     async fetchHistory(node, o): Promise<HistoryEntry[]> {
+      const { chat, topic } = targetOf(node)
+      // a topic of a forum: only its messages; General (topic 0) is the chat's history without a topic
+      const general = node.kind === 'thread' && topic === undefined
       const page = await guarded(node, () =>
-        client.history(targetOf(node).chat, {
+        client.history(chat, {
           limit: Math.min(o.limit, 100),
           ...(o.before === undefined ? {} : { offsetId: Number(o.before) }),
+          ...(topic === undefined ? {} : { topicId: topic }),
         }),
       )
-      return page.map(historyEntryOf).reverse()
+      const mine = general ? page.filter((m) => m.topicId === undefined || m.topicId === 1) : page
+      return mine.map(historyEntryOf).reverse()
     },
     async listMembers(node, o) {
       // partial on purpose: a bounded look at who is there, never a sweep of a big group

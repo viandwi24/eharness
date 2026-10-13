@@ -17,7 +17,10 @@ import {
   subjectOf,
 } from '../domain/decision-memory.ts'
 import {
+  type Answerer,
   amendmentBody,
+  answeredByText,
+  attributionLine,
   authorityLines,
   checkBody,
   checkNote,
@@ -232,8 +235,12 @@ export function proposeFromAgent(
 export interface EscalateInput {
   agentId: string
   sessionId: string
-  /** The external wait the session is parked on; one decision per wait (a retried `start` is idempotent). */
-  waitId: string
+  /**
+   * The external wait the session is parked on; one decision per wait (a retried `start` is
+   * idempotent). Null: a non-blocking escalation, the answer continues the session with a new
+   * message (like a report-made escalation).
+   */
+  waitId: string | null
   title: string
   question: string
   details?: string | undefined
@@ -263,9 +270,16 @@ function standDownPayload(
 
 /** `escalate`: the decision of a parked session. */
 export function createEscalation(deps: Deps, input: EscalateInput): Decision {
-  const existing = deps.decisions.getByWait(input.waitId)
+  const existing = input.waitId === null ? undefined : deps.decisions.getByWait(input.waitId)
   if (existing !== undefined) return existing
   const question = input.question.trim()
+  if (input.waitId === null) {
+    // a non-blocking escalation asked twice with the same question (a retried call) is one decision
+    const same = deps.decisions
+      .list({ sessionId: input.sessionId, status: 'open', limit: 50 })
+      .find((d) => d.kind === 'escalation' && d.waitId === null && d.payload.question === question)
+    if (same !== undefined) return same
+  }
   const d = deps.decisions.insert({
     id: deps.ids.next(),
     kind: 'escalation',
@@ -406,6 +420,14 @@ export interface ApproveInput {
     | undefined
   /** Amendment: the authority to grant when it is narrower than asked. */
   authority?: Partial<ProgramAuthority> | undefined
+  /** Who answered and where; absent: the client in the web app (Decision Center). */
+  by?: Answerer | undefined
+}
+
+/** The answer as the agent reads it: the decision, the note, and who answered where. */
+function answerOf(decision: string, note: string, by: Answerer | undefined): DecisionAnswer {
+  const answeredBy = answeredByText(by)
+  return { decision, note, answeredBy, attribution: attributionLine(answeredBy) }
 }
 
 function mustBeOpen(d: Decision): void {
@@ -520,7 +542,7 @@ export async function approveDecision(
     const decision = input.choice ?? 'approved'
     expireIfStale(deps, d)
     const next = claim(deps, d, 'approved', note, { outcome: { decision } })
-    await deliver(deps, next, { decision, note })
+    await deliver(deps, next, answerOf(decision, note, input.by))
     rememberStandDown(deps, next, decision, note)
     changed(deps, next, 'decided')
     return next
@@ -547,7 +569,7 @@ export async function approveDecision(
     deps.decisions.reopen(d.id)
     throw error
   }
-  await deliver(deps, next, { decision: 'approved', note })
+  await deliver(deps, next, answerOf('approved', note, input.by))
   changed(deps, next, 'decided')
   return next
 }
@@ -644,14 +666,14 @@ async function approveProposal(
 export async function rejectDecision(
   deps: Deps,
   id: string,
-  input: { note?: string | undefined } = {},
+  input: { note?: string | undefined; by?: Answerer | undefined } = {},
 ): Promise<Decision> {
   const d = getDecision(deps, id)
   mustBeOpen(d)
   const note = checkNote(input.note)
   if (d.kind === 'escalation') expireIfStale(deps, d)
   const next = claim(deps, d, 'rejected', note, { outcome: { decision: 'rejected' } })
-  if (d.kind !== 'proposal') await deliver(deps, next, { decision: 'rejected', note })
+  if (d.kind !== 'proposal') await deliver(deps, next, answerOf('rejected', note, input.by))
   else await tellProposer(deps, d, 'rejected', note)
   changed(deps, next, 'decided')
   return next

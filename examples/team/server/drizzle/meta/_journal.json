@@ -211,6 +211,13 @@
       "when": 1791807474350,
       "tag": "0029_worthless_dagger",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1791890488322,
+      "tag": "0030_fuzzy_war_machine",
+      "breakpoints": true
     }
   ]
 }

@@ -319,6 +319,12 @@ export function resolveScope(config: ConnectionConfig, chain: readonly ScopeNode
   }
 }
 
+/** Text with no letter and no digit (emoji, punctuation): a reaction typed as a message. */
+export const isOnlyEmoji = (text: string): boolean =>
+  text.trim() !== '' && !/[\p{L}\p{N}]/u.test(text)
+/** Emoji that answer an approval ("ya" / "tidak"): never ignored. */
+const ANSWER_EMOJI = /^(👍|✅|👌|❌|👎|🚫)$/u
+
 export type WakeDecision =
   | { action: 'wake'; reason: string }
   | { action: 'observe'; reason: string }
@@ -337,6 +343,16 @@ export function decideWake(event: Addressable, scope: ResolvedScope, self: Ident
   if (scope.wake === 'never') return { action: 'observe', reason: 'wake is never here' }
   if (scope.wake === 'always') return { action: 'wake', reason: 'wake is always here' }
   const s = event.signals
+  // a laugh or a sticker-like emoji in reply to the agent is a reaction, not a request (the
+  // approval emojis stay: they answer a pending request)
+  if (
+    s.replyToSelf &&
+    !s.mentionedSelf &&
+    isOnlyEmoji(event.text) &&
+    !ANSWER_EMOJI.test(event.text.trim())
+  ) {
+    return { action: 'observe', reason: 'a reply with only an emoji' }
+  }
   if (s.replyToSelf && scope.implicit.reply) return { action: 'wake', reason: 'reply to the agent' }
   const othersOnly = s.mentionedOthers === true && !s.mentionedSelf
   if (othersOnly && scope.ignoreWhenOthersMentioned) {

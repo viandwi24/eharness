@@ -423,7 +423,7 @@ describe('escalation', () => {
   test('the continuation of a parked run keeps the program step limit, not the agent default', async () => {
     // more steps after the answer than the agent default (a chunked job is many small steps)
     const steps: ScriptedStepInput[] = [
-      call('escalate', { title: 'Go?', question: 'Start the long job?' }),
+      call('escalate_wait', { title: 'Go?', question: 'Start the long job?' }),
       ...Array.from({ length: 45 }, (_, i) =>
         call('write_file', { path: `/library/reports/step-${i}.md`, content: `step ${i}` }),
       ),
@@ -443,7 +443,7 @@ describe('escalation', () => {
   test('parks the run on an external wait; approving resumes the SAME session with the decision as the tool output', async () => {
     const { app, server, models } = fresh({
       researcher: [
-        call('escalate', {
+        call('escalate_wait', {
           title: 'Publish the draft?',
           question: 'Publish /library/reports/a.md to the channel?',
           details: 'Evidence: /library/reports/a.md',
@@ -498,10 +498,10 @@ describe('escalation', () => {
     expect(all[0]).toMatchObject({ sessionId: started.sessionId, status: 'done' })
     expect(all[0]?.report?.summary).toBe('published after approval')
     // the decision is the tool output, in the same message
-    const parts = await toolParts(app, started.sessionId, 'escalate')
+    const parts = await toolParts(app, started.sessionId, 'escalate_wait')
     expect(parts).toHaveLength(1)
     expect(parts[0]?.state).toBe('output-available')
-    expect(parts[0]?.output).toEqual({ decision: 'approved', note: 'go ahead' })
+    expect(parts[0]?.output).toMatchObject({ decision: 'approved', note: 'go ahead' })
     // and the model saw it
     expect(JSON.stringify(models.researcher?.prompts[1])).toContain('go ahead')
     expect(models.researcher?.calls).toHaveLength(2)
@@ -510,7 +510,7 @@ describe('escalation', () => {
   test('options: the client picks one; the pick is the decision; a wrong pick is refused', async () => {
     const { app, models } = fresh({
       researcher: [
-        call('escalate', {
+        call('escalate_wait', {
           title: 'Which source?',
           question: 'Which source first?',
           options: ['Telegram', 'Slack'],
@@ -531,7 +531,7 @@ describe('escalation', () => {
   test('reject resumes the run with the refusal and the note', async () => {
     const { app } = fresh({
       researcher: [
-        call('escalate', { title: 'Delete it?', question: 'Delete the old reports?' }),
+        call('escalate_wait', { title: 'Delete it?', question: 'Delete the old reports?' }),
         done('left them alone'),
       ],
     })
@@ -541,8 +541,8 @@ describe('escalation', () => {
     const res = await reject(app, d.id, { note: 'keep them' })
     expect(await res.json()).toMatchObject({ status: 'rejected', decisionNote: 'keep them' })
     await until('the run ends', async () => ended((await runs(app, p.id))[0]))
-    const parts = await toolParts(app, started.sessionId, 'escalate')
-    expect(parts[0]?.output).toEqual({ decision: 'rejected', note: 'keep them' })
+    const parts = await toolParts(app, started.sessionId, 'escalate_wait')
+    expect(parts[0]?.output).toMatchObject({ decision: 'rejected', note: 'keep them' })
   })
 
   test('a decision whose run no longer waits expires (409) instead of pretending', async () => {
@@ -645,7 +645,7 @@ describe('request_authority', () => {
     expect((await runs(app, p.id))[0]?.status).toBe('done')
     expect(await libraryFs(server.conn.sqlite).read('/library/other/x.md')).toBeNull()
     const parts = await toolParts(app, started.sessionId, 'request_authority')
-    expect(parts[0]?.output).toEqual({ decision: 'rejected', note: 'no' })
+    expect(parts[0]?.output).toMatchObject({ decision: 'rejected', note: 'no' })
     const writes = await toolParts(app, started.sessionId, 'write_file')
     expect(writes.map((w) => w.state)).toEqual(['output-denied', 'output-denied'])
     const program = (await (await app.request(`/programs/${p.id}`)).json()) as ProgramView
@@ -703,7 +703,7 @@ describe('needs_decision reports', () => {
 
   test('a run that escalated by itself and reports done creates no extra decision', async () => {
     const { app } = fresh({
-      researcher: [call('escalate', { title: 'T', question: 'q' }), done('fine')],
+      researcher: [call('escalate_wait', { title: 'T', question: 'q' }), done('fine')],
     })
     const p = await createProgram(app)
     await runNow(app, p.id)
@@ -719,7 +719,7 @@ describe('decisions survive a restart', () => {
     const dir = mkdtempSync(join(tmpdir(), 'team-p40b-restart-'))
     dirs.push(dir)
     const a = instance(dir, {
-      researcher: [call('escalate', { title: 'Restart?', question: 'Survives a restart?' })],
+      researcher: [call('escalate_wait', { title: 'Restart?', question: 'Survives a restart?' })],
     })
     const p = await createProgram(a.app)
     const started = await runNow(a.app, p.id)
@@ -740,8 +740,8 @@ describe('decisions survive a restart', () => {
     const run = (await runs(b.app, p.id))[0] as TaskView
     expect(run).toMatchObject({ sessionId: started.sessionId, status: 'done' })
     expect(run.report?.summary).toBe('finished after the restart')
-    const parts = await toolParts(b.app, started.sessionId, 'escalate')
-    expect(parts[0]?.output).toEqual({ decision: 'approved', note: 'after restart' })
+    const parts = await toolParts(b.app, started.sessionId, 'escalate_wait')
+    expect(parts[0]?.output).toMatchObject({ decision: 'approved', note: 'after restart' })
   })
 
   test('an approved amendment is read by a restarted instance: the resumed run can use it', async () => {
@@ -773,7 +773,7 @@ describe('decisions survive a restart', () => {
 describe('API', () => {
   test('filters, unknown ids, events and the open count', async () => {
     const { app } = fresh({
-      researcher: [call('escalate', { title: 'One', question: 'q' }), done('ok')],
+      researcher: [call('escalate_wait', { title: 'One', question: 'q' }), done('ok')],
     })
     expect((await app.request('/decisions/nope')).status).toBe(404)
     expect((await app.request('/decisions?agentId=ghost')).status).toBe(404)

@@ -10,6 +10,8 @@ import {
   ChannelAdminLogRunSchema,
   ChannelBackfillBodySchema,
   ChannelBindBodySchema,
+  ChannelBulkRoleBodySchema,
+  ChannelBulkRoleResultSchema,
   ChannelChatListSchema,
   ChannelChatParam,
   ChannelChatSchema,
@@ -45,6 +47,8 @@ import {
   ChannelRemindersTablePageSchema,
   ChannelRemindersTableQuery,
   ChannelRoleBodySchema,
+  ChannelRoleSuggestionsQuery,
+  ChannelRoleSuggestionsSchema,
   ChannelSelectBodySchema,
   ChannelUnlinkedListSchema,
   ChannelUnlinkedQuery,
@@ -581,6 +585,39 @@ const peopleImport = createRoute({
     ...errorResponses,
   },
 })
+const roleBulk = createRoute({
+  method: 'post',
+  path: '/channels/connections/{id}/people/bulk-role',
+  tags,
+  summary: 'Set the role of many people at once',
+  description:
+    'Give `peerIds` a role, or give everybody without a role (`allWithoutRole`, bots left out, `exclude` to skip some) member or guest. Never sets `owner`; `admin` only for explicit ids. Each person goes through the same path as a single role change.',
+  security,
+  request: {
+    params: ChannelIdParam,
+    body: { required: true, content: content(ChannelBulkRoleBodySchema) },
+  },
+  responses: {
+    200: { description: 'Counts', content: content(ChannelBulkRoleResultSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const roleSuggestions = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/people/suggestions',
+  tags,
+  summary: 'Suggested roles for the people without one',
+  description:
+    'Read-only. People the platform lists as chat administrators are suggested as admins, everybody else seen (optionally only in one chat) as members; bots are left out. Nothing is applied.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelRoleSuggestionsQuery },
+  responses: {
+    200: { description: 'Suggestions', content: content(ChannelRoleSuggestionsSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
 const peopleSettingsGet = createRoute({
   method: 'get',
   path: '/channels/connections/{id}/people/settings',
@@ -710,6 +747,15 @@ export function channelRoutes(deps: Deps) {
     )
     .openapi(peopleList, async (c) =>
       c.json({ items: await inbox.people(c.req.valid('param').id) }, 200),
+    )
+    .openapi(roleSuggestions, async (c) =>
+      c.json(
+        await inbox.roleSuggestions(c.req.valid('param').id, defined(c.req.valid('query'))),
+        200,
+      ),
+    )
+    .openapi(roleBulk, async (c) =>
+      c.json(await inbox.bulkRole(c.req.valid('param').id, defined(c.req.valid('json'))), 200),
     )
     .openapi(peopleSettingsGet, async (c) =>
       c.json(await inbox.peopleSettings(c.req.valid('param').id), 200),

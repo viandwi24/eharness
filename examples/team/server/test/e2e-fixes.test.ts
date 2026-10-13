@@ -715,7 +715,7 @@ describe('a run parked on a decision stays parked across a restart', () => {
     const dir = mkdtempSync(join(tmpdir(), 'team-e2efix-restart-'))
     dirs.push(dir)
     const a = instance(
-      { researcher: [call('escalate', { title: 'Restart?', question: 'Does it survive?' })] },
+      { researcher: [call('escalate_wait', { title: 'Restart?', question: 'Does it survive?' })] },
       { dir },
     )
     const p = await createProgram(a.app)

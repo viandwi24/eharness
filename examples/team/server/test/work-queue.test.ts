@@ -704,7 +704,7 @@ describe('waiting for you', () => {
   test('a task whose run parked on a decision is in the Waiting column until it is decided', async () => {
     const { app, server } = fresh({
       writer: [
-        call('escalate', {
+        call('escalate_wait', {
           title: 'Which tone?',
           question: 'Funny or serious?',
           options: ['funny', 'serious'],

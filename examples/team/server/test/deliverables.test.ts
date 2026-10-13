@@ -354,7 +354,7 @@ describe('the run end', () => {
     const thin = '# Weekly brief\n\n## Summary\nAll quiet this week, nothing else.\n'
     const { server, app } = fresh({
       writer: [
-        call('escalate', { title: 'Which tone?', question: 'Formal or casual?' }),
+        call('escalate_wait', { title: 'Which tone?', question: 'Formal or casual?' }),
         writeReport(thin), // after the answer: the file lacks "Findings"
         () => report('done', [reportPath()]),
         writeReport(GOOD_MD), // the fix-up turn

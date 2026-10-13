@@ -43,6 +43,18 @@ export function toolSearchNames(output: unknown): string[] {
     .filter((n): n is string => typeof n === 'string')
 }
 
+/** The output AI SDK answers a call to a tool that is not in the step's tool set with. */
+function isUnavailableToolOutput(output: unknown): boolean {
+  if (typeof output !== 'object' || output === null) return false
+  const o = output as { type?: unknown; value?: unknown }
+  return (
+    (o.type === 'error-text' || o.type === 'error-json') &&
+    /unavailable tool|NoSuchToolError/i.test(
+      typeof o.value === 'string' ? o.value : JSON.stringify(o.value),
+    )
+  )
+}
+
 export function collectDiscovered(response: readonly ModelMessage[], into: Set<string>): void {
   for (const message of response) {
     if (message.role !== 'tool' && message.role !== 'assistant') continue
@@ -51,6 +63,11 @@ export function collectDiscovered(response: readonly ModelMessage[], into: Set<s
       if (part.type === 'tool-result' && part.toolName === 'tool_search') {
         for (const name of toolSearchNames(part.output)) into.add(name)
       }
+      // a call to a deferred tool that was never loaded fails with "unavailable tool": the call
+      // itself is the search, so the tool is loaded for the next step (a name that is not a
+      // deferred tool of the turn is ignored by `toolsForStep`)
+      if (part.type === 'tool-result' && isUnavailableToolOutput(part.output))
+        into.add(part.toolName)
     }
   }
 }

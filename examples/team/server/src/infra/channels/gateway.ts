@@ -254,6 +254,16 @@ export interface GatewayDeps {
   webLink?: (target: { agentId: string; sessionId: string }) => string | undefined
   /** Retry timing of the outbox (tests use small values). */
   delivery?: { retryBaseMs?: number; retryMaxMs?: number; maxAttempts?: number }
+  /**
+   * Answer a Decision Center question from a chat (`announceDecision`): the option picked (or
+   * `approved` / `rejected` for a question without options), by a named person. Throws when the
+   * decision is no longer open.
+   */
+  answerDecision?(input: {
+    decisionId: string
+    choice: string
+    by: { name: string }
+  }): Promise<void>
   /** A bell notification (breaker opened). */
   notify?(n: {
     key: string
@@ -749,6 +759,19 @@ export interface ChannelGateway {
   roomOf(node: NodeRow): NodeRow
   /** The adapter's view of a stored node (for optional adapter operations). */
   viewOf(node: NodeRow): ChannelNode
+  /** " Chats: …" listing the allowed group chats of a connection (a hint for a call that named none). */
+  chatsHint(connectionId: string): string
+  /**
+   * A Decision Center question of a run that belongs to a chat (the program was proposed there) is
+   * asked in that chat too: owners and admins answer with an option number, its text, or ya/tidak.
+   */
+  announceDecision(input: {
+    sessionId: string
+    decisionId: string
+    title: string
+    question: string
+    options: readonly string[]
+  }): Promise<void>
   /** May this requester read what was said in the node? Staff: any node; a member: their own node and their divisions; a guest: none. */
   canRead(requester: Requester, node: NodeRow): boolean
   /** Resolve who to mention: a team member id, a platform user id or an identity id. */
@@ -823,6 +846,8 @@ export interface ChannelGateway {
     stop: string
     messages: ReadonlyArray<{ role: string; parts?: unknown; metadata?: unknown }>
     pending?: PendingView | undefined
+    /** Why a turn that stopped with `error` failed (provider text; never posted as is). */
+    error?: { code: string; message: string } | undefined
   }): Promise<void>
   /**
    * A delegated agent (a child of a channel session) ended a turn. When it waits for an approval
@@ -978,6 +1003,10 @@ export function approvalWord(text: string): 'yes' | 'no' | undefined {
 
 /** A "ya" / "tidak" reply answers only requests announced this recently (older ones: the web app). */
 const TEXT_ANSWER_MAX_AGE_MS = 10 * 60_000
+
+/** The provider refused the call for money: the team has to add credit, not ask again. */
+const CREDIT_NOTICE =
+  'I cannot answer right now: the AI service this team uses has run out of credit. An admin needs to add credit; then ask me again.'
 
 /** Stops whose last words (the wrap-up summary) are worth more than a generic notice. */
 const SAY_WHAT_WAS_DONE: ReadonlySet<string> = new Set(['max-steps', 'stuck', 'length'])
@@ -1965,6 +1994,164 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const mention = Array.isArray(i.mention) ? i.mention.map(String) : []
     for (const id of mention) if (!names(m, row.connectionId, id)) return false
     return true
+  }
+
+  // --- Decision Center questions asked in a chat ---------------------------------------------
+
+  /** Open decision cards: by decision id. Kept in `ch_meta` so a restart still knows them. */
+  interface DecisionCard {
+    decisionId: string
+    connectionId: string
+    nodeId: string
+    messageId: string | null
+    options: string[]
+    at: number
+  }
+  const CARD_KEY = 'decision-card:'
+  const DECISION_CARD_MAX_AGE_MS = 24 * 3_600_000
+  const saveCard = (c: DecisionCard): void => {
+    deps.sqlite
+      .query('INSERT OR REPLACE INTO ch_meta (key, value) VALUES (?, ?)')
+      .run(`${CARD_KEY}${c.decisionId}`, JSON.stringify(c))
+  }
+  const dropCard = (decisionId: string): void => {
+    deps.sqlite.query('DELETE FROM ch_meta WHERE key = ?').run(`${CARD_KEY}${decisionId}`)
+  }
+  const cardsIn = (roomId: string): DecisionCard[] =>
+    deps.sqlite
+      .query<{ value: string }, [string]>('SELECT value FROM ch_meta WHERE key LIKE ?')
+      .all(`${CARD_KEY}%`)
+      .map((r) => {
+        try {
+          return JSON.parse(r.value) as DecisionCard
+        } catch {
+          return undefined
+        }
+      })
+      .filter((c): c is DecisionCard => {
+        if (c === undefined) return false
+        const n = nodes.get(c.nodeId)
+        return n !== undefined && roomOf(n).id === roomId && now() - c.at < DECISION_CARD_MAX_AGE_MS
+      })
+
+  async function announceDecision(input: {
+    sessionId: string
+    decisionId: string
+    title: string
+    question: string
+    options: readonly string[]
+  }): Promise<void> {
+    if (deps.answerDecision === undefined) return
+    const row = sessions.bySession(input.sessionId)
+    const node = row === undefined ? undefined : nodes.get(row.nodeId)
+    const adapter = row === undefined ? undefined : adapters.get(row.connectionId)
+    if (row === undefined || node === undefined || adapter === undefined) return
+    const options = [...input.options]
+    const lines = [
+      `Decision needed: ${input.title}`,
+      input.question,
+      ...(options.length === 0
+        ? ['Reply to this message with "ya" (yes) or "tidak" (no).']
+        : [
+            ...options.map((o, i) => `${i + 1}. ${o}`),
+            'Reply to this message with the number or the text of an option.',
+          ]),
+      'Only an owner or admin of the team can answer; it can also be answered in the web app (Decisions).',
+    ]
+    const caps = capsOf(adapter, node)
+    const text = clip(neutralizeHandles(lines.join('\n')), caps.maxTextLength)
+    try {
+      const sent = await limitedOutbound.run(laneOf(node), () =>
+        adapter.send(viewOf(node), { text }),
+      )
+      saveCard({
+        decisionId: input.decisionId,
+        connectionId: row.connectionId,
+        nodeId: node.id,
+        messageId: sent.nativeId,
+        options,
+        at: now(),
+      })
+    } catch (error) {
+      warn(`channels: the decision ${input.decisionId} was not announced: ${errorText(error)}`)
+    }
+  }
+
+  /**
+   * A staff reply that answers an open decision card of this chat: the reply points at the card (or
+   * only one card is open) and names an option (number or text) or says ya / tidak.
+   */
+  async function answerDecisionCard(input: {
+    config: ConnectionConfig
+    adapter: ChannelAdapter
+    node: NodeRow
+    sender: IdentityRow
+    typed: string
+    replyToNativeId: string | undefined
+  }): Promise<boolean> {
+    if (deps.answerDecision === undefined) return false
+    const role = resolveIdentityRole(input.config.connectionId, input.sender).role
+    if (!isStaff(role)) return false
+    const open = cardsIn(roomOf(input.node).id)
+    if (open.length === 0) return false
+    const card =
+      open.find((c) => c.messageId !== null && c.messageId === input.replyToNativeId) ??
+      (open.length === 1 ? open[0] : undefined)
+    if (card === undefined) return false
+    const typed = input.typed.trim().toLowerCase()
+    let choice: string | undefined
+    if (card.options.length === 0) {
+      const word = approvalWord(input.typed)
+      choice = word === 'yes' ? 'approved' : word === 'no' ? 'rejected' : undefined
+    } else {
+      const n = Number(typed.replace(/[^0-9]/g, ''))
+      if (/^\s*\d+\s*[.)]?\s*$/.test(typed) && n >= 1 && n <= card.options.length)
+        choice = card.options[n - 1]
+      else choice = card.options.find((o) => o.trim().toLowerCase() === typed)
+    }
+    if (choice === undefined) return false
+    const who = input.sender.displayName ?? input.sender.username ?? input.sender.nativeId
+    try {
+      await deps.answerDecision({ decisionId: card.decisionId, choice, by: { name: who } })
+      dropCard(card.decisionId)
+      await sendDirect(
+        input.config,
+        input.adapter,
+        input.node,
+        `Noted: "${choice}" (answered by ${who}).`,
+        card.messageId ?? undefined,
+      )
+      activity({
+        connectionId: input.config.connectionId,
+        type: 'approval-answered',
+        reason: 'decision',
+        conversationId: input.node.id,
+        peerId: input.sender.nativeId,
+        peerName: who,
+        detail: { decision: card.decisionId, via: 'chat-text' },
+      })
+    } catch (error) {
+      dropCard(card.decisionId)
+      await sendDirect(
+        input.config,
+        input.adapter,
+        input.node,
+        `That decision could not be recorded: ${errorText(error)}`,
+        card.messageId ?? undefined,
+      ).catch(() => undefined)
+    }
+    return true
+  }
+
+  /** The allowed group chats of a connection, as a hint for a call that named none (saves a step). */
+  function chatsHint(connectionId: string): string {
+    const rooms = nodes
+      .list(connectionId, { kind: 'room' })
+      .filter((n) => scopeOf(n)?.allowed === true)
+      .slice(0, 8)
+    return rooms.length === 0
+      ? ''
+      : ` Chats: ${rooms.map((n) => `"${n.title ?? n.nativeId}" (${n.nativeId})`).join(', ')}.`
   }
 
   async function requesterOf(sessionId: string): Promise<Requester | undefined> {
@@ -3934,6 +4121,20 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     // approvals of this session wait: a message from the person who asked (or an admin) declines
     // them like a new message in the web app and is processed; anybody else's stays context
     if (event.type === 'message.created') {
+      // a reply that answers a Decision Center question asked in this chat
+      if (
+        await answerDecisionCard({
+          config,
+          adapter,
+          node,
+          sender,
+          typed: event.message.text,
+          replyToNativeId: event.message.replyTo?.messageId,
+        })
+      ) {
+        log.markHandled(node.id, nativeId)
+        return { action: 'approval', reason: 'answered a decision in the chat' }
+      }
       const outcome = await declinePendingFor({
         config,
         adapter,
@@ -4055,6 +4256,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     isOwn(nodeNativeId, messageNativeId) {
       const node = nodes.byNative(connectionId, nodeNativeId)
       return node !== undefined && log.isOwn(node.id, messageNativeId)
+    },
+    usernameOf(nativeId) {
+      return identities.byNative(connectionId, nativeId)?.username ?? undefined
     },
   })
 
@@ -4519,10 +4723,14 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     } else if (current !== undefined && current.connectionId === connectionId) {
       node = current.node
     } else {
-      throw new ChannelUserError('Name the conversation (or a member to message).')
+      throw new ChannelUserError(
+        `Name the conversation (or a member to message).${chatsHint(connectionId)}`,
+      )
     }
     if (node === undefined)
-      throw new ChannelUserError('Name the conversation (or a member to message).')
+      throw new ChannelUserError(
+        `Name the conversation (or a member to message).${chatsHint(connectionId)}`,
+      )
     const scope = scopeOf(node)
     if (scope === undefined)
       throw new ChannelUserError(`The connection "${connectionId}" is not one of yours.`)
@@ -4965,6 +5173,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     stop: string
     messages: ReadonlyArray<{ role: string; parts?: unknown; metadata?: unknown }>
     pending?: PendingView | undefined
+    /** Why a turn that stopped with `error` failed (provider text; never posted as is). */
+    error?: { code: string; message: string } | undefined
   }): Promise<void> {
     stopTyping(end.sessionId)
     const row = sessions.bySession(end.sessionId)
@@ -5017,7 +5227,20 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     }
     // the turn is over: its announcements no longer belong to a running turn
     if (parked !== undefined) approvals.consume(end.sessionId)
-    const failure = FAILURE_NOTICE[end.stop]
+    // the model provider refused for money (credits, quota, billing): say that plainly, ring the bell
+    const outOfCredit =
+      end.stop === 'error' &&
+      /credit|quota|insufficient|billing|payment required|\b402\b/i.test(end.error?.message ?? '')
+    if (outOfCredit) {
+      deps.notify?.({
+        key: `model-credit:${new Date(now()).toISOString().slice(0, 13)}`,
+        title: 'The AI model provider ran out of credit',
+        body: 'Chats cannot be answered until credit is added at the model provider (Settings → Providers).',
+        agentId: row.agentId,
+        link: '/settings',
+      })
+    }
+    const failure = outOfCredit ? CREDIT_NOTICE : FAILURE_NOTICE[end.stop]
     if (end.stop !== 'complete' && failure === undefined) return
     if (trigger === undefined) return // not a turn the channel started (a person in the web app)
     if (config === undefined) return
@@ -5073,6 +5296,25 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         detail: { kind: 'reply', chunks: chunks.length },
       })
       await flush(row.connectionId)
+      // a long answer (a report, an audit) is kept in the library as well, findable later
+      if (modelText && text.length >= 800 && deps.library !== undefined) {
+        const room = roomOf(node)
+        const place = `${room.title ?? room.nativeId}${node.id === room.id ? '' : ` / ${node.title ?? node.nativeId}`}`
+        const slug = place
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 50)
+        const path = `/library/reports/chat/${new Date(now()).toISOString().slice(0, 10)}-${slug || 'chat'}-${trigger.nativeId}.md`
+        await deps.library
+          .write(
+            path,
+            `# Answer in ${place}\n\n_${new Date(now()).toISOString()} · reply to message ${trigger.nativeId}_\n\n${plainMentions(text)}\n`,
+          )
+          .catch((error) =>
+            warn(`channels: the answer of ${row.sessionId} was not saved: ${errorText(error)}`),
+          )
+      }
     } catch (error) {
       warn(`channels: the reply to ${row.sessionId} was not queued: ${errorText(error)}`)
     }
@@ -5518,6 +5760,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     directInstruction,
     roomOf,
     viewOf,
+    chatsHint,
+    announceDecision,
     canRead,
     resolveMentions,
     expireApprovals,

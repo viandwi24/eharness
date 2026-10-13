@@ -4,7 +4,11 @@
  * gateway; platform neutral.
  */
 import type { ChannelInboxPort } from '../../app/ports.ts'
-import type { ChannelPersonView, ChannelReminderView } from '../../domain/channels.ts'
+import type {
+  ChannelPersonView,
+  ChannelReminderView,
+  ChannelRoleSuggestion,
+} from '../../domain/channels.ts'
 import { invalid, notFound } from '../../domain/errors.ts'
 import type { ChannelGateway, PersonView } from './gateway.ts'
 import { type ReminderRow, WEB_REMINDER_CONNECTION, webReminderSession } from './reminders.ts'
@@ -31,6 +35,13 @@ const personOf = (v: PersonView): ChannelPersonView => ({
 
 const OWNER = 'owner'
 
+/** Somebody the team can give a role: a person, not a bot, a chat speaking as itself or the connection. */
+const isRoleable = (v: PersonView): boolean =>
+  !v.isBot && v.kind !== 'bot' && v.kind !== 'anonymous' && v.kind !== 'channel'
+/** No directory entry and nothing derived: they get the connection's default (guest). */
+const hasNoRole = (v: PersonView): boolean =>
+  !v.explicit && v.role === 'guest' && v.roleSource === 'default'
+
 export interface ChannelInboxOptions {
   gateway: ChannelGateway
   /** Resolves when the connection exists (a channel connection), rejects with not-found otherwise. */
@@ -47,6 +58,23 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
   const { gateway } = options
   const known = async (id: string): Promise<void> => {
     await options.connection(id)
+  }
+  /** The people of a connection; with `nodeId` only those seen in that chat or below it. */
+  const peopleIn = (id: string, nodeId: string | undefined): PersonView[] => {
+    const all = gateway.people.list(id)
+    if (nodeId === undefined) return all
+    const node = gateway.nodes.get(nodeId)
+    if (node === undefined || node.connectionId !== id)
+      throw invalid(`"${nodeId}" is not a chat of this connection.`)
+    const seen = new Set<string>()
+    for (const n of [node, ...gateway.nodes.subtree(node)])
+      for (const m of gateway.identities.members(n.id)) seen.add(m.identityId)
+    const natives = new Set<string>()
+    for (const identityId of seen) {
+      const row = gateway.identities.get(identityId)
+      if (row !== undefined) natives.add(row.nativeId)
+    }
+    return all.filter((v) => natives.has(v.peerId))
   }
   return {
     async members(id) {
@@ -146,6 +174,66 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
       } catch (error) {
         throw invalid(error instanceof Error ? error.message : String(error))
       }
+    },
+    async bulkRole(id, input) {
+      await known(id)
+      const explicit = input.peerIds !== undefined && input.peerIds.length > 0
+      if (explicit === (input.allWithoutRole === true))
+        throw invalid('Give either peerIds or allWithoutRole, not both and not neither.')
+      if (!explicit && input.role === 'admin')
+        throw invalid('Admins are chosen one by one: give peerIds to make somebody an admin.')
+      const exclude = new Set((input.exclude ?? []).map((p) => p.trim()))
+      const wanted: string[] = explicit
+        ? [...new Set((input.peerIds as string[]).map((p) => clean(p, 'peerId')))]
+        : peopleIn(id, input.nodeId)
+            .filter((v) => isRoleable(v) && hasNoRole(v) && !exclude.has(v.peerId))
+            .map((v) => v.peerId)
+      let updated = 0
+      let skipped = 0
+      const problems: string[] = []
+      for (const peerId of wanted) {
+        const current = gateway.people.get(id, peerId)
+        if (current !== undefined && !isRoleable(current)) {
+          skipped++
+          problems.push(`${peerId}: a bot or a chat speaking as itself keeps no role.`)
+          continue
+        }
+        try {
+          gateway.people.setRole(id, peerId, { role: input.role }, OWNER)
+          updated++
+        } catch (error) {
+          skipped++
+          problems.push(`${peerId}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      return { updated, skipped, problems: problems.slice(0, 20) }
+    },
+    async roleSuggestions(id, opts) {
+      await known(id)
+      const admins: ChannelRoleSuggestion[] = []
+      const members: ChannelRoleSuggestion[] = []
+      for (const v of peopleIn(id, opts.nodeId)) {
+        if (!isRoleable(v) || v.explicit || v.role !== 'guest') continue
+        const base = {
+          peerId: v.peerId,
+          ...(v.name === null ? {} : { name: v.name }),
+          ...(v.username === null ? {} : { username: v.username }),
+        }
+        if (v.platformAdmin.length > 0) {
+          const creator = v.platformAdmin.find((a) => a.role === 'owner')
+          admins.push({
+            ...base,
+            role: 'admin',
+            reason:
+              creator === undefined
+                ? `administrator of ${v.platformAdmin.map((a) => a.title).join(', ')}`
+                : `creator of ${creator.title} (suggested as admin, never as owner)`,
+          })
+        } else {
+          members.push({ ...base, role: 'member', reason: 'wrote in the chats' })
+        }
+      }
+      return { admins, members }
     },
     async clearRole(id, peerId) {
       await known(id)

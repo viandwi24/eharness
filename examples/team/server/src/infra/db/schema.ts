@@ -403,6 +403,8 @@ export const programs = sqliteTable(
     worker: json<{ maxTasks: number }>('worker'),
     /** Files a run must leave in the library, checked at run end (P40 phase H); `[]` = none. */
     deliverables: json<unknown[]>('deliverables').notNull().default([]),
+    /** Standing agreements from the client about this program, told to every run; `[]` = none. */
+    notes: json<string[]>('notes').notNull().default([]),
     /** `active` | `paused` */
     status: text('status').notNull().default('active'),
     /** `client`, or the id of the agent that proposed it. */

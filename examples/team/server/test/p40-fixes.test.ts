@@ -566,7 +566,7 @@ describe('finding 6: a run parked on a decision is waiting on the board', () => 
   test('GET /tasks tells column waiting while the status stays running', async () => {
     const { app } = instance({
       researcher: [
-        call('escalate', { title: 'Publish?', question: 'May I publish?' }),
+        call('escalate_wait', { title: 'Publish?', question: 'May I publish?' }),
         finalReport({ status: 'done', summary: 'ok', outputs: [] }),
       ],
     })

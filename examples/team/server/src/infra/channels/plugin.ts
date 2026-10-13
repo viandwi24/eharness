@@ -64,7 +64,10 @@ export const CHANNEL_READ_TOOLS = [
  * by rule so they do not ask for an approval in a chat. WHO may use them is the role policy of the
  * person who asked (`roles.ts`), checked by the `tool.approve` hook below.
  */
-export const CHANNEL_OWN_WRITE_TOOLS = SELF_WRITE_TOOLS
+/** Own writes allowed by rule; changing somebody's role always asks first (a "ya" in the chat). */
+export const CHANNEL_OWN_WRITE_TOOLS: readonly string[] = SELF_WRITE_TOOLS.filter(
+  (t) => t !== 'person_role',
+)
 
 export interface ChannelsPluginOptions {
   /** Late-bound: the plugin is built before the gateway. */
@@ -87,6 +90,9 @@ const HISTORY_LINE_CHARS = 1000
  * (the client's own grant, P41 U2); an assigned task is not unattended either when the client
  * created it or granted `channel_send` (`taskMayPost`): that is somebody's instruction to post.
  */
+/** Posts this long or longer are also saved to the library (`keepLongPost`). */
+const LONG_POST_CHARS = 800
+
 const UNATTENDED: ReadonlySet<string> = new Set(['routine', 'task', 'heartbeat'])
 
 const target = {
@@ -514,7 +520,37 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           mentions,
           ...(input.action === 'reply' ? { replyTo: input.replyTo } : {}),
         })
-        return `Sent (message ${ids.join(', ')}).`
+        // a long post (a report, an audit) is kept in the library too, so it can be found and
+        // referred to later instead of living only in the chat history
+        const kept = await keepLongPost(t, input.text, ids[0])
+        return `Sent (message ${ids.join(', ')}).${kept === undefined ? '' : ` A copy is saved at ${kept}.`}`
+      }
+
+      /** Save a post of `LONG_POST_CHARS` or more to /library/reports/chat; the path, or undefined. */
+      const keepLongPost = async (
+        t: ResolvedTarget,
+        text: string,
+        messageId: string | undefined,
+      ): Promise<string | undefined> => {
+        if (text.length < LONG_POST_CHARS || gw.library === undefined) return undefined
+        const room = gw.roomOf(t.node)
+        const place = `${room.title ?? room.nativeId}${t.node.id === room.id ? '' : ` / ${t.node.title ?? t.node.nativeId}`}`
+        const slug = place
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 50)
+        const day = new Date().toISOString().slice(0, 10)
+        const path = `/library/reports/chat/${day}-${slug || 'chat'}-${messageId ?? Date.now().toString(36)}.md`
+        try {
+          await gw.library.write(
+            path,
+            `# Posted in ${place}\n\n_${new Date().toISOString()} · message ${messageId ?? '?'}_\n\n${text}\n`,
+          )
+          return path
+        } catch {
+          return undefined
+        }
       }
 
       const manage = async (input: z.infer<typeof manageSchema>): Promise<string> => {
@@ -789,6 +825,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
               stop: string
               messages: Array<{ role: string; parts?: unknown; metadata?: unknown }>
               pending?: PendingView
+              error?: { code: string; message: string }
             },
           ): Promise<void> => {
             try {
@@ -797,6 +834,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
                 stop: e.stop,
                 messages: e.messages,
                 pending: e.pending,
+                ...(e.error === undefined ? {} : { error: e.error }),
               })
             } catch (error) {
               hookCtx.log.warn(

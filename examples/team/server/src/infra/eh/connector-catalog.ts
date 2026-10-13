@@ -35,7 +35,7 @@ import { CHANNEL_OWN_WRITE_TOOLS, CHANNEL_READ_TOOLS } from '../channels/index.t
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
 import { DATETIME_TOOL } from './clock-plugin.ts'
-import { DECISION_TOOLS } from './decisions-plugin.ts'
+import { DECISION_TOOLS, PROGRAM_NOTE_TOOL } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { PERSONA_TOOLS } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
@@ -71,6 +71,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       'write_file',
       'edit_file',
       ...DECISION_TOOLS,
+      // standing agreements of a program; roles refuse it for members (risk write)
+      PROGRAM_NOTE_TOOL,
       ...WORK_QUEUE_TOOLS,
       // reading the Briefing page is read-only
       READ_BRIEFINGS_TOOL,

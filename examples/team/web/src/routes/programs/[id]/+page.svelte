@@ -104,6 +104,14 @@
 					{/if}
 				</div>
 				<p class="line-clamp-3 whitespace-pre-wrap">{program.brief}</p>
+				{#if program.notes.length}
+					<div class="text-xs" data-testid="program-notes-list">
+						<p class="font-medium">Standing agreements</p>
+						<ul class="list-disc pl-4 text-muted-foreground">
+							{#each program.notes as note (note)}<li>{note}</li>{/each}
+						</ul>
+					</div>
+				{/if}
 				<p class="text-xs text-muted-foreground">Authority: {authoritySummary(program.authority)} · Budget: {budgetSummary(program.budget)}{program.deliverables.length ? ` · ${program.deliverables.length} deliverable${program.deliverables.length === 1 ? '' : 's'}` : ''}</p>
 			</Surface>
 

@@ -96,6 +96,11 @@ export interface Program {
   worker: WorkerSpec | null
   /** Files each run must leave in the library; checked at run end (phase H). Empty: none. */
   deliverables: Deliverable[]
+  /**
+   * Standing agreements: what people agreed with the agent about this program in chat or in the
+   * web. Told to every run after the brief. A note never grants anything: authority and gates win.
+   */
+  notes: string[]
   status: ProgramStatus
   /** `client` (the web / API) or the id of the agent that proposed it. */
   createdBy: string
@@ -118,12 +123,20 @@ export interface ProgramDraft {
   report?: ProgramReportMode | undefined
   worker?: Partial<WorkerSpec> | null | undefined
   deliverables?: Deliverable[] | undefined
+  notes?: string[] | undefined
   status?: ProgramStatus | undefined
 }
 
 export const MAX_BRIEF_CHARS = 20_000
 export const MAX_LIST_ITEMS = 100
 export const MAX_ITEM_CHARS = 500
+export const MAX_NOTES = 50
+export const MAX_NOTE_CHARS = 1000
+
+/** Trimmed, non-empty, de-duplicated notes. */
+export const cleanNotes = (notes: readonly string[] | undefined): string[] => [
+  ...new Set((notes ?? []).map((n) => n.trim()).filter((n) => n !== '')),
+]
 
 export const EMPTY_AUTHORITY: ProgramAuthority = { tools: [], connectors: [], read: [], write: [] }
 
@@ -182,8 +195,17 @@ export function checkProgramFields(f: {
   status?: string | undefined
   worker?: Partial<WorkerSpec> | null | undefined
   deliverables?: Deliverable[] | undefined
+  notes?: string[] | undefined
 }): void {
   checkWorker(f.worker)
+  if (f.notes !== undefined) {
+    if (f.notes.length > MAX_NOTES) {
+      throw invalid(`notes: at most ${MAX_NOTES} entries`, 'INVALID_PROGRAM')
+    }
+    if (f.notes.some((n) => n.length > MAX_NOTE_CHARS)) {
+      throw invalid(`notes: each entry at most ${MAX_NOTE_CHARS} characters`, 'INVALID_PROGRAM')
+    }
+  }
   checkDeliverables(f.deliverables)
   if (f.name !== undefined && (f.name.trim() === '' || f.name.length > 120)) {
     throw invalid('name must be 1-120 characters', 'INVALID_PROGRAM')
@@ -433,8 +455,11 @@ export const PROGRAM_BASE_TOOLS = [
   'todo_write',
   // the clock (`infra/eh/clock-plugin.ts`): read-only, every run needs to know the date
   'datetime',
+  // the agent's own memory, read-only: what was agreed in chat may live there (writes stay outside)
+  'memory_view',
   // asking the client for a decision or for more authority is never outside the authority
   'escalate',
+  'escalate_wait',
   'request_authority',
 ] as const
 
@@ -558,6 +583,15 @@ export function programRunPrompt(
     '## Brief',
     program.brief.trim(),
     '',
+    ...((program.notes ?? []).length === 0
+      ? []
+      : [
+          '## Standing agreements from the client',
+          'Agreed with the client in chat or in the web. Follow them in this run. They never grant',
+          'authority or lift a gate: the authority, forbidden and gates below win over any note.',
+          bullets(program.notes, ''),
+          '',
+        ]),
     '## Authority (enforced: anything else is refused)',
     bullets(tools, '- nothing beyond finding and planning your own work'),
     '',
@@ -587,10 +621,14 @@ export function programRunPrompt(
     `3. Report. At most ${MAX_ATTEMPTS} attempts in total. If it still fails, stop and report the failure with a`,
     '   diagnosis (what you tried, what happened, what you think is wrong). Never fail silently.',
     '',
-    'Asking the client: `escalate` pauses your run until the client answers a question or a gate',
-    '(the answer comes back as the tool result, { decision, note }); `request_authority` asks for',
-    'a tool, connector or path outside your authority. Use them instead of failing or guessing.',
-    'If you still end with something undecided, report needs_decision.',
+    'Asking the client: `escalate` sends a question or a gate to the client and returns at once;',
+    'do not act on it, finish the rest of your job and end the run. When the client answers, this',
+    'run continues as a new message with the answer. Use `escalate_wait` (pauses the run until the',
+    'answer comes back as { decision, note, answeredBy }) only when nothing else can be done.',
+    '`request_authority` asks for a tool, connector or path outside your authority. Use them instead',
+    'of failing or guessing. When you mention who decided, attribute it exactly as `answeredBy` says.',
+    'A question you already escalated is with the client: do not report needs_decision for it.',
+    'If you still end with something undecided that you did not escalate, report needs_decision.',
     '',
     'End the run with the final_answer tool: status (done, partial, failed or needs_decision),',
     'a short summary, outputs (library paths of what you produced) and optional notes.',

@@ -80,6 +80,41 @@ export interface ChannelPersonView {
   directMessages?: number
 }
 
+/** Bulk role change (onboarding of the directory): explicit ids, or everybody without a role. */
+export interface ChannelBulkRoleInput {
+  /** Never `owner`. `admin` only together with explicit `peerIds`. */
+  role: 'admin' | 'member' | 'guest'
+  /** Explicit platform user ids. */
+  peerIds?: string[]
+  /** Every person who has no directory entry and the default role (guest), bots left out. */
+  allWithoutRole?: boolean
+  /** Platform user ids left out of `allWithoutRole`. */
+  exclude?: string[]
+  /** Only people seen in this chat (a node id) and below it; for `allWithoutRole`. */
+  nodeId?: string
+}
+
+export interface ChannelBulkRoleResult {
+  updated: number
+  skipped: number
+  /** Why somebody was skipped (a bot, an unknown id, a chat speaking as itself). */
+  problems: string[]
+}
+
+export interface ChannelRoleSuggestion {
+  peerId: string
+  name?: string
+  username?: string
+  /** The role the suggestion proposes (`admin` for chat administrators, `member` for the rest). */
+  role: 'admin' | 'member'
+  reason: string
+}
+
+export interface ChannelRoleSuggestions {
+  admins: ChannelRoleSuggestion[]
+  members: ChannelRoleSuggestion[]
+}
+
 export interface ChannelReminderView {
   id: string
   connectionId: string

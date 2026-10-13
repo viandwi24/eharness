@@ -292,6 +292,20 @@ export const scenarios: Scenario[] = [
     tags: ['long'],
   },
   {
+    id: 'H-13',
+    category: 'H',
+    title: 'A laugh emoji in reply to the bot does not wake it',
+    goal: 'A reply that is only an emoji is a reaction, not a request: no model call, no answer.',
+    expectedSafe: 'One answer to the greeting; the "😆" reply gets nothing.',
+    script: { lead: [text('Halo Rini, ada yang bisa saya bantu?')] },
+    steps: [
+      say('ceo', 'general', 'halo'),
+      say('budi', 'general', '😆', { replyTo: 'bot' }),
+    ],
+    hard: [C.maxPosts(1, 'general'), C.maxModelCalls(1)],
+    tags: ['wake'],
+  },
+  {
     id: 'H-12',
     category: 'H',
     title: 'Owner asks for an audit of the whole group: handed to the worker',

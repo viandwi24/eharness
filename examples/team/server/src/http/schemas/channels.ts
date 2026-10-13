@@ -635,6 +635,45 @@ export const ChannelPersonListSchema = z
 export const ChannelRoleBodySchema = z
   .object({ role, divisions: z.array(z.string().min(1)).max(100).optional() })
   .openapi('ChannelRoleBody')
+export const ChannelBulkRoleBodySchema = z
+  .object({
+    role: z.enum(['admin', 'member', 'guest']).openapi({
+      description:
+        '`owner` is never set in bulk. `admin` only with explicit `peerIds`, never with `allWithoutRole`.',
+    }),
+    peerIds: z.array(z.string().min(1)).max(500).optional().openapi({
+      description: 'Platform user ids to set (mutually exclusive with `allWithoutRole`).',
+    }),
+    allWithoutRole: z.boolean().optional().openapi({
+      description:
+        'Everybody with no directory entry and the default role (guest); bots and chats speaking as themselves are left out.',
+    }),
+    exclude: z.array(z.string().min(1)).max(500).optional(),
+    nodeId: z.string().min(1).optional().openapi({
+      description: 'With `allWithoutRole`: only people seen in this chat (and below it).',
+    }),
+  })
+  .openapi('ChannelBulkRoleBody')
+export const ChannelBulkRoleResultSchema = z
+  .object({
+    updated: z.number().int(),
+    skipped: z.number().int(),
+    problems: z.array(z.string()),
+  })
+  .openapi('ChannelBulkRoleResult')
+const roleSuggestion = z.object({
+  peerId: z.string(),
+  name: z.string().optional(),
+  username: z.string().optional(),
+  role: z.enum(['admin', 'member']),
+  reason: z.string(),
+})
+export const ChannelRoleSuggestionsSchema = z
+  .object({ admins: z.array(roleSuggestion), members: z.array(roleSuggestion) })
+  .openapi('ChannelRoleSuggestions')
+export const ChannelRoleSuggestionsQuery = z.object({
+  nodeId: z.string().min(1).optional().openapi({ description: 'Only people seen in this chat.' }),
+})
 export const ChannelImportResultSchema = z
   .object({ chats: z.number().int(), people: z.number().int(), problems: z.array(z.string()) })
   .openapi('ChannelImportResult')

@@ -968,3 +968,22 @@ does not need a second confirmation, provided identity and arguments are checked
 - Per connection: `directInstructions` (default on), Channels → Settings → People.
 - The approval card names who a post would ping ("Will ping: Wins (@BANGzwins)"); a "ya" / "tidak" reply
   only answers requests announced in the last 10 minutes (older ones are answered in the web app).
+
+## Directory onboarding (as built)
+
+Production finding: in a real company group 24 of 26 people were `guest` because nobody set roles
+after connecting. The directory now has a one-minute onboarding.
+
+- `POST /channels/connections/{id}/people/bulk-role`: `{ role, peerIds | allWithoutRole, exclude?, nodeId? }`.
+  `peerIds` sets those people (member, guest or admin); `allWithoutRole` takes everybody with no
+  directory entry and the default role (bots and chats speaking as themselves left out), and never
+  admin. `owner` is never settable in bulk. Each person goes through `people.setRole` (same path as
+  one change). Returns `{ updated, skipped, problems }`.
+- `GET /channels/connections/{id}/people/suggestions?nodeId=`: read-only. People the platform lists as
+  chat admins (or creator) are suggested as `admin` (never owner); everybody else seen (optionally
+  only in one chat and below) as `member`; bots left out; people with a directory entry are skipped.
+- People page: a banner ("N people have no role: they only get answers") with "Make everyone who wrote
+  here a member" (confirm dialog with the count; suggested admins are excluded) and "Review suggested
+  admins" (per-row Apply). The role source stays visible under each role.
+- Agent tool `person_role` (risk `write`, owner only in code): sets one person to member, guest or
+  admin by platform user id; refuses `owner`, the requester's own role, bots and owners.

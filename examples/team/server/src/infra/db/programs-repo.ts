@@ -26,6 +26,7 @@ const toProgram = (row: Row): Program => ({
   report: row.report as ProgramReportMode,
   worker: row.worker,
   deliverables: parseDeliverables(row.deliverables),
+  notes: row.notes,
   status: row.status as ProgramStatus,
   createdBy: row.createdBy,
   createdAt: row.createdAt,

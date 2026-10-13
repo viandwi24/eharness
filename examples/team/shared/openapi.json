@@ -6749,6 +6749,13 @@
             },
             "description": "Files each run must leave in the library; checked when the run ends."
           },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Standing agreements: what the client and the agent agreed about this program. Told to every run after the brief. They never grant authority or lift a gate."
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -6919,6 +6926,7 @@
           "report",
           "worker",
           "deliverables",
+          "notes",
           "status",
           "createdBy",
           "createdAt",
@@ -7604,6 +7612,14 @@
               "$ref": "#/components/schemas/Deliverable"
             },
             "maxItems": 20
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "maxItems": 50
           }
         },
         "required": [
@@ -7754,6 +7770,14 @@
               "$ref": "#/components/schemas/Deliverable"
             },
             "maxItems": 20
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "maxItems": 50
           },
           "version": {
             "type": "integer",
@@ -11164,6 +11188,144 @@
         },
         "required": [
           "items"
+        ]
+      },
+      "ChannelRoleSuggestions": {
+        "type": "object",
+        "properties": {
+          "admins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "peerId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "admin",
+                    "member"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "peerId",
+                "role",
+                "reason"
+              ]
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "peerId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "admin",
+                    "member"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "peerId",
+                "role",
+                "reason"
+              ]
+            }
+          }
+        },
+        "required": [
+          "admins",
+          "members"
+        ]
+      },
+      "ChannelBulkRoleResult": {
+        "type": "object",
+        "properties": {
+          "updated": {
+            "type": "integer"
+          },
+          "skipped": {
+            "type": "integer"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "updated",
+          "skipped",
+          "problems"
+        ]
+      },
+      "ChannelBulkRoleBody": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "member",
+              "guest"
+            ],
+            "description": "`owner` is never set in bulk. `admin` only with explicit `peerIds`, never with `allWithoutRole`."
+          },
+          "peerIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxItems": 500,
+            "description": "Platform user ids to set (mutually exclusive with `allWithoutRole`)."
+          },
+          "allWithoutRole": {
+            "type": "boolean",
+            "description": "Everybody with no directory entry and the default role (guest); bots and chats speaking as themselves are left out."
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxItems": 500
+          },
+          "nodeId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "With `allWithoutRole`: only people seen in this chat (and below it)."
+          }
+        },
+        "required": [
+          "role"
         ]
       },
       "ChannelPeopleSettings": {
@@ -23745,6 +23907,161 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChannelPersonList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/people/suggestions": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Suggested roles for the people without one",
+        "description": "Read-only. People the platform lists as chat administrators are suggested as admins, everybody else seen (optionally only in one chat) as members; bots are left out. Nothing is applied.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only people seen in this chat."
+            },
+            "required": false,
+            "description": "Only people seen in this chat.",
+            "name": "nodeId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suggestions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelRoleSuggestions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/people/bulk-role": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Set the role of many people at once",
+        "description": "Give `peerIds` a role, or give everybody without a role (`allWithoutRole`, bots left out, `exclude` to skip some) member or guest. Never sets `owner`; `admin` only for explicit ids. Each person goes through the same path as a single role change.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelBulkRoleBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelBulkRoleResult"
                 }
               }
             }

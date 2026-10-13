@@ -1382,9 +1382,9 @@ describe('approvals in channel conversations', () => {
     const { i, mock } = await setup([approvalStep, textStep('Posted it.')], { buttons: false })
     await mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
     await until('the request', () =>
-      mock.sent.some((s) => s.message.text.includes('Answer it in the team web app')),
+      mock.sent.some((s) => s.message.text.includes('answer in the team web app')),
     )
-    const ask = mock.sent.find((s) => s.message.text.includes('Answer it in the team web app'))
+    const ask = mock.sent.find((s) => s.message.text.includes('answer in the team web app'))
     expect(ask?.message.buttons).toBeUndefined()
     // never a link to this machine
     expect(JSON.stringify(mock.sent)).not.toContain('localhost')
@@ -1395,11 +1395,11 @@ describe('approvals in channel conversations', () => {
     })
     await outside.mock.say({ from: ana, text: '@team_bot publish', id: 'w1', mentionSelf: true })
     await until('the request', () =>
-      outside.mock.sent.some((s) => s.message.text.includes('Answer it in https://')),
+      outside.mock.sent.some((s) => s.message.text.includes('answer in https://')),
     )
     const thread = outside.i.server.deps.threads.getBySession(sid(outside.i, 'room'))
     expect(
-      outside.mock.sent.find((s) => s.message.text.includes('Answer it in https://'))?.message.text,
+      outside.mock.sent.find((s) => s.message.text.includes('answer in https://'))?.message.text,
     ).toContain(`https://team.example.com/a/${outside.i.leadId}?t=${thread?.id}`)
   })
 

@@ -127,10 +127,12 @@ export function checkInvariants(dbFile: string, ctx: SoakContext): Violation[] {
         bad('decisions', `decision ${d.id} (${d.kind}) is still open at the end`)
       else if (d.decided_at === null)
         bad('decisions', `decision ${d.id} is ${d.status} without decided_at`)
-      // a decision made from a final report (`needs_decision`, failed deliverables) has no wait
+      // a decision made from a final report (`needs_decision`, failed deliverables) and a
+      // non-blocking `escalate` (the run goes on; the answer continues the session) have no wait;
+      // an amendment (`request_authority`) always parks
       const fromReport =
         (JSON.parse(String(d.payload ?? '{}')) as { source?: unknown }).source === 'report'
-      if (d.kind !== 'proposal' && d.wait_id === null && !fromReport)
+      if (d.kind === 'amendment' && d.wait_id === null && !fromReport)
         bad('decisions', `${d.kind} ${d.id} has no wait id`)
     }
     for (const s of all(

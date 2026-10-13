@@ -119,6 +119,7 @@ import { DECISION_TOOLS, type DecisionIntake, decisions } from './decisions-plug
 import { fileGrant } from './file-grant-plugin.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
+import { memoryDiscipline } from './memory-discipline-plugin.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import { type PersonaIntake, persona } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
@@ -1057,6 +1058,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           ]),
       // one clock for the team: the `datetime` tool reads the team timezone at every call
       clock({ timezone: () => currentSettings().timezone }),
+      // memory holds durable facts only: no system state, no style notes (hook only)
+      memoryDiscipline(),
       // long turns: the base step budget grows while the turn makes progress (hook only)
       stepBudget({
         isWorker: isWorkerSession,

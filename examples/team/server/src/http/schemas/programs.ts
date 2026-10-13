@@ -151,6 +151,10 @@ export const ProgramSchema = z
     deliverables: z.array(DeliverableSchema).openapi({
       description: 'Files each run must leave in the library; checked when the run ends.',
     }),
+    notes: z.array(z.string()).openapi({
+      description:
+        'Standing agreements: what the client and the agent agreed about this program. Told to every run after the brief. They never grant authority or lift a gate.',
+    }),
     status: z.enum(['active', 'paused']),
     createdBy: z.string().openapi({ description: '`client`, or the id of the proposing agent.' }),
     createdAt: z.number().int(),
@@ -191,6 +195,7 @@ export const ProgramCreateSchema = z
     report: ReportSchema.optional(),
     worker: ProgramWorkerSchema.partial().nullable().optional(),
     deliverables: z.array(DeliverableSchema).max(20).optional(),
+    notes: z.array(z.string().max(1000)).max(50).optional(),
   })
   .openapi('ProgramCreate')
 
@@ -207,6 +212,7 @@ export const ProgramPatchSchema = z
     report: ReportSchema.optional(),
     worker: ProgramWorkerSchema.partial().nullable().optional(),
     deliverables: z.array(DeliverableSchema).max(20).optional(),
+    notes: z.array(z.string().max(1000)).max(50).optional(),
     version: z
       .number()
       .int()

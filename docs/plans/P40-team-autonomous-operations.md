@@ -654,3 +654,27 @@ lead no longer turns "remind me" into a proposal. No library change.
   scratch directory (the server database, key files). An `os.denyRead` list (paths the sandboxed
   process may not read, with a safe default for the home directory) would close it. Worked around by
   documenting the limit and by stripping the environment; use a container for hostile code.
+
+## Production feedback: non-blocking escalations, who answered, program agreements (as built)
+
+- **`escalate` does not park any more.** A program run that called `escalate` waited 53 minutes for
+  the Decision Center. `escalate` is now an ordinary tool: it stores the escalation without a wait
+  (`waitId` null, same path as a report-made escalation), returns at once, and tells the model to
+  finish the job and end the run; the answer continues the finished session as a new message
+  (`decision-service` `send`). `escalate_wait` (an `externalTool`, the old behaviour) is for runs that
+  can do nothing else. A tool cannot be both plain and external in eharness, so `wait: true` on
+  `escalate` only answers with "call `escalate_wait`" (nothing is asked). Both are in
+  `PROGRAM_BASE_TOOLS` and `DECISION_TOOLS`. A waitless escalation with the same question open in the
+  same session is one decision. `expireIfStale` is unchanged: a newer run of the same program closes
+  an older pending report/waitless decision as `expired`.
+- **Who answered.** `DecisionAnswer` carries `answeredBy` ("Answered in the web app (Decision
+  Center) by the client"; a chat answer passes `{ via: 'chat', name }` through `approveDecision` /
+  `rejectDecision` `by`) and `attribution` (tells the model to attribute the decision to exactly that,
+  never to the person it addressed). Both are in the `escalate_wait` result and in the follow-up
+  message.
+- **Program agreements.** `programs.notes` (JSON column, migration 0030) is returned and patched by
+  the API (`notes`, max 50 x 1000 chars), edited on the program editor ("Standing agreements") and
+  listed on the program page. Every run prompt prints them after the brief; they never grant
+  authority or lift a gate. Chat tool `program_note` (list / add / remove, `dm` origin, risk
+  `write`, approved by rule) changes only `notes`; the channel role check refuses members by risk.
+  `memory_view` joined `PROGRAM_BASE_TOOLS` (read-only memory for runs).

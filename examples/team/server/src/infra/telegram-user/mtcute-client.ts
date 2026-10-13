@@ -26,6 +26,7 @@ import type {
   TgChat,
   TgChatKind,
   TgClientFactory,
+  TgMention,
   TgMessage,
   TgUser,
   TgUserClient,
@@ -56,6 +57,30 @@ const chatOf = (p: Peer): TgChat => ({
   admin: p.type === 'chat' && (p.isAdmin || p.isCreator),
   ...(p.type === 'chat' && p.membersCount !== null ? { members: p.membersCount } : {}),
 })
+
+/**
+ * A text with its mentions as Telegram entities: an `@handle` is a mention entity (Telegram pings by
+ * username), a name is a mention by id (mtcute resolves the user; one it cannot resolve stays text).
+ */
+const withMentions = (
+  text: string,
+  mentions: TgMention[] | undefined,
+): string | { text: string; entities: never[] } =>
+  mentions === undefined || mentions.length === 0
+    ? text
+    : {
+        text,
+        entities: mentions.map((m) =>
+          m.byHandle
+            ? { _: 'messageEntityMention', offset: m.offset, length: m.length }
+            : {
+                _: 'messageEntityMentionName',
+                offset: m.offset,
+                length: m.length,
+                userId: Number(m.userId),
+              },
+        ) as never[],
+      }
 
 /** A person reference: a numeric id, or a username (with or without `@`). */
 const peerRef = (ref: string): number | string => {
@@ -358,6 +383,17 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
       async history(chatId, o) {
         await ready()
         const who = await self()
+        // a forum topic: the server-side search of that thread (getHistory has no topic filter)
+        if (o.topicId !== undefined) {
+          const found = await tg.searchMessages({
+            chatId: Number(chatId),
+            query: '',
+            threadId: o.topicId,
+            limit: o.limit,
+            ...(o.offsetId === undefined ? {} : { offset: o.offsetId }),
+          })
+          return found.map((m) => messageOf(m, who))
+        }
         const list = await tg.getHistory(Number(chatId), {
           limit: o.limit,
           ...(o.offsetId === undefined ? {} : { offset: { id: o.offsetId, date: 0 } }),
@@ -572,7 +608,7 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         return list.map((m) => userOf(m.user))
       },
       async sendText(chatId, text, o) {
-        const m = await tg.sendText(Number(chatId), text, {
+        const m = await tg.sendText(Number(chatId), withMentions(text, o?.mentions), {
           ...(o?.replyTo === undefined ? {} : { replyTo: o.replyTo }),
           ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
           ...(o?.silent === true ? { silent: true } : {}),

@@ -54,10 +54,12 @@ import {
 import { briefingsText } from './app/briefings.ts'
 import { checkChatBody, uploadFile } from './app/chat.ts'
 import {
+  approveDecision,
   createAmendment,
   createEscalation,
   createReportEscalation,
   proposeFromAgent,
+  rejectDecision,
 } from './app/decisions.ts'
 import { recheckTask } from './app/deliverables.ts'
 import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
@@ -70,7 +72,7 @@ import {
   revertPersona,
 } from './app/persona.ts'
 import type { ChannelInboxPort, ChannelsPort, Deps } from './app/ports.ts'
-import { repairProgramAuthorities } from './app/programs.ts'
+import { programNoteAction, repairProgramAuthorities } from './app/programs.ts'
 import { seedAgents } from './app/seed.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
@@ -84,6 +86,7 @@ import {
   updateQueuedTask,
 } from './app/work-queue.ts'
 import type { Collector } from './domain/collectors.ts'
+import type { Decision } from './domain/decisions.ts'
 import { areaOf } from './domain/library.ts'
 import { nameOf } from './domain/persona.ts'
 import { parseProgramSession } from './domain/programs.ts'
@@ -764,14 +767,42 @@ export function compose(config: ServerConfig): Server {
     ids: { next: () => uuidv7() },
     workspaceId: WORKSPACE_ID,
   }
+  /**
+   * A question of a program run is asked where the program was proposed when that was a chat (the
+   * owner lives there), next to the Decision Center. Never throws.
+   */
+  const announceInChat = (d: Decision): void => {
+    if (d.kind !== 'escalation' || d.programId === null) return
+    const proposal = deps.decisions
+      .list({ kind: 'proposal', limit: 500 })
+      .find((p) => p.programId === d.programId && p.sessionId !== null)
+    if (proposal?.sessionId == null) return
+    void channelGateway
+      ?.announceDecision({
+        sessionId: proposal.sessionId,
+        decisionId: d.id,
+        title: d.title,
+        question: d.payload.question,
+        options: d.payload.options,
+      })
+      .catch(() => undefined)
+  }
   decisionIntake = {
     propose: (input) => {
       const { decision, duplicate } = proposeFromAgent(deps, input)
       return { id: decision.id, duplicate }
     },
-    escalate: (input) => createEscalation(deps, input),
+    escalate: (input) => {
+      const d = createEscalation(deps, input)
+      announceInChat(d)
+      return d
+    },
     amend: (input) => createAmendment(deps, input),
-    reportNeedsDecision: (input) => void createReportEscalation(deps, input),
+    programNote: (input) => programNoteAction(deps, input),
+    reportNeedsDecision: (input) => {
+      const d = createReportEscalation(deps, input)
+      if (d !== undefined) announceInChat(d)
+    },
   }
   personaIntake = {
     state: (agentId) => getPersonaState(deps, agentId),
@@ -837,6 +868,16 @@ export function compose(config: ServerConfig): Server {
   const channelFiles = libraryFs(conn.sqlite)
   channelGateway = createChannelGateway({
     sqlite: conn.sqlite,
+    // a Decision Center question answered in a chat, by a named owner or admin
+    answerDecision: async ({ decisionId, choice, by }) => {
+      const answerer = { via: 'chat' as const, name: by.name }
+      if (choice === 'rejected') await rejectDecision(deps, decisionId, { by: answerer })
+      else
+        await approveDecision(deps, decisionId, {
+          ...(choice === 'approved' ? {} : { choice }),
+          by: answerer,
+        })
+    },
     vault:
       config.channels?.vault ??
       channelVaultFromEnv({

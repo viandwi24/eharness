@@ -7,6 +7,8 @@ import type {
   ChannelActivityQuery,
   ChannelActivityTableQuery,
   ChannelBindInput,
+  ChannelBulkRoleInput,
+  ChannelBulkRoleResult,
   ChannelChatsQuery,
   ChannelConnectionView,
   ChannelConversationLog,
@@ -23,6 +25,7 @@ import type {
   ChannelRemindersQuery,
   ChannelReminderView,
   ChannelRole,
+  ChannelRoleSuggestions,
   ChannelUnlinkedView,
   TablePage,
 } from '../domain/channels.ts'
@@ -919,6 +922,10 @@ export interface ChannelInboxPort {
     input: { role: ChannelRole; divisions?: string[] },
   ): Promise<ChannelPersonView>
   clearRole(id: string, peerId: string): Promise<void>
+  /** Set the role of many people at once (through the same path as one role). */
+  bulkRole(id: string, input: ChannelBulkRoleInput): Promise<ChannelBulkRoleResult>
+  /** Who the platform and the chats suggest as admins and members (read-only, never applied). */
+  roleSuggestions(id: string, options: { nodeId?: string }): Promise<ChannelRoleSuggestions>
   importAdmins(id: string): Promise<{ chats: number; people: number; problems: string[] }>
   peopleSettings(id: string): Promise<ChannelPeopleSettings>
   setPeopleSettings(

@@ -12,7 +12,10 @@ import {
   type AuthorityInspection,
   checkProgramFields,
   cleanList,
+  cleanNotes,
   type EffectiveGrant,
+  MAX_NOTE_CHARS,
+  MAX_NOTES,
   normalizeAuthority,
   normalizeWorker,
   type Program,
@@ -154,6 +157,7 @@ export function createProgram(
     report: draft.report ?? 'task',
     worker: normalizeWorker(draft.worker),
     deliverables: normalizeDeliverables(draft.deliverables),
+    notes: cleanNotes(draft.notes),
     status: draft.status ?? 'active',
     createdBy: draft.createdBy ?? 'client',
     now,
@@ -198,6 +202,7 @@ export function updateProgram(deps: Deps, id: string, update: ProgramUpdate): Pr
     ...(update.deliverables === undefined
       ? {}
       : { deliverables: normalizeDeliverables(update.deliverables) }),
+    ...(update.notes === undefined ? {} : { notes: cleanNotes(update.notes) }),
   }
   if (update.status !== undefined && update.status !== current.status) {
     throw invalid('use pause and resume to change the status', 'INVALID_PROGRAM')
@@ -223,6 +228,70 @@ export function updateProgram(deps: Deps, id: string, update: ProgramUpdate): Pr
   }
   changed(deps, next, 'updated')
   return programView(deps, next)
+}
+
+export interface ProgramNoteInput {
+  action: 'list' | 'add' | 'remove'
+  /** Program id or name (case-insensitive); `list` may leave it out. */
+  program?: string | undefined
+  /** `add`: the agreement. `remove`: the note text, or its number from `list`. */
+  text?: string | undefined
+}
+
+/**
+ * `program_note`: the standing agreements of a program, from a chat. Only `notes` change: never
+ * the authority, gates, schedule or budget (those need a proposal or an amendment). Errors are
+ * readable text for the model.
+ */
+export function programNoteAction(deps: Deps, input: ProgramNoteInput): string {
+  const all = deps.programs.list({})
+  const render = (p: Program): string =>
+    p.notes.length === 0
+      ? `Program "${p.name}" (${p.id}) has no standing agreements.`
+      : `Standing agreements of "${p.name}" (${p.id}):\n${p.notes.map((n, i) => `${i + 1}. ${n}`).join('\n')}`
+  const ref = input.program?.trim() ?? ''
+  if (ref === '') {
+    if (input.action !== 'list') {
+      throw invalid('`program` (name or id) is required to add or remove a note', 'INVALID_NOTE')
+    }
+    return all.length === 0 ? 'There are no programs.' : all.map(render).join('\n\n')
+  }
+  const lower = ref.toLowerCase()
+  const exact = all.filter((p) => p.id === ref || p.name.toLowerCase() === lower)
+  const found = exact.length > 0 ? exact : all.filter((p) => p.name.toLowerCase().includes(lower))
+  if (found.length === 0) {
+    throw notFound('program', `${ref} (programs: ${all.map((p) => p.name).join(', ') || 'none'})`)
+  }
+  if (found.length > 1) {
+    throw invalid(
+      `"${ref}" matches several programs: ${found.map((p) => `${p.name} (${p.id})`).join(', ')}. Use the id.`,
+      'INVALID_NOTE',
+    )
+  }
+  const program = found[0] as Program
+  if (input.action === 'list') return render(program)
+  const text = input.text?.trim() ?? ''
+  if (text === '') throw invalid('`text` is required', 'INVALID_NOTE')
+  let notes = program.notes
+  if (input.action === 'add') {
+    if (text.length > MAX_NOTE_CHARS) {
+      throw invalid(`a note has at most ${MAX_NOTE_CHARS} characters`, 'INVALID_NOTE')
+    }
+    if (notes.includes(text)) return `Already noted.\n${render(program)}`
+    if (notes.length >= MAX_NOTES) {
+      throw invalid(`a program has at most ${MAX_NOTES} notes: remove one first`, 'INVALID_NOTE')
+    }
+    notes = [...notes, text]
+  } else {
+    const index = /^#?\d+$/.test(text) ? Number(text.replace('#', '')) - 1 : notes.indexOf(text)
+    if (index < 0 || index >= notes.length) {
+      throw invalid(`no such note. ${render(program)}`, 'INVALID_NOTE')
+    }
+    notes = notes.filter((_, i) => i !== index)
+  }
+  const next = deps.programs.update(program.id, { notes }, deps.clock.now()) as Program
+  changed(deps, next, 'updated')
+  return `${input.action === 'add' ? 'Noted' : 'Removed'}.\n${render(next)}`
 }
 
 export function deleteProgram(deps: Deps, id: string): Program {

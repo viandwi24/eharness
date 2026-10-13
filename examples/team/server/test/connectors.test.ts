@@ -249,9 +249,15 @@ describe('migration of the tool checklist and MCP servers', () => {
         'todo_write',
         'send_message',
         'propose_plan',
+        'program_note',
         'person_note',
         'persona',
         'reminder',
+        // the clock and the agent's own background worker (always there)
+        'datetime',
+        'agent',
+        'agent_output',
+        'agent_stop',
       ].sort(),
     )
     const readerOut = server.connectors.activated('id-reader')

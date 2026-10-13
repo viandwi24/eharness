@@ -164,6 +164,12 @@
 		{#if errors.brief}<span class="text-xs text-destructive-text">{errors.brief}</span>{/if}
 	</label>
 
+	<label class="flex flex-col gap-1">
+		<span class="font-medium">Standing agreements</span>
+		<Textarea bind:value={form.notes} rows={3} placeholder={'Warn once, then take a point.\nAudit window: 17:00 yesterday to 17:00 today.'} data-testid="program-notes" />
+		<span class="text-xs text-muted-foreground">One per line. What you agreed with the agent about this program; every run reads them after the brief. They never grant anything: the allowed list and the decisions below still rule. The agent can add to them from a chat.</span>
+	</label>
+
 	<fieldset class="flex flex-col gap-2">
 		<legend class="mb-1 font-medium">When it runs</legend>
 		<NativeSelect bind:value={form.triggerKind} aria-label="Trigger">

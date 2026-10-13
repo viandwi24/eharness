@@ -41,9 +41,19 @@ export function listLibrary(
   if (prefix === `${MEMORY_ROOT}/` || prefix.startsWith(`${MEMORY_ROOT}/`)) {
     throw invalid('memory files are served under /memory', 'INVALID_PATH')
   }
-  return deps.library
-    .list({ prefix, excludePrefixes: [`${MEMORY_ROOT}/`], limit: query.limit ?? 500 })
-    .map((m) => withCreator(deps, m))
+  return (
+    deps.library
+      // `/.eharness/` holds the library's own files (evicted tool outputs): not the client's documents
+      .list({
+        prefix,
+        excludePrefixes: [
+          `${MEMORY_ROOT}/`,
+          ...(prefix.startsWith('/.eharness') ? [] : ['/.eharness/']),
+        ],
+        limit: query.limit ?? 500,
+      })
+      .map((m) => withCreator(deps, m))
+  )
 }
 
 export async function readLibraryFile(deps: Deps, rawPath: string) {

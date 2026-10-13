@@ -7,6 +7,7 @@
 	import ChannelHeader from '#lib/components/app/channels/ChannelHeader.svelte';
 	import DataTable, { type Column } from '#lib/components/app/DataTable.svelte';
 	import FilterChips from '#lib/components/app/FilterChips.svelte';
+	import RoleOnboarding from '#lib/components/app/channels/RoleOnboarding.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -124,6 +125,7 @@
 			The agent is told each sender's role from this list, and the tools check it: an owner or admin can approve in a chat, set reminders for others and use write tools; a member reads the chats of their divisions; a guest only gets answers. Only linked people can talk to the agent in a direct message. Platform admin status and what people say about themselves never change a role.
 		</p>
 		{#if note}<p class="rounded-lg bg-muted/40 p-2 text-xs" role="status">{note}</p>{/if}
+		<RoleOnboarding {id} onChanged={() => table.load(true)} />
 		<DataTable {table} {columns} rowKey={(p) => p.peerId} label="People" onRowClick={(p) => void goto(channelHref(id, 'people', p.peerId))} {filters} {actions} {empty} searchPlaceholder="Search name, @username or id" testid="people-table" />
 
 		<section class="flex flex-col gap-2 rounded-xl border border-border bg-card p-4" aria-label="Link by Telegram user id" data-testid="link-by-id-card">

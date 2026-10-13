@@ -262,7 +262,7 @@ export function taskRunPrompt(task: Task): string {
     'The client (or a manager agent) put this task on the task board for you. Do it the way you',
     'would in a chat: use your own tools; a call that needs approval asks the client, who sees it',
     'on the board. Nobody waits in this conversation, so do not end with a question: when something',
-    'blocks you or needs a decision, call escalate (the run pauses until the client answers).',
+    'blocks you or needs a decision, call escalate (the question goes to the client, the run carries on; use escalate_wait to pause until the answer).',
     '',
     describeTask(task),
     ...(granted.length === 0

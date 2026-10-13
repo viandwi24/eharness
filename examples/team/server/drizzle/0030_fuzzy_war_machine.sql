@@ -1,0 +1,1 @@
+ALTER TABLE `programs` ADD `notes` text DEFAULT '[]' NOT NULL;

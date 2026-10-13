@@ -11,6 +11,7 @@
  *  - `chat_recap`         (read)   the same window as a transcript in chunks, to summarize
  *  - `chat_recap_save`    (write)  save the summary as a library note with its source range
  *  - `reminder`           (write)  create, list, cancel, update reminders
+ *  - `person_role`        (write)  an owner sets the role of one person (member, guest, admin)
  *
  * Authorization is code on the current requester (`gateway.requesterOf`): a member reads only the
  * chats of their divisions and sets reminders only for themselves; a guest gets nothing. Every
@@ -40,6 +41,7 @@ export const REMINDER_TOOL = 'reminder'
 /** The longest reminder text a member may set (a note to themselves, not a broadcast). */
 export const MEMBER_REMINDER_MAX = 160
 export const PERSON_NOTE_TOOL = 'person_note'
+export const PERSON_ROLE_TOOL = 'person_role'
 
 /** Read-risk self-knowledge tools: approved without asking (`appRulesOf`); roles still apply. */
 export const SELF_READ_TOOLS = [
@@ -50,8 +52,21 @@ export const SELF_READ_TOOLS = [
   CHAT_RECAP_TOOL,
 ] as const
 /** Writes that stay inside the team's own space (a library note, a reminder): allowed by rule; roles decide who. */
-export const SELF_WRITE_TOOLS = [CHAT_RECAP_SAVE_TOOL, REMINDER_TOOL, PERSON_NOTE_TOOL] as const
+export const SELF_WRITE_TOOLS = [
+  CHAT_RECAP_SAVE_TOOL,
+  REMINDER_TOOL,
+  PERSON_NOTE_TOOL,
+  PERSON_ROLE_TOOL,
+] as const
 export const SELF_TOOLS = [...SELF_READ_TOOLS, ...SELF_WRITE_TOOLS] as const
+
+const personRoleSchema = z.object({
+  person: z
+    .string()
+    .min(1)
+    .describe('The platform user id of the person (a username or name works when it is unique).'),
+  role: z.enum(['member', 'guest', 'admin']).describe('The new role. Never owner.'),
+})
 
 export interface SelfToolsContext {
   gw: ChannelGateway
@@ -264,7 +279,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     } else if (current !== undefined && current.connectionId === connectionId) {
       base = gw.roomOf(current.node)
     } else {
-      return 'Name the chat (a title, an id from channel_describe).'
+      return `Name the chat (a title, an id from channel_describe).${gw.chatsHint(connectionId)}`
     }
     return { connectionId, base, here: current?.node, requester }
   }
@@ -1109,6 +1124,50 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       return `Saved. From now on: ${text} (a note on ${label === 'you' ? 'your' : `${label}'s`} directory profile; it changes nothing about roles or rules).`
     })
 
+  // --- person_role --------------------------------------------------------------------------------
+
+  /** An owner sets the role of one person; never `owner`, never their own. */
+  const personRole = (input: z.infer<typeof personRoleSchema>): Promise<string> =>
+    guard(async () => {
+      const requester = await gw.requesterOf(sessionId)
+      if (requester === undefined)
+        return 'Roles are set by the owner of the team in a chat: there is nobody asking here.'
+      if (requester.role !== 'owner')
+        return 'Not allowed: only the owner can set roles. Say so in one plain sentence; the People page of the connection also sets them.'
+      const found = gw.people.lookup(requester.connectionId, input.person, 5, requester.nodeId)
+      if (found.length === 0)
+        return `Nobody matches "${flat(input.person, 60)}". Use member_lookup first, then give the platform user id.`
+      if (found.length > 1)
+        return `Several people match "${flat(input.person, 60)}": use their platform user id.`
+      const target = found[0] as PersonView
+      const label = personLabel({
+        id: target.peerId,
+        name: target.name ?? undefined,
+        username: target.username ?? undefined,
+      })
+      if (target.peerId === requester.nativeId)
+        return 'Not changed: nobody changes their own role. Another owner or the People page can.'
+      if (
+        target.isBot ||
+        target.kind === 'bot' ||
+        target.kind === 'anonymous' ||
+        target.kind === 'channel'
+      )
+        return `Not changed: ${label} is a bot or a chat speaking as itself, and those keep no role.`
+      if (target.roleSource === 'linked-admin' || (target.role === 'owner' && target.explicit))
+        return `Not changed: ${label} is an owner, and owners are not changed from a chat.`
+      if (target.role === input.role && target.explicit)
+        return `${label} is already a ${input.role}.`
+      const before = target.role
+      const view = gw.people.setRole(
+        requester.connectionId,
+        target.peerId,
+        { role: input.role },
+        requester.memberId ?? requester.nativeId,
+      )
+      return `Done: ${label} was ${before}, now ${view.role}.`
+    })
+
   return {
     [CHANNEL_STATUS_TOOL]: tool({
       description:
@@ -1165,6 +1224,13 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       inputSchema: personNoteSchema,
       metadata: { risk: 'write', idempotent: false },
       execute: (input): Promise<string> => personNote(input),
+    }),
+    [PERSON_ROLE_TOOL]: tool({
+      description:
+        'Set the role of ONE person of this team directory: member, guest or admin (never owner), by platform user id. Only the owner may ask for it, never for their own role; anybody else is refused. Use it when the owner says who is a member or an admin; for many people at once point to the People page. Say in one plain sentence what changed.',
+      inputSchema: personRoleSchema,
+      metadata: { risk: 'write', idempotent: true },
+      execute: (input): Promise<string> => personRole(input),
     }),
   }
 }

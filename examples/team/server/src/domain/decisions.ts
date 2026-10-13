@@ -125,7 +125,30 @@ export interface DecisionAnswer {
   /** `approved`, `rejected`, or the option the client picked. */
   decision: string
   note: string
+  /** Who answered and where, in words ("Answered in the web app (Decision Center) by the client"). */
+  answeredBy?: string | undefined
+  /** The instruction that goes with `answeredBy` (see `attributionLine`). */
+  attribution?: string | undefined
 }
+
+/** Where and by whom a decision was answered (a chat answer passes the person's name). */
+export interface Answerer {
+  via: 'web' | 'chat'
+  /** Display name; absent: the client. */
+  name?: string | undefined
+}
+
+/** The sentence the agent reads about who answered; the web answer is the client's. */
+export function answeredByText(by: Answerer = { via: 'web' }): string {
+  const who = by.name?.trim() || 'the client'
+  return by.via === 'web'
+    ? `Answered in the web app (Decision Center) by ${who}`
+    : `Answered in the chat by ${who}`
+}
+
+/** Tells the model to attribute the decision to the real answerer, never to the person addressed. */
+export const attributionLine = (answeredBy: string): string =>
+  `${answeredBy}. If you mention who decided, attribute the decision to exactly that: never to the person you addressed, and never to anyone in a chat unless it says so.`
 
 // --- validation ---------------------------------------------------------------------------------
 
@@ -289,6 +312,7 @@ export function amendmentBody(programName: string, a: AmendmentPayload): string 
 export function followUpText(decision: Pick<Decision, 'title'>, answer: DecisionAnswer): string {
   return [
     `The client decided on "${decision.title}": ${answer.decision}.`,
+    ...(answer.attribution === undefined ? [] : [answer.attribution]),
     ...(answer.note === '' ? [] : [`Note from the client: ${answer.note}`]),
     answer.decision === 'rejected'
       ? 'Do not do what was asked. Finish what is inside your authority and report.'
@@ -302,14 +326,32 @@ export function followUpText(decision: Pick<Decision, 'title'>, answer: Decision
 
 /** Description of the tools, written once (the tool texts and the prompts share the wording). */
 export const ESCALATE_DESCRIPTION =
-  'Stop and ask the client for a decision, then wait for it. Use it when a gate or an escalation ' +
-  'rule of your brief applies, when something looks wrong or unsafe, or when a choice is not ' +
-  'yours to make. State the question and what you found (markdown, with library paths as ' +
-  'evidence). Give `options` when there are clear alternatives (2-6 short labels), otherwise the ' +
-  'client approves or rejects. Your run is paused until the client answers, then continues in ' +
-  'this same conversation: the tool result is { decision, note } where decision is "approved", ' +
-  '"rejected" or the option picked. Do not ask for tool permissions with this: use ' +
+  'Ask the client for a decision. Use it when a gate or an escalation rule of your brief ' +
+  'applies, when something looks wrong or unsafe, or when a choice is not yours to make. State ' +
+  'the question and what you found (markdown, with library paths as evidence). Give `options` ' +
+  'when there are clear alternatives (2-6 short labels), otherwise the client approves or ' +
+  'rejects. It does NOT block: the question goes to the client at once and the tool returns ' +
+  'immediately. Do not act on the decision now: finish the rest of your job and end the run ' +
+  'normally; when the client answers, this run continues as a new message with the answer, and ' +
+  'only then you act on it. Prefer this. Only when nothing else can be done before the answer, ' +
+  'use `escalate_wait` (same input) instead. Do not ask for tool permissions with this: use ' +
   '`request_authority` for that. Do not call it for things inside your authority.'
+
+export const ESCALATE_WAIT_DESCRIPTION =
+  'Like `escalate`, but your run is paused until the client answers, then continues in this ' +
+  'same conversation: the tool result is { decision, note, answeredBy, attribution } where ' +
+  'decision is "approved", "rejected" or the option picked, and `answeredBy` says who answered ' +
+  'and where (attribute the decision to exactly that). Use it only when nothing else can be done ' +
+  'before the answer; otherwise call `escalate`, which does not block the run.'
+
+export const PROGRAM_NOTE_DESCRIPTION =
+  'Keep the standing agreements about a program (list, add, remove). When people agree something ' +
+  'about how a program should run ("warn once, then -1 point", "all topics", "audit window 17:00 ' +
+  'to 17:00", nicknames), put it here, not in memory: every run of that program reads these notes ' +
+  'after its brief. Notes change nothing else: never authority, gates, schedule or budget (those ' +
+  'need a proposal or an amendment), and a note never grants anything: where it conflicts with ' +
+  'the gates or the authority, those win. Write each as one short, clear sentence. Only the ' +
+  'client, owners and admins may use it.'
 
 export const REQUEST_AUTHORITY_DESCRIPTION =
   'Ask the client to widen the authority of this program when your work needs a tool, connector ' +

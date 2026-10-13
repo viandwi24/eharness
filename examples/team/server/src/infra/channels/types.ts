@@ -368,6 +368,8 @@ export interface AdapterHost {
   ): Array<{ nodeNativeId: string; messageNativeId: string }>
   /** Did this connection send message `nativeId` of the node (the platform does not say who a reply points at)? */
   isOwn(nodeNativeId: string, messageNativeId: string): boolean
+  /** The handle (username, no `@`) the gateway knows for a platform user id, to render a mention. */
+  usernameOf?(nativeId: string): string | undefined
 }
 
 /** One platform identity on one transport. */

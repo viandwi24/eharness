@@ -32,6 +32,7 @@ const program: Program = {
 	report: 'digest',
 	worker: null,
 	deliverables: [{ path: '/library/reports/{slug}/{date}.md', kind: 'markdown', requiredSections: ['Summary', 'Findings'], minChars: 200 }],
+	notes: [],
 	status: 'active',
 	createdBy: 'client',
 	createdAt: 0,

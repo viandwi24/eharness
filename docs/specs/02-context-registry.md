@@ -93,6 +93,11 @@ If at least one tool in the turn's tool set has `deferLoading: true` (from a `de
 set by the developer), the core adds AI SDK's `toolSearch()` under the reserved name
 `tool_search`. The model initially sees only non-deferred tools plus `tool_search`.
 
+A call to a deferred tool that was not discovered yet fails for that step (AI SDK answers it with
+`NoSuchToolError`, "unavailable tool"); the core then counts the call as a discovery, so the tool is
+in the tool set of the next step and the model can call it again without a `tool_search` round. A
+name that is not a deferred tool of the turn is ignored.
+
 `config.deferTools: string[]` marks tools by name `deferLoading: true` without touching the source,
 so app, plugin and source tools (for example a plugin's rarely used tool) can be deferred by the
 app. Names that match no tool are ignored.

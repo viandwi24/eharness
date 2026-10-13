@@ -114,6 +114,8 @@ export type ProgramForm = {
 	gates: string;
 	forbidden: string;
 	escalation: string;
+	/** Standing agreements, one per line. */
+	notes: string;
 	/** USD as typed; empty = no limit. */
 	perRunUsd: string;
 	perDayUsd: string;
@@ -146,6 +148,7 @@ export const emptyProgramForm = (): ProgramForm => ({
 	gates: '',
 	forbidden: '',
 	escalation: '',
+	notes: '',
 	perRunUsd: '',
 	perDayUsd: '',
 	maxOutputTokens: '',
@@ -179,7 +182,7 @@ export function parseOutputCap(text: string): number | null | 'invalid' {
 }
 
 /** The fields of a program the form edits: a stored program or a proposed one. */
-export type ProgramShape = Pick<Program, 'name' | 'brief' | 'authority' | 'gates' | 'forbidden' | 'escalation' | 'budget' | 'trigger' | 'report'> & { agentId?: string; worker?: Program['worker']; deliverables?: Program['deliverables'] };
+export type ProgramShape = Pick<Program, 'name' | 'brief' | 'authority' | 'gates' | 'forbidden' | 'escalation' | 'budget' | 'trigger' | 'report'> & { agentId?: string; worker?: Program['worker']; deliverables?: Program['deliverables']; notes?: Program['notes'] };
 
 export function formFromProgram(p: ProgramShape, fallbackTz?: string): ProgramForm {
 	return {
@@ -192,6 +195,7 @@ export function formFromProgram(p: ProgramShape, fallbackTz?: string): ProgramFo
 		gates: joinLines(p.gates),
 		forbidden: joinLines(p.forbidden),
 		escalation: p.escalation,
+		notes: joinLines(p.notes ?? []),
 		perRunUsd: p.budget.perRunUsd === null ? '' : String(p.budget.perRunUsd),
 		perDayUsd: p.budget.perDayUsd === null ? '' : String(p.budget.perDayUsd),
 		maxOutputTokens: p.budget.maxOutputTokens == null ? '' : String(p.budget.maxOutputTokens),
@@ -241,6 +245,7 @@ export function bodyFromForm(f: ProgramForm): Omit<ProgramCreate, 'agentId'> {
 		gates: splitLines(f.gates),
 		forbidden: splitLines(f.forbidden),
 		escalation: f.escalation.trim(),
+		notes: splitLines(f.notes),
 		budget: { perRunUsd: perRun === 'invalid' ? null : perRun, perDayUsd: perDay === 'invalid' ? null : perDay, maxOutputTokens: cap === 'invalid' ? null : cap },
 		trigger: f.triggerKind === 'manual' ? { kind: 'manual' } : { kind: 'schedule', spec: buildSpec(f.schedule) },
 		report: f.report,

@@ -31,10 +31,13 @@ import {
 import { z } from 'zod'
 import type { AmendInput, EscalateInput, ProposeInput } from '../../app/decisions.ts'
 import { DomainError } from '../../app/errors.ts'
+import type { ProgramNoteInput } from '../../app/programs.ts'
 import {
   ESCALATE_DESCRIPTION,
+  ESCALATE_WAIT_DESCRIPTION,
   MAX_OPTION_CHARS,
   MAX_OPTIONS,
+  PROGRAM_NOTE_DESCRIPTION,
   PROPOSE_PLAN_DESCRIPTION,
   REQUEST_AUTHORITY_DESCRIPTION,
 } from '../../domain/decisions.ts'
@@ -46,14 +49,25 @@ import { rehearsalSessions } from './rehearsal-registry.ts'
 
 export const PROPOSE_PLAN_TOOL = 'propose_plan'
 export const ESCALATE_TOOL = 'escalate'
+/** `escalate` with the run parked until the client answers (the default `escalate` does not wait). */
+export const ESCALATE_WAIT_TOOL = 'escalate_wait'
 export const REQUEST_AUTHORITY_TOOL = 'request_authority'
+/** Chat tool: the standing agreements of a program (never authority, gates, schedule or budget). */
+export const PROGRAM_NOTE_TOOL = 'program_note'
 /** Rules that approve these tools: asking for a decision never needs a permission of its own. */
-export const DECISION_TOOLS = [PROPOSE_PLAN_TOOL, ESCALATE_TOOL, REQUEST_AUTHORITY_TOOL] as const
+export const DECISION_TOOLS = [
+  PROPOSE_PLAN_TOOL,
+  ESCALATE_TOOL,
+  ESCALATE_WAIT_TOOL,
+  REQUEST_AUTHORITY_TOOL,
+] as const
 
 /** What the plugin needs from the app (`app/decisions.ts` over the deps, built in `main.ts`). */
 export interface DecisionIntake {
   propose(input: ProposeInput): { id: string; duplicate?: boolean }
   escalate(input: EscalateInput): { id: string }
+  /** `program_note`: text for the model, errors thrown as DomainError. */
+  programNote(input: ProgramNoteInput): string
   amend(input: AmendInput): { id: string }
   /** A run ended with `needs_decision` and did not escalate. */
   reportNeedsDecision(input: { agentId: string; sessionId: string; report: TaskReport }): void
@@ -204,6 +218,28 @@ const escalateSchema = z.object({
     ),
 })
 
+const escalateInputSchema = escalateSchema.extend({
+  wait: z
+    .boolean()
+    .optional()
+    .describe(
+      'Default false: the question goes to the client and you carry on. true: pause this run until the client answers (use `escalate_wait`).',
+    ),
+})
+
+const noteSchema = z.object({
+  action: z.enum(['list', 'add', 'remove']),
+  program: z
+    .string()
+    .optional()
+    .describe('Program name or id. `list` without it shows every program.'),
+  text: z
+    .string()
+    .max(1000)
+    .optional()
+    .describe('add: the agreement, one short sentence. remove: the note text or its number.'),
+})
+
 const authoritySchemaAsk = z.object({
   tools: authoritySchema.shape.tools,
   connectors: authoritySchema.shape.connectors,
@@ -215,7 +251,17 @@ const authoritySchemaAsk = z.object({
 const answerSchema = z.object({
   decision: z.string().describe('"approved", "rejected" or the option the client picked.'),
   note: z.string().describe('Note from the client (may be empty).'),
+  answeredBy: z.string().optional().describe('Who answered and where.'),
+  attribution: z.string().optional().describe('How to attribute the decision when you mention it.'),
 })
+
+const NOT_WAITING_TEXT =
+  'The question is with the client now. Do not act on it and do not wait for it: finish the rest ' +
+  'of your job and end this run normally (final report). When the client answers, this run ' +
+  'continues as a new message with the answer, and only then you act on it.'
+const WAIT_REDIRECT_TEXT =
+  'To pause this run until the client answers, call `escalate_wait` with the same input. Nothing ' +
+  'was asked yet. If something else can still be done, call `escalate` without `wait` instead.'
 
 const text = (error: unknown): string =>
   error instanceof DomainError ? error.message : errorText(error)
@@ -293,12 +339,43 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
           },
         })
       }
+      if (origin === 'dm') {
+        // agreements about a program: who may call it is the channel role check (risk 'write':
+        // members are refused in a channel chat); in the web chat it is the client
+        tools[PROGRAM_NOTE_TOOL] = tool({
+          description: PROGRAM_NOTE_DESCRIPTION,
+          inputSchema: noteSchema,
+          metadata: { risk: 'write', idempotent: false },
+          execute: (input): string => {
+            try {
+              return intake().programNote(input)
+            } catch (error) {
+              return `ERROR: ${text(error)}`
+            }
+          },
+        })
+      }
       if (origin === 'rehearsal') {
         // a rehearsal never parks and never writes to the Decision Center: what the run would ask
         // is recorded ("would ask") and the model carries on (`domain/rehearsal.ts`)
         const wouldAsk = rehearsalSessions.get(sessionId)?.recorder.wouldAsk
         tools[ESCALATE_TOOL] = tool({
           description: ESCALATE_DESCRIPTION,
+          inputSchema: escalateInputSchema,
+          metadata: { risk: 'write', idempotent: true },
+          execute: (input): string => {
+            wouldAsk?.({
+              kind: 'escalation',
+              title: input.title,
+              question: input.question,
+              details: input.details,
+              options: input.options,
+            })
+            return SIMULATED_ESCALATION_TEXT
+          },
+        })
+        tools[ESCALATE_WAIT_TOOL] = tool({
+          description: ESCALATE_WAIT_DESCRIPTION,
           inputSchema: escalateSchema,
           metadata: { risk: 'write', idempotent: true },
           execute: (input): string => {
@@ -334,8 +411,34 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
         })
       }
       if (origin === 'program' || origin === 'routine' || origin === 'task') {
-        tools[ESCALATE_TOOL] = externalTool({
+        // not parked by default: the question is stored without a wait and the run carries on;
+        // the answer continues the session as a new message (like a report-made escalation)
+        tools[ESCALATE_TOOL] = tool({
           description: ESCALATE_DESCRIPTION,
+          inputSchema: escalateInputSchema,
+          metadata: { risk: 'write', idempotent: true },
+          execute: (input): string => {
+            if (input.wait === true) return WAIT_REDIRECT_TEXT
+            try {
+              intake().escalate({
+                agentId: self().id,
+                sessionId,
+                waitId: null,
+                title: input.title,
+                question: input.question,
+                details: input.details,
+                options: input.options,
+                standDown: input.standDown,
+              })
+              return NOT_WAITING_TEXT
+            } catch (error) {
+              return `ERROR: could not ask the client: ${text(error)}`
+            }
+          },
+        })
+        // for the rare run that can do nothing else: parks until the client answers
+        tools[ESCALATE_WAIT_TOOL] = externalTool({
+          description: ESCALATE_WAIT_DESCRIPTION,
           inputSchema: escalateSchema,
           outputSchema: answerSchema,
           metadata: { risk: 'write', idempotent: true },

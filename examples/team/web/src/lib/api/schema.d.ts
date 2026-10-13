@@ -9456,6 +9456,149 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/channels/connections/{id}/people/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggested roles for the people without one
+         * @description Read-only. People the platform lists as chat administrators are suggested as admins, everybody else seen (optionally only in one chat) as members; bots are left out. Nothing is applied.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Only people seen in this chat. */
+                    nodeId?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Suggestions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelRoleSuggestions"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/people/bulk-role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set the role of many people at once
+         * @description Give `peerIds` a role, or give everybody without a role (`allWithoutRole`, bots left out, `exclude` to skip some) member or guest. Never sets `owner`; `admin` only for explicit ids. Each person goes through the same path as a single role change.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelBulkRoleBody"];
+                };
+            };
+            responses: {
+                /** @description Counts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelBulkRoleResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/channels/connections/{id}/people/settings": {
         parameters: {
             query?: never;
@@ -13899,6 +14042,8 @@ export interface components {
             worker: components["schemas"]["ProgramWorker"];
             /** @description Files each run must leave in the library; checked when the run ends. */
             deliverables: components["schemas"]["Deliverable"][];
+            /** @description Standing agreements: what the client and the agent agreed about this program. Told to every run after the brief. They never grant authority or lift a gate. */
+            notes: string[];
             /** @enum {string} */
             status: "active" | "paused";
             /** @description `client`, or the id of the proposing agent. */
@@ -14107,6 +14252,7 @@ export interface components {
                 maxTasks?: number;
             } | null;
             deliverables?: components["schemas"]["Deliverable"][];
+            notes?: string[];
         };
         ProgramPatch: {
             name?: string;
@@ -14143,6 +14289,7 @@ export interface components {
                 maxTasks?: number;
             } | null;
             deliverables?: components["schemas"]["Deliverable"][];
+            notes?: string[];
             /** @description The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`. */
             version?: number;
         };
@@ -15044,6 +15191,43 @@ export interface components {
         };
         ChannelPersonList: {
             items: components["schemas"]["ChannelPerson"][];
+        };
+        ChannelRoleSuggestions: {
+            admins: {
+                peerId: string;
+                name?: string;
+                username?: string;
+                /** @enum {string} */
+                role: "admin" | "member";
+                reason: string;
+            }[];
+            members: {
+                peerId: string;
+                name?: string;
+                username?: string;
+                /** @enum {string} */
+                role: "admin" | "member";
+                reason: string;
+            }[];
+        };
+        ChannelBulkRoleResult: {
+            updated: number;
+            skipped: number;
+            problems: string[];
+        };
+        ChannelBulkRoleBody: {
+            /**
+             * @description `owner` is never set in bulk. `admin` only with explicit `peerIds`, never with `allWithoutRole`.
+             * @enum {string}
+             */
+            role: "admin" | "member" | "guest";
+            /** @description Platform user ids to set (mutually exclusive with `allWithoutRole`). */
+            peerIds?: string[];
+            /** @description Everybody with no directory entry and the default role (guest); bots and chats speaking as themselves are left out. */
+            allWithoutRole?: boolean;
+            exclude?: string[];
+            /** @description With `allWithoutRole`: only people seen in this chat (and below it). */
+            nodeId?: string;
         };
         ChannelPeopleSettings: {
             /**

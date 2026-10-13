@@ -156,10 +156,20 @@ export interface TgUpdateHandlers {
   error(error: unknown): void
 }
 
+/** A mention inside a text (UTF-16 offsets): `@handle` text, or a name linked to the user id. */
+export interface TgMention {
+  offset: number
+  length: number
+  userId: string
+  /** The text at the offset is `@handle` (pings by username); else a name linked to the id. */
+  byHandle: boolean
+}
+
 export interface TgSendOptions {
   replyTo?: number
   topicId?: number
   silent?: boolean
+  mentions?: TgMention[]
   /** Stable per message: Telegram dedupes a send with the same key (`random_id`). */
   key?: string
 }
@@ -198,8 +208,14 @@ export interface TgUserClient {
   startUpdates(handlers: TgUpdateHandlers, options: { catchUp: boolean }): Promise<void>
   /** Stop the updates loop and close the connection (the session stays valid). */
   stop(): Promise<void>
-  /** Messages of a chat, newest first, strictly older than `offsetId` when given. */
-  history(chatId: string, options: { limit: number; offsetId?: number }): Promise<TgMessage[]>
+  /**
+   * Messages of a chat, newest first, strictly older than `offsetId` when given. With `topicId`,
+   * only that forum topic (Telegram's chat history has no topic filter of its own).
+   */
+  history(
+    chatId: string,
+    options: { limit: number; offsetId?: number; topicId?: number },
+  ): Promise<TgMessage[]>
   /** Messages by id (null = missing, deleted). */
   messagesById(chatId: string, ids: number[]): Promise<Array<TgMessage | null>>
   /** The moderation log of a chat (the account must be an admin), newest first. */
