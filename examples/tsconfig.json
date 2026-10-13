@@ -9,5 +9,5 @@
   },
   "include": ["."],
   // `coder/` and `team/` are workspace packages with their own tsconfig; typechecked separately
-  "exclude": ["coder", "team"]
+  "exclude": ["coder", "team", "sandbox-server"]
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@eharness-examples/sandbox-server",
+  "private": true,
+  "type": "module",
+  "description": "Standalone remote code sandbox for eharness/code: an HTTP server (runs in Docker) plus a client that implements CodeSandbox.",
+  "exports": {
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "start": "bun src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p ."
+  }
+}

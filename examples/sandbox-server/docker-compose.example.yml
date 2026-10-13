@@ -1,0 +1,47 @@
+# The team example next to a sandbox server. The sandbox sits on an `internal` network: scripts
+# cannot reach the internet (and only `team` can reach the sandbox). Build from the repo root:
+#
+#   SANDBOX_TOKEN=$(openssl rand -hex 24) TEAM_TOKEN=$(openssl rand -hex 24) \
+#     docker compose -f examples/sandbox-server/docker-compose.example.yml up --build
+#
+# In the team settings point the code sandbox at http://sandbox:4100 with SANDBOX_TOKEN, and set
+# the code plugin's `python.command` to /opt/eh-python/bin/python (GET /v1/info -> pythonCommand).
+name: eharness-sandbox
+services:
+  team:
+    build:
+      context: ../..
+      dockerfile: examples/team/Dockerfile
+    ports: ['4000:4000']
+    environment:
+      TEAM_TOKEN: ${TEAM_TOKEN:?set TEAM_TOKEN}
+      SANDBOX_URL: http://sandbox:4100
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?set SANDBOX_TOKEN}
+    volumes: [team-data:/data]
+    networks: [default, sandbox]
+
+  sandbox:
+    build:
+      context: ../..
+      dockerfile: examples/sandbox-server/Dockerfile
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?set SANDBOX_TOKEN}
+      SANDBOX_MAX_SESSIONS: '16'
+      SANDBOX_MEMORY_MB: '1024'
+    mem_limit: 4g
+    cpus: 2
+    pids_limit: 512
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    networks: [sandbox]
+
+networks:
+  default: {}
+  sandbox:
+    internal: true # no route to the internet for the sandbox
+
+volumes:
+  team-data: {}

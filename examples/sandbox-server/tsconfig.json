@@ -1,0 +1,8 @@
+{
+  // Extends examples/tsconfig.json → the root tsconfig, whose `paths` map `eharness` and
+  // `eharness/*` to `src/`: the server runs against the library source, no build step.
+  "extends": "../tsconfig.json",
+  "include": ["src", "test"],
+  // do not inherit examples/tsconfig.json's `exclude`
+  "exclude": []
+}

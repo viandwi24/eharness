@@ -32,7 +32,8 @@
     ".",
     "examples/coder",
     "examples/team",
-    "examples/team/server"
+    "examples/team/server",
+    "examples/sandbox-server"
   ],
   "publishConfig": {
     "access": "public"
@@ -40,7 +41,7 @@
   "scripts": {
     "lint": "biome check . && bun scripts/check-throws.ts",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p examples && tsc --noEmit -p examples/coder && tsc --noEmit -p examples/team/server && bun run --cwd examples/team/web check",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p examples && tsc --noEmit -p examples/coder && tsc --noEmit -p examples/team/server && tsc --noEmit -p examples/sandbox-server && bun run --cwd examples/team/web check",
     "test": "bun test",
     "build": "tsdown",
     "check:package": "bun scripts/check-client-bundle.ts && bun scripts/exports-snapshot.ts --dist && publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz",
