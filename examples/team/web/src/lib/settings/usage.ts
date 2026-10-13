@@ -1,3 +1,4 @@
+import { formatDate } from '../time';
 export type Usage = { inputTokens: number; outputTokens: number; totalTokens: number; costUsd: number; turns: number };
 
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, turns: 0 });
@@ -35,7 +36,7 @@ export const percentOf = (part: number, whole: number): number => (whole > 0 ? M
 /** Where the breakdown starts: the call log is pruned, so older calls are not in it. */
 export function sinceText(since: number | null): string {
 	if (since === null) return 'No calls recorded yet.';
-	const day = new Date(since).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+	const day = formatDate(since, { year: 'numeric', month: 'short', day: 'numeric' });
 	return `Breakdown since ${day}; older calls are pruned from the log.`;
 }
 

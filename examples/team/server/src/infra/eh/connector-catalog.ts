@@ -34,6 +34,7 @@ import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { CHANNEL_OWN_WRITE_TOOLS, CHANNEL_READ_TOOLS } from '../channels/index.ts'
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
+import { DATETIME_TOOL } from './clock-plugin.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { PERSONA_TOOLS } from './persona-plugin.ts'
@@ -73,6 +74,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       ...WORK_QUEUE_TOOLS,
       // reading the Briefing page is read-only
       READ_BRIEFINGS_TOOL,
+      // the clock is read-only
+      DATETIME_TOOL,
       // reading and describing chat channels is read-only; posting keeps its own risk (`infra/channels`)
       ...CHANNEL_READ_TOOLS,
       // a recap note and a reminder stay in the team's own space; roles decide who may use them

@@ -7,7 +7,7 @@
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import type { Program } from '#lib/programs/form.js';
 	import { rehearsalBadge, type Rehearsal } from '#lib/rehearsal/model.js';
-	import { formatUsd } from '#lib/time.js';
+	import { formatDateTime, formatUsd } from '#lib/time.js';
 	import Surface from './Surface.svelte';
 
 	/** The recent test runs of a program, newest first. */
@@ -37,7 +37,7 @@
 	}, 2000);
 	onDestroy(() => clearInterval(timer));
 
-	const when = (ms: number): string => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+	const when = (ms: number): string => formatDateTime(ms);
 </script>
 
 <section class="flex flex-col gap-2" data-testid="program-rehearsals">

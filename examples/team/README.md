@@ -110,7 +110,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_TELEGRAM_API_ROOT` | `https://api.telegram.org` | Bot API root of the Telegram bot (a local Bot API server, or a test fake) |
 | `TEAM_TELEGRAM_API_ID` / `TEAM_TELEGRAM_API_HASH` | - | api_id / api_hash of the Telegram account (MTProto) channel, from my.telegram.org/apps; or enter them once in the web connect flow |
 | `TEAM_WEB_DIR` | - | serve the built web (`web/build`) from the server on one port; the API then lives under `/api` (set by the Docker image) |
-| `TZ` | host timezone | team timezone default (active hours, briefing time) |
+| `TZ` | host timezone | default of the team timezone (Settings): the one clock of the app, what agents read as now (`datetime` tool), routines, reminders, chat times, the digest and active hours |
 | `TEAM_SEED_AGENTS` | - | a new workspace starts empty; `1` = add the example agents (Lead, Researcher, Writer, Analyst, Ops) when the database is first created |
 | `TEAM_DEMO_COLLECTOR` | - | `1` = register the demo community source (5 000 deterministic chat messages) for the big-data tools |
 | `PUBLIC_TEAM_TOKEN` | - | web only: token the browser sends (else saved from Settings) |

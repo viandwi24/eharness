@@ -5,7 +5,7 @@
 	import Surface from '#lib/components/app/Surface.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { live } from '#lib/stores/live.svelte.js';
-	import { timeAgo } from '#lib/time.js';
+	import { formatDate, timeAgo } from '#lib/time.js';
 	import { readableSubject } from '#lib/decisions/model.js';
 	import type { Program } from '#lib/programs/form.js';
 
@@ -48,7 +48,7 @@
 		}
 	}
 
-	const until = (at: number): string => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	const until = (at: number): string => formatDate(at);
 </script>
 
 {#if loaded && items.length}

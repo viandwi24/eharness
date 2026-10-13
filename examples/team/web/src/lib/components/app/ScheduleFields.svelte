@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { teamZone } from '#lib/time.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { fromLocalInput, MIN_EVERY_SECONDS, SCHEDULE_PRESETS, timezones, toLocalInput, WEEKDAYS, type ScheduleForm } from '#lib/routines/schedule.js';
@@ -62,6 +63,7 @@
 			onchange={(e) => (schedule.at = fromLocalInput(e.currentTarget.value))}
 			aria-label="Run at"
 		/>
+		<span class="text-xs text-muted-foreground">In the team timezone ({teamZone()}).</span>
 	{/if}
 	{#if usesTz}
 		<label class="flex flex-col gap-1">

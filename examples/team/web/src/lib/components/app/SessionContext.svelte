@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatDate } from '#lib/time.js';
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
@@ -179,7 +180,7 @@
 	const previewTitle = $derived(previewPath ? (previewText ? markdownTitle(previewText) : undefined) ?? basename(previewPath) : '');
 	const previewDate = $derived.by((): string => {
 		const t = previewPath ? updatedAt.get(previewPath) : undefined;
-		return t ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase() : '';
+		return t ? formatDate(t).toUpperCase() : '';
 	});
 
 	function kindOf(path: string): ArtifactKind {

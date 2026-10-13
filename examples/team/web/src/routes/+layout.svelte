@@ -17,6 +17,7 @@
 	import TaskDrawer from '#lib/components/app/TaskDrawer.svelte';
 	import { startLive } from '#lib/stores/live.svelte.js';
 	import { checkSession } from '#lib/stores/auth.svelte.js';
+	import { loadTeamZone, teamClock } from '#lib/stores/team-zone.svelte.js';
 	import { goToLogin } from '#lib/api/auth-fetch.js';
 	import { isLoginPath, mustSignIn } from '#lib/auth.js';
 	import { onMount } from 'svelte';
@@ -41,7 +42,11 @@
 		void checkSession().then((s) => {
 			if (gone) return;
 			if (mustSignIn(s)) goToLogin();
-			else stop = startLive();
+			else {
+				stop = startLive();
+				// every time on screen is in the team timezone (Settings)
+				void loadTeamZone();
+			}
 		});
 		return () => {
 			gone = true;
@@ -85,7 +90,8 @@
 					<InsetPanel.Header class="block p-0 font-normal">{@render shell.header()}</InsetPanel.Header>
 				{/if}
 				<InsetPanel.Body class="{shell.header ? '' : 'mt-0.5'} flex min-h-0 text-foreground max-md:m-0 max-md:rounded-none max-md:border-0">
-					{@render children()}
+					<!-- a new team timezone re-renders the page so every time follows it -->
+					{#key teamClock.rev}{@render children()}{/key}
 				</InsetPanel.Body>
 			</InsetPanel.Root>
 		</div>

@@ -9,7 +9,7 @@
 	import MessageView from '#lib/parts/MessageView.svelte';
 	import { REPORT_LABELS, type Program } from '#lib/programs/form.js';
 	import { fileBytes, fileSize, inputPreview, rehearsalBadge, toolCounts, type Rehearsal, type RehearsalFile } from '#lib/rehearsal/model.js';
-	import { formatUsd } from '#lib/time.js';
+	import { formatDateTime, formatUsd } from '#lib/time.js';
 	import Surface from './Surface.svelte';
 
 	/**
@@ -21,7 +21,7 @@
 
 	const badge = $derived(rehearsalBadge(rehearsal));
 	const tools = $derived(toolCounts(rehearsal.toolsCalled));
-	const when = (ms: number): string => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+	const when = (ms: number): string => formatDateTime(ms);
 	const seconds = $derived(rehearsal.endedAt === null ? null : Math.max(1, Math.round((rehearsal.endedAt - rehearsal.startedAt) / 1000)));
 
 	let messages = $state<UIMessage[] | null>(null);

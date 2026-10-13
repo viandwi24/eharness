@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatDateTime } from '#lib/time.js';
 	import Surface from '#lib/components/app/Surface.svelte';
 	import { onDestroy, untrack } from 'svelte';
 	import ClockCounterClockwiseIcon from 'phosphor-svelte/lib/ClockCounterClockwise';
@@ -251,7 +252,7 @@
 								<span>{v.by?.name ?? 'you'}</span>
 								{#if v.size !== null}<span class="text-muted-foreground">{formatBytes(v.size)}</span>{/if}
 								{#if v.fromPath}<span class="font-mono text-muted-foreground">from {v.fromPath}</span>{/if}
-								<span class="ml-auto text-muted-foreground">{new Date(v.at).toLocaleString()}</span>
+								<span class="ml-auto text-muted-foreground">{formatDateTime(v.at)}</span>
 							</li>
 						{/each}
 					</ul>

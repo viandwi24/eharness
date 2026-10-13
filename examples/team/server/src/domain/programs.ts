@@ -431,6 +431,8 @@ export const PROGRAM_BASE_TOOLS = [
   'read_skill_file',
   'search_skills',
   'todo_write',
+  // the clock (`infra/eh/clock-plugin.ts`): read-only, every run needs to know the date
+  'datetime',
   // asking the client for a decision or for more authority is never outside the authority
   'escalate',
   'request_authority',

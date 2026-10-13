@@ -31,7 +31,9 @@
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
 	import { monthText, percentOf, sinceText, sourceLabel } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
-	import { timezoneOptions } from '#lib/heartbeat/model.js';
+	import { isTimezone, timezoneOptions } from '#lib/heartbeat/model.js';
+	import { applyTeamZone } from '#lib/stores/team-zone.svelte.js';
+	import { formatDateTime } from '#lib/time.js';
 	import { AUTO_THRESHOLD } from '#lib/connectors/tool-access.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live, reconnectLive } from '#lib/stores/live.svelte.js';
@@ -116,8 +118,11 @@
 		errors = {};
 		saving = true;
 		try {
-			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, toolAccess, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, timezone: v.value.timezone, defaultModel: model || null, defaultProfile: profile || null } }));
+			const saved = await api.patch('/settings', { body: { defaultPermissionMode: mode, toolAccess, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, timezone: v.value.timezone, defaultModel: model || null, defaultProfile: profile || null } });
+			fill(saved);
 			toast.success('Settings saved');
+			// every time in the app follows the team timezone (re-renders the page when it changed)
+			applyTeamZone(saved.timezone);
 		} catch (err) {
 			errors = fieldErrors(err);
 			formError = err instanceof Error ? err.message : String(err);
@@ -270,7 +275,10 @@
 										<datalist id="settings-zones">
 											{#each timezoneOptions() as z (z)}<option value={z}></option>{/each}
 										</datalist>
-										<Field.Description>The default timezone of the heartbeat's active hours and of the daily digest time. The server's own timezone until you set one; a heartbeat or the digest can use its own.</Field.Description>
+										<Field.Description>
+											The one clock of the team: every time in this app, what agents read as "now" and "today", routines and reminders, chat message times, the daily digest and the heartbeat's active hours. The server's own timezone until you set one; a routine, a heartbeat or the digest can name its own.
+											{#if settings && isTimezone(timezone.trim())}<span class="mt-1 block">Now in {timezone.trim()}: {formatDateTime(Date.now(), { dateStyle: 'full', timeStyle: 'short', timeZone: timezone.trim() })}</span>{/if}
+										</Field.Description>
 										{#if errors.timezone}<Field.Error>{errors.timezone}</Field.Error>{/if}
 									</Field.Field>
 								</Field.Group>

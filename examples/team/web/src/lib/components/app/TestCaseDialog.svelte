@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatDate } from '#lib/time.js';
 	import { untrack } from 'svelte';
 	import { api, fieldErrors } from '#lib/api/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -45,7 +46,7 @@
 	$effect(() => {
 		if (!open) return;
 		untrack(() => {
-			name = edit?.name ?? (from ? `Test of ${new Date(from.startedAt).toLocaleDateString()}` : '');
+			name = edit?.name ?? (from ? `Test of ${formatDate(from.startedAt, { dateStyle: 'medium' })}` : '');
 			sample = edit ? formFromSample(edit.sample) : from ? formFromSample(from.sample) : emptySampleForm();
 			expectForm = edit
 				? formFromExpect(edit.expect)

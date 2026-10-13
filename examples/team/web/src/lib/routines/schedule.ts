@@ -1,4 +1,5 @@
 import type { components } from '../api/schema';
+import { formatDateTime, teamZone, wallClock, zonedEpoch } from '../time';
 
 export type RoutineSpec = components['schemas']['RoutineSpec'];
 
@@ -36,15 +37,7 @@ export const SCHEDULE_PRESETS: { id: ScheduleKind; label: string }[] = [
 	{ id: 'once', label: 'Once' }
 ];
 
-export const browserTimezone = (): string => {
-	try {
-		return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-	} catch {
-		return 'UTC';
-	}
-};
-
-export const defaultScheduleForm = (tz: string = browserTimezone()): ScheduleForm => ({
+export const defaultScheduleForm = (tz: string = teamZone()): ScheduleForm => ({
 	kind: 'daily',
 	time: '09:00',
 	weekday: 1,
@@ -102,7 +95,7 @@ export function buildSpec(f: ScheduleForm): RoutineSpec {
 }
 
 /** API spec -> editor fields (the inverse of `buildSpec`; unknown cron shapes become `custom`). */
-export function parseSpec(spec: RoutineSpec, fallbackTz: string = browserTimezone()): ScheduleForm {
+export function parseSpec(spec: RoutineSpec, fallbackTz: string = teamZone()): ScheduleForm {
 	const base = defaultScheduleForm(fallbackTz);
 	if (spec.kind === 'at') return { ...base, kind: 'once', at: spec.at };
 	if (spec.kind === 'every') {
@@ -141,7 +134,7 @@ export function describeSpec(spec: RoutineSpec): string {
 					? 'Every minute'
 					: `Every ${f.everyMinutes} minutes`;
 		case 'once':
-			return `Once, ${new Date(f.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+			return `Once, ${formatDateTime(f.at)}`;
 		default:
 			return `Cron ${f.expr}`;
 	}
@@ -197,12 +190,15 @@ export function describeScheduleWords(spec: RoutineSpec): string {
 	return `On a custom schedule (${spec.expr}, ${zone})`;
 }
 
-/** `datetime-local` input value (local time) <-> epoch ms. */
-export const toLocalInput = (ms: number): string => {
-	const d = new Date(ms);
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** `datetime-local` input value (wall clock of the team timezone) <-> epoch ms. */
+export const toLocalInput = (ms: number, tz: string = teamZone()): string => {
+	const w = wallClock(ms, tz);
+	return `${w.year}-${pad(w.month)}-${pad(w.day)}T${pad(w.hour)}:${pad(w.minute)}`;
 };
-export const fromLocalInput = (v: string): number => new Date(v).getTime();
+export const fromLocalInput = (v: string, tz: string = teamZone()): number => {
+	const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(v);
+	return m ? zonedEpoch(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5]), tz) : Number.NaN;
+};
 
 export const CATCH_UP_OPTIONS: { value: number | null; label: string }[] = [
 	{ value: null, label: 'Skip missed runs' },

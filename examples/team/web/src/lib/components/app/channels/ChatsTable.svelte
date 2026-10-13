@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatDateTime } from '#lib/time.js';
 	import { goto } from '$app/navigation';
 	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwise';
 	import { api } from '#lib/api/index.js';
@@ -105,7 +106,7 @@
 {#snippet wakeCell(c: ChannelChat)}
 	{#if !c.effective.allowed}<span class="text-muted-foreground">Ignored</span>{:else if c.container && !c.postable}<span class="text-muted-foreground">In its topics</span>{:else}{wakeLabel(c.effective.wake)}{/if}
 {/snippet}
-{#snippet heardCell(c: ChannelChat)}<span class="text-muted-foreground" title={new Date(c.lastSeen).toLocaleString()}>{ago(c.lastSeen, Date.now())}</span>{/snippet}
+{#snippet heardCell(c: ChannelChat)}<span class="text-muted-foreground" title={formatDateTime(c.lastSeen)}>{ago(c.lastSeen, Date.now())}</span>{/snippet}
 
 {#snippet filters()}
 	{#if !topics}

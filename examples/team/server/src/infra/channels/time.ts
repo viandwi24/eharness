@@ -192,3 +192,13 @@ export function inQuietHours(
   if (a === b) return false
   return a < b ? minutes >= a && minutes < b : minutes >= a || minutes < b
 }
+
+/** Offset of a zone from UTC at an instant, as `UTC+07:00` (`UTC` for none). */
+export function offsetLabel(at: number, zone: string): string {
+  const w = wallOf(at, zone)
+  const shown = Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second)
+  const minutes = Math.round((shown - Math.floor(at / 1000) * 1000) / 60_000)
+  if (minutes === 0) return 'UTC'
+  const abs = Math.abs(minutes)
+  return `UTC${minutes < 0 ? '-' : '+'}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`
+}

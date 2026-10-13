@@ -112,6 +112,7 @@ import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { ActivityLog } from './activity-log.ts'
 import { budgetNotice, capText, trackRefusals } from './budget-notice.ts'
 import { chatTools } from './chat-tools-plugin.ts'
+import { clock, DATETIME_TOOL, nowLine } from './clock-plugin.ts'
 import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
 import { DECISION_TOOLS, type DecisionIntake, decisions } from './decisions-plugin.ts'
@@ -185,7 +186,12 @@ export interface AgentFactoryDeps {
    */
   settings?: () => Pick<
     WorkspaceSettings,
-    'spawnCap' | 'defaultModel' | 'defaultProfile' | 'defaultPermissionMode' | 'budgetUsd'
+    | 'spawnCap'
+    | 'defaultModel'
+    | 'defaultProfile'
+    | 'defaultPermissionMode'
+    | 'budgetUsd'
+    | 'timezone'
   > & { rev: number }
   /** Modes people picked per session (`domain/modes.ts`); absent = nobody can pick one. */
   sessionModes?: Pick<SessionModeStore, 'get'>
@@ -442,6 +448,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       defaultProfile: null,
       defaultPermissionMode: 'default' as const,
       budgetUsd: deps.budgetUsd ?? null,
+      timezone: 'UTC',
       rev: 0,
     }
   setBudgetLimit(sqlite, workspaceScope(workspaceId), currentSettings().budgetUsd)
@@ -952,6 +959,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             decisions({
               intake: deps.decisions,
               agentOf: (slug) => deps.agentBySlug?.(slug),
+              timezone: () => currentSettings().timezone,
               // `request_authority` for a tool the run can never have explains why instead of
               // parking: no decision of the client can make the tool exist
               unavailable: (sessionId, asked) => {
@@ -983,6 +991,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               agentOf: (slug) => deps.agentBySlug?.(slug),
             }),
           ]),
+      // one clock for the team: the `datetime` tool reads the team timezone at every call
+      clock({ timezone: () => currentSettings().timezone }),
       ...(deps.heartbeat === undefined ? [] : [heartbeat({ intake: deps.heartbeat })]),
       ...(deps.channels === undefined
         ? []
@@ -1109,7 +1119,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     const reminder = {
       text: (): string => {
         const lines = [
-          `Today's date: ${new Date().toISOString().slice(0, 10)}`,
+          // the team timezone, like routines, reminders and chat times (never the host's or UTC)
+          `Now: ${nowLine(Date.now(), currentSettings().timezone)}. For the exact time or date arithmetic use the ${DATETIME_TOOL} tool.`,
           `You are ${callName}.`,
         ]
         if (def.role === 'lead' && roster !== undefined) {

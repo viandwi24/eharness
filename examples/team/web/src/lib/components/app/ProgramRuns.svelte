@@ -8,7 +8,7 @@
 	import { REPORT_LABELS, type Program } from '#lib/programs/form.js';
 	import { openTask } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
-	import { formatUsd } from '#lib/time.js';
+	import { formatDateTime, formatUsd } from '#lib/time.js';
 
 	type Task = components['schemas']['Task'];
 
@@ -36,7 +36,7 @@
 		);
 	});
 
-	const when = (ms: number): string => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+	const when = (ms: number): string => formatDateTime(ms);
 </script>
 
 <section class="flex flex-col gap-2" aria-label="Run history">

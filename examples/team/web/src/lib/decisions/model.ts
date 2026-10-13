@@ -52,6 +52,7 @@ const BUILTIN_WORDS: Record<string, string> = {
 	edit_file: 'edit files',
 	web_search: 'search the web',
 	web_fetch: 'open web pages',
+	datetime: 'check the date and time',
 	run_code: 'run code'
 };
 

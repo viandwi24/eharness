@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatDateTime } from '#lib/time.js';
 	import Surface from '#lib/components/app/Surface.svelte';
 	import { api } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
@@ -36,7 +37,7 @@
 	const variant = (s: Run['status']): 'success' | 'destructive' | 'warning' | 'info' | 'outline' =>
 		s === 'succeeded' ? 'success' : s === 'failed' ? 'destructive' : s === 'needs_action' ? 'warning' : s === 'skipped' ? 'outline' : 'info';
 
-	const when = (ms: number): string => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+	const when = (ms: number): string => formatDateTime(ms);
 </script>
 
 <section class="flex flex-col gap-2" aria-label="Run history">

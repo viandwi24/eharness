@@ -1,5 +1,6 @@
 // Pure helpers of the Logs page: ranges, filters, speed, and the readable prompt.
 import type { ModelCallDetail, ModelCallStatus, ModelCallSummary } from '../api/client';
+import { formatClock, formatDate, formatDateTime as teamDateTime } from '../time';
 
 export const RANGES = [
 	{ id: '1h', label: 'Last hour', ms: 3_600_000 },
@@ -101,15 +102,14 @@ export const formatSpeed = (tps: number | null): string => (tps === null ? '—'
 export const statusVariant = (s: ModelCallStatus): 'success' | 'destructive' | 'warning' => (s === 'ok' ? 'success' : s === 'error' ? 'destructive' : 'warning');
 
 export function formatDateTime(ms: number): string {
-	return new Date(ms).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+	return teamDateTime(ms, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 /** A short label for a histogram bucket start. */
 export function bucketLabel(ms: number, bucketMs: number): string {
-	const d = new Date(ms);
-	if (bucketMs >= 86_400_000) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-	const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-	return bucketMs >= 3_600_000 * 6 ? `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}` : time;
+	if (bucketMs >= 86_400_000) return formatDate(ms);
+	const time = formatClock(ms);
+	return bucketMs >= 3_600_000 * 6 ? `${formatDate(ms)} ${time}` : time;
 }
 
 /** A JSON column holding the marker of a value cut at the server's size cap. */

@@ -1,3 +1,4 @@
+import { isoDay } from '../time';
 // The Channels page's view model (Telegram bot connections, chats, people, delivery). Pure.
 import type { components } from '../api/schema';
 import { stripMarkdown } from '../format';
@@ -305,7 +306,7 @@ export function backfillText(c: ChannelChat, now: number): string {
 	const b = c.account?.backfill;
 	if (!b || b.days === null) return 'No history is read.';
 	const parts = [`${b.days} day${b.days === 1 ? '' : 's'}`, BACKFILL_STATE_LABEL[b.state] ?? b.state, `${b.count} messages`];
-	if (b.oldestAt !== undefined) parts.push(`back to ${new Date(b.oldestAt).toISOString().slice(0, 10)}`);
+	if (b.oldestAt !== undefined) parts.push(`back to ${isoDay(b.oldestAt)}`);
 	if (b.state === 'parked' && b.parkedUntil !== undefined) parts.push(`resumes in about ${Math.max(1, Math.ceil((b.parkedUntil - now) / 60_000))} min`);
 	if (b.error) parts.push(b.error);
 	return parts.join(' · ');
@@ -380,7 +381,7 @@ export function ago(at: number, now: number): string {
 	const h = Math.round(m / 60);
 	if (h < 24) return `${h} h ago`;
 	const d = Math.round(h / 24);
-	return d <= 7 ? `${d} day${d === 1 ? '' : 's'} ago` : new Date(at).toISOString().slice(0, 10);
+	return d <= 7 ? `${d} day${d === 1 ? '' : 's'} ago` : isoDay(at);
 }
 
 // ---- inbox ----

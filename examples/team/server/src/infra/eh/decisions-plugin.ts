@@ -72,6 +72,8 @@ export interface DecisionsPluginOptions {
     sessionId: string,
     asked: { tools?: string[]; read?: string[]; write?: string[] },
   ) => string | undefined
+  /** The team timezone: the zone of a plan's cron when the model names none (default UTC). */
+  timezone?: () => string
 }
 
 const list = z.array(z.string().min(1).max(500)).max(100)
@@ -134,7 +136,13 @@ const proposeSchema = z.object({
     .optional(),
   schedule: z
     .union([
-      z.object({ cron: z.string().min(1), timezone: z.string().optional() }),
+      z.object({
+        cron: z.string().min(1),
+        timezone: z
+          .string()
+          .optional()
+          .describe('IANA zone of the cron. Leave it out to use the team timezone.'),
+      }),
       z.object({ everyMinutes: z.number().int().min(1) }),
     ])
     .optional()
@@ -265,7 +273,7 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
                               ? {
                                   kind: 'cron' as const,
                                   expr: input.schedule.cron,
-                                  tz: input.schedule.timezone ?? 'UTC',
+                                  tz: input.schedule.timezone ?? options.timezone?.() ?? 'UTC',
                                 }
                               : {
                                   kind: 'every' as const,

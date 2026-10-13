@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isoDay } from '#lib/time.js';
 	import { goto } from '$app/navigation';
 	import { api } from '#lib/api/index.js';
 	import ChannelHeader from '#lib/components/app/channels/ChannelHeader.svelte';
@@ -60,7 +61,7 @@
 	{#if !b || b.days === null}<span class="text-muted-foreground">Not read</span>{:else}
 		<div class="flex flex-col gap-0.5">
 			<Badge variant={b.state === 'error' ? 'destructive' : b.state === 'done' ? 'success' : 'secondary'}>{BACKFILL_STATE_LABEL[b.state] ?? b.state}</Badge>
-			<span class="text-xs text-muted-foreground">{b.days} day{b.days === 1 ? '' : 's'}{b.oldestAt !== undefined ? ` · back to ${new Date(b.oldestAt).toISOString().slice(0, 10)}` : ''}{b.state === 'parked' && b.parkedUntil !== undefined ? ` · resumes in about ${Math.max(1, Math.ceil((b.parkedUntil - Date.now()) / 60_000))} min` : ''}</span>
+			<span class="text-xs text-muted-foreground">{b.days} day{b.days === 1 ? '' : 's'}{b.oldestAt !== undefined ? ` · back to ${isoDay(b.oldestAt)}` : ''}{b.state === 'parked' && b.parkedUntil !== undefined ? ` · resumes in about ${Math.max(1, Math.ceil((b.parkedUntil - Date.now()) / 60_000))} min` : ''}</span>
 			{#if b.error}<span class="text-xs text-destructive-text">{b.error}</span>{/if}
 		</div>
 	{/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatDateTime } from '#lib/time.js';
 	import { goto } from '$app/navigation';
 	import { api } from '#lib/api/index.js';
 	import ChannelHeader from '#lib/components/app/channels/ChannelHeader.svelte';
@@ -39,7 +40,7 @@
 {#snippet allowedCell(c: InboxConversation)}<Badge variant={c.allowed ? 'success' : 'warning'}>{allowlistLabel(c)}</Badge>{/snippet}
 {#snippet countsCell(c: InboxConversation)}<span class="text-xs text-muted-foreground">{inboxCounts(c)}</span>{/snippet}
 {#snippet previewCell(c: InboxConversation)}<span class="line-clamp-2 text-xs break-words text-muted-foreground">{previewLine(c)}</span><span class="block text-[11px] text-muted-foreground">Agent: {agentName(c.agentId)}</span>{/snippet}
-{#snippet lastCell(c: InboxConversation)}<span class="text-muted-foreground" title={new Date(c.lastAt).toLocaleString()}>{ago(c.lastAt, Date.now())}</span>{/snippet}
+{#snippet lastCell(c: InboxConversation)}<span class="text-muted-foreground" title={formatDateTime(c.lastAt)}>{ago(c.lastAt, Date.now())}</span>{/snippet}
 
 {#snippet filters()}
 	<FilterChips label="Type" options={[{ value: '', label: 'All' }, { value: 'group', label: 'Groups' }, { value: 'channel', label: 'Channels' }, { value: 'topic', label: 'Topics' }, { value: 'dm', label: 'Direct' }]} value={table.params.filters.kind ?? ''} onChange={(v) => table.setFilter('kind', v)} />
