@@ -5,6 +5,9 @@
 	import AppWindowIcon from 'phosphor-svelte/lib/AppWindow';
 	import FileIcon from 'phosphor-svelte/lib/File';
 	import FileTextIcon from 'phosphor-svelte/lib/FileText';
+	import GlobeIcon from 'phosphor-svelte/lib/Globe';
+	import TableIcon from 'phosphor-svelte/lib/Table';
+	import TreeStructureIcon from 'phosphor-svelte/lib/TreeStructure';
 	import type { ArtifactKind } from "./use-artifact-card.svelte.js";
 
 	let {
@@ -24,6 +27,12 @@
 	<ImageIcon class={className} />
 {:else if kind === "slides"}
 	<AppWindowIcon class={className} />
+{:else if kind === "html"}
+	<GlobeIcon class={className} />
+{:else if kind === "mermaid"}
+	<TreeStructureIcon class={className} />
+{:else if kind === "data"}
+	<TableIcon class={className} />
 {:else if kind === "file"}
 	<FileIcon class={className} />
 {:else}

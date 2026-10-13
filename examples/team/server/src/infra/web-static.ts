@@ -73,6 +73,10 @@ export function resolveWebUrl(input: {
   publicUrl: string
 }): string {
   const explicit = input.configured ?? (input.env.TEAM_WEB_URL?.trim() || undefined)
-  const url = explicit ?? (input.env.TEAM_WEB_DIR ? input.publicUrl : 'http://localhost:5173')
+  // one-port image: the web is the server itself; TEAM_PUBLIC_URL names the API (`…/api`), so the
+  // web is that URL without the `/api` suffix (links in agent replies follow the public domain)
+  const url =
+    explicit ??
+    (input.env.TEAM_WEB_DIR ? input.publicUrl.replace(/\/api\/?$/, '') : 'http://localhost:5173')
   return url.replace(/\/$/, '')
 }

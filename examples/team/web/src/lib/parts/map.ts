@@ -76,6 +76,7 @@ export type PartView =
 	| { kind: 'compaction'; key: string; summary: string; tokens?: unknown; trigger?: string; partial?: boolean }
 	| { kind: 'file'; key: string; url: string; mediaType: string; filename?: string }
 	| { kind: 'source'; key: string; sourceType: 'url' | 'document'; url?: string; title: string; mediaType?: string }
+	| { kind: 'artifact'; key: string; id: string; artifactKind: string; title: string; version?: number }
 	| { kind: 'unknown'; key: string; type: string; data?: unknown };
 
 type AnyPart = { type: string; [k: string]: unknown };
@@ -279,6 +280,11 @@ export function viewModel(message: UIMessage, live = true): PartView[] {
 			out.push({ kind: 'source', key, sourceType: 'url', url: str(part.url), title: str(part.title) ?? String(part.url ?? 'source') });
 		} else if (type === 'source-document') {
 			out.push({ kind: 'source', key, sourceType: 'document', title: str(part.title) ?? 'document', mediaType: str(part.mediaType) });
+		} else if (type === 'data-artifacts.artifact') {
+			// written by `artifact_create` (plan P45): the card, and the panel opens on it
+			const d = isRecord(part.data) ? part.data : {};
+			const id = str(d.id);
+			if (id) out.push({ kind: 'artifact', key, id, artifactKind: str(d.kind) ?? 'file', title: str(d.title) ?? 'Artifact', version: typeof d.version === 'number' ? d.version : undefined });
 		} else if (type === 'step-start') {
 			// layout marker only
 		} else {

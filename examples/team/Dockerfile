@@ -72,8 +72,7 @@ ENV NODE_ENV=production \
     TEAM_DB=/data/team.db \
     TEAM_CODE_PYTHON=/opt/eh-python/bin/python \
     TEAM_WEB_DIR=/app/examples/team/web/build \
-    TEAM_PUBLIC_URL=http://localhost:4000/api \
-    TEAM_WEB_URL=http://localhost:4000
+    TEAM_PUBLIC_URL=http://localhost:4000/api
 
 USER bun
 WORKDIR /app/examples/team/server

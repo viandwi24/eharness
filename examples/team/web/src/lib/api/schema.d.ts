@@ -4386,6 +4386,680 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List artifacts (newest change first) */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Words from the title or description. */
+                    query?: string;
+                    kind?: string;
+                    agentId?: string;
+                    limit?: number;
+                    cursor?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Artifacts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create an artifact from text files (the web "Save as artifact") */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ArtifactCreateBody"];
+                };
+            };
+            responses: {
+                /** @description Created (private, version 1) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Artifact"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/artifacts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One artifact with its files */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Artifact id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The artifact */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Artifact"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such artifact */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete an artifact (soft; its public link stops working, the library files stay) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Artifact id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactDeleted"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such artifact */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Rename, change visibility or pin the public version
+         * @description private -> public issues a new share token; public -> private clears it (the old link answers 404). The signed-in app may always publish.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Artifact id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ArtifactPatchBody"];
+                };
+            };
+            responses: {
+                /** @description The artifact */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Artifact"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such artifact */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/artifacts/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Versions, newest first */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Artifact id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Versions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactVersions"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such artifact */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/artifacts/{id}/view-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A short-lived signed content URL (10 minutes) of a version of the entry or of one file
+         * @description Content is served outside `/api` by the content routes with a sandbox CSP; the URL needs no cookie. Bound to the artifact and the version. Embed it in an iframe with `sandbox="allow-scripts allow-popups allow-forms allow-modals"` (never `allow-same-origin`). An HTML page posts `{ source: "eh-artifact", type: "resize" | "error" | "ready", ... }` to the parent.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Artifact id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ArtifactViewUrlBody"];
+                };
+            };
+            responses: {
+                /** @description Signed URL */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SignedUrl"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such artifact, version or file */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/artifacts/{id}/entry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Editor save: write the entry file (compare-and-set) and make a version by the web */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Artifact id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ArtifactEntryBody"];
+                };
+            };
+            responses: {
+                /** @description The artifact with the new version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Artifact"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such artifact */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `VERSION_CONFLICT` (`error.details.currentVersion`) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/artifacts/{id}/export/{format}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download an export (html, zip, md, csv, json, mmd, original ...)
+         * @description Formats are the `exports` of the kind (`shared/artifacts/kinds.ts`) plus `zip` for any artifact. Formats marked client-side (PDF, PNG of SVG, SVG of a diagram) are produced in the browser and answer 400 here.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    version?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description Artifact id. */
+                    id: string;
+                    format: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such artifact */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/share/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public: metadata of a shared artifact (no login)
+         * @description An unknown or revoked token answers 404 with no detail. The shared version is the pinned one, else the latest.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The shared artifact */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactShare"];
+                    };
+                };
+                /** @description Unknown or revoked link */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/library/view-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A short-lived signed raw view URL of a library file (thumbnails of run_python outputs) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LibraryViewUrlBody"];
+                };
+            };
+            responses: {
+                /** @description Signed URL */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SignedUrl"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -14040,6 +14714,112 @@ export interface components {
         MemoryDeleted: {
             scope: components["schemas"]["MemoryScope"];
             agentId: string | null;
+            path: string;
+        };
+        ArtifactList: {
+            items: components["schemas"]["ArtifactSummary"][];
+            nextCursor: string | null;
+        };
+        ArtifactSummary: {
+            id: string;
+            /** @description html, document, image, mermaid, code, data or file (an unknown kind renders as file). */
+            kind: string;
+            title: string;
+            description: string;
+            /** @description The library folder with the files. Empty on the public share page. */
+            dir: string;
+            /** @description The main file inside `dir`. */
+            entry: string;
+            agentId: string | null;
+            sessionId: string | null;
+            /** @description The current (latest) version number. */
+            version: number;
+            /** @enum {string} */
+            visibility: "private" | "public";
+            /** @description The public page `<web>/s/<token>`; null while private. */
+            shareUrl: string | null;
+            /** @description null = the public link follows the latest version. */
+            shareVersion: number | null;
+            createdAt: number;
+            updatedAt: number;
+        };
+        Artifact: components["schemas"]["ArtifactSummary"] & {
+            /** @description The files of the current version. */
+            files: components["schemas"]["ArtifactFile"][];
+        };
+        ArtifactFile: {
+            path: string;
+            size: number;
+            mediaType: string;
+        };
+        ArtifactCreateBody: {
+            kind: string;
+            title: string;
+            description?: string;
+            /** @default [] */
+            files: {
+                path: string;
+                content?: string;
+                base64?: string;
+            }[];
+            entry?: string;
+            /** @description Where it came from ("Save as artifact" of a fence in a message). */
+            origin?: {
+                sessionId?: string;
+                messageId?: string;
+                block?: number;
+            };
+        };
+        ArtifactVersions: components["schemas"]["ArtifactVersion"][];
+        ArtifactVersion: {
+            n: number;
+            note: string;
+            /** @description `agent:<id>` or `web`. */
+            by: string;
+            at: number;
+            entry: string;
+            files: components["schemas"]["ArtifactFile"][];
+        };
+        SignedUrl: {
+            /** @description Absolute content URL (`/art/v/<id>/<version>/~<token>/<path>`; relative links inside a page keep working). No cookie needed. */
+            url: string;
+            /** @description Epoch ms; ask again after it (a 403 means expired). */
+            expiresAt: number;
+        };
+        ArtifactViewUrlBody: {
+            /** @description Default: the current version. */
+            version?: number;
+            /** @description A file inside the folder; default: the entry. */
+            path?: string;
+        };
+        ArtifactPatchBody: {
+            title?: string;
+            description?: string;
+            /**
+             * @description private -> public issues a NEW link; public -> private kills it.
+             * @enum {string}
+             */
+            visibility?: "private" | "public";
+            /** @description Pin the public link to a version; null = follow the latest. Public artifacts only. */
+            shareVersion?: number | null;
+        };
+        ArtifactEntryBody: {
+            content: string;
+            /** @description The library version of the entry file you edited (`GET /library/file`). A stale edit gets 409 `VERSION_CONFLICT` (`error.details.currentVersion`). */
+            ifVersion?: string | null;
+        };
+        ArtifactDeleted: {
+            id: string;
+        };
+        ArtifactShare: {
+            artifact: components["schemas"]["ArtifactSummary"];
+            /** @description Public content URL of the entry file (CORS open, no login). */
+            entryUrl: string;
+            /** @description Public content URL prefix of the folder; append a relative file path. */
+            baseUrl: string;
+            files: components["schemas"]["ArtifactFile"][];
+        };
+        LibraryViewUrlBody: {
             path: string;
         };
         Settings: {

@@ -35,6 +35,10 @@
       "description": "Shared files: agent artifacts, uploads, version history."
     },
     {
+      "name": "artifacts",
+      "description": "Generated pages, documents, images, diagrams, tables and code with versions, signed content URLs, exports and public sharing (docs/plans/P45-team-artifacts.md)."
+    },
+    {
       "name": "memory",
       "description": "Workspace and per-agent memory files."
     },
@@ -4127,6 +4131,393 @@
         "required": [
           "scope",
           "agentId",
+          "path"
+        ]
+      },
+      "ArtifactList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "ArtifactSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "html, document, image, mermaid, code, data or file (an unknown kind renders as file)."
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "dir": {
+            "type": "string",
+            "description": "The library folder with the files. Empty on the public share page."
+          },
+          "entry": {
+            "type": "string",
+            "description": "The main file inside `dir`."
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "description": "The current (latest) version number."
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "private",
+              "public"
+            ]
+          },
+          "shareUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The public page `<web>/s/<token>`; null while private."
+          },
+          "shareVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "null = the public link follows the latest version."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "description",
+          "dir",
+          "entry",
+          "agentId",
+          "sessionId",
+          "version",
+          "visibility",
+          "shareUrl",
+          "shareVersion",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "Artifact": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ArtifactSummary"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "files": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ArtifactFile"
+                },
+                "description": "The files of the current version."
+              }
+            },
+            "required": [
+              "files"
+            ]
+          }
+        ]
+      },
+      "ArtifactFile": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "mediaType": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "size",
+          "mediaType"
+        ]
+      },
+      "ArtifactCreateBody": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "content": {
+                  "type": "string"
+                },
+                "base64": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            },
+            "maxItems": 60,
+            "default": []
+          },
+          "entry": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "block": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "description": "Where it came from (\"Save as artifact\" of a fence in a message)."
+          }
+        },
+        "required": [
+          "kind",
+          "title"
+        ]
+      },
+      "ArtifactVersions": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/ArtifactVersion"
+        }
+      },
+      "ArtifactVersion": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer"
+          },
+          "note": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string",
+            "description": "`agent:<id>` or `web`."
+          },
+          "at": {
+            "type": "integer"
+          },
+          "entry": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactFile"
+            }
+          }
+        },
+        "required": [
+          "n",
+          "note",
+          "by",
+          "at",
+          "entry",
+          "files"
+        ]
+      },
+      "SignedUrl": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Absolute content URL (`/art/v/<id>/<version>/~<token>/<path>`; relative links inside a page keep working). No cookie needed."
+          },
+          "expiresAt": {
+            "type": "integer",
+            "description": "Epoch ms; ask again after it (a 403 means expired)."
+          }
+        },
+        "required": [
+          "url",
+          "expiresAt"
+        ]
+      },
+      "ArtifactViewUrlBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Default: the current version."
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "A file inside the folder; default: the entry."
+          }
+        }
+      },
+      "ArtifactPatchBody": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "private",
+              "public"
+            ],
+            "description": "private -> public issues a NEW link; public -> private kills it."
+          },
+          "shareVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "Pin the public link to a version; null = follow the latest. Public artifacts only."
+          }
+        }
+      },
+      "ArtifactEntryBody": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "ifVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library version of the entry file you edited (`GET /library/file`). A stale edit gets 409 `VERSION_CONFLICT` (`error.details.currentVersion`)."
+          }
+        },
+        "required": [
+          "content"
+        ]
+      },
+      "ArtifactDeleted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "ArtifactShare": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/ArtifactSummary"
+          },
+          "entryUrl": {
+            "type": "string",
+            "description": "Public content URL of the entry file (CORS open, no login)."
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Public content URL prefix of the folder; append a relative file path."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactFile"
+            }
+          }
+        },
+        "required": [
+          "artifact",
+          "entryUrl",
+          "baseUrl",
+          "files"
+        ]
+      },
+      "LibraryViewUrlBody": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
           "path"
         ]
       },
@@ -18691,6 +19082,788 @@
           },
           "409": {
             "description": "`FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "List artifacts (newest change first)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "Words from the title or description."
+            },
+            "required": false,
+            "description": "Words from the title or description.",
+            "name": "query",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "required": false,
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artifacts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Create an artifact from text files (the web \"Save as artifact\")",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created (private, version 1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{id}": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "One artifact with its files",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Artifact id."
+            },
+            "required": true,
+            "description": "Artifact id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Rename, change visibility or pin the public version",
+        "description": "private -> public issues a new share token; public -> private clears it (the old link answers 404). The signed-in app may always publish.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Artifact id."
+            },
+            "required": true,
+            "description": "Artifact id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactPatchBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Delete an artifact (soft; its public link stops working, the library files stay)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Artifact id."
+            },
+            "required": true,
+            "description": "Artifact id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{id}/versions": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Versions, newest first",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Artifact id."
+            },
+            "required": true,
+            "description": "Artifact id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactVersions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{id}/view-url": {
+      "post": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "A short-lived signed content URL (10 minutes) of a version of the entry or of one file",
+        "description": "Content is served outside `/api` by the content routes with a sandbox CSP; the URL needs no cookie. Bound to the artifact and the version. Embed it in an iframe with `sandbox=\"allow-scripts allow-popups allow-forms allow-modals\"` (never `allow-same-origin`). An HTML page posts `{ source: \"eh-artifact\", type: \"resize\" | \"error\" | \"ready\", ... }` to the parent.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Artifact id."
+            },
+            "required": true,
+            "description": "Artifact id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactViewUrlBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedUrl"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such artifact, version or file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{id}/entry": {
+      "put": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Editor save: write the entry file (compare-and-set) and make a version by the web",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Artifact id."
+            },
+            "required": true,
+            "description": "Artifact id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactEntryBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The artifact with the new version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`VERSION_CONFLICT` (`error.details.currentVersion`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{id}/export/{format}": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Download an export (html, zip, md, csv, json, mmd, original ...)",
+        "description": "Formats are the `exports` of the kind (`shared/artifacts/kinds.ts`) plus `zip` for any artifact. Formats marked client-side (PDF, PNG of SVG, SVG of a diagram) are produced in the browser and answer 400 here.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Artifact id."
+            },
+            "required": true,
+            "description": "Artifact id.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20
+            },
+            "required": true,
+            "name": "format",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "required": false,
+            "name": "version",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/share/{token}": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Public: metadata of a shared artifact (no login)",
+        "description": "An unknown or revoked token answers 404 with no detail. The shared version is the pinned one, else the latest.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The shared artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactShare"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or revoked link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/library/view-url": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "A short-lived signed raw view URL of a library file (thumbnails of run_python outputs)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryViewUrlBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedUrl"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
             "content": {
               "application/json": {
                 "schema": {

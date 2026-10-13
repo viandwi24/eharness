@@ -3,9 +3,12 @@ import type { PartView } from './map.js';
 
 export type ToolView = Extract<PartView, { kind: 'tool' }>;
 
+/** Tools with a part of their own (an artifact card, the saved files of a code run): never folded into a group. */
+export const RICH_TOOLS: readonly string[] = ['artifact_create', 'run_python'];
+
 /** A tool call that renders as a quiet activity row (not a subagent card, not awaiting a person). */
 export function isActivityTool(v: PartView): v is ToolView {
-	return v.kind === 'tool' && !v.isSubagent && v.state !== 'approval-requested';
+	return v.kind === 'tool' && !v.isSubagent && v.state !== 'approval-requested' && !RICH_TOOLS.includes(v.toolName);
 }
 
 export function isRunning(v: ToolView): boolean {

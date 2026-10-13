@@ -3,7 +3,7 @@
 	import type { StreamdownProps } from "svelte-streamdown";
 	import SafeStreamdown from "#lib/parts/SafeStreamdown.svelte";
 
-	let { content, class: className, theme, ...restProps }: StreamdownProps = $props();
+	let { content, class: className, theme, ...restProps }: StreamdownProps & { trustedImagePrefixes?: string[] } = $props();
 
 	// Response typography (DESIGN §5b rule 3): 15/1.65, 600 lead-ins, h1-h3 22/18/16, inline code = mono 12.5 on
 	// --muted in --destructive-text, links --info-text underlined, quote = 3px --border rule, 22px list indent,

@@ -96,6 +96,11 @@ import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { taskGrantRules } from '../../domain/work-queue.ts'
+import {
+  type ArtifactDecisions,
+  type ArtifactService,
+  createArtifactsHook,
+} from '../artifacts/index.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
 import {
   CHANNEL_TOOLS,
@@ -249,6 +254,8 @@ export interface AgentFactoryDeps {
   workQueue?: () => WorkQueueIntake | undefined
   /** The big-data toolkit (`infra/bigdata`): sources and `run_code` limits. Needs `programs`. */
   bigData?: BigDataConfig
+  /** Artifacts (docs/plans/P45-team-artifacts.md): the service and the decision hook for public requests. Needs `programs`. */
+  artifacts?: { service: ArtifactService; decisions: () => ArtifactDecisions | undefined }
   /** Definition by id: a child's parent session `dm:<agentId>` names its agent. */
   agentById?: (id: string) => AgentDef | undefined
   /**
@@ -759,6 +766,20 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       programs: deps.programs,
       onFileChange: deps.onFileChange,
       config: deps.bigData,
+    })
+  }
+
+  if (
+    deps.connectors.hooks.artifacts === undefined &&
+    deps.artifacts !== undefined &&
+    deps.programs !== undefined
+  ) {
+    deps.connectors.hooks.artifacts = createArtifactsHook({
+      service: deps.artifacts.service,
+      programs: deps.programs,
+      agentOf: (slug) => deps.agentBySlug?.(slug),
+      channels: () => deps.channels?.(),
+      decisions: deps.artifacts.decisions,
     })
   }
 

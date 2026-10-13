@@ -24,7 +24,11 @@ export default defineConfig(({ mode }) => {
 	},
 	server: {
 		// `/api/*` (every route: /sessions, /attention, /activity, /agents, ...) goes to the team server.
-		proxy: { '/api': { target: apiTarget, changeOrigin: true, rewrite: (p) => p.replace(/^\/api/, '') } }
+		proxy: {
+			'/api': { target: apiTarget, changeOrigin: true, rewrite: (p) => p.replace(/^\/api/, '') },
+			// artifact content (signed URLs are root-relative: `/art/...`)
+			'/art': { target: apiTarget, changeOrigin: true }
+		}
 	},
 	plugins: [
 		tailwindcss(),

@@ -6,6 +6,9 @@ export type ArtifactKind =
 	| "code"
 	| "image"
 	| "slides"
+	| "html"
+	| "mermaid"
+	| "data"
 	| "file";
 
 export type ArtifactCardState = "ready" | "generating";

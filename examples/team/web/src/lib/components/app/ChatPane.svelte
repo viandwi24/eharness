@@ -54,6 +54,13 @@
 	import MessageView from '#lib/parts/MessageView.svelte';
 	import ChatComposer from './ChatComposer.svelte';
 	import { shouldFocusComposer } from '#lib/chat/typing.js';
+	import { page } from '$app/state';
+	import { MediaQuery } from 'svelte/reactivity';
+	import * as Resizable from '#lib/components/ui/resizable/index.js';
+	import ArtifactPanel from '#lib/components/artifacts/ArtifactPanel.svelte';
+	import { setChatEnv } from '#lib/artifacts/context.js';
+	import { openPanel } from '#lib/artifacts/open.js';
+	import { parsePanel } from '#lib/artifacts/panel.js';
 
 	/**
 	 * `panelOpen`: whether the session panel is shown (a column when `wide`, a popover below lg).
@@ -86,6 +93,15 @@
 		void ac?.init();
 	});
 	const chat = $derived(ac?.chat);
+
+	// The artifact panel (plan P45 R1): what it shows is in the URL (`?artifact=`, `?preview=`, `?file=`),
+	// so a reload keeps it open. Side by side from 900px, a full-width overlay below.
+	const target = $derived(parsePanel(page.url.searchParams));
+	const split = new MediaQuery('min-width: 900px');
+	let rowWidth = $state(1200);
+	const chatMin = $derived(Math.min(60, (360 / Math.max(rowWidth, 1)) * 100));
+	const panelMin = $derived(Math.min(60, (420 / Math.max(rowWidth, 1)) * 100));
+	setChatEnv({ sessionId: () => sessionId, ask: (text) => void ac?.send(text) });
 	// One entry per id at the render boundary: a duplicate key would crash the whole page. An empty
 	// assistant message (a provider failure stores one on purpose, next to the notice) is not shown.
 	const messages = $derived(
@@ -95,6 +111,25 @@
 			})
 		)
 	);
+
+	// An artifact the agent creates in the turn the person is watching opens in the panel (like Claude);
+	// the ones already in the history do not. The first pass over a chat only records what is there.
+	let artifactSeen: { session: string; ids: Set<string> } | undefined;
+	$effect(() => {
+		const ids: string[] = [];
+		for (const m of chat?.messages ?? []) {
+			for (const p of m.parts as { type: string; data?: { id?: unknown } }[]) if (p.type === 'data-artifacts.artifact' && typeof p.data?.id === 'string') ids.push(p.data.id);
+		}
+		if (!ac?.loaded) return;
+		if (artifactSeen?.session !== sessionId) {
+			artifactSeen = { session: sessionId, ids: new Set(ids) };
+			return;
+		}
+		const fresh = ids.filter((id) => !artifactSeen!.ids.has(id));
+		for (const id of fresh) artifactSeen.ids.add(id);
+		const last = fresh.at(-1);
+		if (last && (ac.status === 'submitted' || ac.status === 'streaming' || ac.following)) openPanel({ kind: 'artifact', id: last });
+	});
 
 	// A tool row waiting for an approval says "answered elsewhere" only when this tab did not answer it
 	// and a refresh made after the row appeared still lacks it (the list lags the stream, and a failed
@@ -394,7 +429,8 @@
 
 	<!-- The conversation fills the pane to the bottom; the pending card and the composer float over
 	     it (dock), and the content is padded by the dock's height so the last message stays visible. -->
-	<div class="flex min-h-0 flex-1">
+	<div class="relative flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+	{#snippet chatColumn()}
 	{#if ac && chat && thread}
 	<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
 		<div bind:this={root} class="flex min-h-0 flex-1 flex-col">
@@ -564,7 +600,25 @@
 			<div class="flex flex-col gap-2"><Skeleton class="h-3.5 w-1/3" /><Skeleton class="h-3.5 w-4/5" /></div>
 		</div>
 	{/if}
-	{#if wide && panelOpen && thread}
+	{/snippet}
+	<!-- The chat stays mounted whether the panel is open or not: it is always the first pane. -->
+	<Resizable.PaneGroup direction="horizontal" autoSaveId="team-artifact-split" class="min-w-0 flex-1">
+		<Resizable.Pane id="chat" order={1} minSize={target && split.current ? chatMin : 0} class="flex min-h-0 min-w-0 flex-col">
+			{@render chatColumn()}
+		</Resizable.Pane>
+		{#if target && thread && split.current}
+			<Resizable.Handle withHandle aria-label="Resize the panel" />
+			<Resizable.Pane id="panel" order={2} defaultSize={50} minSize={panelMin} class="flex min-h-0 min-w-0 flex-col">
+				<ArtifactPanel {target} {messages} refreshKey={busy} onClose={() => openPanel(null)} onAsk={(t) => void ac?.send(t)} />
+			</Resizable.Pane>
+		{/if}
+	</Resizable.PaneGroup>
+	{#if target && thread && !split.current}
+		<div class="absolute inset-0 z-30 bg-background">
+			<ArtifactPanel {target} {messages} refreshKey={busy} onBack={() => openPanel(null)} onClose={() => openPanel(null)} onAsk={(t) => void ac?.send(t)} />
+		</div>
+	{/if}
+	{#if wide && panelOpen && thread && !target}
 		<!-- Second column of the same surface: the floating session card scrolls on its own. -->
 		<aside class="hidden w-[352px] shrink-0 overflow-y-auto p-3 min-[1200px]:block" aria-label="Agent session">
 			<SessionContext {agentId} {thread} elevation="flat" class="border-border bg-background shadow-sm" onClose={onTogglePanel} />

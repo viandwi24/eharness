@@ -1627,3 +1627,81 @@ export const peopleLinkCodes = sqliteTable(
   },
   (t) => [index('people_link_codes_person').on(t.personId)],
 )
+
+// --- artifacts (docs/plans/P45-team-artifacts.md)
+
+/** A generated document, page, image, diagram, table or code file with versions and a share setting. */
+export const artifacts = sqliteTable(
+  'artifacts',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    /** The library folder that holds the files (`/library/artifacts/<slug>-<id>`, or an adopted folder). */
+    dir: text('dir').notNull(),
+    /** The entry file inside `dir`. */
+    entry: text('entry').notNull(),
+    agentId: text('agent_id'),
+    /** Session of origin (the chat or run that made it); null for the web "Save as artifact". */
+    sessionId: text('session_id'),
+    /** The current version number. */
+    version: integer('version').notNull().default(1),
+    /** `private` | `public` */
+    visibility: text('visibility').notNull().default('private'),
+    /** 128-bit random, base64url; null while private. A new one on every private -> public. */
+    shareToken: text('share_token'),
+    /** Null = the public link follows the latest version; else a pinned number. */
+    shareVersion: integer('share_version'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    deletedAt: integer('deleted_at'),
+  },
+  (t) => [
+    index('artifacts_updated').on(t.updatedAt),
+    index('artifacts_dir').on(t.dir),
+    uniqueIndex('artifacts_share_token').on(t.shareToken),
+  ],
+)
+
+/** One snapshot of an artifact: path -> content hash (rows of `artifact_blobs`). */
+export const artifactVersions = sqliteTable(
+  'artifact_versions',
+  {
+    artifactId: text('artifact_id').notNull(),
+    n: integer('n').notNull(),
+    /** path (relative to the folder) -> { hash, size } */
+    files: json<Record<string, { hash: string; size: number }>>('files').notNull(),
+    entry: text('entry').notNull(),
+    note: text('note').notNull().default(''),
+    /** `agent:<id>` | `web` */
+    by: text('by').notNull(),
+    at: integer('at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.artifactId, t.n] })],
+)
+
+/** Content of versioned files by hash (copy-on-write: a file that did not change is not stored again). */
+export const artifactBlobs = sqliteTable('artifact_blobs', {
+  hash: text('hash').primaryKey(),
+  bytes: blob('bytes', { mode: 'buffer' }).notNull(),
+  mediaType: text('media_type').notNull(),
+  size: integer('size').notNull(),
+})
+
+/** Append-only audit: create, version, visibility, export, delete. */
+export const artifactEvents = sqliteTable(
+  'artifact_events',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    artifactId: text('artifact_id').notNull(),
+    /** `create` | `version` | `visibility` | `export` | `delete` | `rename` */
+    action: text('action').notNull(),
+    /** `agent:<id>` | `web` | `channel:<role>` */
+    actor: text('actor').notNull(),
+    sessionId: text('session_id'),
+    detail: json<Record<string, unknown>>('detail').notNull(),
+    at: integer('at').notNull(),
+  },
+  (t) => [index('artifact_events_artifact').on(t.artifactId, t.seq)],
+)

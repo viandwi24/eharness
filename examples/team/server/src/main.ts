@@ -15,6 +15,8 @@
  *   TEAM_SECRET_KEY   32 bytes base64: encrypts provider secrets, connection secrets and tokens at rest (dev: a key file next to the DB)
  *   TEAM_ALLOWED_ORIGINS extra browser origins allowed to send state-changing requests (the origins of TEAM_WEB_URL and TEAM_PUBLIC_URL always are; other `Origin`s get 403 FORBIDDEN_ORIGIN, the CSRF guard)
  *   TEAM_PUBLIC_URL   where this server is reached by the browser (OAuth callback `<url>/oauth/callback`; default http://localhost:PORT)
+ *   TEAM_ARTIFACT_URL  public base URL of the artifact content origin (docs/plans/P45-team-artifacts.md; default: root-relative /art/* URLs on the host that shows the page)
+ *   TEAM_ARTIFACT_PORT also serve ONLY the content routes on this port (a separate origin behind a proxy, or in dev; TEAM_ARTIFACT_URL then points at it)
  *   TEAM_WEB_URL      where the web app lives (the OAuth callback redirects to `<url>/connectors`, channel messages link to it; default http://localhost:5173, or TEAM_PUBLIC_URL with TEAM_WEB_DIR)
  *   TEAM_TELEGRAM_API_ROOT Bot API root of the Telegram bot (default https://api.telegram.org; a local Bot API server or a test fake)
  *   TEAM_WEB_DIR      serve the built web (web/build) from this server on one port; the API then lives under /api (Dockerfile)
@@ -104,6 +106,13 @@ import { parseAssignedSession } from './domain/work-queue.ts'
 import { createApp } from './http/app.ts'
 import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
+import { artifactContentRoutes } from './infra/artifacts/content.ts'
+import {
+  type ArtifactDecisions,
+  type ArtifactService,
+  createArtifactService,
+} from './infra/artifacts/index.ts'
+import { KEEP_PRIVATE_OPTION, PUBLISH_OPTION } from './infra/artifacts/plugin.ts'
 import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
 import { seedBuiltinSkills } from './infra/bigdata/skills.ts'
 import { createChannelInboxPort, lazyInboxPort } from './infra/channels/admin.ts'
@@ -313,6 +322,10 @@ export interface ServerConfig {
 
 export interface Server {
   app: OpenAPIHono
+  /** The artifact content routes (`/art/*`): served on `TEAM_ARTIFACT_PORT` too. */
+  artifactContent: { fetch: (request: Request) => Response | Promise<Response> }
+  /** Artifacts: records, versions, signed content URLs (`infra/artifacts`). */
+  artifacts: ArtifactService
   deps: Deps
   conn: Connection
   factory: AgentFactory
@@ -427,8 +440,11 @@ export function compose(config: ServerConfig): Server {
   const providersReady = providers.ready()
   providersReady.catch(() => undefined)
 
+  // artifacts (docs/plans/P45-team-artifacts.md): built once the URLs are known (below)
+  let artifactService: ArtifactService | undefined
   // every change of a library file (agents, uploads, people) reaches the event feed
   const onFileChange = (c: LibraryChange): void => {
+    artifactService?.onLibraryChange(c)
     events.append({
       type: 'file-changed',
       agentId: c.agentId,
@@ -509,6 +525,37 @@ export function compose(config: ServerConfig): Server {
     env: config.env ?? process.env,
     publicUrl,
   })
+  const envOf = config.env ?? process.env
+  // content is served by this server under /art/* unless TEAM_ARTIFACT_URL / TEAM_ARTIFACT_PORT say
+  // otherwise. Default: root-relative URLs (`/art/...`), resolved against the page that shows them:
+  // the one-port image serves /art next to the web, and the dev web proxies /art like /api.
+  const artifactPort = envOf.TEAM_ARTIFACT_PORT?.trim()
+  const contentUrl = (
+    envOf.TEAM_ARTIFACT_URL?.trim() ||
+    (artifactPort
+      ? (() => {
+          const u = new URL(publicUrl)
+          u.port = artifactPort
+          return u.origin
+        })()
+      : '')
+  ).replace(/\/$/, '')
+  const signingSecret =
+    envOf.TEAM_SECRET_KEY || vault.keyId
+      ? `artifacts|${envOf.TEAM_SECRET_KEY ?? ''}|${vault.keyId ?? ''}`
+      : // no stable secret: signed links die with the process (the web asks for a new one)
+        `artifacts|${crypto.randomUUID()}`
+  const artifacts = createArtifactService({
+    sqlite: conn.sqlite,
+    now: () => Date.now(),
+    nextId: () => uuidv7(),
+    webUrl,
+    contentUrl,
+    secret: signingSecret,
+    onFileChange,
+  })
+  artifactService = artifacts
+  const artifactContent = artifactContentRoutes(artifacts)
   const codeRuntime = createCodeRuntime(
     {
       ...codeConfigFromEnv(config.env ?? process.env, config.dbFile),
@@ -553,6 +600,8 @@ export function compose(config: ServerConfig): Server {
   const decisionStore = drizzleDecisionStore(conn.db)
   // the decision tools of the agents need the app deps, which are built after the factory
   let decisionIntake: DecisionIntake | undefined
+  // "make this artifact public?" of a run nobody is talking to (late-bound with the decision intake)
+  let artifactDecisions: ArtifactDecisions | undefined
   // the same for the heartbeat tools (`team_status`) and the hook that records a beat
   let heartbeatIntake: HeartbeatIntake | undefined
   let workQueueIntake: WorkQueueIntake | undefined
@@ -600,6 +649,7 @@ export function compose(config: ServerConfig): Server {
       )
     },
     bigData: bigDataConfig,
+    artifacts: { service: artifacts, decisions: () => artifactDecisions },
     decisions: () => decisionIntake,
     heartbeat: () => heartbeatIntake,
     workQueue: () => workQueueIntake,
@@ -759,6 +809,7 @@ export function compose(config: ServerConfig): Server {
     tasks,
     team,
     library: sqliteLibraryStore(conn.sqlite, { onChange: onFileChange }),
+    artifacts,
     settings,
     providers,
     connectors,
@@ -832,6 +883,33 @@ export function compose(config: ServerConfig): Server {
       const d = createReportEscalation(deps, input)
       if (d !== undefined) announceInChat(d)
     },
+  }
+  const publishTitle = (artifactId: string): string =>
+    `Make artifact ${artifactId.slice(-6)} public?`
+  artifactDecisions = {
+    request: ({ agentId, sessionId, artifactId, title }) => {
+      const d = createEscalation(deps, {
+        agentId,
+        sessionId,
+        waitId: null,
+        title: `Make "${title}" public?`.slice(0, 200),
+        question: `${publishTitle(artifactId)} An agent wants a public link (anyone with it can open it, no sign-in) for "${title}" [artifact ${artifactId}].`,
+        options: [PUBLISH_OPTION, KEEP_PRIVATE_OPTION],
+        standDown: [KEEP_PRIVATE_OPTION],
+      })
+      announceInChat(d)
+      return { id: d.id }
+    },
+    approved: (sessionId, artifactId) =>
+      deps.decisions
+        .list({ sessionId, kind: 'escalation', limit: 100 })
+        .some(
+          (d) =>
+            d.kind === 'escalation' &&
+            d.status === 'approved' &&
+            d.outcome?.decision === PUBLISH_OPTION &&
+            d.payload.question.includes(`[artifact ${artifactId}]`),
+        ),
   }
   personaIntake = {
     state: (agentId) => getPersonaState(deps, agentId),
@@ -1241,6 +1319,7 @@ export function compose(config: ServerConfig): Server {
     deps,
     token: config.token,
     harness,
+    content: artifactContent,
     allowedOrigins,
     login: config.loginPassword
       ? {
@@ -1258,6 +1337,8 @@ export function compose(config: ServerConfig): Server {
   void connectorsReady.then(() => repairProgramAuthorities(deps)).catch(() => undefined)
   return {
     app,
+    artifactContent,
+    artifacts,
     deps,
     conn,
     factory,
@@ -1393,10 +1474,32 @@ if (import.meta.main) {
         )
       }
       if (!web) return server.app.fetch(request, bunServer)
+      // artifact content (signed or share tokens) lives next to /api, not in the web build
+      if (new URL(request.url).pathname.startsWith('/art/'))
+        return server.artifactContent.fetch(request)
       const api = web.apiRequest(request)
       return api ? server.app.fetch(api, bunServer) : web.serve(request)
     },
   })
+  // TEAM_ARTIFACT_PORT: the content routes alone on their own port (a separate origin behind a proxy, or in dev)
+  const artifactPort = Number(process.env.TEAM_ARTIFACT_PORT)
+  const artifactHttp =
+    Number.isInteger(artifactPort) && artifactPort > 0 && artifactPort !== http.port
+      ? Bun.serve({
+          port: artifactPort,
+          hostname: listen.hostname,
+          idleTimeout: 0,
+          fetch: (request) =>
+            new URL(request.url).pathname.startsWith('/art/')
+              ? server.artifactContent.fetch(request)
+              : new Response('not found', { status: 404 }),
+        })
+      : undefined
+  if (artifactHttp !== undefined) {
+    console.log(
+      `artifact content on http://${listen.hostname}:${artifactHttp.port} (set TEAM_ARTIFACT_URL to its public URL)`,
+    )
+  }
   console.log(
     `team server on http://${listen.hostname}:${http.port} (${web ? 'web at /, API and docs under /api' : 'docs at /docs'}, ${[token ? 'token auth' : '', process.env.BASIC_AUTH_PASSWORD ? 'password login' : ''].filter(Boolean).join(' + ') || 'no TEAM_TOKEN: open, loopback only'})`,
   )
@@ -1415,6 +1518,7 @@ if (import.meta.main) {
       const stopped = http.stop()
       await Promise.race([stopped, new Promise((r) => setTimeout(r, 1500))])
       await http.stop(true)
+      await artifactHttp?.stop(true)
       await server.close()
     } catch (error) {
       console.error(`shutdown failed: ${errorText(error)}`)

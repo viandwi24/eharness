@@ -144,6 +144,11 @@ export function enablementFromTools(
   out[agentMemoryConnection(agent.id)] = memory
     ? { enabled: 'on', capabilities: { read: 'allow', write: 'allow' } }
     : { enabled: 'off' }
+  // artifacts (P45) follow the files: an agent that can write the library can show what it makes
+  // (a read-only agent keeps exactly its legacy tools)
+  out[builtinId('artifacts')] = has('library_write')
+    ? { enabled: 'on', capabilities: { create: 'allow', read: 'allow', share: 'allow' } }
+    : { enabled: 'off' }
   out[builtinId('planning')] = { enabled: has('todos') ? 'on' : 'off' }
   out[builtinId('web')] =
     has('web_search') || has('web_fetch')

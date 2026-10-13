@@ -13,6 +13,7 @@ import { DomainError } from '../app/errors.ts'
 import { createLoginAuth, createLoginThrottle, SESSION_COOKIE } from '../app/login.ts'
 import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
+import { artifactRoutes } from './routes/artifacts.ts'
 import { authRoutes } from './routes/auth.ts'
 import { briefingRoutes } from './routes/briefings.ts'
 import { channelRoutes } from './routes/channels.ts'
@@ -48,6 +49,11 @@ export interface AppOptions {
   allowedOrigins?: readonly string[] | undefined
   /** `eharness/http` (`infra/eh/harness-http.ts`): chat, sessions, attention answers, activity. */
   harness: HarnessFetch
+  /**
+   * The content routes of artifacts (`/art/*`, `infra/artifacts/content.ts`), mounted outside the
+   * login and token checks: they carry their own signed tokens or share tokens.
+   */
+  content?: { fetch: (request: Request) => Response | Promise<Response> } | undefined
   /**
    * Password login (`BASIC_AUTH_PASSWORD`). Set: every route except `/health` and `/auth/*` needs
    * the `team_session` cookie or the bearer `token`. Unset: no login, behaviour unchanged.
@@ -103,6 +109,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
         'The daily digest as a page (one briefing per day) and the bell: urgent alerts and "briefing ready".',
     },
     { name: 'library', description: 'Shared files: agent artifacts, uploads, version history.' },
+    {
+      name: 'artifacts',
+      description:
+        'Generated pages, documents, images, diagrams, tables and code with versions, signed content URLs, exports and public sharing (docs/plans/P45-team-artifacts.md).',
+    },
     { name: 'memory', description: 'Workspace and per-agent memory files.' },
     { name: 'settings', description: 'Workspace settings read by the agent factory.' },
     {
@@ -171,6 +182,13 @@ const EH_STATUS: Record<string, number> = {
 const PUBLIC = new Set(['/health', '/openapi.json', '/docs', '/oauth/callback'])
 
 /**
+ * Open prefixes: artifact content (`/art/`: signed or share tokens, no cookie) and the public share
+ * metadata (`/share/<token>`).
+ */
+const isOpenPrefix = (path: string): boolean =>
+  path.startsWith('/art/') || path.startsWith('/share/')
+
+/**
  * Paths that stay open when password login is on: the probe and the login endpoints. The docs, the
  * OpenAPI document and the OAuth callback are protected (the callback is a top-level GET
  * navigation, so the SameSite=Lax session cookie still reaches it).
@@ -205,6 +223,19 @@ export function createApp(options: AppOptions): OpenAPIHono {
   })
 
   app.use('*', async (c, next) => {
+    // a sandboxed artifact page has the opaque origin `null`: it never gets to the API, any method
+    if (c.req.header('origin') === 'null' && !c.req.path.startsWith('/art/')) {
+      return c.json(
+        {
+          error: {
+            code: 'FORBIDDEN_ORIGIN',
+            message: 'requests from a sandboxed page are refused',
+          },
+        },
+        403,
+      )
+    }
+    if (isOpenPrefix(c.req.path)) return next()
     if (
       options.allowedOrigins !== undefined &&
       !originAllowed(c.req.method, c.req.header('origin'), options.allowedOrigins)
@@ -243,6 +274,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
     (trustProxy && c.req.header('x-forwarded-proto') === 'https')
 
   app.use('*', async (c, next) => {
+    if (isOpenPrefix(c.req.path)) return next()
     if (login) {
       if (PUBLIC_WITH_LOGIN.has(c.req.path)) return next()
       if (bearerOk(c) || (await login.verify(getCookie(c, SESSION_COOKIE)))) return next()
@@ -340,6 +372,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', uploadRoutes(options.deps))
   app.route('/', taskRoutes(options.deps))
   app.route('/', libraryRoutes(options.deps))
+  app.route('/', artifactRoutes(options.deps))
   app.route('/', settingsRoutes(options.deps))
   app.route('/', usageRoutes(options.deps))
   app.route('/', providerRoutes(options.deps))
@@ -352,6 +385,9 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', channelRoutes(options.deps))
   app.route('/', peopleRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
+
+  const content = options.content
+  if (content !== undefined) app.all('/art/*', (c) => content.fetch(c.req.raw))
 
   app.doc31('/openapi.json', OPENAPI_DOC)
   // relative: behind the web server the app is mounted under `/api`, so `/api/docs` must read `/api/openapi.json`

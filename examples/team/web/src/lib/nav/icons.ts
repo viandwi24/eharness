@@ -9,6 +9,7 @@ import GearIcon from 'phosphor-svelte/lib/Gear';
 import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 import NewspaperIcon from 'phosphor-svelte/lib/Newspaper';
 import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
+import CubeIcon from 'phosphor-svelte/lib/Cube';
 import PulseIcon from 'phosphor-svelte/lib/Pulse';
 import StrategyIcon from 'phosphor-svelte/lib/Strategy';
 import UsersThreeIcon from 'phosphor-svelte/lib/UsersThree';
@@ -24,6 +25,7 @@ export const NAV_ICONS: Record<SectionId | RailId, Component> = {
 	programs: StrategyIcon,
 	routines: ClockIcon,
 	files: FolderOpenIcon,
+	artifacts: CubeIcon,
 	channels: ChatCircleDotsIcon,
 	people: UsersThreeIcon,
 	connectors: PlugsConnectedIcon,

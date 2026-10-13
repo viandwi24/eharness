@@ -1,6 +1,16 @@
 /** Ports the use cases depend on; `infra/` implements them. */
 import type { AgentDef } from '../domain/agents.ts'
 import type { ApprovalView } from '../domain/approvals.ts'
+import type {
+  Artifact,
+  ArtifactExport,
+  ArtifactPatch,
+  ArtifactShare,
+  ArtifactSummary,
+  ArtifactVersionView,
+  NewArtifact,
+  SignedUrl,
+} from '../domain/artifacts.ts'
 import type { Briefing, Notification, NotificationKind } from '../domain/briefings.ts'
 import type {
   ChannelActivityPage,
@@ -692,6 +702,32 @@ export interface LibraryStore {
   versions(path: string, limit: number): LibraryVersion[]
 }
 
+/** Artifacts (`infra/artifacts/service.ts`, docs/plans/P45-team-artifacts.md). */
+export interface ArtifactsPort {
+  list(query: {
+    query?: string | undefined
+    kind?: string | undefined
+    agentId?: string | undefined
+    limit: number
+    cursor?: string | undefined
+  }): { items: ArtifactSummary[]; nextCursor: string | null }
+  get(id: string): Artifact | undefined
+  versions(id: string): ArtifactVersionView[] | undefined
+  viewUrl(
+    id: string,
+    opts: { version?: number | undefined; path?: string | undefined },
+  ): Promise<SignedUrl>
+  create(input: NewArtifact): Promise<Artifact>
+  patch(id: string, patch: ArtifactPatch): Promise<Artifact>
+  /** Editor save: a compare-and-set write of the entry file, then a version by the web. */
+  saveEntry(id: string, content: string, ifVersion: string | null | undefined): Promise<Artifact>
+  exportOf(id: string, format: string, version?: number): Promise<ArtifactExport>
+  remove(id: string): void
+  share(token: string): ArtifactShare | undefined
+  /** A signed raw view URL of a library file (the caller checked the path). */
+  libraryViewUrl(path: string): Promise<SignedUrl>
+}
+
 /** The workspace settings row (`infra/db/settings-repo.ts`). */
 export interface SettingsStore {
   get(): WorkspaceSettings & { updatedAt: number }
@@ -1073,6 +1109,7 @@ export interface Deps {
   tasks: TaskStore
   team: TeamPort
   library: LibraryStore
+  artifacts: ArtifactsPort
   settings: SettingsStore
   providers: ProvidersPort
   connectors: ConnectorsPort

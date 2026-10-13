@@ -93,7 +93,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_ALLOWED_HOSTS` | - | comma-separated `Host` header names accepted besides loopback, `TEAM_HOST` and the host of `TEAM_PUBLIC_URL` (DNS rebinding guard: other hosts get `403 FORBIDDEN_HOST`) |
 | `TEAM_DEBUG_INVARIANTS` | - | `1` = `debug.invariants` on every agent (explicit in eharness; the server tests set it through `server/bunfig.toml`). A broken session invariant then fails the turn instead of only warning |
 | `TEAM_ALLOW_PRIVATE_MCP` | - | `1` = custom connector URLs may point at private/loopback hosts (local MCP servers; dev only) |
-| `TEAM_PUBLIC_URL` / `TEAM_WEB_URL` | `http://localhost:$PORT` / `http://localhost:5173` (with `TEAM_WEB_DIR`: the public URL, same origin) | where browsers reach the server (OAuth redirect URI `<url>/oauth/callback`; its host and origin are always allowed) / where the OAuth callback sends the browser back (`<url>/connectors`; its origin is always allowed) and the links in channel messages |
+| `TEAM_PUBLIC_URL` / `TEAM_WEB_URL` | `http://localhost:$PORT` / `http://localhost:5173` (with `TEAM_WEB_DIR`: the public URL without a trailing `/api`, same origin) | where browsers reach the server (OAuth redirect URI `<url>/oauth/callback`; its host and origin are always allowed) / where the OAuth callback sends the browser back (`<url>/connectors`; its origin is always allowed) and the links in channel messages |
 | `TEAM_<CONNECTOR>_CLIENT_ID` / `_CLIENT_SECRET` | - | OAuth app of a curated connector (for example `TEAM_GITHUB_CLIENT_ID`); or save it on the Connectors page (stored encrypted) |
 | `OPENROUTER_BASE_URL` | - | base URL of the OpenRouter env profile (proxies) |
 | `TEAM_DB` | `./data/team.db` | SQLite file (WAL). Several instances may share it |
@@ -102,6 +102,8 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_SPAWN_CAP` | `4` | role agents the lead runs at once (also in Settings) |
 | `TEAM_CONTEXT_CAP` | `128000` | working context window: the model's own window, at most this; history is summarized at 80 % of it (a 1 M-token model would otherwise carry ~800 k tokens into every call) |
 | `TEAM_MAX_WORKER_STEPS` | `400` | hard cap of one background worker turn (every agent can hand long jobs to its `worker`; chat turns stop at 120 steps) |
+| `TEAM_ARTIFACT_URL` | - (root-relative `/art/*` on the host that shows the page) | public base URL of a separate artifact content origin, e.g. `https://artifacts.example.com` (sandboxed HTML runs there; recommended in production) |
+| `TEAM_ARTIFACT_PORT` | - | also serve only the artifact content routes (`/art/*`) on this port, for a separate content origin; signed content URLs then point at it (or at `TEAM_ARTIFACT_URL`) |
 | `TEAM_CODE_DRIVER` | `local` when the interpreter is found, else `off` | where agents run Python (`run_python` of the **Files & Sandbox** connector): `off` or `local` (a scratch directory under an OS sandbox: no network, the data directory and your home are unreadable); for a separate machine use the **Remote sandbox** connector (below) |
 | `TEAM_CODE_PYTHON` | `python3` | interpreter of `local` (the Docker image sets `/opt/eh-python/bin/python`) |
 | `TEAM_CODE_INSTALL` | `off` | `off`, `allowlist` or `any`: agents may add packages with `install_packages` (asks first; wheels only) |
@@ -256,7 +258,9 @@ docker run -d --name team -p 4000:4000 --env-file examples/team/.env -v team-dat
   it into the web bundle (`PUBLIC_TEAM_TOKEN` is ignored).
 - All state (SQLite database, library files, dev key files) lives in the `/data` volume. Keep
   `TEAM_DB` unset in `.env` (a relative path would leave the volume).
-- Another host port or a domain: set `TEAM_PUBLIC_URL=<origin>/api` and `TEAM_WEB_URL=<origin>`.
+- Another host port or a domain: set `TEAM_PUBLIC_URL=<origin>/api` (the web URL follows: `<origin>`; set
+  `TEAM_WEB_URL` only when the web lives elsewhere). Links the agents send (artifacts, shares,
+  channel replies) use it.
 - `docker logs team` shows the server log; the container health check calls `/api/health`.
 
 ## Code sandbox (Python)

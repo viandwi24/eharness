@@ -30,6 +30,7 @@ import type { AgentDef } from '../../domain/agents.ts'
 import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
+import { type ArtifactsHook, artifactsConnector } from '../artifacts/index.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { CHANNEL_OWN_WRITE_TOOLS, CHANNEL_READ_TOOLS } from '../channels/index.ts'
 import { CODE_LIST_PATH, type CodeRuntime } from '../code/index.ts'
@@ -105,6 +106,8 @@ export interface CatalogHooks {
   team?: (agent: AgentDef, input: BuiltinInput) => ConnectorActivation
   /** The big-data toolkit plugin (`infra/bigdata`); undefined = the connector offers nothing. */
   bigdata?: BigDataHook
+  /** The artifacts plugin (`infra/artifacts`); undefined = the connector offers nothing. */
+  artifacts?: ArtifactsHook
   /**
    * True while activating an agent whose Remote sandbox runs `run_python` (plan P44 D13): the
    * Files & Sandbox connector then leaves `code()` to the remote connector (one `run_python`).
@@ -493,6 +496,7 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
   return [
     ...builtins,
     bigDataConnector(() => options.hooks.bigdata),
+    artifactsConnector(() => options.hooks.artifacts),
     remoteSandboxConnector(() => options.code),
     github(listTools, defer),
     telegramConnector(

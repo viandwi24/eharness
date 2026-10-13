@@ -18,6 +18,11 @@
 	import ToolPart from './ToolPart.svelte';
 	import { isActivityTool, type ToolView, writtenFiles } from './activity.js';
 	import FileCard from './FileCard.svelte';
+	import ArtifactChatCard from '#lib/components/artifacts/ArtifactChatCard.svelte';
+	import ArtifactToolPart from '#lib/components/artifacts/ArtifactToolPart.svelte';
+	import RunPythonPart from '#lib/components/artifacts/RunPythonPart.svelte';
+	import { setMessageEnv } from '#lib/artifacts/context.js';
+	import { messageText, scanFences } from '#lib/artifacts/fences.js';
 	import type { ApprovalStanding } from '#lib/approval/chip.js';
 
 	type Block =
@@ -56,6 +61,14 @@
 	} = $props();
 
 	const views = $derived(viewModel(message, live));
+	// Fences of the message: a mermaid / svg / html block finds its index here and opens in the panel by it.
+	setMessageEnv({
+		get messageId() {
+			return message.id;
+		},
+		fences: () => scanFences(messageText(message))
+	});
+	const hasArtifactCard = $derived(views.some((v) => v.kind === 'artifact'));
 	const kind = $derived(messageKind(message));
 	const isInstruction = $derived(isInstructionMessage(message, instruction));
 
@@ -103,9 +116,15 @@
 	{:else if v.kind === 'tool'}
 		{#if v.isSubagent}
 			<SubagentPart view={v} {onOpenSession} />
+		{:else if v.toolName === 'artifact_create'}
+			<ArtifactToolPart view={v} hasCard={hasArtifactCard} {standing} {onFocusDock} />
+		{:else if v.toolName === 'run_python'}
+			<RunPythonPart view={v} {standing} {onFocusDock} />
 		{:else}
 			<ToolPart view={v} {standing} {onFocusDock} />
 		{/if}
+	{:else if v.kind === 'artifact'}
+		<ArtifactChatCard id={v.id} kind={v.artifactKind} title={v.title} version={v.version} />
 	{:else if v.kind === 'subagentRun'}
 		<SubagentPart view={v} {onOpenSession} />
 	{:else if v.kind === 'input'}

@@ -824,6 +824,10 @@ describe('part A: approval summary and the web link', () => {
       'https://app.example.com',
     )
     expect(resolveWebUrl({ env: { TEAM_WEB_DIR: '/srv/web' }, publicUrl })).toBe(publicUrl)
+    // the image's TEAM_PUBLIC_URL names the API: the web is the same host without /api
+    expect(
+      resolveWebUrl({ env: { TEAM_WEB_DIR: '/srv/web' }, publicUrl: 'https://team.example.com/api' }),
+    ).toBe('https://team.example.com')
     expect(
       resolveWebUrl({
         env: { TEAM_WEB_DIR: '/srv/web', TEAM_WEB_URL: 'https://other' },
