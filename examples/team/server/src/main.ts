@@ -1456,7 +1456,17 @@ if (import.meta.main) {
     console.error(errorText(error))
     process.exit(1)
   }
-  const web = process.env.TEAM_WEB_DIR ? webStatic(process.env.TEAM_WEB_DIR) : undefined
+  // a public share page (`/s/<token>`) carries link-preview tags for chat apps (P45)
+  const web = process.env.TEAM_WEB_DIR
+    ? webStatic(process.env.TEAM_WEB_DIR, {
+        shareMeta: (shareToken) => {
+          const found = server.artifacts.share(shareToken)?.artifact
+          if (found === undefined) return undefined
+          const description = found.description.trim() || `Shared ${found.kind} artifact`
+          return { title: found.title, description: description.slice(0, 300), kind: found.kind }
+        },
+      })
+    : undefined
   // idleTimeout 0: Bun closes a connection after 10 s without bytes by default, which cuts chat
   // streams while a long tool runs (the activity stream has its own 8 s keep-alive)
   const http = Bun.serve({

@@ -114,9 +114,14 @@ Mermaid diagrams render inside `document`.
 
 ## Sharing
 
-- Public page: `GET /s/<token>` on the web app host (no login): title bar, viewer, "Download" for
-  the kind's exports. HTML `og:title` / `og:description` / `og:site_name` for link previews
-  (Telegram). Unknown or revoked token → 404 page with no detail.
+- Public page: `/s/<token>` on the web app host (no login, no app shell, no session probe): a
+  full-screen page that is only the artifact viewer (owner decision 2026-10-14: no title bar).
+  Web route `web/src/routes/s/[token]` reads `GET /share/{token}` and the public content URLs.
+  Unknown or revoked token → "This link is not available", no detail. Link previews (Telegram):
+  in the single-port deployment (`TEAM_WEB_DIR`) the server injects `og:title`, `og:description`
+  (the artifact description, else "Shared <kind> artifact"), `og:site_name` and `robots: noindex`
+  into the app shell of `/s/<token>` (`infra/web-static.ts`); an unknown token gets no preview.
+  A separately hosted web (Vite dev, static host) has no preview.
 - Private: the artifact page `/artifacts/<id>` in the signed-in app; the "copy link" action gives
   that URL.
 - Version: public link follows the latest version by default; "pin this version" sets

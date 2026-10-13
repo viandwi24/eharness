@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isAuthRequired, isLoginPath, loginRedirect, mustSignIn, parseSession, safeNext } from './auth';
+import { isAuthRequired, isLoginPath, isSharePath, loginRedirect, mustSignIn, parseSession, safeNext } from './auth';
 
 describe('login redirect', () => {
 	test('keeps the current path as next, never loops on the login page', () => {
@@ -35,5 +35,13 @@ describe('session probe', () => {
 		expect(mustSignIn(parseSession({ required: true, authenticated: true }))).toBe(false);
 		expect(mustSignIn(parseSession({ required: false, authenticated: true }))).toBe(false);
 		expect(mustSignIn(parseSession('<html>'))).toBe(false);
+	});
+});
+
+describe('public share page', () => {
+	test('/s/<token> is bare and public; other paths are not', () => {
+		expect(isSharePath('/s/cbPR8hLepVMxog3p8ZQagw')).toBe(true);
+		expect(isSharePath('/settings')).toBe(false);
+		expect(isSharePath('/s')).toBe(false);
 	});
 });

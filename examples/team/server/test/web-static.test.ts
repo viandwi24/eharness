@@ -54,3 +54,43 @@ describe('web static (single-port deployment)', () => {
     expect((await web.serve(new Request('http://x/tasks', { method: 'POST' }))).status).toBe(404)
   })
 })
+
+describe('public share page link preview', () => {
+  const shareDir = join(base, 'share-build')
+  mkdirSync(shareDir, { recursive: true })
+  writeFileSync(
+    join(shareDir, 'index.html'),
+    '<!doctype html><html><head></head><body></body></html>',
+  )
+  const web = webStatic(shareDir, {
+    siteName: 'Team',
+    shareMeta: (token) =>
+      token === 'cbPR8hLepVMxog3p8ZQagw'
+        ? { title: 'Plan "Q4" <draft>', description: 'Follow up & notes', kind: 'document' }
+        : undefined,
+  })
+
+  test('a known token gets escaped og tags and is never indexed', async () => {
+    const res = await web.serve(new Request('http://x/s/cbPR8hLepVMxog3p8ZQagw'))
+    const html = await res.text()
+    expect(res.headers.get('x-robots-tag')).toBe('noindex')
+    expect(html).toContain(
+      '<meta property="og:title" content="Plan &quot;Q4&quot; &lt;draft&gt;" />',
+    )
+    expect(html).toContain('<meta property="og:description" content="Follow up &amp; notes" />')
+    expect(html).toContain('<meta property="og:site_name" content="Team" />')
+    expect(html).toContain('name="robots" content="noindex"')
+  })
+
+  test('an unknown token gets no preview, still the app shell', async () => {
+    const res = await web.serve(new Request('http://x/s/unknownTokenValue'))
+    const html = await res.text()
+    expect(res.status).toBe(200)
+    expect(html).not.toContain('og:title')
+    expect(html).toContain('noindex')
+  })
+
+  test('other routes are untouched', async () => {
+    expect(await (await web.serve(new Request('http://x/artifacts'))).text()).not.toContain('og:')
+  })
+})

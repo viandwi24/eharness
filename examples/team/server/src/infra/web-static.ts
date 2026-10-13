@@ -7,6 +7,48 @@ import { join, normalize, sep } from 'node:path'
 
 export const API_PREFIX = '/api'
 
+/** What a link preview of a public share page shows (`og:*`); undefined = unknown or revoked token. */
+export type ShareMeta = { title: string; description: string; kind: string }
+
+export interface WebStaticOptions {
+  /** Looks up a public share token for the link preview of `/s/<token>`. */
+  shareMeta?: (token: string) => ShareMeta | undefined
+  /** Site name of the preview (`og:site_name`). */
+  siteName?: string
+}
+
+const SHARE_PATH = /^\/s\/([A-Za-z0-9_-]{8,64})\/?$/
+
+const escapeHtml = (text: string): string =>
+  text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+/**
+ * The app shell with link-preview tags for a public share page: chat apps (Telegram) read `og:*`
+ * from the HTML and run no JavaScript, and the web is a SPA. A share page is never indexed.
+ */
+export function withShareMeta(html: string, meta: ShareMeta | undefined, siteName: string): string {
+  const tags = [
+    '<meta name="robots" content="noindex" />',
+    ...(meta
+      ? [
+          `<title>${escapeHtml(meta.title)}</title>`,
+          `<meta name="description" content="${escapeHtml(meta.description)}" />`,
+          '<meta property="og:type" content="website" />',
+          `<meta property="og:title" content="${escapeHtml(meta.title)}" />`,
+          `<meta property="og:description" content="${escapeHtml(meta.description)}" />`,
+          `<meta property="og:site_name" content="${escapeHtml(siteName)}" />`,
+          '<meta name="twitter:card" content="summary" />',
+        ]
+      : []),
+  ].join('\n\t\t')
+  return html.includes('</head>') ? html.replace('</head>', `\t${tags}\n\t</head>`) : html
+}
+
 export type WebStatic = {
   /** The API request with `/api` stripped, or undefined when the request is for the web app. */
   apiRequest(request: Request): Request | undefined
@@ -14,7 +56,7 @@ export type WebStatic = {
   serve(request: Request): Promise<Response>
 }
 
-export function webStatic(dir: string): WebStatic {
+export function webStatic(dir: string, options: WebStaticOptions = {}): WebStatic {
   const root = normalize(dir)
   const index = join(root, 'index.html')
   return {
@@ -54,6 +96,22 @@ export function webStatic(dir: string): WebStatic {
           { error: { code: 'NOT_FOUND', message: 'not found' } },
           { status: 404 },
         )
+      }
+      const share = options.shareMeta ? SHARE_PATH.exec(pathname) : null
+      if (share !== null && options.shareMeta) {
+        const html = withShareMeta(
+          await Bun.file(index).text(),
+          options.shareMeta(share[1] ?? ''),
+          options.siteName ?? 'Team',
+        )
+        return new Response(html, {
+          headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-cache',
+            'x-robots-tag': 'noindex',
+            'referrer-policy': 'no-referrer',
+          },
+        })
       }
       return new Response(Bun.file(index), {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },

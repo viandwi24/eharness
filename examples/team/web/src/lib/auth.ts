@@ -7,6 +7,11 @@ export function isLoginPath(pathname: string): boolean {
 	return pathname === LOGIN_PATH || pathname.startsWith(`${LOGIN_PATH}/`);
 }
 
+/** A public share page (`/s/<token>`): no login, no app shell, no live connection. */
+export function isSharePath(pathname: string): boolean {
+	return pathname.startsWith('/s/');
+}
+
 /**
  * `?next=` is user-controlled: only a same-origin path is followed (`/a/b?x=1`), never an absolute
  * URL, a protocol-relative `//host` or a backslash trick. Anything else falls back to `/`.

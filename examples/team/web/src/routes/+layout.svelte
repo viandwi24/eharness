@@ -20,7 +20,7 @@
 	import { checkSession } from '#lib/stores/auth.svelte.js';
 	import { loadTeamZone, teamClock } from '#lib/stores/team-zone.svelte.js';
 	import { goToLogin } from '#lib/api/auth-fetch.js';
-	import { isLoginPath, mustSignIn } from '#lib/auth.js';
+	import { isLoginPath, isSharePath, mustSignIn } from '#lib/auth.js';
 	import { onMount } from 'svelte';
 	import type { LayoutProps } from './$types';
 
@@ -31,12 +31,12 @@
 		typeof document === 'undefined' || !/(?:^|;\s*)sidebar_state=false\b/.test(document.cookie)
 	);
 
-	// The login page is a bare page: no rail, no live connection.
-	const isLogin = $derived(isLoginPath(page.url.pathname));
+	// The login page and public share pages are bare pages: no rail, no live connection.
+	const isLogin = $derived(isLoginPath(page.url.pathname) || isSharePath(page.url.pathname));
 
 	onMount(() => {
 		document.getElementById('boot')?.remove(); // the static "Loading…" of app.html
-		if (isLoginPath(location.pathname)) return;
+		if (isLoginPath(location.pathname) || isSharePath(location.pathname)) return;
 		let stop: (() => void) | undefined;
 		let gone = false;
 		// with a login, ask the server first: a signed-out browser goes to /login instead of opening streams
