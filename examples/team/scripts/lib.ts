@@ -97,6 +97,7 @@ export async function startInstance(
       OPENROUTER_API_KEY: '',
       AI_GATEWAY_API_KEY: '',
       TEAM_DB: work.db,
+      TEAM_SEED_AGENTS: '1',
       PORT: String(port),
       TEAM_SCRIPTED_MODEL: work.script(steps),
       ...env,

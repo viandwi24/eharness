@@ -20,7 +20,7 @@
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
  *   TEAM_SEARCH_MODEL   model of web_search, same format
  *   TEAM_INSTANCE_ID  stable id of this instance (default team-<PORT>): a restarted instance recovers its own interrupted turns at boot
- *   TEAM_SEED_AGENTS  0 = start an empty workspace without the example agents (default: seed them once)
+ *   TEAM_SEED_AGENTS  1 = add the example agents (Lead, Researcher, Writer, Analyst, Ops) to an empty workspace; default: start empty
  *   TEAM_DEMO_COLLECTOR   1 = register the fixture community source (`ingest_source` of the Data work connector; 5 000 deterministic messages)
  *   TEAM_DEBUG_INVARIANTS   1 = debug.invariants on every agent (tests set it; a broken session invariant fails the turn)
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
@@ -192,7 +192,7 @@ export interface ServerConfig {
   token?: string | undefined
   /** Skip seeding (tests that start empty). */
   seed?: boolean
-  /** Seed the example agents into an empty workspace (default true; `TEAM_SEED_AGENTS=0` turns it off). */
+  /** Seed the example agents into an empty workspace (compose default true for tests; the server entry seeds only with `TEAM_SEED_AGENTS=1`). */
   seedAgents?: boolean
   /** Model config override (tests); default from the environment. */
   models?: ModelConfig
@@ -1227,7 +1227,7 @@ if (import.meta.main) {
   const listenPort = Number(process.env.PORT ?? 4000)
   const server = compose({
     dbFile,
-    seedAgents: process.env.TEAM_SEED_AGENTS !== '0',
+    seedAgents: process.env.TEAM_SEED_AGENTS === '1',
     instanceId: process.env.TEAM_INSTANCE_ID ?? `team-${listenPort}`,
     token,
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),

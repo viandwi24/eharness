@@ -97,6 +97,7 @@ if (withTeam) {
       TEAM_TOKEN: token,
       PORT: String(TEAM_PORT),
       TEAM_DB: join(dir, 'data', 'team.db'),
+      TEAM_SEED_AGENTS: '1',
       TEAM_WEB_DIR: buildDir,
       TEAM_PUBLIC_URL: `${base}/api`,
       TEAM_WEB_URL: base,
