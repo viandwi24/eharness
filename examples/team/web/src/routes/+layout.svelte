@@ -9,7 +9,8 @@
 	import AgentDialog from '#lib/components/app/AgentDialog.svelte';
 	import AgentListPanel from '#lib/components/app/AgentListPanel.svelte';
 	import AppRail from '#lib/components/app/AppRail.svelte';
-	import { hasSubSidebar } from '#lib/nav/sections.js';
+	import WorkNavPanel from '#lib/components/app/WorkNavPanel.svelte';
+	import { subSidebarOf } from '#lib/nav/sections.js';
 	import NewTaskDialog from '#lib/components/app/NewTaskDialog.svelte';
 	import ProgramDialog from '#lib/components/app/ProgramDialog.svelte';
 	import RoutineDialog from '#lib/components/app/RoutineDialog.svelte';
@@ -56,8 +57,9 @@
 
 	// Mobile: list -> chat -> panel sheet. The list is the home screen; other routes replace it.
 	const isHome = $derived(page.url.pathname === '/');
-	// Desktop: [icon rail] [agent list, agents section only] [page]. ⌘B hides the agent list.
-	const listShown = $derived(hasSubSidebar(page.url.pathname) && sidebarOpen);
+	// Desktop: [icon rail] [second column: agent list or work menu] [page]. ⌘B hides the column.
+	const sub = $derived(subSidebarOf(page.url.pathname));
+	const listShown = $derived(sub !== undefined && sidebarOpen);
 	// Mobile bottom bar on top-level pages; a chat (/a/…) gets the whole screen.
 	const barShown = $derived(!page.url.pathname.startsWith('/a/'));
 </script>
@@ -75,11 +77,17 @@
 		<div class="hidden md:flex"><AppRail /></div>
 		<div class="flex min-h-0 min-w-0 flex-1">
 			<!-- the agent list sits on the shell background next to the rail (no card); only the page is a panel -->
-			<aside
-				class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {listShown ? 'md:flex' : 'md:hidden'} md:w-72 lg:w-80"
-			>
-				<AgentListPanel />
-			</aside>
+			{#if sub === 'work'}
+				<aside class="hidden h-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {listShown ? 'md:flex' : 'md:hidden'} md:w-60">
+					<WorkNavPanel />
+				</aside>
+			{:else}
+				<aside
+					class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {listShown ? 'md:flex' : 'md:hidden'} md:w-72 lg:w-80"
+				>
+					<AgentListPanel />
+				</aside>
+			{/if}
 			<!-- the page is an edmi inset panel: a shell with the content plate inset in it -->
 			<InsetPanel.Root
 				elevation="raised"
@@ -89,6 +97,7 @@
 					<!-- page header on the shell, above the plate (edmi inset panel recipe) -->
 					<InsetPanel.Header class="block p-0 font-normal">{@render shell.header()}</InsetPanel.Header>
 				{/if}
+				{#if sub === 'work'}<div class="md:hidden"><WorkNavPanel row /></div>{/if}
 				<InsetPanel.Body class="{shell.header ? '' : 'mt-0.5'} flex min-h-0 text-foreground max-md:m-0 max-md:rounded-none max-md:border-0">
 					<!-- a new team timezone re-renders the page so every time follows it -->
 					{#key teamClock.rev}{@render children()}{/key}

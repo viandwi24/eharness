@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { groupSections, hasSubSidebar, SECTIONS, sectionOf } from './sections';
+import { hasSubSidebar, RAIL, railOf, sectionOf, subSidebarOf } from './sections';
 
 describe('sections', () => {
 	test('paths map to their section; chats and home are agents', () => {
@@ -19,14 +19,17 @@ describe('sections', () => {
 		expect(sectionOf('/settings')).toBe('settings');
 		expect(sectionOf('/filesystem')).toBe('agents');
 	});
-	test('only the agents section has the agent list column', () => {
+	test('the agent list and the work menu are the second columns', () => {
 		expect(hasSubSidebar('/a/1')).toBe(true);
+		expect(subSidebarOf('/a/1')).toBe('agents');
+		expect(subSidebarOf('/decisions')).toBe('work');
+		expect(subSidebarOf('/tasks/abc')).toBe('work');
 		expect(hasSubSidebar('/files')).toBe(false);
 	});
-
-	test('the agent work sections form one group, in order', () => {
-		const groups = groupSections(SECTIONS);
-		expect(groups.map((g) => g.group)).toEqual(['home', 'work', 'workspace', 'system']);
-		expect(groups[1]?.items.map((s) => s.id)).toEqual(['tasks', 'briefings', 'decisions', 'programs', 'routines']);
+	test('the work sections are one rail item', () => {
+		expect(RAIL.map((s) => s.id)).toEqual(['agents', 'work', 'files', 'channels', 'people', 'connectors', 'logs', 'settings']);
+		for (const p of ['/tasks', '/briefings', '/decisions/x', '/programs', '/routines']) expect(railOf(p)).toBe('work');
+		expect(railOf('/people')).toBe('people');
+		expect(railOf('/')).toBe('agents');
 	});
 });

@@ -1,22 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import NewspaperIcon from 'phosphor-svelte/lib/Newspaper';
-	import ChatCircleDotsIcon from 'phosphor-svelte/lib/ChatCircleDots';
-	import ChatsCircleIcon from 'phosphor-svelte/lib/ChatsCircle';
-	import ClockIcon from 'phosphor-svelte/lib/Clock';
-	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
-	import GavelIcon from 'phosphor-svelte/lib/Gavel';
-	import GearIcon from 'phosphor-svelte/lib/Gear';
-	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
-	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
-	import UsersThreeIcon from 'phosphor-svelte/lib/UsersThree';
-	import PulseIcon from 'phosphor-svelte/lib/Pulse';
 	import SignOutIcon from 'phosphor-svelte/lib/SignOut';
-	import StrategyIcon from 'phosphor-svelte/lib/Strategy';
-	import type { Component } from 'svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
-	import { GROUP_LABELS, groupSections, SECTIONS, sectionOf, type SectionId } from '#lib/nav/sections.js';
+	import { NAV_ICONS } from '#lib/nav/icons.js';
+	import { lastWork } from '#lib/nav/last-work.svelte.js';
+	import { RAIL, railOf } from '#lib/nav/sections.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { cn } from '#lib/utils.js';
@@ -28,32 +17,19 @@
 
 	/**
 	 * Main navigation as an icon rail (WhatsApp / Slack style): sections at the top, notifications,
-	 * theme and settings at the bottom. `bar`: the same items as a bottom tab bar on mobile.
+	 * theme and settings at the bottom. `bar`: the same items as a bottom tab bar on mobile. The agent's
+	 * work (tasks, briefing, decisions, programs, routines) is one item with its own menu.
 	 */
 	let { bar = false }: { bar?: boolean } = $props();
 
-	const ICONS: Record<SectionId, Component> = {
-		agents: ChatsCircleIcon,
-		tasks: ListChecksIcon,
-		briefings: NewspaperIcon,
-		decisions: GavelIcon,
-		programs: StrategyIcon,
-		routines: ClockIcon,
-		files: FolderOpenIcon,
-		channels: ChatCircleDotsIcon,
-		people: UsersThreeIcon,
-		connectors: PlugsConnectedIcon,
-		logs: PulseIcon,
-		settings: GearIcon
-	};
-	const current = $derived(sectionOf(page.url.pathname));
+	const current = $derived(railOf(page.url.pathname));
+	$effect(() => lastWork.visit(page.url.pathname));
 	const unread = $derived(Object.values(agentsStore.state.activity).reduce((n, a) => n + (a?.unread ? 1 : 0), 0));
 	const decisionCount = $derived(live.state.decisions.length);
 	const briefingCount = $derived(live.state.notifications.filter((n) => n.kind === 'briefing').length);
-	const main = SECTIONS.filter((s) => s.id !== 'settings');
-	const settings = SECTIONS.find((s) => s.id === 'settings')!;
-	const groups = groupSections(main);
-	const barGroups = groupSections([...main, settings]);
+	const main = RAIL.filter((s) => s.id !== 'settings');
+	const settings = RAIL.find((s) => s.id === 'settings')!;
+	const hrefOf = (s: (typeof RAIL)[number]): string => (s.id === 'work' ? lastWork.href : s.href);
 
 	// The bottom bar scrolls sideways: it fades where more tabs are hidden.
 	let strip = $state<HTMLElement | null>(null);
@@ -70,15 +46,15 @@
 	});
 </script>
 
-{#snippet item(s: (typeof SECTIONS)[number])}
-	{@const Icon = ICONS[s.id]}
+{#snippet item(s: (typeof RAIL)[number])}
+	{@const Icon = NAV_ICONS[s.id]}
 	{@const active = current === s.id}
 	<Tooltip.Root>
 		<Tooltip.Trigger>
 			{#snippet child({ props })}
 				<a
 					{...props}
-					href={s.href}
+					href={hrefOf(s)}
 					aria-label={s.label}
 					aria-current={active ? 'page' : undefined}
 					class={cn(
@@ -89,10 +65,9 @@
 				>
 					<Icon class="size-5" weight={active ? 'fill' : 'regular'} />
 					{#if bar}<span>{s.label}</span>{/if}
-					{#if s.id === 'decisions' && decisionCount > 0}
+					{#if s.id === 'work' && decisionCount > 0}
 						<Badge shape="number" variant="warning" class="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 text-[10px]" aria-label="{decisionCount} decisions waiting">{decisionCount}</Badge>
-					{/if}
-					{#if s.id === 'briefings' && briefingCount > 0}
+					{:else if s.id === 'work' && briefingCount > 0}
 						<span class="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" aria-label="New briefing"></span>
 					{/if}
 					{#if s.id === 'agents' && unread > 0}
@@ -101,37 +76,22 @@
 				</a>
 			{/snippet}
 		</Tooltip.Trigger>
-		{#if !bar}<Tooltip.Content side="right">{s.group === 'work' ? `${GROUP_LABELS.work} · ${s.label}` : s.label}</Tooltip.Content>{/if}
+		{#if !bar}<Tooltip.Content side="right">{s.label}</Tooltip.Content>{/if}
 	</Tooltip.Root>
 {/snippet}
 
 {#if bar}
 	<div class="relative shrink-0 border-t border-border bg-sidebar">
 		<nav bind:this={strip} onscroll={measure} class="flex items-center gap-1 overflow-x-auto px-2 py-1.5" aria-label="Main">
-			{#each barGroups as g, i (g.group)}
-				{#if i > 0}<div class="mx-0.5 h-7 w-px shrink-0 bg-border" aria-hidden="true"></div>{/if}
-				{#each g.items as s (s.id)}{@render item(s)}{/each}
-			{/each}
+			{#each [...main, settings] as s (s.id)}{@render item(s)}{/each}
 		</nav>
 		{#if fades.left}<div class="pointer-events-none absolute inset-y-0 left-0 w-8 bg-linear-to-r from-sidebar to-transparent" data-testid="bar-fade-left"></div>{/if}
 		{#if fades.right}<div class="pointer-events-none absolute inset-y-0 right-0 w-8 bg-linear-to-l from-sidebar to-transparent" data-testid="bar-fade-right"></div>{/if}
 	</div>
 {:else}
-	<nav class="flex h-full w-14 shrink-0 flex-col items-center gap-1 overflow-y-auto py-3" aria-label="Main">
-		<a href="/" class="mb-2 flex size-9 shrink-0 items-center justify-center rounded-xl bg-foreground font-brand text-sm text-background" aria-label="Team home">T</a>
-		{#each groups as g, i (g.group)}
-			{#if i > 0}<div class="my-1 h-px w-6 shrink-0 bg-border" aria-hidden="true"></div>{/if}
-			{#if g.group === 'work'}
-				<div role="group" aria-label={GROUP_LABELS.work} class="flex flex-col items-center gap-1 rounded-2xl border border-border bg-muted/50 px-0.5 pt-1.5 pb-0.5">
-					<span class="text-[9px] leading-none font-medium tracking-wide text-muted-foreground uppercase select-none" aria-hidden="true">{GROUP_LABELS.work}</span>
-					{#each g.items as s (s.id)}{@render item(s)}{/each}
-				</div>
-			{:else}
-				<div role="group" aria-label={GROUP_LABELS[g.group]} class="flex flex-col items-center gap-1">
-					{#each g.items as s (s.id)}{@render item(s)}{/each}
-				</div>
-			{/if}
-		{/each}
+	<nav class="flex h-full w-14 shrink-0 flex-col items-center gap-1 py-3" aria-label="Main">
+		<a href="/" class="mb-2 flex size-9 items-center justify-center rounded-xl bg-foreground font-brand text-sm text-background" aria-label="Team home">T</a>
+		{#each main as s (s.id)}{@render item(s)}{/each}
 		<div class="mt-auto flex flex-col items-center gap-1">
 			<ThemeToggle />
 			{#if auth.required}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { hasSubSidebar } from '#lib/nav/sections.js';
+	import { subSidebarOf } from '#lib/nav/sections.js';
 	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimple';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Kbd, KbdGroup } from '#lib/components/ui/kbd/index.js';
@@ -13,8 +13,10 @@
 	 */
 	let { whenCollapsed = false }: { whenCollapsed?: boolean } = $props();
 	const sidebar = useSidebar();
-	// it toggles the agent list column, which only the agents section has
-	const shown = $derived(hasSubSidebar(page.url.pathname));
+	// it toggles the second column: the agent list (agents) or the work menu (tasks, decisions, ...)
+	const sub = $derived(subSidebarOf(page.url.pathname));
+	const shown = $derived(sub !== undefined);
+	const what = $derived(sub === 'work' ? 'work menu' : 'agent list');
 	const mac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform);
 </script>
 
@@ -27,7 +29,7 @@
 					variant="ghost"
 					size="icon-sm"
 					class="hidden shrink-0 text-muted-foreground md:inline-flex"
-					aria-label={sidebar.open ? 'Hide agent list' : 'Show agent list'}
+					aria-label={sidebar.open ? `Hide ${what}` : `Show ${what}`}
 					aria-expanded={sidebar.open}
 					onclick={() => sidebar.setOpen(!sidebar.open)}
 				>
@@ -36,7 +38,7 @@
 			{/snippet}
 		</Tooltip.Trigger>
 		<Tooltip.Content side="bottom" class="flex items-center gap-2">
-			{sidebar.open ? 'Hide agent list' : 'Show agent list'}
+			{sidebar.open ? `Hide ${what}` : `Show ${what}`}
 			<KbdGroup><Kbd>{mac ? '⌘' : 'Ctrl'}</Kbd><Kbd>B</Kbd></KbdGroup>
 		</Tooltip.Content>
 	</Tooltip.Root>

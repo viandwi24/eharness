@@ -1,0 +1,32 @@
+// Icons of the navigation (rail, bottom bar, work menu).
+import BriefcaseIcon from 'phosphor-svelte/lib/Briefcase';
+import ChatCircleDotsIcon from 'phosphor-svelte/lib/ChatCircleDots';
+import ChatsCircleIcon from 'phosphor-svelte/lib/ChatsCircle';
+import ClockIcon from 'phosphor-svelte/lib/Clock';
+import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
+import GavelIcon from 'phosphor-svelte/lib/Gavel';
+import GearIcon from 'phosphor-svelte/lib/Gear';
+import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
+import NewspaperIcon from 'phosphor-svelte/lib/Newspaper';
+import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
+import PulseIcon from 'phosphor-svelte/lib/Pulse';
+import StrategyIcon from 'phosphor-svelte/lib/Strategy';
+import UsersThreeIcon from 'phosphor-svelte/lib/UsersThree';
+import type { Component } from 'svelte';
+import type { RailId, SectionId } from './sections.js';
+
+export const NAV_ICONS: Record<SectionId | RailId, Component> = {
+	agents: ChatsCircleIcon,
+	work: BriefcaseIcon,
+	tasks: ListChecksIcon,
+	briefings: NewspaperIcon,
+	decisions: GavelIcon,
+	programs: StrategyIcon,
+	routines: ClockIcon,
+	files: FolderOpenIcon,
+	channels: ChatCircleDotsIcon,
+	people: UsersThreeIcon,
+	connectors: PlugsConnectedIcon,
+	logs: PulseIcon,
+	settings: GearIcon
+};
