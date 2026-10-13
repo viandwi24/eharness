@@ -415,6 +415,8 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         client,
         // topic titles are background reads: through the governor, like the backfill
         topicClient: governJobClient(client, gateway.governor, id),
+        // times the platform actions show: the team clock
+        timezone: () => gateway.timezone(),
         me,
         chats,
         counters,
@@ -433,6 +435,14 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
           // effect as the Channels page, chosen chats stay observe-only
           dialogsSeen: (list) => {
             for (const d of list) if (d.kind !== 'dm') chats.upsertDialog(id, d, now())
+          },
+          chatsChanged: () => {
+            void adapter
+              .dialogs(true)
+              .then((list) => {
+                for (const d of list) if (d.kind !== 'dm') chats.upsertDialog(id, d, now())
+              })
+              .catch(() => undefined)
           },
           chooseChat: async (chatId, days) => {
             const d = (await adapter.dialogs(true)).find((x) => x.id === chatId)

@@ -11,7 +11,6 @@
  * waits), a circuit breaker on PEER_FLOOD or a storm of floods. It never marks anything as read,
  * never types, never touches presence.
  */
-import { z } from 'zod'
 import {
   type AdapterHost,
   type ChannelAdapter,
@@ -28,6 +27,7 @@ import {
   type RemoteEvent,
   type SentMessage,
 } from '../channels/types.ts'
+import { accountActions } from './actions.ts'
 import type { TgChat, TgDelete, TgMessage, TgTopic, TgUser, TgUserClient } from './client.ts'
 import { classifyError, describeError, type TgErrorKind } from './errors.ts'
 import {
@@ -87,6 +87,8 @@ export interface UserAdapterHooks {
   chooseChat?(chatId: string, days: number): Promise<string>
   /** Back-fill a chosen chat for `days`; a sentence for the model. */
   backfill?(chatId: string, days: number): Promise<string>
+  /** A chat was joined or left by a platform action. */
+  chatsChanged?(): void
   warn?(message: string): void
 }
 
@@ -113,6 +115,8 @@ export interface UserAdapterOptions {
   topicClient?: TgUserClient
   /** How long a topic title is trusted before it is read again (ms, default 6 hours). */
   topicTtlMs?: number
+  /** The team timezone (times the platform actions show). Default UTC. */
+  timezone?: () => string
 }
 
 export interface TelegramUserAdapter extends ChannelAdapter {
@@ -223,9 +227,6 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
   // --- forum topic titles ----------------------------------------------------------------------
   // MTProto updates carry only the topic id; the title is read from the forum (`forumTopics`) and
   // given to the gateway as `node.updated`, so chats, tools and the agent see "Clipping", not `/19480`.
-
-  const knownTopic = (chatId: string, topicId: number): string | undefined =>
-    topicTitles.get(chatId)?.get(topicId)?.title
 
   /** Record titles; a new or renamed one goes to the gateway (in the chat's lane, after its messages). */
   function learnTopics(
@@ -551,130 +552,40 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     }
   }
 
-  const daysField = z
-    .number()
-    .int()
-    .min(0)
-    .max(3650)
-    .describe(
-      'REQUIRED: how many days back to read the history (0 = none, from now on only). Ask the person when they did not say.',
-    )
-  const chatField = z
-    .string()
-    .min(1)
-    .describe('The chat id, as `list_dialogs` shows it (e.g. -1001234567890).')
+  /** Park check and error mapping for a platform action (a flood wait parks the chat and is seen by the governor). */
+  const callFor = async <T>(chatId: string | undefined, fn: () => Promise<T>): Promise<T> => {
+    const parked = chatId === undefined ? undefined : parkedUntil(chatId)
+    if (parked !== undefined) {
+      throw new ChannelError(
+        'rate_limit',
+        'this chat is paused by a Telegram flood wait',
+        parked - now(),
+        'chat',
+      )
+    }
+    try {
+      return await fn()
+    } catch (error) {
+      throw toChannelError(error, chatId)
+    }
+  }
 
-  const actions: NativeAction[] = [
-    {
-      name: 'list_dialogs',
-      risk: 'read',
-      summary:
-        'Every chat, group and channel this Telegram account is a member of, read live from Telegram (also ones joined just now), with whether each is chosen for ingest. Only chosen chats can be read; choose one with choose_chat.',
-      schema: z.object({
-        query: z
-          .string()
-          .max(100)
-          .optional()
-          .describe('Only titles or usernames containing this text.'),
-        kind: z
-          .enum(['group', 'channel', 'all'])
-          .optional()
-          .describe('Default all (people are left out).'),
-      }),
-      run: async (input) => {
-        const list = await dialogs(true)
-        hooks.dialogsSeen?.(list)
-        const q = typeof input.query === 'string' ? input.query.trim().toLowerCase() : ''
-        const kind = input.kind ?? 'all'
-        const rows = list
-          .filter((d) => d.kind !== 'dm')
-          .filter((d) => kind === 'all' || d.kind === kind)
-          .filter(
-            (d) =>
-              q === '' ||
-              d.title.toLowerCase().includes(q) ||
-              (d.username ?? '').toLowerCase().includes(q),
-          )
-        if (rows.length === 0) {
-          return q === ''
-            ? 'This account is in no groups or channels.'
-            : `No group or channel of this account matches "${input.query}".`
-        }
-        const shown = rows.slice(0, 200)
-        return [
-          `${rows.length} group(s) and channel(s)${rows.length > shown.length ? ` (first ${shown.length})` : ''}:`,
-          ...shown.map(
-            (d) =>
-              `${d.id}  ${d.title}${d.username === undefined ? '' : ` @${d.username}`} (${d.kind}${d.forum ? ', forum' : ''}${d.admin ? ', admin' : ''}${d.members === undefined ? '' : `, ${d.members} members`}) ${chats.isSelected(connectionId, d.id) ? 'CHOSEN' : 'not chosen'}`,
-          ),
-        ].join('\n')
-      },
-    },
-    {
-      name: 'choose_chat',
-      risk: 'write',
-      summary:
-        'Choose a group or channel of this account for ingest (observe-only: messages are stored and readable, the agent never wakes or posts there on its own), and read its history back `backfill_days` days. Both the chat and the range are required.',
-      schema: z.object({ chat: chatField, backfill_days: daysField }),
-      run: async (input) => {
-        if (hooks.chooseChat === undefined) return 'ERROR: choosing chats is not available here.'
-        return hooks.chooseChat(String(input.chat).trim(), Number(input.backfill_days))
-      },
-    },
-    {
-      name: 'backfill',
-      risk: 'write',
-      summary:
-        'Read the history of a chosen chat back `days` days (into the stored log, then readable with channel_read and chat_history). Runs in the background through the rate-limit queue.',
-      schema: z.object({
-        chat: chatField,
-        days: daysField
-          .min(1)
-          .describe(
-            'REQUIRED: how many days back (1 to 3650). Ask the person when they did not say.',
-          ),
-      }),
-      run: async (input) => {
-        if (hooks.backfill === undefined) return 'ERROR: backfill is not available here.'
-        return hooks.backfill(String(input.chat).trim(), Number(input.days))
-      },
-    },
-    {
-      name: 'list_chats',
-      risk: 'read',
-      local: true,
-      summary:
-        'List the chats this account has chosen for ingest (and whether it is an admin there). For every chat the account is in, use list_dialogs.',
-      schema: z.object({}),
-      run: async () => {
-        const list = chats.selected(connectionId)
-        if (list.length === 0) return 'No chats are chosen for this account yet.'
-        return list
-          .map(
-            (c) =>
-              `${c.chatId}  ${c.title} (${c.kind}${c.admin ? ', admin' : ''}${c.forum ? ', forum' : ''})`,
-          )
-          .join('\n')
-      },
-    },
-    {
-      name: 'admin_log',
-      risk: 'read',
-      local: true,
-      summary:
-        'Moderation events stored for a chat the account administers (deletions with their text, edits, bans, promotions). Telegram keeps them only briefly: this is what we stored.',
-      schema: z.object({
-        chat: z.string().min(1).describe('The chat id, as `list_chats` shows it.'),
-        limit: z.number().int().min(1).max(100).default(30),
-      }),
-      run: async (input) => {
-        const text = hooks.adminLogText?.(String(input.chat), Number(input.limit ?? 30))
-        return text === undefined || text === ''
-          ? 'No admin log events are stored for that chat.'
-          : text
-      },
-    },
-  ]
+  // the platform layer of the account (`actions.ts`): what MTProto can do beyond the generic tools
+  const actions: NativeAction[] = accountActions({
+    connectionId,
+    client,
+    chats,
+    counters,
+    settings: options.settings,
+    selfId,
+    dialogs,
+    call: callFor,
+    blocked: () => options.blocked?.(),
+    learnTopics: (chat, list) => learnTopics(chat, list),
+    timezone: () => options.timezone?.() ?? 'UTC',
+    now,
+    hooks,
+  })
 
   const adapter: TelegramUserAdapter = {
     platform: 'telegram-user',

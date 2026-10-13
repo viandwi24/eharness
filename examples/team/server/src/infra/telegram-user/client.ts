@@ -68,6 +68,61 @@ export interface TgTopic {
   closed: boolean
 }
 
+/** A chat as `getChatInfo` reads it (more than the dialog list knows). */
+export interface TgChatInfo extends TgChat {
+  description?: string
+  admins?: number
+  linkedChatId?: string
+  /** The account can list the members (hidden members groups say no). */
+  canListMembers?: boolean
+}
+
+export type TgMemberStatus = 'creator' | 'admin' | 'member' | 'restricted' | 'banned' | 'left'
+
+export interface TgMember {
+  user: TgUser
+  status: TgMemberStatus
+  /** The admin title, when it has one. */
+  title?: string
+  joinedAt?: number
+}
+
+/** A scheduled message of the account (Telegram sends it at `at`, even when we are offline). */
+export interface TgScheduled {
+  id: number
+  at: number
+  text: string
+  topicId?: number
+}
+
+export interface TgPollInput {
+  question: string
+  options: string[]
+  multiple?: boolean
+  /** Voters are visible (not possible in channels). */
+  publicVoters?: boolean
+  /** Quiz: the index of the right option. */
+  correct?: number
+}
+
+export interface TgPostOptions {
+  topicId?: number
+  silent?: boolean
+  /** Epoch ms: Telegram sends it then (a scheduled message). */
+  at?: number
+}
+
+export interface TgRestrictions {
+  sendMessages?: boolean
+  sendMedia?: boolean
+  sendPolls?: boolean
+  sendOther?: boolean
+  embedLinks?: boolean
+  inviteUsers?: boolean
+  pinMessages?: boolean
+  changeInfo?: boolean
+}
+
 export interface TgDelete {
   ids: number[]
   chatId?: string
@@ -153,6 +208,65 @@ export interface TgUserClient {
     options: { minId?: string; maxId?: string; limit: number },
   ): Promise<TgAdminEvent[]>
   members(chatId: string, limit: number): Promise<TgUser[]>
+  // --- platform actions (the account's native tools, `actions.ts`) --------------------------
+  getChatInfo?(chatId: string): Promise<TgChatInfo>
+  /** A person by id or `@username` (a username lookup is rate limited by Telegram: use sparingly). */
+  getUserInfo?(ref: string): Promise<TgUser>
+  listMembers?(
+    chatId: string,
+    options: {
+      type: 'recent' | 'admins' | 'banned' | 'restricted' | 'bots' | 'all'
+      query?: string
+      limit: number
+    },
+  ): Promise<{ total: number; members: TgMember[] }>
+  /** Server-side search in one chat, newest first. */
+  searchMessages?(
+    chatId: string,
+    options: {
+      query: string
+      fromUser?: string
+      topicId?: number
+      limit: number
+      minDate?: number
+      maxDate?: number
+    },
+  ): Promise<TgMessage[]>
+  forwardMessages?(
+    fromChatId: string,
+    ids: number[],
+    toChatId: string,
+    options?: TgPostOptions & { dropAuthor?: boolean },
+  ): Promise<number[]>
+  sendPoll?(chatId: string, poll: TgPollInput, options?: TgPostOptions): Promise<{ id: number }>
+  /** Text sent by Telegram at `options.at`. */
+  scheduleText?(
+    chatId: string,
+    text: string,
+    options: TgPostOptions & { at: number },
+  ): Promise<{ id: number }>
+  listScheduled?(chatId: string): Promise<TgScheduled[]>
+  cancelScheduled?(chatId: string, ids: number[]): Promise<void>
+  createTopic?(chatId: string, title: string): Promise<{ id: number }>
+  editTopic?(chatId: string, topicId: number, title: string): Promise<void>
+  setTopicClosed?(chatId: string, topicId: number, closed: boolean): Promise<void>
+  banMember?(chatId: string, userId: string, untilMs?: number): Promise<void>
+  unbanMember?(chatId: string, userId: string): Promise<void>
+  restrictMember?(
+    chatId: string,
+    userId: string,
+    restrictions: TgRestrictions,
+    untilMs?: number,
+  ): Promise<void>
+  deleteMemberMessages?(chatId: string, userId: string): Promise<void>
+  createInviteLink?(
+    chatId: string,
+    options: { expiresAt?: number; usageLimit?: number; withApproval?: boolean },
+  ): Promise<{ link: string }>
+  /** Join by invite link, `@username` or t.me link. */
+  joinChat?(ref: string): Promise<{ status: 'joined'; chat: TgChat } | { status: 'requested' }>
+  leaveChat?(chatId: string): Promise<void>
+
   /**
    * Forum topics of a supergroup: the ones named by `ids`, else the first `limit` (default 100).
    * Optional: a client without it leaves topics untitled.

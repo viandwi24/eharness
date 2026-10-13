@@ -46,6 +46,23 @@ const chatKindOf = (peer: Peer): TgChatKind => {
 
 const peerName = (p: Peer): string => (p.type === 'user' ? p.displayName : p.title)
 
+/** A chat as the plain client types say it. */
+const chatOf = (p: Peer): TgChat => ({
+  id: String(p.id),
+  kind: chatKindOf(p),
+  title: peerName(p),
+  ...(p.username == null ? {} : { username: p.username }),
+  forum: p.type === 'chat' && p.isForum,
+  admin: p.type === 'chat' && (p.isAdmin || p.isCreator),
+  ...(p.type === 'chat' && p.membersCount !== null ? { members: p.membersCount } : {}),
+})
+
+/** A person reference: a numeric id, or a username (with or without `@`). */
+const peerRef = (ref: string): number | string => {
+  const t = ref.trim()
+  return /^-?\d+$/.test(t) ? Number(t) : t.replace(/^@/, '')
+}
+
 function attachmentsOf(m: Message): TgAttachment[] {
   const media = m.media
   if (media === null) return []
@@ -316,16 +333,7 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         dialogsReadAt = Date.now()
         const out: TgChat[] = []
         for await (const d of tg.iterDialogs({ archived: 'keep', limit: 1000 })) {
-          const p = d.peer
-          out.push({
-            id: String(p.id),
-            kind: chatKindOf(p),
-            title: peerName(p),
-            ...(p.username == null ? {} : { username: p.username }),
-            forum: p.type === 'chat' && p.isForum,
-            admin: p.type === 'chat' && (p.isAdmin || p.isCreator),
-            ...(p.type === 'chat' && p.membersCount !== null ? { members: p.membersCount } : {}),
-          })
+          out.push(chatOf(d.peer))
         }
         return out
       },
@@ -382,6 +390,182 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
             const topic = t as NonNullable<typeof t>
             return { id: topic.id, title: topic.title, closed: topic.isClosed }
           })
+      },
+      async getChatInfo(chatId) {
+        await ready()
+        const c = await tg.getFullChat(Number(chatId))
+        return {
+          ...chatOf(c),
+          ...(c.bio === '' ? {} : { description: c.bio }),
+          ...(c.membersCount > 0 ? { members: c.membersCount } : {}),
+          ...(c.adminsCount > 0 ? { admins: c.adminsCount } : {}),
+          ...(c.linkedChat === null ? {} : { linkedChatId: String(c.linkedChat.id) }),
+          canListMembers: c.canViewParticipants,
+        }
+      },
+      async getUserInfo(ref) {
+        await ready()
+        return userOf(await tg.getUser(peerRef(ref)))
+      },
+      async listMembers(chatId, o) {
+        await ready()
+        const list = await tg.getChatMembers(Number(chatId), {
+          type: o.type,
+          limit: o.limit,
+          ...(o.query === undefined ? {} : { query: o.query }),
+        })
+        return {
+          total: list.total,
+          members: list.map((m) => ({
+            user: userOf(m.user),
+            status: m.status,
+            ...(m.title === null ? {} : { title: m.title }),
+            ...(m.joinedDate === null ? {} : { joinedAt: m.joinedDate.getTime() }),
+          })),
+        }
+      },
+      async searchMessages(chatId, o) {
+        await ready()
+        const who = await self()
+        const list = await tg.searchMessages({
+          chatId: Number(chatId),
+          query: o.query,
+          limit: o.limit,
+          ...(o.fromUser === undefined ? {} : { fromUser: peerRef(o.fromUser) }),
+          ...(o.topicId === undefined ? {} : { threadId: o.topicId }),
+          ...(o.minDate === undefined ? {} : { minDate: new Date(o.minDate) }),
+          ...(o.maxDate === undefined ? {} : { maxDate: new Date(o.maxDate) }),
+        })
+        return list.map((m) => messageOf(m, who))
+      },
+      async forwardMessages(fromChatId, ids, toChatId, o) {
+        await ready()
+        const list = await tg.forwardMessagesById({
+          fromChatId: Number(fromChatId),
+          messages: ids,
+          toChatId: Number(toChatId),
+          ...(o?.topicId === undefined ? {} : { toThreadId: o.topicId }),
+          ...(o?.silent === true ? { silent: true } : {}),
+          ...(o?.at === undefined ? {} : { schedule: o.at }),
+          ...(o?.dropAuthor === true ? { noAuthor: true } : {}),
+        })
+        return list.map((m) => m.id)
+      },
+      async sendPoll(chatId, poll, o) {
+        await ready()
+        const base = {
+          question: poll.question,
+          answers: poll.options,
+          ...(poll.multiple === true ? { multiple: true } : {}),
+          ...(poll.publicVoters === true ? { public: true } : {}),
+        }
+        const m = await tg.sendMedia(
+          Number(chatId),
+          poll.correct === undefined
+            ? { type: 'poll', ...base }
+            : { type: 'quiz', ...base, correct: poll.correct },
+          {
+            ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
+            ...(o?.silent === true ? { silent: true } : {}),
+            ...(o?.at === undefined ? {} : { schedule: o.at }),
+          },
+        )
+        return { id: m.id }
+      },
+      async scheduleText(chatId, text, o) {
+        await ready()
+        const m = await tg.sendText(Number(chatId), text, {
+          schedule: o.at,
+          ...(o.topicId === undefined ? {} : { threadId: o.topicId }),
+          ...(o.silent === true ? { silent: true } : {}),
+          disableWebPreview: true,
+        })
+        return { id: m.id }
+      },
+      async listScheduled(chatId) {
+        await ready()
+        const list = await tg.getAllScheduledMessages(Number(chatId))
+        return list.map((m) => {
+          const topic = m.isTopicMessage ? m.replyToMessage?.threadId : undefined
+          return {
+            id: m.id,
+            at: m.date.getTime(),
+            text: m.text,
+            ...(topic === undefined || topic === null ? {} : { topicId: topic }),
+          }
+        })
+      },
+      async cancelScheduled(chatId, ids) {
+        await ready()
+        await tg.deleteScheduledMessages(Number(chatId), ids)
+      },
+      async createTopic(chatId, title) {
+        await ready()
+        const m = await tg.createForumTopic({ chatId: Number(chatId), title })
+        return { id: m.id }
+      },
+      async editTopic(chatId, topicId, title) {
+        await ready()
+        await tg.editForumTopic({ chatId: Number(chatId), topicId, title })
+      },
+      async setTopicClosed(chatId, topicId, closed) {
+        await ready()
+        await tg.toggleForumTopicClosed({ chatId: Number(chatId), topicId, closed })
+      },
+      async banMember(chatId, userId, untilMs) {
+        await ready()
+        await tg.banChatMember({
+          chatId: Number(chatId),
+          participantId: peerRef(userId),
+          ...(untilMs === undefined ? {} : { untilDate: new Date(untilMs) }),
+        })
+      },
+      async unbanMember(chatId, userId) {
+        await ready()
+        await tg.unbanChatMember({ chatId: Number(chatId), participantId: peerRef(userId) })
+      },
+      async restrictMember(chatId, userId, r, untilMs) {
+        await ready()
+        await tg.restrictChatMember({
+          chatId: Number(chatId),
+          userId: peerRef(userId),
+          restrictions: {
+            ...(r.sendMessages === true ? { sendMessages: true } : {}),
+            ...(r.sendMedia === true ? { sendMedia: true } : {}),
+            ...(r.sendPolls === true ? { sendPolls: true } : {}),
+            ...(r.sendOther === true
+              ? { sendStickers: true, sendGifs: true, sendGames: true, sendInline: true }
+              : {}),
+            ...(r.embedLinks === true ? { embedLinks: true } : {}),
+            ...(r.inviteUsers === true ? { inviteUsers: true } : {}),
+            ...(r.pinMessages === true ? { pinMessages: true } : {}),
+            ...(r.changeInfo === true ? { changeInfo: true } : {}),
+          },
+          ...(untilMs === undefined ? {} : { until: untilMs }),
+        })
+      },
+      async deleteMemberMessages(chatId, userId) {
+        await ready()
+        await tg.deleteUserHistory({ chatId: Number(chatId), participantId: peerRef(userId) })
+      },
+      async createInviteLink(chatId, o) {
+        await ready()
+        const l = await tg.createInviteLink(Number(chatId), {
+          ...(o.expiresAt === undefined ? {} : { expires: o.expiresAt }),
+          ...(o.usageLimit === undefined ? {} : { usageLimit: o.usageLimit }),
+          ...(o.withApproval === true ? { withApproval: true } : {}),
+        })
+        return { link: l.link }
+      },
+      async joinChat(ref) {
+        await ready()
+        const r = await tg.joinChat(ref.trim())
+        if (r.status === 'ok') return { status: 'joined', chat: chatOf(r.chat) }
+        return { status: 'requested' }
+      },
+      async leaveChat(chatId) {
+        await ready()
+        await tg.leaveChat(Number(chatId))
       },
       async members(chatId, limit) {
         const list = await tg.getChatMembers(Number(chatId), { limit, type: 'recent' })
@@ -460,6 +644,23 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
       'adminLog',
       'forumTopics',
       'members',
+      'getChatInfo',
+      'listMembers',
+      'searchMessages',
+      'forwardMessages',
+      'sendPoll',
+      'scheduleText',
+      'listScheduled',
+      'cancelScheduled',
+      'createTopic',
+      'editTopic',
+      'setTopicClosed',
+      'banMember',
+      'unbanMember',
+      'restrictMember',
+      'deleteMemberMessages',
+      'createInviteLink',
+      'leaveChat',
       'sendText',
       'sendFiles',
       'editText',

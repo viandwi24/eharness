@@ -420,6 +420,19 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
           `Asking now: ${personLabel({ id: p.requester.nativeId, name: p.requester.name, username: p.requester.username })}, role ${p.requester.role}${p.requester.divisions.length > 0 ? `, divisions ${p.requester.divisions.map((d) => gw.nodes.get(d)?.title ?? d).join(', ')}` : ''}.`,
         )
       }
+      // the platform layer (native actions): named for those who may use them, so the model knows
+      // they exist (they are deferred tools, loaded with tool_search)
+      if (p.requester === undefined || isStaff(p.requester.role)) {
+        const adapter = gw.adapter(p.connectionId)
+        const names = (adapter?.actions ?? []).map((a) =>
+          nativeToolName(adapter?.platform ?? 'channel', a.name),
+        )
+        if (names.length > 0) {
+          lines.push(
+            `Platform tools of ${p.connectionId} (load with tool_search; owners and admins only): ${names.join(', ')}.`,
+          )
+        }
+      }
       lines.push(`Team timezone: ${zone}. Now: ${absoluteTime(Date.now(), zone)}.`)
       void config
       return lines.join('\n')

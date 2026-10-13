@@ -851,6 +851,33 @@ Built (example only, `src/` of the library unchanged):
   reads the dialogs once (at most once a minute) and retries. Forum topic titles are read from the forum
   (`forumTopics`, governed, once per topic per 10 minutes) and given to the gateway as `node.updated`.
   An unknown chat in a generic tool points the model to `list_dialogs` / `choose_chat`.
+- **Account platform layer complete** (`infra/telegram-user/actions.ts`, production feedback: "MTProto full
+  API behind our queue" was only two actions). Native actions of a user account, all governed by risk class
+  and audited:
+  - read: `list_dialogs`, `list_chats` (local), `get_chat`, `get_user`, `list_members` (≤200, Telegram's cap),
+    `list_forum_topics`, `search_messages` (server-side, also un-backfilled history), `get_message`,
+    `list_scheduled`, `admin_log` (local);
+  - write: `choose_chat`, `backfill` (range required), `cancel_scheduled`, `create_forum_topic`,
+    `edit_forum_topic` (rename, close, reopen);
+  - external: `forward_message`, `send_poll`, `schedule_message` (Telegram's scheduler: fires while we are down;
+    1 minute to 365 days ahead);
+  - destructive + `ownerOnly`: `ban_member`, `unban_member`, `restrict_member`, `delete_member_messages`,
+    `create_invite_link`, `join_chat`, `leave_chat`.
+- **Safety rules** (multi-person groups: founder, CEO, employees):
+  - members and guests get no native tool (roles); `NativeAction.ownerOnly` is checked on the current requester
+    before the action runs (web turns are the client); every non-read action still asks for approval;
+  - content, member, post, topic and moderation actions only work on chats chosen for ingest, never on a
+    person's direct chat; metadata (`list_dialogs`, `get_chat`) covers every chat of the account;
+  - posts keep the daily send cap, the flood park and `neutralizeHandles`; moderation targets are user ids only
+    (never usernames) and never the account itself; invite links are told to go to the asker only;
+  - ban-prone calls get hard caps of our own (Telegram publishes few numbers; community reports): username
+    lookups 5/minute and 30/day, joins 3/day (counters `resolve`, `join` in `tgu_counters`, no migration);
+  - `channel_status` names the platform tools for owners and admins (they are deferred tools).
+- mtcute methods behind the plain client (`client.ts`): `getFullChat`, `getUser`, `getChatMembers`,
+  `searchMessages`, `forwardMessagesById`, `sendMedia` (poll/quiz), `sendText({ schedule })`,
+  `getAllScheduledMessages`, `deleteScheduledMessages`, `createForumTopic`, `editForumTopic`,
+  `toggleForumTopicClosed`, `banChatMember`, `unbanChatMember`, `restrictChatMember`, `deleteUserHistory`,
+  `createInviteLink`, `joinChat`, `leaveChat`; each one heals a peer-cache miss once.
 
 Decisions and open points:
 

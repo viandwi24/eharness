@@ -657,6 +657,16 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
                 }
                 if (!gw.isBound(agentId, pick.connectionId))
                   return 'ERROR: that connection is not one of yours.'
+                if (pick.action.ownerOnly === true) {
+                  // decided on the current requester, never on what the message says
+                  const requester = await gw.requesterOf(sessionId)
+                  if (requester !== undefined && requester.role !== 'owner') {
+                    return `Not allowed: only an owner of the team can ask for ${name}. ${requester.name ?? requester.username ?? requester.nativeId} has the role "${requester.role}". Tell them in one plain sentence to ask an owner; do not retry or look for a way around it.`
+                  }
+                  if (requester === undefined && gw.unresolvedChatTurn(sessionId)) {
+                    return `Not allowed: ${name} needs an owner, and the sender of this chat message could not be identified.`
+                  }
+                }
                 return pick.action.run(rest)
               }),
           }),

@@ -306,6 +306,11 @@ export interface NativeAction {
   schema: z.ZodObject
   /** Answers from what the gateway stored, never calling the platform: the API governor skips it. */
   local?: boolean
+  /**
+   * Only an owner of the team may ask for it (bans, invite links, joining): a chat turn of anybody
+   * else is refused in code before it runs; a turn without a chat requester (the web app) is the client.
+   */
+  ownerOnly?: boolean
   run(input: Record<string, unknown>): Promise<string>
 }
 
