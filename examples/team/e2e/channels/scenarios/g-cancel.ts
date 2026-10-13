@@ -525,45 +525,42 @@ export const scenarios: Scenario[] = [
       researcher: slowResearcher('/library/research/late6.md'),
     },
     steps: [
-      act('web user sends a chat message (not awaiting the stream)', (w) => {
-        void w.server.app
-          .request('/sessions/dm:lead/chat', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              id: 'dm:lead',
-              messages: [
-                {
-                  id: crypto.randomUUID(),
-                  role: 'user',
-                  parts: [
-                    {
-                      type: 'text',
-                      text: 'Langsung minta Researcher (tunggu hasilnya, jangan di background, jangan tanya balik): riset 3 kompetitor tools AI video clipper dan simpan di /library/research/late6.md.',
-                    },
-                  ],
-                },
-              ],
-            }),
-          })
-          .then((r) => r.text())
-          .catch(() => undefined)
-      }),
-      until(
-        'the child session started',
-        (w) =>
-          (
-            w.server.conn.sqlite
-              .query("SELECT COUNT(*) n FROM eh_messages WHERE session_id LIKE '%:agent:%'")
-              .get() as { n: number }
-          ).n > 0,
+      act(
+        'web user sends a chat message (not awaiting the stream)',
+        (w) => {
+          void w.server.app
+            .request('/sessions/dm:lead/chat', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                id: 'dm:lead',
+                messages: [
+                  {
+                    id: crypto.randomUUID(),
+                    role: 'user',
+                    parts: [
+                      {
+                        type: 'text',
+                        text: 'Langsung minta Researcher (tunggu hasilnya, jangan di background, jangan tanya balik): riset 3 kompetitor tools AI video clipper dan simpan di /library/research/late6.md.',
+                      },
+                    ],
+                  },
+                ],
+              }),
+            })
+            .then((r) => r.text())
+            .catch(() => undefined)
+        },
+        { noSettle: true },
       ),
+      // the child's first row is stored only when its step ends (the scripted delay is per stream part)
       wait(1500),
       act('web user presses Stop', async (w) => {
         const r = await w.api('POST', '/sessions/dm:lead/interrupt')
         if (r.status >= 400) throw new Error(`interrupt -> ${r.status} ${r.text.slice(0, 200)}`)
       }),
-      wait(SLOW + 2500),
+      // the scripted delay is per stream part: the late write would come after about 2 delays
+      wait(SLOW * 3),
     ],
     timeoutMs: 150_000,
     hard: [noLateWrite(/late6\.md$/)],

@@ -108,7 +108,13 @@ export type Step =
   | { kind: 'fireReminders'; only?: 'all' | 'due' }
   | { kind: 'expireApprovals' }
   | { kind: 'api'; method: string; path: string; body?: unknown; label?: string }
-  | { kind: 'do'; label: string; fn: (w: World, run: RunState) => Promise<void> | void }
+  | {
+      kind: 'do'
+      label: string
+      fn: (w: World, run: RunState) => Promise<void> | void
+      /** Do not wait for the world to settle afterwards (the step leaves a turn running). */
+      noSettle?: boolean
+    }
   | { kind: 'update'; label: string; build: (w: World, run: RunState) => Json }
   | { kind: 'note'; text: string }
   /** Poll until `fn` is true (no settling), at most `maxMs` (default 10 s scripted / 120 s real). */
@@ -162,10 +168,12 @@ export const api = (method: string, path: string, body?: unknown, label = 'api')
 export const act = (
   label: string,
   fn: (w: World, run: RunState) => Promise<void> | void,
+  opts: { noSettle?: boolean } = {},
 ): Step => ({
   kind: 'do',
   label,
   fn,
+  ...opts,
 })
 export const rawUpdate = (label: string, build: (w: World, run: RunState) => Json): Step => ({
   kind: 'update',
@@ -984,7 +992,7 @@ export async function playStep(run: RunState, step: Step, index: number): Promis
       case 'do':
         await step.fn(w, run)
         run.stepLog.push({ at: Date.now(), who: 'system', text: step.label, kind: 'system' })
-        await settleWorld(w, run)
+        if (step.noSettle !== true) await settleWorld(w, run)
         break
       case 'update':
         push(run, step.build(w, run))

@@ -29,6 +29,7 @@
  *   TZ                default of the team timezone (Settings): the clock of agents, routines, reminders, chats, digest
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
  *   TEAM_MAX_WORKER_STEPS  hard cap of one background worker turn (default 400; at least 60)
+ *   TEAM_CONTEXT_CAP  working context window in tokens (default 128000): history is summarized at 80 % of it
  *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
@@ -1294,7 +1295,9 @@ if (import.meta.main) {
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
     ...(() => {
       const maxWorkerSteps = Number(process.env.TEAM_MAX_WORKER_STEPS)
+      const contextCap = Number(process.env.TEAM_CONTEXT_CAP)
       const limits = {
+        ...(Number.isFinite(contextCap) && contextCap >= 16_000 ? { contextCap } : {}),
         ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { spawnCap } : {}),
         ...(Number.isFinite(maxWorkerSteps) && maxWorkerSteps >= 60 ? { maxWorkerSteps } : {}),
       }

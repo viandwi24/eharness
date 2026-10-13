@@ -149,6 +149,11 @@ export interface TeamLimits {
   childMaxTurns?: number
   /** Hard cap of a background worker turn (the step budget extends up to it). Default 400. */
   maxWorkerSteps?: number
+  /**
+   * The working context window (tokens): the model's own window, at most this. Compaction
+   * summarizes at 80 % of it. Default 128 000.
+   */
+  contextCap?: number
   /** How long the lead stays parked on a task before the wait times out (ms). Default 24 h. */
   parkTimeoutMs?: number
   /** A background delegation running longer than this gets one "timed out" report. Default 2 h; 0 = never. */
@@ -1248,7 +1253,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       id: def.slug,
       model: deps.models.resolve(...selectionOf(def, settings)),
       // the catalog knows the window of real models; 200k only for models it does not list
-      ...(modelInfoOf(def, settings).contextWindow === undefined ? { contextWindow: 200_000 } : {}),
+      // the working window: compaction summarizes at 80 % of it. A model that reads 1 M tokens would
+      // otherwise carry ~800 k tokens of history into every call before anything is summarized
+      // (production: 40 k tokens per call on average, 150 k at worst)
+      contextWindow: Math.min(
+        modelInfoOf(def, settings).contextWindow ?? 200_000,
+        deps.limits?.contextCap ?? 128_000,
+      ),
       ...(catalog === undefined ? {} : { models: catalog }),
       // never leave the output cap to the provider: OpenRouter-style gateways then reserve (and
       // check credits for) the model maximum on every call
