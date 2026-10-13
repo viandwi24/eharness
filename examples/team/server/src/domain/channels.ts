@@ -107,6 +107,8 @@ export interface ChannelReminderView {
 export interface ChannelPeopleSettings {
   defaultRole: ChannelRole
   approvalTtlHours: number
+  /** A post an owner or admin just asked for in the chat runs without a second "ya". */
+  directInstructions: boolean
 }
 
 export interface ChannelBinding {

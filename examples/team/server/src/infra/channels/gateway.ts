@@ -738,6 +738,13 @@ export interface ChannelGateway {
    * who asked in the parent turn (their role and scope). Call when the child session opens.
    */
   adoptChild(childSessionId: string, parentSessionId: string): void
+  /**
+   * Is this call exactly what an owner or admin just asked for in this chat (a direct instruction)?
+   * Then it needs no second confirmation. Decided in code: the live chat message that started the
+   * turn, its sender's directory role, the target (the same chat), and every person mentioned being
+   * named in that message. Anything else (and anything destructive) still asks.
+   */
+  directInstruction(sessionId: string, call: { toolName: string; input: unknown }): Promise<boolean>
   /** The room a node belongs to: itself, or the nearest ancestor that is not a thread. */
   roomOf(node: NodeRow): NodeRow
   /** The adapter's view of a stored node (for optional adapter operations). */
@@ -968,6 +975,9 @@ export function approvalWord(text: string): 'yes' | 'no' | undefined {
   if (words.every((w) => NO_WORDS.has(w))) return 'no'
   return undefined
 }
+
+/** A "ya" / "tidak" reply answers only requests announced this recently (older ones: the web app). */
+const TEXT_ANSWER_MAX_AGE_MS = 10 * 60_000
 
 /** Stops whose last words (the wrap-up summary) are worth more than a generic notice. */
 const SAY_WHAT_WAS_DONE: ReadonlySet<string> = new Set(['max-steps', 'stuck', 'length'])
@@ -1879,6 +1889,84 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     // a parent turn of the web app (no chat requester) leaves the child unrestricted, like its parent
   }
 
+  /** Posting tools a direct instruction may cover (never destructive ones). */
+  const DIRECT_ACTIONS: ReadonlySet<string> = new Set(['send', 'reply', 'react'])
+  /** A direct instruction is fresh: a message older than this asked for something else by now. */
+  const DIRECT_MAX_AGE_MS = 15 * 60_000
+
+  /** Does the message name this person: a mention of their id, their @handle, or their name? */
+  function names(m: LogMessage, connectionId: string, nativeId: string): boolean {
+    const id = identities.byNative(connectionId, nativeId)
+    if (id === undefined) return false
+    const handle = id.username?.toLowerCase()
+    for (const e of m.entities ?? []) {
+      if (e.type !== 'mention') continue
+      if (e.identity === nativeId) return true
+      if (handle !== undefined && e.handle?.replace(/^@/, '').toLowerCase() === handle) return true
+    }
+    const text = m.text.toLowerCase()
+    if (handle !== undefined && text.includes(`@${handle}`)) return true
+    // a name as people write it ("bilang ke Wins ..."): a word of the display name, 3+ letters
+    const words = (id.displayName ?? '')
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => w.length >= 3)
+    return words.some((w) =>
+      new RegExp(
+        `(^|[^\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`,
+        'u',
+      ).test(text),
+    )
+  }
+
+  async function directInstruction(
+    sessionId: string,
+    call: { toolName: string; input: unknown },
+  ): Promise<boolean> {
+    if (call.toolName !== 'channel_send') return false
+    const i = (call.input ?? {}) as {
+      action?: string
+      connection?: string
+      conversation?: string
+      topic?: string
+      member?: string
+      mention?: unknown
+    }
+    if (i.action === undefined || !DIRECT_ACTIONS.has(i.action)) return false
+    if (i.member !== undefined) return false // a direct message to somebody else: another place
+    const row = sessions.bySession(sessionId)
+    if (row === undefined) return false
+    const config = cache.get(row.connectionId)
+    if (config === undefined || config.directInstructions === false) return false
+    // a turn a chat message started (not the web app, not a report, not a continuation)
+    const key = turnTriggers.get(sessionId)
+    const r = requesters.get(sessionId)
+    if (key === undefined || r === undefined || !isStaff(r.role) || r.forwarded === true)
+      return false
+    const m = await triggerMessage(row, key)
+    if (m === undefined || m.forwardOf !== undefined || m.senderIdentityId !== r.identityId)
+      return false
+    if (now() - m.at > DIRECT_MAX_AGE_MS) return false
+    // the same chat the instruction was written in (another topic of the same group is fine)
+    let target: ResolvedTarget
+    try {
+      target = resolveTarget(row.agentId, sessionId, {
+        connection: i.connection,
+        conversation: i.conversation,
+        topic: i.topic,
+      })
+    } catch {
+      return false
+    }
+    const here = nodes.get(m.nodeId)
+    if (here === undefined || target.config.connectionId !== row.connectionId) return false
+    if (roomOf(target.node).id !== roomOf(here).id) return false
+    // every person pinged was named by the person who asked
+    const mention = Array.isArray(i.mention) ? i.mention.map(String) : []
+    for (const id of mention) if (!names(m, row.connectionId, id)) return false
+    return true
+  }
+
   async function requesterOf(sessionId: string): Promise<Requester | undefined> {
     const adopted = childRequesters.get(sessionId)
     if (adopted !== undefined) return adopted ?? undefined
@@ -1959,7 +2047,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     // people who type instead of pressing): who may is decided by their id and directory role
     const verdict = approvalWord(input.text)
     if (verdict !== undefined) {
-      const answerable = open.filter((a) => mayAnswer(input.config, a, input.node, input.sender))
+      // a "ya" typed long after the request is about something else: only fresh requests
+      const answerable = open.filter(
+        (a) =>
+          now() - a.createdAt <= TEXT_ANSWER_MAX_AGE_MS &&
+          mayAnswer(input.config, a, input.node, input.sender),
+      )
       if (answerable.length > 0) {
         for (const rec of answerable) {
           await answerInChat(
@@ -3367,11 +3460,21 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     for (const a of pending.approvals) {
       if (a.answer !== undefined || a.granted === true) continue
       const summary = summarizeToolInput(a.input)
+      // the people a post would ping, by name: the approver sees exactly who
+      const mentioned = (a.input as { mention?: unknown } | undefined)?.mention
+      const pinged = Array.isArray(mentioned)
+        ? mentioned.map((id) => {
+            const p = identities.byNative(row.connectionId, String(id))
+            return p === undefined
+              ? `id ${String(id)}`
+              : `${p.displayName ?? p.username ?? p.nativeId}${p.username === undefined || p.username === null ? '' : ` (@${p.username})`}`
+          })
+        : []
       items.push({
         itemId: a.approvalId,
         kind: 'approval',
         toolName: a.toolName,
-        text: `${who ?? 'I'} need${who === undefined ? '' : 's'} an approval to use ${a.toolName}${a.risk === undefined ? '' : ` (${a.risk})`}.${summary === '' ? '' : `\n${summary}`}`,
+        text: `${who ?? 'I'} need${who === undefined ? '' : 's'} an approval to use ${a.toolName}${a.risk === undefined ? '' : ` (${a.risk})`}.${summary === '' ? '' : `\n${summary}`}${pinged.length === 0 ? '' : `\nWill ping: ${pinged.join(', ')}`}`,
       })
     }
     for (const c of pending.clientTools) {
@@ -5409,6 +5512,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       childRequesters.get(sessionId) === null ||
       (!childRequesters.has(sessionId) && loadChild(sessionId)?.trigger === null),
     adoptChild,
+    directInstruction,
     roomOf,
     viewOf,
     canRead,

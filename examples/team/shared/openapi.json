@@ -11184,11 +11184,16 @@
             "minimum": 0.02,
             "maximum": 720,
             "description": "An approval nobody answers in a chat is declined after this long."
+          },
+          "directInstructions": {
+            "type": "boolean",
+            "description": "A post an owner or admin just asked for in the chat (same chat, the people they named) runs without a second \"ya\". Destructive actions and anything the agent chose on its own still ask."
           }
         },
         "required": [
           "defaultRole",
-          "approvalTtlHours"
+          "approvalTtlHours",
+          "directInstructions"
         ]
       },
       "ChannelPeopleSettingsBody": {
@@ -11209,6 +11214,10 @@
             "minimum": 0.02,
             "maximum": 720,
             "description": "An approval nobody answers in a chat is declined after this long."
+          },
+          "directInstructions": {
+            "type": "boolean",
+            "description": "A post an owner or admin just asked for in the chat (same chat, the people they named) runs without a second \"ya\". Destructive actions and anything the agent chose on its own still ask."
           }
         }
       },

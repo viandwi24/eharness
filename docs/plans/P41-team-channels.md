@@ -949,3 +949,22 @@ next message ("you are admin already") cancelled the request. Now:
 - Not changed on purpose: an owner's request still asks before a post that reaches other people (external)
   or a destructive action; reads and own writes do not ask. The approval confirms what the model is about
   to do (text, mentions, target), which also guards against instructions hidden in chat content.
+
+## Direct instructions need no second "ya" (as built)
+
+Research (OpenClaw exec approvals, Hermes gateway approvals, Claude Code auto mode, OWASP LLM06, Willison's
+lethal trifecta) agrees: what the model chose on its own needs consent; what the person explicitly asked for
+does not need a second confirmation, provided identity and arguments are checked deterministically. So:
+
+- `gateway.directInstruction(sessionId, call)` approves a `channel_send` (`send`, `reply`, `react`; never a
+  DM to a member) when ALL hold: the turn was started by a live chat message (not the web app, a report or a
+  continuation); its sender resolves (platform id, directory) to owner or admin and it is not a forward;
+  the message is at most 15 minutes old; the target is the same chat (another topic of the same group is
+  fine); every mentioned id is named in that message (a mention entity, their @handle, or a word of their
+  display name). `sessionPermissions({ directGrant })` turns the engine's `user-approval` into `approved`
+  only then; a denial stays a denial, and the role check of the channels plugin still applies.
+- Everything else asks as before: posts the model chose itself, another chat, people the asker did not
+  name, native platform actions, destructive actions.
+- Per connection: `directInstructions` (default on), Channels → Settings → People.
+- The approval card names who a post would ping ("Will ping: Wins (@BANGzwins)"); a "ya" / "tidak" reply
+  only answers requests announced in the last 10 minutes (older ones are answered in the web app).

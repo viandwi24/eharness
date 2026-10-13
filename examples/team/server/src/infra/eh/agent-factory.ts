@@ -1097,6 +1097,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         gate: gateOf,
         manualAllowed: (_agentId, toolName) =>
           deps.connectors.readAllowed(def.id)?.has(toolName) === true,
+        // a post an owner or admin just asked for in a chat needs no second "ya" (checked in code)
+        directGrant: async (ctx, call) =>
+          (await deps.channels?.()?.directInstruction(ctx.session.id, call)) === true,
         registry: engines,
         mode: (ctx) =>
           resolveSessionMode(def, ctx.session.id, ctx.session.parent?.sessionId, currentSettings())

@@ -165,6 +165,7 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
       return {
         defaultRole: c?.people.defaultRole ?? 'guest',
         approvalTtlHours: Math.round(((c?.approvalTtlMs ?? 86_400_000) / 3_600_000) * 100) / 100,
+        directInstructions: c?.directInstructions ?? true,
       }
     },
     async setPeopleSettings(id, input) {
@@ -180,11 +181,15 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
         ...(input.approvalTtlHours === undefined
           ? {}
           : { approvalTtlMs: Math.max(60_000, Math.round(input.approvalTtlHours * 3_600_000)) }),
+        ...(input.directInstructions === undefined
+          ? {}
+          : { directInstructions: input.directInstructions }),
       })
       const n = gateway.config(id)
       return {
         defaultRole: n?.people.defaultRole ?? 'guest',
         approvalTtlHours: Math.round(((n?.approvalTtlMs ?? 86_400_000) / 3_600_000) * 100) / 100,
+        directInstructions: n?.directInstructions ?? true,
       }
     },
     async reminders(id, opts) {

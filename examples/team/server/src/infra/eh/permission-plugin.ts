@@ -56,6 +56,15 @@ export interface SessionPermissionsOptions<G extends SessionGate = SessionGate> 
    * default mode asks about them, an Auto classifier or Bypass is left alone.
    */
   manualAllowed?: (agentId: string, toolName: string) => boolean
+  /**
+   * A call the engine would ask about that the person just asked for themselves, verified in code
+   * (an owner's or admin's instruction in a chat, `gateway.directInstruction`): approved without a
+   * second confirmation. Never turns a denial into an approval.
+   */
+  directGrant?: (
+    ctx: HarnessContext,
+    call: { toolName: string; input: unknown },
+  ) => Promise<boolean>
   /** Engines of the live sessions of this process, by session id. */
   registry: Map<string, PermissionEngine>
   /** Auto mode blocked / paused / resumed, for the event feed. */
@@ -95,7 +104,9 @@ export function sessionPermissions<G extends SessionGate = SessionGate>(
       // Manual mode: an Allowed built-in read does not ask (a gated session has its own closed rules)
       const engineApprove = base?.['tool.approve'] as ApproveHook | undefined
       const hooks =
-        gate !== undefined || engineApprove === undefined || opts.manualAllowed === undefined
+        gate !== undefined ||
+        engineApprove === undefined ||
+        (opts.manualAllowed === undefined && opts.directGrant === undefined)
           ? base
           : ({
               ...base,
@@ -105,6 +116,14 @@ export function sessionPermissions<G extends SessionGate = SessionGate>(
                   verdict?.type === 'user-approval' &&
                   opts.mode(hookCtx) === 'manual' &&
                   opts.manualAllowed?.(ctx.agent.id, e.toolName) === true
+                ) {
+                  return { type: 'approved' }
+                }
+                // the person asked for exactly this themselves (checked in code, not by the model)
+                if (
+                  verdict?.type === 'user-approval' &&
+                  opts.directGrant !== undefined &&
+                  (await opts.directGrant(hookCtx, { toolName: e.toolName, input: e.input }))
                 ) {
                   return { type: 'approved' }
                 }

@@ -646,6 +646,10 @@ export const ChannelPeopleSettingsSchema = z
     approvalTtlHours: z.number().min(0.02).max(720).openapi({
       description: 'An approval nobody answers in a chat is declined after this long.',
     }),
+    directInstructions: z.boolean().openapi({
+      description:
+        'A post an owner or admin just asked for in the chat (same chat, the people they named) runs without a second "ya". Destructive actions and anything the agent chose on its own still ask.',
+    }),
   })
   .openapi('ChannelPeopleSettings')
 export const ChannelPeopleSettingsBodySchema = ChannelPeopleSettingsSchema.partial().openapi(

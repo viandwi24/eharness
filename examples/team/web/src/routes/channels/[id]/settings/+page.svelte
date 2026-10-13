@@ -28,7 +28,7 @@
 	let busy = $state(false);
 	let unbindOpen = $state(false);
 	let reconnectOpen = $state(false);
-	let settings = $state<ChannelPeopleSettings>({ defaultRole: 'guest', approvalTtlHours: 24 });
+	let settings = $state<ChannelPeopleSettings>({ defaultRole: 'guest', approvalTtlHours: 24, directInstructions: true });
 	let ttl = $state('24');
 	// the defaults of the chats, as typed ('' = the product default)
 	let wake = $state(untrack(() => cs.conn?.binding?.defaults.wake ?? ''));
@@ -153,6 +153,13 @@
 					</label>
 				</div>
 				{#if ttlProblem}<span class="text-xs text-destructive-text">{ttlProblem}</span>{/if}
+				<label class="flex items-start gap-2 text-sm">
+					<input type="checkbox" class="mt-0.5" checked={settings.directInstructions} onchange={(e) => void savePeople({ directInstructions: (e.currentTarget as HTMLInputElement).checked })} disabled={busy} aria-label="Direct instructions run without a second confirmation" />
+					<span>
+						<span class="font-medium">An owner's or admin's own request needs no second "ya"</span>
+						<span class="block text-xs text-muted-foreground">When an owner or admin asks in the chat to post or tag (in that same chat, tagging people they named), it runs at once. Posts the agent decides on its own, other chats and destructive actions still ask; anybody can still be refused by their role.</span>
+					</span>
+				</label>
 			</section>
 
 			<section class="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-label="Defaults for chats" data-testid="settings-defaults">

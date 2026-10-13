@@ -186,6 +186,12 @@ export const ConnectionConfigSchema = z.object({
     .default({ defaultRole: 'guest', policy: {} }),
   /** An approval announced in a chat that nobody answers is declined after this long (default 24 h). */
   approvalTtlMs: z.number().int().min(60_000).default(86_400_000),
+  /**
+   * A post an owner or admin just asked for in this chat (same chat, people named in their message)
+   * runs without a second "ya" (`gateway.directInstruction`). Default on; destructive actions and
+   * anything the model chose on its own still ask.
+   */
+  directInstructions: z.boolean().default(true),
   /** Observed messages injected into the next wake (default 50). */
   historyLimit: z.number().int().min(1).max(200).default(50),
   rate: RateLimitsSchema.default(RateLimitsSchema.parse({})),
