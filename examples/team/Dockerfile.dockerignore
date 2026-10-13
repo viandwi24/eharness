@@ -13,12 +13,15 @@ docs
 .changeset
 .github
 
-# examples: only what the team image needs (the coder package.json is a workspace member)
+# examples: only what the team image needs (the coder package.json is a workspace member; the
+# sandbox-server package provides the Remote sandbox connector's client)
 examples/*
 !examples/team
 !examples/coder
+!examples/sandbox-server
 examples/coder/*
 !examples/coder/package.json
+examples/sandbox-server/test
 examples/team/server/data
 examples/team/server/test
 examples/team/web/build
