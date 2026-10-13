@@ -50,6 +50,9 @@ Options considered:
   hash; extra packages are opt-in, approved, installed by the plugin (not by model code) with
   wheels only, and the accepted list is stored in the virtual file system so any fresh sandbox can
   rebuild it. Scripts have no network.
+- **The sandbox is disposable.** Nothing lives only in it: changes are written back at the end of
+  every run, the manifest is never persisted, a missing work directory or environment is rebuilt
+  (files by a full sync-in, extra packages from the stored list), and no volume is required.
 - New subpath `eharness/code`, runtime-neutral (it talks to the sandbox only through the AI SDK
   type), importing core only through `src/index.ts`.
 

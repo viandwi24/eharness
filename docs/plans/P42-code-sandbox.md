@@ -84,6 +84,29 @@ Design and the options that were rejected: [ADR-0061](../decisions/0061-code-san
   declares itself isolated.
 - **D10 — No preset wrappers** (docs over presets): the library ships no package list; the guide
   and the team example ship a recommended list, a lock file and a Dockerfile.
+- **D11 — The sandbox is disposable; nothing lives only there.** No volume is required, and the
+  plugin must behave correctly when the work directory, the workspace environment or the whole
+  container disappears at any moment (restart, redeploy, scale-out to another instance, idle
+  cleanup):
+  - every file that matters is in the virtual file system (the team's database-backed library)
+    when a run ends: write-back happens at the end of **each** run, never "later" or at session
+    close;
+  - the sync manifest is in memory only and is never persisted; a missing or unknown work
+    directory means a full sync-in on the next run (correct, only slower);
+  - a run that was in flight when the sandbox died writes nothing back and is reported as failed
+    (`ERROR: the sandbox stopped during the run; nothing was saved`), the same as a failed run (D4);
+  - base packages are part of the image (or rebuilt from the developer's list for
+    `localSandbox`); extra packages are rebuilt from the stored list
+    (`/work/.eharness/requirements.txt`, layer 2 below) on the first `run_python` that finds the
+    workspace environment missing, and the result says so (`Rebuilt the package environment (3
+    packages, 12s).`);
+  - a package download cache (a pip/uv cache volume) is an optional speed-up the guide describes;
+    the plugin never depends on it.
+- **D12 — No sync when the files are already on disk.** When the file system is a disk adapter
+  (`diskFs`, `nodeWorkspace`) whose root is the sandbox's work directory, sync-in and sync-out are
+  skipped (an identity bridge): the script works on the real files. The coder example therefore
+  takes phase D (`denyRead`, limits) for its `bash` and, optionally, the package environment; it
+  does not enable `run_python` by default, which would duplicate `bash`.
 
 ## Packages: how libraries get into the sandbox
 
@@ -156,8 +179,14 @@ with `install: 'off'`.
 - [ ] Policy on both directions (D5) through `filePolicy`, permissions and `access`.
 - [ ] One run per session at a time (mutex); the work directory is removed at session close;
       leftovers of a crashed process are removed on the next start (local driver).
+- [ ] Disposable sandbox (D11): detect a missing or replaced work directory (a marker file with the
+      manifest id) and fall back to a full sync-in; a sandbox that dies during a run is a failed
+      run with nothing written back.
+- [ ] Identity bridge (D12) for disk adapters whose root is the work directory.
 - [ ] Tests with an in-memory fake driver: zero uploads on the second run, conflict, failed run saves
-      nothing, deletion propagation, hidden and read-only prefixes, caps, binary, odd file names.
+      nothing, deletion propagation, hidden and read-only prefixes, caps, binary, odd file names,
+      a wiped work directory between two runs (full sync-in, same result), a sandbox killed
+      mid-run (nothing saved).
 
 ## Phase C — `run_python` and environments
 
@@ -170,7 +199,8 @@ with `install: 'off'`.
 - [ ] Environment: base build from a requirements list for `localSandbox` (venv; `uv` when found),
       key, probe (`importlib.metadata`), description line, cache directory option.
 - [ ] `install_packages` with `installer` session, `--only-binary=:all:`, allowlist, index URL,
-      the stored extra list and rebuild from it.
+      the stored extra list and the lazy rebuild from it when the workspace environment is
+      missing (D11), reported in the result.
 - [ ] Tests: scripted model over the fake driver; real `localSandbox` runs where `python3` exists
       (skipped otherwise), including pandas only when the test environment has it.
 
@@ -195,7 +225,10 @@ with `install: 'off'`.
 ## Phase F — Team example and docs
 
 - [ ] Team: `Files & Sandbox` label; `run_python` under the program authority (`access` hook);
-      a Dockerfile and lock file with the recommended packages; env `TEAM_CODE_DRIVER=local|docker`.
+      a Dockerfile and lock file with the recommended packages (no volume needed, D11; an optional
+      pip cache volume documented); env `TEAM_CODE_DRIVER=local|docker`.
+- [ ] Team Settings shows the code driver status: Python version, driver (`local` / `docker`),
+      isolated or not, install policy.
 - [ ] `examples/sandboxes/docker` (a `SandboxSession` over `docker exec`) and
       `examples/sandboxes/pyodide` (in-process, not a security boundary).
 - [ ] Guide `docs/guides/code-sandbox.md`: drivers and isolation table, packages, sizing,
@@ -214,6 +247,9 @@ with `install: 'off'`.
 - [ ] A hidden file is never present in the sandbox; a write under a read-only mount is reported
       and not saved.
 - [ ] With `denyRead`, the script cannot read the server's database file or `~/.ssh`.
+- [ ] Container restart (team, `docker` driver, no volume): after the restart the next run sees the
+      same library files, rebuilds the extra packages from the stored list, and produces the same
+      outputs; nothing that was saved before the restart is lost.
 - [ ] `import scipy` without scipy: the hint names the installed packages (install off) or
       `install_packages` (install on, approved, then the import works in the next run and after a
       server restart).
@@ -226,8 +262,6 @@ with `install: 'off'`.
   it (`allowSourceBuilds`)? Conservative default meanwhile: no.
 - Size of the probed package list in the description: top-level names only (default) or with
   versions? Meanwhile: names with major.minor versions, at most 60.
-- Should the manifest be persisted (plugin state) so a restarted process with a surviving work
-  directory skips the full sync-in? Meanwhile: no; a restart does a full sync-in.
 
 ## Requests to other phases
 
