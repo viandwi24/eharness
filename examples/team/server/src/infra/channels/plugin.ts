@@ -31,6 +31,7 @@ import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
 import { decideTool, isStaff } from './roles.ts'
 import {
+  PERSON_NOTE_TOOL,
   REMINDER_TOOL,
   SELF_READ_TOOLS,
   SELF_TOOLS,
@@ -591,8 +592,8 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       const own = selfTools({ gw, sessionId, agentId, origin })
       for (const [name, def] of Object.entries(own)) {
         // outside a chat the `reminder` tool is the web one (`web-reminders.ts`), which hands a named
-        // chat back to this implementation
-        if (!inChannel && name === REMINDER_TOOL) continue
+        // chat back to this implementation, and `person_note` is the web one (`web-person-note.ts`)
+        if (!inChannel && (name === REMINDER_TOOL || name === PERSON_NOTE_TOOL)) continue
         const writes = (SELF_WRITE_TOOLS as readonly string[]).includes(name)
         tools[name] =
           rehearsal && writes
