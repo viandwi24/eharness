@@ -1,0 +1,15 @@
+# Recommended packages of the team's code sandbox (docs/guides/code-sandbox.md). Pinned for
+# Python 3.12; wheels only (pip install --only-binary=:all:). Used by Dockerfile.sandbox and by
+# the team image (/opt/eh-python); TEAM_CODE_REQUIREMENTS can point at your own list.
+numpy==2.5.4
+pandas==3.0.6
+matplotlib==3.11.2
+openpyxl==3.1.5
+pyarrow==26.0.0
+python-dateutil==2.9.0.post0
+tabulate==0.10.0
+pillow==12.3.0
+pypdf==6.20.1
+beautifulsoup4==4.15.0
+lxml==6.1.3
+scipy==1.18.1

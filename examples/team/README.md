@@ -102,6 +102,12 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_SPAWN_CAP` | `4` | role agents the lead runs at once (also in Settings) |
 | `TEAM_CONTEXT_CAP` | `128000` | working context window: the model's own window, at most this; history is summarized at 80 % of it (a 1 M-token model would otherwise carry ~800 k tokens into every call) |
 | `TEAM_MAX_WORKER_STEPS` | `400` | hard cap of one background worker turn (every agent can hand long jobs to its `worker`; chat turns stop at 120 steps) |
+| `TEAM_CODE_DRIVER` | `local` when the interpreter is found, else `off` | where agents run Python (`run_python` of the **Files & Sandbox** connector): `off` or `local` (a scratch directory under an OS sandbox: no network, the data directory and your home are unreadable); remote drivers come later |
+| `TEAM_CODE_PYTHON` | `python3` | interpreter of `local` (the Docker image sets `/opt/eh-python/bin/python`) |
+| `TEAM_CODE_INSTALL` | `off` | `off`, `allowlist` or `any`: agents may add packages with `install_packages` (asks first; wheels only) |
+| `TEAM_CODE_ALLOW` | - | comma list of package names (optional `==version`) for `allowlist` |
+| `TEAM_CODE_ENV_ROOT` | `<data dir>/python-envs` | where package environments are kept (rebuilt when missing) |
+| `TEAM_CODE_REQUIREMENTS` | - | a requirements file: `local` builds its base environment from it (default: the interpreter as it is) |
 | `TEAM_ROUTINE_TICK_MS` | `15000` | routine ticker interval (`0` = off) |
 | `TEAM_LOG_MAX_ROWS` | `5000` | model call log (Logs page): rows kept |
 | `TEAM_LOG_RETENTION_DAYS` | `7` | model call log: days kept |
@@ -252,6 +258,28 @@ docker run -d --name team -p 4000:4000 --env-file examples/team/.env -v team-dat
   `TEAM_DB` unset in `.env` (a relative path would leave the volume).
 - Another host port or a domain: set `TEAM_PUBLIC_URL=<origin>/api` and `TEAM_WEB_URL=<origin>`.
 - `docker logs team` shows the server log; the container health check calls `/api/health`.
+
+## Code sandbox (Python)
+
+The **Files & Sandbox** connector adds `run_python`: the agent writes a script and its data into the
+library (`/library/work/analyze.py`), runs it, and the files the script creates or changes
+(`report.md`, `chart.png`) are saved back into the library, where `read_file` and the Library page
+show them. The sandbox is a disposable cache synchronised around every run
+([spec 28](../../docs/specs/28-code-plugin.md), [P44](../../docs/plans/P44-code-sandbox.md)); the
+database is the source of truth, so **no volume is needed** for code. Capability "Run Python" asks
+before it runs by default. Settings shows the driver, the Python version and whether it runs isolated.
+
+- `TEAM_CODE_DRIVER=local` (default when `python3` is on the PATH): a scratch directory per session
+  under the OS sandbox (macOS Seatbelt, Linux bubblewrap): no network, writes only in the scratch
+  directory, the server's data directory (database, key files) and `$HOME` unreadable, 120 s CPU,
+  1 GiB memory (Linux), 128 processes and 64 MiB per file. Without an OS sandbox on the host it runs unisolated, and Settings says so.
+  Use it for development and trusted agents. Packages: the interpreter as it is, or a base
+  environment built from `TEAM_CODE_REQUIREMENTS` (for example `examples/team/python/requirements.txt`),
+  plus `TEAM_CODE_INSTALL` for packages agents ask for.
+- The team image installs Python and a pinned virtual environment (`/opt/eh-python`, from
+  `python/requirements.txt`): code runs with `local` inside the container. An optional pip cache
+  volume only speeds up `TEAM_CODE_INSTALL`; nothing depends on it.
+- The JavaScript `run_code` of the Data work connector (programs) is unchanged.
 
 ## Scripts and checks
 

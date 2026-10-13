@@ -52,6 +52,7 @@ import type {
 import { CUSTOM_DEFINITION, isAllowedMcpUrl, slugOf, uniqueSlug } from '../../domain/connectors.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { NewEvent } from '../../domain/events.ts'
+import type { CodeRuntime } from '../code/index.ts'
 import type { TgClientFactory } from '../telegram-user/client.ts'
 import {
   parseTelegramApp,
@@ -95,6 +96,8 @@ export interface ConnectorsOptions {
   onFileChange?: (change: LibraryChange) => void
   env?: Env
   fetch?: typeof fetch
+  /** The code sandbox of the Files & Sandbox connector (driver off = files only). */
+  code?: CodeRuntime
   /** Resolves a host name to its addresses (custom connector SSRF guard; default: system DNS). */
   resolveHost?: (host: string) => Promise<string[]>
   /** The OAuth callback URL of this server. */
@@ -187,6 +190,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     ...(options.listTools === undefined ? {} : { listTools: options.listTools }),
     ...(options.onFileChange === undefined ? {} : { onFileChange: options.onFileChange }),
     hooks,
+    ...(options.code === undefined ? {} : { code: options.code }),
     ...(env.TEAM_TELEGRAM_API_ROOT === undefined
       ? {}
       : { telegramApiRoot: env.TEAM_TELEGRAM_API_ROOT }),

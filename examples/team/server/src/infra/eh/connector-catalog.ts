@@ -32,6 +32,7 @@ import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { CHANNEL_OWN_WRITE_TOOLS, CHANNEL_READ_TOOLS } from '../channels/index.ts'
+import { CODE_LIST_PATH, type CodeRuntime } from '../code/index.ts'
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
 import { DATETIME_TOOL } from './clock-plugin.ts'
@@ -123,6 +124,8 @@ export interface CatalogOptions {
   telegramApiRoot?: string
   /** The "Telegram account" connector (user account over MTProto); absent = not offered. */
   telegramUser?: UserConnectorOptions
+  /** The code sandbox of the Files & Sandbox connector; absent or driver off = files only. */
+  code?: CodeRuntime
 }
 
 /** Connection label of the two memory scopes, as people and the model read them. */
@@ -390,11 +393,23 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
   const builtins = builtinConnectors({
     labels: {
       files: {
-        description: 'Read, write and organise the shared library of files.',
+        ...(options.code?.filesOption === undefined ? {} : { name: 'Files & Sandbox' }),
+        description:
+          options.code?.filesOption === undefined
+            ? 'Read, write and organise the shared library of files.'
+            : 'Read, write and organise the shared library of files, and run Python over them in a sandbox.',
         capabilities: {
           read: { description: 'Open, list and search library files.' },
           edit: { description: 'Create and change library files.' },
           delete: { description: 'Delete library files.' },
+          run: {
+            description:
+              'Run Python scripts over library files in a sandbox; files the script creates or changes are saved to the library.',
+          },
+          install: {
+            description:
+              'Add Python packages to the sandbox (the install policy of the server applies).',
+          },
         },
       },
       memory: {
@@ -410,9 +425,10 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
       },
     },
     files: {
+      ...(options.code?.filesOption === undefined ? {} : { code: options.code.filesOption }),
       plugin: ({ tools }, ctx) => {
         const def = defOf(ctx.agent.id)
-        return filesystem({
+        const files = filesystem({
           // a rehearsal session sees an overlay over the library (`rehearsal-registry.ts`)
           fs: sessionFileSystem(
             libraryFs(sqlite, {
@@ -422,10 +438,23 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
           ),
           // every tool a program run can be granted is defined; the ones the connection does not
           // offer are hidden from every session but a run that is granted them (`fileGrant`)
-          tools: [...new Set([...tools, ...PROGRAM_FILE_TOOLS])] as FileToolName[],
+          tools: [
+            ...new Set([
+              ...tools.filter((t) => t !== 'run_python' && t !== 'install_packages'),
+              ...PROGRAM_FILE_TOOLS,
+            ]),
+          ] as FileToolName[],
           hiddenPrefixes: ['/memories'],
+          // the stored package list of the code sandbox is edited by `install_packages` only
+          ...(options.code?.filesOption === undefined
+            ? {}
+            : { readonlyPrefixes: [CODE_LIST_PATH.slice(0, CODE_LIST_PATH.lastIndexOf('/'))] }),
           ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
         })
+        // `code()` reads the `fs` service of the plugin before it, so a rehearsal overlay applies
+        return options.code !== undefined && tools.includes('run_python')
+          ? [files, options.code.plugin({ tools })]
+          : files
       },
     },
     memory: {

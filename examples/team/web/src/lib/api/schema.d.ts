@@ -4485,6 +4485,63 @@ export interface paths {
         };
         trace?: never;
     };
+    "/settings/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Code sandbox status
+         * @description The driver of `run_python` (`off`, `local` or `docker`), the Python version, whether it runs isolated and the package install policy. Set by the `TEAM_CODE_*` variables.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CodeSandbox"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/usage": {
         parameters: {
             query?: never;
@@ -14008,6 +14065,24 @@ export interface components {
             timezone: string;
             /** @description 0 until a person changed something. */
             updatedAt: number;
+        };
+        CodeSandbox: {
+            /**
+             * @description `TEAM_CODE_DRIVER`: where agents run Python (`run_python`).
+             * @enum {string}
+             */
+            driver: "off" | "local";
+            /** @description Python version of the interpreter; null when off, unknown or inside docker. */
+            python: string | null;
+            /** @description True when the code runs under an OS sandbox or in a container, without network. */
+            isolated: boolean;
+            /**
+             * @description `TEAM_CODE_INSTALL`.
+             * @enum {string}
+             */
+            install: "off" | "allowlist" | "any";
+            /** @description One line for people. */
+            label: string;
         };
         SettingsPatch: {
             /**

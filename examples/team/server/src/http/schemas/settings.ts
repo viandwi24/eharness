@@ -50,3 +50,20 @@ export const SettingsPatchSchema = z
     timezone: z.string().min(1).max(64).optional().openapi({ description: 'IANA timezone.' }),
   })
   .openapi('SettingsPatch')
+
+export const CodeSandboxSchema = z
+  .object({
+    driver: z.enum(['off', 'local']).openapi({
+      description: '`TEAM_CODE_DRIVER`: where agents run Python (`run_python`).',
+    }),
+    python: z.string().nullable().openapi({
+      description: 'Python version of the interpreter; null when off, unknown or inside docker.',
+    }),
+    isolated: z.boolean().openapi({
+      description:
+        'True when the code runs under an OS sandbox or in a container, without network.',
+    }),
+    install: z.enum(['off', 'allowlist', 'any']).openapi({ description: '`TEAM_CODE_INSTALL`.' }),
+    label: z.string().openapi({ description: 'One line for people.' }),
+  })
+  .openapi('CodeSandbox')

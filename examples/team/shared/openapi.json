@@ -4198,6 +4198,50 @@
           "updatedAt"
         ]
       },
+      "CodeSandbox": {
+        "type": "object",
+        "properties": {
+          "driver": {
+            "type": "string",
+            "enum": [
+              "off",
+              "local"
+            ],
+            "description": "`TEAM_CODE_DRIVER`: where agents run Python (`run_python`)."
+          },
+          "python": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Python version of the interpreter; null when off, unknown or inside docker."
+          },
+          "isolated": {
+            "type": "boolean",
+            "description": "True when the code runs under an OS sandbox or in a container, without network."
+          },
+          "install": {
+            "type": "string",
+            "enum": [
+              "off",
+              "allowlist",
+              "any"
+            ],
+            "description": "`TEAM_CODE_INSTALL`."
+          },
+          "label": {
+            "type": "string",
+            "description": "One line for people."
+          }
+        },
+        "required": [
+          "driver",
+          "python",
+          "isolated",
+          "install",
+          "label"
+        ]
+      },
       "SettingsPatch": {
         "type": "object",
         "properties": {
@@ -18700,6 +18744,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings/code": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Code sandbox status",
+        "description": "The driver of `run_python` (`off`, `local` or `docker`), the Python version, whether it runs isolated and the package install policy. Set by the `TEAM_CODE_*` variables.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeSandbox"
                 }
               }
             }

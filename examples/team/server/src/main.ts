@@ -26,6 +26,12 @@
  *   TEAM_DEMO_COLLECTOR   1 = register the fixture community source (`ingest_source` of the Data work connector; 5 000 deterministic messages)
  *   TEAM_DEBUG_INVARIANTS   1 = debug.invariants on every agent (tests set it; a broken session invariant fails the turn)
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
+ *   TEAM_CODE_DRIVER   where agents run Python (`run_python`, the Files & Sandbox connector): `off` | `local` (a scratch directory under an OS sandbox, no network, the data directory unreadable). Default `local` when the interpreter is found, else `off`
+ *   TEAM_CODE_PYTHON   the interpreter of `local` (default `python3`; the team image sets /opt/eh-python/bin/python)
+ *   TEAM_CODE_INSTALL  `off` (default) | `allowlist` | `any`: lets agents add Python packages (`install_packages`, asks first); built by the server with network, wheels only
+ *   TEAM_CODE_ALLOW    comma list of package names (optional `==version`) for `allowlist`
+ *   TEAM_CODE_ENV_ROOT where package environments are kept (default `<data dir>/python-envs`; rebuilt when missing)
+ *   TEAM_CODE_REQUIREMENTS   a requirements file: `local` builds the base environment from it (default: use the interpreter as it is)
  *   TZ                default of the team timezone (Settings): the clock of agents, routines, reminders, chats, digest
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
  *   TEAM_MAX_WORKER_STEPS  hard cap of one background worker turn (default 400; at least 60)
@@ -110,6 +116,7 @@ import {
 import { createPeoplePort, lazyPeoplePort } from './infra/channels/people-admin.ts'
 import { webReminderSession } from './infra/channels/reminders.ts'
 import { webReminderPost } from './infra/channels/web-reminders.ts'
+import { type CodeConfig, codeConfigFromEnv, createCodeRuntime } from './infra/code/index.ts'
 import { sqliteActivityStore } from './infra/db/activity-store.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
@@ -239,6 +246,8 @@ export interface ServerConfig {
   limits?: TeamLimits
   /** The big-data toolkit: data sources of `ingest_source`, limits of `run_code` (`infra/bigdata`). */
   bigData?: BigDataConfig
+  /** The code sandbox (`run_python`): overrides of what `TEAM_CODE_*` say (tests). */
+  code?: Partial<CodeConfig>
   /** Monthly USD limit of the workspace ledger scope. */
   budgetUsd?: number
   /** Model call log retention: rows kept (default 5000) and days kept (default 7). */
@@ -500,7 +509,16 @@ export function compose(config: ServerConfig): Server {
     env: config.env ?? process.env,
     publicUrl,
   })
+  const codeRuntime = createCodeRuntime(
+    {
+      ...codeConfigFromEnv(config.env ?? process.env, config.dbFile),
+      ...config.code,
+    },
+    { programs: () => programStore },
+  )
+  void codeRuntime.start()
   const connectors = createConnectors({
+    code: codeRuntime,
     sqlite: conn.sqlite,
     profiles: profileStore,
     vault,
@@ -749,6 +767,7 @@ export function compose(config: ServerConfig): Server {
     channelInbox: lazyInboxPort(() => channelInboxPort),
     people: lazyPeoplePort(() => peoplePort),
     webUrl,
+    codeSandbox: codeRuntime,
     modes: createModeService(factory, {
       store: sessionModes,
       workspaceDefault: () => settings.get().defaultPermissionMode,

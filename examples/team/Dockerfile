@@ -35,6 +35,17 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 
 # ─── runtime ─────────────────────────────────────────────────────────────────
 FROM oven/bun:${BUN_VERSION} AS runtime
+# Python for `run_python` (TEAM_CODE_DRIVER=local runs it under bubblewrap in the container; the
+# container needs user namespaces: if the OS sandbox is unavailable Settings says "not isolated").
+# The environment is built from wheels only, outside /data: nothing about code needs a volume.
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 python3-venv bubblewrap \
+  && rm -rf /var/lib/apt/lists/*
+COPY examples/team/python/requirements.txt /tmp/requirements.txt
+RUN python3 -m venv /opt/eh-python \
+  && /opt/eh-python/bin/pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements.txt \
+  && rm /tmp/requirements.txt
 WORKDIR /app
 COPY --from=deps /app ./
 COPY tsconfig.json ./
@@ -56,6 +67,7 @@ ENV NODE_ENV=production \
     TEAM_HOST=0.0.0.0 \
     PORT=4000 \
     TEAM_DB=/data/team.db \
+    TEAM_CODE_PYTHON=/opt/eh-python/bin/python \
     TEAM_WEB_DIR=/app/examples/team/web/build \
     TEAM_PUBLIC_URL=http://localhost:4000/api \
     TEAM_WEB_URL=http://localhost:4000

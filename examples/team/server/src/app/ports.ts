@@ -29,6 +29,7 @@ import type {
   ChannelUnlinkedView,
   TablePage,
 } from '../domain/channels.ts'
+import type { CodeSandboxInfo } from '../domain/code-sandbox.ts'
 import type {
   AgentConnectors,
   AgentConnectorView,
@@ -1081,6 +1082,8 @@ export interface Deps {
   people: PeoplePort
   /** Where the browser app lives (the OAuth callback redirects back to it). */
   webUrl: string
+  /** The code sandbox of the Files & Sandbox connector (Settings shows its status). */
+  codeSandbox?: { info(): Promise<CodeSandboxInfo> }
   modes: ModePort
   routines: RoutineStore
   schedule: ScheduleCalc

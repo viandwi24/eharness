@@ -101,6 +101,23 @@
 		}
 	}
 
+	// --- code sandbox (`GET /settings/code`) -----------------------------------------------------
+	let codeSandbox = $state<components['schemas']['CodeSandbox'] | null>(null);
+	const codeSummary = $derived(
+		!codeSandbox
+			? ''
+			: codeSandbox.driver === 'off'
+				? 'Code sandbox: off'
+				: `Code sandbox: ${codeSandbox.python ? `Python ${codeSandbox.python}` : 'Python (version unknown)'} · ${codeSandbox.driver} · ${codeSandbox.isolated ? 'isolated' : 'not isolated'}${codeSandbox.install === 'off' ? '' : ` · installs: ${codeSandbox.install}`}`
+	);
+	async function loadCodeSandbox(): Promise<void> {
+		try {
+			codeSandbox = await api.get('/settings/code');
+		} catch {
+			codeSandbox = null;
+		}
+	}
+
 	function discard(): void {
 		if (settings) fill(settings);
 		errors = {};
@@ -189,6 +206,7 @@
 		untrack(() => {
 			void loadSettings();
 			void loadUsage();
+			void loadCodeSandbox();
 		});
 	});
 
@@ -283,6 +301,21 @@
 									</Field.Field>
 								</Field.Group>
 								{#if formError && !Object.keys(errors).length}<p class="mt-4 text-sm text-destructive-text" role="alert">{formError}</p>{/if}
+							</Card.Content>
+						</Card.Root>
+
+						<Card.Root>
+							<Card.Header>
+								<Card.Title>Code sandbox</Card.Title>
+								<Card.Description>Where agents with "Run Python" (Files &amp; Sandbox) run their scripts. Set by the server's TEAM_CODE_* variables.</Card.Description>
+							</Card.Header>
+							<Card.Content>
+								{#if codeSandbox}
+									<p class="text-sm" data-testid="code-sandbox">{codeSummary}</p>
+									<p class="mt-1 text-xs text-muted-foreground">{codeSandbox.label}</p>
+								{:else}
+									<p class="text-sm text-muted-foreground">Loading…</p>
+								{/if}
 							</Card.Content>
 						</Card.Root>
 

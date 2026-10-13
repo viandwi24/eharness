@@ -2,7 +2,7 @@ import { createRoute, OpenAPIHono } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import { getSettings, patchSettings } from '../../app/settings.ts'
 import { errorResponses } from '../schemas/common.ts'
-import { SettingsPatchSchema, SettingsSchema } from '../schemas/settings.ts'
+import { CodeSandboxSchema, SettingsPatchSchema, SettingsSchema } from '../schemas/settings.ts'
 
 const security = [{ Bearer: [] }]
 
@@ -44,8 +44,37 @@ const patchRoute = createRoute({
   },
 })
 
+const codeRoute = createRoute({
+  method: 'get',
+  path: '/settings/code',
+  tags: ['settings'],
+  summary: 'Code sandbox status',
+  description:
+    'The driver of `run_python` (`off`, `local` or `docker`), the Python version, whether it runs isolated and the package install policy. Set by the `TEAM_CODE_*` variables.',
+  security,
+  responses: {
+    200: {
+      description: 'Status',
+      content: { 'application/json': { schema: CodeSandboxSchema } },
+    },
+    ...errorResponses,
+  },
+})
+
 export function settingsRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(getRoute, (c) => c.json(getSettings(deps), 200))
+    .openapi(codeRoute, async (c) =>
+      c.json(
+        (await deps.codeSandbox?.info()) ?? {
+          driver: 'off' as const,
+          python: null,
+          isolated: false,
+          install: 'off' as const,
+          label: 'Code sandbox is off',
+        },
+        200,
+      ),
+    )
     .openapi(patchRoute, (c) => c.json(patchSettings(deps, c.req.valid('json')), 200))
 }
