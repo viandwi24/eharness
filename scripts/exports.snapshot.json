@@ -108,6 +108,15 @@
     "chatBridgeOf",
     "createReactBindings"
   ],
+  "eharness/code": [
+    "DEFAULT_CODE_IGNORE",
+    "DEFAULT_CODE_LIMITS",
+    "INSTALL_PACKAGES_TOOL",
+    "RUN_PYTHON_TOOL",
+    "code",
+    "parseRequirement",
+    "syncedSandbox"
+  ],
   "eharness/connectors": [
     "CONNECTION_KIND",
     "CREDENTIALS_KIND",
@@ -269,6 +278,8 @@
     "detectOsSandbox",
     "killAllSandboxProcesses",
     "localSandbox",
+    "removeStaleScratch",
+    "scratchSandbox",
     "shell"
   ],
   "eharness/storage/memory": [

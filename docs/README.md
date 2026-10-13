@@ -58,6 +58,7 @@ is needed and what breaks without it, pointing at real code.
 | 25 | [activity](specs/25-activity.md) | `eharness/activity`: `activity()` plugin, `ActivityStore` port, SSE helpers, attention queue (`listAttention`, `answerAttention`) |
 | 26 | [http](specs/26-http.md) | `eharness/http`: `createHarnessHttp` (chat with resume, steering and interrupt, session reads, attention, activity), one `authorize` hook, wire types, `httpConformance` |
 | 27 | [client](specs/27-client.md) | `eharness/client`: typed fetch client, chat transport, chat session (history, follow, steer, recovery), activity feed (SSE, restart detection), attention list, `Store<T>`; `eharness/client/react` |
+| 28 | [code-plugin](specs/28-code-plugin.md) | `eharness/code` (Draft): `run_python` over the virtual file system (sync in/out, compare-and-set write-back), packages, `syncedSandbox()` |
 
 ## Status vocabulary
 

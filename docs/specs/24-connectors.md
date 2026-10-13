@@ -261,7 +261,7 @@ definitions only for the factories the app passes (the module imports no plugin)
 
 | Connector | Capabilities (tools) | Needs from the app |
 |---|---|---|
-| `files` | Read files (`read_file, list_files, grep, glob`), Edit files (`write_file, edit_file`), Delete files (`delete_file`, destructive) | `files.plugin(input)` → `filesystem(...)` |
+| `files` | Read files (`read_file, list_files, grep, glob`), Edit files (`write_file, edit_file`), Delete files (`delete_file`, destructive); with `files.code`: Run Python (`run_python`, external, default `ask`) and, with `code: { install: true }`, Install packages (`install_packages`, external, default `ask`) | `files.plugin(input)` → `filesystem(...)` (+ `code(...)` when `run_python` is in `input.tools`) |
 | `memory` | Read memory (`memory_view`), Save to memory (the five write tools); scopes `workspace` ("Workspace memory", shared) and `agent` ("This agent's memory", private) | `memory.paths` and `memory.plugin(roots)` → `memory({ roots })` |
 | `planning` | Plan with todos (`todo_write`) | `planning.plugin` |
 | `web` | Search the web (`web_search`), Read web pages (`web_fetch`) | `web.search` / `web.read` factories (search backend) |
@@ -274,7 +274,11 @@ so the workspace connection and the agent's own connection become two roots and 
 private root never appears. The memory plugin offers all its tools while a root exists; restrict
 them with the capability modes (rules). `labels` relabels names, descriptions, icons, capability
 texts and scope labels (translation, rebranding). Built-in capabilities default to `allow` (no
-rule). `ensureBuiltinConnections({ store, definitions, agentId? })` creates the workspace
+rule), except the files code capabilities `run` and `install`, which default to `ask`. They exist
+only when `files.code` is set (`true` or `{ install?: boolean }`); the module still imports no
+plugin, so the app's `files.plugin` factory decides what to build: it adds `code()` (spec 28) when
+`run_python` is in `input.tools`, and enables package installs when `install_packages` is.
+`ensureBuiltinConnections({ store, definitions, agentId? })` creates the workspace
 connections (`builtin:<id>`) and, for connectors with `scopeDefaults.agent` (memory), the agent
 connection (`builtin:<id>:agent:<agent>`); idempotent.
 

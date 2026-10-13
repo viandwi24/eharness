@@ -116,6 +116,7 @@ every entry are a committed snapshot, `scripts/exports.snapshot.json`, derived f
 | `eharness/filesystem/node` | `src/filesystem/node.ts` | `diskFs()`, `mountFs()`, `nodeWorkspace()`, `nodeCheckpointStore()`, `nodeRealpath()`, `nodeContainsProtected()`, `compileIgnore()` (Node-only, ADR-0036) |
 | `eharness/web` | `src/web/index.ts` | `webFetch()`, `webSearch()`, `WEB_FETCH_TOOL`, `WEB_SEARCH_TOOL` (spec 22) |
 | `eharness/web/node` | `src/web/node.ts` | `nodeResolveHost()`, the DNS resolver for `webFetch` (Node-only, ADR-0036) |
+| `eharness/code` | `src/code/index.ts` | `code()` plugin (`run_python`, `install_packages`), `syncedSandbox()` (spec 28, Draft) |
 | `eharness/shell` | `src/shell/index.ts` | `shell()` plugin (`bash`, `bash_output`, `kill_shell`, the `shellTasks` service), `localSandbox()`, `detectOsSandbox()`, `killAllSandboxProcesses()`, `capOutput()`, `SAFE_ENV_NAMES` (Node-only, ADR-0036) |
 | `eharness/permissions` | `src/permissions/index.ts` | `permissions()`, `createPermissionEngine()`, `parseRule()` / `matchRule()`, `domainSpecifierMatches()`, `isReadOnlyCommand()`, `modelClassifier()`, `PERMISSION_MODES`, `DEFAULT_PROTECTED_PATHS`, `DEFAULT_TOOL_KINDS` (spec 18) |
 | `eharness/subagent` | `src/subagent/index.ts` | `subagent()` (approvals `'inline'` / `'park'` / `'policy'`, background children), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()`, `reconcileBackgroundChildren()`, tool-name and `SUBAGENT_*` text constants (spec 20, ADR-0035) |

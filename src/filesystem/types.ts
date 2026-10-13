@@ -206,6 +206,23 @@ export interface FileSystem {
 }
 
 /**
+ * The path rules the file tools apply, as a service (spec 08 §2): other plugins (for example
+ * `code()`) use it so a sync in or out of the file system honours the same hidden, read-only,
+ * extension and undeletable rules as `write_file` and `delete_file`. Paths are normalized
+ * absolute paths; folding and prefix rules are the ones of the tools.
+ */
+export interface FilePolicy {
+  /** Hidden from the model (`hiddenPrefixes`, the skills root when hidden). */
+  isHidden(path: string): boolean
+  /** Read-only (`readonlyPrefixes`, the `toolOutputs` directory). Hidden paths are not implied. */
+  isReadonly(path: string): boolean
+  /** Whether a write may use this path's extension (`allowedExtensions`; true when unset). */
+  extensionAllowed(path: string): boolean
+  /** Whether `isUndeletable` forbids deleting the path. */
+  isUndeletable(path: string): boolean
+}
+
+/**
  * The `toolOutputs` service: stores full tool outputs for `toolOutput.strategy: 'evict'`
  * (spec 09 §4).
  *

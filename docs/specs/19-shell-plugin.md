@@ -31,12 +31,25 @@ shell({
 }): HarnessPlugin<'shell', ShellDataParts>
 
 localSandbox(options: LocalSandboxOptions): LocalSandbox  // Sandbox & { state(): SandboxState; setOs(os): void }
+scratchSandbox(o: Omit<LocalSandboxOptions, 'root'> & { parent?: string; prefix?: string }):
+  Promise<LocalSandbox & { root: string; dispose(): Promise<void> }>   // §6
+removeStaleScratch(o?: { parent?: string; prefix?: string; olderThanMs?: number }): Promise<number>
 interface LocalSandboxOptions {
   root: string                      // absolute project root: default cwd of every command
   os?: OsSandboxOptions             // OS isolation, default off
   env?: Record<string, string>      // added to the inherited allow-list (§6)
   inheritEnv?: boolean              // default false
   shell?: string                    // default /bin/bash, else /bin/sh
+  limits?: { cpuSeconds?: number; fileBytes?: number; memoryBytes?: number; processes?: number } // §6
+}
+interface OsSandboxOptions {
+  enabled: boolean
+  network?: boolean                 // default false
+  allowWrite?: string[]             // absolute or relative to root
+  denyRead?: string[]               // paths commands cannot read (absolute or relative to root)
+  denyReadHome?: boolean            // default false: deny the home directory (see §6)
+  allowRead?: string[]              // re-allowed inside a denied path
+  home?: string                     // home for denyReadHome, default os.homedir()
 }
 
 detectOsSandbox(): { kind: 'seatbelt' | 'bubblewrap' | 'none'; path?: string }
@@ -213,28 +226,49 @@ and a `description` that states whether commands are sandboxed. Relative file pa
 - `killAllSandboxProcesses(signal?)` terminates every live group of every local sandbox in the
   process (exit handlers). With `SIGKILL`, or when nothing runs, it returns at once; otherwise a
   SIGKILL follows after 2 s from an unref'd timer, which cannot run inside `process.exit`.
-- `state()` is `{ enabled, kind, network }`: `enabled` is true only when requested **and** the
+- `limits` prefixes every command with `ulimit` in the spawned shell: `cpuSeconds` → `-t`;
+  `fileBytes` → `-f` (rounded up to the shell's block: 1024 bytes for `bash`, 512 for other shells);
+  `memoryBytes` → `-v` (KiB), **Linux only, not applied on macOS**; `processes` → `-u`, best
+  effort (a failing `ulimit -u` is ignored; the others abort the command with exit 126). Values
+  must be integers ≥ 1, else `localSandbox` throws `EH_CONFIG_INVALID`. Limits apply with or
+  without the OS sandbox.
+- `scratchSandbox(options)` creates a directory with `mkdtemp` under `parent` (default
+  `os.tmpdir()`, name prefix default `eh-code-`) and returns a `localSandbox` rooted there, plus
+  `root` and `dispose()`: it SIGKILLs the process groups of that sandbox's commands, then removes
+  the directory recursively; idempotent. `removeStaleScratch({ parent, prefix, olderThanMs })`
+  removes directories of that prefix not modified for `olderThanMs` (default 24 h), returns the
+  count; for leftovers of crashed processes.
+- `state()` is `{ enabled, kind, network, writableRoots, denyRead }`: `enabled` is true only when requested **and** the
   platform tool exists; never claim isolation when `kind` is `'none'`. `setOs()` applies to
   commands started afterwards.
 
 ### OS sandbox profiles
 
-Same policy on both platforms: everything is readable; writes only under the root, `allowWrite`
-and temp locations; network off unless `network: true`.
+Same policy on both platforms: everything is readable except `denyRead` (and the home directory
+with `denyReadHome: true`); writes only under the root, `allowWrite` and temp locations; network
+off unless `network: true`. With `denyReadHome` the home is denied **except** the root,
+`allowWrite` and `allowRead` entries inside it (the root and `allowWrite` are also re-allowed
+inside any `denyRead` path). `state().denyRead` lists the effective denied paths (home included;
+empty when the sandbox is not active).
 
 - **macOS** Seatbelt (`/usr/bin/sandbox-exec`, deprecated by Apple but shipped): profile
   `(allow default) (deny file-write*)`, re-allow `subpath` of root, `allowWrite` (symlink-resolved
   and as given), `/tmp`, `/private/tmp`, `/private/var/folders`, `os.tmpdir()`, `/dev/null`,
   `/dev/zero`, `/dev/dtracehelper`, ttys; `(deny network*)` except unix sockets (git credential
-  helpers, ssh-agent, DNS through mDNSResponder).
+  helpers, ssh-agent, DNS through mDNSResponder). Denied paths: `(deny file-read* (subpath p))`
+  for each path as given and symlink-resolved, after the allow-default; re-allowed paths follow as
+  `(allow file-read* (subpath p))` plus `(allow file-read-metadata (literal d))` for every
+  directory above them (needed to reach them).
 - **Linux** bubblewrap (`bwrap`): `--ro-bind / /`, `--dev /dev`, `--proc /proc`, `--tmpfs /tmp`
   (before the binds, the root may live in `/tmp`), `--bind` for root and `allowWrite`,
-  `--unshare-pid --unshare-ipc --new-session` (no view of or signals to host processes),
+  denied directories become `--tmpfs <p>`, denied files `--ro-bind /dev/null <p>` (missing paths
+  are skipped), then re-allowed paths are `--ro-bind` back and root/`allowWrite` `--bind` (after
+  the tmpfs, so a root inside a denied directory stays visible); `--unshare-pid --unshare-ipc --new-session` (no view of or signals to host processes),
   `--unshare-net` unless network, `--die-with-parent`, `--chdir <root>`.
 - Other platforms or a missing tool: `kind: 'none'`, the command runs unwrapped.
 
-Not covered: reads (secrets under `$HOME` stay readable), CPU/memory/process limits, local
-unix-socket IPC on macOS. It is defence in depth, not a jail for hostile code: use a container or
+Not covered: reads outside `denyRead` (secrets under `$HOME` stay readable unless `denyReadHome`),
+memory limits on macOS, local unix-socket IPC on macOS. It is defence in depth, not a jail for hostile code: use a container or
 VM driver for that.
 
 ## 7. Errors and warnings

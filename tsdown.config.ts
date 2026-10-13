@@ -6,6 +6,7 @@ export default defineConfig({
     'filesystem/index': 'src/filesystem/index.ts',
     'filesystem/memory': 'src/filesystem/memory.ts',
     'filesystem/node': 'src/filesystem/node.ts',
+    'code/index': 'src/code/index.ts',
     'connectors/index': 'src/connectors/index.ts',
     'storage/memory': 'src/storage/memory.ts',
     'mcp/index': 'src/mcp/index.ts',

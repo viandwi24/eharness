@@ -31,6 +31,8 @@ export const BUILTIN_TOOLS = {
   filesRead: ['read_file', 'list_files', 'grep', 'glob'],
   filesEdit: ['write_file', 'edit_file'],
   filesDelete: ['delete_file'],
+  filesRun: ['run_python'],
+  filesInstall: ['install_packages'],
   memoryRead: ['memory_view'],
   memoryWrite: [
     'memory_create',
@@ -99,7 +101,15 @@ export interface BuiltinMemoryRoot {
 export interface BuiltinConnectorsOptions {
   labels?: Partial<Record<BuiltinId, BuiltinLabel>>
   /** `filesystem({ fs, tools: input.tools })`. */
-  files?: { plugin: BuiltinFactory }
+  files?: {
+    plugin: BuiltinFactory
+    /**
+     * Also offer the code sandbox capabilities (`run`, and `install` with `install: true`), both
+     * defaulting to `ask`. The factory decides what to build: it adds `code()` when `run_python`
+     * is in `input.tools` (and package install when `install_packages` is).
+     */
+    code?: boolean | { install?: boolean }
+  }
   /**
    * Memory: where each scope lives and how to build the plugin from the roots, for example
    * `plugin: (roots) => memory({ roots: () => roots.map(({ path, write, label }) => ({ path, write, label })) })`.
@@ -131,6 +141,7 @@ function cap(
   kind: CapabilityDef['kind'],
   tools: readonly string[],
   label?: BuiltinCapabilityLabel,
+  defaultMode: CapabilityMode = 'allow',
 ): CapabilityDef {
   return {
     id,
@@ -139,7 +150,7 @@ function cap(
     kind,
     tools: [...tools],
     // built-in tools stay governed by the app's permission mode: `allow` adds no rule
-    defaultMode: 'allow',
+    defaultMode,
   }
 }
 
@@ -151,7 +162,7 @@ const inputOf = (ctx: ConnectorActivationContext): BuiltinInput => ({
 
 /**
  * The built-in connector definitions for the factories the app supplies. Built-in capabilities
- * default to `allow`, which adds no rule (the app's permission mode decides: reading is free,
+ * default to `allow` (except the files code capabilities `run` and `install`, which default to `ask`), which adds no rule (the app's permission mode decides: reading is free,
  * writing asks in `default` mode); `ask` adds an ask rule, `off` a deny rule. Built-in tools are
  * never pinned (spec 24 §7): `bypassPermissions` skips their asks like any other built-in tool.
  *
@@ -208,6 +219,36 @@ export function builtinConnectors(options: BuiltinConnectorsOptions = {}): Conne
 
   if (options.files !== undefined) {
     const factory = options.files.plugin
+    const code = options.files.code
+    const codeOn = code !== undefined && code !== false
+    const install = typeof code === 'object' && code.install === true
+    const codeCapabilities: CapabilityDef[] = []
+    if (codeOn) {
+      codeCapabilities.push(
+        cap(
+          'run',
+          'Run Python',
+          'Run Python scripts over the files in a sandbox.',
+          'external',
+          BUILTIN_TOOLS.filesRun,
+          L.files?.capabilities?.run,
+          'ask',
+        ),
+      )
+    }
+    if (install) {
+      codeCapabilities.push(
+        cap(
+          'install',
+          'Install packages',
+          'Add Python packages to the sandbox.',
+          'external',
+          BUILTIN_TOOLS.filesInstall,
+          L.files?.capabilities?.install,
+          'ask',
+        ),
+      )
+    }
     out.push(
       defineConnector({
         ...base('files', 'Files', 'Read and change files in the workspace.', 'workspace', 'folder'),
@@ -238,6 +279,7 @@ export function builtinConnectors(options: BuiltinConnectorsOptions = {}): Conne
             BUILTIN_TOOLS.filesDelete,
             L.files?.capabilities?.delete,
           ),
+          ...codeCapabilities,
         ],
         ...scoped('files', { workspace: { defaultEnabled: true } }),
         activate: (ctx) => factory(inputOf(ctx), ctx),

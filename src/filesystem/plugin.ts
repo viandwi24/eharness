@@ -16,11 +16,12 @@ import {
 } from '../index.ts'
 import { checkpointedFs, checkpointTurnKey, copyCheckpoints } from './checkpoints.ts'
 import { lastReadOf } from './last-read.ts'
-import { joinPath, normalizePath, normalizePrefixes } from './paths.ts'
+import { isUnderAnyFolded, joinPath, normalizePath, normalizePrefixes } from './paths.ts'
 import { fsSkillSource } from './skill-source.ts'
 import { createFileTools, DEFAULT_MEDIA_MAX_BYTES } from './tools.ts'
 import type {
   FileChangeData,
+  FilePolicy,
   FileSystem,
   FilesystemOptions,
   FileToolName,
@@ -111,9 +112,29 @@ function toolOutputStore(fs: FileSystem, dir: string): ToolOutputStore {
   }
 }
 
+/** The `filePolicy` service over the normalized options the file tools use (spec 08 §2). */
+function createFilePolicy(env: {
+  hidden: readonly string[]
+  readonly: readonly string[]
+  allowedExtensions: readonly string[] | undefined
+  isUndeletable: ((path: string) => boolean) | undefined
+}): FilePolicy {
+  return {
+    isHidden: (path) => isUnderAnyFolded(path, env.hidden),
+    isReadonly: (path) => isUnderAnyFolded(path, env.readonly),
+    extensionAllowed(path) {
+      if (env.allowedExtensions === undefined) return true
+      const base = path.slice(path.lastIndexOf('/') + 1)
+      const dot = base.lastIndexOf('.')
+      return env.allowedExtensions.includes(dot > 0 ? base.slice(dot).toLowerCase() : '')
+    },
+    isUndeletable: (path) => env.isUndeletable?.(path) === true,
+  }
+}
+
 /**
- * The filesystem plugin: provides the `fs` service (a {@link FileSystem}) and the `toolOutputs`
- * service, the file tools `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
+ * The filesystem plugin: provides the `fs` service (a {@link FileSystem}), the `toolOutputs`
+ * service and the `filePolicy` service, the file tools `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
  * `grep` and `glob` with the editing rules of spec 08 §4 (read before edit/overwrite/delete, `STALE:`
  * with the current content, smart replace, optimistic locking), the `data-filesystem.change`
  * part on every mutation, and skills autoload from the same file system.
@@ -219,7 +240,7 @@ export function filesystem(
 
   return definePlugin({
     name: 'filesystem',
-    provides: outputsDir === undefined ? ['fs'] : ['fs', 'toolOutputs'],
+    provides: outputsDir === undefined ? ['fs', 'filePolicy'] : ['fs', 'toolOutputs', 'filePolicy'],
     dataParts: { change: changePart },
     setup() {
       const store = opts.checkpoints
@@ -258,11 +279,17 @@ export function filesystem(
               onError: (path, error) =>
                 ctx.log.warn(`checkpoint of ${path} failed: ${String(error)}`),
             })
+      const filePolicy = createFilePolicy({
+        hidden,
+        readonly,
+        allowedExtensions,
+        isUndeletable: opts.isUndeletable,
+      })
       const contribution: SessionContribution<FilesystemDataParts> = {
         services:
           outputsDir === undefined
-            ? { fs: visible }
-            : { fs: visible, toolOutputs: toolOutputStore(fs, outputsDir) },
+            ? { fs: visible, filePolicy }
+            : { fs: visible, toolOutputs: toolOutputStore(fs, outputsDir), filePolicy },
         tools: createFileTools(
           {
             fs: visible,

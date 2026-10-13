@@ -18,6 +18,7 @@ Everything a user can observe without reading our source:
    | `eharness/guard`, `eharness/group`, `eharness/openapi` | Draft | 0.5 | specs 15-17 |
    | `eharness/permissions`, `eharness/subagent`, `eharness/ask`, `eharness/web` | Draft | 0.7 | specs 18, 20-22 |
    | `eharness/shell` | Draft | 0.7 | spec 19; Node-only (ADR-0036) |
+   | `eharness/code` | Draft | 0.9 | spec 28; runtime-neutral |
    | `eharness/web/node` | Draft | 0.8 | `nodeResolveHost` for `webFetch`; Node-only (ADR-0036) |
    | `eharness/providers` | Draft | 0.8 | spec 23 |
    | `eharness/connectors` | Draft | 0.8 | spec 24 |

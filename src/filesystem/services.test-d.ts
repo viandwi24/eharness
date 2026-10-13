@@ -8,7 +8,7 @@ import {
   type HarnessContext,
   type InferHarnessUIMessage,
 } from '../index.ts'
-import type { FileChangeData, FileSystem, ToolOutputStore } from './index.ts'
+import type { FileChangeData, FilePolicy, FileSystem, ToolOutputStore } from './index.ts'
 import { filesystem } from './index.ts'
 import { inMemoryFs } from './memory.ts'
 
@@ -18,6 +18,7 @@ type Expect<T extends true> = T
 
 type _fs = Expect<Equal<HarnessContext['services']['fs'], FileSystem>>
 type _outputs = Expect<Equal<HarnessContext['services']['toolOutputs'], ToolOutputStore>>
+type _policy = Expect<Equal<HarnessContext['services']['filePolicy'], FilePolicy>>
 
 definePlugin({
   name: 'reader',

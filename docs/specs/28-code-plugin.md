@@ -54,7 +54,7 @@ interface CodeSandbox extends Sandbox {
   dispose?(): Promise<void>
   /** Optional: what isolation the driver gives. `localSandbox` exposes `state()` instead. */
   isolation?: { isolated: boolean; label: string }
-  /** Optional fast path for sync-out: files under `dir` with sha1, relative to the root. */
+  /** Optional fast path for sync-out: files under `dir` (`work` or `.`) with sha1; paths relative to the root (`work/a.csv`). */
   listFiles?(dir: string): Promise<Array<{ path: string; size: number; sha1: string }>>
 }
 
@@ -78,8 +78,9 @@ Plugin: name `code`, `requires: ['fs']` (it must come after `filesystem()`), no 
 instructions (the tool descriptions carry the text), service `codeSandbox` (§7). Tools in this
 order: `run_python`, then `install_packages` (only when `packages.install !== 'off'`). Invalid
 options throw `EH_CONFIG_INVALID` from `code()`: a mount that does not start and end with `/`,
-overlapping mounts, `install !== 'off'` without `installer`, `requirements` without `envRoot` and
-`installer`, `install: 'allowlist'` without `allow`, a non-positive limit.
+overlapping mounts, `install !== 'off'` without `installer` or `envRoot`, `requirements` without
+`envRoot` and `installer`, `install !== 'off'` without a writable mount (or `listPath`),
+`install: 'allowlist'` without `allow`, a non-positive limit.
 
 Exports: `code`, `syncedSandbox`, `RUN_PYTHON_TOOL` (`'run_python'`), `INSTALL_PACKAGES_TOOL`
 (`'install_packages'`), `DEFAULT_CODE_LIMITS`, `DEFAULT_CODE_IGNORE`, `parseRequirement` and the
@@ -113,7 +114,8 @@ description is computed when the session's tools are resolved and cached per env
 it changes only when the environment changes (prompt-cache prefix, spec 02 §5). It recommends
 writing the script with `write_file` and running it with `file`.
 
-Run: sync-in (§4.2), then the interpreter (§5) runs `-E -s <script> <args…>` in the root with the
+Run: sync-in (§4.2), then the interpreter (§5) runs `-E -s -B -u <script> <args…>` (`-B` and `-u`
+because `-E` ignores the matching environment variables, which are passed too) in the root with the
 environment `PYTHONDONTWRITEBYTECODE=1`, `MPLBACKEND=Agg`, `PYTHONUNBUFFERED=1`,
 `HOME=.eh-code/home`, plus what the driver adds; then sync-out (§4.3). One run per session at a time
 (a second call waits for the first).
@@ -133,7 +135,8 @@ Lines after the footer appear only when non-empty; each list shows at most 20 pa
 `… and <n> more`. Reasons (exact texts): `changed in the file system while the code ran`,
 `read-only`, `not allowed`, `cannot be deleted`, `extension not allowed`, `binary files are not
 supported by this file system`, `larger than <n> MB`, `too many files changed (limit <n>)`,
-`file name not supported`, `the run failed` (only with `writeBack: 'success'`, as one line:
+`file name not supported`, `too many files (limit <n>)` and `over the sync size limit (<n> MB)`
+(not copied in, caps of §4.2), `the run failed` (only with `writeBack: 'success'`, as one line:
 `Not saved (the run failed): <n> changed files.`).
 
 Other outcomes: timeout `(timed out after <n>s)` replaces the exit code part of the footer;
@@ -155,8 +158,10 @@ Hints appended before the footer:
 
 Input `{ packages: string[] }` (1–20 requirement lines: a name and an optional version specifier,
 `parseRequirement`; no URLs, paths, options or `-r`). `metadata.risk` = `installRisk`. Steps:
-validate every line (`ERROR: "<line>" is not a package name with an optional version.`), check the
-allowlist (`REJECTED: <name> is not on the list of allowed packages.`), merge with the stored list
+validate every line (`parseRequirement`: a name, an optional version specifier; extras, markers,
+URLs and options are rejected) (`ERROR: "<line>" is not a package name with an optional version.`), check the
+allowlist (an entry without a specifier allows any version; an entry with one requires exactly
+that specifier) (`REJECTED: <name> is not on the list of allowed packages.`), merge with the stored list
 (§5.2), build the workspace environment with the installer, write the list. Result:
 `Installed: pandas-ta 0.3, … (<s>s). They can be imported in the next run_python call.` or
 `ERROR: installing failed: <last 2 000 characters of the installer output>` (the stored list is
@@ -196,8 +201,9 @@ A second run over unchanged files uploads nothing.
    manifest, missing now). Ignored paths (§4.4) are never written back.
 3. With `writeBack: 'success'` and a failed run (non-zero exit, timeout, abort, sandbox error):
    stop here; report the count; the manifest keeps the baseline values (the sandbox now differs,
-   so the next sync-in re-uploads what the run changed: the marker is not touched, but the changed
-   paths are dropped from the manifest).
+   so the next sync-in re-uploads what the run changed: the marker is not touched, the changed and
+   deleted paths are dropped from the manifest, and files the run created are removed from the
+   sandbox so a later successful run does not save them).
 4. For each path (sorted, at most `maxWriteBackFiles`): policy (`readonly` mount, `filePolicy`
    read-only / extension / undeletable, `access(path, 'write' | 'delete')`), then
    compare-and-set: write with `ifVersion` = the manifest's `fsVersion` (`null` for a new path);
@@ -205,7 +211,9 @@ A second run over unchanged files uploads nothing.
    other bytes through `writeBytes` with `detectMediaType` (no `writeBytes`: not saved, reason
    `binary files are not supported…`). A conflict or `exists` result is not saved (reason
    `changed in the file system while the code ran`) and the path is dropped from the manifest so
-   the next sync-in brings the file system's version back.
+   the next sync-in brings the file system's version back. The same holds for every path that is
+   not saved for another reason (read-only, not allowed, …). `packages.listPath` is never written
+   back (`not allowed`): a script cannot change the stored requirement list.
 5. The manifest takes the new `fsVersion` and sha1 of every saved path.
 
 ### 4.4 Ignore list
@@ -219,7 +227,9 @@ virtual path.
 The first sync of a session writes `.eh-code/marker` with a random id and keeps it in the manifest.
 Every sync-in reads it (`readTextFile`): missing or different (the directory was wiped, the
 container restarted, another instance) → the manifest is cleared, a new marker written, and the
-sync-in is full. The base environment and the workspace environment are probed the same way
+sync-in is full. After a sandbox error during a run (§3) the bridge is marked dirty: the next
+sync-in removes the mount directories in the sandbox (`rm -rf`, not for a `/` mount) and uploads
+everything. The base environment and the workspace environment are probed the same way
 (§5.3). No volume is required; the result of a run that was in flight when the sandbox died is
 `ERROR: the sandbox stopped during the run; nothing was saved.`
 
@@ -238,7 +248,7 @@ runs the script directly on the files (no manifest, no write-back reports).
 - No `requirements`: the base interpreter is `python.command` (a container image with its
   packages, or the host's `python3`).
 - `requirements`: the plugin builds `<envRoot>/base-<key>` with the installer the first time it is
-  needed (`<command> -m venv <dir>`, then `<dir>/bin/python -m pip install --only-binary=:all:
+  needed (the first `run_python`, reported as a rebuild; never at session open) (`<command> -m venv <dir>`, then `<dir>/bin/python -m pip install --only-binary=:all:
   [--index-url <url>] <lines…>`; `uv venv` + `uv pip install` when `uv` is on the installer's PATH).
   `key` = first 16 hex of SHA-1 over `<python version>\n<sorted requirement lines>`. An existing
   directory with a `.eh-ok` file is reused (built by an earlier session or process); building
@@ -263,7 +273,8 @@ runs the script directly on the files (no manifest, no write-back reports).
 ### 5.3 Probe
 
 `<python> -c <probe>` prints `{ version, packages: [[name, version], …] }` from
-`importlib.metadata`. Cached per environment key (plugin instance, process lifetime). Used for the
+`importlib.metadata`. Cached per environment key (plugin instance, process lifetime). Only an environment that is
+already built is probed for the description (otherwise `packages unknown`). Used for the
 description (§3) and the `ModuleNotFoundError` hint.
 
 ## 6. Isolation
@@ -283,7 +294,8 @@ interface CodeSandboxService {
 }
 ```
 
-`filePolicy` is provided by the filesystem plugin (spec 08 §2) and read by name when present:
+`filePolicy` is provided by the filesystem plugin (spec 08 §2) and read from `ctx.services` when
+present (a missing service means no policy):
 
 ```ts
 interface FilePolicy {

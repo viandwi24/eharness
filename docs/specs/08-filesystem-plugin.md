@@ -46,11 +46,11 @@ export interface GrepHit { path: string; line: number; text: string }
 export type MoveResult = { ok: true } | { ok: false; reason: 'missing' | 'exists' | 'conflict'; currentVersion?: string }
 
 declare module 'eharness' {
-  interface HarnessServices { fs: FileSystem; toolOutputs: ToolOutputStore }
+  interface HarnessServices { fs: FileSystem; toolOutputs: ToolOutputStore; filePolicy: FilePolicy }
 }
 ```
 
-The augmentation declares both services as present; `toolOutputs` is not provided with
+The augmentation declares the services as present; `toolOutputs` is not provided with
 `toolOutputs: false` (§2), and accessing a service that no plugin provides throws
 `EH_SERVICE_MISSING` (spec 01 §6). Code that may run without it (e.g. the core's `evict`
 strategy) looks the service up by name and falls back.
@@ -135,8 +135,8 @@ export interface FilesystemOptions {
 }
 ```
 
-Definition: `name: 'filesystem'`, `provides: ['fs', 'toolOutputs']` (only `['fs']` with
-`toolOutputs: false`), `dataParts: { change }`. Tools, services and the skill source are
+Definition: `name: 'filesystem'`, `provides: ['fs', 'toolOutputs', 'filePolicy']` (without
+`'toolOutputs'` when `toolOutputs: false`), `dataParts: { change }`. Tools, services and the skill source are
 contributed in the session phase, so every session gets its own `fs` from the resolver, called
 once per live session with the plugin's context. Invalid options throw `EH_CONFIG_INVALID` from
 `filesystem()`; a resolver that returns no `FileSystem` (an object with `read`, `write`,
@@ -149,7 +149,23 @@ with trailing dots and spaces ignored (`foldSegment`, the permissions engine's r
 `/secrets.` are under `/secrets`, since an extra match only hides or protects a little more.
 Exported constants: `DEFAULT_MAX_READ_CHARS` (50_000) and `DEFAULT_TOOL_OUTPUTS_DIR`.
 
-Option `toolOutputs` (above) controls the second service, used by `toolOutput.strategy: 'evict'` (spec 09 §4):
+The `filePolicy` service exposes the path rules the file tools apply, so other plugins that move
+files outside the tools (for example `code()`, spec 28) honour them:
+
+```ts
+export interface FilePolicy {
+  isHidden(path: string): boolean          // hiddenPrefixes, plus the skills root when hidden
+  isReadonly(path: string): boolean        // readonlyPrefixes, plus the toolOutputs directory
+  extensionAllowed(path: string): boolean  // allowedExtensions (true when unset)
+  isUndeletable(path: string): boolean     // the isUndeletable option
+}
+```
+
+It is built from the same normalized options as the tools (same case/NFC folding for prefixes and
+the same extension comparison), always provided, and takes normalized absolute paths. Hidden and
+read-only are independent answers; the tools reject a hidden path before a read-only one.
+
+Option `toolOutputs` (above) controls the `toolOutputs` service, used by `toolOutput.strategy: 'evict'` (spec 09 §4):
 
 ```ts
 export interface ToolOutputStore {

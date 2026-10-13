@@ -30,6 +30,7 @@ const nonCore = new Set([
   'permissions',
   'providers',
   'connectors',
+  'code',
   'shell',
   'subagent',
   'web',

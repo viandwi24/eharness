@@ -25,7 +25,7 @@ import { classifyToolResult } from './classify.ts'
 import { inMemoryFs } from './memory.ts'
 import { filesystem } from './plugin.ts'
 import { GREP_PATTERN_RULE } from './text.ts'
-import type { FileSystem, FilesystemOptions } from './types.ts'
+import type { FilePolicy, FileSystem, FilesystemOptions } from './types.ts'
 import { contentVersion } from './version.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
@@ -916,6 +916,65 @@ describe('services, state and resolver', () => {
     expect((await fs.read('/outputs/abc.txt'))?.content).toBe('text')
     expect(paths[0]).not.toBe(paths[1])
     expect(paths[1]).toBe('/outputs/a_b.txt')
+  })
+
+  test('filePolicy service mirrors the rules of the file tools', async () => {
+    let policy: FilePolicy | undefined
+    const reader = definePlugin({
+      name: 'policy-reader',
+      requires: ['filePolicy'],
+      session: async (ctx) => {
+        policy = ctx.services.filePolicy
+      },
+    })
+    const { agent } = setup(
+      [{ text: 'ok' }],
+      {
+        fs: inMemoryFs(),
+        hiddenPrefixes: ['/Secret'],
+        readonlyPrefixes: ['/vendor'],
+        allowedExtensions: ['md', '.TXT'],
+        isUndeletable: (path) => path === '/keep.md',
+        skills: { root: '/skills' },
+      },
+      { plugins: [reader] },
+    )
+    await agent.session('s').send('go').result
+    expect(policy?.isHidden('/secret/a.md')).toBe(true)
+    expect(policy?.isHidden('/skills/x/SKILL.md')).toBe(true)
+    expect(policy?.isHidden('/docs/a.md')).toBe(false)
+    expect(policy?.isReadonly('/vendor/lib.md')).toBe(true)
+    expect(policy?.isReadonly('/.eharness/tool-outputs/a.txt')).toBe(true)
+    expect(policy?.isReadonly('/docs/a.md')).toBe(false)
+    expect(policy?.extensionAllowed('/a.MD')).toBe(true)
+    expect(policy?.extensionAllowed('/a.txt')).toBe(true)
+    expect(policy?.extensionAllowed('/a.py')).toBe(false)
+    expect(policy?.extensionAllowed('/Makefile')).toBe(false)
+    expect(policy?.isUndeletable('/keep.md')).toBe(true)
+    expect(policy?.isUndeletable('/other.md')).toBe(false)
+  })
+
+  test('filePolicy without options allows everything', async () => {
+    let policy: FilePolicy | undefined
+    const reader = definePlugin({
+      name: 'policy-reader',
+      requires: ['filePolicy'],
+      session: async (ctx) => {
+        policy = ctx.services.filePolicy
+      },
+    })
+    const { agent } = setup(
+      [{ text: 'ok' }],
+      { fs: inMemoryFs(), toolOutputs: false },
+      {
+        plugins: [reader],
+      },
+    )
+    await agent.session('s').send('go').result
+    expect(policy?.isHidden('/a')).toBe(false)
+    expect(policy?.isReadonly('/a')).toBe(false)
+    expect(policy?.extensionAllowed('/a.bin')).toBe(true)
+    expect(policy?.isUndeletable('/a')).toBe(false)
   })
 
   test('tools option selects the exposed tools', async () => {

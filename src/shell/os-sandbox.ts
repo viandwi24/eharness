@@ -5,12 +5,14 @@
  *
  * Seatbelt (`sandbox-exec`) is deprecated by Apple but still ships with macOS. If the platform
  * tool is missing, {@link detectOsSandbox} reports `none` and callers must NOT pretend to be
- * sandboxed. Not covered: reads (secrets in `$HOME` stay readable), CPU/memory limits, and, on
- * macOS, local unix-socket IPC (allowed on purpose so tools like git, ssh-agent and DNS lookups
- * through mDNSResponder keep working).
+ * sandboxed. Reads are open by default; `denyRead` / `denyReadHome` hide paths (Seatbelt
+ * `deny file-read*`, bubblewrap `--tmpfs` / `--ro-bind /dev/null`). Not covered: CPU/memory limits
+ * (see `limits` of the local sandbox) and, on macOS, local unix-socket IPC (allowed on purpose so
+ * tools like git, ssh-agent and DNS lookups through mDNSResponder keep working).
  */
-import { existsSync, realpathSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, realpathSync, statSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, sep } from 'node:path'
 
 /** Which OS mechanism is available. */
 export type OsSandboxKind = 'seatbelt' | 'bubblewrap' | 'none'
@@ -23,6 +25,14 @@ export interface WrapOptions {
   allowWrite: string[]
   /** Allow network access. */
   network: boolean
+  /** Absolute paths whose content must not be readable. */
+  denyRead?: string[]
+  /** Deny the home directory (except the root, `allowWrite` and `allowRead` inside it). */
+  denyReadHome?: boolean
+  /** Paths re-allowed for reading inside a denied path (the root and `allowWrite` always are). */
+  allowRead?: string[]
+  /** Home directory for `denyReadHome`; default `os.homedir()`. */
+  home?: string
   kind: OsSandboxKind
   /** Absolute path of the sandbox tool; default: `/usr/bin/sandbox-exec` or `bwrap` on PATH. */
   toolPath?: string
@@ -75,13 +85,37 @@ function writableDirs(opts: Pick<WrapOptions, 'root' | 'allowWrite'>): string[] 
   return [...set]
 }
 
+type ReadOpts = Pick<
+  WrapOptions,
+  'root' | 'allowWrite' | 'denyRead' | 'denyReadHome' | 'allowRead' | 'home'
+>
+
+function isInside(path: string, dir: string): boolean {
+  return path === dir || path.startsWith(dir.endsWith(sep) ? dir : dir + sep)
+}
+
+/** The denied paths (as given) and the paths re-allowed inside them (root, `allowWrite`, `allowRead`). */
+export function readPolicy(opts: ReadOpts): { deny: string[]; reallow: string[] } {
+  const deny = [
+    ...new Set([...(opts.denyRead ?? []), ...(opts.denyReadHome ? [opts.home ?? homedir()] : [])]),
+  ]
+  if (deny.length === 0) return { deny, reallow: [] }
+  const reallow = [...new Set([opts.root, ...opts.allowWrite, ...(opts.allowRead ?? [])])].filter(
+    (p) => deny.some((d) => isInside(p, d) || isInside(real(p), real(d))),
+  )
+  return { deny, reallow }
+}
+
+/** Both spellings of each path (as given and symlink-resolved), unique. */
+function bothForms(paths: string[]): string[] {
+  return [...new Set(paths.flatMap((p) => [p, real(p)]))]
+}
+
 /**
  * Generate the Seatbelt profile (SBPL). Default-allow with file writes and network denied, then
  * writes re-allowed for the root, `allowWrite`, temp dirs and a few device files.
  */
-export function seatbeltProfile(
-  opts: Pick<WrapOptions, 'root' | 'allowWrite' | 'network'>,
-): string {
+export function seatbeltProfile(opts: ReadOpts & Pick<WrapOptions, 'network'>): string {
   const subpaths = [
     ...writableDirs(opts),
     '/tmp',
@@ -102,6 +136,19 @@ export function seatbeltProfile(
     '  (regex #"^/dev/tty")',
     '  (regex #"^/dev/ttys[0-9]+$"))',
   ]
+  const { deny, reallow } = readPolicy(opts)
+  if (deny.length > 0) {
+    for (const p of bothForms(deny)) lines.push(`(deny file-read* (subpath ${sbplString(p)}))`)
+    for (const p of bothForms(reallow)) lines.push(`(allow file-read* (subpath ${sbplString(p)}))`)
+    // Walking down to a re-allowed path needs metadata of every directory above it.
+    const parents = new Set<string>()
+    for (const p of bothForms(reallow)) {
+      for (let d = dirname(p); d !== dirname(d); d = dirname(d)) parents.add(d)
+    }
+    for (const d of parents) {
+      lines.push(`(allow file-read-metadata (literal ${sbplString(d)}))`)
+    }
+  }
   if (!opts.network) {
     lines.push('(deny network*)')
     // Local unix sockets stay usable (git credential helpers, ssh-agent, mDNSResponder).
@@ -143,6 +190,19 @@ export function wrapCommand(command: string, opts: WrapOptions): string[] {
       '--tmpfs',
       '/tmp', // before the binds: the root may live under /tmp
     ]
+    const { deny, reallow } = readPolicy(opts)
+    for (const p of deny) {
+      let isDir: boolean
+      try {
+        isDir = statSync(p).isDirectory()
+      } catch {
+        continue // nothing to hide, and bwrap fails on a missing mount source
+      }
+      if (isDir) argv.push('--tmpfs', p)
+      else argv.push('--ro-bind', '/dev/null', p)
+    }
+    // Re-allowed paths come back after the tmpfs; the root and allowWrite stay writable.
+    for (const d of reallow) if (!dirs.includes(d)) argv.push('--ro-bind', d, d)
     for (const d of dirs) argv.push('--bind', d, d)
     // Own PID and IPC namespaces and a new session (no TIOCSTI / signals to the host's processes).
     argv.push('--unshare-pid', '--unshare-ipc', '--new-session')

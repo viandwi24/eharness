@@ -302,6 +302,7 @@ subpaths import `node:` built-ins; everything else is runtime-neutral.
 | `eharness/ask` | Draft | `ask()` (`ask_user_question`), `pendingQuestions()`, `answerOutput()` |
 | `eharness/web` | Draft | `webFetch()` (SSRF guards, Markdown) and `webSearch()` (provider-agnostic) |
 | `eharness/web/node` | Draft, Node-only | `nodeResolveHost()`: a DNS resolver for `webFetch` |
+| `eharness/code` | Draft | `code()` (`run_python`, `install_packages`): Python over the virtual file system with incremental sync and compare-and-set write-back, `syncedSandbox()` |
 | `eharness/shell` | Draft, Node-only | `shell()` (`bash`, background tasks), `localSandbox()`, `detectOsSandbox()` |
 | `eharness/providers` | Draft (0.8) | `createProviderManager()`, provider definitions, `inMemoryProfileStore()`, `sealedProfileStore()`, `formSpec()`, `SecretVault`s, catalog loaders |
 | `eharness/connectors` | Draft (0.8) | `createConnectorService()`, `defineConnector()`, setup flows, enablement, `activateConnectors()`, built-in connectors |

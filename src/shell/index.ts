@@ -30,8 +30,13 @@ export {
   type LocalSandboxOptions,
   localSandbox,
   type OsSandboxOptions,
+  removeStaleScratch,
   SAFE_ENV_NAMES,
   type Sandbox,
+  type SandboxLimits,
   type SandboxState,
+  type ScratchSandbox,
+  type ScratchSandboxOptions,
+  scratchSandbox,
 } from './sandbox-local.ts'
 export type { ShellTask, ShellTaskStatus, ShellTasks } from './tasks.ts'

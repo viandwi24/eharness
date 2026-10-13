@@ -78,6 +78,7 @@
     "./ask": "./dist/ask/index.js",
     "./client": "./dist/client/index.js",
     "./client/react": "./dist/client/react.js",
+    "./code": "./dist/code/index.js",
     "./connectors": "./dist/connectors/index.js",
     "./filesystem": "./dist/filesystem/index.js",
     "./filesystem/memory": "./dist/filesystem/memory.js",

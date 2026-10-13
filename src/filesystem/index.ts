@@ -7,7 +7,7 @@
  * @see docs/specs/08-filesystem-plugin.md
  */
 import type { ProjectInstructionsInfo } from './project-instructions.ts'
-import type { FileSystem, ToolOutputStore } from './types.ts'
+import type { FilePolicy, FileSystem, ToolOutputStore } from './types.ts'
 
 export {
   type CheckpointKey,
@@ -53,6 +53,7 @@ export type {
   FileChangeData,
   FileEntry,
   FileMeta,
+  FilePolicy,
   FileSystem,
   FilesystemOptions,
   FileToolName,
@@ -74,6 +75,11 @@ declare module 'eharness' {
      * `EH_SERVICE_MISSING` (declare `requires: ['toolOutputs']` to get a boot error instead).
      */
     toolOutputs: ToolOutputStore
+    /**
+     * The hidden / read-only / extension / undeletable rules of the file tools, provided by the
+     * `filesystem()` plugin (spec 08 §2); plugins that move files outside the tools use it.
+     */
+    filePolicy: FilePolicy
     /**
      * What `projectInstructions()` loaded at session open (spec 08 §13): the chosen root file,
      * the nested files and the candidates that lost the preference.
