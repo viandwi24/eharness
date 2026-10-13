@@ -420,6 +420,11 @@ export function syncedSandbox(options: SyncedSandboxOptions): SyncedSandbox {
     }
     // Symlinks are never syncable: a script may have planted one that points out of the root.
     // Remove them before anything is uploaded (the host-side writes must not follow them).
+    // Every mount directory exists in the sandbox, also while its folder is still empty, so a
+    // script can write its first file there.
+    await sandbox.run({
+      command: `mkdir -p -- ${mounts.map((m) => shellQuote(mountDir(m))).join(' ')}`,
+    })
     await sandbox.run({
       command: `find ${mounts.map((m) => shellQuote(mountDir(m))).join(' ')} -type l -delete 2>/dev/null; true`,
     })

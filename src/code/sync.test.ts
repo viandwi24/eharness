@@ -325,6 +325,15 @@ test('exclusive sections run one at a time', async () => {
   expect(order).toEqual(['a-start', 'a-end', 'b'])
 })
 
+test('sync-in creates every mount directory, also an empty one', async () => {
+  const { sandbox, bridge } = setup(
+    {},
+    { mounts: [{ virtual: '/library/' }, { virtual: '/uploads/', readonly: true }] },
+  )
+  await bridge.syncIn()
+  expect(sandbox.commands).toContain("mkdir -p -- 'library' 'uploads'")
+})
+
 describe('hardening (review findings)', () => {
   test('sync-in removes symlinks under the mount dirs before uploading', async () => {
     const { sandbox, bridge } = setup({ '/work/a.txt': '1' }, { mounts: [{ virtual: '/work/' }] })

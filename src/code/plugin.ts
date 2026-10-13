@@ -256,6 +256,9 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
   const sync = options.sync ?? true
   const risk = options.risk ?? 'external'
   const installRisk = options.installRisk ?? 'external'
+  const exampleMount = (mounts.find((m) => m.readonly !== true) ?? mounts[0])?.virtual ?? '/'
+  const exampleScript = `${exampleMount}analyze.py`
+  const exampleData = `${exampleMount}sales.csv`.slice(1)
   const mountText = mounts
     .map((m) => `${m.virtual} (${m.readonly === true ? 'read-only' : 'read/write'})`)
     .join(', ')
@@ -361,6 +364,8 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
           ? `Python environment: ${python} (packages unknown).`
           : `Python ${probed.version}. Installed packages: ${formatPackages(probed.packages)}.`
       const description = `${RUN_PYTHON_DESCRIPTION.replace('{mounts}', mountText)
+        .replace('{example}', exampleScript)
+        .replace(/\{exampleRel\}/g, exampleData)
         .replace('{timeout}', String(Math.round(limits.timeoutMs / 1000)))
         .replace(
           '{maxTimeout}',
@@ -557,7 +562,7 @@ export function code(options: CodeOptions): HarnessPlugin<'code'> {
             file: z
               .string()
               .optional()
-              .describe('Virtual path of the script to run, for example /work/analyze.py.'),
+              .describe(`Virtual path of the script to run, for example ${exampleScript}.`),
             code: z
               .string()
               .optional()
