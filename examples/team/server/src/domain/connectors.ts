@@ -94,7 +94,8 @@ export const DEFAULT_LEGACY_TOOLS: readonly string[] = ['library_read', 'memory'
  * The enablement that reproduces a legacy tool checklist exactly (same tools, same rules):
  *
  * - `library_read` / `library_write` -> Files: read / edit and delete;
- * - `memory` -> workspace memory (writable for the lead only) and the agent's own memory;
+ * - `memory` -> workspace memory (writable for the lead only, or for every new agent with
+ *   `workspaceMemoryWrite`) and the agent's own memory;
  * - `todos` -> Planning; `web_search` / `web_fetch` -> Web; `ask_user` -> Ask the user;
  * - `delegate` -> Team (lead); `send_message` is part of Team and only counted with `delegate`
  *   (alone it never installed anything); a lead with `delegate` but not `send_message` keeps
@@ -109,6 +110,14 @@ export const DEFAULT_LEGACY_TOOLS: readonly string[] = ['library_read', 'memory'
 export function enablementFromTools(
   tools: readonly string[],
   agent: { id: string; role: string },
+  options: {
+    /**
+     * Every agent may write the workspace (company) memory, not only the lead. A new agent gets
+     * this (production: a workspace whose only agent was not the lead could not keep company
+     * facts); the migration of legacy agents keeps the old lead-only rule.
+     */
+    workspaceMemoryWrite?: boolean
+  } = {},
 ): AgentConnectors {
   const has = (t: string): boolean => tools.includes(t)
   const mode = (on: boolean): CapabilityMode => (on ? 'allow' : 'off')
@@ -127,7 +136,10 @@ export function enablementFromTools(
     : { enabled: 'off' }
   const memory = has('memory')
   out[BUILTIN_MEMORY_WORKSPACE] = memory
-    ? { enabled: 'on', capabilities: { read: 'allow', write: mode(lead) } }
+    ? {
+        enabled: 'on',
+        capabilities: { read: 'allow', write: mode(lead || options.workspaceMemoryWrite === true) },
+      }
     : { enabled: 'off' }
   out[agentMemoryConnection(agent.id)] = memory
     ? { enabled: 'on', capabilities: { read: 'allow', write: 'allow' } }

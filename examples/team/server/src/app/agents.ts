@@ -133,7 +133,11 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     permissionMode: draft.permissionMode ?? 'default',
     connectors:
       draft.connectors === undefined
-        ? enablementFromTools(draft.toolset ?? DEFAULT_LEGACY_TOOLS, { id, role })
+        ? enablementFromTools(
+            draft.toolset ?? DEFAULT_LEGACY_TOOLS,
+            { id, role },
+            { workspaceMemoryWrite: true },
+          )
         : normalizeConnectors(draft.connectors),
     rules: { allow: [], ask: [], deny: [], ...draft.rules },
     version: 1,
