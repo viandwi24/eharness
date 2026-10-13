@@ -930,3 +930,22 @@ the web app. Fixes:
 - **Web turns in a chat thread**: the medium reminder tells the model that a message typed in the web app
   is answered only there and that posting needs `channel_send`.
 
+
+## Approvals answered by a reply (production feedback, as built)
+
+An owner asked the agent (on a Telegram user account) to tag a member; `channel_send` (external) asked for
+approval, but a user account cannot show buttons, so the card only linked to the web app, and the owner's
+next message ("you are admin already") cancelled the request. Now:
+
+- A short plain yes or no (`approvalWord`: "ya", "ok gas", "boleh", "kirim", 👍 / "tidak", "batal", ❌; at most
+  four words, all of one kind) from somebody who `mayAnswer` (owner or admin of the directory, by platform id;
+  in a direct chat also the asker) answers the open approvals of that conversation, through the same path
+  as a button (`answerInChat`, first answer wins, audited as `chat-text`). Anything longer or mixed is a new
+  message, never an answer.
+- Any other message cancels only the sender's OWN pending requests; an admin's unrelated message no longer
+  cancels the owner's request (it is context).
+- The card on a platform without buttons says to reply "ya" / "tidak" (owner or admin only) or answer in the
+  web app.
+- Not changed on purpose: an owner's request still asks before a post that reaches other people (external)
+  or a destructive action; reads and own writes do not ask. The approval confirms what the model is about
+  to do (text, mentions, target), which also guards against instructions hidden in chat content.

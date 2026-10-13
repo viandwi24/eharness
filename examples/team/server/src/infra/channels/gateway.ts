@@ -891,6 +891,84 @@ const FAILURE_NOTICE: Record<string, string> = {
 const WEB_TURN_NOTE =
   'THIS message was typed in the web app by a team member looking at this chat thread, not sent in the chat. Your reply here is shown only in the web app; nothing reaches the chat unless you call channel_send (or another posting tool). When the person asks you to send, post or forward something to the chat, do it with the tool and say what you posted; never claim it was sent otherwise.'
 
+const YES_WORDS = new Set([
+  'ya',
+  'iya',
+  'iyah',
+  'iyaa',
+  'y',
+  'yes',
+  'yep',
+  'ok',
+  'oke',
+  'okay',
+  'okey',
+  'okee',
+  'sip',
+  'siap',
+  'boleh',
+  'setuju',
+  'acc',
+  'approve',
+  'approved',
+  'gas',
+  'gass',
+  'lanjut',
+  'lanjutkan',
+  'kirim',
+  'kirimkan',
+  'send',
+  'go',
+  'silakan',
+  'silahkan',
+  'betul',
+  'benar',
+  '👍',
+  '✅',
+  '👌',
+])
+const NO_WORDS = new Set([
+  'tidak',
+  'tdk',
+  'ga',
+  'gak',
+  'nggak',
+  'enggak',
+  'engga',
+  'jangan',
+  'no',
+  'n',
+  'nope',
+  'batal',
+  'batalkan',
+  'cancel',
+  'tolak',
+  'deny',
+  'denied',
+  'stop',
+  'gausah',
+  'gaperlu',
+  '❌',
+  '👎',
+  '🚫',
+])
+
+/**
+ * A short reply that is plainly yes or no ("ya", "ok gas", "tidak", "batal"), else undefined.
+ * Anything longer or mixed is a new message, never an answer.
+ */
+export function approvalWord(text: string): 'yes' | 'no' | undefined {
+  const words = text
+    .toLowerCase()
+    .replace(/[.,!?;:"'()[\]]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w !== '')
+  if (words.length === 0 || words.length > 4) return undefined
+  if (words.every((w) => YES_WORDS.has(w))) return 'yes'
+  if (words.every((w) => NO_WORDS.has(w))) return 'no'
+  return undefined
+}
+
 /** Stops whose last words (the wrap-up summary) are worth more than a generic notice. */
 const SAY_WHAT_WAS_DONE: ReadonlySet<string> = new Set(['max-steps', 'stuck', 'length'])
 
@@ -1872,15 +1950,35 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     sender: IdentityRow
     triggerId: string
     text: string
-  }): Promise<'none' | 'continued' | 'context' | 'failed'> {
+  }): Promise<'none' | 'continued' | 'context' | 'failed' | 'answered'> {
     const open = openFor(input.session.sessionId, input.node.id).filter(
       (a) => a.itemKind === 'approval',
     )
     if (open.length === 0) return 'none'
-    const role = resolveIdentityRole(input.config.connectionId, input.sender).role
+    // "ya" / "tidak" from somebody who may answer is the answer (platforms without buttons, and
+    // people who type instead of pressing): who may is decided by their id and directory role
+    const verdict = approvalWord(input.text)
+    if (verdict !== undefined) {
+      const answerable = open.filter((a) => mayAnswer(input.config, a, input.node, input.sender))
+      if (answerable.length > 0) {
+        for (const rec of answerable) {
+          await answerInChat(
+            rec,
+            verdict === 'yes',
+            input.config,
+            input.adapter,
+            input.node,
+            input.sender,
+            'chat-text',
+          )
+        }
+        return 'answered'
+      }
+    }
+    // any other message cancels only the sender's own requests (an admin chatting about something
+    // else must not cancel the owner's pending request); for anybody else it is context
     const mine = open.filter(
       (a) =>
-        isStaff(role) ||
         a.requesterPeer === input.sender.nativeId ||
         (input.sender.personId !== null && a.requesterMember === input.sender.personId),
     )
@@ -3317,7 +3415,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           ? item.text
           : buttons
             ? `${item.text}\nApprove?`
-            : `${item.text}\nAnswer it in ${where}.`
+            : `${item.text}\nReply to this message with "ya" (yes) to approve or "tidak" (no) to decline; only an owner or admin of the team can answer. Or answer in ${where}.`
       await outbox.enqueue(
         [
           {
@@ -3372,15 +3470,31 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     ) {
       return undefined
     }
+    // somebody who may not answer gets silence: no text, nothing changes (the platform's button
+    // spinner was already stopped by the adapter)
+    if (!mayAnswer(config, rec, node, sender)) return { action: 'drop', reason: 'not-authorized' }
+    return answerInChat(rec, event.name === 'approve', config, adapter, node, sender, 'chat')
+  }
+
+  /**
+   * An approval answered from the chat (a button, or a "ya" / "tidak" reply on a platform without
+   * buttons). The caller checked `mayAnswer`. First answer wins, wherever it comes from.
+   */
+  async function answerInChat(
+    rec: ApprovalRow,
+    approved: boolean,
+    config: ConnectionConfig,
+    adapter: ChannelAdapter,
+    node: NodeRow,
+    sender: IdentityRow,
+    via: 'chat' | 'chat-text',
+  ): Promise<HandleResult> {
     const reply = (text: string): Promise<void> =>
       sendDirect(config, adapter, node, text, rec.messageId ?? undefined).catch((error) =>
         warn(`channels: an approval reply failed: ${errorText(error)}`),
       )
     const memberId = sender.personId ?? undefined
     const web = deps.webLink?.({ agentId: rec.agentId, sessionId: rec.sessionId })
-    // somebody who may not answer gets silence: no text, nothing changes (the platform's button
-    // spinner was already stopped by the adapter)
-    if (!mayAnswer(config, rec, node, sender)) return { action: 'drop', reason: 'not-authorized' }
     if (rec.status !== 'open') {
       await reply(`That was already answered (${outcomeText(rec)}).`)
       return { action: 'approval', reason: 'already answered' }
@@ -3389,7 +3503,6 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       await reply(`Answering from a chat is not set up. Answer in ${web ?? 'the team web app'}.`)
       return { action: 'approval', reason: 'no answer path' }
     }
-    const approved = event.name === 'approve'
     const who = sender.displayName ?? sender.username ?? memberId ?? 'someone'
     // claim first (atomic): whichever answer arrives first wins, the other side is told
     if (!approvals.answer(rec.id, who, approved ? 'approved' : 'denied', now())) {
@@ -3427,7 +3540,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       conversationId: rec.conversationId,
       peerId: sender.nativeId,
       peerName: who,
-      detail: { tool: rec.toolName, via: 'chat' },
+      detail: { tool: rec.toolName, via },
     })
     await resolveMessage(done, adapter, config)
     return { action: 'approval', reason: approved ? 'approved' : 'denied' }
@@ -3732,6 +3845,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       if (outcome === 'continued') {
         log.markHandled(node.id, nativeId)
         return { action: 'wake', reason: 'declined the pending approvals' }
+      }
+      if (outcome === 'answered') {
+        log.markHandled(node.id, nativeId)
+        return { action: 'approval', reason: 'answered with a reply in the chat' }
       }
     }
     // a foreground delegation blocks the turn: the person who asked (or an admin) writing again
