@@ -47,18 +47,49 @@ export function createBrowserHook(deps: BrowserHookDeps): BrowserHook {
     },
     settle: deps.settle,
     plugin({ agentId, profileId }): HarnessPlugin {
+      // no choice in the connection: the only profile, looked up on every call (profiles change
+      // while a session is open: one deleted, another created)
+      const only = async (): Promise<string | undefined> => {
+        const page = await profiles.list({ limit: 2 })
+        return page.items.length === 1 ? page.items[0]?.id : undefined
+      }
       return browser({
         manager,
-        profile: profileId,
+        profile: profileId ?? only,
+        // no profile fixed by an admin: the agent may see every profile and pick one
+        ...(profileId !== undefined
+          ? {}
+          : {
+              choose: {
+                list: async () => {
+                  const [page, status] = await Promise.all([
+                    profiles.list({ limit: 100 }),
+                    manager.status().catch(() => []),
+                  ])
+                  const running = new Set(status.map((s) => s.profileId))
+                  return page.items.map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                    adapter: p.adapter,
+                    mode: p.mode,
+                    running: running.has(p.id),
+                    trusted: p.trusted === true,
+                  }))
+                },
+              },
+            }),
         images: () => deps.images?.(agentId) ?? true,
-        requestHuman: async ({ reason, sessionId, waitId }): Promise<WaitStart | undefined> => {
-          const profile = await profiles.get(profileId)
+        requestHuman: async (args): Promise<WaitStart | undefined> => {
+          const { reason, sessionId, waitId } = args
+          const used = args.profileId ?? profileId ?? (await only())
+          if (used === undefined) return undefined
+          const profile = await profiles.get(used)
           const { id } = deps.takeover({
             agentId,
             sessionId,
             waitId,
-            profileId,
-            profileName: profile?.name ?? profileId,
+            profileId: used,
+            profileName: profile?.name ?? used,
             reason,
           })
           return { correlationId: id, payload: { decisionId: id } }

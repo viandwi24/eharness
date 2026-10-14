@@ -18,7 +18,12 @@ import { BROWSER_CONNECTOR_ID } from '../../app/browser.ts'
 /** What the connector needs from the browser service (late-bound: the hook is set after the deps). */
 export interface BrowserHook {
   /** The plugin of one agent's connection. */
-  plugin(input: { agentId: string; connectionId: string; profileId: string }): HarnessPlugin
+  /** `profileId` undefined: the only profile, resolved on every call. */
+  plugin(input: {
+    agentId: string
+    connectionId: string
+    profileId: string | undefined
+  }): HarnessPlugin
   /** The profile of a connection's settings (name for people), for the test. */
   describe(
     profileId: string,
@@ -53,6 +58,8 @@ export const BROWSER_BROWSE_TOOLS = [
   'browser_read',
   'browser_tabs',
   'browser_request_human',
+  'browser_profiles',
+  'browser_use',
 ] as const
 export const BROWSER_ACT_TOOLS = ['browser_act'] as const
 
@@ -108,6 +115,17 @@ export function browserConnector(hook: () => BrowserHook | undefined): AnyConnec
       const h = hook()
       if (h === undefined)
         return { ok: false, message: 'Browsers are not available on this server.' }
+      const fixedChoice = (ctx.settings as { profileId?: unknown } | undefined)?.profileId
+      if (typeof fixedChoice !== 'string' || fixedChoice === '') {
+        const { count } = await h.profileCount()
+        if (count > 1) {
+          return {
+            ok: true,
+            message: 'The agent picks one of the Browser page profiles.',
+            accountLabel: 'Any profile',
+          }
+        }
+      }
       const picked = await profileOf(h, ctx.settings)
       if ('error' in picked) return { ok: false, message: picked.error }
       const found = await h.describe(picked.id)
@@ -123,14 +141,18 @@ export function browserConnector(hook: () => BrowserHook | undefined): AnyConnec
     activate: async (ctx) => {
       const h = hook()
       if (h === undefined) return []
-      const picked = await profileOf(h, ctx.settings)
-      if ('error' in picked) return []
-      const profileId = picked.id
-      const found = await h.describe(profileId)
-      // a profile that was deleted leaves the tools out (the connection shows it in its test)
-      if (found === undefined) return []
-      if (found.trusted && ctx.modes.act === 'ask') h.settle(ctx.connection.id, true)
-      return h.plugin({ agentId: ctx.agent.id, connectionId: ctx.connection.id, profileId })
+      const chosen = (ctx.settings as { profileId?: unknown } | undefined)?.profileId
+      const fixed = typeof chosen === 'string' && chosen !== '' ? chosen : undefined
+      if (fixed !== undefined) {
+        const found = await h.describe(fixed)
+        // a profile that was deleted leaves the tools out (the connection shows it in its test)
+        if (found === undefined) return []
+        if (found.trusted && ctx.modes.act === 'ask') h.settle(ctx.connection.id, true)
+      } else if ((await h.profileCount()).count === 0) {
+        return [] // nothing to browse with yet
+      }
+      // no choice: the agent lists the profiles and picks one (the only one is used by itself)
+      return h.plugin({ agentId: ctx.agent.id, connectionId: ctx.connection.id, profileId: fixed })
     },
   })
 }
