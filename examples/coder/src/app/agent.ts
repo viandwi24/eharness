@@ -237,6 +237,8 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
 
   const build = (def: AgentDefinition | undefined, depth: number): HarnessAgent => {
     const isMain = def === undefined
+    // `--max-steps 0` (default) is unlimited: extend while the progress guard sees progress
+    const stepCap = config.maxSteps > 0 ? config.maxSteps : Number.MAX_SAFE_INTEGER
     // Order = prompt order. Strings are the static block; functions are SESSION instructions
     // (block 2, evaluated at the first turn of a session, then cached): user memory, then the
     // output style. The turn reminder is the only per-turn text.
@@ -375,7 +377,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       ...(deps.extraPlugins?.({ main: isMain }) ?? []),
       ...(isMain ? (deps.mainPlugins ?? []) : []),
       // the main turn starts with one chunk and is extended while it makes progress, up to the cap
-      ...(isMain ? [stepBudget({ chunk: config.stepChunk, cap: config.maxSteps })] : []),
+      ...(isMain ? [stepBudget({ chunk: config.stepChunk, cap: stepCap })] : []),
     ]
 
     const agent = defineHarnessAgent({
@@ -399,7 +401,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       storage: deps.storage,
       ...(deps.instanceId === undefined ? {} : { recovery: { instanceId: deps.instanceId } }),
       loop: {
-        maxSteps: isMain ? Math.min(config.stepChunk, config.maxSteps) : (def.maxTurns ?? 50),
+        maxSteps: isMain ? Math.min(config.stepChunk, stepCap) : (def.maxTurns ?? 50),
       },
       compaction: { summarizeAt: 0.8, prune: {} },
       toolOutput: { maxChars: 30_000, strategy: 'evict' },

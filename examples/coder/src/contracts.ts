@@ -163,7 +163,7 @@ export interface CoderConfig {
   additionalDirectories: string[]
   /** `--agents` JSON, already parsed. */
   cliAgents: Record<string, AgentDefinitionInput>
-  /** Hard cap of steps per turn (`--max-steps`), default 200; a turn runs in `stepChunk` chunks up to it. */
+  /** Hard cap of steps per turn (`--max-steps`); `0` (default) is unlimited while the turn makes progress. A turn runs in `stepChunk` chunks. */
   maxSteps: number
   /** `stepChunk` setting (default 50). */
   stepChunk: number

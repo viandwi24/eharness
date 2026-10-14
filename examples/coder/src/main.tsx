@@ -30,7 +30,9 @@ interface Options extends CliFlags {
 
 function parseSteps(value: string): number {
   const n = Number(value)
-  if (!Number.isInteger(n) || n < 1) throw new InvalidArgumentError('must be a positive integer')
+  if (!Number.isInteger(n) || n < 0) {
+    throw new InvalidArgumentError('must be a non-negative integer (0 = unlimited)')
+  }
   return n
 }
 
@@ -150,7 +152,11 @@ const program = new Command()
   .option('--agents <json>', 'session-only subagent definitions (JSON object)')
   .option('-c, --continue', 'continue the most recent session of this project')
   .option('-r, --resume [id]', 'resume a session (picker without an id)')
-  .option('--max-steps <n>', 'loop.maxSteps per turn', parseSteps)
+  .option(
+    '--max-steps <n>',
+    'hard cap of steps per turn (0 = unlimited while on track, default)',
+    parseSteps,
+  )
   .option('--cwd <path>', 'project root (default: the current directory)')
   .option(
     '--trust-project',

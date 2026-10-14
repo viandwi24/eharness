@@ -134,7 +134,7 @@ cost is shown. `contextWindow` in a settings file always wins over the catalog.
 | `--agents <json>` | session-only subagent definitions |
 | `-c, --continue` | continue the most recent session of this project |
 | `-r, --resume [id]` | resume a session; without an id a picker opens |
-| `--max-steps <n>` | hard cap of steps per turn (default 200); a turn runs in `stepChunk` chunks up to it |
+| `--max-steps <n>` | optional hard cap of steps per turn; default `0` = unlimited: the turn keeps extending in `stepChunk` chunks while it makes progress and stops when the model is done, the progress guard sees it is stuck, or you interrupt (Esc / Ctrl+C) |
 | `--cwd <path>` | project root (default: the current directory) |
 | `--trust-project` | trust this project's `.coder/` settings, agents and skills (see Project trust) |
 
@@ -534,7 +534,7 @@ scope; `Enter` or `Space` toggles or cycles, `Enter` edits text and numbers).
 | `promptSuggestions` | `false` | next-prompt suggestion after each turn | no |
 | `editorMode` | `normal` | `normal` or `vim`; default scope: user | no |
 | `deferTools` | `true` | defer MCP tools and rarely used built-ins (see Deferred tools) | no |
-| `stepChunk` | `50` | steps per chunk of a turn; a turn is extended chunk by chunk (`eharness/limits` `stepBudget`) up to `--max-steps` | no |
+| `stepChunk` | `50` | steps per chunk of a turn; a turn is extended chunk by chunk (`eharness/limits` `stepBudget`) until the model is done or the progress guard stops it, or up to `--max-steps` when set | no |
 | `hooks` | `{}` | shell hooks by event | yes |
 | `sandbox.enabled` | `false` | OS sandbox for `bash` | turning it off needs trust; turning it on does not |
 | `sandbox.network` | `false` | allow network in the sandbox | enabling needs trust |

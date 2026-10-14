@@ -14,7 +14,7 @@ describe('loadConfig', () => {
     expect(config.model).toBe('anthropic/claude-sonnet-4.6')
     expect(config.mode).toBe('default')
     expect(config.contextWindow).toBe(200_000)
-    expect(config.maxSteps).toBe(200)
+    expect(config.maxSteps).toBe(0)
     expect(config.maxAgentDepth).toBe(2)
     expect(config.rules).toEqual({ allow: [], ask: [], deny: [] })
     expect(config.warnings).toEqual([])

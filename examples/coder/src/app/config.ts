@@ -563,7 +563,7 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     rules: { allow: dedupe(rules.allow), ask: dedupe(rules.ask), deny: dedupe(rules.deny) },
     additionalDirectories,
     cliAgents,
-    maxSteps: flags.maxSteps ?? 200,
+    maxSteps: flags.maxSteps ?? 0,
     stepChunk: mergeSettings(layers.map((l) => l.settings)).stepChunk ?? 50,
     maxAgentDepth: 2,
     deferTools: mergeSettings(layers.map((l) => l.settings)).deferTools ?? true,

@@ -254,6 +254,7 @@ describe('print mode e2e', () => {
   test('unknown flags and invalid values exit 2', async () => {
     expect((await coder(['--bogus'])).code).toBe(2)
     expect((await coder(['--max-steps', 'abc', '-p', 'x'])).code).toBe(2)
+    expect((await coder(['--max-steps', '-1', '-p', 'x'])).code).toBe(2)
     expect((await coder(['--help'])).code).toBe(0)
   })
 
