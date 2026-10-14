@@ -9,7 +9,7 @@ import type {
   ChannelReminderView,
   ChannelRoleSuggestion,
 } from '../../domain/channels.ts'
-import { invalid, notFound } from '../../domain/errors.ts'
+import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { ChannelGateway, PersonView } from './gateway.ts'
 import { type ReminderRow, WEB_REMINDER_CONNECTION, webReminderSession } from './reminders.ts'
 
@@ -157,6 +157,30 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
       const p = gateway.people.get(id, peerId)
       if (p === undefined) throw notFound('person', peerId)
       return personOf(p)
+    },
+    async outboxAttention(id, query) {
+      await known(id)
+      return gateway.outboxAttention(id, query)
+    },
+    async retryOutbox(id, rowId) {
+      await known(id)
+      const r = await gateway.retryOutbox(id, rowId)
+      if (r === 'not-found') throw notFound('message', rowId)
+      if (r === 'not-allowed')
+        throw conflict(
+          'only a failed message that is not a tool call can be sent again',
+          'NOT_RETRYABLE',
+        )
+    },
+    async dismissOutbox(id, rowId) {
+      await known(id)
+      const r = await gateway.dismissOutbox(id, rowId)
+      if (r === 'not-found') throw notFound('message', rowId)
+      if (r === 'not-allowed')
+        throw conflict(
+          'only a failed message that was not dismissed yet can be dismissed',
+          'NOT_DISMISSABLE',
+        )
     },
     async activityActions(id) {
       await known(id)

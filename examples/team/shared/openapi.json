@@ -7514,6 +7514,21 @@
           "agents"
         ]
       },
+      "BrowserLiveTicket": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ticket",
+          "expiresAt"
+        ]
+      },
       "BrowserProfileCreate": {
         "type": "object",
         "properties": {
@@ -12994,6 +13009,10 @@
               },
               "outboxFailed": {
                 "type": "integer"
+              },
+              "outboxHeld": {
+                "type": "integer",
+                "description": "Messages a stopped server was sending; it checks the chat and settles them by itself."
               }
             },
             "required": [
@@ -13001,7 +13020,8 @@
               "linked",
               "unlinked",
               "outboxPending",
-              "outboxFailed"
+              "outboxFailed",
+              "outboxHeld"
             ]
           },
           "breaker": {
@@ -13896,6 +13916,104 @@
           "self",
           "text",
           "attachments"
+        ]
+      },
+      "ChannelOutboxAttentionPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelOutboxAttention"
+            },
+            "description": "Newest first."
+          },
+          "next": {
+            "type": "string",
+            "description": "Pass as `before` for older messages."
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelOutboxAttention": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chatId": {
+            "type": "string",
+            "description": "Node id of the chat or topic."
+          },
+          "chat": {
+            "type": "string",
+            "description": "Chat (and topic) name."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reply",
+              "post",
+              "approval",
+              "reminder"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "held",
+              "failed"
+            ],
+            "description": "`held`: the server stopped while sending and checks the chat by itself. `failed`: given up."
+          },
+          "uncertain": {
+            "type": "boolean",
+            "description": "The platform could not say whether the message arrived; it was not resent."
+          },
+          "preview": {
+            "type": "string",
+            "description": "The beginning of the message text."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "\"Send again\" is allowed."
+          },
+          "dismissable": {
+            "type": "boolean",
+            "description": "\"Dismiss\" is allowed."
+          }
+        },
+        "required": [
+          "id",
+          "chatId",
+          "chat",
+          "kind",
+          "status",
+          "uncertain",
+          "preview",
+          "reason",
+          "attempts",
+          "createdAt",
+          "updatedAt",
+          "retryable",
+          "dismissable"
         ]
       },
       "ChannelActivityPage": {
@@ -22901,6 +23019,75 @@
         }
       }
     },
+    "/browser/profiles/{id}/live-ticket": {
+      "post": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "A ticket for the live view",
+        "description": "A one-time ticket (valid one minute) for `GET /browser/profiles/{id}/live?ticket=`: a browser cannot send the bearer token on a WebSocket.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserLiveTicket"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/browser/profiles/{id}": {
       "get": {
         "tags": [
@@ -30303,6 +30490,250 @@
           },
           "404": {
             "description": "Unknown connection or conversation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/outbox/attention": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Messages that need a look",
+        "description": "Messages whose delivery is uncertain (the server stopped while sending; it checks the chat by itself) or that failed and were not dismissed, newest first. Page with `before`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelOutboxAttentionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/outbox/{rowId}/retry": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Send a failed message again",
+        "description": "Queues a failed message once more. If it had arrived after all, it appears twice. A tool call (a post) is never re-run and cannot be sent again.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "rowId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Queued"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection or message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The message is not a failed, retryable one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/outbox/{rowId}/dismiss": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Dismiss a failed message",
+        "description": "Marks a failed message reviewed so it leaves the list and the failed count. Nothing is deleted.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "rowId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Dismissed"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection or message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The message is not a failed one, or was dismissed already",
             "content": {
               "application/json": {
                 "schema": {

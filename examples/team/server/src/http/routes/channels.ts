@@ -34,6 +34,9 @@ import {
   ChannelLinkSchema,
   ChannelMemberListSchema,
   ChannelMessagesQuery,
+  ChannelOutboxAttentionPageSchema,
+  ChannelOutboxAttentionQuery,
+  ChannelOutboxParam,
   ChannelPeopleSettingsBodySchema,
   ChannelPeopleSettingsSchema,
   ChannelPeopleTablePageSchema,
@@ -324,6 +327,53 @@ const activityList = createRoute({
   responses: {
     200: { description: 'Events', content: content(ChannelActivityPageSchema) },
     404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const outboxAttention = createRoute({
+  method: 'get',
+  path: '/channels/connections/{id}/outbox/attention',
+  tags,
+  summary: 'Messages that need a look',
+  description:
+    'Messages whose delivery is uncertain (the server stopped while sending; it checks the chat by itself) or that failed and were not dismissed, newest first. Page with `before`.',
+  security,
+  request: { params: ChannelIdParam, query: ChannelOutboxAttentionQuery },
+  responses: {
+    200: { description: 'Messages', content: content(ChannelOutboxAttentionPageSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+const outboxRetry = createRoute({
+  method: 'post',
+  path: '/channels/connections/{id}/outbox/{rowId}/retry',
+  tags,
+  summary: 'Send a failed message again',
+  description:
+    'Queues a failed message once more. If it had arrived after all, it appears twice. A tool call (a post) is never re-run and cannot be sent again.',
+  security,
+  request: { params: ChannelOutboxParam },
+  responses: {
+    204: { description: 'Queued' },
+    404: jsonError('Unknown connection or message'),
+    409: jsonError('The message is not a failed, retryable one'),
+    ...errorResponses,
+  },
+})
+const outboxDismiss = createRoute({
+  method: 'post',
+  path: '/channels/connections/{id}/outbox/{rowId}/dismiss',
+  tags,
+  summary: 'Dismiss a failed message',
+  description:
+    'Marks a failed message reviewed so it leaves the list and the failed count. Nothing is deleted.',
+  security,
+  request: { params: ChannelOutboxParam },
+  responses: {
+    204: { description: 'Dismissed' },
+    404: jsonError('Unknown connection or message'),
+    409: jsonError('The message is not a failed one, or was dismissed already'),
     ...errorResponses,
   },
 })
@@ -892,6 +942,26 @@ export function channelRoutes(deps: Deps) {
         }),
         200,
       )
+    })
+    .openapi(outboxAttention, async (c) => {
+      const { before, limit } = c.req.valid('query')
+      return c.json(
+        await inbox.outboxAttention(c.req.valid('param').id, {
+          limit,
+          ...(before === undefined ? {} : { before }),
+        }),
+        200,
+      )
+    })
+    .openapi(outboxRetry, async (c) => {
+      const { id, rowId } = c.req.valid('param')
+      await inbox.retryOutbox(id, rowId)
+      return c.body(null, 204)
+    })
+    .openapi(outboxDismiss, async (c) => {
+      const { id, rowId } = c.req.valid('param')
+      await inbox.dismissOutbox(id, rowId)
+      return c.body(null, 204)
     })
     .openapi(activityList, async (c) => {
       const { type, direction, action, conversationId, before, limit } = c.req.valid('query')

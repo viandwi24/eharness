@@ -25,6 +25,25 @@ export interface BrowserHook {
   ): Promise<{ name: string; adapter: string; mode: string; trusted: boolean } | undefined>
   /** Make the default mode of `act` follow the profile's trust (never lowers a choice). */
   settle(connectionId: string, trusted: boolean): void
+  /** How many profiles exist (up to 2), and the id when there is exactly one. */
+  profileCount(): Promise<{ count: number; only: string | undefined }>
+}
+
+/** The profile a connection uses: its choice, or the only profile when it chose none. */
+async function profileOf(
+  h: BrowserHook,
+  settings: unknown,
+): Promise<{ id: string } | { error: string }> {
+  const chosen = (settings as { profileId?: unknown } | undefined)?.profileId
+  if (typeof chosen === 'string' && chosen !== '') return { id: chosen }
+  const { count, only } = await h.profileCount()
+  if (only !== undefined) return { id: only }
+  return {
+    error:
+      count === 0
+        ? 'There is no browser profile yet: create one on the Browser page.'
+        : 'Choose a browser profile in this connection (there is more than one).',
+  }
 }
 
 export const BROWSER_BROWSE_TOOLS = [
@@ -56,11 +75,11 @@ export function browserConnector(hook: () => BrowserHook | undefined): AnyConnec
     settings: z.object({
       profileId: z
         .string()
-        .min(1)
+        .optional()
         .meta({
           title: 'Browser profile',
           description:
-            'The id of a profile made on the Browser page. A profile keeps its logins, so give each agent its own.',
+            'A profile made on the Browser page. Empty: the only profile, when there is just one. A profile keeps its logins, so give each agent its own.',
           ...ehMeta({ group: 'endpoint' }),
         }),
     }),
@@ -86,9 +105,14 @@ export function browserConnector(hook: () => BrowserHook | undefined): AnyConnec
     ],
     scopeDefaults: { workspace: { defaultEnabled: false } },
     test: async (ctx) => {
-      const found = await hook()?.describe((ctx.settings as { profileId: string }).profileId)
+      const h = hook()
+      if (h === undefined)
+        return { ok: false, message: 'Browsers are not available on this server.' }
+      const picked = await profileOf(h, ctx.settings)
+      if ('error' in picked) return { ok: false, message: picked.error }
+      const found = await h.describe(picked.id)
       if (found === undefined) {
-        return { ok: false, message: 'There is no browser profile with this id (Browser page).' }
+        return { ok: false, message: 'That browser profile was deleted: choose another one.' }
       }
       return {
         ok: true,
@@ -99,7 +123,9 @@ export function browserConnector(hook: () => BrowserHook | undefined): AnyConnec
     activate: async (ctx) => {
       const h = hook()
       if (h === undefined) return []
-      const profileId = (ctx.settings as { profileId: string }).profileId
+      const picked = await profileOf(h, ctx.settings)
+      if ('error' in picked) return []
+      const profileId = picked.id
       const found = await h.describe(profileId)
       // a profile that was deleted leaves the tools out (the connection shows it in its test)
       if (found === undefined) return []

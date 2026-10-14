@@ -239,6 +239,8 @@ export interface ChannelConnectionView {
     unlinked: number
     outboxPending: number
     outboxFailed: number
+    /** Messages being checked after the server stopped while sending them. */
+    outboxHeld: number
   }
   breaker?: { open: boolean; until: number; reason: string }
 }
@@ -466,6 +468,28 @@ export interface ChannelActivityView {
   peerName?: string
   platformId?: string
   detail?: Record<string, string | number | boolean>
+}
+
+/** A message whose delivery needs a person to look (the Delivery page, "Needs a look"). */
+export interface ChannelOutboxAttentionView {
+  id: string
+  chatId: string
+  chat: string
+  kind: 'reply' | 'post' | 'approval' | 'reminder'
+  status: 'held' | 'failed'
+  uncertain: boolean
+  preview: string
+  reason: string | null
+  attempts: number
+  createdAt: number
+  updatedAt: number
+  retryable: boolean
+  dismissable: boolean
+}
+
+export interface ChannelOutboxAttentionPage {
+  items: ChannelOutboxAttentionView[]
+  next?: string
 }
 
 export interface ChannelActivityPage {

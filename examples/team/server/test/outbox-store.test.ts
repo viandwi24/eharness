@@ -115,3 +115,70 @@ describe('the team rows on the library port', () => {
     expect(team.counts('c1')).toMatchObject({ skipped: 1, held: 0 })
   })
 })
+
+describe('rows that need a look', () => {
+  const setup = () => {
+    const { sqlite } = openDatabase(':memory:')
+    return sqliteOutboxStore(sqlite, vault)
+  }
+  const msg = (conversationId: string, text: string, kind: 'reply' | 'post' = 'reply') => ({
+    connectionId: 'c1',
+    conversationId,
+    kind,
+    triggerId: text,
+    chunkIndex: 0,
+    chunkCount: 1,
+    text,
+  })
+
+  test('held and failed rows are listed newest first, with paging; sent and dismissed rows are not', async () => {
+    const team = setup()
+    const [a, b, c, d, e] = await team.enqueue(
+      ['a', 'b', 'c', 'd', 'e'].map((t, i) => msg(`n${i}`, t)),
+      10,
+    )
+    team.markSent(a as string, 'p1', 20)
+    team.markFailed(b as string, 'boom', 20)
+    team.markFailed(c as string, 'boom', 20)
+    expect(team.claimNow(d as string, 20)).toBe(true)
+    team.holdStale('c1')
+    // e stays pending: not listed
+    void e
+    const all = await team.attention('c1')
+    expect(all.rows.map((r) => r.text)).toEqual(['d', 'c', 'b'])
+    expect(all.next).toBeUndefined()
+    const first = await team.attention('c1', { limit: 2 })
+    expect(first.rows.map((r) => r.text)).toEqual(['d', 'c'])
+    const second = await team.attention('c1', {
+      limit: 2,
+      ...(first.next ? { before: first.next } : {}),
+    })
+    expect(second.rows.map((r) => r.text)).toEqual(['b'])
+    // other connections are not mixed in; a failed row older than `since` is left out
+    expect((await team.attention('other')).rows).toEqual([])
+    expect((await team.attention('c1', { since: 21 })).rows.map((r) => r.text)).toEqual(['d'])
+    // dismiss: it leaves the list and the failed count, and nothing is deleted
+    expect(team.counts('c1').failed).toBe(2)
+    expect(team.dismiss('c1', b as string, 30)).toBe(true)
+    expect(team.dismiss('c1', b as string, 31)).toBe(false)
+    expect(team.dismiss('c1', d as string, 31)).toBe(false) // held: nothing to dismiss
+    expect((await team.attention('c1')).rows.map((r) => r.text)).toEqual(['d', 'c'])
+    expect(team.counts('c1')).toMatchObject({ failed: 1, held: 1 })
+    expect((await team.get(b as string))?.reviewedAt).toBe(30)
+  })
+
+  test('retry re-queues a failed row with fresh attempts; tool calls and other connections are refused', async () => {
+    const team = setup()
+    const [id, post] = await team.enqueue([msg('n1', 'hello'), msg('n2', 'tool', 'post')], 10)
+    team.markFailed(id as string, 'boom', 20)
+    team.markFailed(post as string, 'boom', 20)
+    expect(team.retry('c2', id as string, 40)).toBe(false)
+    expect(team.retry('c1', post as string, 40)).toBe(false)
+    expect(team.retry('c1', id as string, 40)).toBe(true)
+    expect(team.retry('c1', id as string, 41)).toBe(false) // pending now
+    const row = await team.get(id as string)
+    expect(row).toMatchObject({ status: 'pending', attempts: 0, nextAt: 40, reviewedAt: null })
+    const claimed = await team.queue({ connectionId: 'c1' }).claim(50, 'w', 1_000, 10)
+    expect(claimed.map((r) => r.id)).toEqual([id as string])
+  })
+})

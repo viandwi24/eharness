@@ -756,6 +756,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         unlinked: gateway.unlinked.list(id).length,
         outboxPending: counts.pending + counts.sending,
         outboxFailed: counts.failed,
+        outboxHeld: counts.held,
       },
       ...(breaker === undefined || !breaker.open ? {} : { breaker }),
     }

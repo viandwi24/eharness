@@ -1,4 +1,4 @@
-import { apiBase } from '../api/index';
+import { api, apiBase } from '../api/index';
 import { type Controller, type LiveInput, liveUrl, parseFrame } from './model';
 
 export type LiveInfo = { width: number; height: number; liveView: string; liveUrl?: string };
@@ -32,7 +32,26 @@ export class LiveSession {
 		this.close();
 		this.status = 'connecting';
 		this.message = '';
-		const ws = new WebSocket(liveUrl(apiBase, this.profileId, location.origin));
+		const attempt = ++this.#attempt;
+		// a browser WebSocket cannot send the bearer token: a one-time ticket from the API carries it
+		void api
+			.post('/browser/profiles/{id}/live-ticket', { params: { id: this.profileId } })
+			.then(
+				(t) => {
+					if (attempt === this.#attempt) this.#open(t.ticket);
+				},
+				(e: unknown) => {
+					if (attempt !== this.#attempt) return;
+					this.status = 'error';
+					this.message = e instanceof Error ? e.message : 'Could not open the live view.';
+				}
+			);
+	}
+
+	#attempt = 0;
+
+	#open(ticket: string): void {
+		const ws = new WebSocket(`${liveUrl(apiBase, this.profileId, location.origin)}?ticket=${encodeURIComponent(ticket)}`);
 		ws.binaryType = 'arraybuffer';
 		this.#ws = ws;
 		ws.onmessage = (e) => {
@@ -147,6 +166,7 @@ export class LiveSession {
 	}
 
 	close(): void {
+		this.#attempt++; // a ticket still on its way opens nothing
 		clearInterval(this.#ping);
 		const ws = this.#ws;
 		this.#ws = undefined;

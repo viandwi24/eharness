@@ -817,6 +817,8 @@ export const channelOutbox = sqliteTable(
     maxAttempts: integer('max_attempts'),
     /** JSON result of the send (the library outbox's `succeed` result). */
     result: text('result'),
+    /** When a person looked at a failed row and dismissed it (it leaves "Needs a look"). Null = not reviewed. */
+    reviewedAt: integer('reviewed_at'),
   },
   (t) => [
     index('channel_outbox_due').on(t.connectionId, t.status, t.createdAt),

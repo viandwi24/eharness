@@ -91,6 +91,9 @@
 					{#if !live}
 						<p class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">This browser has no live view.</p>
 					{:else if usable && !(profile.mode === 'managed' && profile.state === 'ready')}
+						{#if profile.adapter === 'lightpanda'}
+							<p class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground" data-testid="lightpanda-note">Lightpanda draws an approximate picture of the page, so clicks on it can miss. In control, use the address bar, the paste box and the keyboard. For logins and CAPTCHAs use a Chrome profile.</p>
+						{/if}
 						{#key profile.id}
 							<LiveView profileId={profile.id} liveUrl={profile.liveUrl} agentHolds={profile.lease?.holder?.kind === 'session'} />
 						{/key}

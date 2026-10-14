@@ -1233,6 +1233,68 @@ describe('reliable delivery: the outbox', () => {
     expect(bell.map((n) => n.title).join(' ')).toContain('may not have arrived')
   })
 
+  test('an uncertain message is listed for a person, who can send it again or dismiss it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'team-attention-'))
+    dirs.push(dir)
+    const first = instance({ lead: [textStep('maybe delivered')] }, { dir })
+    const mockA = await connect(first, { config: NO_WAIT })
+    await mockA.say({ from: ana, text: '@team_bot a', id: 'w1', mentionSelf: true })
+    await until('reply', () => mockA.sent.length === 1)
+    first.server.conn.sqlite
+      .query("UPDATE channel_outbox SET status = 'sending', platform_id = NULL")
+      .run()
+    await first.server.close()
+    servers.splice(servers.indexOf(first.server), 1)
+
+    const second = instance({}, { dir })
+    const mockB = createMockAdapter({ connectionId: 'c1', capabilities: { history: false } })
+    await second.gw.register(mockB)
+    await until('the row is settled', () => second.gw.outbox.counts('c1').failed === 1)
+    const bell = second.server.deps.notifications.list({ open: true, limit: 10 })
+    expect(bell.find((n) => n.title.includes('may not have arrived'))?.link).toBe(
+      '/channels/c1/delivery#needs-a-look',
+    )
+
+    const page = await second.gw.outboxAttention('c1')
+    expect(page.items).toHaveLength(1)
+    const item = page.items[0]
+    expect(item).toMatchObject({
+      status: 'failed',
+      uncertain: true,
+      retryable: true,
+      dismissable: true,
+      preview: 'maybe delivered',
+    })
+    expect(await second.gw.retryOutbox('c2', item?.id as string)).toBe('not-found')
+    expect(await second.gw.retryOutbox('c1', item?.id as string)).toBe('queued')
+    await until('it is sent again', () => mockB.sent.length === 1)
+    expect(mockB.sent[0]?.message.text).toBe('maybe delivered')
+    expect((await second.gw.outboxAttention('c1')).items).toEqual([])
+    expect(await second.gw.retryOutbox('c1', item?.id as string)).toBe('not-allowed')
+
+    // a second failed message can be dismissed instead; it is kept but leaves the count
+    const [id] = await second.gw.outbox.enqueue(
+      [
+        {
+          connectionId: 'c1',
+          conversationId: item?.chatId as string,
+          kind: 'reply',
+          triggerId: 'x',
+          chunkIndex: 0,
+          chunkCount: 1,
+          text: 'lost',
+        },
+      ],
+      Date.now(),
+    )
+    second.gw.outbox.markFailed(id as string, 'boom', Date.now())
+    expect(second.gw.outbox.counts('c1').failed).toBe(1)
+    expect(await second.gw.dismissOutbox('c1', id as string)).toBe('dismissed')
+    expect(await second.gw.dismissOutbox('c1', id as string)).toBe('not-allowed')
+    expect(second.gw.outbox.counts('c1').failed).toBe(0)
+    expect((await second.gw.outboxAttention('c1')).items).toEqual([])
+  })
+
   test('a post (tool call) is a row too, and a failed one is final: the model is told, nothing is retried', async () => {
     const i = instance({}, { fastSleep: true })
     const mock = await connect(i, { groups: { news: {} }, config: NO_WAIT })

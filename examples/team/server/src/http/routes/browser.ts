@@ -1,4 +1,4 @@
-import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
+import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import { upgradeWebSocket } from 'hono/bun'
 import type { WSContext } from 'hono/ws'
 import { originAllowed } from '../../app/auth.ts'
@@ -26,6 +26,7 @@ import type {
   BrowserLiveFrame as LiveFrame,
   BrowserLiveInput as LiveInput,
 } from '../../app/ports.ts'
+import { issueLiveTicket } from '../live-tickets.ts'
 import {
   BrowserAdapterParam,
   BrowserDraftSchema,
@@ -282,6 +283,31 @@ const uninstall = createRoute({
 
 // --- live view ---------------------------------------------------------------------------------
 
+const liveTicket = createRoute({
+  method: 'post',
+  path: '/browser/profiles/{id}/live-ticket',
+  tags,
+  summary: 'A ticket for the live view',
+  description:
+    'A one-time ticket (valid one minute) for `GET /browser/profiles/{id}/live?ticket=`: a browser cannot send the bearer token on a WebSocket.',
+  security,
+  request: { params: BrowserProfileIdParam },
+  responses: {
+    200: {
+      description: 'The ticket',
+      content: {
+        'application/json': {
+          schema: z
+            .object({ ticket: z.string(), expiresAt: z.number().int() })
+            .openapi('BrowserLiveTicket'),
+        },
+      },
+    },
+    404: jsonError('Unknown profile'),
+    ...errorResponses,
+  },
+})
+
 /** What a client may send on the live socket (text JSON). `id` is echoed in the answer. */
 export type LiveClientMessage =
   | { type: 'takeOver'; id?: string }
@@ -352,6 +378,13 @@ export function browserRoutes(
     .openapi(usage, async (c) => c.json(await browserUsage(deps), 200))
     .openapi(draftTest, async (c) => c.json(await testBrowserDraft(deps, c.req.valid('json')), 200))
     .openapi(list, async (c) => c.json(await listBrowserProfiles(deps), 200))
+    .openapi(liveTicket, async (c) => {
+      const id = c.req.valid('param').id
+      if ((await deps.browser?.profiles.get(id)) == null) {
+        return c.json({ error: { code: 'NOT_FOUND', message: 'browser profile not found' } }, 404)
+      }
+      return c.json(issueLiveTicket(id), 200)
+    })
     .openapi(create, async (c) =>
       c.json(await createBrowserProfile(deps, c.req.valid('json')), 201),
     )

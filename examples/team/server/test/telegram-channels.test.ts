@@ -791,6 +791,36 @@ describe('failures', () => {
     ).toBe('running')
     expect((await call(server, 'GET', '/channels/connections/nope')).status).toBe(404)
   })
+
+  test('messages that need a look: list, send again, dismiss', async () => {
+    const { server, fake, leadId } = await boot([])
+    const { id } = await connectBot(server, fake.token)
+    await call(server, 'PUT', `/channels/connections/${id}/binding`, { agentId: leadId })
+    const base = `/channels/connections/${id}/outbox`
+    expect((await call(server, 'GET', `${base}/attention`)).json).toEqual({ items: [] })
+    const [lost, again] = await server.channels.outbox.enqueue(
+      ['lost', 'again'].map((text, i) => ({
+        connectionId: id,
+        conversationId: `n${i}`,
+        kind: 'reply' as const,
+        triggerId: text,
+        chunkIndex: 0,
+        chunkCount: 1,
+        text,
+      })),
+      Date.now(),
+    )
+    server.channels.outbox.markFailed(lost as string, 'boom', Date.now())
+    server.channels.outbox.markFailed(again as string, 'boom', Date.now())
+    const list = await call(server, 'GET', `${base}/attention?limit=1`)
+    expect(list.json.items).toHaveLength(1)
+    expect(list.json.next).toBeDefined()
+    expect((await view(server, id)).counts).toMatchObject({ outboxFailed: 2, outboxHeld: 0 })
+    expect((await call(server, 'POST', `${base}/${lost}/dismiss`)).status).toBe(204)
+    expect((await call(server, 'POST', `${base}/${lost}/dismiss`)).status).toBe(409)
+    expect((await call(server, 'POST', `${base}/nope/retry`)).status).toBe(404)
+    expect((await call(server, 'POST', `${base}/${again}/retry`)).status).toBe(204)
+  })
 })
 
 describe('part A: approval summary and the web link', () => {

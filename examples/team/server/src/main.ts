@@ -599,6 +599,14 @@ export function compose(config: ServerConfig): Server {
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const connectors = createConnectors({
+    // the Browser connector picks a profile of the Browser page by name
+    fieldOptions: async (connectorId, path) =>
+      connectorId === 'browser' && path === 'profileId'
+        ? (await browserService.profiles.list({ limit: 200 })).items.map((p) => ({
+            value: p.id,
+            label: `${p.name} (${p.adapter})`,
+          }))
+        : undefined,
     code: codeRuntime,
     sqlite: conn.sqlite,
     profiles: profileStore,

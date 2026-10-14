@@ -7150,6 +7150,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/browser/profiles/{id}/live-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A ticket for the live view
+         * @description A one-time ticket (valid one minute) for `GET /browser/profiles/{id}/live?ticket=`: a browser cannot send the bearer token on a WebSocket.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The ticket */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserLiveTicket"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/browser/profiles/{id}": {
         parameters: {
             query?: never;
@@ -13480,6 +13549,229 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/channels/connections/{id}/outbox/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Messages that need a look
+         * @description Messages whose delivery is uncertain (the server stopped while sending; it checks the chat by itself) or that failed and were not dismissed, newest first. Page with `before`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    before?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Messages */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelOutboxAttentionPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/outbox/{rowId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a failed message again
+         * @description Queues a failed message once more. If it had arrived after all, it appears twice. A tool call (a post) is never re-run and cannot be sent again.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    rowId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Queued */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection or message */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The message is not a failed, retryable one */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/outbox/{rowId}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss a failed message
+         * @description Marks a failed message reviewed so it leaves the list and the failed count. Nothing is deleted.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    rowId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dismissed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection or message */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The message is not a failed one, or was dismissed already */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/channels/connections/{id}/activity": {
         parameters: {
             query?: never;
@@ -16950,6 +17242,10 @@ export interface components {
             /** @description A hosted provider's own live view; show it in an iframe. */
             liveUrl?: string;
         };
+        BrowserLiveTicket: {
+            ticket: string;
+            expiresAt: number;
+        };
         BrowserProfileCreate: {
             name: string;
             /** @example chrome */
@@ -18398,6 +18694,8 @@ export interface components {
                 unlinked: number;
                 outboxPending: number;
                 outboxFailed: number;
+                /** @description Messages a stopped server was sending; it checks the chat and settles them by itself. */
+                outboxHeld: number;
             };
             breaker?: {
                 open: boolean;
@@ -18627,6 +18925,38 @@ export interface components {
                 answeredBy?: string;
                 answeredAt?: number;
             };
+        };
+        ChannelOutboxAttentionPage: {
+            /** @description Newest first. */
+            items: components["schemas"]["ChannelOutboxAttention"][];
+            /** @description Pass as `before` for older messages. */
+            next?: string;
+        };
+        ChannelOutboxAttention: {
+            id: string;
+            /** @description Node id of the chat or topic. */
+            chatId: string;
+            /** @description Chat (and topic) name. */
+            chat: string;
+            /** @enum {string} */
+            kind: "reply" | "post" | "approval" | "reminder";
+            /**
+             * @description `held`: the server stopped while sending and checks the chat by itself. `failed`: given up.
+             * @enum {string}
+             */
+            status: "held" | "failed";
+            /** @description The platform could not say whether the message arrived; it was not resent. */
+            uncertain: boolean;
+            /** @description The beginning of the message text. */
+            preview: string;
+            reason: string | null;
+            attempts: number;
+            createdAt: number;
+            updatedAt: number;
+            /** @description "Send again" is allowed. */
+            retryable: boolean;
+            /** @description "Dismiss" is allowed. */
+            dismissable: boolean;
         };
         ChannelActivityPage: {
             /** @description Newest first. */

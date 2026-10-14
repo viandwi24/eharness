@@ -79,7 +79,7 @@
 		<Textarea id={id(f)} rows={4} bind:value={values[f.path] as never} placeholder={f.placeholder ?? '{}'} {disabled} aria-invalid={!!err} class="font-mono text-xs" />
 	{:else if c === 'select'}
 		<NativeSelect id={id(f)} bind:value={values[f.path] as never} {disabled} class="w-full max-w-sm">
-			{#if !f.required}<NativeSelectOption value="">Default</NativeSelectOption>{/if}
+			{#if !f.required}<NativeSelectOption value="">Default</NativeSelectOption>{:else}<NativeSelectOption value="" disabled>{(f.options ?? []).length === 0 ? 'Nothing to choose yet' : 'Choose…'}</NativeSelectOption>{/if}
 			{#each f.options ?? [] as o (String(o.value))}
 				<NativeSelectOption value={String(o.value)}>{o.label}</NativeSelectOption>
 			{/each}

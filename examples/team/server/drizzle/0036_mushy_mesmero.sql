@@ -1,0 +1,1 @@
+ALTER TABLE `channel_outbox` ADD `reviewed_at` integer;

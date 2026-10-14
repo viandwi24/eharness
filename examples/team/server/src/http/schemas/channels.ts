@@ -185,6 +185,10 @@ export const ChannelConnectionSchema = z
       }),
       outboxPending: z.number().int(),
       outboxFailed: z.number().int(),
+      outboxHeld: z.number().int().openapi({
+        description:
+          'Messages a stopped server was sending; it checks the chat and settles them by itself.',
+      }),
     }),
     breaker: z
       .object({ open: z.boolean(), until: z.number().int(), reason: z.string() })
@@ -514,6 +518,41 @@ export const ChannelActivityPageSchema = z
   })
   .openapi('ChannelActivityPage')
 
+export const ChannelOutboxAttentionSchema = z
+  .object({
+    id: z.string(),
+    chatId: z.string().openapi({ description: 'Node id of the chat or topic.' }),
+    chat: z.string().openapi({ description: 'Chat (and topic) name.' }),
+    kind: z.enum(['reply', 'post', 'approval', 'reminder']),
+    status: z.enum(['held', 'failed']).openapi({
+      description:
+        '`held`: the server stopped while sending and checks the chat by itself. `failed`: given up.',
+    }),
+    uncertain: z.boolean().openapi({
+      description: 'The platform could not say whether the message arrived; it was not resent.',
+    }),
+    preview: z.string().openapi({ description: 'The beginning of the message text.' }),
+    reason: z.string().nullable(),
+    attempts: z.number().int(),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+    retryable: z.boolean().openapi({ description: '"Send again" is allowed.' }),
+    dismissable: z.boolean().openapi({ description: '"Dismiss" is allowed.' }),
+  })
+  .openapi('ChannelOutboxAttention')
+
+export const ChannelOutboxAttentionPageSchema = z
+  .object({
+    items: z.array(ChannelOutboxAttentionSchema).openapi({ description: 'Newest first.' }),
+    next: z.string().optional().openapi({ description: 'Pass as `before` for older messages.' }),
+  })
+  .openapi('ChannelOutboxAttentionPage')
+
+export const ChannelOutboxAttentionQuery = z.object({
+  before: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+})
+
 export const ChannelActivityActionsSchema = z
   .object({ actions: z.array(z.string()) })
   .openapi('ChannelActivityActions')
@@ -533,6 +572,13 @@ export const ChannelIdParam = z.object({
     .min(1)
     .openapi({ param: { name: 'id', in: 'path' } }),
 })
+export const ChannelOutboxParam = ChannelIdParam.extend({
+  rowId: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: 'rowId', in: 'path' } }),
+})
+
 export const ChannelChatParam = ChannelIdParam.extend({
   chatId: z
     .string()

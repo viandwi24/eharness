@@ -2,13 +2,14 @@
 	import { untrack } from 'svelte';
 	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwise';
 	import { api } from '#lib/api/index.js';
+	import NeedsALook from '#lib/components/app/channels/NeedsALook.svelte';
 	import ChannelHeader from '#lib/components/app/channels/ChannelHeader.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { useConnection } from '#lib/channels/connection.svelte.js';
-	import { breakerText, limitsBody, limitsFormOf, outboxSummary, usageText, type LimitsForm } from '#lib/channels/model.js';
+	import { breakerText, HELD_HELP, HELD_LABEL, limitsBody, limitsFormOf, outboxSummary, usageText, type LimitsForm } from '#lib/channels/model.js';
 	import { formatTime } from '#lib/format.js';
 
 	// How messages leave: the queue, the pause after errors, and for a user account the daily caps.
@@ -59,11 +60,14 @@
 	<PageBody size="narrow" class="gap-4">
 		<section class="flex flex-col gap-1 rounded-xl border border-border bg-card p-4" aria-label="Outbox">
 			<h2 class="text-sm font-medium">Outbox</h2>
-			<p class="text-xs text-muted-foreground" data-testid="outbox-summary">{outboxSummary(conn)}</p>
+			<p class="text-xs text-muted-foreground" data-testid="outbox-summary" title={conn.counts.outboxHeld > 0 ? `${HELD_LABEL}: ${HELD_HELP}` : undefined}>{outboxSummary(conn)}</p>
+			{#if conn.counts.outboxHeld > 0}<p class="text-xs text-muted-foreground" data-testid="held-help">{HELD_HELP}</p>{/if}
 			{#if account}
 				<p class="text-xs" data-testid="usage">{usageText(account)}{#if account.floods.parkedChats > 0} · {account.floods.parkedChats} chat{account.floods.parkedChats === 1 ? '' : 's'} paused by a flood wait{/if}{#if account.pausedUntil} · sending paused until {formatTime(account.pausedUntil)}{/if}</p>
 			{/if}
 		</section>
+
+		<NeedsALook connectionId={id} onChanged={() => cs.load()} />
 
 		{#if breaker}
 			<section class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-warning-soft p-4 text-xs text-warning-text" role="alert" aria-label="Sending is paused">

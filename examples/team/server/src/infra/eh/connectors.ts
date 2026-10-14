@@ -84,6 +84,14 @@ export const SEALED_KINDS = ['connection', 'connection-credentials', 'connector-
 const CLIENT_KIND = 'connector-client'
 
 export interface ConnectorsOptions {
+  /**
+   * Choices for a settings field the app knows at request time (the Browser connector's profile:
+   * a list of the Browser page's profiles instead of an id to type). The field becomes a select.
+   */
+  fieldOptions?: (
+    connectorId: string,
+    path: string,
+  ) => Promise<Array<{ value: string; label: string }> | undefined>
   sqlite: Database
   /** The sealed profile store (`sealedProfileStore` over `sqliteProfileStore`). */
   profiles: ProfileStore
@@ -350,7 +358,12 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         type: desc.auth.type,
         ...(desc.auth.scopes === undefined ? {} : { scopes: desc.auth.scopes }),
       },
-      fields: desc.form.fields as ConnectorView['fields'],
+      fields: (await Promise.all(
+        desc.form.fields.map(async (f) => {
+          const choices = await options.fieldOptions?.(d.id, f.path).catch(() => undefined)
+          return choices === undefined ? f : { ...f, widget: 'select' as const, options: choices }
+        }),
+      )) as ConnectorView['fields'],
       capabilities: d.capabilities.map(capView),
       builtin: d.source === 'builtin',
       leadOnly: d.id === 'team',

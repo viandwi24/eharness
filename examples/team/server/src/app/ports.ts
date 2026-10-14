@@ -29,6 +29,7 @@ import type {
   ChannelLinkView,
   ChannelMemberView,
   ChannelNodeView,
+  ChannelOutboxAttentionPage,
   ChannelPeopleQuery,
   ChannelPeopleSettings,
   ChannelPersonView,
@@ -1068,6 +1069,15 @@ export interface ChannelInboxPort {
     options: { limit: number; before?: string },
   ): Promise<ChannelConversationLog>
   activity(id: string, query: ChannelActivityQuery): Promise<ChannelActivityPage>
+  /** Messages whose delivery is uncertain or failed and not dismissed, newest first. */
+  outboxAttention(
+    id: string,
+    query: { limit: number; before?: string },
+  ): Promise<ChannelOutboxAttentionPage>
+  /** "Send again": re-queue a failed message (not a tool call). It may appear twice. */
+  retryOutbox(id: string, rowId: string): Promise<void>
+  /** Mark a failed message reviewed so it leaves the list. Nothing is deleted. */
+  dismissOutbox(id: string, rowId: string): Promise<void>
   /** The action and read names recorded in the activity (the Activity filter). */
   activityActions(id: string): Promise<string[]>
   /** One page of activity: SQL filter and count, newest first by default. */

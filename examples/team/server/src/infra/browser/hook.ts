@@ -38,6 +38,13 @@ export function createBrowserHook(deps: BrowserHookDeps): BrowserHook {
         ? undefined
         : { name: p.name, adapter: p.adapter, mode: p.mode, trusted: p.trusted === true }
     },
+    async profileCount() {
+      const page = await profiles.list({ limit: 2 })
+      return {
+        count: page.items.length,
+        only: page.items.length === 1 ? page.items[0]?.id : undefined,
+      }
+    },
     settle: deps.settle,
     plugin({ agentId, profileId }): HarnessPlugin {
       return browser({

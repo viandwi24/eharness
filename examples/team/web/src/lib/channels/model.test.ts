@@ -28,6 +28,10 @@ import {
 	formOfChat,
 	originText,
 	outboxSummary,
+	attentionReason,
+	attentionKind,
+	needsALookCount,
+	HELD_HELP,
 	policyBody,
 	privacyWarning,
 	retentionError,
@@ -84,7 +88,7 @@ const conn = (over: Partial<ChannelConnection> = {}): ChannelConnection => ({
 	enabled: true,
 	runtime: { state: 'running', since: 1 },
 	binding: null,
-	counts: { chats: 0, linked: 0, unlinked: 0, outboxPending: 0, outboxFailed: 0 },
+	counts: { chats: 0, linked: 0, unlinked: 0, outboxPending: 0, outboxFailed: 0, outboxHeld: 0 },
 	...over
 });
 
@@ -159,9 +163,23 @@ describe('privacy mode warning', () => {
 describe('delivery text', () => {
 	test('outbox and breaker', () => {
 		expect(outboxSummary(conn())).toBe('Nothing waiting');
-		expect(outboxSummary(conn({ counts: { chats: 0, linked: 0, unlinked: 0, outboxPending: 2, outboxFailed: 1 } }))).toBe('2 waiting to send · 1 failed');
+		expect(outboxSummary(conn({ counts: { chats: 0, linked: 0, unlinked: 0, outboxPending: 2, outboxFailed: 1, outboxHeld: 0 } }))).toBe('2 waiting to send · 1 failed');
+		expect(outboxSummary(conn({ counts: { chats: 0, linked: 0, unlinked: 0, outboxPending: 0, outboxFailed: 0, outboxHeld: 2 } }))).toBe('Nothing waiting · Held after a restart: 2');
+		expect(outboxSummary(conn({ counts: { chats: 0, linked: 0, unlinked: 0, outboxPending: 1, outboxFailed: 3, outboxHeld: 1 } }))).toBe('1 waiting to send · Held after a restart: 1 · 3 failed');
 		expect(breakerText(conn(), 0)).toBeUndefined();
 		expect(breakerText(conn({ breaker: { open: true, until: 5 * 60_000, reason: 'forbidden' } }), 0)).toContain('about 5 min');
+	});
+	test('messages that need a look are told in plain words', () => {
+		expect(attentionReason({ status: 'held', uncertain: true, reason: null, kind: 'reply' })).toContain('checking the chat');
+		expect(attentionReason({ status: 'failed', uncertain: true, reason: 'x', kind: 'reply' })).toContain('could not confirm whether it arrived');
+		expect(attentionReason({ status: 'failed', uncertain: false, reason: 'interrupted before it was sent; a tool call is never re-executed', kind: 'post' })).toContain('never run twice');
+		expect(attentionReason({ status: 'failed', uncertain: false, reason: 'chat not found', kind: 'reply' })).toBe('Could not be sent: chat not found');
+		expect(attentionReason({ status: 'failed', uncertain: false, reason: null, kind: 'reply' })).toBe('Could not be sent.');
+		expect(attentionKind('approval')).toBe('Approval request');
+		expect(attentionKind('reply')).toBe('Reply');
+		expect(needsALookCount(3, false)).toBe('3');
+		expect(needsALookCount(20, true)).toBe('20+');
+		expect(HELD_HELP).toContain('nothing is sent twice');
 	});
 	test('agents and connections lists', () => {
 		expect(agentChoices([{ id: '1', name: 'a' }, { id: '2', name: 'b', archivedAt: 5 }]).map((a) => a.id)).toEqual(['1']);
@@ -385,7 +403,7 @@ describe('navigation of a connection', () => {
 });
 
 describe('what needs attention', () => {
-	const base = { runtime: { state: 'running', since: 1 }, counts: { chats: 1, linked: 1, unlinked: 0, outboxPending: 0, outboxFailed: 0 }, binding: { agentId: 'a' }, transport: 'bot' };
+	const base = { runtime: { state: 'running', since: 1 }, counts: { chats: 1, linked: 1, unlinked: 0, outboxPending: 0, outboxFailed: 0, outboxHeld: 0 }, binding: { agentId: 'a' }, transport: 'bot' };
 	test('a running connection with nothing waiting is healthy', () => {
 		expect(attentionOf(base as never)).toEqual([]);
 		expect(isHealthy(base as never)).toBe(true);

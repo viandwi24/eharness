@@ -250,10 +250,39 @@ export function privacyWarning(c: ChannelConnection, chats: readonly ChannelChat
 export const cannotPost = (c: ChannelChat): boolean => c.canPost === false;
 
 export function outboxSummary(c: ChannelConnection): string {
-	const { outboxPending: p, outboxFailed: f } = c.counts;
+	const { outboxPending: p, outboxFailed: f, outboxHeld: h } = c.counts;
 	const parts = [p === 0 ? 'Nothing waiting' : `${p} waiting to send`];
+	if (h > 0) parts.push(`${HELD_LABEL}: ${h}`);
 	if (f > 0) parts.push(`${f} failed`);
 	return parts.join(' · ');
+}
+
+export const HELD_LABEL = 'Held after a restart';
+/** What "held" means, for the tooltip and help text next to the count. */
+export const HELD_HELP = 'The server stopped while sending these. It checks the chat and settles them automatically; nothing is sent twice.';
+
+export type OutboxAttention = components['schemas']['ChannelOutboxAttention'];
+
+/** The reason a message needs a look, in plain words. */
+export function attentionReason(item: Pick<OutboxAttention, 'status' | 'uncertain' | 'reason' | 'kind'>): string {
+	if (item.status === 'held') return 'The server stopped while sending this. It is checking the chat and will settle it by itself.';
+	if (item.uncertain) return 'The server stopped while this was being sent, and the chat could not confirm whether it arrived. It was not sent again, to avoid a duplicate.';
+	if (item.reason?.startsWith('interrupted before it was sent')) return 'An action of the agent was interrupted before it was sent. It is never run twice.';
+	const why = item.reason?.trim();
+	return why ? `Could not be sent: ${why}` : 'Could not be sent.';
+}
+
+/** What the message was, for a small label. */
+export function attentionKind(kind: OutboxAttention['kind']): string {
+	return kind === 'approval' ? 'Approval request' : kind === 'reminder' ? 'Reminder' : kind === 'post' ? 'Post' : 'Reply';
+}
+
+/** The warning of the "Send again" confirmation. */
+export const RETRY_WARNING = 'If the first attempt did arrive, the chat will show this message twice.';
+
+/** The count shown on the section heading: the loaded rows, with a plus when more pages exist. */
+export function needsALookCount(loaded: number, more: boolean): string {
+	return `${loaded}${more ? '+' : ''}`;
 }
 
 export function breakerText(c: ChannelConnection, now: number): string | undefined {

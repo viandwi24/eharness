@@ -12,6 +12,7 @@ import { checkBearer, originAllowed } from '../app/auth.ts'
 import { DomainError } from '../app/errors.ts'
 import { createLoginAuth, createLoginThrottle, SESSION_COOKIE } from '../app/login.ts'
 import type { Deps } from '../app/ports.ts'
+import { liveProfileOf, takeLiveTicket } from './live-tickets.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
 import { authRoutes } from './routes/auth.ts'
@@ -281,6 +282,10 @@ export function createApp(options: AppOptions): OpenAPIHono {
 
   app.use('*', async (c, next) => {
     if (isOpenPrefix(c.req.path)) return next()
+    // the live view WebSocket carries a one-time ticket instead of a header (live-tickets.ts)
+    const liveProfile = liveProfileOf(c.req.path)
+    if (liveProfile !== undefined && takeLiveTicket(c.req.query('ticket'), liveProfile))
+      return next()
     if (login) {
       if (PUBLIC_WITH_LOGIN.has(c.req.path)) return next()
       if (bearerOk(c) || (await login.verify(getCookie(c, SESSION_COOKIE)))) return next()

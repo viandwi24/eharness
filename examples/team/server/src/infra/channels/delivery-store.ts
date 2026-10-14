@@ -52,6 +52,24 @@ export interface OutboxRow {
   createdAt: number
   updatedAt: number
   sentAt: number | null
+  /** When a person dismissed this failed row from "Needs a look"; null = not reviewed. */
+  reviewedAt: number | null
+}
+
+/** A row a person may need to look at: delivery uncertain (held) or failed and not yet dismissed. */
+export interface AttentionQuery {
+  /** Page size (default 20, at most 100). */
+  limit?: number
+  /** Rows older than this id (ids sort by creation time). */
+  before?: string
+  /** Failed rows older than this are not listed (default: no limit). */
+  since?: number
+}
+
+export interface AttentionPage {
+  rows: OutboxRow[]
+  /** Pass as `before` for the next page; undefined on the last one. */
+  next?: string
 }
 
 export interface NewOutbox {
@@ -90,6 +108,7 @@ interface OutboxDb {
   lease_until: number | null
   max_attempts: number | null
   result: string | null
+  reviewed_at: number | null
 }
 
 interface OutboxBody {
@@ -144,6 +163,19 @@ export interface OutboxStore {
   /** A platform message id that a sent row already holds. */
   platformIdTaken(connectionId: string, platformId: string): boolean
   counts(connectionId?: string): Record<OutboxStatus, number>
+  /**
+   * Held rows (being checked) and failed rows nobody dismissed yet, newest first, one page at a
+   * time. `post` rows (tool calls) are listed as well: they are never re-run, so they are only
+   * told about.
+   */
+  attention(connectionId: string, query?: AttentionQuery): Promise<AttentionPage>
+  /**
+   * Re-queue a failed row (not a `post`): pending again, due now, a fresh set of attempts.
+   * False when the row is not a failed, retryable row of this connection.
+   */
+  retry(connectionId: string, id: string, now: number): boolean
+  /** Mark a failed row reviewed so it leaves "Needs a look". Nothing is deleted. False when there is nothing to dismiss. */
+  dismiss(connectionId: string, id: string, now: number): boolean
   /** Delete finished rows older than `before`. */
   purge(before: number): number
 }
@@ -197,6 +229,7 @@ export function sqliteOutboxStore(
       createdAt: r.created_at,
       updatedAt: r.updated_at,
       sentAt: r.sent_at,
+      reviewedAt: r.reviewed_at,
     }
   }
   const setStatus = (
@@ -605,17 +638,58 @@ export function sqliteOutboxStore(
           .get(connectionId, platformId)?.n !== 0
       )
     },
+    async attention(connectionId, query = {}) {
+      const limit = Math.min(Math.max(query.limit ?? 20, 1), 100)
+      const rows = sqlite
+        .query<OutboxDb, (string | number)[]>(
+          `SELECT * FROM channel_outbox
+             WHERE connection_id = ? AND id < ?
+               AND (status = 'held' OR (status = 'failed' AND reviewed_at IS NULL AND updated_at >= ?))
+             ORDER BY id DESC LIMIT ?`,
+        )
+        .all(connectionId, query.before ?? '\uffff', query.since ?? 0, limit + 1)
+      const page = rows.slice(0, limit)
+      const last = page[page.length - 1]
+      return {
+        rows: await Promise.all(page.map(open)),
+        ...(rows.length > limit && last !== undefined ? { next: last.id } : {}),
+      }
+    },
+    retry(connectionId, id, now) {
+      return (
+        sqlite
+          .query(
+            `UPDATE channel_outbox SET status = 'pending', next_at = ?, attempts = 0, updated_at = ?,
+               reviewed_at = NULL, owner = NULL, lease_until = NULL
+               WHERE id = ? AND connection_id = ? AND status = 'failed' AND kind != 'post'`,
+          )
+          .run(now, now, id, connectionId).changes === 1
+      )
+    },
+    dismiss(connectionId, id, now) {
+      return (
+        sqlite
+          .query(
+            `UPDATE channel_outbox SET reviewed_at = ?
+               WHERE id = ? AND connection_id = ? AND status = 'failed' AND reviewed_at IS NULL`,
+          )
+          .run(now, id, connectionId).changes === 1
+      )
+    },
     counts(connectionId) {
+      // a failed row a person dismissed no longer counts: it was looked at
       const rows =
         connectionId === undefined
           ? sqlite
               .query<{ status: string; n: number }, []>(
-                'SELECT status, COUNT(*) AS n FROM channel_outbox GROUP BY status',
+                `SELECT status, COUNT(*) AS n FROM channel_outbox
+                   WHERE NOT (status = 'failed' AND reviewed_at IS NOT NULL) GROUP BY status`,
               )
               .all()
           : sqlite
               .query<{ status: string; n: number }, [string]>(
-                'SELECT status, COUNT(*) AS n FROM channel_outbox WHERE connection_id = ? GROUP BY status',
+                `SELECT status, COUNT(*) AS n FROM channel_outbox
+                   WHERE connection_id = ? AND NOT (status = 'failed' AND reviewed_at IS NOT NULL) GROUP BY status`,
               )
               .all(connectionId)
       const out: Record<OutboxStatus, number> = {

@@ -687,6 +687,41 @@ export interface ProactiveApi {
   flush(at?: number): Promise<number>
 }
 
+/** A message whose delivery needs a person to look: still being checked, or failed and not dismissed. */
+export interface OutboxAttentionItem {
+  id: string
+  /** Node id of the chat or topic the message was for. */
+  chatId: string
+  /** Chat (and topic) name; the node id when it is unknown now. */
+  chat: string
+  kind: OutboxRow['kind']
+  /** `held` = the server stopped while sending and is checking the chat; `failed` = given up. */
+  status: 'held' | 'failed'
+  /** The platform could not say whether the message arrived (it was not resent). */
+  uncertain: boolean
+  /** The beginning of the message text. */
+  preview: string
+  reason: string | null
+  attempts: number
+  createdAt: number
+  updatedAt: number
+  /** "Send again" is offered. */
+  retryable: boolean
+  /** "Dismiss" is offered. */
+  dismissable: boolean
+}
+
+export interface OutboxAttentionPage {
+  items: OutboxAttentionItem[]
+  next?: string
+}
+
+export type OutboxAction = 'queued' | 'dismissed' | 'not-found' | 'not-allowed'
+
+/** The error text recovery writes when the platform cannot say whether a message arrived. */
+export const UNCERTAIN_DELIVERY_REASON =
+  'the process stopped while sending and the platform cannot say whether it arrived; not resent to avoid a duplicate'
+
 export interface ChannelGateway {
   configure(input: ConnectionConfigInput): ConnectionConfig
   removeConnection(connectionId: string): void
@@ -844,6 +879,15 @@ export interface ChannelGateway {
   approvals: ApprovalStore
   /** Send what is due in the outbox of a connection (default: all). Resolves when the pass is done. */
   flush(connectionId?: string): Promise<void>
+  /** Messages of a connection that need a look (held, or failed and not dismissed), newest first. */
+  outboxAttention(
+    connectionId: string,
+    query?: { limit?: number; before?: string },
+  ): Promise<OutboxAttentionPage>
+  /** Re-queue a failed message ("Send again"); it may appear twice when it had arrived after all. */
+  retryOutbox(connectionId: string, id: string): Promise<OutboxAction>
+  /** Mark a failed message reviewed; it leaves the list and nothing is deleted. */
+  dismissOutbox(connectionId: string, id: string): Promise<OutboxAction>
   /**
    * An item of a channel session stopped waiting (answered in the web app, by the classifier, or
    * from a chat): updates the announcement. Fed from the activity feed (`pending-changed`).
@@ -3354,6 +3398,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       title: `A message to ${titleOf(node, row.conversationId)} was not delivered`,
       body: `The ${row.kind === 'reply' ? 'reply' : row.kind === 'approval' ? 'approval request' : 'message'} could not be sent: ${reason}`,
       agentId: config.agentId,
+      link: `/channels/${row.connectionId}/delivery#needs-a-look`,
     })
   }
 
@@ -3623,7 +3668,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       row.id,
       checked
         ? 'interrupted before it was sent; a tool call is never re-executed'
-        : 'the process stopped while sending and the platform cannot say whether it arrived; not resent to avoid a duplicate',
+        : UNCERTAIN_DELIVERY_REASON,
       now(),
     )
     if (row.kind !== 'post') {
@@ -3632,8 +3677,63 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         title: `A message to ${titleOf(node, row.conversationId)} may not have arrived`,
         body: 'The server stopped while it was sending it, and the platform cannot tell whether it was delivered. It was not sent again.',
         agentId: config.agentId,
+        link: `/channels/${row.connectionId}/delivery#needs-a-look`,
       })
     }
+  }
+
+  const ATTENTION_PREVIEW = 160
+  /** Failed rows older than this leave "Needs a look" by themselves. */
+  const ATTENTION_DAYS = 30
+
+  async function outboxAttention(
+    connectionId: string,
+    query: { limit?: number; before?: string } = {},
+  ): Promise<OutboxAttentionPage> {
+    await migrated
+    const page = await outbox.attention(connectionId, {
+      ...query,
+      since: now() - ATTENTION_DAYS * 86_400_000,
+    })
+    return {
+      items: page.rows.map((row) => {
+        const failed = row.status === 'failed'
+        const text = row.text.replace(/\s+/g, ' ').trim()
+        return {
+          id: row.id,
+          chatId: row.conversationId,
+          chat: titleOf(nodes.get(row.conversationId), row.conversationId),
+          kind: row.kind,
+          status: failed ? 'failed' : 'held',
+          uncertain: !failed || row.lastError === UNCERTAIN_DELIVERY_REASON,
+          preview: text.length > ATTENTION_PREVIEW ? `${text.slice(0, ATTENTION_PREVIEW)}…` : text,
+          reason: row.lastError,
+          attempts: row.attempts,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          retryable: failed && row.kind !== 'post',
+          dismissable: failed,
+        }
+      }),
+      ...(page.next === undefined ? {} : { next: page.next }),
+    }
+  }
+
+  async function retryOutbox(connectionId: string, id: string): Promise<OutboxAction> {
+    await migrated
+    const row = await outbox.get(id)
+    if (row === undefined || row.connectionId !== connectionId) return 'not-found'
+    if (!outbox.retry(connectionId, id, now())) return 'not-allowed'
+    outboxEvent(row, 'reply-retried', 'sent again by a person', { attempt: 0 })
+    void flush(connectionId).catch(() => undefined)
+    return 'queued'
+  }
+
+  async function dismissOutbox(connectionId: string, id: string): Promise<OutboxAction> {
+    await migrated
+    const row = await outbox.get(id)
+    if (row === undefined || row.connectionId !== connectionId) return 'not-found'
+    return outbox.dismiss(connectionId, id, now()) ? 'dismissed' : 'not-allowed'
   }
 
   async function flushPass(connectionId: string): Promise<void> {
@@ -6332,6 +6432,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     outbox,
     approvals,
     flush,
+    outboxAttention,
+    retryOutbox,
+    dismissOutbox,
     pendingChanged,
     readActionTools(agentId) {
       const names: string[] = []
