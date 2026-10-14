@@ -29,6 +29,8 @@ import {
   READ_DESCRIPTION,
   REQUEST_HUMAN_DESCRIPTION,
   SCREENSHOT_DESCRIPTION,
+  SCREENSHOT_FOR_PERSON_DESCRIPTION,
+  SCREENSHOT_FOR_PERSON_TEXT,
   SNAPSHOT_DESCRIPTION,
   TABS_DESCRIPTION,
 } from './texts.ts'
@@ -330,11 +332,14 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
         typeof options.images === 'function'
           ? await options.images(context)
           : (options.images ?? true)
+      // screenshots the model sees (and the automatic ones after open/act) need image input; a
+      // screenshot for the person (shown in the chat, stored in the file system) needs only fs
       const shots = caps.snapshot && caps.screenshot && fsOk && imagesOk
+      const personShots = caps.screenshot && fsOk
       let seq = 0
       let lastHash: string | undefined
       const cache = new Map<number, { bytes: Uint8Array; version: string }>()
-      if (shots && fs?.list !== undefined) {
+      if (personShots && fs?.list !== undefined) {
         try {
           const prefix = `${slug(sessionId)}-`
           for (const f of await fs.list(folder)) {
@@ -510,6 +515,9 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
             value: typeof output === 'string' ? output : JSON.stringify(output),
           }
         }
+        if (!imagesOk) {
+          return { type: 'text', value: `${output.text}\n${SCREENSHOT_FOR_PERSON_TEXT}` }
+        }
         if (output.seq <= seq - inModel) {
           return { type: 'text', value: `${output.text}\n${OLDER_SCREENSHOT_TEXT}` }
         }
@@ -639,9 +647,9 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
           }),
       } as never)
 
-      if (shots) {
+      if (personShots) {
         tools[names('browser_screenshot')] = tool({
-          description: SCREENSHOT_DESCRIPTION,
+          description: imagesOk ? SCREENSHOT_DESCRIPTION : SCREENSHOT_FOR_PERSON_DESCRIPTION,
           inputSchema: z.object({
             fullPage: z.boolean().optional().describe('The whole page instead of the visible part'),
             ref: z.string().optional().describe('Ref of one element to capture'),

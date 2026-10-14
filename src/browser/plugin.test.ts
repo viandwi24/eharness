@@ -234,15 +234,17 @@ describe('browser plugin: the loop with a vision model', () => {
 })
 
 describe('browser plugin: tool list', () => {
-  test('a model without image input gets no screenshot tool and no images', async () => {
+  test('a model without image input gets no images; its screenshots are for the person', async () => {
     const { agent, model, manager } = await setup(
-      [call('browser_open', { url: URL_A }), { text: 'done' }],
+      [call('browser_open', { url: URL_A }), call('browser_screenshot'), { text: 'done' }],
       { plugin: { images: false } },
     )
     await agent.session('s').send('go').result
-    expect(toolNames(model)).not.toContain('browser_screenshot')
-    expect(lastResults(model).some((r) => hasImage(r.output))).toBe(false)
-    expect(textOf(lastResults(model)[0]?.output as WireOutput)).toContain('button "Submit"')
+    expect(toolNames(model)).toContain('browser_screenshot')
+    const results = lastResults(model)
+    expect(results.some((r) => hasImage(r.output))).toBe(false)
+    expect(textOf(results[0]?.output as WireOutput)).toContain('button "Submit"')
+    expect(textOf(results[1]?.output as WireOutput)).toContain('shown to the person in the chat')
     await manager.close()
   })
 

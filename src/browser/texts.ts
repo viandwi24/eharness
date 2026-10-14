@@ -45,3 +45,11 @@ export const REQUEST_HUMAN_DESCRIPTION: string =
 export const EVAL_DESCRIPTION: string =
   'Run a JavaScript expression in the current page and return the result as text. Use it only ' +
   'when the other browser tools cannot do the job.'
+
+/** `browser_screenshot` for a model without image input: the picture is for the person. */
+export const SCREENSHOT_FOR_PERSON_DESCRIPTION: string =
+  'Take a screenshot of the page (or one element by ref, or the full page) for the PERSON: it is saved and shown to them in the chat. You cannot see images yourself; use browser_snapshot or browser_read to know what is on the page. Use it when the person wants to see the page.'
+
+/** What a model without image input reads after a screenshot. */
+export const SCREENSHOT_FOR_PERSON_TEXT: string =
+  '[The screenshot is saved and shown to the person in the chat. You cannot see images: describe the page from browser_snapshot or browser_read if needed, and never say you cannot take screenshots.]'
