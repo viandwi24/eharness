@@ -751,6 +751,7 @@ export function compose(config: ServerConfig): Server {
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   routines = createRoutineService(factory, {
+    sqlite: conn.sqlite,
     agents,
     queue: sqliteSessionQueue(conn.sqlite),
     routines: routineStore,
@@ -1061,15 +1062,13 @@ export function compose(config: ServerConfig): Server {
             return { posted: false, reason: 'the chat of this reminder is gone' }
           const text = webReminderPost(rem.body)
           await factory.prepare(def)
-          await (
-            factory.openSession(def, sessionId) as unknown as {
-              inject(kind: string, data: unknown, options?: { key?: string }): Promise<unknown>
-            }
-          ).inject(
-            'eh.notice',
-            { level: 'info', code: 'EH_REMINDER', message: text },
-            { key: `reminder:${rem.id}:${slot}` },
-          )
+          await factory
+            .openSession(def, sessionId)
+            .inject(
+              'eh.notice',
+              { level: 'info', code: 'EH_REMINDER', message: text },
+              { key: `reminder:${rem.id}:${slot}` },
+            )
           events.append({
             type: 'message-added',
             agentId: def.id,

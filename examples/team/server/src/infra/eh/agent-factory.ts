@@ -40,8 +40,10 @@ import {
   type SessionPeek,
 } from 'eharness'
 import { type ActivityStore, activity } from 'eharness/activity'
+import { clock, nowLine } from 'eharness/clock'
 import type { ActivatedConnectors, BuiltinInput } from 'eharness/connectors'
 import { type FileToolName, filesystem } from 'eharness/filesystem'
+import { budgetNotice, stepBudget, trackRefusals } from 'eharness/limits'
 import {
   type AutoClassifier,
   type AutoEvent,
@@ -115,10 +117,9 @@ import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { ActivityLog } from './activity-log.ts'
-import { budgetNotice, capText, trackRefusals } from './budget-notice.ts'
+import { capText } from './budget-cap-text.ts'
 import { chatTools } from './chat-tools-plugin.ts'
-import { clock, DATETIME_TOOL, nowLine } from './clock-plugin.ts'
-import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
+import { DATETIME_TOOL, MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
 import { DECISION_TOOLS, type DecisionIntake, decisions } from './decisions-plugin.ts'
 import { fileGrant } from './file-grant-plugin.ts'
@@ -131,7 +132,6 @@ import type { ModelConfig } from './provider.ts'
 import { rehearsalSessions, sessionFileSystem } from './rehearsal-registry.ts'
 import { routineOutcomes } from './routine-plugin.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
-import { stepBudget } from './step-budget-plugin.ts'
 import {
   setBudgetLimit,
   sqliteBudgetLedger,
@@ -428,6 +428,31 @@ const TEAM_PREAMBLE = [
 export const WORKER_TYPE = 'worker'
 const WORKER_MARK = ':worker:'
 export const isWorkerSession = (sessionId: string): boolean => sessionId.includes(WORKER_MARK)
+
+/** Runs whose budget is set by their runner: the step budget never extends them. */
+const FIXED_STEP_ORIGINS: ReadonlySet<string> = new Set([
+  'program',
+  'rehearsal',
+  'heartbeat',
+  'routine',
+])
+
+/**
+ * The hard step cap of a turn of this session (0 = never extended): a chat turn 120 steps; a
+ * delegated child or an assigned task 200; a background worker `maxWorkerSteps` (default 400).
+ */
+export function stepCapOf(sessionId: string, hasParent: boolean, maxWorkerSteps = 400): number {
+  if (isWorkerSession(sessionId)) return maxWorkerSteps
+  const origin = originOfSession(sessionId, hasParent)
+  if (FIXED_STEP_ORIGINS.has(origin)) return 0
+  if (hasParent || origin === 'task') return 200
+  return 120
+}
+
+const TEAM_DATETIME_DESCRIPTION =
+  'The current date and time, and date arithmetic, in the team timezone (the one zone the whole team uses: routines, reminders, chat times, "today"). ' +
+  'now: the exact time now. convert: a moment in another zone. add: a moment plus or minus months/weeks/days/hours/minutes (calendar-aware). diff: the time between two moments. ' +
+  'Use it instead of computing dates, weekdays or time differences yourself. Read-only.'
 /** The child session id: workers are told apart from role agents by id. */
 const childIdFor = (parentId: string, toolCallId: string, agent: string): string =>
   agent === WORKER_TYPE
@@ -1083,15 +1108,17 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             }),
           ]),
       // one clock for the team: the `datetime` tool reads the team timezone at every call
-      clock({ timezone: () => currentSettings().timezone }),
+      clock({
+        timezone: () => currentSettings().timezone,
+        label: 'Team',
+        description: TEAM_DATETIME_DESCRIPTION,
+      }),
       // memory holds durable facts only: no system state, no style notes (hook only)
       memoryDiscipline(),
       // long turns: the base step budget grows while the turn makes progress (hook only)
       stepBudget({
-        isWorker: isWorkerSession,
-        ...(deps.limits?.maxWorkerSteps === undefined
-          ? {}
-          : { maxWorkerSteps: deps.limits.maxWorkerSteps }),
+        cap: (ctx) =>
+          stepCapOf(ctx.session.id, ctx.session.parent !== undefined, deps.limits?.maxWorkerSteps),
       }),
       ...(deps.heartbeat === undefined ? [] : [heartbeat({ intake: deps.heartbeat })]),
       ...(deps.channels === undefined
@@ -1219,8 +1246,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             }),
           ]),
       // a chat turn that stops on a budget leaves a readable notice (which limit, where to raise it)
+      // (`text` peeks the refusal itself: the task index reads the same one for its stop text)
       budgetNotice({
-        describe: (sessionId) => (isDmSession(sessionId) ? capTextOf(sessionId) : undefined),
+        text: (_refusal, sessionId) => (isDmSession(sessionId) ? capTextOf(sessionId) : ''),
       }),
       // session events of the feed (turn-started, pending-changed, approval-decided, ...): the
       // library plugin writes them on whichever instance runs the turn
@@ -1344,7 +1372,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       compaction: { summarizeAt: 0.8, prune: {} },
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
-    }) as unknown as HarnessAgent
+    })
     if (worker) workerSelf = agent
     else selves.set(def.id, agent)
     return agent

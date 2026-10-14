@@ -908,7 +908,7 @@ agent read 2 of 13 topics page by page with `channel_read`, hit its 25-step budg
 "I ran out of steps"; later messages typed in the web view of that chat thread were answered only in
 the web app. Fixes:
 
-- **Step budget** (`infra/eh/step-budget-plugin.ts`): `turn.beforeEnd` extends a turn's base budget by
+- **Step budget** (`eharness/limits` `stepBudget`, cap in `agent-factory.ts`): `turn.beforeEnd` extends a turn's base budget by
   30 while it makes progress (the library's stuck detection still stops loops), up to 120 steps for a
   chat turn, 200 for a delegated child or task, `TEAM_MAX_WORKER_STEPS` (400) for a worker. Programs,
   rehearsals, heartbeats and routines keep their runner's budget.

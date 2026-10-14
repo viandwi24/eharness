@@ -1292,7 +1292,7 @@ example (the library is untouched) and has a scripted-model regression test in
   newer run answers `409 DECISION_EXPIRED` ("this run already finished...") and the decision becomes
   `expired`.
 - **A budget stop says which limit.** The ledger refusal is remembered per session
-  (`infra/eh/budget-notice.ts`); a chat turn that stops on `cost-cap` stores an `eh.notice` (which
+  (`eharness/limits`, text in `infra/eh/budget-cap-text.ts`); a chat turn that stops on `cost-cap` stores an `eh.notice` (which
   budget, what is used, where to raise it), it is the sidebar preview and the summary of a failed
   program run ("The day budget of program ...").
 - **One source of truth for spend.** `GET /usage` reads the model call log (the rows of the Logs page

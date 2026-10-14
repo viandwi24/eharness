@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Schedule } from 'eharness/scheduler'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
 import { fireId, type Routine, type RoutineRun } from '../src/domain/routines.ts'
@@ -15,6 +16,7 @@ import { openDatabase } from '../src/infra/db/client.ts'
 import { sqliteRoutineStore } from '../src/infra/db/routines-repo.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
+import { sqliteScheduleStore } from '../src/infra/eh/schedule-store.ts'
 import { compose, type Server } from '../src/main.ts'
 import { attn } from './support/attention.ts'
 
@@ -255,14 +257,13 @@ describe('ticker', () => {
     expect(feed.events.filter((e) => e.type === 'routine-fired').length).toBeGreaterThanOrEqual(2)
   })
 
-  test('the compare-and-set lets one of two connections claim a slot', () => {
+  test('the compare-and-set lets one of two connections claim a slot', async () => {
     const dir = tmp()
     const a = openDatabase(join(dir, 'team.db'))
     const b = openDatabase(join(dir, 'team.db'))
     try {
       const sa = sqliteRoutineStore(a.sqlite)
-      const sb = sqliteRoutineStore(b.sqlite)
-      const r = sa.insert({
+      sa.insert({
         id: 'r1',
         agentId: 'ag',
         name: 'n',
@@ -277,23 +278,18 @@ describe('ticker', () => {
         nextFireAt: 1000,
         now: 1,
       })
-      const claim = (store: typeof sa) =>
-        store.claimSlot({
-          routineId: r.id,
-          expectedNext: 1000,
-          scheduledAt: 1000,
-          nextFireAt: 61_000,
-          fire: true,
-          status: 'claimed',
-          sessionId: 'routine:r1:1000',
-          now: 2000,
-        })
-      const first = claim(sa)
-      const second = claim(sb)
-      expect(first?.scheduledAt).toBe(1000)
+      // the claim is the library's schedule store (`eharness/scheduler`): one winner per version
+      const ta = sqliteScheduleStore(a.sqlite)
+      const tb = sqliteScheduleStore(b.sqlite)
+      const row = (await ta.get('r1')) as Schedule
+      const first = await ta.claim('r1', row.version, 'a', 32_000)
+      const second = await tb.claim('r1', row.version, 'b', 32_000)
+      expect(first?.claimedBy).toBe('a')
       expect(second).toBeUndefined()
-      expect(sb.get('r1')?.fireCount).toBe(1)
-      expect(sb.get('r1')?.nextFireAt).toBe(61_000)
+      expect((await tb.due(2000, 10)).map((s) => s.id)).toEqual([]) // the live claim hides it
+      const done = await ta.complete('r1', 'a', { nextFireAt: 61_000, lastFireAt: 1000 })
+      expect(done?.nextFireAt).toBe(61_000)
+      expect(sqliteRoutineStore(b.sqlite).get('r1')?.nextFireAt).toBe(61_000)
     } finally {
       a.close()
       b.close()
@@ -448,7 +444,7 @@ describe('ticker', () => {
     await until('runs done', async () => (await runs(a.app, capped.id)).every(finished))
   })
 
-  test('a retried fire is deduplicated: recovery enqueues the claimed slot again, nothing runs twice', async () => {
+  test('a retried fire is deduplicated: the expired claim is taken over, the claimed slot is enqueued again, nothing runs twice', async () => {
     const a = instance(
       tmp(),
       { researcher: [{ text: 'only once' }, { text: 'extra' }] },
@@ -456,17 +452,19 @@ describe('ticker', () => {
     )
     const r = await create(a.app, { schedule: { kind: 'every', everyMs: 3_600_000 } })
     const slot = Date.now() - 500
-    // the first attempt: claimed the slot and enqueued, then "crashed" before recording the enqueue
-    const run = sqliteRoutineStore(a.server.conn.sqlite).claimSlot({
+    // the first attempt: opened the run of the slot and enqueued, then "crashed" before recording
+    // the enqueue; its claim on the routine row expired (the lease of this instance is 0)
+    const sqlite = a.server.conn.sqlite
+    sqlite.query('UPDATE routines SET next_fire_at = ? WHERE id = ?').run(slot, r.id)
+    const store = sqliteRoutineStore(sqlite)
+    const { run } = store.openSlot({
       routineId: r.id,
-      expectedNext: r.nextFireAt as number,
       scheduledAt: slot,
-      nextFireAt: slot + 3_600_000,
       fire: true,
       status: 'claimed',
       sessionId: `routine:${r.id}:${slot}`,
       now: Date.now() - 1000,
-    }) as RoutineRun
+    })
     const def = a.server.deps.agents.getBySlug('researcher')
     if (def === undefined) throw new Error('seed')
     await a.server.factory.prepare(def)

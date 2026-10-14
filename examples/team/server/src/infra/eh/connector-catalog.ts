@@ -37,13 +37,15 @@ import { CODE_LIST_PATH, type CodeRuntime } from '../code/index.ts'
 import { remoteSandboxConnector } from '../code/remote.ts'
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
-import { DATETIME_TOOL } from './clock-plugin.ts'
 import { DECISION_TOOLS, PROGRAM_NOTE_TOOL } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { PERSONA_TOOLS } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
 import { sessionFileSystem } from './rehearsal-registry.ts'
 import { WORK_QUEUE_TOOLS } from './work-queue-plugin.ts'
+
+/** Name of the clock tool (`eharness/clock`'s default). */
+export const DATETIME_TOOL = 'datetime'
 
 /** Memory tools are file writes by definition: the agent owns its memory, so they never ask. */
 export const MEMORY_TOOL_KINDS = {

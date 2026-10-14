@@ -1,10 +1,10 @@
 /**
- * Routines and their runs on SQLite (plain SQL on the shared connection). The scheduler's two
- * atomic steps live here:
+ * Routines and their runs on SQLite (plain SQL on the shared connection). Claiming slots is the
+ * job of `eharness/scheduler` over `infra/eh/schedule-store.ts`; this store keeps the atomic steps
+ * of a run:
  *
- *  - `claimSlot`: compare-and-set of `next_fire_at` plus the insert of the slot's run row in one
- *    `BEGIN IMMEDIATE` transaction. Of two instances that tick at once exactly one changes the
- *    row; the unique `(routine_id, scheduled_at)` makes a slot fire at most once.
+ *  - `openSlot`: insert the run row of a slot and count the fire in one `BEGIN IMMEDIATE`
+ *    transaction; the unique `(routine_id, scheduled_at)` makes a slot fire at most once.
  *  - `finishRun`: the outcome of a run and the routine's failure counter / auto-pause, atomically.
  */
 import type { Database } from 'bun:sqlite'
@@ -96,16 +96,11 @@ const toRun = (r: RunRow): RoutineRun => ({
   finishedAt: r.finished_at,
 })
 
-/** What the winner of a slot writes to the routine row. */
-export interface SlotClaim {
+/** The run row of a slot a scheduler fire opens. */
+export interface SlotOpen {
   routineId: string
-  /** The `next_fire_at` the claimer read: the compare-and-set expects it. */
-  expectedNext: number
   /** The slot the run is for (a missed slot is recorded as skipped). */
   scheduledAt: number
-  nextFireAt: number | null
-  /** Set when the routine pauses itself (`at` done, `endAt`, `maxFires`). */
-  pause?: PausedReason
   /** Count the fire (a skipped or missed slot is not a fire). */
   fire: boolean
   status: 'claimed' | 'skipped'
@@ -117,15 +112,20 @@ export interface SlotClaim {
 export interface SqliteRoutineStore extends RoutineStore {
   /** The routine that owns a program's schedule trigger. */
   getByProgram(programId: string): Routine | undefined
-  /** Active routines whose slot is at or before `horizon`, oldest slot first. */
-  due(horizon: number, limit: number): Routine[]
-  /** The winner gets the run; a loser (another instance moved the slot) gets undefined. */
-  claimSlot(claim: SlotClaim): RoutineRun | undefined
   /**
-   * Pause a routine only while its slot is still `expectedNext` (e.g. its agent was archived);
-   * true when this call did it.
+   * Open the run of a slot: `created` is true for the caller that inserted the row (it counts the
+   * fire), false when the row already exists (a retried fire after a crash: dispatch it again,
+   * the deterministic id dedupes the enqueue).
    */
-  pauseSlot(routineId: string, expectedNext: number, reason: PausedReason, now: number): boolean
+  openSlot(slot: SlotOpen): { run: RoutineRun; created: boolean }
+  /**
+   * Runs still `claimed` since before `before`: a fire that died between opening the run and
+   * enqueueing it, whose slot the schedule has already moved past (also the runs a tick of the
+   * pre-scheduler engine left behind).
+   */
+  staleClaims(before: number): RoutineRun[]
+  /** Pause an active routine (e.g. its agent was archived); true when this call did it. */
+  pause(routineId: string, reason: PausedReason, now: number): boolean
   /** A manual run: a run row for `scheduledAt = now`, the schedule untouched. */
   insertManualRun(
     routineId: string,
@@ -135,8 +135,6 @@ export interface SqliteRoutineStore extends RoutineStore {
   ): RoutineRun | undefined
   getRunBySlot(routineId: string, scheduledAt: number): RoutineRun | undefined
   getRunByInbox(inboxId: string): RoutineRun | undefined
-  /** Runs still `claimed` since before `before`: a tick that died between claim and enqueue. */
-  staleClaims(before: number): RoutineRun[]
   /** Newest run that is not skipped and not `exceptId`. */
   previousFiredRun(routineId: string, exceptId: string): RoutineRun | undefined
   markEnqueued(runId: string, info: { inboxId: string; firedAt: number; reason?: string }): void
@@ -272,40 +270,8 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
 
     getRun,
 
-    due(horizon, limit) {
-      return sqlite
-        .query<RoutineRow, [number, number]>(
-          `SELECT * FROM routines WHERE status = 'active' AND next_fire_at IS NOT NULL
-             AND next_fire_at <= ? ORDER BY next_fire_at, id LIMIT ?`,
-        )
-        .all(horizon, limit)
-        .map(toRoutine)
-    },
-
-    claimSlot(c) {
+    openSlot(c) {
       return immediate(() => {
-        const changed = sqlite
-          .query(
-            `UPDATE routines SET next_fire_at = ?, updated_at = ?,
-                 last_fire_at = CASE WHEN ? = 1 THEN ? ELSE last_fire_at END,
-                 fire_count = fire_count + ?,
-                 status = CASE WHEN ? IS NULL THEN status ELSE 'paused' END,
-                 paused_reason = CASE WHEN ? IS NULL THEN paused_reason ELSE ? END
-               WHERE id = ? AND status = 'active' AND next_fire_at = ?`,
-          )
-          .run(
-            c.nextFireAt,
-            c.now,
-            c.fire ? 1 : 0,
-            c.now,
-            c.fire ? 1 : 0,
-            c.pause ?? null,
-            c.pause ?? null,
-            c.pause ?? null,
-            c.routineId,
-            c.expectedNext,
-          ).changes
-        if (changed !== 1) return undefined
         const id = uuidv7()
         const inserted = sqlite
           .query(
@@ -323,24 +289,38 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
             c.now,
             c.status === 'skipped' ? c.now : null,
           ).changes
-        if (inserted !== 1) return undefined
+        if (inserted !== 1) {
+          const existing = sqlite
+            .query<RunRow, [string, number]>(
+              'SELECT * FROM routine_runs WHERE routine_id = ? AND scheduled_at = ?',
+            )
+            .get(c.routineId, c.scheduledAt)
+          return { run: toRun(existing as RunRow), created: false }
+        }
+        if (c.fire) {
+          sqlite
+            .query(
+              'UPDATE routines SET fire_count = fire_count + 1, last_fire_at = ?, updated_at = ? WHERE id = ?',
+            )
+            .run(c.now, c.now, c.routineId)
+        }
         if (c.status === 'skipped') {
           sqlite
             .query('UPDATE routines SET last_status = ? WHERE id = ?')
             .run(`skipped: ${c.reason ?? ''}`, c.routineId)
         }
-        return getRun(id)
+        return { run: getRun(id) as RoutineRun, created: true }
       })
     },
 
-    pauseSlot(routineId, expectedNext, reason, now) {
+    pause(routineId, reason, now) {
       return (
         sqlite
           .query(
             `UPDATE routines SET status = 'paused', paused_reason = ?, updated_at = ?
-               WHERE id = ? AND status = 'active' AND next_fire_at = ?`,
+               WHERE id = ? AND status = 'active'`,
           )
-          .run(reason, now, routineId, expectedNext).changes === 1
+          .run(reason, now, routineId).changes === 1
       )
     },
 

@@ -3,86 +3,31 @@
  * team timezone decides what "today", "9:00" and "tomorrow" mean in a chat. Pure.
  */
 
-export const isZone = (zone: string): boolean => {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: zone })
-    return true
-  } catch {
-    return false
-  }
-}
+import {
+  addDays,
+  fromZoned,
+  isValidTimeZone,
+  type LocalDate,
+  offsetLabel,
+  parseDate,
+  zonedParts,
+} from 'eharness/clock'
 
-interface Wall {
-  year: number
-  month: number
-  day: number
-  hour: number
-  minute: number
-  second: number
-  /** 0 = Sunday. */
-  weekday: number
-}
-
-/** The wall clock of an instant in a zone. */
-export function wallOf(at: number, zone: string): Wall {
-  const f = new Intl.DateTimeFormat('en-US', {
-    timeZone: zone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-    weekday: 'short',
-  })
-  const p = Object.fromEntries(f.formatToParts(new Date(at)).map((x) => [x.type, x.value]))
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-  return {
-    year: Number(p.year),
-    month: Number(p.month),
-    day: Number(p.day),
-    hour: Number(p.hour),
-    minute: Number(p.minute),
-    second: Number(p.second),
-    weekday: Math.max(0, days.indexOf(p.weekday as string)),
-  }
-}
+// zone arithmetic lives in `eharness/clock`; this module keeps the team's own helpers on top of it
+export { addDays, type LocalDate, offsetLabel, parseDate }
+export const isZone: (zone: string) => boolean = isValidTimeZone
+export const wallOf: typeof zonedParts = zonedParts
 
 /** The instant at which the wall clock of `zone` shows this date and time (DST gaps resolve forward). */
-export function zonedToEpoch(
-  date: { year: number; month: number; day: number },
+export const zonedToEpoch = (
+  date: LocalDate,
   time: { hour: number; minute: number },
   zone: string,
-): number {
-  const naive = Date.UTC(date.year, date.month - 1, date.day, time.hour, time.minute, 0)
-  let guess = naive
-  // the offset depends on the instant: settle in two passes
-  for (let i = 0; i < 3; i++) {
-    const w = wallOf(guess, zone)
-    const shown = Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, 0)
-    const delta = naive - shown
-    if (delta === 0) break
-    guess += delta
-  }
-  return guess
-}
-
-export interface LocalDate {
-  year: number
-  month: number
-  day: number
-}
+): number => fromZoned(date, time, zone)
 
 export const dateOf = (at: number, zone: string): LocalDate => {
   const w = wallOf(at, zone)
   return { year: w.year, month: w.month, day: w.day }
-}
-
-/** The calendar date `days` after `date` (negative = before). */
-export function addDays(date: LocalDate, days: number): LocalDate {
-  const d = new Date(Date.UTC(date.year, date.month - 1, date.day + days))
-  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() }
 }
 
 export const startOfDay = (date: LocalDate, zone: string): number =>
@@ -90,19 +35,6 @@ export const startOfDay = (date: LocalDate, zone: string): number =>
 
 export const isoDate = (d: LocalDate): string =>
   `${String(d.year).padStart(4, '0')}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`
-
-/** `2026-10-13` -> a date; undefined when it is not one. */
-export function parseDate(text: string): LocalDate | undefined {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text.trim())
-  if (m === null) return undefined
-  const d = { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) }
-  const back = new Date(Date.UTC(d.year, d.month - 1, d.day))
-  return back.getUTCFullYear() === d.year &&
-    back.getUTCMonth() + 1 === d.month &&
-    back.getUTCDate() === d.day
-    ? d
-    : undefined
-}
 
 export function parseClock(text: string): { hour: number; minute: number } | undefined {
   const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(text.trim())
@@ -191,14 +123,4 @@ export function inQuietHours(
   const b = to.hour * 60 + to.minute
   if (a === b) return false
   return a < b ? minutes >= a && minutes < b : minutes >= a || minutes < b
-}
-
-/** Offset of a zone from UTC at an instant, as `UTC+07:00` (`UTC` for none). */
-export function offsetLabel(at: number, zone: string): string {
-  const w = wallOf(at, zone)
-  const shown = Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second)
-  const minutes = Math.round((shown - Math.floor(at / 1000) * 1000) / 60_000)
-  if (minutes === 0) return 'UTC'
-  const abs = Math.abs(minutes)
-  return `UTC${minutes < 0 ? '-' : '+'}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`
 }

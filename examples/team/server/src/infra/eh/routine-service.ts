@@ -1,20 +1,22 @@
 /**
- * Routines on the durable inbox (docs/plans/P32-team-example.md §6.6, decision D3, ADR-0040).
- * eharness ships no scheduler: this is the app-side pattern of the multi-instance guide.
+ * Routines on the durable inbox (docs/plans/P32-team-example.md §6.6, decision D3, ADR-0040),
+ * scheduled by `eharness/scheduler` (spec 29, ADR-0063) over `schedule-store.ts`: the routines
+ * table is the schedule store.
  *
- * Every instance runs `tick()`. One iteration:
+ * Every instance runs `tick()`. One tick is one scheduler tick plus the app's part:
  *
- *  1. **Recover** runs a dead tick left `claimed` (claimed, not yet enqueued): the deterministic
- *     id `sched:<routineId>:<scheduledAt>` makes enqueueing them again idempotent.
- *  2. **Claim** the due routines (`next_fire_at <= now + lookahead`) with a compare-and-set on
- *     `next_fire_at`: of several instances exactly one moves the slot forward and fires it.
- *     The next slot comes from `croner` (IANA timezone). After downtime the missed slots are
- *     skipped (recorded as one skipped run); with `catchUpWindowMs` the latest missed slot fires
- *     once when it is younger than the window.
- *  3. **Fire**: overlap `skip` looks at the previous run (`session.busy()`, the session's inbox,
- *     pending approvals), then `session.enqueue(prompt, { mode: 'queue', id, availableAt })`;
- *     `availableAt` is the slot when it is still ahead, so a tick a little early fires on time.
- *  4. **Sweep** inbox items nobody holds (an instance died after enqueueing): opening the session
+ *  1. **Claim** (library): the due routines (`next_fire_at <= now + lookahead`) are claimed with a
+ *     compare-and-set; of several instances exactly one fires a slot. The next slot comes from
+ *     `croner` (IANA timezone), injected as the scheduler's `next`. A claim of a dead instance
+ *     expires after the lease (`recoverAfterMs`) and is taken over: the slot is fired again.
+ *  2. **Fire** (this file's callback): downtime policy (missed slots are skipped and recorded as one
+ *     skipped run; with `catchUpWindowMs` the latest slot fires once when it is inside the window),
+ *     then the run row of the slot (unique per slot, so a retried fire reuses it), the overlap
+ *     check (`skip` looks at the previous run: `session.busy()`, the session's inbox, pending
+ *     approvals) and `session.enqueue(prompt, { mode: 'queue', id, availableAt })`; `availableAt` is
+ *     the slot when it is still ahead, so a tick a little early fires on time. The id
+ *     `sched:<routineId>:<scheduledAt>` makes enqueueing again idempotent.
+ *  3. **Sweep** inbox items nobody holds (an instance died after enqueueing): opening the session
  *     drains it.
  *
  * A fire that needs a person is not approved by anyone: its turn ends `tool-pending`, the run is
@@ -23,7 +25,9 @@
  * `failed`, `needs_action`) arrives from the `routineOutcomes` plugin on turn end; consecutive
  * failures pause the routine (`maxFailures`).
  */
-import { errorText } from 'eharness'
+import type { Database } from 'bun:sqlite'
+import { errorText, uuidv7 } from 'eharness'
+import { createScheduler, type FireContext } from 'eharness/scheduler'
 import { postNotice } from '../../app/briefings.ts'
 import type {
   AgentRepo,
@@ -41,7 +45,6 @@ import { parseSystemKey } from '../../domain/heartbeat.ts'
 import { parseProgramSession } from '../../domain/programs.ts'
 import {
   fireId,
-  type PausedReason,
   parseRoutineSession,
   type Routine,
   type RoutineRun,
@@ -53,6 +56,7 @@ import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
 import type { SystemRunner } from './heartbeat-service.ts'
 import { INSTRUCTION_METADATA } from './instruction-marks.ts'
+import { sqliteScheduleStore } from './schedule-store.ts'
 
 export interface RoutineEngineConfig {
   /** Ticker interval (ms). Default 15 000; 0 = no timer (tests call `tick()`). */
@@ -61,7 +65,7 @@ export interface RoutineEngineConfig {
   lookaheadMs?: number
   /** A slot later than this counts as missed (downtime), not late. Default max(2 × tick, 60 s). */
   graceMs?: number
-  /** A `claimed` run older than this is re-enqueued by recovery. Default 30 s. */
+  /** Claim lease: a dead instance's claim is taken over (and its slot fired again) after it. Default 30 s. */
   recoverAfterMs?: number
   /** Routines claimed per tick. Default 50. */
   maxPerTick?: number
@@ -107,6 +111,8 @@ export interface RoutineService extends RoutineEngine {
 }
 
 export interface RoutineServiceDeps {
+  /** The shared connection: the schedule store runs on the `routines` table. */
+  sqlite: Database
   agents: AgentRepo
   routines: SqliteRoutineStore
   schedule: ScheduleCalc
@@ -165,6 +171,16 @@ export function createRoutineService(
       ? deps.dmSession(routine.agentId)
       : routineSessionId(routine, scheduledAt)
   const maxPerTick = deps.config?.maxPerTick ?? 50
+  const owner = uuidv7()
+  const scheduleStore = sqliteScheduleStore(deps.sqlite, {
+    lookaheadMs,
+    onPaused: (routineId, reason) => {
+      const routine = store.get(routineId)
+      if (routine !== undefined) {
+        emit('routine-changed', routine, null, { change: 'paused', reason }, clock())
+      }
+    },
+  })
 
   const emit = (
     type: EventType,
@@ -424,90 +440,77 @@ export function createRoutineService(
     return store.getRun(run.id) as RoutineRun
   }
 
-  async function processDue(row: Routine, now: number, report: TickReport): Promise<void> {
-    const expected = row.nextFireAt as number
+  /** One slot the scheduler hands over (spec 29 §3): the app's part of a fire. */
+  async function fireSlot(ctx: FireContext, now: number, report: TickReport): Promise<void> {
+    const row = store.get(ctx.schedule.id)
+    if (row === undefined) return
+    const scheduledAt = ctx.scheduledAt
     const def = deps.agents.get(row.agentId)
     if (def === undefined || def.archivedAt !== null) {
-      if (store.pauseSlot(row.id, expected, 'agent-archived', now)) {
+      if (store.pause(row.id, 'agent-archived', now)) {
         emit('routine-changed', row, null, { change: 'paused', reason: 'agent-archived' }, now)
       }
       return
     }
-
-    let fireAt: number | null = expected
-    let skipReason: string | undefined
-    let next: number | null
-    if (now - expected <= graceMs) {
-      next = schedule.next(row.schedule, expected)
-      // more than one slot behind but inside the grace: the extra slots are skipped, not replayed
-      if (next !== null && next <= now) next = schedule.next(row.schedule, now)
-    } else {
-      // downtime: never replay every missed slot
-      next = schedule.next(row.schedule, now)
+    const expected = ctx.schedule.nextFireAt as number
+    if (now - expected > graceMs) {
+      // downtime: never replay every missed slot; only the latest one inside the catch-up window
       const latest =
         row.catchUpWindowMs === null
           ? null
           : latestSlot(row.schedule, now - row.catchUpWindowMs, now)
       if (latest === null) {
-        fireAt = null
-        skipReason = 'missed'
-      } else {
-        fireAt = latest
+        const { run, created } = store.openSlot({
+          routineId: row.id,
+          scheduledAt: expected,
+          fire: false,
+          status: 'skipped',
+          reason: 'missed',
+          sessionId: sessionOf(row, expected),
+          now,
+        })
+        if (created) {
+          report.skipped.push({ routineId: row.id, scheduledAt: expected, reason: 'missed' })
+          emitRun(row, run, now)
+        }
+        return
       }
+      if (scheduledAt !== latest) return
     }
-    const firing = fireAt !== null
-    let pause: PausedReason | undefined
-    if (next !== null && row.endAt !== null && next > row.endAt) {
-      next = null
-      pause = 'ended'
-    }
-    if (firing && row.maxFires !== null && row.fireCount + 1 >= row.maxFires) {
-      next = null
-      pause = 'max-fires'
-    }
-    if (next === null && pause === undefined) {
-      pause = row.schedule.kind === 'at' ? 'completed' : 'ended'
-    }
-
-    const slot = fireAt ?? expected
-    const run = store.claimSlot({
+    const { run, created } = store.openSlot({
       routineId: row.id,
-      expectedNext: expected,
-      scheduledAt: slot,
-      nextFireAt: next,
-      ...(pause === undefined ? {} : { pause }),
-      fire: firing,
-      status: firing ? 'claimed' : 'skipped',
-      ...(skipReason === undefined ? {} : { reason: skipReason }),
-      sessionId: sessionOf(row, slot),
+      scheduledAt,
+      fire: true,
+      status: 'claimed',
+      sessionId: sessionOf(row, scheduledAt),
       now,
     })
-    if (run === undefined) {
-      report.lost++
+    // an existing row still `claimed` is a fire that died before it enqueued: dispatch it again
+    // (the enqueue id dedupes, so no overlap check); any other status was handled already
+    if (!created && run.status !== 'claimed') return
+    const done = await dispatch(row, run, now, { checkOverlap: created })
+    if (!created) {
+      report.recovered++
+      if (done.status === 'enqueued') report.fired.push(done)
       return
     }
-    if (pause !== undefined) {
-      emit('routine-changed', row, null, { change: 'paused', reason: pause }, now)
-    }
-    if (!firing) {
-      report.skipped.push({ routineId: row.id, scheduledAt: slot, reason: skipReason ?? '' })
-      emitRun(row, run, now)
-      return
-    }
-    const done = await dispatch(row, run, now, { checkOverlap: true })
     if (parseSystemKey(row.programId) !== undefined) return
     if (done.status === 'skipped') {
-      report.skipped.push({ routineId: row.id, scheduledAt: slot, reason: done.reason ?? '' })
+      report.skipped.push({ routineId: row.id, scheduledAt, reason: done.reason ?? '' })
     } else {
       report.fired.push(done)
     }
   }
 
+  /**
+   * Safety net: a run still `claimed` after the lease belongs to a fire that died after opening it
+   * and whose slot is already behind the schedule (a lease takeover covers the rest). The first
+   * attempt may already have enqueued (the id dedupes), so no overlap check here.
+   */
   async function recover(now: number, report: TickReport): Promise<void> {
     for (const run of store.staleClaims(now - recoverAfterMs)) {
       const routine = store.get(run.routineId)
       if (routine === undefined) continue
-      // the first attempt may already have enqueued (the id dedupes), so no overlap check here
       const done = await dispatch(routine, run, now, { checkOverlap: false })
       if (done.status === 'enqueued') report.fired.push(done)
       report.recovered++
@@ -556,18 +559,32 @@ export function createRoutineService(
   async function runTick(now: number): Promise<TickReport> {
     const report: TickReport = { fired: [], skipped: [], lost: 0, recovered: 0, swept: 0 }
     await recover(now, report).catch((e) => log.warn(`routines: recovery failed: ${errorText(e)}`))
-    for (const row of store.due(now + lookaheadMs, maxPerTick)) {
-      // a run that starts at once (program, heartbeat, digest) is not claimed ahead of its slot:
-      // it fires at or after it (D12 of the e2e pass); a timer wakes the ticker at the slot
-      if (row.programId != null && row.nextFireAt !== null && row.nextFireAt > now) {
-        wakeAt(row.nextFireAt)
-        continue
-      }
-      try {
-        await processDue(row, now, report)
-      } catch (error) {
-        log.warn(`routines: ${row.id} failed: ${errorText(error)}`)
-      }
+    // The scheduler runs `lookaheadMs` ahead of the clock (a slot a little ahead is claimed and
+    // fires with `availableAt`); its grace grows by the same amount, so a slot is missed when it
+    // is more than `graceMs` behind the real clock.
+    const scheduler = createScheduler({
+      store: scheduleStore,
+      now: () => now + lookaheadMs,
+      graceMs: graceMs + lookaheadMs,
+      leaseMs: recoverAfterMs,
+      maxPerTick,
+      owner,
+      next: (expr, after, timezone) =>
+        schedule.next({ kind: 'cron', expr, tz: timezone ?? 'UTC' }, after) ?? undefined,
+      fire: (ctx) => fireSlot(ctx, now, report),
+      onError: (error, context) =>
+        log.warn(`routines: ${context.scheduleId ?? 'tick'} failed: ${errorText(error)}`),
+    })
+    await scheduler.tick().catch((e) => log.warn(`routines: tick failed: ${errorText(e)}`))
+    if (timer !== undefined) {
+      // programs and system routines are not fired ahead of their slot: a timer wakes the ticker
+      const ahead = deps.sqlite
+        .query<{ next_fire_at: number }, [number, number]>(
+          `SELECT next_fire_at FROM routines WHERE status = 'active' AND program_id IS NOT NULL
+             AND next_fire_at > ? AND next_fire_at <= ?`,
+        )
+        .all(now, now + lookaheadMs)
+      for (const { next_fire_at } of ahead) wakeAt(next_fire_at)
     }
     report.swept = await sweep().catch((e) => {
       log.warn(`routines: sweep failed: ${errorText(e)}`)

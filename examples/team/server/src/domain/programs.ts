@@ -453,7 +453,7 @@ export const PROGRAM_BASE_TOOLS = [
   'read_skill_file',
   'search_skills',
   'todo_write',
-  // the clock (`infra/eh/clock-plugin.ts`): read-only, every run needs to know the date
+  // the clock (`eharness/clock`): read-only, every run needs to know the date
   'datetime',
   // the agent's own memory, read-only: what was agreed in chat may live there (writes stay outside)
   'memory_view',

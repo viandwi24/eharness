@@ -364,6 +364,15 @@ export const routines = sqliteTable(
     version: integer('version').notNull().default(1),
     /** Set when a program owns this routine (its schedule trigger); such routines are not listed as routines. */
     programId: text('program_id'),
+    /**
+     * Scheduler columns (`eharness/scheduler`, `infra/eh/schedule-store.ts`): the compare-and-set
+     * token of claims (separate from `version`, which only editors bump), the claim lease and the
+     * JSON payload of a schedule created through the library API (null for routines).
+     */
+    schedVersion: integer('sched_version').notNull().default(1),
+    claimedBy: text('claimed_by'),
+    claimedUntil: integer('claimed_until'),
+    schedPayload: text('sched_payload'),
   },
   (t) => [
     index('routines_due').on(t.status, t.nextFireAt),
