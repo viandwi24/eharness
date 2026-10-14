@@ -550,7 +550,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
   }
 
   const session = async (): Promise<HarnessSession<CoderMessage>> => {
-    const s = (await agentsReady).main.session(sessionId) as unknown as HarnessSession<CoderMessage>
+    const s = (await agentsReady).main.session(sessionId)
     if (!subscribed.has(s)) {
       subscribed.add(s)
       // every run of the session: the ones `drive` started answer to it, the others (a wake by a

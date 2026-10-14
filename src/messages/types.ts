@@ -404,7 +404,8 @@ export interface OutputPartData {
 /** Payload of the `eh.notice` kind (errors, timeouts, blocked input, recovered turns). */
 export interface NoticePayload {
   level: 'info' | 'warning' | 'error'
-  code?: HarnessErrorCode | HarnessNoticeCode
+  /** A library code (autocompleted) or an app-defined string, e.g. `EH_REMINDER` (app kinds inject notices too). */
+  code?: HarnessErrorCode | HarnessNoticeCode | (string & Record<never, never>)
   message: string
 }
 

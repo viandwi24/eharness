@@ -53,11 +53,7 @@ export function createChatService(
 
     async seed(def, sessionId, { name, text, key }) {
       const session = await sessionFor(def, sessionId)
-      await (
-        session as unknown as {
-          inject(kind: string, data: unknown, opts?: { key?: string }): Promise<unknown>
-        }
-      ).inject('eh.event', { name, text }, { key })
+      await session.inject('eh.event', { name, text }, { key })
     },
 
     async context(def, sessionId) {

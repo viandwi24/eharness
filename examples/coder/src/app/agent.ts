@@ -410,7 +410,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       ...((deps.invariants ?? process.env.CODER_DEBUG_INVARIANTS === '1')
         ? { debug: { invariants: true } }
         : {}),
-    }) as unknown as HarnessAgent
+    })
     self.agent = agent
     built.push(agent)
     return agent
