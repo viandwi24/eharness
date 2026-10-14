@@ -1,6 +1,6 @@
 # P48 — Browser agent (`eharness/browser`) and the team Browser page
 
-Status: todo (phase A in review) · Owner: maintainer · Branch: `main` (batched, see release workflow)
+Status: in progress (phase A done 2026-10-14) · Owner: maintainer · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -210,7 +210,7 @@ Design and rejected options: [ADR-0064](../decisions/0064-browser-module.md). Co
 
 - [x] Research: control layers, engines, hosted services, live view, screenshots for vision (table above)
 - [x] Spec 35, ADR-0064 (Proposed), this plan, board row, spec and ADR index rows
-- [ ] Owner review; ADR-0064 → Accepted; CLAUDE.md layout and hard rule 4; `check-imports` lists
+- [x] Owner review; ADR-0064 → Accepted; CLAUDE.md layout and hard rule 4; `check-imports` lists
 
 ### B. CDP core (`src/browser/cdp/*`)
 
@@ -313,7 +313,24 @@ After each wave, check for leftover Chrome or Lightpanda processes and ports.
 - [ ] No new runtime dependency; `check:imports` passes with `browser/node/` as the only Node-only part.
 - [ ] Gate green; changeset added; spec 35 updated wherever the code differs.
 
-## Open questions
+## Owner decisions (2026-10-14)
+
+- **Open questions answered:** (1) OOPIF later; a ref inside a cross-site iframe answers a readable
+  "not supported yet" string instead of a guess. (2) Per-process leases are enough (one server).
+  (3) `browser_act` stays `external` (ask) by default; a profile an admin marks **trusted** lets
+  its acting tools run without asking. (4) One profile per agent by default; sharing is allowed and
+  serial. (5) Downloads and uploads are a later plan.
+- **Resources are visible, not capped low:** `TEAM_BROWSER_MAX` stays 4; the Browser page and the
+  runtime card show each running profile's memory (RSS of the engine process tree) and CPU, the
+  total, and the server's free memory, so people judge it themselves while they try it.
+- **Container:** the team Dockerfile documents the Chrome system libraries for a managed profile
+  (or `TEAM_BROWSER_DRIVER=off`), and `--no-sandbox` only inside a container (detected), never on a
+  desktop.
+- **Long-run jobs (P49):** a profile lease survives the checkpoint between chunks of a long job (it
+  is released on idle, not at every turn end); after a restart the agent re-opens the browser and
+  starts with a fresh snapshot (old refs are stale).
+
+## Open questions (answered above)
 
 1. Out-of-process iframes (cross-site embeds, many login widgets): the first version covers the main
    frame and same-process iframes. Add OOPIF in B, or later?

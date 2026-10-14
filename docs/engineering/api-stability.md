@@ -21,6 +21,7 @@ Everything a user can observe without reading our source:
    | `eharness/code` | Draft | 0.9 | spec 28; runtime-neutral |
 | `eharness/scheduler`, `eharness/identity`, `eharness/channels`, `eharness/handoff` | Draft | 0.9 | specs 29-32; ADR-0062, 0063 |
 | `eharness/limits`, `eharness/clock` | Draft | 0.9 | specs 33-34 |
+| `eharness/browser`, `eharness/browser/node` | Draft | 0.9 | spec 35, ADR-0064; `browser/node` is Node-only (ADR-0036) |
    | `eharness/web/node` | Draft | 0.8 | `nodeResolveHost` for `webFetch`; Node-only (ADR-0036) |
    | `eharness/providers` | Draft | 0.8 | spec 23 |
    | `eharness/connectors` | Draft | 0.8 | spec 24 |

@@ -32,6 +32,8 @@ export default defineConfig({
     'handoff/index': 'src/handoff/index.ts',
     'limits/index': 'src/limits/index.ts',
     'clock/index': 'src/clock/index.ts',
+    'browser/index': 'src/browser/index.ts',
+    'browser/node': 'src/browser/node.ts',
     'testing/index': 'src/testing/index.ts',
   },
   format: 'esm',

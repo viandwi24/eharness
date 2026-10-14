@@ -60,6 +60,7 @@ const subpaths = [
   'handoff',
   'limits',
   'clock',
+  'browser',
 ]
 /**
  * Documented exceptions (ADR-0049): `eharness/connectors` reuses the generic configuration
@@ -69,10 +70,18 @@ const allowedImports: Record<string, string[]> = {
   connectors: ['providers'],
   http: ['activity'],
   client: ['http', 'activity'],
-  testing: ['activity', 'http', 'scheduler', 'channels', 'identity', 'handoff'],
+  testing: ['activity', 'http', 'scheduler', 'channels', 'identity', 'handoff', 'browser'],
+  browser: ['providers'],
 }
 /** Node-only modules (ADR-0036): `node:` built-ins allowed. */
-const nodeOnly = ['filesystem/node.ts', 'filesystem/node/', 'shell/', 'web/node.ts']
+const nodeOnly = [
+  'filesystem/node.ts',
+  'filesystem/node/',
+  'shell/',
+  'web/node.ts',
+  'browser/node/',
+  'browser/node.ts',
+]
 /**
  * Reviewed exceptions to rule 3: file -> patterns (as source text of the rule name) that may appear.
  * `src/session` reads `globalThis.process` behind a `typeof` guard (no bare `process.` use).

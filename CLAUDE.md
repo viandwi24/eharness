@@ -41,12 +41,12 @@ bunx changeset              # add a changeset (required for every user-facing ch
    `LanguageModel`, `createUIMessageStream`, `convertToModelMessages` directly. Do not invent our
    own message, tool or stream shapes (ADR-0001).
 3. **Runtime-neutral source.** `src/` must run on Node ≥ 22 and Bun. No `Bun.*`, no `node:fs` in core.
-   Node built-ins are allowed only in the Node-only modules `src/filesystem/node*` and `src/shell/**`
+   Node built-ins are allowed only in the Node-only modules `src/filesystem/node*`, `src/shell/**` and `src/browser/node/**`
    (ADR-0036; listed in `scripts/check-imports.ts`). Use Web APIs
    (`crypto.subtle`, `TextEncoder`, `ReadableStream`).
 4. **Shipped plugins use only the public API.** `src/filesystem/**`, `src/mcp/**`, `src/storage/**`,
    `src/todos/**`, `src/memory/**`, `src/guard/**`, `src/openapi/**`, `src/group/**`, `src/ask/**`,
-   `src/permissions/**`, `src/providers/**`, `src/connectors/**` (also `src/providers/index.ts`, ADR-0049), `src/code/**`, `src/scheduler/**`, `src/identity/**`, `src/channels/**`, `src/handoff/**`, `src/limits/**`, `src/clock/**`, `src/shell/**`, `src/subagent/**`, `src/web/**`, `src/http/**` (also `src/activity/index.ts`, ADR-0059), `src/client/**` (core, `http` and `activity` only as `import type`; runtime imports only `ai`, ADR-0059) and `src/testing/**` may import core only through `src/index.ts`
+   `src/permissions/**`, `src/providers/**`, `src/connectors/**` (also `src/providers/index.ts`, ADR-0049), `src/code/**`, `src/scheduler/**`, `src/identity/**`, `src/channels/**`, `src/handoff/**`, `src/limits/**`, `src/clock/**`, `src/browser/**`, `src/shell/**`, `src/subagent/**`, `src/web/**`, `src/http/**` (also `src/activity/index.ts`, ADR-0059), `src/client/**` (core, `http` and `activity` only as `import type`; runtime imports only `ai`, ADR-0059) and `src/testing/**` may import core only through `src/index.ts`
    (dogfooding, ADR-0008).
 5. **The library ships memory adapters only.** Database/S3/JSON-file adapters are examples in
    `examples/`, never dependencies (ADR-0008).
@@ -101,6 +101,7 @@ src/
   handoff/          eharness/handoff (ask a person and park the turn; answers resume it from anywhere)
   limits/           eharness/limits (step budgets, readable budget stops)
   clock/            eharness/clock (datetime tool and time-zone arithmetic)
+  browser/          eharness/browser (CDP client, adapters, profiles, manager, live view) + eharness/browser/node (runtimes, Node-only)
   web/              eharness/web
   http/             eharness/http (fetch-style HTTP module: chat, sessions, attention, activity; Web APIs only)
   client/           eharness/client + eharness/client/react (browser counterpart of http; runtime imports only `ai`)

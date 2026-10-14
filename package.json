@@ -77,6 +77,8 @@
     ".": "./dist/index.js",
     "./activity": "./dist/activity/index.js",
     "./ask": "./dist/ask/index.js",
+    "./browser": "./dist/browser/index.js",
+    "./browser/node": "./dist/browser/node.js",
     "./channels": "./dist/channels/index.js",
     "./client": "./dist/client/index.js",
     "./client/react": "./dist/client/react.js",

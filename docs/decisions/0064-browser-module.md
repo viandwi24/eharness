@@ -1,6 +1,6 @@
 # ADR-0064: `eharness/browser`: adapters over an operation-level connection, CDP in core
 
-Status: **Proposed** · Date: 2026-10-14 · Related: [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0036](0036-node-only-modules.md), [ADR-0061](0061-code-sandbox-sync-not-mount.md), [ADR-0062](0062-platform-rings-and-rule-of-two.md) · Spec: [35](../specs/35-browser.md) · Plan: [P48](../plans/P48-browser.md)
+Status: **Accepted** · Date: 2026-10-14 · Related: [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0036](0036-node-only-modules.md), [ADR-0061](0061-code-sandbox-sync-not-mount.md), [ADR-0062](0062-platform-rings-and-rule-of-two.md) · Spec: [35](../specs/35-browser.md) · Plan: [P48](../plans/P48-browser.md)
 
 ## Context
 
