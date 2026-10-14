@@ -16,7 +16,8 @@ export interface RateClass {
 
 /** Options of {@link createRateGovernor}. */
 export interface RateGovernorOptions {
-  classes: Record<string, RateClass>
+  /** A class is a fixed rule, or a function of the key (limits that differ per connection and may change at runtime). */
+  classes: Record<string, RateClass | ((key: string) => RateClass)>
   /** Clock in epoch ms. Default `Date.now`. */
   now?: () => number
   /** Wait `ms`; must reject (or may be raced) when `signal` aborts. Default: `setTimeout`. */
@@ -26,6 +27,12 @@ export interface RateGovernorOptions {
 /** Options of {@link RateGovernor.acquire}. */
 export interface AcquireOptions {
   signal?: AbortSignal
+  /**
+   * A patient (background) caller leaves this many tokens behind so interactive calls are never
+   * starved: it waits until `cost + reserve` tokens are free but takes only `cost`. Clamped to what
+   * the bucket can hold (`capacity - cost`). Default 0.
+   */
+  reserve?: number
 }
 
 /** Diagnostics of {@link RateGovernor.state}. */
@@ -41,7 +48,26 @@ export interface RateGovernor {
   /** Wait until `cost` tokens of `cls` (per `key`) are free and no park holds `key`; then take them. */
   acquire(cls: string, key?: string, cost?: number, options?: AcquireOptions): Promise<void>
   /** Take the tokens now if free and not parked; otherwise return false and take nothing. */
-  tryAcquire(cls: string, key?: string, cost?: number): boolean
+  tryAcquire(
+    cls: string,
+    key?: string,
+    cost?: number,
+    options?: Pick<AcquireOptions, 'reserve'>,
+  ): boolean
+  /**
+   * Take the tokens without waiting and without a park check, for a call that waited elsewhere or
+   * must not wait. The balance may go negative, so the next `acquire` waits longer to pay it back.
+   */
+  charge(cls: string, key?: string, cost?: number): void
+  /** Milliseconds until `acquire` with the same arguments would return (0 = now); takes nothing. */
+  waitFor(
+    cls: string,
+    key?: string,
+    cost?: number,
+    options?: Pick<AcquireOptions, 'reserve'>,
+  ): number
+  /** Forget the buckets of `key` (every class): they start full again. Parks are not touched. */
+  resetBuckets(key: string): void
   /** The platform asked to wait: hold every call for `key` (or {@link PARK_ALL}) until `untilMs`. A park only extends. */
   park(key: string, untilMs: number, reason: string): void
   /** Milliseconds `key` is still parked for (0 = free). */
@@ -99,13 +125,13 @@ export function createRateGovernor(options: RateGovernorOptions): RateGovernor {
   const buckets = new Map<string, { cls: string; key: string; tokens: number; at: number }>()
   const parks = new Map<string, { until: number; reason: string }>()
 
-  const classOf = (cls: string): RateClass => {
+  const classOf = (cls: string, key: string): RateClass => {
     const c = options.classes[cls]
     if (c === undefined)
       throw new HarnessError('EH_INVALID_INPUT', `unknown rate class "${cls}"`, {
         details: { cls },
       })
-    return c
+    return typeof c === 'function' ? c(key) : c
   }
 
   const parkedFor = (key = ''): number => {
@@ -124,7 +150,7 @@ export function createRateGovernor(options: RateGovernorOptions): RateGovernor {
     cls: string,
     key: string,
   ): { tokens: number; c: RateClass; b: { tokens: number } } => {
-    const c = classOf(cls)
+    const c = classOf(cls, key)
     const id = `${cls}\n${key}`
     const t = now()
     let b = buckets.get(id)
@@ -137,8 +163,8 @@ export function createRateGovernor(options: RateGovernorOptions): RateGovernor {
     return { tokens: b.tokens, c, b }
   }
 
-  /** ms until `cost` tokens fit and no park holds (0 = now). */
-  const waitFor = (cls: string, key: string, cost: number): number => {
+  /** ms until `cost` (plus `reserve`) tokens fit and no park holds (0 = now). */
+  const waitOf = (cls: string, key: string, cost: number, reserve = 0): number => {
     const { tokens, c } = bucket(cls, key)
     if (cost > c.capacity) {
       throw new HarnessError(
@@ -147,7 +173,8 @@ export function createRateGovernor(options: RateGovernorOptions): RateGovernor {
         { details: { cls, cost } },
       )
     }
-    const refill = tokens >= cost ? 0 : Math.ceil(((cost - tokens) / c.refillPerSec) * 1000)
+    const need = cost + Math.max(0, Math.min(reserve, c.capacity - cost))
+    const refill = tokens >= need ? 0 : Math.ceil(((need - tokens) / c.refillPerSec) * 1000)
     return Math.max(parkedFor(key), refill)
   }
 
@@ -160,15 +187,24 @@ export function createRateGovernor(options: RateGovernorOptions): RateGovernor {
       const signal = opts?.signal
       for (;;) {
         if (signal?.aborted === true) throw signal.reason
-        const wait = waitFor(cls, key, cost)
+        const wait = waitOf(cls, key, cost, opts?.reserve)
         if (wait <= 0) return take(cls, key, cost)
         await sleepWithSignal(sleep, wait, signal)
       }
     },
-    tryAcquire(cls, key = '', cost = 1) {
-      if (waitFor(cls, key, cost) > 0) return false
+    tryAcquire(cls, key = '', cost = 1, opts) {
+      if (waitOf(cls, key, cost, opts?.reserve) > 0) return false
       take(cls, key, cost)
       return true
+    },
+    charge(cls, key = '', cost = 1) {
+      take(cls, key, cost)
+    },
+    waitFor(cls, key = '', cost = 1, opts) {
+      return waitOf(cls, key, cost, opts?.reserve)
+    },
+    resetBuckets(key) {
+      for (const [id, b] of buckets) if (b.key === key) buckets.delete(id)
     },
     park(key, untilMs, reason) {
       const cur = parks.get(key)
@@ -182,7 +218,7 @@ export function createRateGovernor(options: RateGovernorOptions): RateGovernor {
       const t = now()
       const out: RateGovernorState = { buckets: [], parks: [] }
       for (const b of buckets.values()) {
-        const c = classOf(b.cls)
+        const c = classOf(b.cls, b.key)
         const tokens = Math.min(c.capacity, b.tokens + ((t - b.at) / 1000) * c.refillPerSec)
         out.buckets.push({ class: b.cls, key: b.key, tokens, capacity: c.capacity })
       }

@@ -2,6 +2,7 @@ import { HarnessError, uuidv7 } from '../index.ts'
 import type {
   CreateScheduleInput,
   FireContext,
+  FireResult,
   Schedule,
   ScheduleSpec,
   ScheduleStore,
@@ -16,7 +17,7 @@ export type CronNext = (expr: string, after: number, timezone?: string) => numbe
 export interface SchedulerOptions {
   store: ScheduleStore
   /** The app callback of a fire (usually `session.enqueue(…, { id: fireId, availableAt })`). */
-  fire: (ctx: FireContext) => void | Promise<void>
+  fire: (ctx: FireContext) => FireResult | Promise<FireResult>
   /** Cron calculator (e.g. built on `croner`). Required to create cron schedules. */
   next?: CronNext
   /** Clock (epoch ms). Default `Date.now`. */
@@ -56,6 +57,7 @@ export interface Scheduler {
 
 const MAX_SLOTS = 1000
 const MAX_STEPS = 100_000
+const EDIT_ATTEMPTS = 5
 
 function invalid(
   reason: string,
@@ -177,6 +179,21 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     return { slots, next: cur ?? null }
   }
 
+  /**
+   * Read-modify-write with compare-and-set: a concurrent fire or edit makes the write conflict and
+   * the edit is re-applied to the fresh row (a few attempts). Stores without `update` use `put`.
+   */
+  const edit = async (id: string, mutate: (cur: Schedule) => Schedule): Promise<Schedule> => {
+    for (let attempt = 0; attempt < EDIT_ATTEMPTS; attempt++) {
+      const cur = await need(id)
+      const next = mutate(cur)
+      if (!store.update) return store.put(next)
+      const written = await store.update(next, cur.version)
+      if (written) return written
+    }
+    throw invalid('conflict', `Schedule ${id} kept changing; the edit was not applied.`, { id })
+  }
+
   const fireIdOf = (id: string, scheduledAt: number): string => `sched:${id}:${scheduledAt}`
 
   const processRow = async (row: Schedule, t: number, out: TickReport): Promise<void> => {
@@ -206,12 +223,17 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         if (fresh.length > 0) toFire.push(fresh[fresh.length - 1] as number)
         drop(fresh.slice(0, -1), 'overlap')
       }
+      let last: number | undefined
       for (const scheduledAt of toFire) {
         const fireId = fireIdOf(claimed.id, scheduledAt)
-        await fire({ schedule: claimed, scheduledAt, fireId })
+        const result = await fire({ schedule: claimed, scheduledAt, fireId })
+        if (result !== undefined && result !== null && result.fired === false) {
+          out.skipped.push({ scheduleId: claimed.id, scheduledAt, reason: 'declined' })
+          continue
+        }
         out.fired.push({ scheduleId: claimed.id, scheduledAt, fireId })
+        last = scheduledAt
       }
-      const last = toFire[toFire.length - 1]
       await store.complete(claimed.id, owner, {
         nextFireAt: next,
         ...(last !== undefined ? { lastFireAt: last } : {}),
@@ -292,21 +314,22 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
       }
       return store.put(schedule)
     },
-    async update(id: string, patch: UpdateSchedulePatch): Promise<Schedule> {
-      const cur = await need(id)
-      const next: Schedule = { ...cur, ...patch }
-      if (patch.spec) next.nextFireAt = initial(patch.spec, now())
-      return store.put(next)
+    update(id: string, patch: UpdateSchedulePatch): Promise<Schedule> {
+      return edit(id, (cur) => {
+        const next: Schedule = { ...cur, ...patch }
+        if (patch.spec) next.nextFireAt = initial(patch.spec, now())
+        return next
+      })
     },
-    async pause(id: string): Promise<Schedule> {
-      const cur = await need(id)
-      return store.put({ ...cur, state: 'paused' })
+    pause(id: string): Promise<Schedule> {
+      return edit(id, (cur) => ({ ...cur, state: 'paused' }))
     },
-    async resume(id: string): Promise<Schedule> {
-      const cur = await need(id)
-      // slots that passed while paused are dropped: look ahead from now (a pending `once` keeps its slot)
-      const nextFireAt = cur.spec.kind === 'once' ? cur.nextFireAt : initial(cur.spec, now())
-      return store.put({ ...cur, state: 'active', nextFireAt })
+    resume(id: string): Promise<Schedule> {
+      return edit(id, (cur) => {
+        // slots that passed while paused are dropped: look ahead from now (a pending `once` keeps its slot)
+        const nextFireAt = cur.spec.kind === 'once' ? cur.nextFireAt : initial(cur.spec, now())
+        return { ...cur, state: 'active', nextFireAt }
+      })
     },
     remove(id: string): Promise<boolean> {
       return store.delete(id)

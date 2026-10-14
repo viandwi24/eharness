@@ -177,6 +177,33 @@ export function scheduleStoreConformance(
       },
     },
     {
+      name: 'update is a compare-and-set: it replaces on the expected version and conflicts otherwise',
+      run: async () => {
+        const store = await factory()
+        if (store.update === undefined) return // optional port method
+        const a = await store.put(row())
+        const b = await store.update({ ...a, payload: 'edited' }, a.version)
+        assertTrue(b !== undefined && b.version === a.version + 1, 'update bumps the version')
+        assertTrue((await store.get(a.id))?.payload === 'edited', 'row replaced')
+        assertTrue(
+          (await store.update({ ...a, payload: 'stale' }, a.version)) === undefined,
+          'stale expected version conflicts',
+        )
+        assertTrue((await store.get(a.id))?.payload === 'edited', 'a conflict writes nothing')
+        assertTrue(
+          (await store.update(row({ id: 'missing-row' }), 1)) === undefined,
+          'a missing row conflicts',
+        )
+        const claimed = await store.claim(a.id, (b as Schedule).version, 'me', 9000)
+        assertTrue(
+          claimed !== undefined &&
+            (await store.update({ ...(b as Schedule), payload: 'x' }, (b as Schedule).version)) ===
+              undefined,
+          'a claim in between makes the edit conflict',
+        )
+      },
+    },
+    {
       name: 'rows are returned as copies (mutating a result does not change the store)',
       run: async () => {
         const store = await factory()

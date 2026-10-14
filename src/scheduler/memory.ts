@@ -40,6 +40,13 @@ export function memoryScheduleStore(): ScheduleStore {
       rows.set(next.id, next)
       return clone(next)
     },
+    async update(schedule: Schedule, expectedVersion: number): Promise<Schedule | undefined> {
+      const cur = rows.get(schedule.id)
+      if (!cur || cur.version !== expectedVersion) return undefined
+      const next = { ...clone(schedule), version: expectedVersion + 1 }
+      rows.set(next.id, next)
+      return clone(next)
+    },
     async delete(id: string): Promise<boolean> {
       return rows.delete(id)
     },

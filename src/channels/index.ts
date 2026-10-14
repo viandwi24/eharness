@@ -35,14 +35,17 @@ export {
   type BackoffOptions,
   type BreakerOptions,
   createOutbox,
+  type FloodStormOptions,
   type Outbox,
   type OutboxEvent,
   type OutboxOptions,
   PermanentSendError,
   RetryAfter,
   type SendContext,
+  SkipSend,
 } from './outbox.ts'
 export type {
+  ClaimOptions,
   Json,
   OutboxFailure,
   OutboxItem,

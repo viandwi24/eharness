@@ -59,6 +59,13 @@ export interface ScheduleStore {
   list(query?: ScheduleListQuery): Promise<ScheduleListResult>
   /** Create or replace. The store assigns `version` (previous + 1, `1` on create) and returns the row. */
   put(schedule: Schedule): Promise<Schedule>
+  /**
+   * Compare-and-set replace (optional; stores without it give last-writer-wins edits). Succeeds
+   * only when the row exists and still has `expectedVersion`; then it behaves like `put` (version
+   * bumped, row returned). Returns `undefined` on a conflict (row changed or gone), writing
+   * nothing. `scheduler.update/pause/resume` use it with a retry loop.
+   */
+  update?(schedule: Schedule, expectedVersion: number): Promise<Schedule | undefined>
   /** Remove; `true` when a row existed. */
   delete(id: string): Promise<boolean>
   /**
@@ -86,6 +93,14 @@ export interface ScheduleStore {
   /** When `owner` still holds the claim: clear it without advancing (the slot is retried). */
   release(id: string, owner: string): Promise<boolean>
 }
+
+/**
+ * What `fire` may resolve to. `void` / `undefined` (or `{ fired: true }`) means the slot fired;
+ * `{ fired: false }` means "slot handled, nothing fired" (for example the app skipped it): the
+ * scheduler advances `nextFireAt` but leaves `lastFireAt` unchanged and does not count a fire.
+ */
+// biome-ignore lint/suspicious/noConfusingVoidType: `void` keeps callbacks that return nothing assignable
+export type FireResult = void | { fired?: boolean }
 
 /** Argument of the app's `fire` callback. */
 export interface FireContext {
@@ -132,7 +147,11 @@ export interface TickReport {
   recovered: number
   fired: FireRecord[]
   /** Slots dropped by `catchUp` / `overlap`. */
-  skipped: Array<{ scheduleId: string; scheduledAt: number; reason: 'catch-up' | 'overlap' }>
+  skipped: Array<{
+    scheduleId: string
+    scheduledAt: number
+    reason: 'catch-up' | 'overlap' | 'declined'
+  }>
   /** Rows whose `fire` threw; they were released and are retried. */
   failed: number
 }

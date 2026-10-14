@@ -14,7 +14,7 @@ does is an app callback (normally `session.enqueue`).
 ```ts
 const scheduler = createScheduler({
   store,                       // ScheduleStore (memoryScheduleStore() ships)
-  fire,                        // ({ schedule, scheduledAt, fireId }) => void | Promise<void>
+  fire,                        // ({ schedule, scheduledAt, fireId }) => void | { fired?: boolean } | Promise<…>
   next?,                       // (expr, after, timezone?) => number | undefined  (cron)
   now?, tickMs?, leaseMs?, graceMs?, maxPerTick?, owner?, onError?,
 })
@@ -33,7 +33,7 @@ Defaults: `tickMs` 15 000, `leaseMs` 30 000, `graceMs` `max(2 × tickMs, 1000)`,
 ## 2. The store port
 
 `get`, `list({ sessionId?, state?, limit?, cursor? })` (ordered by id, `nextCursor`), `put`, `delete`,
-`due(now, limit)`, `claim(id, version, owner, leaseUntil)`, `complete(id, owner, { nextFireAt,
+`update?(schedule, expectedVersion)`, `due(now, limit)`, `claim(id, version, owner, leaseUntil)`, `complete(id, owner, { nextFireAt,
 lastFireAt? })`, `release(id, owner)`. All async.
 
 1. `put` creates or replaces; **the store assigns `version`** (previous + 1, `1` on create) and
@@ -45,7 +45,10 @@ lastFireAt? })`, `release(id, owner)`. All async.
    row or `undefined`.
 4. `complete` and `release` act only when `claimedBy === owner`; otherwise they return
    `undefined` / `false` (a dead owner's late completion is a no-op).
-5. Results are copies; callers never share mutable state with the store.
+5. `update(schedule, expectedVersion)` (optional) is a compare-and-set replace: it writes only
+   when the row exists with `expectedVersion`, bumps the version and returns the row, otherwise
+   it returns `undefined` and writes nothing.
+6. Results are copies; callers never share mutable state with the store.
 
 ## 3. Tick
 
@@ -60,6 +63,11 @@ lastFireAt? })`, `release(id, owner)`. All async.
    latest `n`. Fresh slots follow `overlap`: `queue` fires all, `skip` fires only the latest.
 5. `fire({ schedule, scheduledAt, fireId })` per slot, oldest first, awaited.
 6. `complete` with the slot after `now` (`null` for `once` or an exhausted cron) and `lastFireAt`.
+
+`fire` may resolve to `{ fired: false }` ("slot handled, nothing fired"): the slot is reported in
+`TickReport.skipped` with reason `declined`, not in `fired`, and `lastFireAt` is set only from slots
+that fired (when none did, `complete` carries no `lastFireAt` and the stored one is unchanged).
+`nextFireAt` advances either way. `void`, `undefined` and `{ fired: true }` mean fired.
 
 If `fire` throws, the error goes to `onError`, the row is **released without advancing** and the
 slot is retried on the next tick. Slots already fired in that tick fire again with the same ids.
@@ -89,8 +97,11 @@ and return without enqueueing.
 4. `remove` deletes the row (`true` when it existed).
 5. `fireNow(id)` fires immediately with `scheduledAt = now` and returns the `fireId`; it does not
    move `nextFireAt` and does not claim.
-6. `update`/`pause`/`resume` are read-modify-write through `put`; an app that edits one schedule
-   from several places serialises those calls itself.
+6. `update`/`pause`/`resume` are read-modify-write with compare-and-set: they write through
+   `store.update(row, readVersion)` and, on a conflict (a concurrent fire, claim or edit), re-read
+   and re-apply the change, up to 5 attempts, then throw `EH_INVALID_INPUT` with reason `conflict`.
+   A fire's `nextFireAt`/`lastFireAt` advance is therefore never overwritten by an edit and vice
+   versa. A store without `update` falls back to `put` (last writer wins).
 
 ## 7. Cron
 
@@ -101,11 +112,11 @@ Core has no cron parser. `next(expr, after, timezone?)` returns the first slot s
 
 Programmer errors throw `HarnessError('EH_INVALID_INPUT')` with `details.reason`:
 `cron-unsupported` (no `next`), `spec-invalid`, `spec-exhausted` (cron without a future slot),
-`exists`, `not-found`. Fire failures never throw out of `tick()`; they are counted in
+`exists`, `not-found`, `conflict` (edit kept conflicting). Fire failures never throw out of `tick()`; they are counted in
 `TickReport.failed` and sent to `onError`. `fireNow` rethrows the callback's error.
 
 ## 9. Conformance
 
 `scheduleStoreConformance(factory)` from `eharness/testing` returns cases for the store port:
 version assignment, list filters and paging, `due` selection, single-winner `claim`, lease expiry
-and takeover, owner-only `complete`/`release`, paused rows, copy isolation.
+and takeover, owner-only `complete`/`release`, paused rows, `update` compare-and-set (skipped when the store has no `update`), copy isolation.

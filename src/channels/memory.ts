@@ -4,7 +4,7 @@
  *
  * @see docs/specs/31-channels.md#3-outbox
  */
-import type { OutboxRecord, OutboxStore } from './types.ts'
+import type { ClaimOptions, OutboxRecord, OutboxStore } from './types.ts'
 
 /** Options of {@link memoryOutboxStore}. */
 export interface MemoryOutboxStoreOptions {
@@ -22,7 +22,7 @@ export function memoryOutboxStore(options: MemoryOutboxStoreOptions = {}): Outbo
   const touch = (r: OutboxRecord): void => {
     r.updatedAt = clock()
   }
-  const release = (r: OutboxRecord, state: 'pending' | 'dead'): void => {
+  const release = (r: OutboxRecord, state: 'pending' | 'dead' | 'skipped' | 'held'): void => {
     r.state = state
     delete r.owner
     delete r.leaseUntil
@@ -47,12 +47,13 @@ export function memoryOutboxStore(options: MemoryOutboxStoreOptions = {}): Outbo
       rows.set(item.id, record)
       return { created: true, record: copy(record) }
     },
-    async claim(now, owner, leaseMs, limit) {
+    async claim(now, owner, leaseMs, limit, claimOptions: ClaimOptions = {}) {
+      const reclaim = claimOptions.reclaimExpired !== false
       const due = [...rows.values()]
         .filter(
           (r) =>
             (r.state === 'pending' && r.availableAt <= now) ||
-            (r.state === 'claimed' && (r.leaseUntil ?? 0) <= now),
+            (reclaim && r.state === 'claimed' && (r.leaseUntil ?? 0) <= now),
         )
         .sort((a, b) => a.availableAt - b.availableAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       const out: OutboxRecord[] = []
@@ -71,6 +72,31 @@ export function memoryOutboxStore(options: MemoryOutboxStoreOptions = {}): Outbo
         out.push(copy(r))
       }
       return out
+    },
+    async holdExpired(now) {
+      const out: OutboxRecord[] = []
+      for (const r of rows.values()) {
+        if (r.state !== 'claimed' || (r.leaseUntil ?? 0) > now) continue
+        r.error = 'the lease expired while sending; delivery unknown'
+        release(r, 'held')
+        out.push(copy(r))
+      }
+      return out
+    },
+    async release(id, resolution, now) {
+      const r = rows.get(id)
+      if (r === undefined || r.state !== 'held') return undefined
+      if (resolution === 'retry') r.availableAt = now
+      else r.error = 'dropped after the lease expired'
+      release(r, resolution === 'retry' ? 'pending' : 'skipped')
+      return copy(r)
+    },
+    async skip(id, owner, reason) {
+      const r = held(id, owner)
+      if (r === undefined) return false
+      r.error = reason
+      release(r, 'skipped')
+      return true
     },
     async succeed(id, owner, result) {
       const r = held(id, owner)
@@ -112,7 +138,10 @@ export function memoryOutboxStore(options: MemoryOutboxStoreOptions = {}): Outbo
     async purge(olderThan) {
       let n = 0
       for (const [id, r] of rows) {
-        if ((r.state === 'done' || r.state === 'dead') && r.updatedAt < olderThan) {
+        if (
+          (r.state === 'done' || r.state === 'dead' || r.state === 'skipped') &&
+          r.updatedAt < olderThan
+        ) {
           rows.delete(id)
           n++
         }

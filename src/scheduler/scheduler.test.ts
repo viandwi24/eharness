@@ -259,4 +259,70 @@ describe('scheduler', () => {
     await new Promise((r) => setTimeout(r, 40))
     expect(n).toBe(after)
   })
+
+  test('fire resolving { fired: false } advances nextFireAt but keeps lastFireAt', async () => {
+    const store = memoryScheduleStore()
+    let decline = false
+    const sc = createScheduler({
+      store,
+      now: () => clock.t,
+      tickMs: 1000,
+      fire: () => (decline ? { fired: false } : undefined),
+    })
+    const clock = { t: 0 }
+    await sc.create({ id: 'd', sessionId: 'x', spec: { kind: 'interval', everyMs: 1000 } })
+    clock.t = 1000
+    const first = await sc.tick()
+    expect(first.fired).toHaveLength(1)
+    expect((await store.get('d'))?.lastFireAt).toBe(1000)
+    decline = true
+    clock.t = 2000
+    const second = await sc.tick()
+    expect(second.fired).toHaveLength(0)
+    expect(second.skipped).toEqual([{ scheduleId: 'd', scheduledAt: 2000, reason: 'declined' }])
+    const row = await store.get('d')
+    expect(row?.nextFireAt).toBe(3000)
+    expect(row?.lastFireAt).toBe(1000)
+    expect(row?.claimedBy).toBeUndefined()
+  })
+
+  test('an edit that races a claim is re-applied on the fresh row, not lost', async () => {
+    const base = memoryScheduleStore()
+    let raced = false
+    const store: ScheduleStore = {
+      ...base,
+      async update(s, v) {
+        if (!raced) {
+          raced = true
+          // a tick claims and completes between the editor's read and write
+          const claimed = await base.claim(s.id, v, 'other', 9000)
+          await base.complete(s.id, 'other', { nextFireAt: 5000, lastFireAt: 4000 })
+          expect(claimed).toBeDefined()
+        }
+        return base.update?.(s, v)
+      },
+    }
+    const { scheduler } = setup({ store })
+    await scheduler.create({
+      id: 'r',
+      sessionId: 'x',
+      spec: { kind: 'interval', everyMs: 1000 },
+      payload: 1,
+    })
+    const edited = await scheduler.update('r', { payload: 2 })
+    expect(edited.payload).toBe(2)
+    expect(edited.nextFireAt).toBe(5000) // the fire's advance survived
+    expect(edited.lastFireAt).toBe(4000)
+    const paused = await scheduler.pause('r')
+    expect(paused.state).toBe('paused')
+  })
+
+  test('an edit that conflicts every time fails with reason conflict', async () => {
+    const base = memoryScheduleStore()
+    const store: ScheduleStore = { ...base, update: async () => undefined }
+    const { scheduler } = setup({ store })
+    await scheduler.create({ id: 'c', sessionId: 'x', spec: { kind: 'interval', everyMs: 1000 } })
+    const err = await scheduler.pause('c').catch((e: unknown) => e)
+    expect(isHarnessError(err, 'EH_INVALID_INPUT')).toBe(true)
+  })
 })

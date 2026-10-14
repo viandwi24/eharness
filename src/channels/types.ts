@@ -23,8 +23,13 @@ export interface OutboxItem {
   maxAttempts: number
 }
 
-/** `pending` (waiting or leased back), `claimed` (leased), `done`, `dead` (dead-lettered). */
-export type OutboxState = 'pending' | 'claimed' | 'done' | 'dead'
+/**
+ * `pending` (waiting or leased back), `claimed` (leased), `done`, `dead` (dead-lettered),
+ * `skipped` (settled without sending: nothing to send any more, or dropped from `held`) and `held`
+ * (the lease expired while the item was being sent, so it may or may not have been delivered: it
+ * waits for `release`). `done`, `dead` and `skipped` are terminal.
+ */
+export type OutboxState = 'pending' | 'claimed' | 'done' | 'dead' | 'skipped' | 'held'
 
 /** A stored item. */
 export interface OutboxRecord extends OutboxItem {
@@ -33,7 +38,7 @@ export interface OutboxRecord extends OutboxItem {
   /** Epoch ms the lease of a claimed item ends. */
   leaseUntil?: number
   result?: Json
-  /** The last error text. */
+  /** The last error text; for a `skipped` item, why it was skipped. */
   error?: string
   createdAt: number
   updatedAt: number
@@ -46,6 +51,15 @@ export interface OutboxFailure {
   error: string
   /** Dead-letter now, whatever the attempts left. */
   permanent?: boolean
+}
+
+/** Argument of {@link OutboxStore.claim}. */
+export interface ClaimOptions {
+  /**
+   * Take over `claimed` items whose lease expired. Default `true`. The worker passes `false` under
+   * `expiredLeases: 'hold'` (after {@link OutboxStore.holdExpired}), so only `pending` items are claimed.
+   */
+  reclaimExpired?: boolean
 }
 
 /**
@@ -62,7 +76,28 @@ export interface OutboxStore {
    * increments `attempts`. An expired-lease item that already used `maxAttempts` is dead-lettered
    * instead of claimed.
    */
-  claim(now: number, owner: string, leaseMs: number, limit: number): Promise<OutboxRecord[]>
+  claim(
+    now: number,
+    owner: string,
+    leaseMs: number,
+    limit: number,
+    options?: ClaimOptions,
+  ): Promise<OutboxRecord[]>
+  /**
+   * Move `claimed` items whose lease ended at or before `now` to `held` (owner and lease cleared,
+   * `attempts` kept, `error` says the lease expired) and return them. Used by the worker under
+   * `expiredLeases: 'hold'`; an app may call it with a far-future `now` at boot to hold every
+   * item a previous process left claimed.
+   */
+  holdExpired(now: number): Promise<OutboxRecord[]>
+  /**
+   * Resolve a `held` item: `retry` makes it `pending` and due at `now` (the attempt already
+   * counted stays counted), `drop` settles it `skipped`. Returns the updated record, or
+   * `undefined` when the item is not `held`.
+   */
+  release(id: string, resolution: 'retry' | 'drop', now: number): Promise<OutboxRecord | undefined>
+  /** Settle as `skipped` with a reason (nothing to send any more). False when `owner` no longer holds the lease. */
+  skip(id: string, owner: string, reason: string): Promise<boolean>
   /** Mark done. False when `owner` no longer holds the lease. */
   succeed(id: string, owner: string, result?: Json): Promise<boolean>
   /**
@@ -75,6 +110,6 @@ export interface OutboxStore {
   get(id: string): Promise<OutboxRecord | undefined>
   /** Records in `state`, oldest `availableAt` first. */
   list(query?: { state?: OutboxState; limit?: number }): Promise<OutboxRecord[]>
-  /** Delete `done` and `dead` records last updated before `olderThan`; returns how many. */
+  /** Delete `done`, `dead` and `skipped` records last updated before `olderThan`; returns how many. */
   purge(olderThan: number): Promise<number>
 }

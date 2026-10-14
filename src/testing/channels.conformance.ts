@@ -22,7 +22,8 @@ const item = (id: string, over: Partial<OutboxItem> = {}): OutboxItem => ({
 /**
  * Conformance cases for an {@link OutboxStore} (spec 31 §3): idempotent enqueue, due-only claims in
  * order, exclusive leases (also across handles), lease expiry takeover, owner-checked
- * succeed/fail/defer, retry vs dead-letter, attempts accounting, listing and purge.
+ * succeed/fail/defer/skip, retry vs dead-letter, attempts accounting, listing and purge, and the
+ * `hold` policy for expired leases (`claim` without `reclaimExpired`, `holdExpired`, `release`).
  *
  * Times are explicit epoch values; `purge` uses the store's own clock, so its case purges with a
  * far-future cutoff.
@@ -156,12 +157,88 @@ export function outboxStoreConformance(
 
   add('purge removes finished records only', async (s) => {
     await s.enqueue(item('done'))
+    await s.enqueue(item('skip'))
     await s.enqueue(item('wait'))
-    await s.claim(2000, 'w', 1000, 1)
+    await s.claim(2000, 'w', 1000, 2)
     await s.succeed('done', 'w')
+    await s.skip('skip', 'w', 'gone')
     assertTrue((await s.purge(0)) === 0, 'nothing older than the epoch')
-    assertTrue((await s.purge(Number.MAX_SAFE_INTEGER)) === 1, 'one finished record')
+    assertTrue((await s.purge(Number.MAX_SAFE_INTEGER)) === 2, 'done and skipped records')
     assertTrue((await s.get('wait')) !== undefined, 'unfinished record stays')
+  })
+
+  add('skip settles an item as skipped with a reason; the old owner is fenced out', async (s) => {
+    await s.enqueue(item('a'))
+    await s.claim(2000, 'w', 1000, 1)
+    assertTrue(!(await s.skip('a', 'other', 'x')), 'a stranger cannot skip')
+    assertTrue(await s.skip('a', 'w', 'gone'), 'skipped')
+    assertTrue(!(await s.skip('a', 'w', 'again')), 'no longer held')
+    const rec = await s.get('a')
+    assertTrue(rec?.state === 'skipped' && rec.error === 'gone', 'skipped with the reason')
+    assertTrue((await s.list({ state: 'skipped' })).length === 1, 'listed as skipped')
+    assertTrue((await s.claim(9000, 'w', 1000, 1)).length === 0, 'never claimed again')
+  })
+
+  add('claim without reclaimExpired leaves an expired lease alone', async (s) => {
+    await s.enqueue(item('a'))
+    await s.enqueue(item('b', { availableAt: 3500 }))
+    await s.claim(2000, 'w1', 1000, 1)
+    const got = await s.claim(4000, 'w2', 1000, 5, { reclaimExpired: false })
+    assertJsonEqual(
+      got.map((r) => r.id),
+      ['b'],
+      'only the pending item',
+    )
+    assertTrue((await s.get('a'))?.state === 'claimed', 'the expired item is untouched')
+  })
+
+  add(
+    'holdExpired holds expired leases only, keeps the attempts, and never dead-letters',
+    async (s) => {
+      await s.enqueue(item('old', { maxAttempts: 1 }))
+      await s.enqueue(item('fresh', { availableAt: 1100 }))
+      await s.claim(2000, 'w1', 1000, 1) // old, lease ends 3000
+      await s.claim(2900, 'w1', 5000, 1) // fresh, lease ends 7900
+      assertTrue((await s.holdExpired(2500)).length === 0, 'nothing expired yet')
+      const held = await s.holdExpired(4000)
+      assertJsonEqual(
+        held.map((r) => r.id),
+        ['old'],
+        'the expired item',
+      )
+      assertTrue(held[0]?.state === 'held' && held[0].attempts === 1, 'held, attempt kept')
+      assertTrue(held[0]?.owner === undefined && held[0]?.leaseUntil === undefined, 'lease cleared')
+      assertTrue((await s.get('old'))?.state === 'held', 'stored as held')
+      assertTrue((await s.get('fresh'))?.state === 'claimed', 'a live lease stays claimed')
+      assertTrue((await s.holdExpired(4000)).length === 0, 'held items are not held twice')
+      assertJsonEqual(
+        (await s.list({ state: 'held' })).map((r) => r.id),
+        ['old'],
+        'listed as held',
+      )
+      assertTrue(
+        (await s.claim(9000, 'w2', 1000, 5, { reclaimExpired: false })).length === 0,
+        'a held item is not claimed',
+      )
+      assertTrue(!(await s.succeed('old', 'w1')), 'the old owner cannot settle a held item')
+    },
+  )
+
+  add('release retry makes a held item due again; drop settles it skipped', async (s) => {
+    await s.enqueue(item('a'))
+    await s.enqueue(item('b'))
+    await s.claim(2000, 'w1', 1000, 2)
+    await s.holdExpired(4000)
+    assertTrue((await s.release('missing', 'retry', 5000)) === undefined, 'unknown id')
+    const again = await s.release('a', 'retry', 5000)
+    assertTrue(again?.state === 'pending' && again.availableAt === 5000, 'pending at now')
+    assertTrue((await s.release('a', 'retry', 5000)) === undefined, 'no longer held')
+    assertTrue((await s.claim(4999, 'w2', 1000, 5)).length === 0, 'not due before the release time')
+    const [c] = await s.claim(5000, 'w2', 1000, 5)
+    assertTrue(c?.id === 'a' && c.attempts === 2, 'claimed again, attempt 2')
+    const dropped = await s.release('b', 'drop', 5000)
+    assertTrue(dropped?.state === 'skipped', 'dropped is skipped')
+    assertTrue((await s.get('b'))?.state === 'skipped', 'stored as skipped')
   })
 
   return cases
