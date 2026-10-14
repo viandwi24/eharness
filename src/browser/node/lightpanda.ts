@@ -23,6 +23,13 @@ import {
   tcpProbe,
 } from './process.ts'
 import { processUsage } from './resources.ts'
+import {
+  defaultProcessOs,
+  type ProcessOs,
+  reapOrphan,
+  removePidFile,
+  writePidFile,
+} from './stale.ts'
 import type {
   BrowserRuntime,
   InstallOptions,
@@ -58,6 +65,8 @@ export interface LightpandaRuntimeOptions {
   startTimeoutMs?: number
   platform?: NodeJS.Platform
   arch?: string
+  /** Process calls of the orphan cleanup (tests). */
+  os?: ProcessOs
 }
 
 export function lightpandaRuntime(opts: LightpandaRuntimeOptions): BrowserRuntime {
@@ -123,6 +132,11 @@ export function lightpandaRuntime(opts: LightpandaRuntimeOptions): BrowserRuntim
     if (na !== undefined) throw runtimeError(na)
     return procs.start(profile.id, async () => {
       if (!existsSync(exe())) throw runtimeError('Lightpanda is not installed: run install() first')
+      // an engine left by a hard crash of this runtime is killed first (spec 35 §6)
+      const pidFile = /^[A-Za-z0-9_-]+$/.test(profile.id)
+        ? join(opts.root, 'lightpanda', 'run', `${profile.id}.pid`)
+        : undefined
+      if (pidFile !== undefined) await reapOrphan(pidFile, exe(), opts.os ?? defaultProcessOs)
       const port = await freePort()
       const proc = launcher(exe(), ['serve', '--host', '127.0.0.1', '--port', String(port)], {
         env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true' },
@@ -130,7 +144,9 @@ export function lightpandaRuntime(opts: LightpandaRuntimeOptions): BrowserRuntim
       let exited = false
       void proc.exited.then(() => {
         exited = true
+        if (pidFile !== undefined) void removePidFile(pidFile)
       })
+      if (pidFile !== undefined) await writePidFile(pidFile, proc.pid)
       const probe = opts.probe ?? tcpProbe
       const deadline = Date.now() + (opts.startTimeoutMs ?? 30_000)
       while (!(await probe(port))) {

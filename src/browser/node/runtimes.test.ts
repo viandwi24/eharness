@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkExtraArgs, chromePlatform, chromeRuntime, detectContainer } from './chrome.ts'
@@ -8,6 +8,7 @@ import { withInstallLock } from './download.ts'
 import { lightpandaAsset, lightpandaRuntime } from './lightpanda.ts'
 import type { LaunchedProcess, ProcessLauncher } from './process.ts'
 import { parsePs, processUsage, sumTree, systemMemory } from './resources.ts'
+import { clearStaleChromeLocks, type ProcessOs, reapOrphan, writePidFile } from './stale.ts'
 
 const dirs: string[] = []
 async function tmp(): Promise<string> {
@@ -329,4 +330,127 @@ describe.skipIf(!e2e)('real Chrome (EH_BROWSER_E2E=1)', () => {
     expect((await rt.usage('e2e'))?.rssBytes).toBeGreaterThan(0)
     await rt.stop('e2e')
   }, 600_000)
+})
+
+describe('stale profile leftovers (spec 35 §6)', () => {
+  function fakeOs(live: number[], host = 'h1'): ProcessOs & { killed: Array<[number, string]> } {
+    const alive = new Set(live)
+    const killed: Array<[number, string]> = []
+    return {
+      killed,
+      alive: (pid) => alive.has(pid),
+      command: async (pid) => (alive.has(pid) ? '/x/chrome --user-data-dir=/p/prof_1' : undefined),
+      kill: (pid, signal) => {
+        killed.push([pid, signal])
+        alive.delete(pid)
+      },
+      hostname: () => host,
+    }
+  }
+  async function locked(target: string): Promise<string> {
+    const dir = await tmp()
+    await symlink(target, join(dir, 'SingletonLock'))
+    await symlink('/tmp/x/SingletonSocket', join(dir, 'SingletonSocket'))
+    await writeFile(join(dir, 'SingletonCookie'), '1')
+    await writeFile(join(dir, 'DevToolsActivePort'), '1\n/x')
+    return dir
+  }
+  const left = async (dir: string): Promise<string[]> =>
+    (await readdir(dir)).filter((n) => n.startsWith('Singleton') || n === 'DevToolsActivePort')
+
+  test('a lock of a dead process, or of another host, is removed', async () => {
+    const dead = await locked('h1-900')
+    expect(await clearStaleChromeLocks(dead, fakeOs([]))).toBe(true)
+    expect(await left(dead)).toEqual([])
+    const other = await locked('other-host-900')
+    expect(await clearStaleChromeLocks(other, fakeOs([900]))).toBe(true)
+    expect(await left(other)).toEqual([])
+  })
+
+  test('a lock of a live process on this host stays', async () => {
+    const dir = await locked('h1-900')
+    expect(await clearStaleChromeLocks(dir, fakeOs([900]))).toBe(false)
+    expect((await left(dir)).sort()).toEqual([
+      'DevToolsActivePort',
+      'SingletonCookie',
+      'SingletonLock',
+      'SingletonSocket',
+    ])
+  })
+
+  test('reapOrphan kills a live engine with the marker and forgets the file', async () => {
+    const dir = await tmp()
+    const file = join(dir, 'p.pid')
+    await writePidFile(file, 77)
+    const os = fakeOs([77])
+    expect(await reapOrphan(file, '/p/prof_1', os, 50)).toBe(true)
+    expect(os.killed[0]).toEqual([77, 'SIGTERM'])
+    expect(existsSync(file)).toBe(false)
+    // a reused pid (other command) and a dead pid are left alone
+    await writePidFile(file, 78)
+    expect(await reapOrphan(file, '/elsewhere', fakeOs([78]), 50)).toBe(false)
+    await writePidFile(file, 79)
+    expect(await reapOrphan(file, '/p/prof_1', fakeOs([]), 50)).toBe(false)
+  })
+
+  test('chrome start clears the locks and kills the orphan of its profile', async () => {
+    const root = await tmp()
+    const exe = join(root, 'chrome-bin')
+    await writeFile(exe, '#!/bin/sh\n')
+    await chmod(exe, 0o755)
+    const dir = join(root, 'profiles', 'prof_1')
+    await mkdir(dir, { recursive: true })
+    await symlink('h1-900', join(dir, 'SingletonLock'))
+    await writePidFile(join(dir, 'eharness.pid'), 55)
+    const os = fakeOs([55])
+    os.command = async () => `/x/chrome --user-data-dir=${dir}`
+    const proc = fakeProc()
+    const rt = chromeRuntime({
+      root,
+      executablePath: exe,
+      inContainer: false,
+      verify: false,
+      os,
+      launcher: (_c, a) => {
+        const d = a.find((x) => x.startsWith('--user-data-dir='))?.slice(16) as string
+        expect(existsSync(join(d, 'SingletonLock'))).toBe(false)
+        void writeFile(join(d, 'DevToolsActivePort'), '9333\n/devtools/browser/abc\n')
+        return proc
+      },
+    })
+    await rt.start({ id: 'prof_1' })
+    expect(os.killed[0]).toEqual([55, 'SIGTERM'])
+    expect(JSON.parse(await Bun.file(join(dir, 'eharness.pid')).text()).pid).toBe(4242)
+  })
+
+  test('lightpanda start kills an orphan named by its pid file', async () => {
+    const root = await tmp()
+    const exe = join(root, 'lp')
+    await writeFile(exe, '#!/bin/sh\n')
+    await chmod(exe, 0o755)
+    await writePidFile(join(root, 'lightpanda', 'run', 'p1.pid'), 66)
+    const os = fakeOs([66])
+    os.command = async () => `${exe} serve`
+    const rt = lightpandaRuntime({
+      root,
+      platform: 'linux',
+      arch: 'x64',
+      executablePath: exe,
+      launcher: () => fakeProc(),
+      probe: async () => true,
+      os,
+    })
+    await rt.start({ id: 'p1' })
+    expect(os.killed[0]).toEqual([66, 'SIGTERM'])
+  })
+})
+
+describe('systemMemory on macOS', () => {
+  test('vm_stat: free + inactive + speculative + purgeable pages times the page size', async () => {
+    const { parseVmStat } = await import('./resources.ts')
+    const text =
+      'Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:  100.\nPages active:  999.\nPages inactive:  200.\nPages speculative:  10.\nPages purgeable:  5.\n'
+    expect(parseVmStat(text)).toBe(315 * 16384)
+    expect(parseVmStat('garbage')).toBeUndefined()
+  })
 })

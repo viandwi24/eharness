@@ -448,7 +448,7 @@ describe('browser plugin: a person in control', () => {
   })
 
   test('browser_request_human parks the turn; the hand back resumes it with formatHandBack', async () => {
-    const asked: Array<{ reason: string; profileId: string }> = []
+    const asked: Array<Record<string, unknown>> = []
     const { agent, model, manager, profileId } = await setup(
       [
         call('browser_open', { url: URL_A }),
@@ -468,7 +468,14 @@ describe('browser plugin: a person in control', () => {
     const session = agent.session('s')
     const parked = await session.send('log in').result
     expect(parked.stop).toBe('tool-pending')
-    expect(asked).toEqual([{ reason: 'Log in to the portal', profileId }])
+    expect(asked).toHaveLength(1)
+    expect(asked[0]).toMatchObject({
+      reason: 'Log in to the portal',
+      profileId,
+      sessionId: 's',
+    })
+    expect(typeof asked[0]?.toolCallId).toBe('string')
+    expect(asked[0]?.waitId).toBe(parked.pending?.externals?.[0]?.waitId)
     const wait = parked.pending?.externals?.[0]
     expect(wait).toMatchObject({
       toolName: 'browser_request_human',

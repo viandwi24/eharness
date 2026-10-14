@@ -95,7 +95,15 @@ export interface BrowserOptions {
    * is not registered.
    */
   requestHuman?: (
-    input: { reason: string; profileId: string },
+    input: {
+      reason: string
+      profileId: string
+      sessionId: string
+      /** The external wait this call parks on (what `session.resolveWait` takes). */
+      waitId: string
+      toolCallId: string
+      ctx: HarnessContext
+    },
     ctx: HarnessContext,
   ) => Promise<WaitStart | undefined> | WaitStart | undefined
   /**
@@ -679,7 +687,17 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
             }
             l.touch()
             l.requestHuman(input.reason)
-            const started = await ask({ reason: input.reason, profileId }, event.ctx)
+            const started = await ask(
+              {
+                reason: input.reason,
+                profileId,
+                sessionId: event.ctx.session.id,
+                waitId: event.waitId,
+                toolCallId: event.toolCallId,
+                ctx: event.ctx,
+              },
+              event.ctx,
+            )
             return {
               ...(started ?? {}),
               payload: {

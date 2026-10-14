@@ -38,7 +38,7 @@ export interface BrowserManagerOptions {
   profiles: BrowserProfileStore
   limits?: Partial<BrowserLimits>
   /** Memory of the machine the engines run on (`systemMemory` from `eharness/browser/node`). */
-  systemMemory?: () => Promise<SystemMemory>
+  systemMemory?: () => SystemMemory | Promise<SystemMemory>
   /** Clock, epoch ms. Default `Date.now`. */
   now?: () => number
   log?: HarnessLogger

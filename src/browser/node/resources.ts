@@ -2,7 +2,7 @@
  * Resource measurement for running engines (P48 owner decision: resources are visible).
  * Best effort: `null` when the platform or the process is unknown.
  */
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import { freemem, totalmem } from 'node:os'
 import type { ProcessUsage, SystemMemory } from './types.ts'
@@ -166,6 +166,41 @@ export async function processUsage(
   return null
 }
 
+/**
+ * Memory the system can still hand out. On Linux `freemem()` is `MemAvailable`; on macOS it counts
+ * only free pages (a few hundred MB on a busy Mac), so the reclaimable ones from `vm_stat` (inactive,
+ * speculative, purgeable) are added, as Activity Monitor does. Cached for two seconds.
+ */
 export function systemMemory(): SystemMemory {
-  return { totalBytes: totalmem(), freeBytes: freemem() }
+  const now = Date.now()
+  if (memoryCache !== undefined && now - memoryCache.at < 2000) return memoryCache.value
+  const value = {
+    totalBytes: totalmem(),
+    freeBytes: process.platform === 'darwin' ? darwinAvailable() : freemem(),
+  }
+  memoryCache = { at: now, value }
+  return value
+}
+
+let memoryCache: { at: number; value: SystemMemory } | undefined
+
+/** Parse `vm_stat`: free + inactive + speculative + purgeable pages, times the page size. */
+export function parseVmStat(text: string): number | undefined {
+  const size = Number(/page size of (\d+) bytes/.exec(text)?.[1])
+  if (!Number.isFinite(size) || size <= 0) return undefined
+  let pages = 0
+  for (const name of ['Pages free', 'Pages inactive', 'Pages speculative', 'Pages purgeable']) {
+    const n = Number(new RegExp(`${name}:\\s+(\\d+)`).exec(text)?.[1])
+    if (Number.isFinite(n)) pages += n
+  }
+  return pages * size
+}
+
+function darwinAvailable(): number {
+  try {
+    const out = execFileSync('vm_stat', { encoding: 'utf8', timeout: 1000 })
+    return parseVmStat(out) ?? freemem()
+  } catch {
+    return freemem()
+  }
 }

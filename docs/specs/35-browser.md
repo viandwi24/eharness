@@ -256,7 +256,10 @@ browser({
   }
   autoSnapshot?: 'changed' | 'off'     // attach a fresh snapshot to open/act results; default 'changed'
   allowEval?: boolean                  // registers browser_eval; default false
-  requestHuman?: (input: { reason: string; profileId: string }, ctx) => WaitStart | undefined | Promise<…>
+  requestHuman?: (
+    input: { reason: string; profileId: string; sessionId: string; waitId: string; toolCallId: string; ctx },
+    ctx,
+  ) => WaitStart | undefined | Promise<…>   // waitId: what session.resolveWait takes
   images?: boolean | ((ctx) => boolean | Promise<boolean>)  // does the model accept images (spec 12)? default true
   risk?: Partial<Record<BrowserToolName, ToolRisk>>
   limits?: { denyDomains?: string[]; allowPrivateHosts?: boolean }  // added to the profile's and the manager's rules (§8)
@@ -399,12 +402,18 @@ total and free memory; `manager.usage()` (§7) puts them together.
   overrides it), never on a desktop. `extraArgs` of a profile are appended; flags that move or
   expose the debugging port (`--remote-debugging-address|port|pipe`, `--user-data-dir`) are refused.
 - Stop: `Browser.close`, then the process is killed after 5 s.
+- Crash leftovers: on `start` the runtime clears `SingletonLock`, `SingletonSocket`,
+  `SingletonCookie` and `DevToolsActivePort` of the profile when the lock (`<host>-<pid>`) names a
+  dead process or another host (a live process on this host keeps its lock). The engine pid is kept
+  in `<profile>/eharness.pid`; a live process named there whose command line contains the profile
+  directory is an orphan of a crashed run and is killed (SIGTERM, then SIGKILL) before launching.
 
 **`lightpandaRuntime({ root, version?, executablePath?, fetch? })`**
 
 - Install: the release binary for `linux`/`macos` × `x86_64`/`aarch64` from the project's GitHub
   releases, executable bit set. Windows: `status()` is `error` with "not available on Windows".
 - Start: `lightpanda serve --host 127.0.0.1 --port <free>` with `LIGHTPANDA_DISABLE_TELEMETRY=true`.
+  The pid is kept in `<root>/lightpanda/run/<profile>.pid`; an orphan of a crashed run is killed first.
 - The binary is AGPL-3.0; it is downloaded by the user's server and run unmodified as a separate
   process. The npm package never contains it.
 
@@ -419,7 +428,7 @@ createBrowserManager({
   registry: BrowserRegistry
   profiles: BrowserProfileStore       // wrap it with sealedBrowserProfiles for secrets at rest
   limits?: Partial<BrowserLimits>     // idleMs (5 min), maxLeases (8), startTimeoutMs (60 s), denyDomains, allowPrivateHosts, stopOnIdle (true), + the CDP sizes and waits
-  systemMemory?: () => Promise<{ totalBytes: number; freeBytes: number }>  // `systemMemory` of eharness/browser/node
+  systemMemory?: () => SystemMemory | Promise<SystemMemory>  // {totalBytes, freeBytes}  // `systemMemory` of eharness/browser/node
   now?: () => number
   log?: HarnessLogger
 }): BrowserManager

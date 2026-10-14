@@ -24,6 +24,14 @@ import {
   spawnLauncher,
 } from './process.ts'
 import { processUsage } from './resources.ts'
+import {
+  clearStaleChromeLocks,
+  defaultProcessOs,
+  type ProcessOs,
+  reapOrphan,
+  removePidFile,
+  writePidFile,
+} from './stale.ts'
 import type {
   BrowserRuntime,
   InstallOptions,
@@ -136,6 +144,8 @@ export interface ChromeRuntimeOptions {
   stopGraceMs?: number
   platform?: NodeJS.Platform
   arch?: string
+  /** Process calls of the stale-profile cleanup (tests). */
+  os?: ProcessOs
 }
 
 interface VersionInfo {
@@ -320,7 +330,11 @@ export function chromeRuntime(opts: ChromeRuntimeOptions): BrowserRuntime {
       }
       const userDataDir = join(opts.root, 'profiles', profile.id)
       await mkdir(userDataDir, { recursive: true })
-      await rm(join(userDataDir, 'DevToolsActivePort'), { force: true })
+      // a hard crash leaves the engine and the profile locks behind (spec 35 §6)
+      const pidFile = join(userDataDir, 'eharness.pid')
+      const os = opts.os ?? defaultProcessOs
+      await reapOrphan(pidFile, userDataDir, os)
+      await clearStaleChromeLocks(userDataDir, os)
       const args = [
         `--user-data-dir=${userDataDir}`,
         '--remote-debugging-port=0',
@@ -334,6 +348,8 @@ export function chromeRuntime(opts: ChromeRuntimeOptions): BrowserRuntime {
       const proc = useXvfb
         ? launcher('xvfb-run', ['-a', exe, ...args], { env: process.env })
         : launcher(exe, args, { env: process.env })
+      await writePidFile(pidFile, proc.pid)
+      void proc.exited.then(() => removePidFile(pidFile))
       const { port, path } = await waitForPort(userDataDir, proc, opts.startTimeoutMs ?? 60_000)
       const endpoint: RuntimeEndpoint = {
         cdpUrl: `ws://127.0.0.1:${port}${path}`,
@@ -397,7 +413,13 @@ export function chromeRuntime(opts: ChromeRuntimeOptions): BrowserRuntime {
     async removeProfileData(profileId: string): Promise<void> {
       if (!/^[A-Za-z0-9_-]+$/.test(profileId)) return
       await procs.stop(profileId, opts.stopGraceMs)
-      await rm(join(opts.root, 'profiles', profileId), { recursive: true, force: true })
+      // the exiting engine (or its pid-file cleanup) may still touch the directory: retry until gone
+      const dir = join(opts.root, 'profiles', profileId)
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+        if (!existsSync(dir)) return
+        await new Promise((r) => setTimeout(r, 50))
+      }
     },
     async uninstall(): Promise<void> {
       await procs.stopAll(opts.stopGraceMs)
