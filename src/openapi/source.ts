@@ -207,6 +207,7 @@ function specServer(doc: Json, at: string): string {
  * })
  * ```
  * @see docs/specs/17-openapi-plugin.md
+ * @deprecated No product built on eharness uses this module (ADR-0062); it is removed at 1.0 unless one adopts it.
  */
 export function openApiSource(options: OpenApiSourceOptions): ToolSource {
   if (typeof options !== 'object' || options === null) {

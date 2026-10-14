@@ -205,7 +205,11 @@ function checkNumber(
   }
 }
 
-/** Create the group-chat plugin (spec 16). */
+/**
+ * Create the group-chat plugin (spec 16).
+ *
+ * @deprecated No product built on eharness uses this module (ADR-0062); it is removed at 1.0 unless one adopts it.
+ */
 export function group(options: GroupOptions): GroupPlugin {
   checkNumber('historyLimit', options.historyLimit, 0, true)
   checkNumber('maxBotTurns.count', options.maxBotTurns?.count, 0, true)
@@ -399,7 +403,11 @@ export function group(options: GroupOptions): GroupPlugin {
   return Object.freeze({ ...plugin, route })
 }
 
-/** Route one incoming message through a {@link group} plugin (spec 16 §2). */
+/**
+ * Route one incoming message through a {@link group} plugin (spec 16 §2).
+ *
+ * @deprecated No product built on eharness uses this module (ADR-0062); it is removed at 1.0 unless one adopts it.
+ */
 export function routeGroupMessage(
   group: GroupPlugin,
   session: GroupSession,

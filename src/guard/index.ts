@@ -4,6 +4,9 @@
  * tool calls only), with a read-risk fast path, a per-session verdict cache, a consecutive-denial
  * circuit breaker and fail-closed escalation when the judge is unavailable.
  *
+ * **Deprecated** (ADR-0062): no product built on eharness uses this module; it is removed at 1.0
+ * unless one adopts it.
+ *
  * **Draft:** every symbol of this subpath is experimental and may change in a minor release
  * (docs/engineering/api-stability.md).
  *

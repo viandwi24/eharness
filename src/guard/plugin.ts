@@ -120,6 +120,7 @@ function invalid(message: string): HarnessError {
  * })
  * ```
  * @see docs/specs/15-guard-plugin.md
+ * @deprecated No product built on eharness uses this module (ADR-0062); it is removed at 1.0 unless one adopts it.
  */
 export function guard(options: GuardOptions): HarnessPlugin<'guard'> {
   if (typeof options !== 'object' || options === null || options.model === undefined) {
