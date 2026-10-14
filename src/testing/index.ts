@@ -11,6 +11,14 @@ export {
   type ActivityStoreUnderTest,
   activityStoreConformance,
 } from './activity-store.conformance.ts'
+export { browserProfileStoreConformance } from './browser.conformance.ts'
+export {
+  FAKE_PASS,
+  type FakeCdpPeer,
+  type FakeCdpPeerOptions,
+  fakeCdpError,
+  fakeCdpPeer,
+} from './browser-fake-peer.ts'
 export {
   type BudgetLedgerConformanceOptions,
   budgetLedgerConformance,

@@ -34,7 +34,8 @@ browser() plugin ── tools ──► BrowserManager ──► lease(profile) 
 - **Profile**: a stored, named configuration (adapter, mode, settings) plus the engine's persistent
   data (cookies, local storage) where the mode keeps it.
 - **Runtime**: what makes a `managed` profile run (download, verify, start a process, stop it).
-  Implementations are Node-only (`eharness/browser/node`) or remote (an app's HTTP driver).
+  One runtime per adapter serves every managed profile of it. Implementations are Node-only
+  (`eharness/browser/node`) or remote (an app's HTTP driver).
 - **Connection**: an open browser for one lease; operation-level, so non-CDP engines fit.
 - **Manager**: leases (one holder per profile), idle shutdown, the controller flag and live view.
   One per process; the plugin and the app's routes share it.
@@ -52,11 +53,16 @@ defineBrowserAdapter<M extends z.ZodObject, G extends z.ZodObject>({
   }
   managed?: {
     settings: G
-    runtime: BrowserRuntimeFactory<z.infer<G>> // supplied by the app (Node-only or remote), §6
+    runtime: BrowserRuntime                  // supplied by the app (Node-only or remote), §6; one per adapter
+    runtimeSettings?(settings: z.infer<G>): Record<string, unknown> // what runtime.start reads; default: the settings
+    endpoint?(started: RuntimeEndpoint, settings: z.infer<G>): BrowserEndpoint // default { protocol: 'cdp', url: cdpUrl }
   }
-  capabilities: BrowserCapabilities | ((endpoint: BrowserEndpoint) => BrowserCapabilities)
+  capabilities: BrowserCapabilities | ((mode: 'manual' | 'managed', settings) => BrowserCapabilities)
   connect(endpoint: BrowserEndpoint, ctx: ConnectContext): Promise<BrowserConnection>
+  test?(endpoint, ctx): Promise<{ version: string }>   // default: connect and close
 }): BrowserAdapter
+
+interface ConnectContext { signal?: AbortSignal; limits: CdpLimits; profile: { id: string; name: string } }
 
 interface BrowserEndpoint {
   protocol: string                           // 'cdp' (core), 'playwright-ws' (camoufox package), …
@@ -75,31 +81,46 @@ interface BrowserCapabilities {
 }
 
 createBrowserRegistry(adapters: BrowserAdapter[]): BrowserRegistry
-// get(id), list(), forms(id) → { manual?: ProviderFormSpec; managed?: ProviderFormSpec }
+interface BrowserRegistry {
+  get(id), list(): BrowserAdapterInfo[]      // id, label, modes, default capabilities per mode
+  forms(id): { manual?: ProviderFormSpec; managed?: ProviderFormSpec }
+  validate(id, mode, settings): settings     // defaults applied; throws EH_CONFIG_INVALID, no values echoed
+  merge(id, mode, stored, patch): settings   // edit without resending secrets, then validate
+  publicProfile(profile): PublicBrowserProfile
+}
 ```
+
+The capabilities are a function of the mode and settings, not of a connected endpoint: the plugin
+fixes its tool list when the session opens, before any browser runs.
 
 - An adapter has at least one mode. A mode is offered only when present: an app that passes no
   runtime gets a manual-only `chrome`.
 - `forms(id)` reuses the providers form builder (spec 23 §2): labels, groups, widgets, secret
   fields, the edit-without-resending-secrets merge. UIs render a profile form from it.
-- Duplicate ids or an adapter without modes throw `EH_CONFIG_INVALID`.
+- Duplicate ids, a bad id or an adapter without modes throw `EH_CONFIG_INVALID`.
+- A secret field that is also an endpoint (the CDP URL: a hosted service's key sits in it) is kept
+  on edit by leaving it out of the patch (`''` and `{ keep: true }` count as left out); sending a
+  new URL drops the stored secrets (they would be sent to the new host), as in spec 23 §2.
 
 ### 2.1 Shipped adapters (core)
 
-`chromeAdapter({ managed?: BrowserRuntimeFactory })` — Chrome, Chromium, Edge and any CDP service
+`chromeAdapter({ managed?: BrowserRuntime })` — Chrome, Chromium, Edge and any CDP service
 (Browserbase, Kernel, Steel, Anchor, Browserless, a self-hosted container).
 
-- Manual settings: `cdpUrl` (`ws(s)://…` or `http(s)://host:port`), `headers` (secret, optional),
-  `liveUrl` (optional).
-- Managed settings: `channel` (`stable` | `beta`, default `stable`), `headless` (default `false`),
-  `windowSize` (default `1280x800`), `proxy?`, `locale?`, `timezone?`, `userAgent?`,
-  `extraArgs?` (allowlisted flags only, §8).
+- Manual settings: `cdpUrl` (`ws(s)://…` or `http(s)://host:port`; a secret, ADR-0064 D10),
+  `headers` (secret values, optional), `liveUrl` (optional).
+- Managed settings: `headless?` (empty: the runtime's default), `windowSize` (default `1280x800`,
+  `--window-size`), `proxy?` (`--proxy-server`), `locale?` (`--lang`), `extraArgs?` (flags; those
+  that move or expose the debugging port are refused by the runtime, §6). The Chrome channel is a
+  runtime option (`chromeRuntime({ channel })`), not a profile setting; `timezone` and `userAgent`
+  are not offered in this version.
 - Capabilities: all true, `liveView: 'screencast'`; `persistentProfile` true in managed mode,
   false in manual mode (the remote side decides).
 
-`lightpandaAdapter({ managed?: BrowserRuntimeFactory })` — Lightpanda over CDP.
+`lightpandaAdapter({ managed?: BrowserRuntime })` — Lightpanda over CDP.
 
-- Manual settings: `cdpUrl`. Managed settings: `obeyRobots` (default `true`).
+- Manual settings: `cdpUrl` (secret). Managed settings: none yet (the runtime starts `lightpanda
+  serve` on loopback).
 - Capabilities: `snapshot`, `screenshot` (PNG only), `liveView: 'poll'`, `takeover: true`,
   `tabs: false`, `persistentProfile: false`. Fidelity of its rendering is lower than Chrome's; the
   docs say so.
@@ -117,46 +138,56 @@ interface BrowserProfile {
   mode: 'manual' | 'managed'
   settings: Record<string, unknown> // validated by the adapter's schema for the mode; secrets sealed
   allowDomains?: string[]          // §8; empty or absent = any public host
+  trusted?: boolean                // an admin trusts it: acting tools run at risk `write`, not `external` (§5.1)
   createdAt: number
   updatedAt: number
   metadata?: Record<string, unknown> // app data (owner, workspace)
 }
 
 interface BrowserProfileStore {   // async port; memory adapter + conformance suite
-  create(input): Promise<BrowserProfile>      // EH_CONFIG_INVALID on duplicate name
+  create(input & { id? }): Promise<BrowserProfile> // EH_CONFIG_INVALID on duplicate name; id only for wrappers
   get(id): Promise<BrowserProfile | null>
   list(query?: { limit?: number; cursor?: string }): Promise<{ items: BrowserProfile[]; nextCursor?: string }>
   update(id, patch, ifUpdatedAt?): Promise<{ ok: true; profile } | { ok: false; reason: 'not-found' | 'conflict' }>
+                                              // patch: name, settings, allowDomains ([] clears), trusted, metadata; duplicate name throws
   delete(id): Promise<boolean>
 }
 ```
 
 `memoryBrowserProfileStore()` ships; `browserProfileStoreConformance` in `eharness/testing`.
-Secret fields are sealed with an optional `SecretVault` (spec 23) by `sealedBrowserProfiles({
-store, vault })`, with the same redaction as providers (`publicProfile(profile)` never contains a
-secret). Engine data (a Chrome user-data directory) belongs to the runtime, keyed by profile id;
+Secret fields (`secret` and `secretValues`, found with the adapter's schema from the registry) are
+sealed with a `SecretVault` (spec 23) by `sealedBrowserProfiles({ store, vault, registry })`; each
+blob is bound to the profile id and the field path. `publicProfile(registry, profile)` has the same
+redaction as providers and never contains a secret. Engine data (a Chrome user-data directory) belongs to the runtime, keyed by profile id;
 deleting a profile calls `runtime.removeProfileData(id)` when present.
 
 ## 4. Connection (operation level)
 
 ```ts
 interface BrowserConnection {
-  readonly capabilities: BrowserCapabilities
-  navigate(input: { url?: string; action?: 'back' | 'forward' | 'reload' }, signal): Promise<PageInfo>
-  snapshot(input: { scope?: string; interactive?: boolean; offset?: number }, signal): Promise<Snapshot>
+  // Expected failures are `ERROR:` / `STALE:` / `BLOCKED:` strings (a string result, or `error`), never throws.
+  navigate(input: { url?: string; action?: 'back' | 'forward' | 'reload' }, signal): Promise<PageInfo & { error?: string }>
+  snapshot(input: { scope?: string; interactive?: boolean; offset?: number }, signal): Promise<Snapshot | string>
   act(input: ActInput, signal): Promise<ActResult>
-  screenshot(input: { fullPage?: boolean; ref?: string; maxWidth?: number }, signal): Promise<Shot>
-  read(input: { offset?: number; maxChars?: number }, signal): Promise<{ text: string; page: PageInfo; nextOffset?: number }>
-  tabs?(input: { action: 'list' | 'open' | 'switch' | 'close'; tab?: string; url?: string }, signal): Promise<TabInfo[]>
-  live?(): LiveChannel                        // §7; present when liveView is screencast or poll
+  screenshot(input: { fullPage?: boolean; ref?: string; maxWidth?: number }, signal): Promise<Shot | string>
+  read(input: { offset?: number; maxChars?: number }, signal): Promise<{ text: string; page: PageInfo; nextOffset?: number } | string>
+  tabs?(input: { action: 'list' | 'open' | 'switch' | 'close'; tab?: string; url?: string }, signal): Promise<TabInfo[] | string>
+  page?(signal): Promise<PageInfo>            // URL and title, cheap (no snapshot)
+  live?(): Promise<LiveFeed>                  // §7; the manager wraps it with controller rules into LiveChannel
+  eval?(expression: string, signal): Promise<string>  // browser_eval; result as text, `ERROR:` text on failure
+  clearRefs?(): void                          // hand back: the page may have changed
+  onClose?(handler: (reason: string) => void): () => void // the connection ended by itself: the manager drops the lease
   close(): Promise<void>
 }
 ```
 
-`cdpConnection(endpoint, options)` (exported) implements it over one WebSocket with the browser
-target and flattened sessions (`Target.setAutoAttach { flatten: true }`). Requests have ids,
-per-call timeouts (default 30 s) and abort; the socket closing rejects pending calls with a
-readable error. A JSON `http(s)://` URL is resolved through `/json/version`.
+The CDP core lives in `src/browser/cdp/*`: `cdpConnection(endpoint, options)` (`client.ts`) opens one
+WebSocket to the browser target with flattened sessions (`Target.setAutoAttach { flatten: true }`)
+and returns the low-level `CdpClient`; `cdpBrowserConnection(endpoint, options)` (`connection.ts`)
+wraps it as the `BrowserConnection` above. Requests have ids, per-call timeouts (default 30 s) and
+abort; the socket closing rejects pending calls with a readable error; there is no reconnect (a
+lease reopens). A JSON `http(s)://` URL is resolved through `/json/version`. The `CdpClient` throws
+`CdpError` (readable message); the connection turns every one of them into an `ERROR:` string.
 
 ### 4.1 Snapshot and refs
 
@@ -171,6 +202,9 @@ readable error. A JSON `http(s)://` URL is resolved through `/json/version`.
 - Each snapshot has an id `s<n>` (per lease). A ref is `e<n>` and maps to `(snapshotId, frameId,
   backendDOMNodeId)`. A ref stays valid while its frame's document is the same (loader id); a ref
   from an older document answers `STALE: the page changed since snapshot s3. Take a new snapshot.`
+  A ref keeps its number while its element is listed again in the same document. A ref on a
+  cross-site (out-of-process) iframe answers `ERROR: e7 is inside a cross-site iframe … not
+  supported yet.` (the iframe line is shown as `[cross-site, not supported yet]`).
 - Size: at most `limits.snapshotChars` (default 20 000). Longer output ends with
   `… truncated; call browser_snapshot with offset <n> for more` and keeps the last 2 000 characters
   (pagination and footer links). `scope: 'e12'` snapshots a subtree.
@@ -190,7 +224,8 @@ readable error. A JSON `http(s)://` URL is resolved through `/json/version`.
   (`Enter`, `Control+a`).
 - `wait`: `ms` (max 10 s) or `untilText` (max `limits.waitMs`, default 10 s).
 - After an action the connection waits for network idle or 2 s, whichever is first, and returns
-  `ActResult { page: PageInfo, navigated: boolean, changed: boolean, note?: string }`.
+  `ActResult { page: PageInfo, navigated: boolean, changed: boolean, summary: string, note?: string, error?: string }`
+  (`summary` is the status text, e.g. `Clicked e5 (button "Submit")`; a failure sets `error`).
 
 ### 4.3 Screenshots
 
@@ -221,16 +256,26 @@ browser({
   }
   autoSnapshot?: 'changed' | 'off'     // attach a fresh snapshot to open/act results; default 'changed'
   allowEval?: boolean                  // registers browser_eval; default false
-  requestHuman?: (input: { reason: string; profileId: string }, ctx) => Promise<{ correlationId: string }>
+  requestHuman?: (input: { reason: string; profileId: string }, ctx) => WaitStart | undefined | Promise<…>
+  images?: boolean | ((ctx) => boolean | Promise<boolean>)  // does the model accept images (spec 12)? default true
   risk?: Partial<Record<BrowserToolName, ToolRisk>>
-  limits?: Partial<BrowserLimits>
+  limits?: { denyDomains?: string[]; allowPrivateHosts?: boolean }  // added to the profile's and the manager's rules (§8)
   toolNames?: Partial<Record<BrowserToolName, string>>
 }): HarnessPlugin<'browser'>
 ```
 
 Plugin name `browser`; service `browser` (§5.3); no instructions (tool descriptions carry the
-text); no data parts. The session's lease is taken lazily on the first tool call and released at
-session close or after `limits.idleMs` (default 5 min) without a call.
+text); no data parts. The core cannot tell a plugin the model's modalities at session open, so the
+app answers `images` (typically from the model catalog, spec 12 §1.1).
+
+**The lease lives with the session, not with the turn.** It is taken lazily on the first tool call
+and is released only when idle (the manager's `limits.idleMs`, default 5 min, reset by every tool
+call and every live input) or by `service.release()`. It is not released at the end of a turn, so a
+long-running job (`longRun`, spec 33) keeps its logged-in browser across the checkpoint between
+chunks, and a session evicted from memory and opened again with the same id gets the same lease
+back. After a restart (the lease or the engine is gone) the first call re-opens the browser; the
+agent then starts from a fresh snapshot and old refs answer `STALE:`. A profile is used by one
+agent by default; sharing a profile between agents is allowed and serial (`BUSY:`).
 
 ### 5.1 Tools (model-visible; text changes are a minor change)
 
@@ -244,40 +289,52 @@ tool list is stable for the session, spec 02 §5): no `screenshot` → no `brows
 |---|---|---|
 | `browser_open` | `{ url?, action? }` (`back`/`forward`/`reload`) | `read` |
 | `browser_snapshot` | `{ scope?, interactive?, offset? }` | `read` |
-| `browser_act` | `ActInput` (§4.2) | `external` |
+| `browser_act` | `ActInput` (§4.2) | `external`; `write` for a trusted profile |
 | `browser_screenshot` | `{ fullPage?, ref? }` | `read` |
 | `browser_read` | `{ offset? }` | `read` |
 | `browser_tabs` | `{ action, tab?, url? }` | `read` (`open` checks domains) |
 | `browser_request_human` | `{ reason }` | `read` |
-| `browser_eval` | `{ expression }` | `external` |
+| `browser_eval` | `{ expression }` | `external`; `write` for a trusted profile |
 
 All results are strings or a media reference (§5.2); expected failures are `ERROR:`, `STALE:`,
 `BLOCKED:` or `BUSY:` strings, never throws (hard rule 6). Page text (snapshot, read, titles, eval
 output) is framed with `untrustedContent()` (spec 03 §10), source `browser`.
 
-`browser_open` and `browser_act` results: one status line (`Clicked e5 (button "Submit") · page
-"Checkout" https://…`), then, by `autoSnapshot`, the new snapshot when the page changed, then, by
-`screenshots.auto`, the screenshot when its hash changed since the last one sent.
+`browser_open` and `browser_act` results: one status line (`Opened "Checkout" https://…`,
+`Clicked e5 (button "Submit")`), then the framed page block (title, URL and, by `autoSnapshot`,
+the new snapshot when the page changed), then, by `screenshots.auto`, the screenshot: for `open`
+always taken, for `act` only when the page changed (or `'always'`); under `'changed'` it is
+attached only when its hash differs from the last screenshot sent. Every risk can be replaced with
+the `risk` option; a profile marked `trusted` lowers `browser_act` and `browser_eval` from
+`external` to `write` so a permissions plugin (spec 18) does not ask for them.
 
-`browser_request_human` is an `externalTool()` (spec 11 §4.2): `start` switches the controller to
-`human` (§7) and calls `requestHuman` (the team app creates a `takeover` handoff, spec 32). The
-turn parks. The app resolves the wait when the person hands back; `formatHandBack(state)` gives the
+`browser_request_human` is an `externalTool()` (spec 11 §4.2): `start` takes the lease, switches
+the controller to `human` (§7) and calls `requestHuman` (the team app creates a `takeover`
+handoff, spec 32); its `WaitStart` is returned with `payload.kind: 'browser-takeover'` and
+`payload.profileId` added. The turn parks. When no browser can be leased the wait resolves at once
+with the refusal text. The app resolves the wait when the person hands back; `formatHandBack(state)` gives the
 default output: `<by> handed the browser back · page "<title>" <url>`. The agent takes a new
 snapshot after it.
 
 ### 5.2 Screenshots in the model's next step
 
-A screenshot is written to `screenshots.folder` through the filesystem plugin (`writeBytes`) and the
-tool result is the filesystem media reference (spec 08 §12): a small JSON in the stored message,
-the bytes read again by `toModelOutput` when the history is projected. So the model sees the image
+A screenshot is written to `<folder><session>-<seq>.jpg` through the `fs` service of the filesystem
+plugin (`writeBytes`) and the tool result is a media reference with the shape of the filesystem's
+(spec 08 §12: `type: 'media-ref'`, `path`, `version`, `mediaType`, `bytes`, `text`) plus `seq`, the
+position in the session's sequence. A result that carries a screenshot (`browser_open`,
+`browser_act`, `browser_screenshot`) is this reference, with the status text in `text`; the stored
+message holds the small JSON, and `toModelOutput` reads the bytes again when the history is
+projected. So the model sees the image
 as a tool result in its next step (the same as a provider computer-use loop), storage holds no
 base64, and the UI can show the file.
 
 - Only the newest `inModel` screenshots of the session are sent as images; older references are
   sent as their text line plus `[older screenshot omitted]` (the plugin keeps a per-session
-  sequence; after a restart the sequence is recovered from the folder).
-- A model whose catalog entry lacks `image` input (spec 12 `inputModalities`) gets text only:
-  `browser_screenshot` is not registered and `screenshots.auto` is `off`.
+  sequence; after a restart the sequence is recovered from the folder). Within a turn the loop keeps
+  each step's tool results as produced, so the plugin also applies the window with a wire-only
+  `step.prepare` hook. Files beyond `keep` are deleted.
+- A model that does not accept images (the `images` option, from spec 12 `inputModalities`) gets
+  text only: `browser_screenshot` is not registered and no screenshot is attached.
 - Without the filesystem plugin there are no screenshots for the model (`browser_screenshot` not
   registered); live view still works.
 
@@ -294,20 +351,37 @@ interface BrowserService {
 ## 6. Managed runtimes
 
 ```ts
-interface BrowserRuntime {
-  status(): Promise<RuntimeStatus>   // { state: 'missing' | 'installing' | 'ready' | 'starting' | 'running' | 'stopping' | 'error', version?, bytes?, progress?, error? }
+interface BrowserRuntime {            // src/browser/runtime.ts; one per adapter, serves every managed profile of it
+  status(): Promise<RuntimeStatus>
   install(opts?: { signal?; onProgress?(p: { received: number; total?: number }): void }): Promise<void>
-  start(profile: BrowserProfile, settings): Promise<BrowserEndpoint>  // idempotent per profile
+  start(profile: { id: string; name?: string }, settings?: Record<string, unknown>): Promise<RuntimeEndpoint> // idempotent per profile
   stop(profileId: string): Promise<void>
   removeProfileData?(profileId: string): Promise<void>
   uninstall?(): Promise<void>
+  usage?(profileId: string): Promise<ProcessUsage | null>   // memory and CPU of the engine process tree
 }
-type BrowserRuntimeFactory<S> = (settings: S) => BrowserRuntime   // one runtime may serve many profiles
+interface RuntimeStatus {
+  state: 'missing' | 'installing' | 'ready' | 'starting' | 'running' | 'stopping' | 'error'
+  version?: string
+  diskBytes?: number                  // disk used by the installed engine
+  progress?: { received: number; total?: number }   // while `installing`
+  running?: string[]                  // ids of profiles with a running engine
+  error?: string
+}
+interface RuntimeEndpoint { cdpUrl: string; pid?: number; headers?: Record<string, string>; liveUrl?: string }
+interface ProcessUsage { rssBytes: number; cpuPercent: number }
 ```
+
+`installing` is the state while a download or extract runs (with `progress`); `running` while at
+least one profile runs. Expected failures of a runtime throw `HarnessError('EH_CONFIG_INVALID', …)`
+with a readable message; the manager turns them into `ERROR: the browser could not start (…)`.
+Resources are visible, not capped low (P48 owner decision): `usage(profileId)` gives the RSS of the
+engine process tree and its CPU, and the Node module exports `systemMemory()` for the machine's
+total and free memory; `manager.usage()` (§7) puts them together.
 
 `eharness/browser/node` ships:
 
-**`chromeRuntime({ root, channel?, executablePath?, fetch?, xvfb?, allowNoSandbox? })`**
+**`chromeRuntime({ root, channel?, executablePath?, fetch?, launcher?, headless?, xvfb?, inContainer?, … })`**
 
 - Install: reads Chrome for Testing `last-known-good-versions-with-downloads.json`, picks the
   platform (`linux64`, `linux-arm64`, `mac-arm64`, `mac-x64`, `win64`), downloads the zip into
@@ -318,9 +392,12 @@ type BrowserRuntimeFactory<S> = (settings: S) => BrowserRuntime   // one runtime
   default profile: Chrome 136+ refuses remote debugging there), `--remote-debugging-port=0`
   (bound to `127.0.0.1`), the endpoint read from `DevToolsActivePort`, and the defaults
   `--no-first-run --no-default-browser-check --disable-sync --disable-background-networking
-  --disable-dev-shm-usage --disable-search-engine-choice-screen`. `headless: true` adds
-  `--headless=new`; headed on Linux without `DISPLAY` needs `xvfb: true` (`xvfb-run -a`) or fails
-  with a readable error. `--no-sandbox` only with `allowNoSandbox` and when running as root.
+  --disable-dev-shm-usage --disable-search-engine-choice-screen`. `headless` (the runtime option or
+  the profile's setting, default `true`) adds `--headless=new`; headed on Linux without `DISPLAY`
+  needs `xvfb: true` (`xvfb-run -a`) or fails with a readable error. `--no-sandbox` is added only
+  inside a container (detected: `/.dockerenv`, `/run/.containerenv`, cgroup names; `inContainer`
+  overrides it), never on a desktop. `extraArgs` of a profile are appended; flags that move or
+  expose the debugging port (`--remote-debugging-address|port|pipe`, `--user-data-dir`) are refused.
 - Stop: `Browser.close`, then the process is killed after 5 s.
 
 **`lightpandaRuntime({ root, version?, executablePath?, fetch? })`**
@@ -340,36 +417,62 @@ reachable over HTTP) implements the same interface in the app.
 ```ts
 createBrowserManager({
   registry: BrowserRegistry
-  profiles: BrowserProfileStore
-  vault?: SecretVault
-  limits?: Partial<BrowserLimits>     // idleMs, maxLeases (default 8), startTimeoutMs (60 s), …
+  profiles: BrowserProfileStore       // wrap it with sealedBrowserProfiles for secrets at rest
+  limits?: Partial<BrowserLimits>     // idleMs (5 min), maxLeases (8), startTimeoutMs (60 s), denyDomains, allowPrivateHosts, stopOnIdle (true), + the CDP sizes and waits
+  systemMemory?: () => Promise<{ totalBytes: number; freeBytes: number }>  // `systemMemory` of eharness/browser/node
   now?: () => number
-  log?: Logger
+  log?: HarnessLogger
 }): BrowserManager
 
 interface BrowserManager {
-  lease(profileId: string, holder: { kind: 'session' | 'person'; id: string }): Promise<Lease | Busy>
-  runtime(adapterId: string, settings?): BrowserRuntime | undefined   // for install/status UIs
-  test(profile): Promise<{ ok: true; version: string } | { ok: false; error: string }>
-  live(profileId: string, viewer: { id: string }): Promise<LiveChannel | Busy>
-  status(): Promise<LeaseStatus[]>
-  close(): Promise<void>
+  profile(id): Promise<BrowserProfile | null>
+  capabilities(profile): BrowserCapabilities | undefined   // from the adapter, mode and settings
+  rules(profile): DomainRules                               // allowDomains + the manager's deny list and private-host flag
+  lease(profileId, holder: { kind: 'session' | 'person'; id: string }): Promise<Lease | LeaseRefusal>
+  runtime(adapterId): BrowserRuntime | undefined            // install/status/uninstall UIs
+  start(profileId): Promise<{ ok: true } | { ok: false; error: string }>  // start a managed engine without a lease; it keeps running until stop()
+  stop(profileId): Promise<void>                            // release the lease and stop the managed engine
+  test(profile | { adapter, mode, settings }): Promise<{ ok: true; version: string } | { ok: false; error: string }>
+  live(profileId, viewer: { id: string }): Promise<LiveChannel | LeaseRefusal>
+  handBack(profileId, by: string): Promise<HandBackInfo | undefined>   // a person hands back without a channel (a decision card)
+  status(): Promise<LeaseStatus[]>                          // holder, controller, page, viewers per open lease
+  usage(): Promise<{ profiles: { profileId, adapter, rssBytes?, cpuPercent? }[]; totals; system? }>
+  on(listener: (e: BrowserEvent) => void): () => void       // lease, release, request-human, takeover, handback
+  close(): Promise<void>                                    // release all leases, stop the engines this manager started
+}
+
+interface LeaseRefusal { refused: true; kind: 'busy' | 'limit' | 'error'; text: string } // text is `BUSY: …` or `ERROR: …`
+
+interface Lease {                     // what a tool holds
+  profile; holder; capabilities; connection: BrowserConnection
+  controller(): ControllerState; busyText(): string | undefined   // BUSY text while a person controls
+  touch(); setPage(page); requestHuman(reason); release(); readonly open: boolean
 }
 
 interface LiveChannel {
   info: { width: number; height: number; liveView: BrowserCapabilities['liveView']; liveUrl?: string }
-  frames: ReadableStream<LiveFrame>            // { seq, data: Uint8Array, mediaType, width, height, at }
-  controller(): { by: 'agent' | 'human'; holder?: string; since: number }
-  takeOver(): Promise<void>                    // controller → human
-  handBack(): Promise<void>                    // controller → agent
-  input(event: LiveInput): void                // refused unless this viewer took over
+  frames: ReadableStream<LiveFrame>            // { seq, data: Uint8Array, mediaType, width, height, at }; newest wins
+  controller(): { by: 'agent' | 'human'; holder?: string; since: number; reason?: string }
+  takeOver(): Promise<string | undefined>      // controller → human; a refusal text, or undefined
+  handBack(): Promise<string | undefined>      // controller → agent; a refusal text, or undefined
+  input(event: LiveInput): Promise<string | undefined>   // an ERROR:/BLOCKED: text unless this viewer took over
   close(): void
 }
 ```
 
 - **One holder per profile.** A second session gets `BUSY: profile "<name>" is used by another
-  session.` A person opening live view does not take a lease: they attach to the current one, or the
-  manager opens the browser for them (holder `person`) to log in.
+  session.` A person opening live view does not take a lease from a session: they attach to the
+  current one, or the manager opens the browser for them (holder `person`) to log in; a lease only a
+  person opened is released when the last viewer leaves, and a session can take it over while the
+  agent controls it. `maxLeases` answers `BUSY: <n> browsers are open (the limit is <max>)`.
+- **Release.** A lease ends when it is idle for `idleMs` (every tool call and live input moves the
+  deadline; it is never released at the end of a turn, so a long-run job keeps it across
+  checkpoints, §5; it is not released while a viewer is attached or a person controls), by the
+  holder (`release()`), or when the connection ends by itself (`lost`). A managed engine is stopped
+  on idle and on loss (`stopOnIdle`, default `true`; logins stay in the profile's data) unless
+  `start()` pinned it; an explicit `release()` leaves it running.
+- **Resources.** `usage()` lists every running managed profile with `rssBytes` and `cpuPercent`
+  (from `runtime.usage`), the totals, and the machine's memory when `systemMemory` was given.
 - **Frames.** `screencast`: `Page.startScreencast` (JPEG q60, max 1280 wide, every frame acked with
   `Page.screencastFrameAck`; the stream applies backpressure by acking only after the consumer
   read the previous frame). `poll`: a screenshot every 500 ms when the hash changed. `external`:
@@ -381,15 +484,19 @@ interface LiveChannel {
   of the frame's `width`/`height`.
 - **Controller.** While `human` controls, `browser_act`, `browser_open`, `browser_tabs` and
   `browser_eval` answer `BUSY: a person is controlling the browser since <time>. Wait, or call
-  browser_request_human to ask for it.`; read-only tools still work. `handBack` clears refs (the
-  page may have changed) and records `by` for `formatHandBack`.
+  browser_request_human to ask for it.`; read-only tools still work. `takeOver` is refused while
+  another person controls; a viewer that closes the live view while in control hands back
+  (`reason: 'viewer-left'`). `handBack` clears refs (the page may have changed) and records `by` and
+  the page for `formatHandBack`; the manager emits the `handback` event, which the app uses to
+  resolve a parked `browser_request_human`. `browser_request_human` sets the controller to `human`
+  with no holder until a viewer takes it.
 
 ## 8. Security
 
 - **Untrusted pages.** Every page-derived string is framed (§5.1). Instructions on a page never
   change permissions; `browser_act` defaults to `external` risk so the permissions plugin asks or
   judges (spec 18). Apps can lower it per profile.
-- **Domains.** `allowDomains` (profile) and `denyDomains` (plugin limits) are checked before
+- **Domains.** `allowDomains` (profile) and `denyDomains` (manager and plugin limits) are checked before
   `navigate`, `tabs.open` and live `navigate`, and after every action on the top-level URL; a page
   that ended on a blocked host is replaced by `about:blank` and the result says why. Private,
   loopback and link-local hosts are blocked by default (`allowPrivateHosts: false`), as in
@@ -416,8 +523,10 @@ the same plugin, manager and UI.
 
 ## 10. Errors
 
-New codes: none beyond `EH_CONFIG_INVALID` (bad adapter, bad profile settings). Runtime failures
-reach tools as `ERROR: the browser could not start (<reason>).` and UIs through `status()`.
+New codes: none beyond `EH_CONFIG_INVALID` (bad adapter, bad profile settings, a runtime that
+cannot install or start). Runtime failures reach tools as `ERROR: the browser could not start
+(<reason>).` (secrets scrubbed from the reason) and UIs through `runtime.status()` and
+`manager.test()`.
 
 ## 11. Tests
 
