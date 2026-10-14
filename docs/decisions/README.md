@@ -66,3 +66,5 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0059](0059-http-and-client-modules.md) | `eharness/http` (fetch-style routes behind one `authorize`) and `eharness/client` (browser/UI side over AI SDK `DefaultChatTransport`; lands in the same release) |
 | [0060](0060-shared-llm-judge-engine.md) | One shared LLM judge engine in core with two roles: `tighten` (approval guard, never approves) and `decide` (permissions auto mode, may approve); amends 0030 |
 | [0061](0061-code-sandbox-sync-not-mount.md) | Code sandbox over the virtual file system: sync around each run (incremental by content, compare-and-set write-back), not a mount; packages as a cached environment plus a stored requirement list |
+| [0062](0062-platform-rings-and-rule-of-two.md) | Platform rings (core, official modules, adapters, products) and the rule of two: a capability moves into the library when two products need it |
+| [0063](0063-scheduler-module.md) | `eharness/scheduler`: schedule store port, multi-instance scheduler with deterministic fire ids, no cron dependency; amends 0040 |
