@@ -138,3 +138,25 @@ export function resolveWebUrl(input: {
     (input.env.TEAM_WEB_DIR ? input.publicUrl.replace(/\/api\/?$/, '') : 'http://localhost:5173')
   return url.replace(/\/$/, '')
 }
+
+/**
+ * The `env` argument of `app.fetch` for a request that was copied (the `/api` prefix stripped):
+ * Bun upgrades a WebSocket only for the request it handed the server, not for a copy, so the
+ * upgrade of the live browser view is done on the original request.
+ */
+export function upgradeEnv<S extends { upgrade: (...args: never[]) => boolean }>(
+  original: Request,
+  server: S,
+): S {
+  if (original.headers.get('upgrade')?.toLowerCase() !== 'websocket') return server
+  return new Proxy(server, {
+    get(target, prop) {
+      if (prop === 'upgrade') {
+        return (_copy: Request, options: unknown): boolean =>
+          (target.upgrade as (r: Request, o: unknown) => boolean)(original, options)
+      }
+      const value = Reflect.get(target, prop, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}

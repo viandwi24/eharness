@@ -1722,3 +1722,32 @@ export const artifactEvents = sqliteTable(
   },
   (t) => [index('artifact_events_artifact').on(t.artifactId, t.seq)],
 )
+
+/**
+ * Browser profiles (`eharness/browser`, plan P48): a named browser configuration (adapter, mode,
+ * the adapter's settings with secret fields sealed by the vault). Engine data (cookies, a Chrome
+ * user-data directory) lives under `TEAM_BROWSER_ROOT`, never here.
+ */
+export const browserProfiles = sqliteTable(
+  'browser_profiles',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    /** `chrome` | `lightpanda` | an adapter id of the registry. */
+    adapter: text('adapter').notNull(),
+    /** `manual` | `managed` */
+    mode: text('mode').notNull(),
+    /** Validated settings; secret fields are `{ "~sealed": blob }` (`sealedBrowserProfiles`). */
+    settingsJson: json<Record<string, unknown>>('settings_json').notNull(),
+    /** Hosts the profile may open (empty = any public host). */
+    allowDomains: json<string[]>('allow_domains').notNull().default([]),
+    /** An admin trusts the profile: its acting tools run without asking. */
+    trusted: integer('trusted').notNull().default(0),
+    /** App data of the profile (`metadata` of the library type). */
+    metadataJson: json<Record<string, unknown>>('metadata_json'),
+    createdBy: text('created_by'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('browser_profiles_created').on(t.createdAt)],
+)

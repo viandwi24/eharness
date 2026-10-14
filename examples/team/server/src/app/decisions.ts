@@ -247,6 +247,8 @@ export interface EscalateInput {
   options?: string[] | undefined
   /** Labels of `options` that mean "leave it for now" (keep waiting, skip). */
   standDown?: string[] | undefined
+  /** A browser takeover: the profile the person is asked to take over (plan P48). */
+  takeover?: { profileId: string } | undefined
 }
 
 function standDownPayload(
@@ -288,7 +290,17 @@ export function createEscalation(deps: Deps, input: EscalateInput): Decision {
     agentId: input.agentId,
     sessionId: input.sessionId,
     programId: parseProgramSession(input.sessionId)?.programId ?? null,
-    payload: standDownPayload(question, cleanOptions(input.options), input.standDown),
+    payload: {
+      ...standDownPayload(question, cleanOptions(input.options), input.standDown),
+      ...(input.takeover === undefined
+        ? {}
+        : {
+            takeover: {
+              profileId: input.takeover.profileId,
+              link: { label: 'Open browser', path: `/browser/${input.takeover.profileId}` },
+            },
+          }),
+    },
     waitId: input.waitId,
     createdAt: deps.clock.now(),
   })

@@ -144,6 +144,13 @@
 		</div>
 	{/if}
 
+	{#if decision.kind === 'escalation' && decision.payload.takeover}
+		<div class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2" data-testid="takeover-link">
+			<span class="text-[13px]">The agent needs a person in its browser.</span>
+			<Button size="sm" href={decision.payload.takeover.link.path} class="ml-auto">{decision.payload.takeover.link.label || 'Open browser'}</Button>
+		</div>
+	{/if}
+
 	{#if open}
 		{#if rejecting}
 			<div class="flex flex-col gap-2">

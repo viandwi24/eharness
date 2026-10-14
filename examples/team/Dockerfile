@@ -45,6 +45,19 @@ USER root
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-venv bubblewrap \
   && rm -rf /var/lib/apt/lists/*
+# Browser profiles (P48): a managed Chrome is downloaded at runtime into /data/browser, never baked
+# in; it needs these system libraries (and unzip to extract it). Build with
+# `--build-arg TEAM_BROWSER_LIBS=0` for a smaller image without managed browsers (manual profiles,
+# which connect to a browser running elsewhere, still work). Lightpanda needs none of them.
+ARG TEAM_BROWSER_LIBS=1
+RUN if [ "$TEAM_BROWSER_LIBS" = "1" ]; then \
+    apt-get update \
+    && ASOUND=$(apt-cache show libasound2t64 >/dev/null 2>&1 && echo libasound2t64 || echo libasound2) \
+    && apt-get install -y --no-install-recommends unzip ca-certificates fonts-liberation \
+       libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
+       libxdamage1 libxfixes3 libxrandr2 libgbm1 "$ASOUND" libpango-1.0-0 libcairo2 xvfb xauth \
+    && rm -rf /var/lib/apt/lists/*; \
+  fi
 COPY examples/team/python/requirements.txt /tmp/requirements.txt
 RUN python3 -m venv /opt/eh-python \
   && /opt/eh-python/bin/pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements.txt \

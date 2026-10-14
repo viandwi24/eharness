@@ -56,6 +56,21 @@ export const EscalationPayloadSchema = z
       description:
         '`agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`.',
     }),
+    takeover: z
+      .object({
+        profileId: z.string(),
+        link: z.object({
+          label: z.string().openapi({ example: 'Open browser' }),
+          path: z.string().openapi({
+            description: 'A path of the web app (`/browser/<profileId>`): the card links to it.',
+          }),
+        }),
+      })
+      .optional()
+      .openapi({
+        description:
+          'A browser takeover (`browser_request_human`): the agent needs a person in the live browser of this profile. Approve means "handed back" (the live page also settles it), reject means "declined".',
+      }),
   })
   .openapi('EscalationPayload')
 

@@ -43,6 +43,10 @@
       "description": "Workspace and per-agent memory files."
     },
     {
+      "name": "browser",
+      "description": "Browsers agents drive (docs/plans/P48-browser.md): adapters and their managed runtimes (download, start, stop), profiles with their logins, resource usage, screenshots, and the live view with takeover (a WebSocket)."
+    },
+    {
       "name": "settings",
       "description": "Workspace settings read by the agent factory."
     },
@@ -4727,6 +4731,131 @@
           "label"
         ]
       },
+      "BrowserInfo": {
+        "type": "object",
+        "properties": {
+          "driver": {
+            "type": "string",
+            "enum": [
+              "off",
+              "local"
+            ]
+          },
+          "max": {
+            "type": "integer"
+          },
+          "xvfb": {
+            "type": "boolean",
+            "description": "`TEAM_BROWSER_XVFB`."
+          },
+          "system": {
+            "$ref": "#/components/schemas/BrowserSystemMemory"
+          },
+          "runtimes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserRuntime"
+            }
+          },
+          "running": {
+            "type": "integer",
+            "description": "Profiles with a running engine."
+          },
+          "label": {
+            "type": "string",
+            "description": "One line for people."
+          }
+        },
+        "required": [
+          "driver",
+          "max",
+          "xvfb",
+          "system",
+          "runtimes",
+          "running",
+          "label"
+        ]
+      },
+      "BrowserSystemMemory": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "totalBytes": {
+            "type": "number"
+          },
+          "freeBytes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "totalBytes",
+          "freeBytes"
+        ]
+      },
+      "BrowserRuntime": {
+        "type": "object",
+        "properties": {
+          "adapter": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "installing",
+              "ready",
+              "starting",
+              "running",
+              "stopping",
+              "error"
+            ]
+          },
+          "version": {
+            "type": "string"
+          },
+          "diskBytes": {
+            "type": "integer",
+            "description": "Disk used by the engine."
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "received": {
+                "type": "number"
+              },
+              "total": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "received"
+            ],
+            "description": "Download progress while `installing`."
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids of profiles with a running engine."
+          },
+          "error": {
+            "type": "string",
+            "description": "Why the last download or start failed."
+          }
+        },
+        "required": [
+          "adapter",
+          "label",
+          "state",
+          "running"
+        ]
+      },
       "SettingsPatch": {
         "type": "object",
         "properties": {
@@ -6823,6 +6952,638 @@
         },
         "required": [
           "clientId"
+        ]
+      },
+      "BrowserOverview": {
+        "type": "object",
+        "properties": {
+          "driver": {
+            "type": "string",
+            "enum": [
+              "off",
+              "local"
+            ],
+            "description": "`TEAM_BROWSER_DRIVER`."
+          },
+          "max": {
+            "type": "integer",
+            "description": "`TEAM_BROWSER_MAX`: profiles running at once."
+          },
+          "system": {
+            "$ref": "#/components/schemas/BrowserSystemMemory"
+          },
+          "adapters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserAdapter"
+            }
+          }
+        },
+        "required": [
+          "driver",
+          "max",
+          "system",
+          "adapters"
+        ]
+      },
+      "BrowserAdapter": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "chrome"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "managed"
+              ]
+            },
+            "description": "`manual`: connect to a browser someone else runs; `managed`: this server downloads and starts it. A mode that is not offered is missing here and explained in `unavailable`."
+          },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "manual": {
+                "$ref": "#/components/schemas/BrowserCapabilities"
+              },
+              "managed": {
+                "$ref": "#/components/schemas/BrowserCapabilities"
+              }
+            }
+          },
+          "forms": {
+            "type": "object",
+            "properties": {
+              "manual": {
+                "$ref": "#/components/schemas/BrowserForm"
+              },
+              "managed": {
+                "$ref": "#/components/schemas/BrowserForm"
+              }
+            }
+          },
+          "runtime": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BrowserRuntime"
+              },
+              {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "The managed runtime (download, version, size); null without a managed mode."
+              }
+            ]
+          },
+          "unavailable": {
+            "type": "object",
+            "properties": {
+              "manual": {
+                "type": "string"
+              },
+              "managed": {
+                "type": "string"
+              }
+            },
+            "description": "Why a mode is not offered (\"Managed mode is off on this server\")."
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "modes",
+          "capabilities",
+          "forms",
+          "runtime",
+          "unavailable"
+        ]
+      },
+      "BrowserCapabilities": {
+        "type": "object",
+        "properties": {
+          "snapshot": {
+            "type": "boolean"
+          },
+          "screenshot": {
+            "type": "boolean"
+          },
+          "liveView": {
+            "type": "string",
+            "enum": [
+              "screencast",
+              "poll",
+              "external",
+              "none"
+            ],
+            "description": "`screencast`: smooth frames; `poll`: about 2 frames a second; `external`: only `liveUrl` (an iframe); `none`."
+          },
+          "takeover": {
+            "type": "boolean",
+            "description": "A person can click and type remotely."
+          },
+          "tabs": {
+            "type": "boolean"
+          },
+          "persistentProfile": {
+            "type": "boolean",
+            "description": "The engine keeps logins across leases."
+          }
+        },
+        "required": [
+          "snapshot",
+          "screenshot",
+          "liveView",
+          "takeover",
+          "tabs",
+          "persistentProfile"
+        ]
+      },
+      "BrowserForm": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderField"
+            }
+          },
+          "jsonSchema": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "fields",
+          "jsonSchema"
+        ],
+        "description": "The settings form of one mode: render it like a provider form."
+      },
+      "BrowserUsage": {
+        "type": "object",
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "profileId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "adapter": {
+                  "type": "string"
+                },
+                "rssBytes": {
+                  "type": "number",
+                  "description": "Memory of the engine process tree."
+                },
+                "cpuPercent": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "profileId",
+                "name",
+                "adapter"
+              ]
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "rssBytes": {
+                "type": "number"
+              },
+              "cpuPercent": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "rssBytes",
+              "cpuPercent"
+            ]
+          },
+          "system": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BrowserSystemMemory"
+              },
+              {
+                "description": "The server's memory."
+              }
+            ]
+          }
+        },
+        "required": [
+          "profiles",
+          "totals"
+        ]
+      },
+      "BrowserTestResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "description": "Never an error status for an unreachable browser: `ok: false` carries the reason."
+      },
+      "BrowserDraft": {
+        "type": "object",
+        "properties": {
+          "adapter": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "managed"
+            ]
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "adapter",
+          "mode"
+        ],
+        "description": "Settings that are not saved yet (\"Test connection\")."
+      },
+      "BrowserProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "adapter": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "managed"
+            ]
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The settings with every secret replaced by `{ set, hint? }` (headers: one per key).",
+            "example": {
+              "cdpUrl": {
+                "set": true,
+                "hint": "…9222"
+              }
+            }
+          },
+          "allowDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Only these hosts may be opened (`*.example.com`); absent: any public host."
+          },
+          "trusted": {
+            "type": "boolean",
+            "description": "An admin trusts the profile: its agents click and type without asking."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "capabilities": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BrowserCapabilities"
+              },
+              {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "installing",
+              "ready",
+              "running",
+              "in-use",
+              "controlled",
+              "error"
+            ],
+            "description": "`missing`: the managed engine is not downloaded; `ready`; `running`: the engine runs, nobody holds it; `in-use`: an agent holds it; `controlled`: a person controls it."
+          },
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "lease": {
+            "type": "object",
+            "properties": {
+              "holder": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "session",
+                      "person"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
+              "heldBy": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agentId",
+                  "name"
+                ]
+              },
+              "controller": {
+                "type": "object",
+                "properties": {
+                  "by": {
+                    "type": "string",
+                    "enum": [
+                      "agent",
+                      "human"
+                    ]
+                  },
+                  "holder": {
+                    "type": "string",
+                    "description": "Viewer id of the person who took over."
+                  },
+                  "since": {
+                    "type": "integer"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "Why the agent asked for a person."
+                  }
+                },
+                "required": [
+                  "by",
+                  "since"
+                ]
+              },
+              "viewers": {
+                "type": "integer"
+              },
+              "since": {
+                "type": "integer"
+              },
+              "page": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "title"
+                ]
+              }
+            },
+            "required": [
+              "holder",
+              "controller",
+              "viewers",
+              "since"
+            ],
+            "description": "Set while an agent or a person holds the browser."
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "slug": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "slug",
+                "name"
+              ]
+            },
+            "description": "Agents whose Browser connection names this profile."
+          },
+          "liveUrl": {
+            "type": "string",
+            "description": "A hosted provider's own live view; show it in an iframe."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "adapter",
+          "mode",
+          "settings",
+          "createdAt",
+          "updatedAt",
+          "capabilities",
+          "state",
+          "agents"
+        ]
+      },
+      "BrowserProfileCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "adapter": {
+            "type": "string",
+            "minLength": 1,
+            "example": "chrome"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "managed"
+            ]
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Settings by the adapter form of the mode; secrets in plain text (stored sealed)."
+          },
+          "allowDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100
+          },
+          "trusted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "adapter",
+          "mode"
+        ]
+      },
+      "BrowserProfilePatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Keep-secret semantics: a secret omitted, `\"\"` or `{ \"keep\": true }` keeps the stored value; a new CDP URL drops the stored header secrets."
+          },
+          "allowDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "description": "`[]` clears the list."
+          },
+          "trusted": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BrowserShot": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "mediaType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "agent": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "description": "A signed URL of the image."
+          },
+          "expiresAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "mediaType",
+          "size",
+          "updatedAt",
+          "agent",
+          "url",
+          "expiresAt"
         ]
       },
       "RoutineList": {
@@ -9991,6 +10752,36 @@
               "report"
             ],
             "description": "`agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`."
+          },
+          "takeover": {
+            "type": "object",
+            "properties": {
+              "profileId": {
+                "type": "string"
+              },
+              "link": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "example": "Open browser"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "A path of the web app (`/browser/<profileId>`): the card links to it."
+                  }
+                },
+                "required": [
+                  "label",
+                  "path"
+                ]
+              }
+            },
+            "required": [
+              "profileId",
+              "link"
+            ],
+            "description": "A browser takeover (`browser_request_human`): the agent needs a person in the live browser of this profile. Approve means \"handed back\" (the live page also settles it), reject means \"declined\"."
           }
         },
         "required": [
@@ -20164,6 +20955,52 @@
         }
       }
     },
+    "/settings/browser": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Browser driver status",
+        "description": "The driver of managed browsers (`off` or `local`, `TEAM_BROWSER_DRIVER`), the engines that are downloaded (state, version, size), how many profiles run, and the memory of the server. Set by the `TEAM_BROWSER_*` variables.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/usage": {
       "get": {
         "tags": [
@@ -21744,6 +22581,1043 @@
           },
           "404": {
             "description": "Unknown connector",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/adapters": {
+      "get": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Browser adapters, their forms and runtimes",
+        "description": "Chrome and Lightpanda (and any adapter the app adds): the modes offered on this server, the capabilities of each mode, the settings form of each mode (`forms`, secrets marked) and the managed runtime (state, download progress, version, disk size). Poll this while a download runs.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Adapters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserOverview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/usage": {
+      "get": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Memory and CPU of the running browsers",
+        "description": "One row per running profile (memory of the engine process tree, CPU), the totals and the memory of the server. Resources are shown, not capped: `TEAM_BROWSER_MAX` limits the profiles running at once.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserUsage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/test": {
+      "post": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Test settings that are not saved yet",
+        "description": "The wizard's \"Test connection\": connects to the endpoint of a manual draft and answers its version. Never an error status for an unreachable browser (`ok: false`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserTestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/profiles": {
+      "get": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Browser profiles",
+        "description": "Secrets are redacted (`{ set, hint }`). `state` and `lease` say who holds the browser now.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profiles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BrowserProfile"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Create a browser profile",
+        "description": "A name, an adapter, a mode and the adapter form of that mode. Secrets are sealed at rest and never returned. A profile keeps its logins (a Chrome user-data directory) when managed.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserProfileCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/profiles/{id}": {
+      "get": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "One browser profile",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Edit a browser profile",
+        "description": "Rename, change settings (keep-secret semantics), the allowed domains, or mark it trusted: the agents on a trusted profile click and type without asking.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserProfilePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Delete a browser profile",
+        "description": "Stops its engine and deletes its saved logins. Refused (409) while a Browser connection still names it.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Still used by a connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/profiles/{id}/test": {
+      "post": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Test the connection of a profile",
+        "description": "Connects (starting a managed engine for the test) and answers the browser version. Never an error status for an unreachable browser.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserTestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/profiles/{id}/start": {
+      "post": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Start the engine of a managed profile",
+        "description": "Starts it without an agent (it keeps running until stopped). 409 when it cannot start (not downloaded, too many running: `TEAM_BROWSER_MAX`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Could not start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/profiles/{id}/stop": {
+      "post": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Stop a profile",
+        "description": "Releases its lease and stops its managed engine (logins stay on disk).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/profiles/{id}/shots": {
+      "get": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Recent screenshots of a profile",
+        "description": "The newest screenshots the agents using this profile took (the library folder `/.browser/shots/`), with signed image URLs.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Screenshots, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BrowserShot"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/runtimes/{adapter}": {
+      "get": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Status of a managed runtime",
+        "description": "State, download progress, version, disk size and the last error. Poll it during a download.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "chrome",
+              "description": "Adapter id."
+            },
+            "required": true,
+            "description": "Adapter id.",
+            "name": "adapter",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserRuntime"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown adapter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/runtimes/{adapter}/install": {
+      "post": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Download (or update) the engine",
+        "description": "Starts the download in the background and answers at once with `state: \"installing\"`; poll `GET /browser/runtimes/{adapter}` (or `GET /browser/adapters`) for the progress. A failure stays in `error`; call again to retry.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "chrome",
+              "description": "Adapter id."
+            },
+            "required": true,
+            "description": "Adapter id.",
+            "name": "adapter",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Download started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserRuntime"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown adapter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/runtimes/{adapter}/uninstall": {
+      "post": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Remove the downloaded engine",
+        "description": "Profiles and their logins stay. 409 while it downloads or a profile runs.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "chrome",
+              "description": "Adapter id."
+            },
+            "required": true,
+            "description": "Adapter id.",
+            "name": "adapter",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserRuntime"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown adapter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browser/profiles/{id}/live": {
+      "get": {
+        "tags": [
+          "browser"
+        ],
+        "summary": "Live view and takeover (WebSocket)",
+        "description": "Upgrade to a WebSocket (same session cookie or bearer token as every route; a browser `Origin` must be an allowed origin).\n\nServer to client:\n- text `{ \"type\": \"hello\", \"profileId\", \"info\": { \"width\", \"height\", \"liveView\", \"liveUrl\"? }, \"controller\": { \"by\": \"agent\"|\"human\", \"holder\"?, \"since\", \"reason\"? }, \"you\": { \"id\", \"canTakeOver\": boolean } }` once.\n- binary frames: 4-byte big-endian header length, JSON header `{ \"type\": \"frame\", \"seq\", \"width\", \"height\", \"mediaType\": \"image/jpeg\"|\"image/png\", \"at\" }`, then the image bytes. Coordinates of `input` events are in the `width` x `height` of the frame.\n- text `{ \"type\": \"controller\", \"controller\": {...} }` whenever who drives the browser changes (a person took over, handed back, or the agent asked for a person).\n- text `{ \"type\": \"ack\", \"id\", \"ok\": boolean, \"error\"? }` for a command that carried an `id`; `{ \"type\": \"error\", \"message\", \"id\"? }` for a refused input or command.\n- text `{ \"type\": \"closed\", \"reason\" }` before the socket closes because the browser went away (idle release, stop).\n- text `{ \"type\": \"pong\" }`.\n\nClient to server (text JSON): `{ \"type\": \"takeOver\", \"id\"? }`, `{ \"type\": \"handBack\", \"id\"? }`, `{ \"type\": \"input\", \"event\": LiveInput, \"id\"? }` (`mouse` move/down/up/wheel, `key` down/up/char, `text`, `navigate`; refused unless this socket took over), `{ \"type\": \"ping\" }`.\n\nClosing the socket while in control hands the browser back. Every socket is a viewer; the web app has one workspace owner (the client), so any signed-in viewer may take over.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile id."
+            },
+            "required": true,
+            "description": "Browser profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching protocols"
+          },
+          "403": {
+            "description": "Cross-origin upgrade refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
             "content": {
               "application/json": {
                 "schema": {

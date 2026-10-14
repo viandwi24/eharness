@@ -33,6 +33,7 @@ import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { type ArtifactsHook, artifactsConnector } from '../artifacts/index.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
+import { type BrowserHook, browserConnector } from '../browser/connector.ts'
 import { CHANNEL_OWN_WRITE_TOOLS, CHANNEL_READ_TOOLS } from '../channels/index.ts'
 import { CODE_LIST_PATH, type CodeRuntime } from '../code/index.ts'
 import { remoteSandboxConnector } from '../code/remote.ts'
@@ -113,6 +114,8 @@ export interface CatalogHooks {
   bigdata?: BigDataHook
   /** The artifacts plugin (`infra/artifacts`); undefined = the connector offers nothing. */
   artifacts?: ArtifactsHook
+  /** The Browser connector's activation (`infra/browser/hook.ts`); undefined = the connector offers nothing. */
+  browser?: BrowserHook
   /**
    * True while activating an agent whose Remote sandbox runs `run_python` (plan P44 D13): the
    * Files & Sandbox connector then leaves `code()` to the remote connector (one `run_python`).
@@ -502,6 +505,7 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
     ...builtins,
     bigDataConnector(() => options.hooks.bigdata),
     artifactsConnector(() => options.hooks.artifacts),
+    browserConnector(() => options.hooks.browser),
     remoteSandboxConnector(() => options.code),
     github(listTools, defer),
     telegramConnector(

@@ -4,6 +4,7 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { NAV_ICONS } from '#lib/nav/icons.js';
+	import { browserNav, loadBrowserNav } from '#lib/browser/nav.svelte.js';
 	import { lastWork } from '#lib/nav/last-work.svelte.js';
 	import { RAIL, railOf } from '#lib/nav/sections.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -27,7 +28,10 @@
 	const unread = $derived(Object.values(agentsStore.state.activity).reduce((n, a) => n + (a?.unread ? 1 : 0), 0));
 	const decisionCount = $derived(live.state.decisions.length);
 	const briefingCount = $derived(live.state.notifications.filter((n) => n.kind === 'briefing').length);
-	const main = RAIL.filter((s) => s.id !== 'settings');
+	$effect(() => {
+		void loadBrowserNav();
+	});
+	const main = $derived(RAIL.filter((s) => s.id !== 'settings' && (s.id !== 'browser' || browserNav.visible || current === 'browser')));
 	const settings = RAIL.find((s) => s.id === 'settings')!;
 	const hrefOf = (s: (typeof RAIL)[number]): string => (s.id === 'work' ? lastWork.href : s.href);
 

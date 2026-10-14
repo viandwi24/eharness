@@ -15,9 +15,11 @@
  * session (`session.send`).
  */
 import { errorText } from 'eharness'
+import { formatHandBack } from 'eharness/browser'
 import type { AgentRepo, DecisionResolver } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import { followUpText } from '../../domain/decisions.ts'
+import { declinedTakeoverText } from '../../domain/browser.ts'
+import { type Decision, type DecisionAnswer, followUpText } from '../../domain/decisions.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import { PROGRAM_RUN_MAX_STEPS, parseProgramSession } from '../../domain/programs.ts'
 import type { AgentFactory } from './agent-factory.ts'
@@ -33,9 +35,24 @@ export interface DecisionServiceDeps {
   agents: AgentRepo
   /** How long a busy session (a turn ending right now) is retried before giving up (ms). */
   busyRetryMs?: number
+  /** Called when a decided takeover must give the browser back to the agent (plan P48). */
+  handBack?: (profileId: string) => Promise<unknown>
   /** Called when a continued session ends (the deliverable re-check of a decided run). */
   afterRun?: (sessionId: string) => Promise<void>
   log?: { warn(message: string): void }
+}
+
+/**
+ * What the parked `browser_request_human` reads (its output is a string, unlike the structured
+ * answer of other escalations): the hand-back line, or the refusal.
+ */
+export function takeoverOutput(decision: Decision, answer: DecisionAnswer): string | undefined {
+  if (decision.kind !== 'escalation' || decision.payload.takeover === undefined) return undefined
+  if (answer.decision === 'rejected') return declinedTakeoverText(answer.note)
+  // the live page hands the line over as the note; a card answer gets the default one
+  if (answer.note.includes('handed the browser back')) return answer.note
+  const note = answer.note.trim()
+  return `${formatHandBack({ by: 'The client' })}${note === '' ? '' : ` Note: ${note}`}`
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -95,12 +112,19 @@ export function createDecisionService(
         return 'resumed'
       }
 
+      const takeover = takeoverOutput(decision, answer)
+      if (takeover !== undefined && decision.kind === 'escalation') {
+        // the person is done (or declined): the agent drives the browser again
+        await deps
+          .handBack?.(decision.payload.takeover?.profileId as string)
+          ?.catch((error: unknown) => log.warn(`browser hand-back failed: ${errorText(error)}`))
+      }
       const end = Date.now() + busyRetryMs
       for (;;) {
         try {
           const result = await session.resolveWait(
             decision.waitId,
-            { output: answer },
+            { output: takeover ?? answer },
             options(def, decision.sessionId),
           )
           if (result.status === 'continued') {

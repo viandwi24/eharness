@@ -12,6 +12,7 @@ import type {
   SignedUrl,
 } from '../domain/artifacts.ts'
 import type { Briefing, Notification, NotificationKind } from '../domain/briefings.ts'
+import type { BrowserDriver, BrowserInfo, BrowserRuntimeView } from '../domain/browser.ts'
 import type {
   ChannelActivityPage,
   ChannelActivityQuery,
@@ -96,6 +97,7 @@ import type {
   ProfilePatch,
   ProfileView,
   ProviderDefinitionView,
+  ProviderFieldView,
   TestResultView,
 } from '../domain/providers.ts'
 import type { Rehearsal, RehearsalSample, TestCase, TestResult } from '../domain/rehearsal.ts'
@@ -1170,6 +1172,8 @@ export interface Deps {
   webUrl: string
   /** The code sandbox of the Files & Sandbox connector (Settings shows its status). */
   codeSandbox?: { info(): Promise<CodeSandboxInfo> }
+  /** The browser (`infra/browser`, plan P48): the manager, the profiles and the driver status. */
+  browser?: BrowserPort
   modes: ModePort
   routines: RoutineStore
   schedule: ScheduleCalc
@@ -1189,4 +1193,214 @@ export interface Deps {
   clock: Clock
   ids: IdGenerator
   workspaceId: string
+}
+
+// --- browser (app-owned structural copies of `eharness/browser`; `infra/browser/port.ts` implements) ---
+
+export type BrowserMode = 'manual' | 'managed'
+
+export interface BrowserCapabilitiesView {
+  snapshot: boolean
+  screenshot: boolean
+  liveView: 'screencast' | 'poll' | 'external' | 'none'
+  takeover: boolean
+  tabs: boolean
+  persistentProfile: boolean
+}
+
+/** A stored browser profile (settings in plain form; only `infra/browser` sees ciphertext). */
+export interface BrowserProfileRecord {
+  id: string
+  name: string
+  adapter: string
+  mode: BrowserMode
+  settings: Record<string, unknown>
+  allowDomains?: string[]
+  trusted?: boolean
+  createdAt: number
+  updatedAt: number
+  metadata?: Record<string, unknown>
+}
+
+/** A profile with its secrets replaced by `{ set, hint }`. */
+export type BrowserPublicProfileRecord = BrowserProfileRecord
+
+export interface BrowserProfileCreateInput {
+  name: string
+  adapter: string
+  mode: BrowserMode
+  settings: Record<string, unknown>
+  allowDomains?: string[]
+  trusted?: boolean
+  metadata?: Record<string, unknown>
+}
+
+export interface BrowserProfilePatchInput {
+  name?: string
+  settings?: Record<string, unknown>
+  allowDomains?: string[]
+  trusted?: boolean
+}
+
+export interface BrowserProfilesPort {
+  create(input: BrowserProfileCreateInput): Promise<BrowserProfileRecord>
+  get(id: string): Promise<BrowserProfileRecord | null>
+  list(query?: {
+    limit?: number
+    cursor?: string
+  }): Promise<{ items: BrowserProfileRecord[]; nextCursor?: string }>
+  update(
+    id: string,
+    patch: BrowserProfilePatchInput,
+  ): Promise<{ ok: true; profile: BrowserProfileRecord } | { ok: false; reason: string }>
+  delete(id: string): Promise<boolean>
+}
+
+export interface BrowserFormSpecView {
+  fields: ProviderFieldView[]
+  jsonSchema: Record<string, unknown>
+}
+
+export interface BrowserAdapterInfoView {
+  id: string
+  label: string
+  description?: string
+  modes: BrowserMode[]
+  capabilities: Partial<Record<BrowserMode, BrowserCapabilitiesView>>
+}
+
+/** The managed runtime of an adapter (download, remove). */
+export interface BrowserRuntimeControl {
+  status(): Promise<{ state: string; running?: string[] }>
+  install(): Promise<void>
+  uninstall?(): Promise<void>
+  removeProfileData?(profileId: string): Promise<void>
+}
+
+export interface BrowserAdapterHandle {
+  id: string
+  label: string
+  modes: readonly BrowserMode[]
+  runtime(): BrowserRuntimeControl | undefined
+}
+
+export interface BrowserLeaseView {
+  profileId: string
+  holder: { kind: 'session' | 'person'; id: string }
+  controller: { by: 'agent' | 'human'; holder?: string; since: number; reason?: string }
+  since: number
+  page?: { url: string; title: string }
+  viewers: number
+}
+
+export interface BrowserHandBackInfo {
+  by: string
+  at: number
+  page?: { url: string; title: string }
+  reason: 'handed-back' | 'viewer-left'
+}
+
+export type BrowserTestOutcome = { ok: true; version: string } | { ok: false; error: string }
+
+export interface BrowserUsageData {
+  profiles: Array<{ profileId: string; adapter: string; rssBytes?: number; cpuPercent?: number }>
+  totals: { rssBytes: number; cpuPercent: number }
+  system?: { totalBytes: number; freeBytes: number }
+}
+
+/** What a person may send on the live socket (coordinates in the frame's pixels). */
+export type BrowserLiveInput =
+  | {
+      type: 'mouse'
+      event: 'move' | 'down' | 'up' | 'wheel'
+      x: number
+      y: number
+      button?: 'left' | 'middle' | 'right'
+      clickCount?: number
+      deltaX?: number
+      deltaY?: number
+      modifiers?: number
+    }
+  | {
+      type: 'key'
+      event: 'down' | 'up' | 'char'
+      key: string
+      code?: string
+      text?: string
+      modifiers?: number
+    }
+  | { type: 'text'; text: string }
+  | { type: 'navigate'; url: string }
+
+export interface BrowserLiveFrame {
+  seq: number
+  data: Uint8Array
+  mediaType: 'image/jpeg' | 'image/png'
+  width: number
+  height: number
+  at: number
+}
+
+/** One viewer of a profile's live view. */
+export interface BrowserLiveChannel {
+  info: {
+    width: number
+    height: number
+    liveView: BrowserCapabilitiesView['liveView']
+    liveUrl?: string
+  }
+  frames: ReadableStream<BrowserLiveFrame>
+  controller(): BrowserLeaseView['controller']
+  takeOver(): Promise<string | undefined>
+  handBack(): Promise<string | undefined>
+  input(event: BrowserLiveInput): Promise<string | undefined>
+  close(): void
+}
+
+export interface BrowserLiveRefusal {
+  refused: true
+  kind: 'busy' | 'limit' | 'error'
+  text: string
+}
+
+/** The browser as the routes and use cases see it (`infra/browser/port.ts`). */
+export interface BrowserPort {
+  readonly driver: BrowserDriver
+  readonly max: number
+  /** Profiles with plain settings (the table holds ciphertext of secret fields). */
+  readonly profiles: BrowserProfilesPort
+  adapters(): BrowserAdapterInfoView[]
+  adapter(id: string): BrowserAdapterHandle | undefined
+  forms(adapterId: string): { manual?: BrowserFormSpecView; managed?: BrowserFormSpecView }
+  /** Throws `EH_CONFIG_INVALID` for bad settings. */
+  validate(
+    adapterId: string,
+    mode: BrowserMode,
+    settings: Record<string, unknown>,
+  ): Record<string, unknown>
+  merge(
+    adapterId: string,
+    mode: BrowserMode,
+    stored: Record<string, unknown>,
+    patch: Record<string, unknown>,
+  ): Record<string, unknown>
+  publicProfile(profile: BrowserProfileRecord): BrowserPublicProfileRecord
+  capabilities(profile: BrowserProfileRecord): BrowserCapabilitiesView | undefined
+  leases(): Promise<BrowserLeaseView[]>
+  start(profileId: string): Promise<{ ok: true } | { ok: false; error: string }>
+  stop(profileId: string): Promise<void>
+  test(
+    target:
+      | BrowserProfileRecord
+      | { adapter: string; mode: BrowserMode; settings: Record<string, unknown> },
+  ): Promise<BrowserTestOutcome>
+  usage(): Promise<BrowserUsageData>
+  /** Attach a viewer to the live view of a profile. */
+  live(profileId: string, viewer: { id: string }): Promise<BrowserLiveChannel | BrowserLiveRefusal>
+  /** Controller changes and takeovers of a profile; returns the unsubscribe function. */
+  onChange(listener: (event: { profileId: string; type: string }) => void): () => void
+  /** What the agent is told when a person hands the browser back. */
+  formatHandBack(info: { by: string; page?: { url: string; title: string } }): string
+  runtimes(): Promise<BrowserRuntimeView[]>
+  info(): Promise<BrowserInfo>
 }

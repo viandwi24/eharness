@@ -111,6 +111,10 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_CODE_ALLOW` | - | comma list of package names (optional `==version`) for `allowlist` |
 | `TEAM_CODE_ENV_ROOT` | `<data dir>/python-envs` | where package environments are kept (rebuilt when missing) |
 | `TEAM_CODE_REQUIREMENTS` | - | a requirements file: `local` builds its base environment from it (default: the interpreter as it is) |
+| `TEAM_BROWSER_DRIVER` | `local` when the root is writable, else `off` | where agents get a browser (the **Browser** connector and the `/browser` page): `off` (profiles connect to an existing browser, such as a hosted service or a container) or `local` (this server downloads Chrome or Lightpanda and runs it for a **managed** profile) |
+| `TEAM_BROWSER_ROOT` | `<data dir>/browser` | downloaded engines (`chrome/<version>/`, `lightpanda/<version>/`) and the logins of managed profiles (`profiles/<id>/`); safe to delete: profiles stay, logins are lost |
+| `TEAM_BROWSER_XVFB` | - | `1` = headed Chrome on a Linux server without a display (needs `xvfb-run`) |
+| `TEAM_BROWSER_MAX` | `4` | browsers open at once; the Browser page shows each running profile's memory and CPU and the server's free memory |
 | `TEAM_ROUTINE_TICK_MS` | `15000` | routine ticker interval (`0` = off) |
 | `TEAM_LOG_MAX_ROWS` | `5000` | model call log (Logs page): rows kept |
 | `TEAM_LOG_RETENTION_DAYS` | `7` | model call log: days kept |

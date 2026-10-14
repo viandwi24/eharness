@@ -16,6 +16,7 @@ import { agentRoutes } from './routes/agents.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
 import { authRoutes } from './routes/auth.ts'
 import { briefingRoutes } from './routes/briefings.ts'
+import { browserRoutes } from './routes/browser.ts'
 import { channelRoutes } from './routes/channels.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { connectorRoutes } from './routes/connectors.ts'
@@ -115,6 +116,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
         'Generated pages, documents, images, diagrams, tables and code with versions, signed content URLs, exports and public sharing (docs/plans/P45-team-artifacts.md).',
     },
     { name: 'memory', description: 'Workspace and per-agent memory files.' },
+    {
+      name: 'browser',
+      description:
+        'Browsers agents drive (docs/plans/P48-browser.md): adapters and their managed runtimes (download, start, stop), profiles with their logins, resource usage, screenshots, and the live view with takeover (a WebSocket).',
+    },
     { name: 'settings', description: 'Workspace settings read by the agent factory.' },
     {
       name: 'providers',
@@ -377,6 +383,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', usageRoutes(options.deps))
   app.route('/', providerRoutes(options.deps))
   app.route('/', connectorRoutes(options.deps))
+  app.route('/', browserRoutes(options.deps, { allowedOrigins: options.allowedOrigins }))
   app.route('/', routineRoutes(options.deps))
   app.route('/', programRoutes(options.deps))
   app.route('/', rehearsalRoutes(options.deps))

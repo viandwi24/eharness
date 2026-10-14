@@ -384,6 +384,7 @@ describe('migration of the single DM', () => {
       'artifact_versions',
       'artifact_blobs',
       'artifacts',
+      'browser_profiles',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(

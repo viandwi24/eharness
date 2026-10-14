@@ -70,6 +70,11 @@ export interface EscalationPayload {
   standDown?: string[]
   /** `agent`: the agent called `escalate`; `report`: its final report said `needs_decision`. */
   source: 'agent' | 'report'
+  /**
+   * A browser takeover (`browser_request_human`, plan P48): the agent needs a person in the live
+   * browser of this profile. Approving means "handed back"; the card links to the page.
+   */
+  takeover?: { profileId: string; link: { label: string; path: string } }
 }
 
 export interface AmendmentPayload {

@@ -1,6 +1,7 @@
 import { createRoute, OpenAPIHono } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import { getSettings, patchSettings } from '../../app/settings.ts'
+import { BrowserInfoSchema } from '../schemas/browser.ts'
 import { errorResponses } from '../schemas/common.ts'
 import { CodeSandboxSchema, SettingsPatchSchema, SettingsSchema } from '../schemas/settings.ts'
 
@@ -61,6 +62,23 @@ const codeRoute = createRoute({
   },
 })
 
+const browserRoute = createRoute({
+  method: 'get',
+  path: '/settings/browser',
+  tags: ['settings'],
+  summary: 'Browser driver status',
+  description:
+    'The driver of managed browsers (`off` or `local`, `TEAM_BROWSER_DRIVER`), the engines that are downloaded (state, version, size), how many profiles run, and the memory of the server. Set by the `TEAM_BROWSER_*` variables.',
+  security,
+  responses: {
+    200: {
+      description: 'Status',
+      content: { 'application/json': { schema: BrowserInfoSchema } },
+    },
+    ...errorResponses,
+  },
+})
+
 export function settingsRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(getRoute, (c) => c.json(getSettings(deps), 200))
@@ -72,6 +90,20 @@ export function settingsRoutes(deps: Deps): OpenAPIHono {
           isolated: false,
           install: 'off' as const,
           label: 'Code sandbox is off',
+        },
+        200,
+      ),
+    )
+    .openapi(browserRoute, async (c) =>
+      c.json(
+        (await deps.browser?.info()) ?? {
+          driver: 'off' as const,
+          max: 0,
+          xvfb: false,
+          system: null,
+          runtimes: [],
+          running: 0,
+          label: 'The browser is not set up',
         },
         200,
       ),

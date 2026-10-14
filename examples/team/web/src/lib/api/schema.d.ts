@@ -5294,6 +5294,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/browser": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser driver status
+         * @description The driver of managed browsers (`off` or `local`, `TEAM_BROWSER_DRIVER`), the engines that are downloaded (state, version, size), how many profiles run, and the memory of the server. Set by the `TEAM_BROWSER_*` variables.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserInfo"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/usage": {
         parameters: {
             query?: never;
@@ -6811,6 +6868,1039 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/adapters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser adapters, their forms and runtimes
+         * @description Chrome and Lightpanda (and any adapter the app adds): the modes offered on this server, the capabilities of each mode, the settings form of each mode (`forms`, secrets marked) and the managed runtime (state, download progress, version, disk size). Poll this while a download runs.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Adapters */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserOverview"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Memory and CPU of the running browsers
+         * @description One row per running profile (memory of the engine process tree, CPU), the totals and the memory of the server. Resources are shown, not capped: `TEAM_BROWSER_MAX` limits the profiles running at once.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Usage */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserUsage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test settings that are not saved yet
+         * @description The wizard's "Test connection": connects to the endpoint of a manual draft and answers its version. Never an error status for an unreachable browser (`ok: false`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BrowserDraft"];
+                };
+            };
+            responses: {
+                /** @description Result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserTestResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser profiles
+         * @description Secrets are redacted (`{ set, hint }`). `state` and `lease` say who holds the browser now.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Profiles */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserProfile"][];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create a browser profile
+         * @description A name, an adapter, a mode and the adapter form of that mode. Secrets are sealed at rest and never returned. A profile keeps its logins (a Chrome user-data directory) when managed.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BrowserProfileCreate"];
+                };
+            };
+            responses: {
+                /** @description The profile */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserProfile"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/profiles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One browser profile */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The profile */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserProfile"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /**
+         * Delete a browser profile
+         * @description Stops its engine and deletes its saved logins. Refused (409) while a Browser connection still names it.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Still used by a connection */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Edit a browser profile
+         * @description Rename, change settings (keep-secret semantics), the allowed domains, or mark it trusted: the agents on a trusted profile click and type without asking.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BrowserProfilePatch"];
+                };
+            };
+            responses: {
+                /** @description The profile */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserProfile"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/browser/profiles/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the connection of a profile
+         * @description Connects (starting a managed engine for the test) and answers the browser version. Never an error status for an unreachable browser.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserTestResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/profiles/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the engine of a managed profile
+         * @description Starts it without an agent (it keeps running until stopped). 409 when it cannot start (not downloaded, too many running: `TEAM_BROWSER_MAX`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The profile */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserProfile"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Could not start */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/profiles/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop a profile
+         * @description Releases its lease and stops its managed engine (logins stay on disk).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The profile */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserProfile"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/profiles/{id}/shots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent screenshots of a profile
+         * @description The newest screenshots the agents using this profile took (the library folder `/.browser/shots/`), with signed image URLs.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Screenshots, newest first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserShot"][];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/runtimes/{adapter}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Status of a managed runtime
+         * @description State, download progress, version, disk size and the last error. Poll it during a download.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Adapter id. */
+                    adapter: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserRuntime"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown adapter */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/runtimes/{adapter}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Download (or update) the engine
+         * @description Starts the download in the background and answers at once with `state: "installing"`; poll `GET /browser/runtimes/{adapter}` (or `GET /browser/adapters`) for the progress. A failure stays in `error`; call again to retry.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Adapter id. */
+                    adapter: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Download started */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserRuntime"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown adapter */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/runtimes/{adapter}/uninstall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove the downloaded engine
+         * @description Profiles and their logins stay. 409 while it downloads or a profile runs.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Adapter id. */
+                    adapter: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowserRuntime"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown adapter */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Busy */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/browser/profiles/{id}/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live view and takeover (WebSocket)
+         * @description Upgrade to a WebSocket (same session cookie or bearer token as every route; a browser `Origin` must be an allowed origin).
+         *
+         *     Server to client:
+         *     - text `{ "type": "hello", "profileId", "info": { "width", "height", "liveView", "liveUrl"? }, "controller": { "by": "agent"|"human", "holder"?, "since", "reason"? }, "you": { "id", "canTakeOver": boolean } }` once.
+         *     - binary frames: 4-byte big-endian header length, JSON header `{ "type": "frame", "seq", "width", "height", "mediaType": "image/jpeg"|"image/png", "at" }`, then the image bytes. Coordinates of `input` events are in the `width` x `height` of the frame.
+         *     - text `{ "type": "controller", "controller": {...} }` whenever who drives the browser changes (a person took over, handed back, or the agent asked for a person).
+         *     - text `{ "type": "ack", "id", "ok": boolean, "error"? }` for a command that carried an `id`; `{ "type": "error", "message", "id"? }` for a refused input or command.
+         *     - text `{ "type": "closed", "reason" }` before the socket closes because the browser went away (idle release, stop).
+         *     - text `{ "type": "pong" }`.
+         *
+         *     Client to server (text JSON): `{ "type": "takeOver", "id"? }`, `{ "type": "handBack", "id"? }`, `{ "type": "input", "event": LiveInput, "id"? }` (`mouse` move/down/up/wheel, `key` down/up/char, `text`, `navigate`; refused unless this socket took over), `{ "type": "ping" }`.
+         *
+         *     Closing the socket while in control hands the browser back. Every socket is a viewer; the web app has one workspace owner (the client), so any signed-in viewer may take over.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Browser profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Switching protocols */
+                101: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Cross-origin upgrade refused */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -15018,6 +16108,41 @@ export interface components {
                 label: string;
             } | null;
         };
+        BrowserInfo: {
+            /** @enum {string} */
+            driver: "off" | "local";
+            max: number;
+            /** @description `TEAM_BROWSER_XVFB`. */
+            xvfb: boolean;
+            system: components["schemas"]["BrowserSystemMemory"];
+            runtimes: components["schemas"]["BrowserRuntime"][];
+            /** @description Profiles with a running engine. */
+            running: number;
+            /** @description One line for people. */
+            label: string;
+        };
+        BrowserSystemMemory: {
+            totalBytes: number;
+            freeBytes: number;
+        } | null;
+        BrowserRuntime: {
+            adapter: string;
+            label: string;
+            /** @enum {string} */
+            state: "missing" | "installing" | "ready" | "starting" | "running" | "stopping" | "error";
+            version?: string;
+            /** @description Disk used by the engine. */
+            diskBytes?: number;
+            /** @description Download progress while `installing`. */
+            progress?: {
+                received: number;
+                total?: number;
+            };
+            /** @description Ids of profiles with a running engine. */
+            running: string[];
+            /** @description Why the last download or start failed. */
+            error?: string;
+        };
         SettingsPatch: {
             /**
              * @description Legacy values (`acceptEdits`, `plan`, `dontAsk`, `manual`) are stored as `default` (Manual).
@@ -15648,6 +16773,200 @@ export interface components {
         OAuthClientPut: {
             clientId: string;
             clientSecret?: string;
+        };
+        BrowserOverview: {
+            /**
+             * @description `TEAM_BROWSER_DRIVER`.
+             * @enum {string}
+             */
+            driver: "off" | "local";
+            /** @description `TEAM_BROWSER_MAX`: profiles running at once. */
+            max: number;
+            system: components["schemas"]["BrowserSystemMemory"];
+            adapters: components["schemas"]["BrowserAdapter"][];
+        };
+        BrowserAdapter: {
+            /** @example chrome */
+            id: string;
+            label: string;
+            description?: string;
+            /** @description `manual`: connect to a browser someone else runs; `managed`: this server downloads and starts it. A mode that is not offered is missing here and explained in `unavailable`. */
+            modes: ("manual" | "managed")[];
+            capabilities: {
+                manual?: components["schemas"]["BrowserCapabilities"];
+                managed?: components["schemas"]["BrowserCapabilities"];
+            };
+            forms: {
+                manual?: components["schemas"]["BrowserForm"];
+                managed?: components["schemas"]["BrowserForm"];
+            };
+            runtime: components["schemas"]["BrowserRuntime"] & (Record<string, never> | null);
+            /** @description Why a mode is not offered ("Managed mode is off on this server"). */
+            unavailable: {
+                manual?: string;
+                managed?: string;
+            };
+        };
+        BrowserCapabilities: {
+            snapshot: boolean;
+            screenshot: boolean;
+            /**
+             * @description `screencast`: smooth frames; `poll`: about 2 frames a second; `external`: only `liveUrl` (an iframe); `none`.
+             * @enum {string}
+             */
+            liveView: "screencast" | "poll" | "external" | "none";
+            /** @description A person can click and type remotely. */
+            takeover: boolean;
+            tabs: boolean;
+            /** @description The engine keeps logins across leases. */
+            persistentProfile: boolean;
+        };
+        /** @description The settings form of one mode: render it like a provider form. */
+        BrowserForm: {
+            fields: components["schemas"]["ProviderField"][];
+            jsonSchema: {
+                [key: string]: unknown;
+            };
+        };
+        BrowserUsage: {
+            profiles: {
+                profileId: string;
+                name: string;
+                adapter: string;
+                /** @description Memory of the engine process tree. */
+                rssBytes?: number;
+                cpuPercent?: number;
+            }[];
+            totals: {
+                rssBytes: number;
+                cpuPercent: number;
+            };
+            system?: components["schemas"]["BrowserSystemMemory"] & unknown;
+        };
+        /** @description Never an error status for an unreachable browser: `ok: false` carries the reason. */
+        BrowserTestResult: {
+            ok: boolean;
+            version?: string;
+            error?: string;
+        };
+        /** @description Settings that are not saved yet ("Test connection"). */
+        BrowserDraft: {
+            adapter: string;
+            /** @enum {string} */
+            mode: "manual" | "managed";
+            settings?: {
+                [key: string]: unknown;
+            };
+        };
+        BrowserProfile: {
+            id: string;
+            name: string;
+            adapter: string;
+            /** @enum {string} */
+            mode: "manual" | "managed";
+            /**
+             * @description The settings with every secret replaced by `{ set, hint? }` (headers: one per key).
+             * @example {
+             *       "cdpUrl": {
+             *         "set": true,
+             *         "hint": "…9222"
+             *       }
+             *     }
+             */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** @description Only these hosts may be opened (`*.example.com`); absent: any public host. */
+            allowDomains?: string[];
+            /** @description An admin trusts the profile: its agents click and type without asking. */
+            trusted?: boolean;
+            createdAt: number;
+            updatedAt: number;
+            metadata?: {
+                [key: string]: unknown;
+            };
+            capabilities: components["schemas"]["BrowserCapabilities"] & (Record<string, never> | null);
+            /**
+             * @description `missing`: the managed engine is not downloaded; `ready`; `running`: the engine runs, nobody holds it; `in-use`: an agent holds it; `controlled`: a person controls it.
+             * @enum {string}
+             */
+            state: "missing" | "installing" | "ready" | "running" | "in-use" | "controlled" | "error";
+            runtime?: {
+                state: string;
+                version?: string;
+                error?: string;
+            };
+            /** @description Set while an agent or a person holds the browser. */
+            lease?: {
+                holder: {
+                    /** @enum {string} */
+                    kind: "session" | "person";
+                    id: string;
+                };
+                heldBy?: {
+                    agentId: string;
+                    name: string;
+                };
+                controller: {
+                    /** @enum {string} */
+                    by: "agent" | "human";
+                    /** @description Viewer id of the person who took over. */
+                    holder?: string;
+                    since: number;
+                    /** @description Why the agent asked for a person. */
+                    reason?: string;
+                };
+                viewers: number;
+                since: number;
+                page?: {
+                    url: string;
+                    title: string;
+                };
+            };
+            /** @description Agents whose Browser connection names this profile. */
+            agents: {
+                id: string;
+                slug: string;
+                name: string;
+            }[];
+            /** @description A hosted provider's own live view; show it in an iframe. */
+            liveUrl?: string;
+        };
+        BrowserProfileCreate: {
+            name: string;
+            /** @example chrome */
+            adapter: string;
+            /** @enum {string} */
+            mode: "manual" | "managed";
+            /** @description Settings by the adapter form of the mode; secrets in plain text (stored sealed). */
+            settings?: {
+                [key: string]: unknown;
+            };
+            allowDomains?: string[];
+            trusted?: boolean;
+        };
+        BrowserProfilePatch: {
+            name?: string;
+            /** @description Keep-secret semantics: a secret omitted, `""` or `{ "keep": true }` keeps the stored value; a new CDP URL drops the stored header secrets. */
+            settings?: {
+                [key: string]: unknown;
+            };
+            /** @description `[]` clears the list. */
+            allowDomains?: string[];
+            trusted?: boolean;
+        };
+        BrowserShot: {
+            path: string;
+            mediaType: string | null;
+            size: number;
+            updatedAt: number;
+            agent: {
+                id: string;
+                name: string;
+            } | null;
+            /** @description A signed URL of the image. */
+            url: string;
+            expiresAt: number;
         };
         RoutineList: {
             routines: components["schemas"]["Routine"][];
@@ -16450,6 +17769,16 @@ export interface components {
              * @enum {string}
              */
             source: "agent" | "report";
+            /** @description A browser takeover (`browser_request_human`): the agent needs a person in the live browser of this profile. Approve means "handed back" (the live page also settles it), reject means "declined". */
+            takeover?: {
+                profileId: string;
+                link: {
+                    /** @example Open browser */
+                    label: string;
+                    /** @description A path of the web app (`/browser/<profileId>`): the card links to it. */
+                    path: string;
+                };
+            };
         };
         AmendmentPayload: {
             authority: components["schemas"]["ProgramAuthority"] & unknown;

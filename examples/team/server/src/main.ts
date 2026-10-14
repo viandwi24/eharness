@@ -34,6 +34,10 @@
  *   TEAM_CODE_ALLOW    comma list of package names (optional `==version`) for `allowlist`
  *   TEAM_CODE_ENV_ROOT where package environments are kept (default `<data dir>/python-envs`; rebuilt when missing)
  *   TEAM_CODE_REQUIREMENTS   a requirements file: `local` builds the base environment from it (default: use the interpreter as it is)
+ *   TEAM_BROWSER_DRIVER   where agents get a browser (the Browser connector, `/browser`): `off` (profiles connect to an existing browser only) | `local` (this server downloads and starts Chrome or Lightpanda for a managed profile). Default `local` when the root is writable, else `off`
+ *   TEAM_BROWSER_ROOT   where downloaded engines and the logins of managed profiles live (default `<data dir>/browser`; safe to delete: profiles stay, logins are lost)
+ *   TEAM_BROWSER_XVFB   `1` = headed Chrome on a Linux server without a display (needs `xvfb-run`)
+ *   TEAM_BROWSER_MAX    managed or manual browsers open at once (default 4); the Browser page shows each one's memory and CPU and the server's free memory
  *   TZ                default of the team timezone (Settings): the clock of agents, routines, reminders, chats, digest
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
  *   TEAM_LONG_RUN_MAX_COST_USD  stop a background worker job whose estimated cost reaches this (default 10; 0 = no limit)
@@ -55,6 +59,7 @@ import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
+import { websocket } from 'hono/bun'
 import { updateAgent } from './app/agents.ts'
 import {
   hostAllowed,
@@ -64,6 +69,7 @@ import {
   originOf,
 } from './app/auth.ts'
 import { briefingsText } from './app/briefings.ts'
+import { settleConnection, settleTakeovers } from './app/browser.ts'
 import { checkChatBody, uploadFile } from './app/chat.ts'
 import {
   approveDecision,
@@ -118,6 +124,9 @@ import {
 import { KEEP_PRIVATE_OPTION, PUBLISH_OPTION } from './infra/artifacts/plugin.ts'
 import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
 import { seedBuiltinSkills } from './infra/bigdata/skills.ts'
+import { createBrowserHook } from './infra/browser/hook.ts'
+import { browserConfigFromEnv, createBrowserService } from './infra/browser/index.ts'
+import { createBrowserPort } from './infra/browser/port.ts'
 import { createChannelInboxPort, lazyInboxPort } from './infra/channels/admin.ts'
 import { channelApprovalAnswerer, watchPendingChanges } from './infra/channels/attention.ts'
 import {
@@ -213,7 +222,7 @@ import {
   lazyAccountsPort,
   type TelegramUserChannels,
 } from './infra/telegram-user/service.ts'
-import { resolveWebUrl, webStatic } from './infra/web-static.ts'
+import { resolveWebUrl, upgradeEnv, webStatic } from './infra/web-static.ts'
 
 export interface ServerConfig {
   dbFile: string
@@ -568,6 +577,14 @@ export function compose(config: ServerConfig): Server {
     { programs: () => programStore },
   )
   void codeRuntime.start()
+  // the browser (plan P48): one manager over profiles sealed with the same vault; engines it starts
+  // are killed by `close()`
+  const browserService = createBrowserService({
+    config: browserConfigFromEnv(config.env ?? process.env, config.dbFile),
+    sqlite: conn.sqlite,
+    vault,
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
   const connectors = createConnectors({
     code: codeRuntime,
     sqlite: conn.sqlite,
@@ -729,6 +746,8 @@ export function compose(config: ServerConfig): Server {
   })
   const decisionService = createDecisionService(factory, {
     agents,
+    // a decided takeover gives the browser back to the agent
+    handBack: (profileId) => browserService.manager.handBack(profileId, 'The client'),
     // a run the client let continue after failed deliverables is checked again when it ends
     afterRun: async (sessionId) => {
       const task = tasks.getBySession(sessionId)
@@ -823,6 +842,7 @@ export function compose(config: ServerConfig): Server {
     channelInbox: lazyInboxPort(() => channelInboxPort),
     people: lazyPeoplePort(() => peoplePort),
     webUrl,
+    browser: createBrowserPort(browserService),
     codeSandbox: {
       info: async () => {
         const info = await codeRuntime.info()
@@ -917,6 +937,38 @@ export function compose(config: ServerConfig): Server {
             d.payload.question.includes(`[artifact ${artifactId}]`),
         ),
   }
+  // the Browser connector (plan P48): a takeover is a Decision Center card with an "Open browser"
+  // link; the live page's "Give back" (a manager event) or a card answer settles it
+  connectors.hooks.browser = createBrowserHook({
+    service: browserService,
+    takeover: ({ agentId, sessionId, waitId, profileId, profileName, reason }) => {
+      const who = agents.get(agentId)?.name ?? 'An agent'
+      const d = createEscalation(deps, {
+        agentId,
+        sessionId,
+        waitId,
+        title: `${who} needs you in the browser`.slice(0, 200),
+        question: reason,
+        details: `Open the browser "${profileName}", do what is needed (a login, a CAPTCHA, a code), then give it back. Approving here also gives it back; rejecting tells the agent you could not.`,
+        takeover: { profileId },
+      })
+      announceInChat(d)
+      return { id: d.id }
+    },
+    images: (agentId) => {
+      const def = agents.get(agentId)
+      if (def === undefined) return true
+      const modalities = factory.modelInfo(def).inputModalities
+      return modalities === undefined || modalities.includes('image')
+    },
+    settle: (connectionId, trusted) => settleConnection(deps, connectionId, trusted),
+  })
+  const offBrowserEvents = browserService.manager.on((e) => {
+    if (e.type !== 'handback') return
+    void settleTakeovers(deps, e.profileId, e.info).catch((error) =>
+      console.warn(`team: browser hand-back of ${e.profileId} failed: ${errorText(error)}`),
+    )
+  })
   personaIntake = {
     state: (agentId) => getPersonaState(deps, agentId),
     history: (agentId) => personaHistory(deps, agentId),
@@ -1368,6 +1420,9 @@ export function compose(config: ServerConfig): Server {
       if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
+      offBrowserEvents()
+      // kills the engines this process started
+      await browserService.close()
       await telegram?.stop()
       await telegramUser?.stop()
       await channels.stop()
@@ -1490,6 +1545,8 @@ if (import.meta.main) {
     port,
     hostname: listen.hostname,
     idleTimeout: 0,
+    // the live browser view (`GET /browser/profiles/{id}/live`)
+    websocket,
     fetch: (request, bunServer) => {
       // DNS rebinding guard: only loopback names and the configured public hosts are served
       if (!hostAllowed(request.headers.get('host') ?? undefined, listen.allowedHosts)) {
@@ -1505,7 +1562,7 @@ if (import.meta.main) {
       if (new URL(request.url).pathname.startsWith('/art/'))
         return server.artifactContent.fetch(request)
       const api = web.apiRequest(request)
-      return api ? server.app.fetch(api, bunServer) : web.serve(request)
+      return api ? server.app.fetch(api, upgradeEnv(request, bunServer)) : web.serve(request)
     },
   })
   // TEAM_ARTIFACT_PORT: the content routes alone on their own port (a separate origin behind a proxy, or in dev)

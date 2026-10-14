@@ -36,6 +36,7 @@ Status: **Accepted** (v0).
 │ providers · connectors               profiles, secrets, setup flows, OAuth       │
 │ activity · http · client (+ /react)  feed, attention queue, routes, browser side │
 │ scheduler · identity · channels · handoff · limits · clock   product modules    │
+│ browser (+ /node)   CDP client, adapters, profiles, live view, runtimes          │
 │ testing          conformance suites + mock helpers                               │
 └──────────────┬─────────────────────────────────────────────────────────────────────┘
                │
@@ -68,7 +69,7 @@ import core only through `src/index.ts` (the exceptions are listed in `scripts/c
 | `judge/` | `createJudge` and its restricted transcript renderer (ADR-0060) |
 | `output/` | structured final answers (tool mode and native mode) |
 | `internal/` | leaf helpers with no upward imports: `glob`, `path-segments`, `regex-safety`, `private-host`, `hook-run`, `observe`, `model`, `provider-errors`, `ai-types`, `util` (`errorText`, `isRecord`) |
-| `filesystem/`, `storage/`, `mcp/`, `todos/`, `memory/`, `guard/`, `group/`, `openapi/`, `ask/`, `permissions/`, `shell/`, `subagent/`, `web/`, `providers/`, `connectors/`, `activity/`, `http/`, `client/`, `scheduler/`, `identity/`, `channels/`, `handoff/`, `limits/`, `clock/`, `testing/` | one folder per subpath module, see the table in section 2 |
+| `filesystem/`, `storage/`, `mcp/`, `todos/`, `memory/`, `guard/`, `group/`, `openapi/`, `ask/`, `permissions/`, `shell/`, `subagent/`, `web/`, `providers/`, `connectors/`, `activity/`, `http/`, `client/`, `scheduler/`, `identity/`, `channels/`, `handoff/`, `limits/`, `clock/`, `browser/`, `testing/` | one folder per subpath module, see the table in section 2 |
 
 ### 1.2 Import rules and the core DAG
 
@@ -141,6 +142,8 @@ every entry are a committed snapshot, `scripts/exports.snapshot.json`, derived f
 | `eharness/handoff` | `src/handoff/index.ts` | `handoff()` plugin, `resolveHandoff()`, `cancelHandoff()`, `expireHandoffs()`, `memoryHandoffStore()` (spec 32) |
 | `eharness/limits` | `src/limits/index.ts` | `stepBudget()`, `budgetNotice()`, `trackRefusals()` (spec 33) |
 | `eharness/clock` | `src/clock/index.ts` | `clock()` plugin (`datetime` tool) and time-zone helpers (spec 34) |
+| `eharness/browser` | `src/browser/index.ts` | `browser()` plugin (`browser_open`, `browser_snapshot`, `browser_act`, `browser_screenshot`, `browser_read`, `browser_tabs`, `browser_request_human`), `createBrowserManager()`, `chromeAdapter()`, `lightpandaAdapter()`, `defineBrowserAdapter()`, `createBrowserRegistry()`, `memoryBrowserProfileStore()`, `sealedBrowserProfiles()`, `publicProfile()`, `formatHandBack()`, the CDP client (spec 35, ADR-0064) |
+| `eharness/browser/node` | `src/browser/node.ts` | `chromeRuntime()`, `lightpandaRuntime()`, `processUsage()`, `systemMemory()` (Node-only, ADR-0036) |
 | `eharness/testing` | `src/testing/index.ts` | `scriptedModel()`, `scriptedProvider()`, `schemaCheckedMessages()`, `assertValidUIMessage()`, `assertStoredSessionInvariants()`, and the conformance suites (`messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `lockConformance()`, `streamLogConformance()`, `multiInstanceConformance()`, `budgetLedgerConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `activityStoreConformance()`, `httpConformance()`, and the provider and connector store suites) |
 
 Peer dependencies: `ai@^7.0.137`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional

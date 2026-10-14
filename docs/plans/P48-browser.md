@@ -1,6 +1,6 @@
 # P48 — Browser agent (`eharness/browser`) and the team Browser page
 
-Status: in progress (phase A done 2026-10-14) · Owner: maintainer · Branch: `main` (batched, see release workflow)
+Status: in progress (phases A–E built 2026-10-14; real-Chrome e2e, F and G open) · Owner: maintainer · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -214,50 +214,50 @@ Design and rejected options: [ADR-0064](../decisions/0064-browser-module.md). Co
 
 ### B. CDP core (`src/browser/cdp/*`)
 
-- [ ] `client.ts`: request ids, timeouts, abort, events, flattened sessions, `/json/version`, close
+- [x] `client.ts`: request ids, timeouts, abort, events, flattened sessions, `/json/version`, close
       handling, no reconnect (a lease reopens)
-- [ ] `fake-peer.ts` (exported from `eharness/testing`): an in-memory WebSocket peer that replays
+- [x] `fake-peer.ts` (exported from `eharness/testing`): an in-memory WebSocket peer that replays
       recorded responses (AX trees, box models, hit tests, frames) and records sent commands
-- [ ] `snapshot.ts`: AX tree → outline, roles, refs, snapshot ids, loader-id staleness,
+- [x] `snapshot.ts`: AX tree → outline, roles, refs, snapshot ids, loader-id staleness,
       `clickable` pass, scope, cap and offset with a kept tail
-- [ ] `act.ts`: scroll, box centre with frame offset, hit test, mouse sequence, `el.click()` fallback,
+- [x] `act.ts`: scroll, box centre with frame offset, hit test, mouse sequence, `el.click()` fallback,
       fill/type/press/select/check/uncheck/scroll/wait, settle rule
-- [ ] `shot.ts` (JPEG/PNG, `maxWidth`, full page cap, element clip, SHA-1 hash), `read.ts`
+- [x] `shot.ts` (JPEG/PNG, `maxWidth`, full page cap, element clip, SHA-1 hash), `read.ts`
       (constant extractor, cap and offset), `tabs.ts`
-- [ ] `live.ts`: screencast with ack-on-read backpressure, poll mode, `LiveInput` → `Input.*` mapping
+- [x] `live.ts`: screencast with ack-on-read backpressure, poll mode, `LiveInput` → `Input.*` mapping
 
 ### C. Module surface (`src/browser/*`)
 
-- [ ] `adapter.ts`: `defineBrowserAdapter`, `createBrowserRegistry`, `forms()` via the providers form builder
-- [ ] `adapters/chrome.ts`, `adapters/lightpanda.ts` (settings schemas per mode, capabilities)
-- [ ] `profiles.ts`: `BrowserProfileStore`, `memoryBrowserProfileStore`, `sealedBrowserProfiles`,
+- [x] `adapter.ts`: `defineBrowserAdapter`, `createBrowserRegistry`, `forms()` via the providers form builder
+- [x] `adapters/chrome.ts`, `adapters/lightpanda.ts` (settings schemas per mode, capabilities)
+- [x] `profiles.ts`: `BrowserProfileStore`, `memoryBrowserProfileStore`, `sealedBrowserProfiles`,
       `publicProfile`; `browserProfileStoreConformance` in `eharness/testing`
-- [ ] `manager.ts`: leases, idle release, `maxLeases`, `test()`, `runtime()`, `live()`, controller
+- [x] `manager.ts`: leases, idle release, `maxLeases`, `test()`, `runtime()`, `live()`, controller
       rules, `close()`
-- [ ] `plugin.ts` and `texts.ts`: capability-driven tool list, framing, media references and the
+- [x] `plugin.ts` and `texts.ts`: capability-driven tool list, framing, media references and the
       `inModel` window, modality check, `autoSnapshot` / `screenshots.auto`, `browser_request_human`
       as `externalTool()`, `formatHandBack`, domain rules, the `browser` service
-- [ ] `index.ts` exports, exports snapshot, changeset (`minor`, Draft subpath)
+- [x] `index.ts` exports, exports snapshot, changeset (`minor`, Draft subpath)
 
 ### D. Node runtimes (`src/browser/node/*`)
 
-- [ ] `download.ts`: fetch with progress, a temp file, atomic rename, `unzip`/`ditto`, exec bit,
+- [x] `download.ts`: fetch with progress, a temp file, atomic rename, `unzip`/`ditto`, exec bit,
       quarantine removal, install lock, partial-download cleanup
-- [ ] `chrome.ts`: Chrome for Testing JSON and platform pick, launch flags, `DevToolsActivePort`,
+- [x] `chrome.ts`: Chrome for Testing JSON and platform pick, launch flags, `DevToolsActivePort`,
       headless/headed, `xvfb-run`, `--no-sandbox` rule, `Browser.close` then kill, `removeProfileData`
-- [ ] `lightpanda.ts`: release asset pick, `serve` on loopback with a free port, telemetry off,
+- [x] `lightpanda.ts`: release asset pick, `serve` on loopback with a free port, telemetry off,
       Windows status
-- [ ] Unit tests with an injected `fetch` and a fake process launcher; real runs only with
+- [x] Unit tests with an injected `fetch` and a fake process launcher; real runs only with
       `EH_BROWSER_E2E=1`
 
 ### E. Team example
 
-- [ ] Migration + `BrowserProfileStore` adapter + conformance test
-- [ ] Boot wiring, env, routes, live WebSocket, SSE install progress
-- [ ] Browser connector and activation; risk mapping
-- [ ] `takeover` handoff, decision center card, hand back resolution
-- [ ] Web: nav, list, wizard, runtime card, detail with live canvas and takeover, screenshots panel
-- [ ] Settings page: browser driver status (as the code sandbox status)
+- [x] Migration + `BrowserProfileStore` adapter + conformance test
+- [x] Boot wiring, env, routes, live WebSocket, SSE install progress
+- [x] Browser connector and activation; risk mapping
+- [x] `takeover` handoff, decision center card, hand back resolution
+- [x] Web: nav, list, wizard, runtime card, detail with live canvas and takeover, screenshots panel
+- [x] Settings page: browser driver status (as the code sandbox status)
 - [ ] E2E (Playwright in the team's e2e suite): create a managed Chrome profile → download → start
       → an agent opens a local fixture page and clicks → a person takes control, types, gives back →
       the agent continues and sees the change in its next snapshot and screenshot
