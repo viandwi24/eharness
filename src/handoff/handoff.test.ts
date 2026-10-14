@@ -8,6 +8,7 @@ import {
   type HandoffRequest,
   handoff,
   memoryHandoffStore,
+  redeliverHandoff,
   resolveHandoff,
 } from './index.ts'
 
@@ -130,5 +131,59 @@ describe('handoff plugin', () => {
     await res.wait.run.result
     expect(JSON.stringify(model.prompts[1])).toContain('cancelled')
     expect((await store.get(id))?.status).toBe('cancelled')
+  })
+
+  test('output and metadata shape the delivery; a losing answer delivers nothing', async () => {
+    const { store, notified, model, agent } = setup()
+    await agent.session('s1').send('refund?').result
+    const id = notified[0]?.id as string
+    const res = await resolveHandoff({
+      store,
+      sessions: agent,
+      id,
+      answer: { optionId: 'yes', by: 'ana' },
+      output: (_r, a) => `CUSTOM ${a.optionId}`,
+      metadata: { outcome: 'granted' },
+    })
+    if (res.status !== 'resolved' || res.wait.status !== 'continued') throw new Error('no run')
+    await res.wait.run.result
+    expect(JSON.stringify(model.prompts[1])).toContain('CUSTOM yes')
+    expect((await store.get(id))?.metadata).toEqual({ outcome: 'granted' })
+
+    let delivered = 0
+    const spy = {
+      session: () => ({
+        resolveWait: async () => {
+          delivered++
+          return { status: 'already-resolved' as const }
+        },
+      }),
+    }
+    const lost = await resolveHandoff({
+      store,
+      sessions: spy,
+      id,
+      answer: { optionId: 'no', by: 'bob' },
+      metadata: { outcome: 'denied' },
+    })
+    expect(lost.status).toBe('already-answered')
+    expect(delivered).toBe(0)
+    expect((await store.get(id))?.metadata).toEqual({ outcome: 'granted' })
+  })
+
+  test('redeliverHandoff delivers a stored answer only while the wait is pending', async () => {
+    const { store, notified, model, agent } = setup()
+    await agent.session('s1').send('refund?').result
+    const id = notified[0]?.id as string
+    // the process died after the store answered and before the session was told
+    await store.answer(id, { optionId: 'yes', by: 'ana', at: 1 })
+    const sessions = { session: (sid: string) => agent.session(sid) }
+    const res = await redeliverHandoff({ store, sessions, id })
+    if (res.status !== 'resolved' || res.wait.status !== 'continued') throw new Error('no run')
+    await res.wait.run.result
+    expect(JSON.stringify(model.prompts[1])).toContain('ana chose Approve')
+    const again = await redeliverHandoff({ store, sessions, id })
+    expect(again.status).toBe('already-answered')
+    expect(again.status === 'already-answered' && again.wait).toBeFalsy()
   })
 })

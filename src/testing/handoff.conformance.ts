@@ -78,6 +78,24 @@ export function handoffStoreConformance(
       },
     },
     {
+      name: 'answer applies the metadata patch atomically, for the winner only',
+      run: async () => {
+        const store = await factory()
+        const { request } = await store.create(input({ metadata: { keep: 1 } }))
+        const results = await Promise.all(
+          ['a', 'b', 'c'].map((by) => store.answer(request.id, answer(by), { metadata: { by } })),
+        )
+        const winner = results.find((r) => r.ok)
+        assertTrue(winner?.ok === true, 'one winner')
+        const stored = await store.get(request.id)
+        const by = stored?.answer?.by
+        assertTrue(
+          stored?.metadata?.keep === 1 && stored.metadata.by === by,
+          'metadata merged from the winner only',
+        )
+      },
+    },
+    {
       name: 'cancel only works on open requests; a cancelled request cannot be answered',
       run: async () => {
         const store = await factory()

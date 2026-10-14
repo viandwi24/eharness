@@ -93,6 +93,7 @@
     "PARK_ALL",
     "PermanentSendError",
     "RetryAfter",
+    "SkipSend",
     "abortableSleep",
     "createOutbox",
     "createRateGovernor",
@@ -247,7 +248,9 @@
     "formatHandoffAnswer",
     "handoff",
     "memoryHandoffStore",
-    "resolveHandoff"
+    "redeliverHandoff",
+    "resolveHandoff",
+    "startHandoff"
   ],
   "eharness/http": [
     "createHarnessHttp",

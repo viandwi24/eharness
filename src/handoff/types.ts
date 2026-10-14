@@ -66,6 +66,15 @@ export type HandoffTransition =
       request?: HandoffRequest
     }
 
+/** Optional extras of {@link HandoffStore.answer}. */
+export interface HandoffAnswerExtras {
+  /**
+   * Patch shallow-merged into the request's `metadata` in the same compare-and-set as the answer,
+   * so an app stores its outcome atomically with the claim. Only the winner's patch applies.
+   */
+  metadata?: Record<string, unknown>
+}
+
 /** Query of {@link HandoffStore.list}. */
 export interface HandoffListQuery {
   status?: HandoffStatus
@@ -94,8 +103,12 @@ export interface HandoffStore {
   create(input: HandoffInput): Promise<{ request: HandoffRequest; created: boolean }>
   get(id: string): Promise<HandoffRequest | undefined>
   list(query?: HandoffListQuery): Promise<HandoffListResult>
-  /** Only an `open` request can be answered. */
-  answer(id: string, answer: HandoffAnswer): Promise<HandoffTransition>
+  /** Only an `open` request can be answered. `extras.metadata` is applied by the winner only. */
+  answer(
+    id: string,
+    answer: HandoffAnswer,
+    extras?: HandoffAnswerExtras,
+  ): Promise<HandoffTransition>
   /** Only an `open` request can be cancelled. */
   cancel(id: string): Promise<HandoffTransition>
   /** Mark every open request with `expiresAt <= now` expired and return them. */

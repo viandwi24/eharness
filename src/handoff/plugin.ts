@@ -9,15 +9,20 @@
 
 import { z } from 'zod/v4'
 import {
+  type ApprovalActor,
   definePlugin,
   errorText,
   externalTool,
   type HarnessContext,
   type HarnessPlugin,
+  type PendingExternal,
   type ResolveWaitResult,
+  type SendOptions,
+  type WaitStart,
 } from '../index.ts'
 import type {
   HandoffAnswer,
+  HandoffInput,
   HandoffKind,
   HandoffRequest,
   HandoffStore,
@@ -83,6 +88,65 @@ const inputSchema = z.object({
   urgency: z.enum(['low', 'normal', 'high']).optional(),
 })
 
+/** Arguments of {@link startHandoff}. */
+export interface StartHandoffArgs {
+  store: HandoffStore
+  /** Called once, only when the request was newly created (a retried start does not notify). */
+  notify?: (request: HandoffRequest, ctx: HarnessContext) => void | Promise<void>
+  /** The request expires (and the wait times out) this long after creation. Default: never. */
+  defaultExpiryMs?: number
+  /** Clock, epoch ms. Default `Date.now`. */
+  now?: () => number
+  sessionId: string
+  /** From the `start` event of `externalTool()`. */
+  waitId: string
+  toolCallId: string
+  ctx: HarnessContext
+  /** The request itself. `id` defaults to `<sessionId>:<waitId>`; `expiresAt` overrides the default expiry. */
+  request: Omit<HandoffInput, 'id' | 'sessionId' | 'toolCallId' | 'waitId' | 'createdAt'> & {
+    id?: string
+  }
+}
+
+/**
+ * What the plugin's external tool does in `start`: idempotent create in the store, notify once,
+ * and return the wait descriptor (`correlationId`, `payload.handoffId`, and `timeoutAt` with an
+ * `onTimeout` output when the request expires). Call it from your own `externalTool()` to park
+ * through handoff with your own input schema, category or attribution.
+ *
+ * @see docs/specs/32-handoff.md#3-the-plugin
+ */
+export async function startHandoff(args: StartHandoffArgs): Promise<WaitStart> {
+  const createdAt = (args.now ?? Date.now)()
+  const { id, ...rest } = args.request
+  const expiresAt =
+    rest.expiresAt ??
+    (args.defaultExpiryMs === undefined ? undefined : createdAt + args.defaultExpiryMs)
+  const { request, created } = await args.store.create({
+    ...rest,
+    id: id ?? `${args.sessionId}:${args.waitId}`,
+    sessionId: args.sessionId,
+    toolCallId: args.toolCallId,
+    waitId: args.waitId,
+    ...(expiresAt === undefined ? {} : { expiresAt }),
+    createdAt,
+  })
+  if (created && args.notify !== undefined) {
+    try {
+      await args.notify(request, args.ctx)
+    } catch (error) {
+      args.ctx.log.warn(`handoff: notify failed for ${request.id}: ${errorText(error)}`)
+    }
+  }
+  return {
+    correlationId: request.id,
+    payload: { handoffId: request.id },
+    ...(request.expiresAt === undefined
+      ? {}
+      : { timeoutAt: request.expiresAt, onTimeout: { output: HANDOFF_EXPIRED_TEXT } }),
+  }
+}
+
 /** The `ask_person` plugin. @see docs/specs/32-handoff.md */
 export function handoff(options: HandoffOptions): HarnessPlugin<'handoff'> {
   const toolName = options.toolName ?? HANDOFF_TOOL
@@ -98,41 +162,27 @@ export function handoff(options: HandoffOptions): HarnessPlugin<'handoff'> {
             inputSchema,
             outputSchema: z.string(),
             metadata: { risk: 'write', idempotent: true },
-            start: async (input, { waitId, toolCallId, ctx: callCtx }) => {
-              const createdAt = now()
-              const expiresAt =
-                options.defaultExpiryMs === undefined
-                  ? undefined
-                  : createdAt + options.defaultExpiryMs
-              const { request, created } = await options.store.create({
-                id: `${sessionId}:${waitId}`,
-                sessionId,
-                toolCallId,
-                waitId,
-                kind: (input.kind ?? 'decision') as HandoffKind,
-                title: input.title,
-                body: input.body,
-                ...(input.options === undefined ? {} : { options: input.options }),
-                ...(input.audience === undefined ? {} : { audience: input.audience }),
-                ...(input.urgency === undefined ? {} : { urgency: input.urgency }),
-                ...(expiresAt === undefined ? {} : { expiresAt }),
-                createdAt,
-              })
-              if (created && options.notify !== undefined) {
-                try {
-                  await options.notify(request, callCtx)
-                } catch (error) {
-                  callCtx.log.warn(`handoff: notify failed for ${request.id}: ${errorText(error)}`)
-                }
-              }
-              return {
-                correlationId: request.id,
-                payload: { handoffId: request.id },
-                ...(request.expiresAt === undefined
+            start: (input, { waitId, toolCallId, ctx: callCtx }) =>
+              startHandoff({
+                store: options.store,
+                ...(options.notify === undefined ? {} : { notify: options.notify }),
+                ...(options.defaultExpiryMs === undefined
                   ? {}
-                  : { timeoutAt: request.expiresAt, onTimeout: { output: HANDOFF_EXPIRED_TEXT } }),
-              }
-            },
+                  : { defaultExpiryMs: options.defaultExpiryMs }),
+                now,
+                sessionId,
+                waitId,
+                toolCallId,
+                ctx: callCtx,
+                request: {
+                  kind: (input.kind ?? 'decision') as HandoffKind,
+                  title: input.title,
+                  body: input.body,
+                  ...(input.options === undefined ? {} : { options: input.options }),
+                  ...(input.audience === undefined ? {} : { audience: input.audience }),
+                  ...(input.urgency === undefined ? {} : { urgency: input.urgency }),
+                },
+              }),
           }),
         },
       }
@@ -146,7 +196,23 @@ export interface HandoffSessions {
     resolveWait(
       waitId: string,
       result: { output: unknown } | { errorText: string },
+      options?: HandoffResumeOptions,
     ): Promise<ResolveWaitResult>
+  }
+}
+
+/** What `session.resolveWait` accepts as its third argument (`send` options and `actor`). */
+export type HandoffResumeOptions = SendOptions & { actor?: ApprovalActor }
+
+/** {@link HandoffSessions} whose sessions also list their pending waits (for {@link redeliverHandoff}). */
+export interface HandoffRedeliverSessions {
+  session(id: string): {
+    resolveWait(
+      waitId: string,
+      result: { output: unknown } | { errorText: string },
+      options?: HandoffResumeOptions,
+    ): Promise<ResolveWaitResult>
+    pendingWaits(): Promise<PendingExternal[]>
   }
 }
 
@@ -168,7 +234,10 @@ export type HandoffResolution =
       wait: ResolveWaitResult
     }
   | {
-      /** Answered before: the stored answer was delivered again (idempotent crash recovery). */
+      /**
+       * Answered before (by this call's loser race or earlier). Nothing was delivered: use
+       * {@link redeliverHandoff} for crash recovery. `wait` is set only by that function.
+       */
       status: 'already-answered'
       request: HandoffRequest
       wait?: ResolveWaitResult
@@ -197,15 +266,22 @@ async function deliver(
   sessions: HandoffSessions,
   request: HandoffRequest,
   result: { output: unknown } | { errorText: string },
+  resume?: HandoffResumeOptions,
 ): Promise<ResolveWaitResult> {
-  return sessions.session(request.sessionId).resolveWait(request.waitId, result)
+  const session = sessions.session(request.sessionId)
+  return resume === undefined
+    ? session.resolveWait(request.waitId, result)
+    : session.resolveWait(request.waitId, result, resume)
 }
 
 /**
  * Answer a request from anywhere: compare-and-set the store, then resolve the session's wait with
  * a text the model reads. The same assistant message continues (`wait.status === 'continued'`).
  * An unknown option id is `invalid` and changes nothing. A second answer gets `already-answered`
- * and the first answer is delivered again, which is a no-op unless the first delivery failed.
+ * and delivers nothing (no race with the winner); {@link redeliverHandoff} recovers a crashed
+ * delivery. `output` shapes what the parked tool call receives (default
+ * {@link formatHandoffAnswer}); `resume` is forwarded to `session.resolveWait`; `metadata` is
+ * applied by the winner in the same compare-and-set.
  *
  * @see docs/specs/32-handoff.md#4-resolving
  */
@@ -214,6 +290,12 @@ export async function resolveHandoff(args: {
   sessions: HandoffSessions
   id: string
   answer: HandoffAnswerInput
+  /** What the parked tool call receives. Default: {@link formatHandoffAnswer} text. */
+  output?: (request: HandoffRequest, answer: HandoffAnswer) => unknown
+  /** Options of the continuation, forwarded to `session.resolveWait`. */
+  resume?: HandoffResumeOptions
+  /** Metadata patch stored with the answer (winner only). */
+  metadata?: Record<string, unknown>
 }): Promise<HandoffResolution> {
   const { store, sessions, id } = args
   const current = await store.get(id)
@@ -238,11 +320,18 @@ export async function resolveHandoff(args: {
     by: args.answer.by,
     at: args.answer.at ?? Date.now(),
   }
-  const done: HandoffTransition = await store.answer(id, answer)
+  const done: HandoffTransition = await store.answer(
+    id,
+    answer,
+    args.metadata === undefined ? undefined : { metadata: args.metadata },
+  )
   if (done.ok) {
-    const wait = await deliver(sessions, done.request, {
-      output: formatHandoffAnswer(done.request, answer),
-    })
+    const wait = await deliver(
+      sessions,
+      done.request,
+      { output: (args.output ?? formatHandoffAnswer)(done.request, answer) },
+      args.resume,
+    )
     return { status: 'resolved', request: done.request, wait }
   }
   if (done.reason === 'not-found') return { status: 'not-found' }
@@ -253,13 +342,43 @@ export async function resolveHandoff(args: {
       ...(done.request === undefined ? {} : { request: done.request }),
     }
   }
-  const request = done.request as HandoffRequest
-  const first = request.answer
-  const wait =
-    first === undefined
-      ? undefined
-      : await deliver(sessions, request, { output: formatHandoffAnswer(request, first) })
-  return { status: 'already-answered', request, ...(wait === undefined ? {} : { wait }) }
+  return { status: 'already-answered', request: done.request as HandoffRequest }
+}
+
+/**
+ * Crash recovery: deliver the stored answer of an `answered` request, but only while the session
+ * still waits for it (`pendingWaits()` lists the wait). Returns `resolved` with the delivery, or
+ * `already-answered` without `wait` when nothing is pending any more (already delivered, timed
+ * out, or the session is gone). Never racing a live `resolveHandoff`: call it from a sweeper,
+ * after the answer is old enough that its delivery cannot be in flight.
+ */
+export async function redeliverHandoff(args: {
+  store: HandoffStore
+  sessions: HandoffRedeliverSessions
+  id: string
+  output?: (request: HandoffRequest, answer: HandoffAnswer) => unknown
+  resume?: HandoffResumeOptions
+}): Promise<HandoffResolution> {
+  const request = await args.store.get(args.id)
+  if (request === undefined) return { status: 'not-found' }
+  if (request.status === 'expired' || request.status === 'cancelled') {
+    return { status: 'closed', reason: request.status, request }
+  }
+  if (request.status !== 'answered' || request.answer === undefined) {
+    return { status: 'invalid', error: 'The request is not answered.' }
+  }
+  const session = args.sessions.session(request.sessionId)
+  const pending = await session.pendingWaits()
+  if (!pending.some((w) => w.waitId === request.waitId)) {
+    return { status: 'already-answered', request }
+  }
+  const wait = await deliver(
+    args.sessions,
+    request,
+    { output: (args.output ?? formatHandoffAnswer)(request, request.answer) },
+    args.resume,
+  )
+  return { status: 'resolved', request, wait }
 }
 
 /**

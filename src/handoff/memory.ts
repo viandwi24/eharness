@@ -1,5 +1,6 @@
 import type {
   HandoffAnswer,
+  HandoffAnswerExtras,
   HandoffInput,
   HandoffListQuery,
   HandoffListResult,
@@ -28,6 +29,7 @@ export function memoryHandoffStore(): HandoffStore {
     id: string,
     to: 'answered' | 'cancelled',
     answer?: HandoffAnswer,
+    extras?: HandoffAnswerExtras,
   ): HandoffTransition => {
     const row = rows.get(id)
     if (row === undefined) return { ok: false, reason: 'not-found' }
@@ -42,6 +44,9 @@ export function memoryHandoffStore(): HandoffStore {
     }
     row.status = to
     if (answer !== undefined) row.answer = structuredClone(answer)
+    if (extras?.metadata !== undefined) {
+      row.metadata = { ...row.metadata, ...structuredClone(extras.metadata) }
+    }
     return { ok: true, request: clone(row) }
   }
 
@@ -82,8 +87,12 @@ export function memoryHandoffStore(): HandoffStore {
         ...(matching.length > limit && last !== undefined ? { nextCursor: keyOf(last) } : {}),
       }
     },
-    async answer(id: string, answer: HandoffAnswer): Promise<HandoffTransition> {
-      return leave(id, 'answered', answer)
+    async answer(
+      id: string,
+      answer: HandoffAnswer,
+      extras?: HandoffAnswerExtras,
+    ): Promise<HandoffTransition> {
+      return leave(id, 'answered', answer, extras)
     },
     async cancel(id: string): Promise<HandoffTransition> {
       return leave(id, 'cancelled')
