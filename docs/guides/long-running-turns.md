@@ -194,3 +194,45 @@ Nothing limits spending by default. For agents that run without a person watchin
 
 Long turns also grow the context: compaction summarizes older turns and, mid-turn, older steps of
 the running turn (spec 06), and `toolOutput.maxChars` keeps single tool results bounded.
+
+## Jobs that outlive a turn: `longRun`
+
+For work that takes hours (an audit of weeks of chat history) one turn, even a long one, is the
+wrong unit: a restart loses it and a step cap ends it with "ran out of steps". `longRun()` from
+`eharness/limits` runs the job as a chain of bounded turns (chunks) on the durable inbox
+(spec 33 §3).
+
+```ts
+import { longRun, longRunState, stepBudget } from 'eharness/limits'
+
+const storage = { messages, state, inbox } // yours
+let agent: ReturnType<typeof defineHarnessAgent>
+const jobs = longRun({
+  sessions: () => agent, // continuations are enqueued through the agent
+  state: storage.state,
+  chunkSteps: 80,
+  maxCostUsd: 20,
+  maxDurationMs: 6 * 3_600_000,
+  onEvent: (e) => console.log(e.type, e.sessionId, e.state.chunk),
+})
+agent = defineHarnessAgent({ model, storage, plugins: [jobs] })
+
+await agent.session('audit-1').send('Audit the last 3 weeks of the group') // chunk 0
+// at its 80th step the model writes a checkpoint note, the turn ends, chunk 1 is enqueued ...
+
+await jobs.stop('audit-1', 'enough')      // a person stops it
+await longRunState(storage.state, 'audit-1') // { status, chunk, steps, costUsd, checkpoint, ... } for a UI
+await jobs.resume('audit-1')              // at boot: continue a running job whose turn died
+```
+
+- The job ends when the model finishes (a turn ends without a checkpoint), when the progress guard
+  says it is stuck, when the cost or duration budget is spent, or when a person stops it. It never
+  ends with a step cap.
+- A restart interrupts the turn that was running; its in-flight tool calls are not re-executed.
+  Call `jobs.resume(sessionId)` for the sessions of your running jobs at boot (it is idempotent);
+  the continuation tells the model to check the last results before repeating anything.
+- A background subagent child that runs as a job reports to its parent only when the job ends
+  (spec 20 §3.6); its `timeoutMs` bounds one chunk.
+- To hand work over instead (a chat turn that hits its cap), give `stepBudget` an `onCap`:
+  `stepBudget({ cap: 120, onCap: { reminder: 'Hand the rest to the background worker now.' } })`
+  adds 4 steps once, with that reminder, when the turn reaches the cap while it still progresses.

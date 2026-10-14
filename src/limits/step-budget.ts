@@ -22,6 +22,16 @@ export interface StepBudgetOptions {
    * still runs when the budget is finally spent. Default `false`.
    */
   wrapUp?: boolean | string
+  /**
+   * What happens when the turn reaches the hard cap while it still makes progress: it gets
+   * `extraSteps` more steps (default 4), once, and a reminder in each of them, instead of going
+   * straight to the wrap-up. The app uses the reminder to hand the rest of the job over (for
+   * example to a background worker). Never applies twice in a turn, and not when `cap <= 0`.
+   */
+  onCap?: {
+    reminder: string | ((ctx: HarnessContext) => string)
+    extraSteps?: number
+  }
 }
 
 export const STEP_BUDGET_WRAP_UP: string =
@@ -40,6 +50,9 @@ export function stepBudget(options: StepBudgetOptions): HarnessPlugin<'step-budg
       : typeof options.wrapUp === 'string'
         ? options.wrapUp
         : undefined
+  const extraSteps = Math.max(1, Math.floor(options.onCap?.extraSteps ?? 4))
+  /** Turns that used their `onCap` extension. */
+  const capped = new Set<string>()
   return definePlugin({
     name: 'step-budget',
     setup: () => ({
@@ -52,10 +65,30 @@ export function stepBudget(options: StepBudgetOptions): HarnessPlugin<'step-budg
           // continuations without progress are the library's signal that the turn is going nowhere
           if (e.idleContinues > 0) return undefined
           // stepIndex is the 0-based index of the last step: stepIndex + 1 steps have run
-          const room = capOf(ctx) - (e.stepIndex + 1)
-          return room > 0 ? { extendSteps: Math.min(chunk, room) } : undefined
+          const cap = capOf(ctx)
+          const room = cap - (e.stepIndex + 1)
+          if (room > 0) return { extendSteps: Math.min(chunk, room) }
+          const turnId = ctx.turn?.id
+          if (
+            options.onCap !== undefined &&
+            cap > 0 &&
+            turnId !== undefined &&
+            !capped.has(turnId)
+          ) {
+            capped.add(turnId)
+            return { extendSteps: extraSteps }
+          }
+          return undefined
+        },
+        'turn.end': (_ctx, e: { turnId: string }): void => {
+          capped.delete(e.turnId)
         },
         'step.prepare': (ctx, e: { stepIndex: number }): { reminder: string } | undefined => {
+          const turnId = ctx.turn?.id
+          if (options.onCap !== undefined && turnId !== undefined && capped.has(turnId)) {
+            const r = options.onCap.reminder
+            return { reminder: typeof r === 'function' ? r(ctx) : r }
+          }
           if (wrapText === undefined) return undefined
           const cap = capOf(ctx)
           if (cap <= 0 || cap - e.stepIndex > WARN_WINDOW) return undefined

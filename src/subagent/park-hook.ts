@@ -11,6 +11,7 @@ import {
   type HarnessContext,
   type HarnessPlugin,
   isHarnessError,
+  isLongRunCheckpoint,
   neutralizeTags,
   type PendingState,
   type SessionContribution,
@@ -348,6 +349,8 @@ export function createParkHook(options: {
     const parent = ctx.session.parent
     if (parent?.toolCallId === undefined) return
     if (options.parentAgent === undefined) return
+    // a long-run chunk end is a checkpoint, not the end of the job (spec 33 §3)
+    if (isLongRunCheckpoint(e.stop)) return
     if (ctx.state.get(BACKGROUND_STATE) !== undefined) {
       const frame = launcherFrame(e)
       // a turn the launcher started with send_message reports as a resume (ADR-0041)

@@ -298,6 +298,15 @@ export async function endPhases(
         hookFailed(t.rt, 'turn.end', hook.owner, hookError)
       }
     }
+    // `ctx.state` changes made by `turn.end` hooks are written now (the end-of-turn write above
+    // ran before the hooks): a plugin such as `longRun` must not lose its job state on a crash
+    try {
+      await t.rt.state.writeIfDirty()
+    } catch (stateError) {
+      t.rt.log.warn('eharness: writing the state changed by turn.end hooks failed', {
+        error: stateError,
+      })
+    }
   }
   try {
     await settleInbox(t, stop)

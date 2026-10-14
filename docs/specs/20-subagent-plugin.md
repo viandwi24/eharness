@@ -434,6 +434,11 @@ Runs at `session.start` of a root `park` session with `selfAgent` and optionally
 `SubagentOptions.background` (object form) takes `timeoutMs`, `stopOnTimeout`, `startGraceMs`,
 `waitingReminderMs`, `reconcileEveryMs` (below); the options above are those of the standalone function.
 
+**Long-run children (spec 33 §3).** A child turn that ends with the stop `plugin:long-run:checkpoint`
+(`LONG_RUN_CHECKPOINT_STOP`) is a chunk of a job that continues in a queued turn: the turn.end park
+hook and `reconcileBackgroundChildren` (outcome `running`) report nothing for it. The report of the
+final turn is delivered as usual (`plugin:long-run:*` stops map to status `stopped`).
+
 **Bounded by default.** A background child never runs unbounded: in the plugin,
 `background.timeoutMs` defaults to 3 600 000 (1 hour; `Number.POSITIVE_INFINITY` opts out) and
 `stopOnTimeout` defaults to `true` (the child is aborted after the one "timed out" report). The

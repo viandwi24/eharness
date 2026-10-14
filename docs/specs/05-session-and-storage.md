@@ -813,6 +813,8 @@ export interface PluginState {
   commit-point write treats a conflict that only added `children` as no conflict (re-read, retry),
   so a child registering while the parent is idle never fails the parent's next turn. Without
   `setIf` the writes stay plain `set`s (a registration racing an owner write may be lost, §13).
+- `ctx.state` changes made by `turn.end` hooks are written right after those hooks (a second write
+  only when a hook changed something), because the end-of-turn write precedes the hooks.
 - Loaded once at session open (and on cache invalidation); written at the commit point
   (`activeTurn`), during the turn only for heartbeats (§9), at the end of each turn, after
   compaction, after `respond()` consumes pending state, and on `close()` — only if something

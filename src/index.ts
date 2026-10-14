@@ -146,6 +146,7 @@ export {
   type JudgeVerdict,
   judgeCoordinator,
 } from './judge/index.ts'
+export { isLongRunCheckpoint, LONG_RUN_CHECKPOINT_STOP } from './loop/long-run-stop.ts'
 export { type DataChunk, type DataPartDef, defineDataPart } from './messages/data-parts.ts'
 export {
   neutralizeTags,

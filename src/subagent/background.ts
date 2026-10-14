@@ -3,7 +3,13 @@
  * that ended, never started, timed out or waits for a person too long, from any instance, also
  * after a hard crash. Idempotent through the report keys (`session.inject({ key })`).
  */
-import { type ChildSessionInfo, errorText, type HarnessSession, isHarnessError } from '../index.ts'
+import {
+  type ChildSessionInfo,
+  errorText,
+  type HarnessSession,
+  isHarnessError,
+  isLongRunCheckpoint,
+} from '../index.ts'
 import { parseAgentFrame } from './messaging.ts'
 import {
   type BackgroundStatus,
@@ -314,6 +320,11 @@ export async function reconcileBackgroundChildren(
       }
 
       const stop = eh?.stop
+      // a long-run chunk ended (spec 33): the job continues in a queued turn, nothing to report yet
+      if (isLongRunCheckpoint(stop)) {
+        out.push({ sessionId: id, outcome: 'running' })
+        continue
+      }
       if (stop === undefined || stop === 'tool-pending') {
         out.push({ sessionId: id, outcome: 'skipped' })
         continue

@@ -18,6 +18,7 @@
     "INTERRUPTED_TURN",
     "INTERRUPTED_UNKNOWN",
     "JudgeUnavailableError",
+    "LONG_RUN_CHECKPOINT_STOP",
     "MAX_ROOTED_PATH_LENGTH",
     "NOT_EXECUTED_NEW_INPUT",
     "TOOL_OUTPUT_PRUNED",
@@ -49,6 +50,7 @@
     "isHarnessError",
     "isKindMessage",
     "isLiteralPattern",
+    "isLongRunCheckpoint",
     "isPrivateHost",
     "isRecord",
     "isUuidV7",
@@ -277,9 +279,15 @@
     "resolveRole"
   ],
   "eharness/limits": [
+    "LONG_RUN_CHECKPOINT_PROMPT",
+    "LONG_RUN_CHECKPOINT_TOOL",
+    "LONG_RUN_PLUGIN",
     "STEP_BUDGET_WRAP_UP",
     "budgetNotice",
     "defaultBudgetText",
+    "defaultContinueText",
+    "longRun",
+    "longRunState",
     "stepBudget",
     "trackRefusals"
   ],

@@ -60,7 +60,9 @@ export function statusOfStop(stop: string): BackgroundStatus {
       ? 'stopped'
       : stop === 'interrupted'
         ? 'interrupted'
-        : 'failed'
+        : stop.startsWith('plugin:long-run:')
+          ? 'stopped'
+          : 'failed'
 }
 
 /** Idempotency key of a report: one per child turn (or per special case). */
