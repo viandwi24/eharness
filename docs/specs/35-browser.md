@@ -241,6 +241,13 @@ fixed extractor run with `Runtime.evaluate` (no page script is trusted; the extr
 string). An adapter may provide a native reader (Lightpanda `LP.getMarkdown`). Capped at
 `limits.readChars` (default 30 000) with an offset.
 
+### Engine differences handled by the CDP client
+
+- A page target the browser attached by itself (`Target.setAutoAttach` on the browser session) is
+  reused by `attach()`; some engines (Lightpanda) route that page's events only to that session.
+- A screenshot refused in JPEG ("unsupported screenshot format") is taken again in PNG, and later
+  screenshots of that connection ask for PNG directly (Lightpanda).
+
 ## 5. The plugin
 
 ```ts

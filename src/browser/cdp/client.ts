@@ -219,6 +219,7 @@ export async function cdpConnection(
     number,
     { method: string; resolve: (v: never) => void; reject: (e: unknown) => void; done: () => void }
   >()
+  const autoAttached = new Map<string, string>()
   const handlers = new Map<string, Set<CdpEventHandler>>()
   const closeHandlers = new Set<(reason: string) => void>()
 
@@ -254,6 +255,19 @@ export async function cdpConnection(
     }
     if (typeof msg.method === 'string') {
       const params = msg.params ?? {}
+      // a page the browser attached by itself (Target.setAutoAttach on the browser session): some
+      // engines (Lightpanda) route that page's events only to this session, so attach() reuses it
+      if (msg.method === 'Target.attachedToTarget' && msg.sessionId === undefined) {
+        const info = (params as { targetInfo?: { targetId?: unknown } }).targetInfo
+        const sid = (params as { sessionId?: unknown }).sessionId
+        if (typeof info?.targetId === 'string' && typeof sid === 'string') {
+          autoAttached.set(info.targetId, sid)
+        }
+      }
+      if (msg.method === 'Target.detachedFromTarget' && msg.sessionId === undefined) {
+        const sid = (params as { sessionId?: unknown }).sessionId
+        for (const [t, s] of autoAttached) if (s === sid) autoAttached.delete(t)
+      }
       for (const key of [msg.method, '*']) {
         for (const h of [...(handlers.get(key) ?? [])]) {
           try {
@@ -394,6 +408,12 @@ export async function cdpConnection(
       })
     },
     async attach(targetId) {
+      // reuse the session the browser attached by itself (it may arrive just after createTarget)
+      for (let i = 0; i < 4 && !autoAttached.has(targetId); i++) {
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      const auto = autoAttached.get(targetId)
+      if (auto !== undefined) return auto
       const res = await send<{ sessionId?: string }>('Target.attachToTarget', {
         targetId,
         flatten: true,

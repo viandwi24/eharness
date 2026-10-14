@@ -30,6 +30,15 @@ describe('resolveCdpUrl', () => {
 })
 
 describe('cdpConnection', () => {
+  test('attach reuses the session the browser attached by itself (Lightpanda routes events there)', async () => {
+    const peer = fakeCdpPeer()
+    const cdp = await cdpConnection({ url: 'ws://h/x' }, { webSocket: peer.socketFactory })
+    peer.emit('Target.attachedToTarget', { sessionId: 'AUTO-1', targetInfo: { targetId: 'T1' } })
+    expect(await cdp.attach('T1')).toBe('AUTO-1')
+    expect(peer.last('Target.attachToTarget')).toBeUndefined()
+    await cdp.close()
+  })
+
   test('sets flattened auto attach and passes headers to the socket factory', async () => {
     const peer = fakeCdpPeer()
     const cdp = await cdpConnection(

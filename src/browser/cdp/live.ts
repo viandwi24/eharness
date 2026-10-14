@@ -235,7 +235,7 @@ export async function startLive(page: PageSession, options: LiveOptions): Promis
             try {
               const shot = await takeScreenshot(page, {
                 maxWidth,
-                format: options.format ?? 'jpeg',
+                ...(options.format === undefined ? {} : { format: options.format }),
                 quality: options.quality ?? 60,
               })
               if (typeof shot !== 'string' && shot.hash !== last && !closed) {

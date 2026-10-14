@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { fakeCdpPeer } from '../../testing/browser-fake-peer.ts'
+import { fakeCdpError, fakeCdpPeer } from '../../testing/browser-fake-peer.ts'
 import { READ_EXTRACTOR, readPage } from './read.ts'
 import { base64ToBytes, sha1Hex, takeScreenshot } from './shot.ts'
 import { takeSnapshot } from './snapshot.ts'
@@ -72,6 +72,27 @@ describe('takeScreenshot', () => {
     expect(await takeScreenshot(page, { ref: 'e3' })).toStartWith('STALE:')
     peer.handle('Page.captureScreenshot', { data: '' })
     expect(await takeScreenshot(page, {})).toBe('ERROR: the browser returned no image.')
+  })
+})
+
+describe('takeScreenshot on a PNG-only engine (Lightpanda)', () => {
+  test('a refused JPEG is retried as PNG, and later shots ask for PNG directly', async () => {
+    const { peer, page } = await setup()
+    peer.handle('Page.captureScreenshot', (params) =>
+      params.format === 'jpeg'
+        ? fakeCdpError('unsupported screenshot format.')
+        : { data: TINY_JPEG },
+    )
+    const shot = await takeScreenshot(page, {})
+    if (typeof shot === 'string') throw new Error(shot)
+    expect(shot.mediaType).toBe('image/png')
+    const formats = peer
+      .commands('Page.captureScreenshot')
+      .map((c) => (c.params as { format?: string }).format)
+    expect(formats).toEqual(['jpeg', 'png'])
+    await takeScreenshot(page, {})
+    const last = peer.last('Page.captureScreenshot')
+    expect((last?.params as { format?: string } | undefined)?.format).toBe('png')
   })
 })
 

@@ -48,12 +48,16 @@ interface Metrics {
  *
  * @returns the shot, or an `ERROR:` / `STALE:` string.
  */
+/** Connections whose engine refused JPEG screenshots (Lightpanda: PNG only). */
+const pngOnly = new WeakSet<object>()
+
 export async function takeScreenshot(
   page: PageSession,
   options: ShotOptions = {},
   signal?: AbortSignal,
 ): Promise<Shot | string> {
-  const format = options.format ?? 'jpeg'
+  // an engine that takes PNG only (Lightpanda) is remembered per connection after its first refusal
+  let format = options.format ?? (pngOnly.has(page.cdp) ? 'png' : 'jpeg')
   const maxWidth = Math.max(16, Math.floor(options.maxWidth ?? 1280))
   try {
     const metrics = await call<Metrics>(page, 'Page.getLayoutMetrics', undefined, signal)
@@ -117,7 +121,21 @@ export async function takeScreenshot(
       captureBeyondViewport: beyond,
     }
     if (format === 'jpeg') params.quality = options.quality ?? 70
-    const res = await call<{ data?: string }>(page, 'Page.captureScreenshot', params, signal)
+    let res: { data?: string }
+    try {
+      res = await call<{ data?: string }>(page, 'Page.captureScreenshot', params, signal)
+    } catch (error) {
+      if (format !== 'jpeg' || !/unsupported screenshot format/i.test(errorText(error))) throw error
+      pngOnly.add(page.cdp)
+      format = 'png'
+      delete params.quality
+      res = await call<{ data?: string }>(
+        page,
+        'Page.captureScreenshot',
+        { ...params, format },
+        signal,
+      )
+    }
     if (typeof res.data !== 'string' || res.data === '') {
       return 'ERROR: the browser returned no image.'
     }
