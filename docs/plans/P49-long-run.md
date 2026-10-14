@@ -1,4 +1,4 @@
-# P48 — Long-run jobs: no "ran out of steps", hours of work, survives restarts
+# P49 — Long-run jobs: no "ran out of steps", hours of work, survives restarts
 
 Status: done (2026-10-14). Owner: maintainer. Builds on [P47](P47-module-adoption.md).
 
