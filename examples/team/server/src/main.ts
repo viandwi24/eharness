@@ -36,7 +36,10 @@
  *   TEAM_CODE_REQUIREMENTS   a requirements file: `local` builds the base environment from it (default: use the interpreter as it is)
  *   TZ                default of the team timezone (Settings): the clock of agents, routines, reminders, chats, digest
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
- *   TEAM_MAX_WORKER_STEPS  hard cap of one background worker turn (default 400; at least 60)
+ *   TEAM_LONG_RUN_MAX_COST_USD  stop a background worker job whose estimated cost reaches this (default 10; 0 = no limit)
+ *   TEAM_LONG_RUN_MAX_HOURS     stop a background worker job this many hours after it started (default 24; 0 = no limit)
+ *   TEAM_LONG_RUN_CHUNK_STEPS   steps per chunk of a worker job (default 80, at least 10)
+ *   (TEAM_MAX_WORKER_STEPS was removed: workers have no fixed step cap, they run as long-run jobs)
  *   TEAM_CONTEXT_CAP  working context window in tokens (default 128000): history is summarized at 80 % of it
  *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
@@ -1405,12 +1408,25 @@ if (import.meta.main) {
     loginPassword: process.env.BASIC_AUTH_PASSWORD,
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
     ...(() => {
-      const maxWorkerSteps = Number(process.env.TEAM_MAX_WORKER_STEPS)
+      const num = (name: string): number | undefined => {
+        const raw = process.env[name]
+        if (raw === undefined || raw.trim() === '') return undefined
+        const n = Number(raw)
+        return Number.isFinite(n) && n >= 0 ? n : undefined
+      }
+      const maxCostUsd = num('TEAM_LONG_RUN_MAX_COST_USD')
+      const maxHours = num('TEAM_LONG_RUN_MAX_HOURS')
+      const chunkSteps = num('TEAM_LONG_RUN_CHUNK_STEPS')
+      const longRun = {
+        ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+        ...(maxHours === undefined ? {} : { maxDurationMs: maxHours * 60 * 60 * 1000 }),
+        ...(chunkSteps === undefined || chunkSteps < 10 ? {} : { chunkSteps }),
+      }
       const contextCap = Number(process.env.TEAM_CONTEXT_CAP)
       const limits = {
         ...(Number.isFinite(contextCap) && contextCap >= 16_000 ? { contextCap } : {}),
         ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { spawnCap } : {}),
-        ...(Number.isFinite(maxWorkerSteps) && maxWorkerSteps >= 60 ? { maxWorkerSteps } : {}),
+        ...(Object.keys(longRun).length === 0 ? {} : { longRun }),
       }
       return Object.keys(limits).length === 0 ? {} : { limits }
     })(),

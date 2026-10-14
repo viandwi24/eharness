@@ -101,7 +101,8 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_BUDGET_USD` | unset | monthly USD limit of the workspace ledger (also in Settings) |
 | `TEAM_SPAWN_CAP` | `4` | role agents the lead runs at once (also in Settings) |
 | `TEAM_CONTEXT_CAP` | `128000` | working context window: the model's own window, at most this; history is summarized at 80 % of it (a 1 M-token model would otherwise carry ~800 k tokens into every call) |
-| `TEAM_MAX_WORKER_STEPS` | `400` | hard cap of one background worker turn (every agent can hand long jobs to its `worker`; chat turns stop at 120 steps) |
+| `TEAM_LONG_RUN_MAX_COST_USD` | `10` | a background worker job stops at this estimated cost (0 = no limit); workers run as long jobs in chunks of 80 steps with no fixed step cap, and resume after a restart |
+| `TEAM_LONG_RUN_MAX_HOURS` | `24` | a worker job stops this long after it started (0 = no limit) |
 | `TEAM_ARTIFACT_URL` | - (root-relative `/art/*` on the host that shows the page) | public base URL of a separate artifact content origin, e.g. `https://artifacts.example.com` (sandboxed HTML runs there; recommended in production) |
 | `TEAM_ARTIFACT_PORT` | - | also serve only the artifact content routes (`/art/*`) on this port, for a separate content origin; signed content URLs then point at it (or at `TEAM_ARTIFACT_URL`) |
 | `TEAM_CODE_DRIVER` | `local` when the interpreter is found, else `off` | where agents run Python (`run_python` of the **Files & Sandbox** connector): `off` or `local` (a scratch directory under an OS sandbox: no network, the data directory and your home are unreadable); for a separate machine use the **Remote sandbox** connector (below) |

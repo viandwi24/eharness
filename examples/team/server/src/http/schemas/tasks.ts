@@ -205,9 +205,40 @@ export const ApprovalListSchema = z
   .object({ approvals: z.array(ApprovalSchema) })
   .openapi('ApprovalList')
 
+export const WorkerJobSchema = z
+  .object({
+    status: z.enum(['running', 'finished', 'stopped']),
+    chunk: z
+      .number()
+      .int()
+      .openapi({ description: 'The chunk running now (a chunk is up to 80 steps).' }),
+    steps: z.number().int().openapi({ description: 'Model steps of the finished chunks.' }),
+    costUsd: z.number().openapi({ description: 'Estimated cost of the finished chunks.' }),
+    startedAt: z.number().int(),
+    updatedAt: z
+      .number()
+      .int()
+      .openapi({ description: 'Last change (the last checkpoint while running).' }),
+    checkpoint: z
+      .string()
+      .nullable()
+      .openapi({ description: "The worker's last checkpoint note." }),
+    stopReason: z.string().nullable().openapi({
+      description:
+        'Why a stopped job stopped: `stuck`, `cost`, `duration`, `stopped` (a person) or a stop of the turn.',
+    }),
+  })
+  .openapi('WorkerJob', {
+    description:
+      'The long-run job of a background worker task: it runs as a chain of chunks and survives restarts.',
+  })
+
 export const TaskDetailSchema = z
   .object({
     task: TaskSchema,
+    job: WorkerJobSchema.nullable().openapi({
+      description: 'The long-run job of a background worker task; null for any other task.',
+    }),
     messages: z
       .array(UiMessageSchema)
       .openapi({ description: 'The stored messages of the task session (newest 200).' }),

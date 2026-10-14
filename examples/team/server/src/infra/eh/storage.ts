@@ -236,9 +236,15 @@ export function sqliteLock(sqlite: Sqlite, options: SqliteLockOptions = {}): Ses
       held.add(owner)
       const timer = setInterval(
         () => {
-          sqlite
-            .query('UPDATE eh_locks SET until = ? WHERE session_id = ? AND owner = ?')
-            .run(Date.now() + leaseMs, sessionId, owner)
+          try {
+            sqlite
+              .query('UPDATE eh_locks SET until = ? WHERE session_id = ? AND owner = ?')
+              .run(Date.now() + leaseMs, sessionId, owner)
+          } catch {
+            // the database was closed under a turn that is still unwinding (a stopped server):
+            // nothing to extend any more
+            clearInterval(timer)
+          }
         },
         Math.max(10, Math.floor(leaseMs / 3)),
       )

@@ -37,6 +37,7 @@ import { userDeclinedText } from '../../domain/approvals.ts'
 import { isAllowedMediaType, MAX_UPLOAD_BYTES, mediaTypeOfName } from '../../domain/chat.ts'
 import { reminderKey } from '../../domain/heartbeat.ts'
 import { overlayNote, personNoteLine } from '../../domain/persona.ts'
+import { HAND_OVER_NOTICE, HAND_OVER_REMINDER } from '../../domain/prompts.ts'
 import type { Routine, RoutineSpec } from '../../domain/routines.ts'
 import {
   type ApprovalRow,
@@ -940,6 +941,20 @@ export interface ChannelGateway {
 }
 
 const EVENT_PREFIX = 'ev:'
+/**
+ * The id of the one wake that hands a job over to the background worker after a chat turn ended
+ * `max-steps` (`<prefix><trigger message id>`). It answers the same message as the turn it follows.
+ */
+const HANDOVER_PREFIX = 'handover:'
+/** The chat message an inbox key answers (a message event or its hand-over), or undefined. */
+const triggerOfKey = (key: string | undefined): string | undefined =>
+  key === undefined
+    ? undefined
+    : key.startsWith(EVENT_PREFIX)
+      ? key.slice(EVENT_PREFIX.length)
+      : key.startsWith(HANDOVER_PREFIX)
+        ? key.slice(HANDOVER_PREFIX.length)
+        : undefined
 /** The idempotency prefix of the reply to the wake turn a finished background delegation starts. */
 const REPORT_PREFIX = 'wake:'
 const MAX_ATTACHMENTS = 4
@@ -963,8 +978,9 @@ const FAILURE_NOTICE: Record<string, string> = {
   error:
     'Sorry, I could not answer that: something went wrong while I was working on it. Please try again; if it keeps happening, ask a teammate to check this conversation in the web app.',
   'cost-cap': 'I cannot answer right now: my spending limit is used up.',
-  'max-steps':
-    'I ran out of steps before I could finish that. Please ask again, or split it into smaller parts.',
+  // never "ran out of steps": a chat turn at its cap is handed to the background worker
+  // (`turnEnded`); this line is posted only when that hand-over failed
+  'max-steps': HAND_OVER_NOTICE,
   stuck:
     'I got stuck on this and stopped instead of repeating myself. Please rephrase it or give me more detail.',
   length: 'My answer got cut off. Please ask me to continue.',
@@ -1060,7 +1076,7 @@ const CREDIT_NOTICE =
   'I cannot answer right now: the AI service this team uses has run out of credit. An admin needs to add credit; then ask me again.'
 
 /** Stops whose last words (the wrap-up summary) are worth more than a generic notice. */
-const SAY_WHAT_WAS_DONE: ReadonlySet<string> = new Set(['max-steps', 'stuck', 'length'])
+const SAY_WHAT_WAS_DONE: ReadonlySet<string> = new Set(['stuck', 'length'])
 
 const clip = (text: string, max: number): string =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text
@@ -1114,8 +1130,10 @@ export function triggerIds(
       ...(meta?.collected?.map((c) => c.inboxKey) ?? []),
       ...(meta?.collected === undefined ? [meta?.inboxKey] : []),
     ]
-    for (const key of keys)
-      if (key?.startsWith(EVENT_PREFIX)) out.push(key.slice(EVENT_PREFIX.length))
+    for (const key of keys) {
+      const id = triggerOfKey(key)
+      if (id !== undefined) out.push(id)
+    }
   }
   return out
 }
@@ -2012,10 +2030,33 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   const requesters = new Map<string, Requester>()
+  /** Trigger messages whose turn ended at its step cap and got its one hand-over wake. */
+  const handedOver = new Set<string>()
   /** The chat message a parked turn works for, kept for its continuation (which carries no trigger of its own). */
   const turnTriggers = new Map<string, string>()
   /** The chat message that started a delegation: the report that wakes the lead answers to it (P40). */
-  const delegations = new Map<string, string>()
+  const delegationMem = new Map<string, string>()
+  /**
+   * Kept across restarts (`ch_meta`): a restart in the middle of a background job must not lose who
+   * asked for it, or the report that wakes the lead later would reach nobody.
+   */
+  const DELEGATION_KEY = 'delegation:'
+  const delegations = {
+    get(sessionId: string): string | undefined {
+      const known = delegationMem.get(sessionId)
+      if (known !== undefined) return known
+      const row = deps.sqlite
+        .query<{ value: string }, [string]>('SELECT value FROM ch_meta WHERE key = ?')
+        .get(`${DELEGATION_KEY}${sessionId}`)
+      return row === null ? undefined : row.value
+    },
+    set(sessionId: string, triggerId: string): void {
+      delegationMem.set(sessionId, triggerId)
+      deps.sqlite
+        .query('INSERT OR REPLACE INTO ch_meta (key, value) VALUES (?, ?)')
+        .run(`${DELEGATION_KEY}${sessionId}`, triggerId)
+    },
+  }
   /** Sessions whose turn waits for a foreground delegation: the child sessions it waits for. */
   const parkedChildren = new Map<string, Set<string>>()
   /** Sessions whose running turn was woken by the report of a background delegation (key of the report). */
@@ -2058,9 +2099,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const row = sessions.bySession(sessionId)
     if (row === undefined) return
     if (keys !== undefined) turnStarted(sessionId, keys)
-    const evKeys = (keys ?? [])
-      .filter((k) => k.startsWith(EVENT_PREFIX))
-      .map((k) => k.slice(EVENT_PREFIX.length))
+    const evKeys = (keys ?? []).flatMap((k) => triggerOfKey(k) ?? [])
     let r: Requester | undefined
     let chatTriggered = false
     // a wake turn (no input) is what the report of a finished background delegation starts
@@ -5272,14 +5311,14 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   function turnStarted(sessionId: string, keys: readonly string[]): void {
-    const eventKey = keys.find((k) => k.startsWith(EVENT_PREFIX))
-    if (eventKey === undefined) return
+    const eventId = keys.map(triggerOfKey).find((k) => k !== undefined)
+    if (eventId === undefined) return
     const row = sessions.bySession(sessionId)
     if (row === undefined) return
     const adapter = adapters.get(row.connectionId)
     if (adapter?.typing === undefined) return
     void (async () => {
-      const m = await triggerMessage(row, eventKey.slice(EVENT_PREFIX.length))
+      const m = await triggerMessage(row, eventId)
       const node = m === undefined ? undefined : nodes.get(m.nodeId)
       if (node === undefined || !capsOf(adapter, node).typing) return
       stopTyping(sessionId)
@@ -5359,7 +5398,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const fromWeb =
       turn !== undefined &&
       (turn.kind === 'send' || turn.kind === 'edit' || turn.kind === 'regenerate') &&
-      !(turn.keys ?? []).some((k) => k.startsWith(EVENT_PREFIX))
+      !(turn.keys ?? []).some((k) => triggerOfKey(k) !== undefined)
     return fromWeb ? `${base}\n${WEB_TURN_NOTE}` : base
   }
 
@@ -5406,8 +5445,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const ids = new Set<string>()
     // the senders of the messages that woke this turn, then whoever the turn answers to
     for (const key of keys ?? []) {
-      if (!key.startsWith(EVENT_PREFIX)) continue
-      const m = await triggerMessage(row, key.slice(EVENT_PREFIX.length))
+      const id = triggerOfKey(key)
+      if (id === undefined) continue
+      const m = await triggerMessage(row, id)
       if (m?.senderIdentityId !== undefined) ids.add(m.senderIdentityId)
     }
     const requester = await requesterOf(sessionId)
@@ -5654,6 +5694,27 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       })
     }
     const failure = outOfCredit ? CREDIT_NOTICE : FAILURE_NOTICE[end.stop]
+    // a chat turn that still ended at its step cap: the same session is woken once to hand the
+    // rest of the job to the background worker (one hand-over per trigger message)
+    if (end.stop === 'max-steps' && trigger !== undefined && wakeKey === undefined) {
+      const owner = nodes.get(trigger.nodeId)
+      const ownerScope = owner === undefined ? undefined : scopeOf(owner)
+      if (ownerScope?.delivery === 'final_text' && !handedOver.has(trigger.id)) {
+        handedOver.add(trigger.id)
+        if (handedOver.size > 1000) handedOver.delete(handedOver.values().next().value as string)
+        try {
+          await deps.sessions.enqueue(
+            row.agentId,
+            row.sessionId,
+            { text: HAND_OVER_REMINDER },
+            { mode: 'collect', id: `${HANDOVER_PREFIX}${trigger.id}`, collect },
+          )
+          return
+        } catch (error) {
+          warn(`channels: the hand-over of ${row.sessionId} failed: ${errorText(error)}`)
+        }
+      }
+    }
     if (end.stop !== 'complete' && failure === undefined) return
     if (trigger === undefined) return // not a turn the channel started (a person in the web app)
     if (config === undefined) return

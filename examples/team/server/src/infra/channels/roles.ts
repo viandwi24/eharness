@@ -45,8 +45,11 @@ export const RolePoliciesSchema = z
   .default({})
 export type RolePolicies = z.infer<typeof RolePoliciesSchema>
 
-/** Tools every role has: finding a deferred tool changes nothing. */
-export const ALWAYS_ALLOWED: readonly string[] = ['tool_search']
+/**
+ * Tools every role has: finding a deferred tool changes nothing, and the checkpoint of a long-run
+ * worker job only stores the model's own note.
+ */
+export const ALWAYS_ALLOWED: readonly string[] = ['tool_search', 'long_run_checkpoint']
 
 /** The tools of the layer-1 channel surface a member may use (reads are scoped to their divisions in code). */
 export const MEMBER_TOOLS: readonly string[] = [

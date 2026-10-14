@@ -28,6 +28,7 @@ import type {
   EventAppender,
   TeamPort,
   ThreadStore,
+  WorkerJob,
 } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import type { ApprovalRisk, ApprovalView, QuestionView } from '../../domain/approvals.ts'
@@ -36,7 +37,7 @@ import { deriveTaskStatus, type Task } from '../../domain/tasks.ts'
 import { isThreadSession, legacyThreadSessionId, parseChatSession } from '../../domain/threads.ts'
 import { parseAssignedSession } from '../../domain/work-queue.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
-import { type AgentFactory, WORKER_TYPE } from './agent-factory.ts'
+import { type AgentFactory, isWorkerSession, WORKER_TYPE } from './agent-factory.ts'
 
 /** A turn whose heartbeat is older than this is dead (core default `recovery.staleMs`). */
 const STALE_TURN_MS = 120_000
@@ -53,6 +54,8 @@ export interface ReconcileReport {
   recovered: Array<{ sessionId: string; turnId: string }>
   /** Background children: reports delivered / rows updated by `reconcileBackgroundChildren`. */
   background: Array<BackgroundReconcileEntry & { parentSessionId: string }>
+  /** Long-run worker jobs that were continued (restart, or a lost continuation). */
+  longRun: Array<{ sessionId: string; chunk: number; duplicate: boolean }>
   /** Reports of finished children that no turn of the lead saw and no wake was held for. */
   stranded: Array<{ sessionId: string; messageId: string }>
 }
@@ -214,6 +217,59 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     } catch (error) {
       log.warn(`waking stranded reports of ${sessionId} failed: ${String(error)}`)
     }
+  }
+
+  /**
+   * Boot and every periodic pass: continue the long-run job of every worker session whose task
+   * row is still unfinished. The row index is only the candidate list (a task row of a worker is
+   * `running` between chunks and while a turn runs: `statusFromStop`); the job state in the
+   * session state is the truth, and `resume()` reads it: no job, not running or a live turn is a
+   * no-op, and a repeated call enqueues nothing twice (idempotent ids). This repairs a restart in
+   * the middle of a chunk and a continuation whose enqueue failed between chunks.
+   */
+  async function reconcileLongRun(): Promise<ReconcileReport['longRun']> {
+    const out: ReconcileReport['longRun'] = []
+    for (const task of deps.tasks.active()) {
+      if (!isWorkerSession(task.sessionId)) continue
+      try {
+        const def = defById(task.agentId)
+        if (def === undefined) continue
+        await factory.prepare(def)
+        const result = await factory.longRun.resume(def, task.sessionId)
+        if (result.resumed)
+          out.push({ sessionId: task.sessionId, chunk: result.chunk, duplicate: result.duplicate })
+      } catch (error) {
+        if (!isHarnessError(error, 'EH_SESSION_BUSY'))
+          log.warn(`long-run resume of ${task.sessionId} failed: ${String(error)}`)
+      }
+    }
+    return out
+  }
+
+  async function workerJob(task: Task): Promise<WorkerJob | undefined> {
+    if (!isWorkerSession(task.sessionId)) return undefined
+    const def = defById(task.agentId)
+    if (def === undefined) return undefined
+    const job = await factory.longRun.state(def, task.sessionId)
+    if (job === undefined) return undefined
+    return {
+      status: job.status,
+      chunk: job.chunk,
+      steps: job.steps,
+      costUsd: job.costUsd,
+      startedAt: job.startedAt,
+      updatedAt: job.updatedAt,
+      checkpoint: job.checkpoint ?? null,
+      stopReason: job.stopReason ?? null,
+    }
+  }
+
+  async function stopWorkerJob(task: Task, reason = 'stopped'): Promise<boolean> {
+    if (!isWorkerSession(task.sessionId)) return false
+    const def = defById(task.agentId)
+    if (def === undefined) return false
+    await factory.prepare(def)
+    return factory.longRun.stop(def, task.sessionId, reason)
   }
 
   async function reconcileWaits(): Promise<ReconcileReport['waits']> {
@@ -540,13 +596,17 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     afterLeadAnswer,
     messageTask,
     taskMessages,
+    workerJob,
+    stopWorkerJob,
     async reconcile() {
       const recovered = await recoverOrphans()
+      // before the drift pass, which would mark a worker with a dead turn `interrupted`
+      const longRun = await reconcileLongRun()
       const waits = await reconcileWaits()
       const background = await reconcileBackground()
       const drift = await reconcileDrift()
       const stranded = await reconcileStranded()
-      return { recovered, waits, background, drift, stranded }
+      return { recovered, waits, background, drift, longRun, stranded }
     },
   }
 }

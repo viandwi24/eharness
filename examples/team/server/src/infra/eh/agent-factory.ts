@@ -43,7 +43,15 @@ import { type ActivityStore, activity } from 'eharness/activity'
 import { clock, nowLine } from 'eharness/clock'
 import type { ActivatedConnectors, BuiltinInput } from 'eharness/connectors'
 import { type FileToolName, filesystem } from 'eharness/filesystem'
-import { budgetNotice, stepBudget, trackRefusals } from 'eharness/limits'
+import {
+  budgetNotice,
+  type LongRunPlugin,
+  type LongRunResumeResult,
+  type LongRunState,
+  longRun,
+  stepBudget,
+  trackRefusals,
+} from 'eharness/limits'
 import {
   type AutoClassifier,
   type AutoEvent,
@@ -92,7 +100,7 @@ import {
   toolWarnings,
   WORKER_TOOLS,
 } from '../../domain/programs.ts'
-import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
+import { HAND_OVER_REMINDER, LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
 import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
@@ -152,8 +160,18 @@ export interface TeamLimits {
   maxChildren?: number
   /** Steps a role agent may take per delegated run. Default 25. */
   childMaxTurns?: number
-  /** Hard cap of a background worker turn (the step budget extends up to it). Default 400. */
-  maxWorkerSteps?: number
+  /**
+   * Background workers run as long-run jobs (`longRun`, spec 33 §3): a chain of chunks that ends
+   * when the job is done, stuck, over its cost or duration limit, or stopped by a person.
+   */
+  longRun?: {
+    /** Steps per chunk. Default 80. */
+    chunkSteps?: number
+    /** Stop a job whose estimated cost reaches this (USD). Default 10; 0 = no limit. */
+    maxCostUsd?: number
+    /** Stop a job this long after it started (ms). Default 24 h; 0 = no limit. */
+    maxDurationMs?: number
+  }
   /**
    * The working context window (tokens): the model's own window, at most this. Compaction
    * summarizes at 80 % of it. Default 128 000.
@@ -332,6 +350,15 @@ export interface AgentFactory {
   storage: ReturnType<typeof createStorage>
   /** Cross-process turn lock; pass it as `session(id, { lock })`. */
   lock: SessionLock
+  /**
+   * The long-run job of a worker session (the worker variant of `def`): stored state, stop and
+   * resume (boot and every reconcile pass; idempotent).
+   */
+  longRun: {
+    state(def: AgentDef, sessionId: string): Promise<LongRunState | undefined>
+    stop(def: AgentDef, sessionId: string, reason?: string): Promise<boolean>
+    resume(def: AgentDef, sessionId: string): Promise<LongRunResumeResult>
+  }
   /** Limits of background delegations, for the reconcile pass. */
   background: { timeoutMs: number; startGraceMs: number; waitingReminderMs: number }
   /** Open a session of a definition's agent with the shared lock and runtime (any instance). */
@@ -439,10 +466,11 @@ const FIXED_STEP_ORIGINS: ReadonlySet<string> = new Set([
 
 /**
  * The hard step cap of a turn of this session (0 = never extended): a chat turn 120 steps; a
- * delegated child or an assigned task 200; a background worker `maxWorkerSteps` (default 400).
+ * delegated child or an assigned task 200; a background worker has no cap here (0): it runs as
+ * a long-run job in chunks (`longRun`).
  */
-export function stepCapOf(sessionId: string, hasParent: boolean, maxWorkerSteps = 400): number {
-  if (isWorkerSession(sessionId)) return maxWorkerSteps
+export function stepCapOf(sessionId: string, hasParent: boolean): number {
+  if (isWorkerSession(sessionId)) return 0
   const origin = originOfSession(sessionId, hasParent)
   if (FIXED_STEP_ORIGINS.has(origin)) return 0
   if (hasParent || origin === 'task') return 200
@@ -485,6 +513,9 @@ const WORKER_NOTE = [
   'long intermediate results to files under /library when they are worth keeping. Finish with one report:',
   'what you did, the result itself (complete enough to post), gaps, and the paths of files you wrote.',
   'Do not post to chats yourself unless the brief says so; your main session answers the person.',
+  'A big job runs in chunks: at the end of a chunk you are asked for a checkpoint note (what is done with',
+  'ids and counts, what remains, the exact next step); write it completely, it is all you keep. Never write',
+  'the final report before the whole job is done.',
 ].join('\n')
 
 /**
@@ -528,6 +559,19 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     timeoutMs: deps.limits?.backgroundTimeoutMs ?? 2 * 60 * 60 * 1000,
     startGraceMs: deps.limits?.backgroundStartGraceMs ?? 90_000,
     waitingReminderMs: deps.limits?.backgroundWaitingReminderMs ?? 15 * 60_000,
+  }
+  const longRunTuning = {
+    chunkSteps: deps.limits?.longRun?.chunkSteps ?? 80,
+    maxCostUsd: deps.limits?.longRun?.maxCostUsd ?? 10,
+    maxDurationMs: deps.limits?.longRun?.maxDurationMs ?? 24 * 60 * 60 * 1000,
+  }
+  /** The long-run plugin of the current worker variant of each agent (by definition id). */
+  const longRuns = new Map<string, LongRunPlugin>()
+  const longRunOf = (def: AgentDef): LongRunPlugin => {
+    workerAgentFor(def)
+    const lr = longRuns.get(def.id)
+    if (lr === undefined) throw new Error(`no long-run plugin for agent ${def.id}`)
+    return lr
   }
   const currentSettings = () =>
     deps.settings?.() ?? {
@@ -1036,6 +1080,27 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       return new Set(program === undefined ? [] : runFileTools(program.authority))
     }
 
+    /** The long-run plugin of this worker variant; its controls are kept for stop/resume/state. */
+    const workerLongRun = (): LongRunPlugin => {
+      const lr = longRun({
+        // continuations go through the same lock and runtime as every session of this agent
+        sessions: () => ({
+          session: (id: string) =>
+            (self() as HarnessAgent).session(id, {
+              lock,
+              runtime: { workspaceId, agentId: def.id },
+            }) as HarnessSession,
+        }),
+        state: storage.state,
+        match: (ctx) => isWorkerSession(ctx.session.id),
+        chunkSteps: longRunTuning.chunkSteps,
+        ...(longRunTuning.maxCostUsd > 0 ? { maxCostUsd: longRunTuning.maxCostUsd } : {}),
+        ...(longRunTuning.maxDurationMs > 0 ? { maxDurationMs: longRunTuning.maxDurationMs } : {}),
+      })
+      longRuns.set(def.id, lr)
+      return lr
+    }
+
     const plugins = [
       // memory needs the `fs` service: a bare filesystem plugin when only memory is on. With
       // programs it also defines the file tools (hidden from every session but a program run that
@@ -1116,10 +1181,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       // memory holds durable facts only: no system state, no style notes (hook only)
       memoryDiscipline(),
       // long turns: the base step budget grows while the turn makes progress (hook only)
+      // a turn that reaches its cap hands the rest of the job to the background worker
       stepBudget({
-        cap: (ctx) =>
-          stepCapOf(ctx.session.id, ctx.session.parent !== undefined, deps.limits?.maxWorkerSteps),
+        cap: (ctx) => stepCapOf(ctx.session.id, ctx.session.parent !== undefined),
+        onCap: { reminder: HAND_OVER_REMINDER },
       }),
+      // a worker is one long job: chunks with checkpoints, bounded by cost and time, resumable
+      ...(worker ? [workerLongRun()] : []),
       ...(deps.heartbeat === undefined ? [] : [heartbeat({ intake: deps.heartbeat })]),
       ...(deps.channels === undefined
         ? []
@@ -1552,6 +1620,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     storage,
     lock,
     background: backgroundTuning,
+    longRun: {
+      state: (def, sessionId) => longRunOf(def).state(sessionId),
+      stop: (def, sessionId, reason) => longRunOf(def).stop(sessionId, reason),
+      resume: (def, sessionId) => longRunOf(def).resume(sessionId),
+    },
     modes: {
       autoAvailable,
       resolve: (def, sessionId, parentSessionId) =>

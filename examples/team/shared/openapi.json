@@ -2909,6 +2909,9 @@
           "task": {
             "$ref": "#/components/schemas/Task"
           },
+          "job": {
+            "$ref": "#/components/schemas/WorkerJob"
+          },
           "messages": {
             "type": "array",
             "items": {
@@ -2933,9 +2936,70 @@
         },
         "required": [
           "task",
+          "job",
           "messages",
           "approvals"
         ]
+      },
+      "WorkerJob": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "finished",
+              "stopped"
+            ]
+          },
+          "chunk": {
+            "type": "integer",
+            "description": "The chunk running now (a chunk is up to 80 steps)."
+          },
+          "steps": {
+            "type": "integer",
+            "description": "Model steps of the finished chunks."
+          },
+          "costUsd": {
+            "type": "number",
+            "description": "Estimated cost of the finished chunks."
+          },
+          "startedAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "description": "Last change (the last checkpoint while running)."
+          },
+          "checkpoint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The worker's last checkpoint note."
+          },
+          "stopReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a stopped job stopped: `stuck`, `cost`, `duration`, `stopped` (a person) or a stop of the turn."
+          }
+        },
+        "required": [
+          "status",
+          "chunk",
+          "steps",
+          "costUsd",
+          "startedAt",
+          "updatedAt",
+          "checkpoint",
+          "stopReason"
+        ],
+        "description": "The long-run job of a background worker task; null for any other task."
       },
       "Approval": {
         "type": "object",
@@ -17559,6 +17623,86 @@
           },
           "409": {
             "description": "`TASK_NOT_QUEUED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/stop": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Stop a running background worker job",
+        "description": "Stops the long-run job of a background worker task: the running turn is aborted and no further chunk starts. The worker reports `stopped` to the session that started it. `409 TASK_NOT_RUNNING` when the task has no running job.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`TASK_NOT_RUNNING`",
             "content": {
               "application/json": {
                 "schema": {

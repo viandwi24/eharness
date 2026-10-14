@@ -9,6 +9,7 @@ import {
   listApprovals,
   listTasks,
   messageTask,
+  stopWorkerTask,
 } from '../../app/tasks.ts'
 import {
   acceptTask,
@@ -128,6 +129,23 @@ const cancelTaskRoute = createRoute({
     200: { description: 'The task', content: json(TaskSchema) },
     404: jsonError('Unknown task'),
     409: jsonError('`TASK_NOT_QUEUED`'),
+    ...errorResponses,
+  },
+})
+
+const stopTaskRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/stop',
+  tags: ['tasks'],
+  summary: 'Stop a running background worker job',
+  description:
+    'Stops the long-run job of a background worker task: the running turn is aborted and no further chunk starts. The worker reports `stopped` to the session that started it. `409 TASK_NOT_RUNNING` when the task has no running job.',
+  security,
+  request: { params: TaskIdParam },
+  responses: {
+    200: { description: 'The task', content: json(TaskSchema) },
+    404: jsonError('Unknown task'),
+    409: jsonError('`TASK_NOT_RUNNING`'),
     ...errorResponses,
   },
 })
@@ -306,6 +324,9 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
     )
     .openapi(cancelTaskRoute, (c) =>
       c.json(cancelQueuedTask(deps, c.req.valid('param').id) as never, 200),
+    )
+    .openapi(stopTaskRoute, async (c) =>
+      c.json((await stopWorkerTask(deps, c.req.valid('param').id)) as never, 200),
     )
     .openapi(startTaskRoute, (c) =>
       c.json(startTaskNow(deps, c.req.valid('param').id) as never, 200),

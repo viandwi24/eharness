@@ -27,14 +27,25 @@ export async function getTask(
   task: Task
   messages: ChatMessage[]
   approvals: Awaited<ReturnType<typeof taskApprovals>>
+  job: Awaited<ReturnType<Deps['team']['workerJob']>> | null
 }> {
   const task = deps.tasks.get(id)
   if (task === undefined) throw notFound('task', id)
-  const [messages, approvals] = await Promise.all([
+  const [messages, approvals, job] = await Promise.all([
     isQueuedSession(task.sessionId) ? Promise.resolve([]) : deps.team.taskMessages(task, 200),
     taskApprovals(deps, task),
+    isQueuedSession(task.sessionId) ? Promise.resolve(undefined) : deps.team.workerJob(task),
   ])
-  return { task, messages, approvals }
+  return { task, messages, approvals, job: job ?? null }
+}
+
+/** Stop the long-run job of a background worker task (the report to its parent says `stopped`). */
+export async function stopWorkerTask(deps: Deps, id: string): Promise<Task> {
+  const task = taskOrThrow(deps, id)
+  const stopped = await deps.team.stopWorkerJob(task, 'stopped')
+  if (!stopped)
+    throw conflict('This task has no running background job to stop.', 'TASK_NOT_RUNNING')
+  return deps.tasks.get(id) ?? task
 }
 
 async function taskApprovals(deps: Deps, task: Task) {

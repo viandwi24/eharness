@@ -19,6 +19,7 @@ import {
   remoteMcpConnector,
 } from 'eharness/connectors'
 import { type FileToolName, filesystem } from 'eharness/filesystem'
+import { LONG_RUN_CHECKPOINT_TOOL } from 'eharness/limits'
 import { listRemoteMcpTools, mcpServerSource } from 'eharness/mcp'
 import { memory } from 'eharness/memory'
 import { ehMeta } from 'eharness/providers'
@@ -83,6 +84,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       READ_BRIEFINGS_TOOL,
       // the clock is read-only
       DATETIME_TOOL,
+      // the checkpoint of a long-run worker job only stores the model's own note
+      LONG_RUN_CHECKPOINT_TOOL,
       // an agent's own background worker (a copy of itself): its tool calls keep their own rules;
       // the lead's Team connector modes still win for the lead (most restrictive)
       'agent',

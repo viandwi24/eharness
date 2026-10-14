@@ -131,8 +131,15 @@ export interface SessionFacts {
 }
 
 /** Status of a task session from the stop reason of the last turn (turn end hook). */
+/** The stop of a chunk of a long-run job: the job goes on in the next turn (spec 33 §3). */
+export const LONG_RUN_CHECKPOINT = 'plugin:long-run:checkpoint'
+
 export function statusFromStop(stop: string): TaskStatus {
   if (stop === 'tool-pending') return 'needs_action'
+  // a checkpoint is the end of a chunk, not of the job: the row stays running
+  if (stop === LONG_RUN_CHECKPOINT) return 'running'
+  // the job was stopped by its guard (stuck, cost, duration) or by a person
+  if (stop.startsWith('plugin:long-run:')) return 'stopped'
   if (stop === 'aborted') return 'stopped'
   if (stop === 'interrupted') return 'interrupted'
   if (stop === 'error' || stop === 'timeout') return 'failed'

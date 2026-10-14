@@ -41,6 +41,7 @@
 	import type { ApprovalStanding } from '#lib/approval/chip.js';
 	import TaskInfo from './TaskInfo.svelte';
 	import TaskActions from './TaskActions.svelte';
+	import WorkerJobPanel from './WorkerJobPanel.svelte';
 
 	/**
 	 * Watch (and steer) the session of a delegated task, like the coder's agent page: the full
@@ -59,6 +60,7 @@
 	const task = $derived(detail?.task);
 	const agent = $derived(task ? agentsStore.find(task.agentId) : undefined);
 	const running = $derived(task?.status === 'running');
+	const job = $derived(detail?.job ?? undefined);
 	const messages = $derived(mergeLive((detail?.messages ?? []) as unknown as UIMessage[], liveMessages));
 	// Live approvals (events) win over the ones of the last read.
 	const approvals = $derived.by((): Approval[] => {
@@ -161,6 +163,13 @@
 		if (!task) return;
 		aborting = true;
 		try {
+			// a background worker is a long-run job: stopping it also keeps the next chunk from starting
+			if (job?.status === 'running') {
+				await api.post('/tasks/{id}/stop', { params: { id: task.id } });
+				toast.success('Stopping the job');
+				void load(task.id);
+				return;
+			}
 			const r = await harness.sessions.interrupt(task.sessionId);
 			toast.success(r.target === 'idle' ? 'Nothing was running' : 'Stopping the task');
 			void load(task.id);
@@ -269,6 +278,9 @@
 			{/if}
 		</div>
 	</header>
+	{#if task && job}
+		<WorkerJobPanel taskId={task.id} {job} onChange={() => void load(task.id)} />
+	{/if}
 
 	{#if task}<TaskInfo {task} />{/if}
 

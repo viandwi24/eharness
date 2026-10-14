@@ -58,3 +58,17 @@ export const ROLE_AGENT_NOTE = [
   'Ask the lead with `send_message` (to "main") only when you are blocked; do not message to say',
   'you are done, your report already does that.',
 ].join('\n')
+
+/**
+ * Said to a turn that reached its step cap (`stepBudget` `onCap`) and to a chat turn the gateway
+ * wakes once after a `max-steps` end: the rest of the job goes to the background worker.
+ */
+export const HAND_OVER_REMINDER: string =
+  'Your step budget in this conversation is used up, but the job is not finished. Hand the REST of the job to your background worker now: call the `agent` tool with subagent_type "worker" and a complete brief (the goal, scope, time range, which chat or source, who asked and what the result must look like) that INCLUDES everything you already found or did so far (ids, counts, names, partial results), because the worker starts with an empty context. Then tell the person in one short sentence, in their language, that it continues in the background and that you will report here. Do not write a summary of the unfinished work and do not say you ran out of steps.'
+
+/**
+ * Posted to a chat only when the hand-over of a turn that ran out of steps itself failed: never
+ * "I ran out of steps". English and Indonesian: the one-line notice has no model to pick the language.
+ */
+export const HAND_OVER_NOTICE =
+  "This needs more time: I'll continue in the background and report back here. / Ini butuh waktu lebih lama — saya lanjutkan di latar belakang dan kabari hasilnya di sini."

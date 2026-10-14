@@ -635,7 +635,23 @@ export interface DecisionHandoff {
 }
 
 /** Cross-session reads on eharness sessions (answers are the library's `attention` routes) (implemented in `infra/eh/team-service.ts`). */
+/** The long-run job of a background worker session (`eharness/limits` `longRun`, spec 33 §3). */
+export interface WorkerJob {
+  status: 'running' | 'finished' | 'stopped'
+  chunk: number
+  steps: number
+  costUsd: number
+  startedAt: number
+  updatedAt: number
+  checkpoint: string | null
+  stopReason: string | null
+}
+
 export interface TeamPort {
+  /** The long-run job of a worker task session; undefined for any other task or before its first turn. */
+  workerJob(task: Task): Promise<WorkerJob | undefined>
+  /** Stop a running worker job (the running turn is aborted, no further chunk starts). False when it does not run. */
+  stopWorkerJob(task: Task, reason?: string): Promise<boolean>
   /** Stored messages of a task session (newest `limit`, chronological). */
   taskMessages(task: Task, limit: number): Promise<ChatMessage[]>
   /** Everything waiting for a person, across DM chats and task sessions, on any instance. */

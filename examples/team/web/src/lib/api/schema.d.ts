@@ -3084,6 +3084,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop a running background worker job
+         * @description Stops the long-run job of a background worker task: the running turn is aborted and no further chunk starts. The worker reports `stopped` to the session that started it. `409 TASK_NOT_RUNNING` when the task has no running job.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The task */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `TASK_NOT_RUNNING` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/start": {
         parameters: {
             query?: never;
@@ -14468,11 +14546,30 @@ export interface components {
         } | null;
         TaskDetail: {
             task: components["schemas"]["Task"];
+            job: components["schemas"]["WorkerJob"];
             /** @description The stored messages of the task session (newest 200). */
             messages: (components["schemas"]["UiMessage"] & unknown)[];
             /** @description What the task waits for. */
             approvals: components["schemas"]["Approval"][];
         };
+        /** @description The long-run job of a background worker task; null for any other task. */
+        WorkerJob: {
+            /** @enum {string} */
+            status: "running" | "finished" | "stopped";
+            /** @description The chunk running now (a chunk is up to 80 steps). */
+            chunk: number;
+            /** @description Model steps of the finished chunks. */
+            steps: number;
+            /** @description Estimated cost of the finished chunks. */
+            costUsd: number;
+            startedAt: number;
+            /** @description Last change (the last checkpoint while running). */
+            updatedAt: number;
+            /** @description The worker's last checkpoint note. */
+            checkpoint: string | null;
+            /** @description Why a stopped job stopped: `stuck`, `cost`, `duration`, `stopped` (a person) or a stop of the turn. */
+            stopReason: string | null;
+        } | null;
         Approval: {
             /** @description The approval id, or the tool call id of a question: the `{id}` of `POST /attention/{id}/answer`. */
             id: string;
