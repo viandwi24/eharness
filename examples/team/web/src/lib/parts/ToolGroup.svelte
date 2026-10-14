@@ -3,6 +3,7 @@
 	import { Shimmer } from '#lib/components/ai/shimmer/index.js';
 	import { cn } from '#lib/utils.js';
 	import { groupSummary, type ToolView } from './activity.js';
+	import MediaRefImage from './MediaRefImage.svelte';
 	import ToolPart from './ToolPart.svelte';
 	import type { ApprovalStanding } from '#lib/approval/chip.js';
 
@@ -10,6 +11,14 @@
 
 	let open = $state(false);
 	const summary = $derived(groupSummary(views));
+	// the newest image a tool of the group stored for the person (a browser screenshot)
+	const picture = $derived.by(() => {
+		for (let i = views.length - 1; i >= 0; i--) {
+			const o = views[i]?.output as { type?: unknown; path?: unknown; mediaType?: unknown } | null | undefined;
+			if (o && o.type === 'media-ref' && typeof o.path === 'string' && String(o.mediaType ?? '').startsWith('image/')) return o.path;
+		}
+		return undefined;
+	});
 </script>
 
 <!-- Consecutive tool calls collapse into one line ("Used 3 tools ›"); expanded, one row per call. -->
@@ -30,6 +39,9 @@
 		{#if !open && summary.names}<span class="truncate text-muted-foreground/70">· {summary.names}</span>{/if}
 		<CaretRightIcon class={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-90')} />
 	</button>
+	{#if picture && !open}
+		<div class="mt-2 mb-1"><MediaRefImage path={picture} /></div>
+	{/if}
 	{#if open}
 		<div class="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
 			{#each views as v (v.key)}

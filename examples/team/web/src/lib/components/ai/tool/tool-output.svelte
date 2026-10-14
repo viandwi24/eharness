@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { cn } from "#lib/utils.js";
+	import MediaRefImage from "#lib/parts/MediaRefImage.svelte";
 	import type { HTMLAttributes } from "svelte/elements";
 
 	let {
@@ -9,7 +10,20 @@
 		...restProps
 	}: HTMLAttributes<HTMLDivElement> & { output?: unknown; errorText?: string } = $props();
 
-	const text = $derived(typeof output === "string" ? output : JSON.stringify(output, null, 2));
+	// a tool that stored an image (a browser screenshot) returns a media reference: show the picture
+	type MediaRef = { type: "media-ref"; path: string; mediaType: string; text?: string };
+	const media = $derived(
+		output !== null &&
+			typeof output === "object" &&
+			(output as { type?: unknown }).type === "media-ref" &&
+			typeof (output as { path?: unknown }).path === "string" &&
+			String((output as { mediaType?: unknown }).mediaType ?? "").startsWith("image/")
+			? (output as MediaRef)
+			: undefined
+	);
+	const text = $derived(
+		media ? (media.text ?? "") : typeof output === "string" ? output : JSON.stringify(output, null, 2)
+	);
 	const pre =
 		"m-0 overflow-x-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-[1.6] whitespace-pre text-foreground";
 </script>
@@ -21,6 +35,11 @@
 		</div>
 		{#if errorText}
 			<pre class={cn(pre, "bg-destructive-soft text-destructive-text")}>{errorText}</pre>
+		{:else if media}
+			<div class="flex flex-col gap-2">
+				<MediaRefImage path={media.path} />
+				{#if text}<pre class={pre}>{text}</pre>{/if}
+			</div>
 		{:else}
 			<pre class={pre}>{text}</pre>
 		{/if}
