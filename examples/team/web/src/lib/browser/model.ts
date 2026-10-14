@@ -163,10 +163,11 @@ export function liveUrl(apiBase: string, profileId: string, origin: string): str
 export type Controller = { by: 'agent' | 'human'; holder?: string; since: number; reason?: string };
 
 /** One line of the banner above the live view. */
-export function controllerText(c: Controller | undefined, youId: string | undefined): string {
+export function controllerText(c: Controller | undefined, youId: string | undefined, agentHolds = true): string {
 	if (!c) return 'Connecting…';
 	if (c.by === 'human') return c.holder && c.holder === youId ? 'You are in control. The agent waits.' : `${c.holder ? viewerLabel(c.holder) : 'A person'} is in control.`;
-	return c.reason ? `The agent asked for you: ${c.reason}` : 'The agent controls this browser. You are watching.';
+	if (c.reason) return `The agent asked for you: ${c.reason}`;
+	return agentHolds ? 'The agent controls this browser. You are watching.' : 'No agent is using this browser. You are watching.';
 }
 
 /** Domain lines of the settings box to a list (one per line or comma separated). */

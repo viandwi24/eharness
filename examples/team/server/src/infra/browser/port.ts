@@ -28,6 +28,7 @@ export function createBrowserPort(service: BrowserService): BrowserPort {
     onChange: (listener) => manager.on((e) => listener({ profileId: e.profileId, type: e.type })),
     formatHandBack: (info) => formatHandBack(info),
     runtimes: () => service.runtimes(),
+    remoteRuntime: async () => (await service.remoteRuntime())?.runtime,
     info: () => service.info(),
   }
 }

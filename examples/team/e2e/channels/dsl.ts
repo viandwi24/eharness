@@ -238,6 +238,8 @@ export interface Scenario {
   allowFailedOutbox?: boolean
   /** Per-scenario ceiling for the whole run (ms), default 120 000. */
   timeoutMs?: number
+  /** Longest wait for the world to settle after a step (scripted default 20 s); for long jobs. */
+  settleMaxMs?: number
   tags?: string[]
 }
 
@@ -269,6 +271,8 @@ export interface RunState {
   steps: Array<{ index: number; kind: string; ms: number; error?: string }>
   stepLog: LogLine[]
   lastUpdateId: number
+  /** The scenario's settle limit (`Scenario.settleMaxMs`). */
+  settleMaxMs?: number
   trackerBefore: Json
   /** The latency from each `say` to the bot's first visible reaction (ms; undefined = none). */
   latencies: Array<{ label: string; ms: number | undefined }>
@@ -752,7 +756,7 @@ export async function settleWorld(
 ): Promise<void> {
   const scripted = w.opts.mode === 'scripted'
   const quiet = quietMs ?? (scripted ? 250 : 2500)
-  const max = maxMs ?? (scripted ? 20_000 : 120_000)
+  const max = maxMs ?? run.settleMaxMs ?? (scripted ? 20_000 : 120_000)
   const end = Date.now() + max
   let last = signature(w)
   let since = Date.now()

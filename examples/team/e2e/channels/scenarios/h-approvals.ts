@@ -393,6 +393,8 @@ export const scenarios: Scenario[] = [
   },
   {
     id: 'H-15',
+    // 411 scripted steps: the world settles slowly when the machine is busy (the full suite)
+    settleMaxMs: 90_000,
     category: 'H',
     title: 'A worker job longer than 400 steps runs across chunks and reports once',
     goal: 'A worker has no fixed step cap: it runs as a long-run job in chunks of 80 steps with checkpoints.',

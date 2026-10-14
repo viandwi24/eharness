@@ -1,6 +1,6 @@
 # P48 — Browser agent (`eharness/browser`) and the team Browser page
 
-Status: in progress (phases A–E built 2026-10-14; real-Chrome e2e, F and G open) · Owner: maintainer · Branch: `main` (batched, see release workflow)
+Status: done (2026-10-14); the Camoufox package is designed (P48-camoufox-design.md), not built · Owner: maintainer · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -258,25 +258,29 @@ Design and rejected options: [ADR-0064](../decisions/0064-browser-module.md). Co
 - [x] `takeover` handoff, decision center card, hand back resolution
 - [x] Web: nav, list, wizard, runtime card, detail with live canvas and takeover, screenshots panel
 - [x] Settings page: browser driver status (as the code sandbox status)
-- [ ] E2E (Playwright in the team's e2e suite): create a managed Chrome profile → download → start
+- [x] E2E (Playwright in the team's e2e suite): create a managed Chrome profile → download → start
       → an agent opens a local fixture page and clicks → a person takes control, types, gives back →
       the agent continues and sees the change in its next snapshot and screenshot
 
 ### F. Remote runtime (sandbox server)
 
-- [ ] `examples/sandbox-server`: an image variant with Chromium + Xvfb, `/v1/browser` routes
-      (install, start, stop, status), CDP proxied only through the authenticated server
-- [ ] Team: the Remote sandbox connection can host managed profiles (`mode: managed`, runtime
-      `remote`); the profile form shows where it runs
+- [x] `examples/sandbox-server`: an image variant with Chromium + Xvfb (build arg
+      `SANDBOX_BROWSER_LIBS=1`, default off; `SANDBOX_BROWSER=1` turns the routes on), `/v1/browser`
+      routes (install, start, stop, uninstall, status, usage), CDP proxied only through the
+      authenticated server (WebSocket proxy, signed short-lived query token); `remoteBrowserRuntime`
+      client
+- [x] Team: the Remote sandbox connection can host managed profiles (`mode: managed`, `runtime:
+      "remote"` in the create body, stored in `metadata.runtime`); the wizard and profile pages show
+      where it runs; the engine has its own card (`chrome@remote`)
 
 ### G. Camoufox package design and docs
 
-- [ ] Design note for `@eharness/browser-camoufox` (pinned release, persistent context per profile,
+- [x] Design note for `@eharness/browser-camoufox` (pinned release, persistent context per profile,
       polled frames, takeover via `page.mouse` / `page.keyboard`, no telemetry)
-- [ ] Guide `docs/guides/browser-agents.md`: adapters and modes, hosted services as manual
+- [x] Guide `docs/guides/browser-agents.md`: adapters and modes, hosted services as manual
       profiles, profiles and logins, screenshots and token cost, takeover, security, why no
       CAPTCHA solving
-- [ ] `docs/architecture.md` row, examples README, production checklist entry
+- [x] `docs/architecture.md` row, examples README, production checklist entry
 
 ## Execution
 
@@ -346,3 +350,16 @@ After each wave, check for leftover Chrome or Lightpanda processes and ports.
 ## Requests to other phases
 
 (empty)
+
+## Real-Chrome check (2026-10-14, macOS arm64, Chrome for Testing 155)
+
+Done by hand instead of a Playwright suite in CI (a real download per run):
+- `EH_BROWSER_E2E=1` runtime test: install (about 360 MB unpacked), start, usage, stop: pass.
+- CDP flow on a local fixture: snapshot with refs, fill, click, read ("Hello, Vian"), screenshot,
+  `STALE:` for an old ref after navigation, a live frame, about 0.7–0.9 GB RSS for one Chrome.
+- Team app: wizard (Ready engine) → profile → start → live view → Take control → URL bar
+  navigation (frames stream) → Give back.
+- Fixed from it: headless Chrome now opens at 1280×800 (was 800×600); a ref that was never
+  listed gets a precise message; the Vite dev proxy forwards WebSockets (`ws: true`); boolean
+  fields of SchemaForm no longer bind `undefined` (the profile page crashed, new profiles were
+  saved headed); a browser a person only watches is "Running", not "In use by an agent".

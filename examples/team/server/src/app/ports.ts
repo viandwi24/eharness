@@ -1402,5 +1402,7 @@ export interface BrowserPort {
   /** What the agent is told when a person hands the browser back. */
   formatHandBack(info: { by: string; page?: { url: string; title: string } }): string
   runtimes(): Promise<BrowserRuntimeView[]>
+  /** The runtime of the connected Remote sandbox (`chrome@remote`), undefined when none. */
+  remoteRuntime(): Promise<BrowserRuntimeControl | undefined>
   info(): Promise<BrowserInfo>
 }

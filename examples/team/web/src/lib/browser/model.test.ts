@@ -77,6 +77,7 @@ describe('misc', () => {
 		expect(controllerText(undefined, undefined)).toBe('Connecting…');
 		expect(controllerText({ by: 'human', holder: 'client:1', since: 1 }, 'client:1')).toContain('You are in control');
 		expect(controllerText({ by: 'agent', since: 1, reason: 'log in' }, 'client:1')).toContain('log in');
+		expect(controllerText({ by: 'agent', since: 1 }, 'client:1', false)).toContain('No agent is using');
 	});
 	test('domains', () => {
 		expect(parseDomains('a.com, *.b.com\na.com')).toEqual(['a.com', '*.b.com']);

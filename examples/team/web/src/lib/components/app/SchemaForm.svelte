@@ -94,7 +94,7 @@
 			{/each}
 		</RadioGroup.Root>
 	{:else if c === 'switch'}
-		<Switch id={id(f)} bind:checked={values[f.path] as never} {disabled} aria-label={f.label} />
+		<Switch id={id(f)} checked={values[f.path] === true} onCheckedChange={(v: boolean) => (values[f.path] = v)} {disabled} aria-label={f.label} />
 	{:else if c === 'keyvalue'}
 		<div class="flex flex-col gap-2">
 			{#each rows(f) as row, i (i)}

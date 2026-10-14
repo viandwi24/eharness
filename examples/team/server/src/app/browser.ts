@@ -25,6 +25,16 @@ import type {
 // the route names the viewer through this module (http may not import domain)
 export { viewerName }
 
+/** Runtime id of an adapter's engine on the Remote sandbox: `<adapter>@remote`. */
+export const REMOTE_SUFFIX = '@remote'
+
+/** Where a managed profile runs (`metadata.runtime`; a profile made before the choice runs here). */
+export const runsOn = (p: {
+  mode: Mode
+  metadata?: Record<string, unknown>
+}): 'local' | 'remote' =>
+  p.mode === 'managed' && p.metadata?.runtime === 'remote' ? 'remote' : 'local'
+
 /** The definition id of the Browser connector (`infra/browser/connector.ts`). */
 export const BROWSER_CONNECTOR_ID = 'browser'
 /** Where the library holds the screenshots of the agents (`eharness/browser` default folder). */
@@ -60,6 +70,8 @@ export interface BrowserAdapterView {
   forms: { manual?: BrowserFormSpecView; managed?: BrowserFormSpecView }
   /** The managed runtime of this adapter; null when managed mode is off or the adapter has none. */
   runtime: BrowserRuntimeView | null
+  /** The same engine on the connected Remote sandbox (`<adapter>@remote`); null when none is connected. */
+  remote: BrowserRuntimeView | null
   /** Why a mode is not offered ("managed mode is off on this server"). */
   unavailable: Partial<Record<Mode, string>>
 }
@@ -93,6 +105,9 @@ export async function describeBrowser(deps: Deps): Promise<BrowserOverview> {
       capabilities: a.capabilities,
       forms: b.forms(a.id),
       runtime,
+      remote: a.modes.includes('managed')
+        ? (info.runtimes.find((r) => r.adapter === `${a.id}${REMOTE_SUFFIX}`) ?? null)
+        : null,
       unavailable,
     }
   })
@@ -113,8 +128,10 @@ export type BrowserProfileState =
 export interface BrowserProfileView extends BrowserPublicProfileRecord {
   capabilities: BrowserCapabilitiesView | null
   state: BrowserProfileState
+  /** Where a managed profile runs: this server or the Remote sandbox (`runtime.host`). */
+  runsOn?: 'local' | 'remote'
   /** The managed runtime state, for a managed profile. */
-  runtime?: { state: string; version?: string; error?: string }
+  runtime?: { state: string; version?: string; error?: string; host?: string }
   /** Set while an agent or a person holds the browser. */
   lease?: {
     holder: { kind: 'session' | 'person'; id: string }
@@ -173,7 +190,11 @@ async function viewOf(
 ): Promise<BrowserProfileView> {
   const b = need(deps)
   const pub = b.publicProfile(profile)
-  const runtime = ctx.runtimes.find((r) => r.adapter === profile.adapter)
+  const where = runsOn(profile)
+  const runtime = ctx.runtimes.find(
+    (r) =>
+      r.adapter === (where === 'remote' ? `${profile.adapter}${REMOTE_SUFFIX}` : profile.adapter),
+  )
   const lease = ctx.leases.find((l) => l.profileId === profile.id)
   const running = runtime?.running.includes(profile.id) === true
   let state: BrowserProfileState = 'ready'
@@ -184,7 +205,16 @@ async function viewOf(
     else if (runtime.state === 'error' && runtime.version === undefined) state = 'error'
     else if (running) state = 'running'
   }
-  if (lease !== undefined) state = lease.controller.by === 'human' ? 'controlled' : 'in-use'
+  // a person watching (the live view opened it) is not an agent using it
+  if (lease !== undefined)
+    state =
+      lease.controller.by === 'human'
+        ? 'controlled'
+        : lease.holder.kind === 'session'
+          ? 'in-use'
+          : state === 'ready'
+            ? 'running'
+            : state
   const liveUrl =
     profile.mode === 'manual' && typeof profile.settings.liveUrl === 'string'
       ? profile.settings.liveUrl
@@ -198,6 +228,7 @@ async function viewOf(
     ...pub,
     capabilities: b.capabilities(profile) ?? null,
     state,
+    ...(profile.mode === 'managed' ? { runsOn: where } : {}),
     ...(runtime === undefined
       ? {}
       : {
@@ -205,6 +236,7 @@ async function viewOf(
             state: runtime.state,
             ...(runtime.version === undefined ? {} : { version: runtime.version }),
             ...(runtime.error === undefined ? {} : { error: runtime.error }),
+            ...(runtime.host === undefined ? {} : { host: runtime.host }),
           },
         }),
     ...(lease === undefined
@@ -272,6 +304,8 @@ export interface BrowserProfileCreate {
   settings?: Record<string, unknown> | undefined
   allowDomains?: string[] | undefined
   trusted?: boolean | undefined
+  /** Managed only: run it on this server (default) or on the connected Remote sandbox. */
+  runtime?: 'local' | 'remote' | undefined
 }
 
 function adapterOf(deps: Deps, id: string, mode: Mode) {
@@ -295,6 +329,18 @@ export async function createBrowserProfile(
   const b = need(deps)
   adapterOf(deps, input.adapter, input.mode)
   const settings = await readable(() => b.validate(input.adapter, input.mode, input.settings ?? {}))
+  const remote = input.runtime === 'remote'
+  if (remote) {
+    if (input.mode !== 'managed')
+      throw invalid('Only a managed profile can run on the Remote sandbox.')
+    if (input.adapter !== 'chrome') throw invalid('Only Chrome can run on the Remote sandbox.')
+    if ((await b.remoteRuntime()) === undefined) {
+      throw invalid(
+        'The Remote sandbox is not connected. Connect it in Connectors first.',
+        'REMOTE_UNAVAILABLE',
+      )
+    }
+  }
   const allow = cleanDomains(input.allowDomains)
   const profile = await readable(() =>
     b.profiles.create({
@@ -304,7 +350,7 @@ export async function createBrowserProfile(
       settings,
       ...(allow === undefined || allow.length === 0 ? {} : { allowDomains: allow }),
       ...(input.trusted === true ? { trusted: true } : {}),
-      metadata: { createdBy: 'web' },
+      metadata: { createdBy: 'web', ...(remote ? { runtime: 'remote' } : {}) },
     }),
   )
   return viewOf(deps, profile, await context(deps))
@@ -405,12 +451,20 @@ export async function stopBrowserProfile(deps: Deps, id: string): Promise<Browse
 
 // --- runtimes ---------------------------------------------------------------------------------
 
-function runtimeOf(
+async function runtimeOf(
   deps: Deps,
   adapterId: string,
-): { runtime: BrowserRuntimeControl; label: string } {
-  const adapter = need(deps).adapter(adapterId)
+): Promise<{ runtime: BrowserRuntimeControl; label: string }> {
+  const remote = adapterId.endsWith(REMOTE_SUFFIX)
+  const adapter = need(deps).adapter(remote ? adapterId.slice(0, -REMOTE_SUFFIX.length) : adapterId)
   if (adapter === undefined) throw notFound('browser adapter', adapterId)
+  if (remote) {
+    const runtime = await need(deps).remoteRuntime()
+    if (runtime === undefined) {
+      throw invalid('The Remote sandbox is not connected.', 'REMOTE_UNAVAILABLE')
+    }
+    return { runtime, label: `${adapter.label} on the Remote sandbox` }
+  }
   const runtime = adapter.runtime()
   if (runtime === undefined) {
     throw invalid(
@@ -431,7 +485,7 @@ export async function getBrowserRuntime(
   deps: Deps,
   adapterId: string,
 ): Promise<BrowserRuntimeView> {
-  runtimeOf(deps, adapterId)
+  await runtimeOf(deps, adapterId)
   return runtimeView(deps, adapterId)
 }
 
@@ -443,7 +497,7 @@ export async function installBrowserRuntime(
   deps: Deps,
   adapterId: string,
 ): Promise<BrowserRuntimeView> {
-  const { runtime } = runtimeOf(deps, adapterId)
+  const { runtime } = await runtimeOf(deps, adapterId)
   const now = await runtime.status()
   if (now.state !== 'installing') {
     runtime.install().catch(() => undefined)
@@ -456,7 +510,7 @@ export async function uninstallBrowserRuntime(
   deps: Deps,
   adapterId: string,
 ): Promise<BrowserRuntimeView> {
-  const { runtime, label } = runtimeOf(deps, adapterId)
+  const { runtime, label } = await runtimeOf(deps, adapterId)
   const now = await runtime.status()
   if (now.state === 'installing')
     throw conflict(`${label} is downloading right now`, 'RUNTIME_BUSY')

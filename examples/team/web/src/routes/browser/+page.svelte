@@ -90,7 +90,7 @@
 											<Badge variant={badge.variant}>{badge.label}</Badge>
 											{#if p.trusted}<Badge variant="outline">Trusted</Badge>{/if}
 										</div>
-										<span class="text-xs text-muted-foreground">{p.adapter} · {modeLabel(p.mode)}{p.lease?.page ? ` · ${p.lease.page.title || p.lease.page.url}` : ''}</span>
+										<span class="text-xs text-muted-foreground">{p.adapter} · {modeLabel(p.mode)}{p.runsOn === 'remote' ? ` · on ${p.runtime?.host ?? 'the Remote sandbox'}` : ''}{p.lease?.page ? ` · ${p.lease.page.title || p.lease.page.url}` : ''}</span>
 										<span class="truncate text-xs text-muted-foreground">{p.agents.length ? `Agents: ${p.agents.map((a) => a.name).join(', ')}` : 'No agent uses it yet'}</span>
 									</div>
 								</a>

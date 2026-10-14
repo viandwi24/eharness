@@ -4761,6 +4761,18 @@
             "type": "integer",
             "description": "Profiles with a running engine."
           },
+          "remote": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "host"
+            ],
+            "description": "The connected Remote sandbox that can host managed Chrome profiles."
+          },
           "label": {
             "type": "string",
             "description": "One line for people."
@@ -4847,6 +4859,18 @@
           "error": {
             "type": "string",
             "description": "Why the last download or start failed."
+          },
+          "where": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ],
+            "description": "`remote`: the engine of the connected Remote sandbox (its `adapter` is `<adapter>@remote`, usable in `/browser/runtimes/{adapter}`). Absent: this server."
+          },
+          "host": {
+            "type": "string",
+            "description": "Host of the Remote sandbox (`remote` only)."
           }
         },
         "required": [
@@ -7046,6 +7070,20 @@
               }
             ]
           },
+          "remote": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BrowserRuntime"
+              },
+              {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "The same engine on the connected Remote sandbox (a managed profile can run there: create it with `runtime: \"remote\"`); null when none is connected."
+              }
+            ]
+          },
           "unavailable": {
             "type": "object",
             "properties": {
@@ -7066,6 +7104,7 @@
           "capabilities",
           "forms",
           "runtime",
+          "remote",
           "unavailable"
         ]
       },
@@ -7312,6 +7351,14 @@
             ],
             "description": "`missing`: the managed engine is not downloaded; `ready`; `running`: the engine runs, nobody holds it; `in-use`: an agent holds it; `controlled`: a person controls it."
           },
+          "runsOn": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ],
+            "description": "Managed profiles: `local` runs on this server, `remote` on the Remote sandbox (`runtime.host`)."
+          },
           "runtime": {
             "type": "object",
             "properties": {
@@ -7322,6 +7369,9 @@
                 "type": "string"
               },
               "error": {
+                "type": "string"
+              },
+              "host": {
                 "type": "string"
               }
             },
@@ -7498,6 +7548,14 @@
           },
           "trusted": {
             "type": "boolean"
+          },
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ],
+            "description": "Managed Chrome only: `local` (default) runs on this server, `remote` on the connected Remote sandbox (`BrowserAdapter.remote`). Fixed at creation."
           }
         },
         "required": [

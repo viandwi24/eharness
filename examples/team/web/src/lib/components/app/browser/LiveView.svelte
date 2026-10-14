@@ -13,7 +13,7 @@
 	 * frame pixels), Take control / Give back, keyboard capture while in control, a paste box and a URL bar.
 	 * A hosted provider's own view (`liveUrl`) is an iframe instead. Closing the page hands the browser back.
 	 */
-	let { profileId, liveUrl, autoconnect = true }: { profileId: string; liveUrl?: string; autoconnect?: boolean } = $props();
+	let { profileId, liveUrl, autoconnect = true, agentHolds = true }: { profileId: string; liveUrl?: string; autoconnect?: boolean; agentHolds?: boolean } = $props();
 
 	let canvas = $state<HTMLCanvasElement | null>(null);
 	let frame = $state({ width: 0, height: 0 });
@@ -101,7 +101,7 @@
 		if (err) toast.error(err);
 		else pasteText = '';
 	}
-	const banner = $derived(controllerText(session.controller, session.you?.id));
+	const banner = $derived(controllerText(session.controller, session.you?.id, agentHolds));
 	const asked = $derived(session.controller?.by === 'agent' && !!session.controller.reason);
 </script>
 

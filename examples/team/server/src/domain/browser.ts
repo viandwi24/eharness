@@ -14,6 +14,10 @@ export interface BrowserRuntimeView {
   progress?: { received: number; total?: number }
   /** Profile ids with a running engine. */
   running: string[]
+  /** `remote`: the engine of the connected Remote sandbox (adapter id `chrome@remote`). Absent: this server. */
+  where?: 'local' | 'remote'
+  /** Host of the Remote sandbox for a `remote` runtime. */
+  host?: string
   error?: string
 }
 
@@ -34,6 +38,8 @@ export interface BrowserInfo {
   runtimes: BrowserRuntimeView[]
   /** Profiles with a running engine. */
   running: number
+  /** The connected Remote sandbox that can host managed Chrome profiles. */
+  remote?: { host: string }
   /** One line for people. */
   label: string
 }

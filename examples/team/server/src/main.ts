@@ -36,6 +36,7 @@
  *   TEAM_CODE_REQUIREMENTS   a requirements file: `local` builds the base environment from it (default: use the interpreter as it is)
  *   TEAM_BROWSER_DRIVER   where agents get a browser (the Browser connector, `/browser`): `off` (profiles connect to an existing browser only) | `local` (this server downloads and starts Chrome or Lightpanda for a managed profile). Default `local` when the root is writable, else `off`
  *   TEAM_BROWSER_ROOT   where downloaded engines and the logins of managed profiles live (default `<data dir>/browser`; safe to delete: profiles stay, logins are lost)
+ *                       (with a connected Remote sandbox that runs `SANDBOX_BROWSER=1`, a managed Chrome profile can also be created to run there; needs `local`)
  *   TEAM_BROWSER_XVFB   `1` = headed Chrome on a Linux server without a display (needs `xvfb-run`)
  *   TEAM_BROWSER_MAX    managed or manual browsers open at once (default 4); the Browser page shows each one's memory and CPU and the server's free memory
  *   TZ                default of the team timezone (Settings): the clock of agents, routines, reminders, chats, digest
@@ -125,7 +126,11 @@ import { KEEP_PRIVATE_OPTION, PUBLISH_OPTION } from './infra/artifacts/plugin.ts
 import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
 import { seedBuiltinSkills } from './infra/bigdata/skills.ts'
 import { createBrowserHook } from './infra/browser/hook.ts'
-import { browserConfigFromEnv, createBrowserService } from './infra/browser/index.ts'
+import {
+  type BrowserServiceOptions,
+  browserConfigFromEnv,
+  createBrowserService,
+} from './infra/browser/index.ts'
 import { createBrowserPort } from './infra/browser/port.ts'
 import { createChannelInboxPort, lazyInboxPort } from './infra/channels/admin.ts'
 import { channelApprovalAnswerer, watchPendingChanges } from './infra/channels/attention.ts'
@@ -252,6 +257,8 @@ export interface ServerConfig {
   fetch?: typeof fetch
   /** Poll interval of the change feed shared by providers and connectors (ms, default 1000; 0 = off). */
   changePollMs?: number
+  /** Builds the browser runtime of a connected Remote sandbox (default: the sandbox-server client; tests inject a fake). */
+  browserRemoteRuntime?: BrowserServiceOptions['remoteRuntime']
   /** Lists the tools of a remote MCP server when a connection is tested (tests inject a fake). */
   mcpListTools?: CatalogOptions['listTools']
   /** Public URL of this server (OAuth redirect URI base). Default `TEAM_PUBLIC_URL`, else `http://localhost:4000`. */
@@ -583,6 +590,12 @@ export function compose(config: ServerConfig): Server {
     config: browserConfigFromEnv(config.env ?? process.env, config.dbFile),
     sqlite: conn.sqlite,
     vault,
+    // the Remote sandbox connection can host managed Chrome profiles (`connectors` comes below)
+    remote: async () => connectors.remoteSandboxSettings(),
+    ...(config.browserRemoteRuntime === undefined
+      ? {}
+      : { remoteRuntime: config.browserRemoteRuntime }),
+    ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const connectors = createConnectors({

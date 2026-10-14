@@ -421,6 +421,18 @@ Both runtimes keep one install lock (a second `install` waits for the first), cl
 downloads, and never expose the debugging port beyond loopback. A remote runtime (a sandbox server
 reachable over HTTP) implements the same interface in the app.
 
+Remote runtime (reference: `remoteBrowserRuntime({ baseUrl, token })` in `examples/sandbox-server`).
+The sandbox server runs `chromeRuntime` itself and exposes `/v1/browser` (`status`, `install`
+(background, poll `status`), `start`, `stop`, `uninstall`, `usage`, profile data removal) behind
+its bearer token. `start` returns `cdpUrl: ws(s)://<server>/v1/browser/cdp/<profile>?t=<token>`: a
+WebSocket proxy of the authenticated server to a Chrome that listens on its loopback only. `t` is an
+HMAC-signed, 10-minute token bound to one profile and checked when the socket opens (the bearer
+header is accepted too): WebSocket clients cannot set headers in every runtime, so the URL is a
+credential and, like any `cdpUrl`, is never logged. A remote runtime may instead return
+`RuntimeEndpoint.headers`. The manager calls `start` at every lease, so each lease gets a fresh URL.
+An app that offers both places (the team example) wraps them in one runtime that routes by
+profile; the choice is app data (`profile.metadata.runtime`), not an adapter setting.
+
 ## 7. Manager, leases, live view and takeover
 
 ```ts

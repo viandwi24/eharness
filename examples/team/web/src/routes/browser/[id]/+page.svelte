@@ -74,7 +74,7 @@
 {/snippet}
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-	<PageHeader title={profile?.name ?? 'Browser'} description={profile ? `${profile.adapter} · ${modeLabel(profile.mode)}` : undefined} breadcrumb={[{ label: 'Browser', href: '/browser' }]} backHref="/browser" {actions} />
+	<PageHeader title={profile?.name ?? 'Browser'} description={profile ? `${profile.adapter} · ${modeLabel(profile.mode)}${profile.runsOn === 'remote' ? ` · on ${profile.runtime?.host ?? 'the Remote sandbox'}` : ''}` : undefined} breadcrumb={[{ label: 'Browser', href: '/browser' }]} backHref="/browser" {actions} />
 	<PageBody size="full" class="gap-4">
 		{#if error}
 			<p class="text-sm text-destructive-text" role="alert">{error} <a class="underline underline-offset-4" href="/browser">Back to the list</a></p>
@@ -85,13 +85,14 @@
 				<div class="flex min-w-0 flex-col gap-3">
 					{#if badge}<div class="flex flex-wrap items-center gap-2"><Badge variant={badge.variant}>{badge.label}</Badge>{#if profile.trusted}<Badge variant="outline">Trusted</Badge>{/if}{#if profile.lease?.page}<span class="truncate text-xs text-muted-foreground">{profile.lease.page.title || profile.lease.page.url}</span>{/if}</div>{/if}
 					{#if profile.state === 'missing' || profile.state === 'installing' || (profile.state === 'error' && profile.runtime?.error)}
-						{#if adapter?.runtime}<RuntimeCard adapter={adapter.id} label={adapter.label} runtime={adapter.runtime} onChange={() => void load()} />{:else}<p class="text-sm text-muted-foreground">The engine is not ready ({profile.runtime?.error ?? profile.state}).</p>{/if}
+						{@const engine = profile.runsOn === 'remote' ? adapter?.remote : adapter?.runtime}
+						{#if adapter && engine}<RuntimeCard adapter={engine.adapter} label={profile.runsOn === 'remote' ? `${adapter.label} on ${engine.host ?? 'the Remote sandbox'}` : adapter.label} runtime={engine} onChange={() => void load()} />{:else}<p class="text-sm text-muted-foreground">The engine is not ready ({profile.runtime?.error ?? profile.state}).</p>{/if}
 					{/if}
 					{#if !live}
 						<p class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">This browser has no live view.</p>
 					{:else if usable && !(profile.mode === 'managed' && profile.state === 'ready')}
 						{#key profile.id}
-							<LiveView profileId={profile.id} liveUrl={profile.liveUrl} />
+							<LiveView profileId={profile.id} liveUrl={profile.liveUrl} agentHolds={profile.lease?.holder?.kind === 'session'} />
 						{/key}
 					{:else if usable}
 						<p class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">The browser is not running. Press Start to watch it.</p>

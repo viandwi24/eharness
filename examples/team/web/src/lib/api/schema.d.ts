@@ -16118,6 +16118,10 @@ export interface components {
             runtimes: components["schemas"]["BrowserRuntime"][];
             /** @description Profiles with a running engine. */
             running: number;
+            /** @description The connected Remote sandbox that can host managed Chrome profiles. */
+            remote?: {
+                host: string;
+            };
             /** @description One line for people. */
             label: string;
         };
@@ -16142,6 +16146,13 @@ export interface components {
             running: string[];
             /** @description Why the last download or start failed. */
             error?: string;
+            /**
+             * @description `remote`: the engine of the connected Remote sandbox (its `adapter` is `<adapter>@remote`, usable in `/browser/runtimes/{adapter}`). Absent: this server.
+             * @enum {string}
+             */
+            where?: "local" | "remote";
+            /** @description Host of the Remote sandbox (`remote` only). */
+            host?: string;
         };
         SettingsPatch: {
             /**
@@ -16801,6 +16812,7 @@ export interface components {
                 managed?: components["schemas"]["BrowserForm"];
             };
             runtime: components["schemas"]["BrowserRuntime"] & (Record<string, never> | null);
+            remote: components["schemas"]["BrowserRuntime"] & (Record<string, never> | null);
             /** @description Why a mode is not offered ("Managed mode is off on this server"). */
             unavailable: {
                 manual?: string;
@@ -16891,10 +16903,16 @@ export interface components {
              * @enum {string}
              */
             state: "missing" | "installing" | "ready" | "running" | "in-use" | "controlled" | "error";
+            /**
+             * @description Managed profiles: `local` runs on this server, `remote` on the Remote sandbox (`runtime.host`).
+             * @enum {string}
+             */
+            runsOn?: "local" | "remote";
             runtime?: {
                 state: string;
                 version?: string;
                 error?: string;
+                host?: string;
             };
             /** @description Set while an agent or a person holds the browser. */
             lease?: {
@@ -16944,6 +16962,11 @@ export interface components {
             };
             allowDomains?: string[];
             trusted?: boolean;
+            /**
+             * @description Managed Chrome only: `local` (default) runs on this server, `remote` on the connected Remote sandbox (`BrowserAdapter.remote`). Fixed at creation.
+             * @enum {string}
+             */
+            runtime?: "local" | "remote";
         };
         BrowserProfilePatch: {
             name?: string;

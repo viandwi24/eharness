@@ -30,6 +30,14 @@ export const BrowserRuntimeSchema = z
       .openapi({ description: 'Download progress while `installing`.' }),
     running: z.array(z.string()).openapi({ description: 'Ids of profiles with a running engine.' }),
     error: z.string().optional().openapi({ description: 'Why the last download or start failed.' }),
+    where: z.enum(['local', 'remote']).optional().openapi({
+      description:
+        '`remote`: the engine of the connected Remote sandbox (its `adapter` is `<adapter>@remote`, usable in `/browser/runtimes/{adapter}`). Absent: this server.',
+    }),
+    host: z
+      .string()
+      .optional()
+      .openapi({ description: 'Host of the Remote sandbox (`remote` only).' }),
   })
   .openapi('BrowserRuntime')
 
@@ -66,6 +74,10 @@ export const BrowserAdapterSchema = z
     runtime: BrowserRuntimeSchema.nullable().openapi({
       description: 'The managed runtime (download, version, size); null without a managed mode.',
     }),
+    remote: BrowserRuntimeSchema.nullable().openapi({
+      description:
+        'The same engine on the connected Remote sandbox (a managed profile can run there: create it with `runtime: "remote"`); null when none is connected.',
+    }),
     unavailable: z
       .object({ manual: z.string().optional(), managed: z.string().optional() })
       .openapi({
@@ -91,6 +103,9 @@ export const BrowserInfoSchema = z
     system: BrowserSystemSchema.nullable(),
     runtimes: z.array(BrowserRuntimeSchema),
     running: z.number().int().openapi({ description: 'Profiles with a running engine.' }),
+    remote: z.object({ host: z.string() }).optional().openapi({
+      description: 'The connected Remote sandbox that can host managed Chrome profiles.',
+    }),
     label: z.string().openapi({ description: 'One line for people.' }),
   })
   .openapi('BrowserInfo')
@@ -129,8 +144,17 @@ export const BrowserProfileSchema = z
         description:
           '`missing`: the managed engine is not downloaded; `ready`; `running`: the engine runs, nobody holds it; `in-use`: an agent holds it; `controlled`: a person controls it.',
       }),
+    runsOn: z.enum(['local', 'remote']).optional().openapi({
+      description:
+        'Managed profiles: `local` runs on this server, `remote` on the Remote sandbox (`runtime.host`).',
+    }),
     runtime: z
-      .object({ state: z.string(), version: z.string().optional(), error: z.string().optional() })
+      .object({
+        state: z.string(),
+        version: z.string().optional(),
+        error: z.string().optional(),
+        host: z.string().optional(),
+      })
       .optional(),
     lease: z
       .object({
@@ -163,6 +187,10 @@ export const BrowserProfileCreateSchema = z
     }),
     allowDomains: z.array(z.string()).max(100).optional(),
     trusted: z.boolean().optional(),
+    runtime: z.enum(['local', 'remote']).optional().openapi({
+      description:
+        'Managed Chrome only: `local` (default) runs on this server, `remote` on the connected Remote sandbox (`BrowserAdapter.remote`). Fixed at creation.',
+    }),
   })
   .openapi('BrowserProfileCreate')
 

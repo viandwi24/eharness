@@ -35,11 +35,19 @@
 	let test = $state<{ ok: boolean; version?: string; error?: string } | null>(null);
 	let created = $state<BrowserProfile | null>(null);
 	let runtimeState = $state<string | undefined>();
+	let runsOn = $state<'local' | 'remote'>('local');
 
 	const adapter = $derived(overview.adapters.find((a) => a.id === adapterId));
 	const fields = $derived(mode && adapter ? (adapter.forms[mode]?.fields ?? []) : []);
 	const offered = (a: BrowserAdapter): boolean => a.modes.length > 0;
 	const index = $derived(STEPS.findIndex((s) => s.id === step));
+	/** The engine card shown: this server's, or the Remote sandbox's (`chrome@remote`). */
+	const engine = $derived(runsOn === 'remote' && adapter?.remote ? adapter.remote : adapter?.runtime);
+	const engineId = $derived(adapter ? (runsOn === 'remote' && adapter.remote ? adapter.remote.adapter : adapter.id) : '');
+	function pickRunsOn(where: 'local' | 'remote'): void {
+		runsOn = where;
+		runtimeState = (where === 'remote' ? adapter?.remote : adapter?.runtime)?.state;
+	}
 
 	function pickAdapter(a: BrowserAdapter): void {
 		if (!offered(a)) return;
@@ -53,6 +61,7 @@
 		values = initialValues(adapter?.forms[m]?.fields ?? []);
 		errors = {};
 		test = null;
+		runsOn = 'local';
 		runtimeState = adapter?.runtime?.state;
 		step = 'settings';
 	}
@@ -82,7 +91,7 @@
 		if (!settings || !mode) return;
 		busy = true;
 		try {
-			created = await api.post('/browser/profiles', { body: { name: name.trim(), adapter: adapterId, mode, settings } });
+			created = await api.post('/browser/profiles', { body: { name: name.trim(), adapter: adapterId, mode, settings, ...(mode === 'managed' && runsOn === 'remote' ? { runtime: 'remote' as const } : {}) } });
 			step = 'done';
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not create the profile');
@@ -151,8 +160,22 @@
 		</div>
 		<div class="flex justify-between gap-2"><Button size="sm" variant="ghost" onclick={() => (step = 'adapter')}>Back</Button></div>
 	{:else if step === 'settings' && adapter && mode}
-		{#if mode === 'managed' && adapter.runtime}
-			<RuntimeCard adapter={adapter.id} label={adapter.label} runtime={adapter.runtime} onChange={(r) => (runtimeState = r.state)} />
+		{#if mode === 'managed' && adapter.remote}
+			<div class="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Runs on">
+				<button type="button" role="radio" aria-checked={runsOn === 'local'} onclick={() => pickRunsOn('local')} data-testid="runs-on-local" class="flex flex-col gap-1 rounded-lg border border-border p-3 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-checked:border-brand">
+					<span class="text-sm font-medium">This server</span>
+					<span class="text-xs text-muted-foreground">Chrome runs next to the app.</span>
+				</button>
+				<button type="button" role="radio" aria-checked={runsOn === 'remote'} onclick={() => pickRunsOn('remote')} data-testid="runs-on-remote" class="flex flex-col gap-1 rounded-lg border border-border p-3 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-checked:border-brand">
+					<span class="text-sm font-medium">The Remote sandbox</span>
+					<span class="text-xs text-muted-foreground">Chrome runs on {adapter.remote.host}; the app drives it through the sandbox server.</span>
+				</button>
+			</div>
+		{/if}
+		{#if mode === 'managed' && engine}
+			{#key engineId}
+				<RuntimeCard adapter={engineId} label={runsOn === 'remote' && adapter.remote ? `${adapter.label} on ${adapter.remote.host}` : adapter.label} runtime={engine} onChange={(r) => (runtimeState = r.state)} />
+			{/key}
 			{#if !managedReady}<p class="text-xs text-muted-foreground">Install the engine to continue.</p>{/if}
 		{/if}
 		{#if fields.length > 0}

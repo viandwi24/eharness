@@ -90,6 +90,7 @@ export async function runScenario(s: Scenario): Promise<ScenarioResult> {
     })
     if (s.setup) await s.setup(w)
     const run = newRun(w)
+    if (s.settleMaxMs !== undefined) run.settleMaxMs = s.settleMaxMs
     const deadline = Date.now() + (s.timeoutMs ?? (mode === 'real' ? 240_000 : 60_000))
     for (let i = 0; i < s.steps.length; i++) {
       if (Date.now() > deadline) {

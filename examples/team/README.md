@@ -268,6 +268,38 @@ docker run -d --name team -p 4000:4000 --env-file examples/team/.env -v team-dat
   channel replies) use it.
 - `docker logs team` shows the server log; the container health check calls `/api/health`.
 
+## Browser
+
+The **Browser** page (admin) and the **Browser** connector give agents a real browser
+([guide](../../docs/guides/browser-agents.md), [spec 35](../../docs/specs/35-browser.md),
+[P48](../../docs/plans/P48-browser.md)). A **profile** is a named browser with its own logins.
+
+- `TEAM_BROWSER_DRIVER`: `local` (default when the root is writable) lets this server download and run
+  Chrome or Lightpanda for a **managed** profile; `off` leaves only **manual** profiles (a CDP URL of
+  your own Chrome, a container, or a hosted service such as Browserbase, Kernel or Steel).
+- `TEAM_BROWSER_ROOT` (default `<data dir>/browser`) holds the downloaded engines and each managed
+  profile's logins; deleting it loses logins, not profiles. `TEAM_BROWSER_XVFB=1` runs headed Chrome on a
+  Linux server without a display. `TEAM_BROWSER_MAX` (default 4) browsers at once; the page shows each
+  running profile's memory and CPU and the server's free memory.
+- **Docker.** Chrome needs system libraries; the image installs them when built with
+  `TEAM_BROWSER_LIBS=1` (the default). Build with `--build-arg TEAM_BROWSER_LIBS=0` for a smaller image
+  (manual profiles and Lightpanda still work). `--no-sandbox` is added only inside a container.
+
+Create a profile and give it to an agent:
+
+1. **Browser** page, **New profile**: a name, an adapter (Chrome or Lightpanda), then a mode. Choose
+   **Run it on this server** and press **Download** then **Start**, or **Connect to an existing browser**,
+   fill in the CDP URL (a secret) and press **Test connection**. Add **allowed domains** for a profile
+   that holds a login.
+2. Open the profile's live view, press **Take control**, log in once (2FA included), press **Give back**.
+3. **Connectors**, **Browser**: connect it for one agent and choose the profile (give each agent its own).
+   Acting is **Ask first** by default; an admin can mark the profile **trusted** so acting does not ask.
+
+While an agent works you can watch the page live. **Take control** pauses the agent's acting tools
+(`BUSY:`); **Give back** returns control. When the agent meets a login, CAPTCHA or 2FA it calls
+`browser_request_human`: the turn waits, a takeover card appears in the decision center with **Open
+browser**, and **Give back** resumes it. The library solves no CAPTCHAs.
+
 ## Code sandbox (Python)
 
 The **Files & Sandbox** connector adds `run_python`: the agent writes a script and its data into the

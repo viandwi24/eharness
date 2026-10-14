@@ -137,6 +137,8 @@ export interface ConnectorsRuntime extends ConnectorsPort {
   remoteSandboxStatus(): Promise<
     { host: string; python: string | null; isolated: boolean; label: string } | null | undefined
   >
+  /** URL and token of the connected Remote sandbox (server side only), undefined when none. */
+  remoteSandboxSettings(): Promise<{ url: string; token: string } | undefined>
   /** The workspace's Telegram api_id / api_hash: the environment, else what an admin saved. */
   telegramApp(): Promise<TelegramApp | undefined>
   /** The last activation of an agent, or undefined when it was never prepared. */
@@ -989,6 +991,13 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     accessTokenFor: (connectionId) => service.accessToken(connectionId),
     markNeedsAuth: (connectionId, message) => service.markNeedsAuth(connectionId, message),
     credentialsOf: (connectionId) => service.credentials(connectionId),
+    async remoteSandboxSettings() {
+      const record = (await connections.list()).find(
+        (r) => r.definitionId === REMOTE_SANDBOX_ID && r.status === 'connected',
+      )
+      const { url, token } = (record?.settings ?? {}) as { url?: unknown; token?: unknown }
+      return typeof url === 'string' && typeof token === 'string' ? { url, token } : undefined
+    },
     async remoteSandboxStatus() {
       const record = (await connections.list()).find(
         (r) => r.definitionId === REMOTE_SANDBOX_ID && r.status === 'connected',
