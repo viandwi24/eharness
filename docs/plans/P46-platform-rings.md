@@ -1,6 +1,6 @@
 # P46 — Platform rings: shared modules for four products, toward a stable core
 
-Status: in progress (2026-10-14). Owner: maintainer. Decisions: [ADR-0062](../decisions/0062-platform-rings-and-rule-of-two.md),
+Status: done (2026-10-14); follow-ups in [P47](P47-module-adoption.md). Owner: maintainer. Decisions: [ADR-0062](../decisions/0062-platform-rings-and-rule-of-two.md),
 [ADR-0063](../decisions/0063-scheduler-module.md).
 
 ## Why

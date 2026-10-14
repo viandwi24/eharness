@@ -68,3 +68,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0061](0061-code-sandbox-sync-not-mount.md) | Code sandbox over the virtual file system: sync around each run (incremental by content, compare-and-set write-back), not a mount; packages as a cached environment plus a stored requirement list |
 | [0062](0062-platform-rings-and-rule-of-two.md) | Platform rings (core, official modules, adapters, products) and the rule of two: a capability moves into the library when two products need it |
 | [0063](0063-scheduler-module.md) | `eharness/scheduler`: schedule store port, multi-instance scheduler with deterministic fire ids, no cron dependency; amends 0040 |
+| [0064](0064-browser-module.md) | `eharness/browser` (proposed): adapters over an operation-level connection, own CDP client in core, manual and managed modes, no evasion features, Camoufox as a separate package |

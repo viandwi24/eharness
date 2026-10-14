@@ -65,6 +65,7 @@ is needed and what breaks without it, pointing at real code.
 | 32 | [handoff](specs/32-handoff.md) | `eharness/handoff` (Draft): ask a person, park the turn, resolve from any instance |
 | 33 | [limits](specs/33-limits.md) | `eharness/limits` (Draft): `stepBudget`, `budgetNotice` |
 | 34 | [clock](specs/34-clock.md) | `eharness/clock` (Draft): datetime tool and time-zone arithmetic |
+| 35 | [browser](specs/35-browser.md) | `eharness/browser` (Draft): browser adapters and registry, profiles, CDP connection (snapshot refs, act, screenshots, read), manager with leases, live view and takeover; `eharness/browser/node` runtimes |
 
 ## Status vocabulary
 
