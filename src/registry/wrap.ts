@@ -270,7 +270,7 @@ function cloneableOutput(name: string, output: unknown): unknown {
   }
 }
 
-/** `experimental_refineToolInput` map running the `tool.before` chain, or `undefined`. */
+/** Tool input refinement map (AI SDK `experimental_refineToolInput`, named only in `internal/ai-compat.ts`) running the `tool.before` chain, or `undefined`. */
 export function buildRefinement(
   toolNames: readonly string[],
   deps: ToolWrapDeps,

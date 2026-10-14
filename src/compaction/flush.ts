@@ -19,6 +19,7 @@ import {
   type UIMessageChunk,
 } from 'ai'
 import { HarnessError } from '../errors.ts'
+import { experimentalStreamOptions } from '../internal/ai-compat.ts'
 import { hookFailed, hookTimeoutOf, runHook } from '../internal/hook-run.ts'
 import { describeModel } from '../internal/model.ts'
 import { errorText } from '../internal/util.ts'
@@ -320,9 +321,7 @@ export async function runFlushStage(input: FlushStageInput): Promise<FlushOutcom
             tools,
             toolOrder,
             toolApproval: flushApproval(rt, env.registry.approval),
-            ...(env.registry.refine === undefined
-              ? {}
-              : { experimental_refineToolInput: env.registry.refine }),
+            ...experimentalStreamOptions({ refineToolInput: env.registry.refine }),
             ...(env.toolsContext === undefined ? {} : { toolsContext: env.toolsContext }),
           }
         : {}),

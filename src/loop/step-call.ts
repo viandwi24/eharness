@@ -10,6 +10,7 @@ import {
   toUIMessageStream,
   type UIMessageChunk,
 } from 'ai'
+import { experimentalStreamOptions } from '../internal/ai-compat.ts'
 import { inputWireMessage } from '../messages/input-wire.ts'
 import { observeForSession } from '../models/model-calls.ts'
 import { noCallModel } from '../models/no-call.ts'
@@ -79,12 +80,10 @@ export async function streamStep(st: StepsCtx, req: StepRequest): Promise<StepRu
     abortSignal: st.input.signal,
     ...(cached.providerOptions === undefined ? {} : { providerOptions: cached.providerOptions }),
     ...(st.registry.approval === undefined ? {} : { toolApproval: st.registry.approval }),
-    ...(st.rt.agent.config.approval?.secret === undefined
-      ? {}
-      : { experimental_toolApprovalSecret: st.rt.agent.config.approval.secret }),
-    ...(st.registry.refine === undefined
-      ? {}
-      : { experimental_refineToolInput: st.registry.refine }),
+    ...experimentalStreamOptions({
+      approvalSecret: st.rt.agent.config.approval?.secret,
+      refineToolInput: st.registry.refine,
+    }),
     ...(st.rt.agent.config.repairToolCall === undefined
       ? {}
       : { repairToolCall: st.rt.agent.config.repairToolCall }),
