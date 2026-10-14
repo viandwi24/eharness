@@ -11,6 +11,8 @@ export function createBrowserPort(service: BrowserService): BrowserPort {
   return {
     driver: service.config.driver,
     max: service.config.max,
+    // headed Chrome on Linux needs DISPLAY or Xvfb; macOS and Windows always have a screen
+    windows: service.config.xvfb || process.platform !== 'linux' || Boolean(process.env.DISPLAY),
     profiles: service.profiles,
     adapters: () => registry.list(),
     adapter: (id) => registry.get(id),
@@ -20,7 +22,17 @@ export function createBrowserPort(service: BrowserService): BrowserPort {
     publicProfile: (profile) => registry.publicProfile(profile),
     capabilities: (profile) => manager.capabilities(profile),
     leases: () => manager.status(),
-    start: (id) => manager.start(id),
+    start: async (id) => {
+      const r = await manager.start(id)
+      // the library names the fix in general terms; here it is a profile switch or an env var
+      return !r.ok && r.error.includes('needs a display')
+        ? {
+            ok: false,
+            error:
+              'This server has no display, so Chrome can not run with a window. Turn Headless on in the profile settings (the live view works without a window), or start the server with TEAM_BROWSER_XVFB=1.',
+          }
+        : r
+    },
     stop: (id) => manager.stop(id),
     test: (target) => manager.test(target),
     usage: () => manager.usage(),

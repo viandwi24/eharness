@@ -322,6 +322,23 @@ function adapterOf(deps: Deps, id: string, mode: Mode) {
   return adapter
 }
 
+/**
+ * A managed Chrome here with "Headless" off needs a window: a Linux server without a display would
+ * fail at every start ("headed Chrome on Linux needs a display"), so the profile is refused now.
+ */
+function checkWindow(
+  b: BrowserPort,
+  adapter: string,
+  mode: Mode,
+  settings: Record<string, unknown>,
+) {
+  if (adapter !== 'chrome' || mode !== 'managed' || settings.headless !== false || b.windows) return
+  throw invalid(
+    'This server has no display, so Chrome can not run with a window. Turn Headless on (the live view works without a window), or start the server with TEAM_BROWSER_XVFB=1.',
+    'NO_DISPLAY',
+  )
+}
+
 export async function createBrowserProfile(
   deps: Deps,
   input: BrowserProfileCreate,
@@ -330,6 +347,7 @@ export async function createBrowserProfile(
   adapterOf(deps, input.adapter, input.mode)
   const settings = await readable(() => b.validate(input.adapter, input.mode, input.settings ?? {}))
   const remote = input.runtime === 'remote'
+  if (!remote) checkWindow(b, input.adapter, input.mode, settings)
   if (remote) {
     if (input.mode !== 'managed')
       throw invalid('Only a managed profile can run on the Remote sandbox.')
@@ -382,6 +400,9 @@ export async function updateBrowserProfile(
             patch.settings as Record<string, unknown>,
           ),
         )
+  if (settings !== undefined && runsOn(current) === 'local') {
+    checkWindow(b, current.adapter, current.mode, settings)
+  }
   const result = await readable(() =>
     b.profiles.update(id, {
       ...(patch.name === undefined ? {} : { name: patch.name }),

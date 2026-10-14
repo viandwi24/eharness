@@ -113,6 +113,26 @@ describe('browser routes', () => {
     expect(managed.json.error.code).toBe('MODE_UNAVAILABLE')
   })
 
+  test('a Chrome with a window is refused on a server without a display', async () => {
+    const make = (server: Server) =>
+      call(server, 'POST', '/browser/profiles', {
+        name: 'Headed',
+        adapter: 'chrome',
+        mode: 'managed',
+        settings: { headless: false },
+      })
+    const screen = process.platform !== 'linux' || Boolean(process.env.DISPLAY)
+    const plain = await make(boot())
+    if (screen) expect(plain.status).toBe(201)
+    else {
+      expect(plain.status).toBe(400)
+      expect(plain.json.error.code).toBe('NO_DISPLAY')
+      expect(plain.json.error.message).toContain('Turn Headless on')
+    }
+    // Xvfb gives it a window anywhere
+    expect((await make(boot({ env: { TEAM_BROWSER_XVFB: '1' } }))).status).toBe(201)
+  })
+
   test('profiles: create, redact, edit, trust, delete', async () => {
     const server = boot()
     const created = await call(server, 'POST', '/browser/profiles', {

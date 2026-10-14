@@ -1377,6 +1377,8 @@ export interface BrowserLiveRefusal {
 export interface BrowserPort {
   readonly driver: BrowserDriver
   readonly max: number
+  /** Can a managed Chrome on this server run with a window (a display or `TEAM_BROWSER_XVFB`)? */
+  readonly windows: boolean
   /** Profiles with plain settings (the table holds ciphertext of secret fields). */
   readonly profiles: BrowserProfilesPort
   adapters(): BrowserAdapterInfoView[]

@@ -58,7 +58,10 @@
 	}
 	function pickMode(m: BrowserMode): void {
 		mode = m;
-		values = initialValues(adapter?.forms[m]?.fields ?? []);
+		const fields = adapter?.forms[m]?.fields ?? [];
+		values = initialValues(fields);
+		// a server usually has no screen: a new browser runs without a window unless switched off
+		if (fields.some((f) => f.path === 'headless') && values.headless === undefined) values.headless = true;
 		errors = {};
 		test = null;
 		runsOn = 'local';
