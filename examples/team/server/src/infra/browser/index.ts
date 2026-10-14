@@ -154,6 +154,17 @@ export function createBrowserService(options: BrowserServiceOptions): BrowserSer
     return profile.metadata?.runtime === 'remote' ? 'remote' : 'local'
   }
   const chromeLocal = local ? chromeRuntime({ root: config.root, xvfb: config.xvfb }) : undefined
+  const lightpandaLocal = local ? lightpandaRuntime({ root: config.root }) : undefined
+  // engines an earlier process left running (a restart, `--watch`, a crash) would keep using
+  // memory, and sound, with nobody able to stop them: kill them once at boot
+  for (const rt of [chromeLocal, lightpandaLocal]) {
+    void rt
+      ?.reapOrphans?.()
+      .then((n) => {
+        if (n > 0) options.log?.warn(`browser: stopped ${n} engine(s) left by an earlier run`)
+      })
+      .catch(() => undefined)
+  }
   /**
    * The Chrome runtime of the adapter: this server's, or the Remote sandbox's per profile
    * (`metadata.runtime`). Install, status and uninstall of the adapter card are the local ones;
@@ -198,7 +209,7 @@ export function createBrowserService(options: BrowserServiceOptions): BrowserSer
         }
   const registry = createBrowserRegistry([
     chromeAdapter(chromeRouted === undefined ? {} : { managed: chromeRouted }),
-    lightpandaAdapter(local ? { managed: lightpandaRuntime({ root: config.root }) } : {}),
+    lightpandaAdapter(local ? { managed: lightpandaLocal } : {}),
   ])
   const profiles = sealedBrowserProfiles({
     store: sqliteBrowserProfiles(options.sqlite),

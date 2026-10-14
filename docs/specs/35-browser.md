@@ -252,6 +252,13 @@ stays the one of the session's start. Without a pick and without a default the b
 answer that a profile must be picked. Apps decide who may pick: the team example offers `choose`
 only when an admin did not fix a profile in the agent's Browser connection.
 
+### Leftover engines and sound
+
+Managed Chrome starts with `--mute-audio`: an agent's browser never plays sound on the server.
+`BrowserRuntime.reapOrphans()` (optional; both Node runtimes implement it) kills engines an
+earlier process of the runtime left running (an app restart, a `--watch` reload, a crash), found
+by their pid files and checked by command line; apps call it once at boot.
+
 ### Engine differences handled by the CDP client
 
 - A page target the browser attached by itself (`Target.setAutoAttach` on the browser session) is

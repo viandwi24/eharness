@@ -3,7 +3,7 @@
  * AGPL-3.0: downloaded by the user's server and run unmodified as a separate process, never bundled.
  */
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   diskUsage,
@@ -214,5 +214,14 @@ export function lightpandaRuntime(opts: LightpandaRuntimeOptions): BrowserRuntim
       lastError = undefined
     },
     usage: (id): Promise<ProcessUsage | null> => procs.usage(id, (pid) => processUsage(pid)),
+    async reapOrphans(): Promise<number> {
+      let n = 0
+      const dir = join(opts.root, 'lightpanda', 'run')
+      for (const f of await readdir(dir).catch(() => [] as string[])) {
+        if (!f.endsWith('.pid')) continue
+        if (await reapOrphan(join(dir, f), exe(), opts.os ?? defaultProcessOs)) n++
+      }
+      return n
+    },
   }
 }

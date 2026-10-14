@@ -4,7 +4,7 @@
  */
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   diskUsage,
@@ -97,6 +97,8 @@ const DEFAULT_FLAGS = [
   '--disable-background-networking',
   '--disable-dev-shm-usage',
   '--disable-search-engine-choice-screen',
+  // an agent's browser never plays sound (a page with music would play on the server's speakers)
+  '--mute-audio',
 ]
 
 const REFUSED_PREFIXES = [
@@ -432,5 +434,22 @@ export function chromeRuntime(opts: ChromeRuntimeOptions): BrowserRuntime {
       lastError = undefined
     },
     usage: (id): Promise<ProcessUsage | null> => procs.usage(id, (pid) => processUsage(pid)),
+    async reapOrphans(): Promise<number> {
+      let n = 0
+      const dir = join(opts.root, 'profiles')
+      for (const id of await readdir(dir).catch(() => [] as string[])) {
+        if (!/^[A-Za-z0-9_-]+$/.test(id)) continue
+        const userDataDir = join(dir, id)
+        if (
+          await reapOrphan(
+            join(userDataDir, 'eharness.pid'),
+            userDataDir,
+            opts.os ?? defaultProcessOs,
+          )
+        )
+          n++
+      }
+      return n
+    },
   }
 }

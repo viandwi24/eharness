@@ -75,4 +75,9 @@ export interface BrowserRuntime {
   uninstall?(): Promise<void>
   /** Memory/CPU of a running profile's process tree, `null` when not running or unknown. */
   usage?(profileId: string): Promise<ProcessUsage | null>
+  /**
+   * Kill engines an earlier process of this runtime left running (a restart or a crash of the
+   * app). Call it once at boot. Returns how many it stopped.
+   */
+  reapOrphans?(): Promise<number>
 }

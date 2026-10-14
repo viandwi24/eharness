@@ -453,4 +453,25 @@ describe('systemMemory on macOS', () => {
     expect(parseVmStat(text)).toBe(315 * 16384)
     expect(parseVmStat('garbage')).toBeUndefined()
   })
+
+  test('reapOrphans at boot stops every engine an earlier run left (Chrome profiles)', async () => {
+    const root = await tmp()
+    const dir = join(root, 'profiles', 'prof_1')
+    await mkdir(dir, { recursive: true })
+    await writePidFile(join(dir, 'eharness.pid'), 77)
+    const alive = new Set([77])
+    const killed: number[] = []
+    const os: ProcessOs = {
+      alive: (pid) => alive.has(pid),
+      command: async (pid) => (alive.has(pid) ? `/x/chrome --user-data-dir=${dir}` : undefined),
+      kill: (pid) => {
+        killed.push(pid)
+        alive.delete(pid)
+      },
+      hostname: () => 'h1',
+    }
+    expect(await chromeRuntime({ root, os }).reapOrphans?.()).toBe(1)
+    expect(killed).toEqual([77])
+    expect(await chromeRuntime({ root, os }).reapOrphans?.()).toBe(0)
+  })
 })
