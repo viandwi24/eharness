@@ -47,6 +47,7 @@ export function isHarnessError(e: unknown, code?: HarnessErrorCode): e is Harnes
 | `EH_INPUT_BLOCKED` | `input.submit` blocked the input with `persist: true` (spec 05 §3) |
 | `EH_TURN_TIMEOUT` | the turn hit `loop.turnTimeoutMs` |
 | `EH_CONTEXT_THRASH` | the turn stopped with `'context-thrash'` (level `warning`, spec 06 §4). The warning `W_CONTEXT_THRASH` is emitted at the same moment; see §1.2 |
+| `EH_COST_CAP` | the turn stopped with `'cost-cap'` and the `budgetNotice()` plugin of `eharness/limits` stored a readable notice (level `warning`, spec 33) |
 
 "Run error" = reported through the turn stream and `run.result` (`stop: 'error'`,
 `error.code`, always set), never thrown (spec 05 §2). `ready()` rethrows session-open errors for callers who

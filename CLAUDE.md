@@ -46,7 +46,7 @@ bunx changeset              # add a changeset (required for every user-facing ch
    (`crypto.subtle`, `TextEncoder`, `ReadableStream`).
 4. **Shipped plugins use only the public API.** `src/filesystem/**`, `src/mcp/**`, `src/storage/**`,
    `src/todos/**`, `src/memory/**`, `src/guard/**`, `src/openapi/**`, `src/group/**`, `src/ask/**`,
-   `src/permissions/**`, `src/providers/**`, `src/connectors/**` (also `src/providers/index.ts`, ADR-0049), `src/code/**`, `src/shell/**`, `src/subagent/**`, `src/web/**`, `src/http/**` (also `src/activity/index.ts`, ADR-0059), `src/client/**` (core, `http` and `activity` only as `import type`; runtime imports only `ai`, ADR-0059) and `src/testing/**` may import core only through `src/index.ts`
+   `src/permissions/**`, `src/providers/**`, `src/connectors/**` (also `src/providers/index.ts`, ADR-0049), `src/code/**`, `src/scheduler/**`, `src/identity/**`, `src/channels/**`, `src/handoff/**`, `src/limits/**`, `src/clock/**`, `src/shell/**`, `src/subagent/**`, `src/web/**`, `src/http/**` (also `src/activity/index.ts`, ADR-0059), `src/client/**` (core, `http` and `activity` only as `import type`; runtime imports only `ai`, ADR-0059) and `src/testing/**` may import core only through `src/index.ts`
    (dogfooding, ADR-0008).
 5. **The library ships memory adapters only.** Database/S3/JSON-file adapters are examples in
    `examples/`, never dependencies (ADR-0008).
@@ -95,6 +95,12 @@ src/
   shell/            eharness/shell (Node-only)
   subagent/         eharness/subagent
   code/             eharness/code (code sandbox over the virtual file system, Python first)
+  scheduler/        eharness/scheduler (schedules that fire into sessions across instances; cron parser injected)
+  identity/         eharness/identity (persons, platform accounts, pairing codes, roles by risk)
+  channels/         eharness/channels (chat-platform delivery: rate governor, outbox, mention safety)
+  handoff/          eharness/handoff (ask a person and park the turn; answers resume it from anywhere)
+  limits/           eharness/limits (step budgets, readable budget stops)
+  clock/            eharness/clock (datetime tool and time-zone arithmetic)
   web/              eharness/web
   http/             eharness/http (fetch-style HTTP module: chat, sessions, attention, activity; Web APIs only)
   client/           eharness/client + eharness/client/react (browser counterpart of http; runtime imports only `ai`)

@@ -54,6 +54,12 @@ const subpaths = [
   'web',
   'http',
   'client',
+  'scheduler',
+  'identity',
+  'channels',
+  'handoff',
+  'limits',
+  'clock',
 ]
 /**
  * Documented exceptions (ADR-0049): `eharness/connectors` reuses the generic configuration
@@ -63,7 +69,7 @@ const allowedImports: Record<string, string[]> = {
   connectors: ['providers'],
   http: ['activity'],
   client: ['http', 'activity'],
-  testing: ['activity', 'http'],
+  testing: ['activity', 'http', 'scheduler', 'channels', 'identity', 'handoff'],
 }
 /** Node-only modules (ADR-0036): `node:` built-ins allowed. */
 const nodeOnly = ['filesystem/node.ts', 'filesystem/node/', 'shell/', 'web/node.ts']

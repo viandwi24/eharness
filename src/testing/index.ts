@@ -16,6 +16,10 @@ export {
   budgetLedgerConformance,
 } from './budget-ledger.conformance.ts'
 export {
+  type OutboxStoreUnderTest,
+  outboxStoreConformance,
+} from './channels.conformance.ts'
+export {
   type ConnectionStoreUnderTest,
   type CredentialStoreUnderTest,
   connectionStoreConformance,
@@ -30,6 +34,7 @@ export {
   type FileSystemUnderTest,
   fileSystemConformance,
 } from './file-system.conformance.ts'
+export { handoffStoreConformance } from './handoff.conformance.ts'
 export {
   type HttpConformanceOptions,
   type HttpUnderTest,
@@ -39,6 +44,10 @@ export {
   type IdGeneratorConformanceOptions,
   idGeneratorConformance,
 } from './id-generator.conformance.ts'
+export {
+  type PersonStoreUnderTest,
+  personStoreConformance,
+} from './identity.conformance.ts'
 export {
   type InboxAdapterConformanceOptions,
   inboxAdapterConformance,
@@ -62,6 +71,7 @@ export {
   type ProfileStoreUnderTest,
   profileStoreConformance,
 } from './profile-store.conformance.ts'
+export { scheduleStoreConformance } from './scheduler.conformance.ts'
 export { assertValidUIMessage, schemaCheckedMessages } from './schema-checked-messages.ts'
 export {
   type ScriptedCallOptions,

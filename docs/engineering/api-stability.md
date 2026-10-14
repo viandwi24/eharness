@@ -15,10 +15,12 @@ Everything a user can observe without reading our source:
    | `eharness/mcp` | Accepted (spec 09) | 0.1 | optional peer `@ai-sdk/mcp` |
    | `eharness/todos` | Draft | 0.3 | spec 13 |
    | `eharness/memory` | Draft | 0.4 | spec 14 |
-   | `eharness/guard`, `eharness/group`, `eharness/openapi` | Draft | 0.5 | specs 15-17 |
+   | `eharness/guard`, `eharness/group`, `eharness/openapi` | Deprecated (ADR-0062) | 0.5 | specs 15-17; removed at 1.0 unless a product adopts them |
    | `eharness/permissions`, `eharness/subagent`, `eharness/ask`, `eharness/web` | Draft | 0.7 | specs 18, 20-22 |
    | `eharness/shell` | Draft | 0.7 | spec 19; Node-only (ADR-0036) |
    | `eharness/code` | Draft | 0.9 | spec 28; runtime-neutral |
+| `eharness/scheduler`, `eharness/identity`, `eharness/channels`, `eharness/handoff` | Draft | 0.9 | specs 29-32; ADR-0062, 0063 |
+| `eharness/limits`, `eharness/clock` | Draft | 0.9 | specs 33-34 |
    | `eharness/web/node` | Draft | 0.8 | `nodeResolveHost` for `webFetch`; Node-only (ADR-0036) |
    | `eharness/providers` | Draft | 0.8 | spec 23 |
    | `eharness/connectors` | Draft | 0.8 | spec 24 |

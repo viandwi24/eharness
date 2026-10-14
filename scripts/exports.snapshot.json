@@ -89,6 +89,21 @@
     "ask",
     "pendingQuestions"
   ],
+  "eharness/channels": [
+    "PARK_ALL",
+    "PermanentSendError",
+    "RetryAfter",
+    "abortableSleep",
+    "createOutbox",
+    "createRateGovernor",
+    "hasMentionTokens",
+    "memoryOutboxStore",
+    "mentionToken",
+    "neutralizeHandles",
+    "parseMentionTokens",
+    "plainMentions",
+    "readableMentions"
+  ],
   "eharness/client": [
     "ATTENTION_EVENTS",
     "CONTINUE_TEXT",
@@ -107,6 +122,23 @@
   "eharness/client/react": [
     "chatBridgeOf",
     "createReactBindings"
+  ],
+  "eharness/clock": [
+    "DATETIME_DESCRIPTION",
+    "addDays",
+    "addToMoment",
+    "clock",
+    "diffMoments",
+    "durationWords",
+    "formatInZone",
+    "fromZoned",
+    "isValidTimeZone",
+    "nowLine",
+    "offsetLabel",
+    "parseDate",
+    "parseMoment",
+    "runDatetime",
+    "zonedParts"
   ],
   "eharness/code": [
     "DEFAULT_CODE_IGNORE",
@@ -206,9 +238,47 @@
     "GUARD_UNAVAILABLE",
     "guard"
   ],
+  "eharness/handoff": [
+    "HANDOFF_CANCELLED_TEXT",
+    "HANDOFF_EXPIRED_TEXT",
+    "HANDOFF_TOOL",
+    "cancelHandoff",
+    "expireHandoffs",
+    "formatHandoffAnswer",
+    "handoff",
+    "memoryHandoffStore",
+    "resolveHandoff"
+  ],
   "eharness/http": [
     "createHarnessHttp",
     "openAccess"
+  ],
+  "eharness/identity": [
+    "DEFAULT_CODE_TTL_MS",
+    "DEFAULT_ROLES",
+    "DEFAULT_ROLE_POLICY",
+    "IdentityError",
+    "MAX_PENDING_CODES",
+    "PAIRING_ALPHABET",
+    "PAIRING_CODE_LENGTH",
+    "PERSON_STATUSES",
+    "TOOL_RISKS",
+    "decideByRisk",
+    "generatePairingCode",
+    "hashPairingCode",
+    "isIdentityError",
+    "memoryPersonStore",
+    "normalizePairingCode",
+    "pairingGuard",
+    "resolvePolicy",
+    "resolveRole"
+  ],
+  "eharness/limits": [
+    "STEP_BUDGET_WRAP_UP",
+    "budgetNotice",
+    "defaultBudgetText",
+    "stepBudget",
+    "trackRefusals"
   ],
   "eharness/mcp": [
     "bearerAuthProvider",
@@ -269,6 +339,10 @@
     "validateSettings",
     "webCryptoVault"
   ],
+  "eharness/scheduler": [
+    "createScheduler",
+    "memoryScheduleStore"
+  ],
   "eharness/shell": [
     "BASH_OUTPUT_TOOL",
     "BASH_TOOL",
@@ -314,13 +388,17 @@
     "enablementStoreConformance",
     "fileSystemConformance",
     "flowStoreConformance",
+    "handoffStoreConformance",
     "httpConformance",
     "idGeneratorConformance",
     "inboxAdapterConformance",
     "lockConformance",
     "messageAdapterConformance",
     "multiInstanceConformance",
+    "outboxStoreConformance",
+    "personStoreConformance",
     "profileStoreConformance",
+    "scheduleStoreConformance",
     "schemaCheckedMessages",
     "scriptedModel",
     "scriptedProvider",

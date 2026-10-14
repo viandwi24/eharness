@@ -35,6 +35,7 @@ Status: **Accepted** (v0).
 │ todos · memory · guard · group       reference plugins                           │
 │ providers · connectors               profiles, secrets, setup flows, OAuth       │
 │ activity · http · client (+ /react)  feed, attention queue, routes, browser side │
+│ scheduler · identity · channels · handoff · limits · clock   product modules    │
 │ testing          conformance suites + mock helpers                               │
 └──────────────┬─────────────────────────────────────────────────────────────────────┘
                │
@@ -47,7 +48,7 @@ Status: **Accepted** (v0).
 Dependency direction is strictly downward. Core never imports a subpath module. Subpath modules
 import core only through `src/index.ts` (the exceptions are listed in `scripts/check-imports.ts`:
 `connectors` reuses `providers`, `http` reuses `activity`, `client` imports types of `http` and
-`activity`, and `testing` imports `activity` and `http`).
+`activity`, and `testing` imports `activity`, `http` and the stores of the product modules).
 
 ### 1.1 Source map (`src/`)
 
@@ -67,7 +68,7 @@ import core only through `src/index.ts` (the exceptions are listed in `scripts/c
 | `judge/` | `createJudge` and its restricted transcript renderer (ADR-0060) |
 | `output/` | structured final answers (tool mode and native mode) |
 | `internal/` | leaf helpers with no upward imports: `glob`, `path-segments`, `regex-safety`, `private-host`, `hook-run`, `observe`, `model`, `provider-errors`, `ai-types`, `util` (`errorText`, `isRecord`) |
-| `filesystem/`, `storage/`, `mcp/`, `todos/`, `memory/`, `guard/`, `group/`, `openapi/`, `ask/`, `permissions/`, `shell/`, `subagent/`, `web/`, `providers/`, `connectors/`, `activity/`, `http/`, `client/`, `testing/` | one folder per subpath module, see the table in section 2 |
+| `filesystem/`, `storage/`, `mcp/`, `todos/`, `memory/`, `guard/`, `group/`, `openapi/`, `ask/`, `permissions/`, `shell/`, `subagent/`, `web/`, `providers/`, `connectors/`, `activity/`, `http/`, `client/`, `scheduler/`, `identity/`, `channels/`, `handoff/`, `limits/`, `clock/`, `testing/` | one folder per subpath module, see the table in section 2 |
 
 ### 1.2 Import rules and the core DAG
 
@@ -134,6 +135,12 @@ every entry are a committed snapshot, `scripts/exports.snapshot.json`, derived f
 | `eharness/http` | `src/http/index.ts` | `createHarnessHttp()`, `openAccess`, wire types (spec 26, ADR-0059) |
 | `eharness/client` | `src/client/index.ts` | `createHarnessClient()`, `createHarnessTransport()`, `createChatSession()`, `createActivityFeed()`, `createAttentionList()`, `followSessionStream()`, `describeChatError()`, `HarnessHttpError` (spec 27, ADR-0059); runtime imports only `ai` |
 | `eharness/client/react` | `src/client/react.ts` | `createReactBindings(React)`, `chatBridgeOf()` (no import of `react`) |
+| `eharness/scheduler` | `src/scheduler/index.ts` | `createScheduler()`, `memoryScheduleStore()` (spec 29, ADR-0063) |
+| `eharness/identity` | `src/identity/index.ts` | `memoryPersonStore()`, pairing helpers (`generatePairingCode()`, `hashPairingCode()`, `pairingGuard()`), `resolveRole()`, `decideByRisk()` (spec 30) |
+| `eharness/channels` | `src/channels/index.ts` | `createRateGovernor()`, `createOutbox()`, `memoryOutboxStore()`, `RetryAfter`, `PermanentSendError`, mention tokens (`mentionToken()`, `parseMentionTokens()`, `plainMentions()`, `readableMentions()`, `neutralizeHandles()`) (spec 31) |
+| `eharness/handoff` | `src/handoff/index.ts` | `handoff()` plugin, `resolveHandoff()`, `cancelHandoff()`, `expireHandoffs()`, `memoryHandoffStore()` (spec 32) |
+| `eharness/limits` | `src/limits/index.ts` | `stepBudget()`, `budgetNotice()`, `trackRefusals()` (spec 33) |
+| `eharness/clock` | `src/clock/index.ts` | `clock()` plugin (`datetime` tool) and time-zone helpers (spec 34) |
 | `eharness/testing` | `src/testing/index.ts` | `scriptedModel()`, `scriptedProvider()`, `schemaCheckedMessages()`, `assertValidUIMessage()`, `assertStoredSessionInvariants()`, and the conformance suites (`messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `lockConformance()`, `streamLogConformance()`, `multiInstanceConformance()`, `budgetLedgerConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `activityStoreConformance()`, `httpConformance()`, and the provider and connector store suites) |
 
 Peer dependencies: `ai@^7.0.137`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional

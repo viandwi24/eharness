@@ -59,6 +59,12 @@ is needed and what breaks without it, pointing at real code.
 | 26 | [http](specs/26-http.md) | `eharness/http`: `createHarnessHttp` (chat with resume, steering and interrupt, session reads, attention, activity), one `authorize` hook, wire types, `httpConformance` |
 | 27 | [client](specs/27-client.md) | `eharness/client`: typed fetch client, chat transport, chat session (history, follow, steer, recovery), activity feed (SSE, restart detection), attention list, `Store<T>`; `eharness/client/react` |
 | 28 | [code-plugin](specs/28-code-plugin.md) | `eharness/code` (Draft): `run_python` over the virtual file system (sync in/out, compare-and-set write-back), packages, `syncedSandbox()` |
+| 29 | [scheduler](specs/29-scheduler.md) | `eharness/scheduler` (Draft): schedule store port, multi-instance scheduler, deterministic fire ids, injected cron parser |
+| 30 | [identity](specs/30-identity.md) | `eharness/identity` (Draft): persons, platform accounts by stable id, pairing codes, `resolveRole`, `decideByRisk` |
+| 31 | [channels](specs/31-channels.md) | `eharness/channels` (Draft): rate governor, outbox with retries, dead letter and circuit breaker, mention safety |
+| 32 | [handoff](specs/32-handoff.md) | `eharness/handoff` (Draft): ask a person, park the turn, resolve from any instance |
+| 33 | [limits](specs/33-limits.md) | `eharness/limits` (Draft): `stepBudget`, `budgetNotice` |
+| 34 | [clock](specs/34-clock.md) | `eharness/clock` (Draft): datetime tool and time-zone arithmetic |
 
 ## Status vocabulary
 

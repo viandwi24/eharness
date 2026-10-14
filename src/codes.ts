@@ -42,6 +42,7 @@ export const HARNESS_NOTICE_CODES = [
   'EH_INPUT_BLOCKED',
   'EH_TURN_TIMEOUT',
   'EH_CONTEXT_THRASH',
+  'EH_COST_CAP',
 ] as const
 
 /** Codes of non-fatal warnings (internal list). */
