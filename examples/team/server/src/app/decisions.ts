@@ -471,7 +471,11 @@ async function deliver(deps: Deps, d: Decision, answer: DecisionAnswer): Promise
     deps.decisions.reopen(d.id)
     throw error
   }
-  // stopped, timed out or deleted meanwhile: record that the answer reached nobody
+  return markGone(deps, d)
+}
+
+/** Stopped, timed out or deleted meanwhile: record that the answer reached nobody. */
+function markGone(deps: Deps, d: Decision): never {
   deps.decisions.reopen(d.id)
   const expired = deps.decisions.decide(d.id, {
     status: 'expired',
@@ -481,6 +485,34 @@ async function deliver(deps: Deps, d: Decision, answer: DecisionAnswer): Promise
   })
   changed(deps, expired ?? d, 'decided')
   throw conflict('the run no longer waits for this decision', 'DECISION_EXPIRED')
+}
+
+/** A decision parked on an external wait: answered through `eharness/handoff` (claim and delivery). */
+const isParked = (d: Decision): boolean => d.waitId !== null && d.sessionId !== null
+
+async function answerParked(
+  deps: Deps,
+  d: Decision,
+  input: {
+    status: 'approved' | 'rejected'
+    note: string
+    outcome: DecisionOutcome
+    payload?: Decision['payload']
+    answer: DecisionAnswer
+    beforeDeliver?: () => void
+  },
+): Promise<Decision> {
+  const result = await deps.decisionHandoff.answerParked(d, {
+    ...input,
+    decidedAt: deps.clock.now(),
+  })
+  if (result.kind === 'closed') {
+    throw conflict(`the decision is already ${result.status}`, 'DECISION_CLOSED', {
+      status: result.status,
+    })
+  }
+  if (result.kind === 'gone') return markGone(deps, result.decision)
+  return result.decision
 }
 
 /**
@@ -541,8 +573,18 @@ export async function approveDecision(
     }
     const decision = input.choice ?? 'approved'
     expireIfStale(deps, d)
-    const next = claim(deps, d, 'approved', note, { outcome: { decision } })
-    await deliver(deps, next, answerOf(decision, note, input.by))
+    let next: Decision
+    if (isParked(d)) {
+      next = await answerParked(deps, d, {
+        status: 'approved',
+        note,
+        outcome: { decision },
+        answer: answerOf(decision, note, input.by),
+      })
+    } else {
+      next = claim(deps, d, 'approved', note, { outcome: { decision } })
+      await deliver(deps, next, answerOf(decision, note, input.by))
+    }
     rememberStandDown(deps, next, decision, note)
     changed(deps, next, 'decided')
     return next
@@ -559,17 +601,33 @@ export async function approveDecision(
   const program = getProgram(deps, d.programId)
   await deps.programRunner.prepare(program.agentId)
   if (isEmptyAuthority(granted)) throw invalid('nothing to grant', 'INVALID_DECISION')
-  const next = claim(deps, d, 'approved', note, {
-    outcome: { decision: 'approved', programId: program.id },
-    payload: { ...d.payload, authority: granted },
-  })
-  try {
+  const outcome = { decision: 'approved', programId: program.id }
+  const payload = { ...d.payload, authority: granted }
+  // the program is widened after the claim and before the run is told, so the run can use it at
+  // once; when that fails the decision is open again
+  const widen = (): void => {
     updateProgram(deps, program.id, { authority: mergeAuthority(program.authority, granted) })
-  } catch (error) {
-    deps.decisions.reopen(d.id)
-    throw error
   }
-  await deliver(deps, next, answerOf('approved', note, input.by))
+  let next: Decision
+  if (isParked(d)) {
+    next = await answerParked(deps, d, {
+      status: 'approved',
+      note,
+      outcome,
+      payload,
+      answer: answerOf('approved', note, input.by),
+      beforeDeliver: widen,
+    })
+  } else {
+    next = claim(deps, d, 'approved', note, { outcome, payload })
+    try {
+      widen()
+    } catch (error) {
+      deps.decisions.reopen(d.id)
+      throw error
+    }
+    await deliver(deps, next, answerOf('approved', note, input.by))
+  }
   changed(deps, next, 'decided')
   return next
 }
@@ -672,9 +730,19 @@ export async function rejectDecision(
   mustBeOpen(d)
   const note = checkNote(input.note)
   if (d.kind === 'escalation') expireIfStale(deps, d)
-  const next = claim(deps, d, 'rejected', note, { outcome: { decision: 'rejected' } })
-  if (d.kind !== 'proposal') await deliver(deps, next, answerOf('rejected', note, input.by))
-  else await tellProposer(deps, d, 'rejected', note)
+  let next: Decision
+  if (d.kind !== 'proposal' && isParked(d)) {
+    next = await answerParked(deps, d, {
+      status: 'rejected',
+      note,
+      outcome: { decision: 'rejected' },
+      answer: answerOf('rejected', note, input.by),
+    })
+  } else {
+    next = claim(deps, d, 'rejected', note, { outcome: { decision: 'rejected' } })
+    if (d.kind !== 'proposal') await deliver(deps, next, answerOf('rejected', note, input.by))
+    else await tellProposer(deps, d, 'rejected', note)
+  }
   changed(deps, next, 'decided')
   return next
 }

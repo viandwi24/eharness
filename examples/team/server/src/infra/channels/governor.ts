@@ -4,12 +4,15 @@
  *
  *  - **token buckets** per call class (`read`, `edit`, `admin`) and one over the whole connection
  *    (`global`, sends are charged to it too). A user account is stricter than a bot; both are
- *    overridden by the connection's `rate.governor`.
+ *    overridden by the connection's `rate.governor`. The buckets are the library governor's
+ *    (`eharness/channels`; a class is a function of the connection id, so an override takes effect
+ *    at once).
  *  - **the park state**, shared by everything: a rate limit (HTTP 429 `retry_after`, FLOOD_WAIT_X)
  *    on ANY call parks the whole connection, or only one chat when the error says it is chat
- *    scoped. The outbox reads the same state (`outbound.ts` has no park state of its own).
- *  - **the flood storm**: several rate limits within a window ask the owner of the breaker (the
- *    outbox) to open it.
+ *    scoped. The state is the same library governor's (keys: the connection id and
+ *    `connection\nnode`), the one the library outbox worker parks and defers by.
+ *  - **the flood storm** is the library outbox's: every park is reported to `onPark` (the gateway
+ *    passes it to `outbox.noteRateLimit`), so rate limits of ANY call count toward one storm.
  *  - **the audit**: one record per governed call (what, where, who asked, result, duration); ids
  *    and targets only, never a message body or a secret.
  *
@@ -18,6 +21,7 @@
  * jobs (`patient`) wait for as long as it takes, up to a cap.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { createRateGovernor, type RateClass, type RateGovernor } from 'eharness/channels'
 import type { GovernorOverrides } from './policy.ts'
 import {
   type ChannelAdapter,
@@ -160,19 +164,22 @@ export interface GovernorOptions {
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   audit?: (record: AuditRecord) => void
-  /** A park started (for the activity log). */
+  /** A park started: the activity log, and the flood storm counter (`parkKey` is the key that was parked). */
   onPark?: (event: {
     connectionId: string
+    parkKey: string
     until: number
     scope: 'connection' | 'chat'
     reason: string
     ms: number
   }) => void
-  /** Rate limits piled up within the window: open the breaker. */
-  onStorm?: (event: { connectionId: string; reason: string }) => void
+  /** Rate limits counted by the flood storm detector for the connection (for `state` and `describe`). */
+  floodsOf?: (connectionId: string) => number
 }
 
 export interface Governor {
+  /** The library governor that holds the buckets and the park state (pass it to `createOutbox`). */
+  readonly parks: RateGovernor
   /** Park the connection (or one chat) for `ms`; counts toward the flood storm. */
   park(
     connectionId: string,
@@ -195,11 +202,6 @@ export interface Governor {
   context(): CallContext | undefined
   /** Clear parks and counters (a person fixed the problem). */
   reset(connectionId: string): void
-}
-
-interface Bucket {
-  tokens: number
-  at: number
 }
 
 const PATIENT_CAP_MS = 30 * 60_000
@@ -236,56 +238,36 @@ export function createGovernor(options: GovernorOptions): Governor {
   const now = options.now ?? Date.now
   const sleep =
     options.sleep ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)))
-  const buckets = new Map<string, Bucket>()
-  const parkedUntil = new Map<string, { until: number; reason: string }>()
-  const chatParked = new Map<string, number>()
-  const floods = new Map<string, number[]>()
+  type BucketClass = 'read' | 'edit' | 'admin' | 'global'
+  const bucketRule =
+    (cls: BucketClass) =>
+    (connectionId: string): RateClass => {
+      const l = options.limitsOf(connectionId)[cls]
+      return { capacity: l.burst, refillPerSec: l.perMinute / 60 }
+    }
+  /** Buckets (keyed by connection id) and parks (the connection id, `connection\nnode`) in one library governor. */
+  const parks = createRateGovernor({
+    classes: {
+      read: bucketRule('read'),
+      edit: bucketRule('edit'),
+      admin: bucketRule('admin'),
+      global: bucketRule('global'),
+    },
+    now,
+    sleep: (ms): Promise<void> => sleep(ms),
+  })
+  const parkOf = (connectionId: string): { until: number; reason: string } | undefined =>
+    parks.state().parks.find((p) => p.key === connectionId)
   const seen = new WeakSet<object>()
 
-  const bucketOf = (connectionId: string, cls: 'read' | 'edit' | 'admin' | 'global'): Bucket => {
-    const key = `${connectionId}\n${cls}`
-    let b = buckets.get(key)
-    if (b === undefined) {
-      b = { tokens: options.limitsOf(connectionId)[cls].burst, at: now() }
-      buckets.set(key, b)
-    }
-    return b
-  }
-  const refill = (b: Bucket, limit: BucketLimit): void => {
-    const t = now()
-    b.tokens = Math.min(limit.burst, b.tokens + ((t - b.at) * limit.perMinute) / 60_000)
-    b.at = t
-  }
-  /**
-   * Milliseconds until a token is in the bucket (0 = now). A patient background job also leaves
-   * `reserve` tokens behind, so a tool call is never starved by a backfill.
-   */
-  const waitOf = (
-    connectionId: string,
-    cls: 'read' | 'edit' | 'admin' | 'global',
-    patient = false,
-  ): number => {
-    const limit = options.limitsOf(connectionId)[cls]
-    const b = bucketOf(connectionId, cls)
-    refill(b, limit)
-    const need = 1 + (patient ? Math.min(2, limit.burst - 1) : 0)
-    if (b.tokens >= need) return 0
-    return Math.ceil(((need - b.tokens) * 60_000) / limit.perMinute)
-  }
-  const take = (connectionId: string, cls: 'read' | 'edit' | 'admin' | 'global'): void => {
-    const b = bucketOf(connectionId, cls)
-    refill(b, options.limitsOf(connectionId)[cls])
-    b.tokens -= 1
-  }
   const classBucket = (cls: CallClass): 'read' | 'edit' | 'admin' | undefined =>
     cls === 'send' ? undefined : cls
 
   const parkedFor = (connectionId: string, chatKey?: string): number => {
-    const t = now()
     return Math.max(
       0,
-      (parkedUntil.get(connectionId)?.until ?? 0) - t,
-      chatKey === undefined ? 0 : (chatParked.get(chatKey) ?? 0) - t,
+      parks.parkedFor(connectionId),
+      chatKey === undefined ? 0 : parks.parkedFor(chatKey),
     )
   }
 
@@ -297,34 +279,17 @@ export function createGovernor(options: GovernorOptions): Governor {
     const wait = Math.max(1, Math.ceil(ms))
     const until = now() + wait
     const reason = opts.reason ?? 'rate limited by the platform'
-    if (opts.chatKey === undefined) {
-      const current = parkedUntil.get(connectionId)
-      if (current === undefined || current.until < until)
-        parkedUntil.set(connectionId, { until, reason })
-    } else {
-      chatParked.set(opts.chatKey, Math.max(chatParked.get(opts.chatKey) ?? 0, until))
-    }
+    const parkKey = opts.chatKey ?? connectionId
+    // a park only extends; it expires by itself
+    parks.park(parkKey, until, reason)
     options.onPark?.({
       connectionId,
+      parkKey,
       until,
       scope: opts.chatKey === undefined ? 'connection' : 'chat',
       reason,
       ms: wait,
     })
-    // the storm: rate limits piling up within the window
-    const limits = options.limitsOf(connectionId)
-    const list = (floods.get(connectionId) ?? []).filter(
-      (x) => x > now() - limits.floodStorm.windowMs,
-    )
-    list.push(now())
-    floods.set(connectionId, list)
-    if (list.length >= limits.floodStorm.count) {
-      floods.set(connectionId, [])
-      options.onStorm?.({
-        connectionId,
-        reason: `${list.length} rate limits within ${Math.max(1, Math.round(limits.floodStorm.windowMs / 60_000))} minutes`,
-      })
-    }
   }
 
   const rateLimitOf = (
@@ -374,6 +339,7 @@ export function createGovernor(options: GovernorOptions): Governor {
   }
 
   return {
+    parks,
     park,
     noteError(connectionId, error, chatKey) {
       const rl = rateLimitOf(error, undefined)
@@ -386,9 +352,9 @@ export function createGovernor(options: GovernorOptions): Governor {
     },
     parkedFor,
     charge(connectionId, cls = 'send') {
-      take(connectionId, 'global')
+      parks.charge('global', connectionId)
       const own = classBucket(cls)
-      if (own !== undefined) take(connectionId, own)
+      if (own !== undefined) parks.charge(own, connectionId)
     },
     async call(meta, op) {
       const startedAt = now()
@@ -401,10 +367,12 @@ export function createGovernor(options: GovernorOptions): Governor {
         // a send (the outbox waited already) and the gateway's own lookups are charged, never held
         if (meta.noWait === true) break
         const parked = parkedFor(meta.connectionId, meta.chatKey)
+        // a patient background job leaves tokens behind, so a tool call is never starved by a backfill
+        const patient = meta.patient === true ? { reserve: 2 } : undefined
         const need = Math.max(
           parked,
-          waitOf(meta.connectionId, 'global', meta.patient === true),
-          own === undefined ? 0 : waitOf(meta.connectionId, own, meta.patient === true),
+          parks.waitFor('global', meta.connectionId, 1, patient),
+          own === undefined ? 0 : parks.waitFor(own, meta.connectionId, 1, patient),
         )
         if (need <= 0) break
         if (waited + need > bound) {
@@ -412,7 +380,7 @@ export function createGovernor(options: GovernorOptions): Governor {
           const limited = new GovernorLimited(
             `rate limited, retry in ${seconds(need)} s (${
               parked > 0
-                ? (parkedUntil.get(meta.connectionId)?.reason ?? 'the platform asked to slow down')
+                ? (parkOf(meta.connectionId)?.reason ?? 'the platform asked to slow down')
                 : `too many ${meta.cls === 'read' ? 'reads' : meta.cls === 'send' ? 'sends' : `${meta.cls} calls`} for this connection`
             })`,
             need,
@@ -424,8 +392,8 @@ export function createGovernor(options: GovernorOptions): Governor {
         await sleep(Math.ceil(need))
         waited += need
       }
-      take(meta.connectionId, 'global')
-      if (own !== undefined) take(meta.connectionId, own)
+      parks.charge('global', meta.connectionId)
+      if (own !== undefined) parks.charge(own, meta.connectionId)
       const slot: { context?: CallContext; failed?: string } =
         context === undefined ? {} : { context }
       try {
@@ -456,19 +424,19 @@ export function createGovernor(options: GovernorOptions): Governor {
     state(connectionId) {
       const limits = options.limitsOf(connectionId)
       const t = now()
-      const left = (cls: 'read' | 'edit' | 'admin' | 'global'): number => {
-        const b = bucketOf(connectionId, cls)
-        refill(b, limits[cls])
-        return Math.max(0, Math.floor(b.tokens))
+      const tokens = parks.state().buckets
+      const left = (cls: BucketClass): number => {
+        const b = tokens.find((x) => x.class === cls && x.key === connectionId)
+        return Math.max(0, Math.floor(b?.tokens ?? limits[cls].burst))
       }
-      const p = parkedUntil.get(connectionId)
+      const p = parkOf(connectionId)
       return {
         ...(p !== undefined && p.until > t ? { parkedUntil: p.until, parkedReason: p.reason } : {}),
-        chats: [...chatParked.entries()]
-          .filter(([k, until]) => k.startsWith(`${connectionId}\n`) && until > t)
-          .map(([chatKey, until]) => ({ chatKey, until })),
-        floods: (floods.get(connectionId) ?? []).filter((x) => x > t - limits.floodStorm.windowMs)
-          .length,
+        chats: parks
+          .state()
+          .parks.filter((k) => k.key.startsWith(`${connectionId}\n`) && k.until > t)
+          .map((k) => ({ chatKey: k.key, until: k.until })),
+        floods: options.floodsOf?.(connectionId) ?? 0,
         buckets: {
           read: left('read'),
           edit: left('edit'),
@@ -505,12 +473,9 @@ export function createGovernor(options: GovernorOptions): Governor {
     },
     context: () => store.getStore()?.context,
     reset(connectionId) {
-      parkedUntil.delete(connectionId)
-      floods.delete(connectionId)
-      for (const key of [...chatParked.keys()])
-        if (key.startsWith(`${connectionId}\n`)) chatParked.delete(key)
-      for (const key of [...buckets.keys()])
-        if (key.startsWith(`${connectionId}\n`)) buckets.delete(key)
+      for (const p of parks.state().parks)
+        if (p.key === connectionId || p.key.startsWith(`${connectionId}\n`)) parks.unpark(p.key)
+      parks.resetBuckets(connectionId)
     },
   }
 }

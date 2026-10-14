@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createOutbox, memoryOutboxStore } from 'eharness/channels'
 import { webCryptoVault } from 'eharness/providers'
 import { scriptedModel } from 'eharness/testing'
 import { z } from 'zod'
@@ -52,18 +53,43 @@ const LIMITS: GovernorLimits = {
   floodStorm: { count: 3, windowMs: 60_000 },
 }
 
+/** The library outbox is the flood storm detector the gateway wires to the governor's parks. */
+function stormBox(
+  c: ReturnType<typeof clock>,
+  limits: GovernorLimits,
+  onStorm: (count: number, connectionId: string) => void,
+) {
+  return createOutbox({
+    store: memoryOutboxStore(),
+    send: async () => null,
+    now: c.now,
+    floodStorm: {
+      count: () => limits.floodStorm.count,
+      windowMs: () => limits.floodStorm.windowMs,
+      stormKey: (parkKey) => parkKey.split('\n')[0] ?? parkKey,
+    },
+    onEvent: (e) => {
+      if (e.type === 'storm') onStorm(e.count, e.target)
+    },
+  })
+}
+
 function make(limits: GovernorLimits = LIMITS) {
   const c = clock()
   const audits: AuditRecord[] = []
   const parks: Array<{ scope: string; ms: number }> = []
   const storms: string[] = []
+  const box = stormBox(c, limits, (count) => storms.push(`${count} rate limits`))
   const governor = createGovernor({
     limitsOf: () => limits,
     now: c.now,
     sleep: c.sleep,
     audit: (r) => audits.push(r),
-    onPark: (e) => parks.push({ scope: e.scope, ms: e.ms }),
-    onStorm: (e) => storms.push(e.reason),
+    onPark: (e) => {
+      parks.push({ scope: e.scope, ms: e.ms })
+      box.noteRateLimit(e.parkKey, e.ms)
+    },
+    floodsOf: (id) => box.floods(id),
   })
   return { c, audits, parks, storms, governor }
 }
@@ -199,11 +225,12 @@ describe('governor: one park state', () => {
 
   test('the outbox waits on the governor park and its flood storm opens the breaker', async () => {
     const c = clock()
+    const box = stormBox(c, LIMITS, (_count, id) => outbound.open(id, 'a flood storm'))
     const governor = createGovernor({
       limitsOf: () => LIMITS,
       now: c.now,
       sleep: c.sleep,
-      onStorm: (e) => outbound.open(e.connectionId, e.reason),
+      onPark: (e) => box.noteRateLimit(e.parkKey, e.ms),
     })
     const outbound = createOutbound({
       limitsOf: () => RateLimitsSchema.parse({ chatMinIntervalMs: 0 }),

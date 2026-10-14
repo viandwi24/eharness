@@ -21,6 +21,16 @@ import {
   type Answer as QuestionAnswer,
   type Question as QuestionSpec,
 } from 'eharness/ask'
+import {
+  createOutbox,
+  type Json,
+  type Outbox,
+  type OutboxRecord,
+  PermanentSendError,
+  RetryAfter,
+  SkipSend,
+} from 'eharness/channels'
+import { pairingGuard, resolveRole as resolveDirectoryRole } from 'eharness/identity'
 import type { SecretVault } from 'eharness/providers'
 import type { EventAppender, NewRoutine, RoutinePatch, ThreadStore } from '../../app/ports.ts'
 import { userDeclinedText } from '../../domain/approvals.ts'
@@ -1235,13 +1245,16 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const proactiveStore: ProactiveStore = sqliteProactiveStore(deps.sqlite, deps.vault)
   const sessions = sqliteSessionStore(deps.sqlite)
   const log = sqliteChannelLog(deps.sqlite, deps.vault)
-  const outbox = sqliteOutboxStore(deps.sqlite, deps.vault)
   const approvals = sqliteApprovalStore(deps.sqlite)
   const events: EventStore = sqliteEventStore(deps.sqlite)
   const unknownReplied = new Map<string, number>()
   const retryBaseMs = deps.delivery?.retryBaseMs ?? 5000
   const retryMaxMs = deps.delivery?.retryMaxMs ?? 300_000
   const maxDeliveryAttempts = deps.delivery?.maxAttempts ?? 10
+  const outbox = sqliteOutboxStore(deps.sqlite, deps.vault, {
+    now,
+    defaultMaxAttempts: maxDeliveryAttempts,
+  })
   let stopped = false
   const adapters = new Map<string, ChannelAdapter>()
   const cache = new Map<string, ConnectionConfig>(configs.list().map((c) => [c.connectionId, c]))
@@ -1306,14 +1319,17 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     ...(deps.outbound?.now === undefined ? {} : { now: deps.outbound.now }),
     ...(deps.outbound?.sleep === undefined ? {} : { sleep: deps.outbound.sleep }),
     audit: auditCall,
-    onPark: ({ connectionId, ms, scope, reason }) =>
+    onPark: ({ connectionId, parkKey, ms, scope, reason }) => {
       activity({
         connectionId,
         type: 'parked',
         reason: clip(reason, 160),
         detail: { scope, seconds: Math.max(1, Math.ceil(ms / 1000)) },
-      }),
-    onStorm: ({ connectionId, reason }) => outbound.open(connectionId, reason),
+      })
+      // rate limits of every call (reads, edits, sends) count toward the one flood storm
+      workerOf(connectionId).noteRateLimit(parkKey, ms)
+    },
+    floodsOf: (connectionId) => queues.get(connectionId)?.worker.floods(connectionId) ?? 0,
   })
   const outbound: Outbound = createOutbound({
     limitsOf,
@@ -1321,6 +1337,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     ...(deps.outbound?.now === undefined ? {} : { now: deps.outbound.now }),
     ...(deps.outbound?.sleep === undefined ? {} : { sleep: deps.outbound.sleep }),
     onWarn: warn,
+    // the library worker stops claiming a paused connection's rows (no attempt is used) and resumes with it
+    onTrip: ({ connectionId, reason, until }) =>
+      queues.get(connectionId)?.worker.openBreaker(connectionId, until, reason),
+    onReset: (connectionId) => queues.get(connectionId)?.worker.resetBreaker(connectionId),
     onBreaker: ({ connectionId, reason }) => {
       const config = cache.get(connectionId)
       warn(`channels: ${connectionId} paused: ${reason}`)
@@ -1546,6 +1566,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return node
   }
 
+  const NO_ROLE = '\0none'
   const resolveIdentityRole = (
     connectionId: string,
     id: IdentityRow,
@@ -1553,12 +1574,25 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   ): RoleResolution & { entry: PersonEntry | undefined; person?: Person | undefined } => {
     const config = cache.get(connectionId)
     const linked = personOf(id)
-    // a suspended person (or one who left) acts as a guest on every account, never more
-    if (linked !== undefined && linked.person.status !== 'active') {
-      return { role: 'guest', source: 'directory', entry: undefined, person: linked.person }
-    }
     // a linked account takes the person's role and divisions only (no role: the chat default); the
     // per-account entry of before P43 counts only for an account that belongs to no person
+    const legacy = linked === undefined ? people.get(id.id) : undefined
+    // the directory rule of `eharness/identity`: a suspended person (or one who left) acts as a
+    // guest on every account, never more; a linked person's role; no person: the legacy entry.
+    // `NO_ROLE` stands for "the directory says nothing", so the gateway's own steps decide.
+    const directory = resolveDirectoryRole({
+      person: linked?.person,
+      legacyRole: legacy?.role,
+      defaultRole: NO_ROLE,
+    })
+    if (linked !== undefined && linked.person.status !== 'active') {
+      return {
+        role: directory as Role,
+        source: 'directory',
+        entry: undefined,
+        person: linked.person,
+      }
+    }
     const entry: PersonEntry | undefined =
       linked !== undefined
         ? linked.person.role === null
@@ -1571,11 +1605,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
               setBy: null,
               updatedAt: linked.person.updatedAt,
             }
-        : people.get(id.id)
+        : legacy
     const r = resolveRole({
       kind: id.kind,
       isBot: id.kind === 'bot',
-      entryRole: entry?.role,
+      entryRole: directory === NO_ROLE ? undefined : (directory as Role),
       linkedMember: id.personId ?? undefined,
       admins: config?.admins ?? ['owner'],
       // a trusted internal group (node setting) makes unknown people members; else the connection's default
@@ -2339,8 +2373,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   // --- pairing (P43): a person links another account of theirs with a one-time code ------------
 
   /** Failed `/link` tries per sender identity in the current hour (5 locks pairing for that hour). */
-  const pairingFailures = new Map<string, number[]>()
-  const PAIRING_MAX_FAILURES = 5
+  const pairingLimit = pairingGuard({ maxFailures: 5, windowMs: 3_600_000 })
 
   async function redeemPairing(input: {
     config: ConnectionConfig
@@ -2355,8 +2388,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         () => undefined,
       )
     const at = now()
-    const fails = (pairingFailures.get(input.sender.id) ?? []).filter((t) => at - t < 3_600_000)
-    if (fails.length >= PAIRING_MAX_FAILURES) {
+    if (!pairingLimit.allowed(input.sender.id, at)) {
       await say('Too many wrong codes from this account: try again in an hour.')
       return
     }
@@ -2367,8 +2399,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     }
     const personId = await persons.redeemCode(input.code, at)
     if (personId === undefined) {
-      fails.push(at)
-      pairingFailures.set(input.sender.id, fails)
+      pairingLimit.failure(input.sender.id, at)
       await say(
         'That code is not valid or has expired. Ask for a new one from an account that is already yours.',
       )
@@ -3269,14 +3300,15 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const titleOf = (node: NodeRow | undefined, fallback: string): string =>
     node === undefined ? fallback : labelOf(node, undefined)
 
+  /** The row is given up: tell the activity log, the warning log and the bell (the store marks it failed). */
   const giveUp = (
     row: OutboxRow,
     config: ConnectionConfig,
     node: NodeRow | undefined,
     reason: string,
+    attempts: number,
   ): void => {
-    outbox.markFailed(row.id, reason, now())
-    outboxEvent(row, 'reply-failed', reason, { attempts: row.attempts + 1 })
+    outboxEvent(row, 'reply-failed', reason, { attempts })
     warn(`channels: a ${row.kind} to ${row.conversationId} was not delivered: ${reason}`)
     deps.notify?.({
       key: `channel-outbox:${row.id}`,
@@ -3286,31 +3318,28 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     })
   }
 
+  /** The place a row was for is gone: nothing to retry, and nobody to tell. */
+  class PlaceGone extends PermanentSendError {}
+
   /**
-   * Send one outbox row. `retry`: a failure leaves the row for a later attempt (replies, approval
-   * requests); `once`: a failure is final (a tool call told the model, which may post again).
+   * Send one outbox row through the outbound queue (windows, park state, in-process retries).
+   * Resolves with the platform id, or `skipped` when there is nothing to send any more. Settling
+   * the row (sent, retry, failed) is the caller's: the library worker or the direct post.
+   * `attempts`: attempts of the row including this one.
    */
-  async function deliver(
+  async function sendRow(
     row: OutboxRow,
     config: ConnectionConfig,
     adapter: ChannelAdapter,
-    mode: 'retry' | 'once',
-  ): Promise<'sent' | 'retry' | 'failed' | 'skipped' | 'busy'> {
-    if (stopped) return 'retry'
-    if (!outbox.claim(row.id, now())) return 'busy'
+    attempts: number,
+  ): Promise<{ nativeId: string } | { skipped: string }> {
     if (row.kind === 'approval' && row.approvalId !== undefined) {
       // answered in the meantime (the web app was faster): nothing to ask any more
-      if (approvals.get(row.approvalId)?.status !== 'open') {
-        outbox.markSkipped(row.id, 'answered before it was sent', now())
-        return 'skipped'
-      }
+      if (approvals.get(row.approvalId)?.status !== 'open')
+        return { skipped: 'answered before it was sent' }
     }
     const node = nodes.get(row.conversationId)
-    if (node === undefined) {
-      outbox.markFailed(row.id, 'the place this message was for no longer exists', now())
-      outboxEvent(row, 'reply-failed', 'the place this message was for no longer exists')
-      return 'failed'
-    }
+    if (node === undefined) throw new PlaceGone('the place this message was for no longer exists')
     const caps = capsOf(adapter, node)
     const message: OutboundMessage = {
       // a mention token is rendered by an adapter that mentions by id; for the others it is the plain name
@@ -3321,86 +3350,199 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         ? { buttons: row.buttons }
         : {}),
     }
-    try {
-      let target = node
-      let out = message
-      // a topic that was closed or removed: a reminder still reaches the group (the room, or General)
-      if (
-        row.kind === 'reminder' &&
-        (node.state === 'closed' || node.state === 'archived' || node.state === 'deleted')
-      ) {
-        const fb = fallbackNodeOf(node, adapter)
-        if (fb !== undefined) {
-          target = fb
-          out = {
-            ...message,
-            text: `[${titleOf(node, 'a closed topic')} is closed] ${message.text}`,
-          }
-        }
-      }
-      let sent: { nativeId: string }
-      try {
-        sent = await limitedOutbound.run(laneOf(target), () => adapter.send(viewOf(target), out))
-      } catch (error) {
-        const fb =
-          row.kind === 'reminder' &&
-          target.id === node.id &&
-          error instanceof ChannelError &&
-          error.kind === 'invalid'
-            ? fallbackNodeOf(node, adapter)
-            : undefined
-        if (fb === undefined) throw error
+    let target = node
+    let out = message
+    // a topic that was closed or removed: a reminder still reaches the group (the room, or General)
+    if (
+      row.kind === 'reminder' &&
+      (node.state === 'closed' || node.state === 'archived' || node.state === 'deleted')
+    ) {
+      const fb = fallbackNodeOf(node, adapter)
+      if (fb !== undefined) {
         target = fb
         out = {
           ...message,
-          text: `[${titleOf(node, 'a topic')} could not be posted to] ${message.text}`,
+          text: `[${titleOf(node, 'a closed topic')} is closed] ${message.text}`,
         }
-        sent = await limitedOutbound.run(laneOf(target), () => adapter.send(viewOf(target), out))
       }
-      outbox.markSent(row.id, sent.nativeId, now())
-      logSent(
-        config,
-        adapter,
-        target,
-        sent.nativeId,
-        readableMentions(row.text),
-        [],
-        row.id,
-        row.replyTo,
-      )
-      outboxEvent(
-        { ...row, platformId: sent.nativeId },
-        row.kind === 'approval' ? 'approval-posted' : 'reply-sent',
-        undefined,
-        { attempts: row.attempts + 1 },
-      )
-      if (row.approvalId !== undefined) {
-        approvals.setMessage(row.approvalId, sent.nativeId)
-        const a = approvals.get(row.approvalId)
-        // answered while the request was on its way: fix the message now
-        if (a !== undefined && a.status === 'answered') void resolveMessage(a, adapter, config)
-      }
-      return 'sent'
+    }
+    let sent: { nativeId: string }
+    try {
+      sent = await limitedOutbound.run(laneOf(target), () => adapter.send(viewOf(target), out))
     } catch (error) {
-      if (stopped) return 'retry'
+      const fb =
+        row.kind === 'reminder' &&
+        target.id === node.id &&
+        error instanceof ChannelError &&
+        error.kind === 'invalid'
+          ? fallbackNodeOf(node, adapter)
+          : undefined
+      if (fb === undefined) throw error
+      target = fb
+      out = {
+        ...message,
+        text: `[${titleOf(node, 'a topic')} could not be posted to] ${message.text}`,
+      }
+      sent = await limitedOutbound.run(laneOf(target), () => adapter.send(viewOf(target), out))
+    }
+    logSent(
+      config,
+      adapter,
+      target,
+      sent.nativeId,
+      readableMentions(row.text),
+      [],
+      row.id,
+      row.replyTo,
+    )
+    outboxEvent(
+      { ...row, platformId: sent.nativeId },
+      row.kind === 'approval' ? 'approval-posted' : 'reply-sent',
+      undefined,
+      { attempts },
+    )
+    if (row.approvalId !== undefined) {
+      approvals.setMessage(row.approvalId, sent.nativeId)
+      const a = approvals.get(row.approvalId)
+      // answered while the request was on its way: fix the message now
+      if (a !== undefined && a.status === 'answered') void resolveMessage(a, adapter, config)
+    }
+    return { nativeId: sent.nativeId }
+  }
+
+  /** A tool call posts: one direct attempt, a failure is final (the model is told and may post again). */
+  async function deliverOnce(
+    row: OutboxRow,
+    config: ConnectionConfig,
+    adapter: ChannelAdapter,
+  ): Promise<void> {
+    if (stopped) return
+    if (!outbox.claimNow(row.id, now())) return
+    try {
+      const result = await sendRow(row, config, adapter, row.attempts + 1)
+      if ('skipped' in result) outbox.markSkipped(row.id, result.skipped, now())
+      else outbox.markSent(row.id, result.nativeId, now())
+    } catch (error) {
+      if (stopped) return
       const reason = errorText(error)
-      if (mode === 'once') {
-        outbox.markFailed(row.id, reason, now())
+      outbox.markFailed(row.id, reason, now())
+      outboxEvent(row, 'reply-failed', reason)
+      if (error instanceof PlaceGone) return
+      throw error
+    }
+  }
+
+  // --- the library outbox worker (one per connection) ---------------------------------------------
+
+  const queues = new Map<string, { worker: Outbox; hold: (id: string) => void }>()
+  /**
+   * Lease of a claimed batch. A tick is not over before every claimed row is settled, so a lease
+   * only runs out when the process died; such a row is `held` (never resent blind) and checked
+   * against the platform by `recoverRow`.
+   */
+  const LEASE_MS = 15 * 60_000
+
+  /** What the library worker calls for each claimed row. Errors map onto the library's: see below. */
+  async function sendQueued(connectionId: string, rec: OutboxRecord): Promise<Json> {
+    const hold = queues.get(connectionId)?.hold
+    const row = await outbox.get(rec.id)
+    const config = cache.get(connectionId)
+    const adapter = adapters.get(connectionId)
+    if (row === undefined || config === undefined || adapter === undefined || stopped) {
+      // the process is stopping or the connection went away mid-claim: boot recovery settles the row
+      hold?.(rec.id)
+      throw new Error('delivery stopped')
+    }
+    const node = nodes.get(row.conversationId)
+    let result: Awaited<ReturnType<typeof sendRow>>
+    try {
+      result = await sendRow(row, config, adapter, rec.attempts)
+    } catch (error) {
+      if (stopped) {
+        hold?.(rec.id)
+        throw error
+      }
+      const reason = errorText(error)
+      if (error instanceof PlaceGone) {
         outboxEvent(row, 'reply-failed', reason)
         throw error
       }
       const kind = error instanceof ChannelError ? error.kind : 'transient'
-      if (kind === 'invalid' || row.attempts + 1 >= maxDeliveryAttempts) {
-        giveUp(row, config, node, reason)
-        return 'failed'
+      if (kind === 'invalid') {
+        giveUp(row, config, node, reason, rec.attempts)
+        throw new PermanentSendError(reason, { cause: error })
       }
-      outbox.retryLater(row.id, reason, now() + backoff(row.attempts + 1), now())
-      outboxEvent(row, 'reply-retried', reason, { attempt: row.attempts + 1 })
-      return 'retry'
+      if (rec.attempts >= rec.maxAttempts) giveUp(row, config, node, reason, rec.attempts)
+      else outboxEvent(row, 'reply-retried', reason, { attempt: rec.attempts })
+      if (error instanceof ChannelError && error.kind === 'rate_limit') {
+        // the platform spoke: park the chat (or the connection) and come back no earlier than it
+        // asked or than the backoff says, whichever is later
+        const ms = Math.max(error.retryAfterMs ?? 1000, backoff(rec.attempts))
+        throw new RetryAfter(ms, {
+          parkKey: error.scope === 'chat' ? `${connectionId}\n${row.conversationId}` : connectionId,
+          message: reason,
+          // the governor saw this error first (it parked and reported it to the storm detector)
+          counted: true,
+        })
+      }
+      throw error
     }
+    // nothing to send any more (answered in the meantime): settled as skipped, no attempt blamed
+    if ('skipped' in result) throw new SkipSend(result.skipped)
+    return result
   }
 
-  /** A row a crashed process left `sending`: did the platform get it? (Never post a message twice.) */
+  const workerOf = (connectionId: string): Outbox => {
+    let q = queues.get(connectionId)
+    if (q === undefined) {
+      const store = outbox.queue({
+        connectionId,
+        ready: () => !stopped && adapters.has(connectionId) && cache.has(connectionId),
+      })
+      q = {
+        hold: store.hold,
+        worker: createOutbox({
+          store,
+          send: (rec) => sendQueued(connectionId, rec),
+          governor: governor.parks,
+          // the delay of a retry is the gateway's backoff, no jitter (the retry timer is exact)
+          backoff: { baseMs: retryBaseMs, maxMs: retryMaxMs, jitter: 0 },
+          // the breaker that counts failures is the outbound queue's (it counts every call, not
+          // only sends, and alerts); the library one is opened by it (`onTrip`) and by a storm, and
+          // holds a storm for the connection's own cooldown at least
+          breaker: {
+            threshold: Number.MAX_SAFE_INTEGER,
+            cooldownMs: (id) => limitsOf(id).breakerCooldownMs,
+          },
+          // rate limits of any chat count toward the connection's storm (the limits are the
+          // connection's, read live)
+          floodStorm: {
+            count: (id) => governorLimitsFor(id).floodStorm.count,
+            windowMs: (id) => governorLimitsFor(id).floodStorm.windowMs,
+            stormKey: (parkKey) => parkKey.split('\n')[0] ?? parkKey,
+          },
+          expiredLeases: 'hold',
+          now,
+          owner: `gateway:${connectionId}`,
+          leaseMs: LEASE_MS,
+          batch: 50,
+          onEvent: (e) => {
+            if (e.type === 'lease-lost') warn(`channels: the outbox row ${e.id} lost its lease`)
+            else if (e.type === 'storm') {
+              outbound.open(
+                e.target,
+                `${e.count} rate limits within ${Math.max(1, Math.round(governorLimitsFor(e.target).floodStorm.windowMs / 60_000))} minutes`,
+              )
+            }
+          },
+        }),
+      }
+      queues.set(connectionId, q)
+    }
+    return q.worker
+  }
+
+  /** A `held` row (the process died, or its lease ran out, while sending): did the platform get it? (Never post a message twice.) */
   async function recoverRow(
     row: OutboxRow,
     config: ConnectionConfig,
@@ -3435,7 +3577,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     }
     if (checked && row.kind !== 'post') {
       // the platform does not have it: it is safe to send
-      outbox.retryLater(row.id, 'the process stopped while sending', 0, now())
+      await workerOf(row.connectionId).release(row.id, 'retry')
       return
     }
     outbox.markFailed(
@@ -3464,21 +3606,16 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       recovered.add(connectionId)
       outbox.failStalePosts(connectionId, now())
       outbox.releaseAll(connectionId)
-      for (const row of await outbox.sending(connectionId)) await recoverRow(row, config, adapter)
+      // this process owns the connection now: whatever a previous one left `sending` is held
+      outbox.holdStale(connectionId)
     }
-    const stalled = new Set<string>()
-    for (;;) {
-      const rows = await outbox.due(connectionId, now(), 50)
-      let progressed = false
-      for (const row of rows) {
-        if (stopped) return
-        if (stalled.has(row.conversationId) || outbox.blockedBy(row)) continue
-        const result = await deliver(row, config, adapter, 'retry')
-        if (result === 'retry') stalled.add(row.conversationId)
-        else progressed = true
-      }
-      if (!progressed) break
-    }
+    // rows held at boot, or by a lease that ran out during the drain (the worker never resends them)
+    let held = await outbox.held(connectionId)
+    do {
+      for (const row of held) await recoverRow(row, config, adapter)
+      await workerOf(connectionId).drain()
+      held = await outbox.held(connectionId)
+    } while (held.length > 0)
     // a failed attempt left rows for later: wake up when the first is due
     const next = outbox.nextDue(connectionId, now())
     const old = flushTimers.get(connectionId)
@@ -5099,7 +5236,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     for (const [i, id] of rowIds.entries()) {
       const row = (await outbox.get(id)) as OutboxRow
       try {
-        await deliver(row, config, adapter, 'once')
+        await deliverOnce(row, config, adapter)
       } catch (error) {
         for (const later of rowIds.slice(i + 1))
           outbox.markFailed(later, 'an earlier part of the message was not sent', now())

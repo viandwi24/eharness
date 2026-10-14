@@ -809,6 +809,14 @@ export const channelOutbox = sqliteTable(
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
     sentAt: integer('sent_at'),
+    /** The library outbox worker that holds the row (`sending`); null on rows an older process left. */
+    owner: text('owner'),
+    /** End of the lease of a `sending` row. Null = never reclaimed (a person or boot recovery settles it). */
+    leaseUntil: integer('lease_until'),
+    /** Attempts before the row is given up; null = the gateway's default. */
+    maxAttempts: integer('max_attempts'),
+    /** JSON result of the send (the library outbox's `succeed` result). */
+    result: text('result'),
   },
   (t) => [
     index('channel_outbox_due').on(t.connectionId, t.status, t.createdAt),

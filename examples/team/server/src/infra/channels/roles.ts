@@ -9,6 +9,7 @@
  * a tool in the role's `deny` list is refused even when its risk or its `allow` list would let it
  * through.
  */
+import { decideByRisk } from 'eharness/identity'
 import { z } from 'zod'
 
 export const ROLES = ['owner', 'admin', 'member', 'guest'] as const
@@ -99,7 +100,8 @@ export interface ToolDecision {
 
 /**
  * May a requester of `role` call `toolName` (static risk `risk`; a tool without one counts as a
- * write)? Deny list first, then the always-allowed set, the allow list and the allowed risks.
+ * write)? Deny list first, then the always-allowed set, the allow list and the allowed risks
+ * (`decideByRisk` of `eharness/identity`; the refusal text is the team's).
  */
 export function decideTool(
   role: Role,
@@ -109,7 +111,15 @@ export function decideTool(
   who?: string,
 ): ToolDecision {
   const policy = policyOf(role, overrides)
-  const refuse = (): ToolDecision => ({
+  // the team's policy as library data: the always-allowed tools sit in `allow` (deny still wins)
+  const decision = decideByRisk(
+    role,
+    risk,
+    { [role]: { ...policy, allow: [...ALWAYS_ALLOWED, ...policy.allow] } },
+    toolName,
+  )
+  if (decision.allowed) return { allowed: true }
+  return {
     allowed: false,
     reason: `Not allowed: ${who === undefined ? 'the person who asked' : who} has the role "${role}" in this team, and that role may not use ${toolName}${risk === undefined ? '' : ` (${risk})`}. ${
       role === 'guest'
@@ -118,15 +128,7 @@ export function decideTool(
           ? 'Members can read the chats of their divisions and set their own reminders. '
           : ''
     }Only an owner or an admin can ask for this: tell the person, in one plain sentence, to ask an admin. Do not explain where or how roles are set, do not retry and do not look for another way around it. Never offer an action you cannot do (for example "I will note it" or "I will pass it on"): offer only what a tool of yours really does.`,
-  })
-  if (policy.deny.includes(toolName)) return refuse()
-  if (ALWAYS_ALLOWED.includes(toolName)) return { allowed: true }
-  if (policy.allow.includes(toolName)) return { allowed: true }
-  const effective = (TOOL_RISKS as readonly string[]).includes(risk ?? '')
-    ? (risk as ToolRisk)
-    : 'write'
-  if (policy.risks.includes(effective)) return { allowed: true }
-  return refuse()
+  }
 }
 
 /** The word for a role in the header and in refusals. */

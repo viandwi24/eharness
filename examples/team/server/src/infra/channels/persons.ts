@@ -9,59 +9,31 @@
  * account belongs to one person; moving it needs an unlink first. Every change is an event.
  */
 import type { Database } from 'bun:sqlite'
+import {
+  generatePairingCode,
+  hashPairingCode,
+  IdentityError,
+  type PersonPatch as LibPatch,
+  type Person as LibPerson,
+  type PersonStore as LibPersonStore,
+  MAX_PENDING_CODES,
+  PERSON_STATUSES,
+  type PersonAccount,
+  type PersonEvent,
+  type PersonStatus,
+} from 'eharness/identity'
 import { ROLES, type Role } from './roles.ts'
 
-export type PersonStatus = 'active' | 'suspended' | 'left'
-export const PERSON_STATUSES: readonly PersonStatus[] = ['active', 'suspended', 'left']
+// the model of the directory is the library's (`eharness/identity`); the team narrows the role
+export { PERSON_STATUSES, type PersonAccount, type PersonEvent, type PersonStatus }
 
-export interface Person {
-  id: string
-  displayName: string
-  nickname: string | null
-  status: PersonStatus
+export interface Person extends Omit<LibPerson, 'role'> {
   /** null = the connection or chat default. */
   role: Role | null
-  divisions: string[]
-  fields: Record<string, string>
-  notes: string
-  memberId: string | null
-  createdBy: string | null
-  createdAt: number
-  updatedAt: number
 }
 
-export interface PersonAccount {
-  id: string
-  personId: string
-  platform: string
-  nativeId: string
-  label: string | null
-  status: 'linked' | 'revoked'
-  linkedVia: 'owner' | 'pairing' | 'migration'
-  linkedBy: string | null
-  linkedAt: number
-  revokedAt: number | null
-}
-
-export interface PersonEvent {
-  id: string
-  personId: string
-  kind: string
-  actor: string | null
-  detail: Record<string, unknown>
-  at: number
-}
-
-export interface PersonPatch {
-  displayName?: string | undefined
-  nickname?: string | null | undefined
-  status?: PersonStatus | undefined
+export interface PersonPatch extends Omit<LibPatch, 'role'> {
   role?: Role | null | undefined
-  divisions?: string[] | undefined
-  /** Merged into the fields; a null value removes the key. */
-  fields?: Record<string, string | null> | undefined
-  notes?: string | undefined
-  memberId?: string | null | undefined
 }
 
 export interface PersonStore {
@@ -95,7 +67,7 @@ export interface PersonStore {
   link(
     personId: string,
     account: { platform: string; nativeId: string; label?: string | null },
-    via: PersonAccount['linkedVia'],
+    via: 'owner' | 'pairing' | 'migration',
     actor: string | null,
     now: number,
   ): PersonAccount
@@ -123,13 +95,7 @@ export interface PersonStore {
 }
 
 /** Thrown for a refused directory change; the message is a sentence for people and models. */
-export class PersonError extends Error {
-  readonly code: string
-  constructor(message: string, code: string) {
-    super(message)
-    this.code = code
-  }
-}
+export { IdentityError as PersonError }
 
 interface PersonDb {
   id: string
@@ -200,19 +166,6 @@ const toAccount = (r: AccountDb): PersonAccount => ({
   revokedAt: r.revoked_at,
 })
 
-/** Unambiguous code characters (no 0/O, 1/I/L). */
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
-const CODE_LENGTH = 8
-const MAX_PENDING_CODES = 3
-
-async function sha256(text: string): Promise<string> {
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
-  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/** A code as people type it: upper case, no spaces or dashes. */
-export const normalizeCode = (code: string): string => code.toUpperCase().replace(/[\s-]/g, '')
-
 export function sqlitePersonStore(sqlite: Database, ids: { next(): string }): PersonStore {
   const getQ = sqlite.query<PersonDb, [string]>('SELECT * FROM people WHERE id = ?')
   const get = (id: string): Person | undefined => {
@@ -263,7 +216,7 @@ export function sqlitePersonStore(sqlite: Database, ids: { next(): string }): Pe
     },
     create(input, actor, now) {
       const name = input.displayName.trim()
-      if (name === '') throw new PersonError('A person needs a name.', 'INVALID_PERSON')
+      if (name === '') throw new IdentityError('A person needs a name.', 'INVALID_PERSON')
       const id = ids.next()
       sqlite
         .query(
@@ -294,7 +247,7 @@ export function sqlitePersonStore(sqlite: Database, ids: { next(): string }): Pe
     },
     update(id, patch, actor, now) {
       const p = get(id)
-      if (p === undefined) throw new PersonError('No such person.', 'PERSON_NOT_FOUND')
+      if (p === undefined) throw new IdentityError('No such person.', 'PERSON_NOT_FOUND')
       const next: Person = { ...p }
       const changed: Record<string, unknown> = {}
       if (
@@ -383,11 +336,12 @@ export function sqlitePersonStore(sqlite: Database, ids: { next(): string }): Pe
         .map(toAccount)
     },
     link(personId, account, via, actor, now) {
-      if (get(personId) === undefined) throw new PersonError('No such person.', 'PERSON_NOT_FOUND')
+      if (get(personId) === undefined)
+        throw new IdentityError('No such person.', 'PERSON_NOT_FOUND')
       const existing = store.byAccount(account.platform, account.nativeId)
       if (existing !== undefined) {
         if (existing.person.id !== personId) {
-          throw new PersonError(
+          throw new IdentityError(
             `That ${account.platform} account already belongs to ${existing.person.displayName}. Unlink it there first.`,
             'ACCOUNT_LINKED_ELSEWHERE',
           )
@@ -500,19 +454,18 @@ export function sqlitePersonStore(sqlite: Database, ids: { next(): string }): Pe
           error: `There are already ${MAX_PENDING_CODES} unused codes for this person; use one or wait until they expire (1 hour).`,
         }
       }
-      const bytes = crypto.getRandomValues(new Uint8Array(CODE_LENGTH))
-      const code = [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('')
+      const code = generatePairingCode()
       const expiresAt = now + ttlMs
       sqlite
         .query(
           'INSERT INTO people_link_codes (id, person_id, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)',
         )
-        .run(ids.next(), personId, await sha256(code), expiresAt, now)
+        .run(ids.next(), personId, await hashPairingCode(code), expiresAt, now)
       event(personId, 'pair', null, { issued: true, expiresAt }, now)
       return { code, expiresAt }
     },
     async redeemCode(code, now) {
-      const hash = await sha256(normalizeCode(code))
+      const hash = await hashPairingCode(code)
       const r = sqlite
         .query<{ id: string; person_id: string }, [string, number]>(
           'SELECT id, person_id FROM people_link_codes WHERE code_hash = ? AND used_at IS NULL AND expires_at > ? LIMIT 1',
@@ -527,4 +480,30 @@ export function sqlitePersonStore(sqlite: Database, ids: { next(): string }): Pe
     },
   }
   return store
+}
+
+/**
+ * The sync SQLite store as the library's async `PersonStore` (`eharness/identity`): the gateway
+ * keeps reading the directory synchronously, everything else (and the conformance suite) can use
+ * this view. Roles outside the team's ladder are stored as given and read back as `null`.
+ */
+export function asPersonStore(sync: PersonStore): LibPersonStore {
+  return {
+    get: async (id) => sync.get(id),
+    list: async (query) => sync.list(query),
+    create: async (input, actor, now) =>
+      sync.create({ ...input, role: input.role as Role | null | undefined }, actor, now),
+    update: async (id, patch, actor, now) =>
+      sync.update(id, { ...patch, role: patch.role as Role | null | undefined }, actor, now),
+    delete: async (id, actor, now) => sync.delete(id, actor, now),
+    byAccount: async (platform, nativeId) => sync.byAccount(platform, nativeId),
+    accounts: async (personId, includeRevoked) => sync.accounts(personId, includeRevoked),
+    link: async (personId, account, via, actor, now) =>
+      sync.link(personId, account, via as 'owner' | 'pairing' | 'migration', actor, now),
+    unlink: async (accountId, actor, now) => sync.unlink(accountId, actor, now),
+    setLabel: async (accountId, label, actor, now) => sync.setLabel(accountId, label, actor, now),
+    events: async (personId, limit) => sync.events(personId, limit),
+    issueCode: (personId, now, ttlMs) => sync.issueCode(personId, now, ttlMs),
+    redeemCode: (code, now) => sync.redeemCode(code, now),
+  }
 }

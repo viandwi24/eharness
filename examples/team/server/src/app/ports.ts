@@ -603,6 +603,37 @@ export interface DecisionResolver {
   resume(decision: Decision, answer: DecisionAnswer): Promise<'resumed' | 'recorded' | 'gone'>
 }
 
+/** What answering a decision parked on an external wait does (claim, effect, delivery in one step). */
+export interface ParkedAnswer {
+  status: 'approved' | 'rejected'
+  note: string
+  decidedAt: number
+  /** Stored with the decision (`decision` is `approved`, `rejected` or the option picked). */
+  outcome: DecisionOutcome
+  /** The payload as approved (an amendment the client narrowed). */
+  payload?: Decision['payload'] | undefined
+  /** What the agent reads. */
+  answer: DecisionAnswer
+  /** Runs after the claim, before the session is told; a throw reopens the decision. */
+  beforeDeliver?: (() => void) | undefined
+}
+
+export type ParkedResult =
+  | { kind: 'delivered'; decision: Decision; delivery: 'resumed' | 'recorded' }
+  /** The session no longer waits (stopped, timed out, deleted). */
+  | { kind: 'gone'; decision: Decision }
+  /** Somebody decided first (or it expired): `status` is what it is now. */
+  | { kind: 'closed'; status: DecisionStatus }
+
+/**
+ * Answers a decision parked on an external wait: the first answer wins, then the session resumes
+ * (`infra/eh/decision-handoff.ts`, over `eharness/handoff`). Throws, with the decision open again,
+ * when the effect or the delivery fails.
+ */
+export interface DecisionHandoff {
+  answerParked(decision: Decision, answer: ParkedAnswer): Promise<ParkedResult>
+}
+
 /** Cross-session reads on eharness sessions (answers are the library's `attention` routes) (implemented in `infra/eh/team-service.ts`). */
 export interface TeamPort {
   /** Stored messages of a task session (newest `limit`, chronological). */
@@ -1135,6 +1166,7 @@ export interface Deps {
   rehearsalRunner: RehearsalRunner
   decisions: DecisionStore
   decisionResolver: DecisionResolver
+  decisionHandoff: DecisionHandoff
   heartbeat: HeartbeatPorts
   events: EventAppender
   modelCalls: ModelCallStore

@@ -5,6 +5,13 @@
  */
 import type { Database } from 'bun:sqlite'
 import { uuidv7 } from 'eharness'
+import type {
+  ClaimOptions,
+  Json,
+  OutboxStore as LibOutboxStore,
+  OutboxRecord,
+  OutboxState,
+} from 'eharness/channels'
 import type { SecretVault } from 'eharness/providers'
 import type { OutboundButton } from './types.ts'
 
@@ -16,7 +23,11 @@ import type { OutboundButton } from './types.ts'
  * (`reminder:<id>:<slot>`), so a recovered routine fire never posts twice.
  */
 export type OutboxKind = 'reply' | 'post' | 'approval' | 'reminder'
-export type OutboxStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'skipped'
+/**
+ * `held`: a row whose lease ran out (or that a stopped process left `sending`): it may or may not
+ * have reached the platform, so it is checked against the platform before it is resent.
+ */
+export type OutboxStatus = 'pending' | 'sending' | 'held' | 'sent' | 'failed' | 'skipped'
 
 /** What an outbox row says once opened. `conversationId` is the id of the node it goes to. */
 export interface OutboxRow {
@@ -75,6 +86,10 @@ interface OutboxDb {
   created_at: number
   updated_at: number
   sent_at: number | null
+  owner: string | null
+  lease_until: number | null
+  max_attempts: number | null
+  result: string | null
 }
 
 interface OutboxBody {
@@ -82,6 +97,13 @@ interface OutboxBody {
   replyTo?: string
   buttons?: OutboundButton[]
   approvalId?: string
+}
+
+export interface QueueOptions {
+  /** Only this connection's rows are claimed (one library outbox per connection). */
+  connectionId?: string
+  /** Claim nothing while this says no (the connection has no adapter yet, or boot recovery is pending). */
+  ready?: () => boolean
 }
 
 export interface OutboxStore {
@@ -92,17 +114,27 @@ export interface OutboxStore {
    */
   enqueue(rows: NewOutbox[], now: number): Promise<string[]>
   get(id: string): Promise<OutboxRow | undefined>
-  /** Atomically take a `pending` row (`sending`). False when somebody else did. */
-  claim(id: string, now: number): boolean
+  /**
+   * The library `OutboxStore` port over the same table, for `createOutbox` (spec 31 §3.1). Claims
+   * leave out `post` rows (a tool call is answered at once and never retried) and keep the order
+   * of a conversation: a later chunk of a message waits for the earlier chunks, and a row waits
+   * while an earlier row of its conversation is being sent, is held or waits for a retry.
+   */
+  queue(options?: QueueOptions): LibOutboxStore & {
+    /** Leave the row `sending` when the next `fail` comes (the process is stopping: boot recovery checks it). */
+    hold(id: string): void
+  }
+  /** Atomically take a `pending` row for a direct send (`sending`, never reclaimed). False when somebody else did. */
+  claimNow(id: string, now: number): boolean
   markSent(id: string, platformId: string, now: number): void
   /** Back to `pending` for a later attempt. */
   retryLater(id: string, error: string, nextAt: number, now: number): void
   markFailed(id: string, error: string, now: number): void
   markSkipped(id: string, reason: string, now: number): void
-  /** Due `pending` rows of a connection, oldest first (so chunk order holds). */
-  due(connectionId: string, now: number, limit: number): Promise<OutboxRow[]>
-  /** Rows a crashed process left in `sending`. */
-  sending(connectionId: string): Promise<OutboxRow[]>
+  /** Boot: this process owns the connection now, so every row a previous process left `sending` is `held`. */
+  holdStale(connectionId: string): number
+  /** Rows waiting for a decision (see {@link OutboxStatus}). */
+  held(connectionId: string): Promise<OutboxRow[]>
   /** Earliest `next_at` after `now` among pending rows of a connection (for the retry timer). */
   nextDue(connectionId: string, now: number): number | undefined
   /** Boot: rows waiting for a retry are due now. */
@@ -111,17 +143,39 @@ export interface OutboxStore {
   failStalePosts(connectionId: string, now: number): number
   /** A platform message id that a sent row already holds. */
   platformIdTaken(connectionId: string, platformId: string): boolean
-  /** Whether an earlier chunk of the same message is still unsent (later chunks wait). */
-  blockedBy(row: OutboxRow): boolean
   counts(connectionId?: string): Record<OutboxStatus, number>
   /** Delete finished rows older than `before`. */
   purge(before: number): number
 }
 
-export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxStore {
+export interface SqliteOutboxOptions {
+  /** Clock of the library port (lease and settle times). Default `Date.now`. */
+  now?: () => number
+  /** Attempts of a row that has no `max_attempts` of its own. Default 10. */
+  defaultMaxAttempts?: number
+}
+
+const LIB_STATES: Record<OutboxState, string[]> = {
+  pending: ['pending'],
+  claimed: ['sending'],
+  held: ['held'],
+  done: ['sent'],
+  dead: ['failed'],
+  skipped: ['skipped'],
+}
+
+export function sqliteOutboxStore(
+  sqlite: Database,
+  vault: SecretVault,
+  options: SqliteOutboxOptions = {},
+): OutboxStore {
+  const clock = options.now ?? Date.now
+  const defaultMax = options.defaultMaxAttempts ?? 10
   const context = (id: string): string => `channel-outbox:${id}`
+  const bodyOf = async (r: OutboxDb): Promise<OutboxBody> =>
+    JSON.parse(await vault.open(r.body, context(r.id))) as OutboxBody
   const open = async (r: OutboxDb): Promise<OutboxRow> => {
-    const body = JSON.parse(await vault.open(r.body, context(r.id))) as OutboxBody
+    const body = await bodyOf(r)
     return {
       id: r.id,
       connectionId: r.connection_id,
@@ -154,13 +208,278 @@ export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxS
     sqlite
       .query(
         `UPDATE channel_outbox SET status = ?, updated_at = ?, last_error = COALESCE(?, last_error),
-           platform_id = COALESCE(?, platform_id), sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END
+           platform_id = COALESCE(?, platform_id), sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END,
+           owner = NULL, lease_until = NULL
          WHERE id = ?`,
       )
       .run(status, now, fields.error ?? null, fields.platformId ?? null, status, now, id)
   }
 
+  // --- the library port ------------------------------------------------------------------------
+
+  const stateOf = (status: string): OutboxState =>
+    status === 'sending'
+      ? 'claimed'
+      : status === 'held'
+        ? 'held'
+        : status === 'sent'
+          ? 'done'
+          : status === 'skipped'
+            ? 'skipped'
+            : status === 'failed'
+              ? 'dead'
+              : 'pending'
+  /** The target of a record is its connection: breaker, park and lane of the library worker. */
+  const toRecord = async (r: OutboxDb): Promise<OutboxRecord> => ({
+    id: r.id,
+    target: r.connection_id,
+    payload: JSON.parse(await vault.open(r.body, context(r.id))) as Json,
+    availableAt: r.next_at,
+    attempts: r.attempts,
+    maxAttempts: r.max_attempts ?? defaultMax,
+    state: stateOf(r.status),
+    ...(r.owner === null ? {} : { owner: r.owner }),
+    ...(r.lease_until === null ? {} : { leaseUntil: r.lease_until }),
+    ...(r.result === null ? {} : { result: JSON.parse(r.result) as Json }),
+    ...(r.last_error === null ? {} : { error: r.last_error }),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  })
+
+  /**
+   * Order inside a conversation (rows with a conversation id; items enqueued through the generic
+   * port have none). A row is not claimed while an earlier row of its conversation is being sent
+   * or waits for a retry, nor while an earlier chunk of its own message is unsent.
+   */
+  const BLOCKED = `NOT (r.conversation_id <> '' AND EXISTS (
+      SELECT 1 FROM channel_outbox o
+        WHERE o.connection_id = r.connection_id AND o.conversation_id = r.conversation_id
+          AND o.kind != 'post' AND o.id < r.id
+          AND (
+            (o.kind = r.kind AND COALESCE(o.trigger_id, '') = COALESCE(r.trigger_id, '')
+               AND o.chunk_index < r.chunk_index AND o.status IN ('pending', 'sending', 'held'))
+            OR o.status IN ('sending', 'held')
+            OR (o.status = 'pending' AND o.attempts > 0)
+          )))`
+
+  const queue: OutboxStore['queue'] = (queueOptions = {}) => {
+    const scope = queueOptions.connectionId
+    const scoped = scope === undefined ? '' : ' AND r.connection_id = ?'
+    const scopeArgs: string[] = scope === undefined ? [] : [scope]
+    const held = new Set<string>()
+    return {
+      hold(id) {
+        held.add(id)
+      },
+      async enqueue(item) {
+        const existing = sqlite
+          .query<OutboxDb, [string]>('SELECT * FROM channel_outbox WHERE id = ?')
+          .get(item.id)
+        if (existing !== null) return { created: false, record: await toRecord(existing) }
+        const t = clock()
+        const body = await vault.seal(JSON.stringify(item.payload), context(item.id))
+        sqlite
+          .query(
+            `INSERT INTO channel_outbox (id, connection_id, conversation_id, kind, chunk_index, chunk_count,
+               body, status, attempts, next_at, max_attempts, created_at, updated_at)
+             VALUES (?, ?, '', 'reply', 0, 1, ?, 'pending', ?, ?, ?, ?, ?)`,
+          )
+          .run(item.id, item.target, body, item.attempts, item.availableAt, item.maxAttempts, t, t)
+        const row = sqlite
+          .query<OutboxDb, [string]>('SELECT * FROM channel_outbox WHERE id = ?')
+          .get(item.id) as OutboxDb
+        return { created: true, record: await toRecord(row) }
+      },
+      async claim(now, owner, leaseMs, limit, claimOptions: ClaimOptions = {}) {
+        if (queueOptions.ready !== undefined && !queueOptions.ready()) return []
+        const reclaim = claimOptions.reclaimExpired !== false
+        const taken = sqlite.transaction((): OutboxDb[] => {
+          // a lease that ran out on a row with no attempts left is dead-lettered, not claimed
+          if (reclaim) {
+            sqlite
+              .query(
+                `UPDATE channel_outbox AS r SET status = 'failed', updated_at = ?, owner = NULL, lease_until = NULL,
+                   last_error = COALESCE(last_error, 'the lease ran out')
+                   WHERE status = 'sending' AND lease_until IS NOT NULL AND lease_until <= ?
+                     AND attempts >= COALESCE(max_attempts, ?)${scoped}`,
+              )
+              .run(now, now, defaultMax, ...scopeArgs)
+          }
+          const due = sqlite
+            .query<OutboxDb, (string | number)[]>(
+              `SELECT r.* FROM channel_outbox AS r
+                 WHERE r.kind != 'post'
+                   AND ((r.status = 'pending' AND r.next_at <= ?)
+                     ${
+                       reclaim
+                         ? "OR (r.status = 'sending' AND r.lease_until IS NOT NULL AND r.lease_until <= ?)"
+                         : ''
+                     })
+                   AND ${BLOCKED}${scoped}
+                 ORDER BY r.next_at, r.id LIMIT ?`,
+            )
+            .all(...(reclaim ? [now, now] : [now]), ...scopeArgs, limit)
+          const take = sqlite.query(
+            `UPDATE channel_outbox SET status = 'sending', owner = ?, lease_until = ?,
+               attempts = attempts + 1, updated_at = ? WHERE id = ?`,
+          )
+          for (const r of due) take.run(owner, now + leaseMs, now, r.id)
+          return due.map((r) => ({
+            ...r,
+            status: 'sending',
+            owner,
+            lease_until: now + leaseMs,
+            attempts: r.attempts + 1,
+            updated_at: now,
+          }))
+        })()
+        return Promise.all(taken.map(toRecord))
+      },
+      async holdExpired(now) {
+        return Promise.all(
+          sqlite
+            .transaction((): OutboxDb[] => {
+              const rows = sqlite
+                .query<OutboxDb, (string | number)[]>(
+                  `SELECT r.* FROM channel_outbox AS r
+                     WHERE r.status = 'sending' AND r.lease_until IS NOT NULL AND r.lease_until <= ?${scoped}
+                     ORDER BY r.id`,
+                )
+                .all(now, ...scopeArgs)
+              const t = clock()
+              const hold = sqlite.query(
+                `UPDATE channel_outbox SET status = 'held', owner = NULL, lease_until = NULL, updated_at = ?,
+                   last_error = 'the lease ran out while sending; delivery unknown' WHERE id = ?`,
+              )
+              for (const r of rows) hold.run(t, r.id)
+              return rows.map((r) => ({
+                ...r,
+                status: 'held',
+                owner: null,
+                lease_until: null,
+                updated_at: t,
+                last_error: 'the lease ran out while sending; delivery unknown',
+              }))
+            })()
+            .map(toRecord),
+        )
+      },
+      async release(id, resolution, now) {
+        const changed =
+          resolution === 'retry'
+            ? sqlite
+                .query(
+                  `UPDATE channel_outbox SET status = 'pending', next_at = ?, updated_at = ?
+                     WHERE id = ? AND status = 'held'`,
+                )
+                .run(now, now, id).changes
+            : sqlite
+                .query(
+                  `UPDATE channel_outbox SET status = 'skipped', updated_at = ?,
+                     last_error = 'dropped after the lease ran out' WHERE id = ? AND status = 'held'`,
+                )
+                .run(now, id).changes
+        if (changed !== 1) return undefined
+        return toRecord(
+          sqlite
+            .query<OutboxDb, [string]>('SELECT * FROM channel_outbox WHERE id = ?')
+            .get(id) as OutboxDb,
+        )
+      },
+      async skip(id, owner, reason) {
+        return (
+          sqlite
+            .query(
+              `UPDATE channel_outbox SET status = 'skipped', updated_at = ?, owner = NULL, lease_until = NULL,
+                 last_error = ? WHERE id = ? AND status = 'sending' AND owner = ?`,
+            )
+            .run(clock(), reason, id, owner).changes === 1
+        )
+      },
+      async succeed(id, owner, result) {
+        const t = clock()
+        const nativeId =
+          result !== null &&
+          typeof result === 'object' &&
+          !Array.isArray(result) &&
+          typeof result.nativeId === 'string'
+            ? result.nativeId
+            : null
+        return (
+          sqlite
+            .query(
+              `UPDATE channel_outbox SET status = 'sent', updated_at = ?, owner = NULL, lease_until = NULL,
+                 platform_id = COALESCE(?, platform_id), result = ?, sent_at = ?
+               WHERE id = ? AND status = 'sending' AND owner = ?`,
+            )
+            .run(t, nativeId, result === undefined ? null : JSON.stringify(result), t, id, owner)
+            .changes === 1
+        )
+      },
+      async fail(id, owner, failure) {
+        const r = sqlite
+          .query<OutboxDb, [string, string]>(
+            `SELECT * FROM channel_outbox WHERE id = ? AND status = 'sending' AND owner = ?`,
+          )
+          .get(id, owner)
+        if (r === null) return undefined
+        if (held.delete(id)) return 'pending' // stopping: the row stays `sending` for boot recovery
+        const t = clock()
+        const dead = failure.permanent === true || r.attempts >= (r.max_attempts ?? defaultMax)
+        if (dead) {
+          setStatus(id, 'failed', t, { error: failure.error })
+          return 'dead'
+        }
+        sqlite
+          .query(
+            `UPDATE channel_outbox SET status = 'pending', next_at = ?, last_error = ?, updated_at = ?,
+               owner = NULL, lease_until = NULL WHERE id = ?`,
+          )
+          .run(failure.retryAt ?? t, failure.error, t, id)
+        return 'pending'
+      },
+      async defer(id, owner, availableAt) {
+        return (
+          sqlite
+            .query(
+              `UPDATE channel_outbox SET status = 'pending', next_at = ?, attempts = MAX(0, attempts - 1),
+                 updated_at = ?, owner = NULL, lease_until = NULL
+               WHERE id = ? AND status = 'sending' AND owner = ?`,
+            )
+            .run(availableAt, clock(), id, owner).changes === 1
+        )
+      },
+      async get(id) {
+        const r = sqlite
+          .query<OutboxDb, [string]>('SELECT * FROM channel_outbox WHERE id = ?')
+          .get(id)
+        return r === null ? undefined : toRecord(r)
+      },
+      async list(query = {}) {
+        const statuses = query.state === undefined ? undefined : LIB_STATES[query.state]
+        const rows = sqlite
+          .query<OutboxDb, (string | number)[]>(
+            `SELECT * FROM channel_outbox${
+              statuses === undefined
+                ? ''
+                : ` WHERE status IN (${statuses.map(() => '?').join(',')})`
+            } ORDER BY next_at, id LIMIT ?`,
+          )
+          .all(...(statuses ?? []), query.limit ?? 1000)
+        return Promise.all(rows.map(toRecord))
+      },
+      async purge(olderThan) {
+        return sqlite
+          .query(
+            `DELETE FROM channel_outbox WHERE status IN ('sent', 'failed', 'skipped') AND updated_at < ?`,
+          )
+          .run(olderThan).changes
+      },
+    }
+  }
+
   return {
+    queue,
     async enqueue(rows, now) {
       const first = rows[0]
       if (first === undefined) return []
@@ -214,11 +533,12 @@ export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxS
         .get(id)
       return r === null ? undefined : open(r)
     },
-    claim(id, now) {
+    claimNow(id, now) {
       return (
         sqlite
           .query(
-            `UPDATE channel_outbox SET status = 'sending', attempts = attempts + 1, updated_at = ?
+            `UPDATE channel_outbox SET status = 'sending', attempts = attempts + 1, updated_at = ?,
+               owner = 'direct', lease_until = NULL
                WHERE id = ? AND status = 'pending'`,
           )
           .run(now, id).changes === 1
@@ -228,25 +548,25 @@ export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxS
     retryLater(id, error, nextAt, now) {
       sqlite
         .query(
-          `UPDATE channel_outbox SET status = 'pending', last_error = ?, next_at = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE channel_outbox SET status = 'pending', last_error = ?, next_at = ?, updated_at = ?,
+             owner = NULL, lease_until = NULL WHERE id = ?`,
         )
         .run(error, nextAt, now, id)
     },
     markFailed: (id, error, now) => setStatus(id, 'failed', now, { error }),
     markSkipped: (id, reason, now) => setStatus(id, 'skipped', now, { error: reason }),
-    async due(connectionId, now, limit) {
-      const rows = sqlite
-        .query<OutboxDb, [string, number, number]>(
-          `SELECT * FROM channel_outbox WHERE connection_id = ? AND status = 'pending' AND next_at <= ?
-             AND kind != 'post' ORDER BY id LIMIT ?`,
+    holdStale(connectionId) {
+      return sqlite
+        .query(
+          `UPDATE channel_outbox SET status = 'held', owner = NULL, lease_until = NULL, updated_at = ?,
+             last_error = 'the process stopped while sending' WHERE connection_id = ? AND status = 'sending'`,
         )
-        .all(connectionId, now, limit)
-      return Promise.all(rows.map(open))
+        .run(clock(), connectionId).changes
     },
-    async sending(connectionId) {
+    async held(connectionId) {
       const rows = sqlite
         .query<OutboxDb, [string]>(
-          `SELECT * FROM channel_outbox WHERE connection_id = ? AND status = 'sending' ORDER BY id`,
+          `SELECT * FROM channel_outbox WHERE connection_id = ? AND status = 'held' ORDER BY id`,
         )
         .all(connectionId)
       return Promise.all(rows.map(open))
@@ -285,24 +605,6 @@ export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxS
           .get(connectionId, platformId)?.n !== 0
       )
     },
-    blockedBy(row) {
-      if (row.chunkIndex === 0) return false
-      const r = sqlite
-        .query<{ n: number }, [string, string, string, string, number, string]>(
-          `SELECT COUNT(*) AS n FROM channel_outbox
-             WHERE connection_id = ? AND conversation_id = ? AND kind = ? AND COALESCE(trigger_id, '') = ?
-               AND chunk_index < ? AND id < ? AND status IN ('pending', 'sending')`,
-        )
-        .get(
-          row.connectionId,
-          row.conversationId,
-          row.kind,
-          row.triggerId ?? '',
-          row.chunkIndex,
-          row.id,
-        )
-      return (r?.n ?? 0) > 0
-    },
     counts(connectionId) {
       const rows =
         connectionId === undefined
@@ -319,6 +621,7 @@ export function sqliteOutboxStore(sqlite: Database, vault: SecretVault): OutboxS
       const out: Record<OutboxStatus, number> = {
         pending: 0,
         sending: 0,
+        held: 0,
         sent: 0,
         failed: 0,
         skipped: 0,

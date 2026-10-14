@@ -195,6 +195,14 @@ export function sqliteScheduleStore(
       return put(schedule)
     },
 
+    async update(schedule, expectedVersion) {
+      return immediate(() => {
+        const existing = byId.get(schedule.id)
+        if (existing === null || existing.sched_version !== expectedVersion) return undefined
+        return put(schedule)
+      })
+    },
+
     async delete(id) {
       return immediate(() => {
         sqlite.query('DELETE FROM routine_runs WHERE routine_id = ?').run(id)

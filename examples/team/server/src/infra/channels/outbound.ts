@@ -4,7 +4,7 @@
  * for groups and channels, at most `groupMax` per window; over the whole connection at most
  * `connectionMax` per window. A `rate_limit` error parks the connection for the time the
  * platform asked and retries (the park state is the API governor's: `governor.ts` is the one place
- * that knows when a connection or a chat may talk again); a `fatal` error (or too many failures in a row) opens a circuit
+ * that knows when a connection or a chat may talk again; the flood storm is the library outbox's); a `fatal` error (or too many failures in a row) opens a circuit
  * breaker that refuses operations until its cooldown ends and raises an alert once.
  */
 
@@ -14,10 +14,14 @@ import { ChannelError } from './types.ts'
 
 export interface OutboundOptions {
   limitsOf: (connectionId: string) => RateLimits
-  /** The shared API governor (park state and flood storm). Absent = a private one. */
+  /** The shared API governor (buckets and park state). Absent = a private one. */
   governor?: Governor
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  /** The breaker opened or was extended (every trip): the library outbox worker holds the connection's rows too. */
+  onTrip?: (event: { connectionId: string; reason: string; until: number }) => void
+  /** The breaker was reset by hand. */
+  onReset?: (connectionId: string) => void
   /** The breaker opened (or the identity needs attention): raise an alert. */
   onBreaker?: (event: { connectionId: string; reason: string; until: number }) => void
   onWarn?: (message: string) => void
@@ -38,7 +42,7 @@ export interface Outbound {
   breaker(connectionId: string): { open: boolean; until: number; reason: string } | undefined
   /** Close a breaker by hand (the person fixed the credential). */
   reset(connectionId: string): void
-  /** Open the breaker from outside (a flood storm seen by the governor). */
+  /** Open the breaker from outside (a flood storm seen by the library outbox). */
   open(connectionId: string, reason: string): void
 }
 
@@ -61,7 +65,6 @@ export function createOutbound(options: OutboundOptions): Outbound {
       limitsOf: (id) => governorLimitsOf(undefined, options.limitsOf(id).governor),
       now,
       sleep,
-      onStorm: ({ connectionId, reason }) => trip(connectionId, reason),
     })
   const failures = new Map<string, number>()
   const open = new Map<string, { until: number; reason: string; alerted: boolean }>()
@@ -94,6 +97,7 @@ export function createOutbound(options: OutboundOptions): Outbound {
     const until = now() + limits.breakerCooldownMs
     const alerted = open.get(connectionId)?.alerted ?? false
     open.set(connectionId, { until, reason, alerted: true })
+    options.onTrip?.({ connectionId, reason, until })
     if (!alerted) options.onBreaker?.({ connectionId, reason, until })
   }
 
@@ -208,6 +212,7 @@ export function createOutbound(options: OutboundOptions): Outbound {
       open.delete(connectionId)
       failures.set(connectionId, 0)
       governor.reset(connectionId)
+      options.onReset?.(connectionId)
     },
     open(connectionId, reason) {
       trip(connectionId, reason)

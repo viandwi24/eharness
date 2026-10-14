@@ -157,6 +157,7 @@ import { createChatToolsService } from './infra/eh/chat-tools-service.ts'
 import type { CatalogOptions } from './infra/eh/connector-catalog.ts'
 import { type ConnectorsRuntime, createConnectors, SEALED_KINDS } from './infra/eh/connectors.ts'
 import { backfillCustomSlugs, migrateLegacyAgents } from './infra/eh/connectors-migration.ts'
+import { createDecisionHandoff } from './infra/eh/decision-handoff.ts'
 import { createDecisionService, type DecisionService } from './infra/eh/decision-service.ts'
 import type { DecisionIntake } from './infra/eh/decisions-plugin.ts'
 import { createEventAppender } from './infra/eh/event-appender.ts'
@@ -841,6 +842,7 @@ export function compose(config: ServerConfig): Server {
     rehearsalRunner: rehearsalService,
     decisions: decisionStore,
     decisionResolver: decisionService,
+    decisionHandoff: createDecisionHandoff(decisionStore, decisionService),
     heartbeat: heartbeats.ports,
     events,
     modelCalls,
