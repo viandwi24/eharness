@@ -106,6 +106,8 @@ export interface CoderSettings {
    * can override it with its own `"defer": true|false`.
    */
   deferTools?: boolean
+  /** Steps per chunk of a turn: the first `loop.maxSteps` and each `stepBudget` extension (default 50). */
+  stepChunk?: number
   /** Shell hooks on agent events (project hooks need trust). */
   hooks?: Partial<
     Record<HookEvent, Array<{ matcher?: string; command: string; timeoutMs?: number }>>
@@ -161,8 +163,10 @@ export interface CoderConfig {
   additionalDirectories: string[]
   /** `--agents` JSON, already parsed. */
   cliAgents: Record<string, AgentDefinitionInput>
-  /** Default 200. */
+  /** Hard cap of steps per turn (`--max-steps`), default 200; a turn runs in `stepChunk` chunks up to it. */
   maxSteps: number
+  /** `stepChunk` setting (default 50). */
+  stepChunk: number
   /** Default 2: subagent nesting depth below the main agent. */
   maxAgentDepth: number
   /** `deferTools` setting (default true). */

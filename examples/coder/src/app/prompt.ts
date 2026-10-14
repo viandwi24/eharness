@@ -1,6 +1,7 @@
 /** Prompts: static instructions, subagent preamble, project memory framing, turn reminder. */
 import { platform, release } from 'node:os'
 import type { InstructionFn } from 'eharness'
+import { isValidTimeZone, zonedParts } from 'eharness/clock'
 import type { PermissionMode } from '../contracts.ts'
 
 /** The main system prompt. Static: it never changes per session (prompt-cache prefix). */
@@ -147,6 +148,14 @@ async function gitSummary(root: string): Promise<string> {
   return `Git branch: ${branch}\nGit status (short):\n${shown.join('\n')}${more}`
 }
 
+/** Today's date in the machine's time zone (a UTC date is a day off around local midnight). */
+function localDate(): string {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  if (!zone || !isValidTimeZone(zone)) return new Date().toISOString().slice(0, 10)
+  const p = zonedParts(Date.now(), zone)
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} (${zone})`
+}
+
 /** The `refresh: 'turn'` reminder text: date, platform, git state, permission mode, extra dirs. */
 export function turnReminder(opts: {
   root: string
@@ -155,7 +164,7 @@ export function turnReminder(opts: {
 }): (ctx: Parameters<InstructionFn>[0]) => Promise<string> {
   return async () => {
     const lines = [
-      `Today's date: ${new Date().toISOString().slice(0, 10)}`,
+      `Today's date: ${localDate()}`,
       `Platform: ${platform()} ${release()}`,
       await gitSummary(opts.root),
       `Permission mode: ${MODE_TEXT[opts.mode()]}`,

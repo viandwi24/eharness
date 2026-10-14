@@ -37,6 +37,7 @@ import {
   loadProjectInstructions,
   projectInstructions,
 } from 'eharness/filesystem'
+import { stepBudget } from 'eharness/limits'
 import { mcpServerSource } from 'eharness/mcp'
 import { domainSpecifierMatches, parseRule, permissions } from 'eharness/permissions'
 import { type LocalSandbox, shell } from 'eharness/shell'
@@ -373,6 +374,8 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       modelSwitchPlugin({ state: modelState, ...(follows ? { resolve: resolveModel } : {}) }),
       ...(deps.extraPlugins?.({ main: isMain }) ?? []),
       ...(isMain ? (deps.mainPlugins ?? []) : []),
+      // the main turn starts with one chunk and is extended while it makes progress, up to the cap
+      ...(isMain ? [stepBudget({ chunk: config.stepChunk, cap: config.maxSteps })] : []),
     ]
 
     const agent = defineHarnessAgent({
@@ -395,7 +398,9 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       plugins,
       storage: deps.storage,
       ...(deps.instanceId === undefined ? {} : { recovery: { instanceId: deps.instanceId } }),
-      loop: { maxSteps: isMain ? config.maxSteps : (def.maxTurns ?? 50) },
+      loop: {
+        maxSteps: isMain ? Math.min(config.stepChunk, config.maxSteps) : (def.maxTurns ?? 50),
+      },
       compaction: { summarizeAt: 0.8, prune: {} },
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),

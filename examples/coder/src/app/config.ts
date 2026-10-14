@@ -90,6 +90,7 @@ const settingsSchema = z.object({
   promptSuggestions: z.boolean().optional(),
   editorMode: z.enum(['normal', 'vim']).optional(),
   deferTools: z.boolean().optional(),
+  stepChunk: z.number().int().min(1).optional(),
   hooks: z
     .partialRecord(z.enum(HOOK_EVENTS as [HookEvent, ...HookEvent[]]), z.array(hookEntrySchema))
     .optional(),
@@ -563,6 +564,7 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     additionalDirectories,
     cliAgents,
     maxSteps: flags.maxSteps ?? 200,
+    stepChunk: mergeSettings(layers.map((l) => l.settings)).stepChunk ?? 50,
     maxAgentDepth: 2,
     deferTools: mergeSettings(layers.map((l) => l.settings)).deferTools ?? true,
     mcpServers,
