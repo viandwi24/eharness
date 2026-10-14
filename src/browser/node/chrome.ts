@@ -340,6 +340,8 @@ export function chromeRuntime(opts: ChromeRuntimeOptions): BrowserRuntime {
         '--remote-debugging-port=0',
         ...DEFAULT_FLAGS,
         ...(headless ? ['--headless=new'] : []),
+        // headless Chrome defaults to 800×600: pages are read and shot at a common laptop size
+        ...(extra.some((a) => a.startsWith('--window-size=')) ? [] : ['--window-size=1280,800']),
         ...((opts.inContainer ?? detectContainer()) ? ['--no-sandbox'] : []),
         ...extra,
         'about:blank',

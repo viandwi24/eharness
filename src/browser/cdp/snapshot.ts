@@ -185,7 +185,7 @@ export async function resolveRef(
   const entry = page.refs.entries.get(ref)
   if (!entry) {
     return page.refs.lastSnapshotId
-      ? `STALE: the page changed since snapshot ${page.refs.lastSnapshotId}. Take a new snapshot.`
+      ? `STALE: ${ref} is not a ref of the latest snapshot (${page.refs.lastSnapshotId}): the page changed, or it was never listed. Take a new snapshot and use its refs.`
       : `ERROR: unknown ref "${ref}". Take a snapshot first with browser_snapshot.`
   }
   if (entry.unsupported) {
