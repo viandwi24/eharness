@@ -2,7 +2,12 @@
   "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
   "baseBranch": "main",
   "access": "public",
-  "changelog": ["@changesets/changelog-github", { "repo": "viandwi24/eharness" }],
+  "changelog": [
+    "@changesets/changelog-github",
+    {
+      "repo": "viandwi24/eharness"
+    }
+  ],
   "commit": false,
   "changedFilePatterns": [
     "src/**",
@@ -11,5 +16,9 @@
     "!src/**/*.test-d.ts",
     "!src/**/__golden__/**",
     "package.json"
-  ]
+  ],
+  "snapshot": {
+    "useCalculatedVersion": true,
+    "prereleaseTemplate": "{tag}-{datetime}"
+  }
 }

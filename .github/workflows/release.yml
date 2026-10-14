@@ -2,6 +2,8 @@
 #
 #   push to main/next ─▶ select-mode ─┬─ mode=version ─▶ version  (opens/updates "Version Packages" PR)
 #                                     └─ mode=publish ─▶ pack ─▶ publish (npm + git tags + GitHub releases)
+#   manual run with canary=true ─▶ canary (snapshot <next>-canary-<datetime> under the npm tag `canary`;
+#                                          no git tag, no release; products install eharness@canary)
 #
 # The npm trusted publisher MUST be configured for this exact file name: release.yml
 # and environment: npm. Docs: docs/engineering/release.md
@@ -14,6 +16,11 @@ on:
   push:
     branches: [main, next]
   workflow_dispatch:
+    inputs:
+      canary:
+        description: Publish a canary snapshot of the pending changesets (npm tag `canary`)
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -23,7 +30,7 @@ concurrency:
 
 jobs:
   select-mode:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') && inputs.canary != true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -125,3 +132,30 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
           create-github-releases: true
+
+  canary:
+    if: github.event_name == 'workflow_dispatch' && inputs.canary == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm # same trusted publisher as the release jobs
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) + provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Ensure npm supports trusted publishing (>= 11.5.1)
+        run: npm install -g npm@11.21.0 && npm --version
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      # snapshot version from the pending changesets (no commit, no tag)
+      - run: bunx changeset version --snapshot canary && bun scripts/sync-version.ts
+      - run: bun run build
+      - run: bun run check:package
+      - run: bunx changeset publish --tag canary --no-git-tag

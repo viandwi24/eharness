@@ -155,6 +155,19 @@ Merging changesets into `next` produces version PRs like `0.4.0-next.0` publishe
 `next` dist-tag (`npm i eharness@next`). To finish: `bunx changeset pre exit` on `next`, merge
 `next` into `main`, and the normal flow publishes the stable version.
 
+### Canary snapshots (products on the latest `main`)
+
+Products built on eharness (ADR-0062) can run the latest `main` before a release. Run the
+**Release** workflow by hand with `canary: true` (Actions → Release → Run workflow). It tests,
+builds and publishes the pending changesets as the next version with a `-canary-<datetime>` suffix (for example `0.9.0-canary-20261014120000`) under the `canary`
+dist-tag, with no commit, git tag or GitHub release:
+
+```bash
+bun add eharness@canary
+```
+
+A canary is never `latest`; pin the exact version in a product's lockfile.
+
 ## 8. Hotfix for an older minor (0.x)
 
 Rare in 0.x (users are expected to move to the latest minor). When needed, it is a **manual,
