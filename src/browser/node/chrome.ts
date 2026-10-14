@@ -335,6 +335,9 @@ export function chromeRuntime(opts: ChromeRuntimeOptions): BrowserRuntime {
       const os = opts.os ?? defaultProcessOs
       await reapOrphan(pidFile, userDataDir, os)
       await clearStaleChromeLocks(userDataDir, os)
+      // a port file of an earlier run (a clean stop leaves it) would be read before Chrome writes
+      // the new one, and the first connection would go to a dead port
+      await rm(join(userDataDir, 'DevToolsActivePort'), { force: true }).catch(() => undefined)
       const args = [
         `--user-data-dir=${userDataDir}`,
         '--remote-debugging-port=0',

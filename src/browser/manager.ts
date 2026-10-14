@@ -326,7 +326,10 @@ export function createBrowserManager(options: BrowserManagerOptions): BrowserMan
       return { refused: true, kind, text }
     }
     const profile = await profiles.get(entry.profileId)
-    if (profile === null) return fail('ERROR: this browser profile does not exist (anymore).')
+    if (profile === null)
+      return fail(
+        'ERROR: this browser profile does not exist (anymore): it was deleted. Retrying does not help and no other tool replaces the browser. Tell the person in one sentence; an admin chooses another profile for you.',
+      )
     entry.profile = profile
     const adapter = registry.get(profile.adapter)
     if (adapter === undefined) {
@@ -352,15 +355,26 @@ export function createBrowserManager(options: BrowserManagerOptions): BrowserMan
               settings,
             )
       if (!entry.open) return fail('ERROR: the browser was released while it started.')
-      const connection = await raceAbort(
-        adapter.connect(endpoint, {
-          signal: controller.signal,
-          limits,
-          profile: { id: profile.id, name: profile.name },
-        }),
-        controller.signal,
-        limits.startTimeoutMs,
-      )
+      // an engine that has just started can refuse its first connection for a moment: retry a
+      // managed one a few times within the start timeout
+      const attempts = profile.mode === 'managed' ? 5 : 1
+      let connection: BrowserConnection | undefined
+      for (let attempt = 1; connection === undefined; attempt++) {
+        try {
+          connection = await raceAbort(
+            adapter.connect(endpoint, {
+              signal: controller.signal,
+              limits,
+              profile: { id: profile.id, name: profile.name },
+            }),
+            controller.signal,
+            limits.startTimeoutMs,
+          )
+        } catch (error) {
+          if (attempt >= attempts || controller.signal.aborted) throw error
+          await new Promise((r) => setTimeout(r, 200 * attempt))
+        }
+      }
       if (!entry.open) {
         await connection.close().catch(() => {})
         return fail('ERROR: the browser was released while it started.')

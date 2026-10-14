@@ -650,3 +650,43 @@ describe('browser plugin: untrusted content, eval and risk', () => {
 function FAKE_PASS_VALUE(peer: FakeCdpPeer): Record<string, unknown> {
   return { result: { type: 'object', value: { url: peer.state.url, title: peer.state.title } } }
 }
+
+describe('browser plugin: the agent picks a profile', () => {
+  test('browser_profiles lists, browser_use picks, later calls use the pick', async () => {
+    let store: ReturnType<typeof memoryBrowserProfileStore> | undefined
+    const list = async () =>
+      ((await store?.list({ limit: 10 }))?.items ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        adapter: p.adapter,
+      }))
+    const { agent, model, manager, profiles } = await setup(
+      [
+        call('browser_open', { url: URL_A }),
+        call('browser_profiles'),
+        call('browser_use', { profile: 'personal' }),
+        call('browser_open', { url: URL_A }),
+        { text: 'done' },
+      ],
+      { plugin: { profile: () => undefined, choose: { list } } },
+    )
+    store = profiles
+    const personal = await profiles.create({
+      name: 'Personal',
+      adapter: 'fake',
+      mode: 'manual',
+      settings: { cdpUrl: 'ws://fake.test/devtools' },
+    })
+    await agent.session('s').send('go').result
+    expect(toolNames(model)).toEqual(expect.arrayContaining(['browser_profiles', 'browser_use']))
+    const results = toolResults(model.prompts.at(-1) as ScriptedPrompt)
+    expect(textOf(results[0]?.output as WireOutput)).toContain('no browser profile is picked')
+    expect(textOf(results[1]?.output as WireOutput)).toContain('- Personal')
+    expect(textOf(results[2]?.output as WireOutput)).toContain(
+      'Now using the browser profile "Personal"',
+    )
+    expect(textOf(results[3]?.output as WireOutput)).toStartWith('Opened')
+    expect((await manager.status()).some((s) => s.profileId === personal.id)).toBe(true)
+    await manager.close()
+  })
+})

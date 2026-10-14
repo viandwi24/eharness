@@ -44,6 +44,8 @@ export type BrowserToolName =
   | 'browser_tabs'
   | 'browser_request_human'
   | 'browser_eval'
+  | 'browser_profiles'
+  | 'browser_use'
 
 /** The `browser` service (spec 35 §5.3). */
 export interface BrowserService {
@@ -70,8 +72,24 @@ export interface BrowserPluginLimits {
   allowPrivateHosts?: boolean
 }
 
+/** One profile the agent may pick (`BrowserOptions.choose`). */
+export interface BrowserProfileChoice {
+  id: string
+  name: string
+  adapter: string
+  mode?: string
+  running?: boolean
+  trusted?: boolean
+}
+
 /** Options of {@link browser}. */
 export interface BrowserOptions {
+  /**
+   * Let the agent list profiles and pick one for its session (`browser_profiles`, `browser_use`).
+   * `list` returns the profiles this agent may use. The pick is kept in session state and wins
+   * over `profile`, which stays the default.
+   */
+  choose?: { list: (ctx: HarnessContext) => Promise<BrowserProfileChoice[]> }
   manager: BrowserManager
   /** Which profile this session uses; `undefined` registers no tools. */
   profile: string | ((ctx: HarnessContext) => string | undefined | Promise<string | undefined>)
@@ -259,8 +277,22 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
     session: async (ctx): Promise<SessionContribution> => {
       const context = ctx as unknown as HarnessContext
       const sessionId = ctx.session.id
-      const profileId =
-        typeof options.profile === 'function' ? await options.profile(context) : options.profile
+      const chosen = (): string | undefined => {
+        if (options.choose === undefined) return undefined
+        const v = ctx.state.get<string>('profile')
+        return typeof v === 'string' && v !== '' ? v : undefined
+      }
+      const pick = async (): Promise<string | undefined> =>
+        chosen() ??
+        (typeof options.profile === 'function' ? await options.profile(context) : options.profile)
+      const dynamic = options.choose !== undefined || typeof options.profile === 'function'
+      let profileId = await pick()
+      // with a chooser the tools exist even before a pick: their capabilities come from a profile
+      // the agent may use (the first one), and calls ask it to pick when it must
+      if ((profileId === undefined || profileId === '') && options.choose !== undefined) {
+        const first = (await options.choose.list(context).catch(() => []))[0]
+        if (first !== undefined) profileId = first.id
+      }
       let lease: Lease | undefined
       const service: BrowserService = {
         profileId: () => (profileId === '' ? undefined : profileId),
@@ -316,8 +348,11 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
         }
       }
 
+      // a profile given as a function is looked up again on every call: it can be replaced or
+      // deleted while the session is open (the tool list stays the one of the session's start)
+      let current = profile
       const rules = (): DomainRules => {
-        const base = manager.rules(profile)
+        const base = manager.rules(current)
         return {
           allowDomains: base.allowDomains ?? [],
           denyDomains: [...(base.denyDomains ?? []), ...(options.limits?.denyDomains ?? [])],
@@ -326,8 +361,26 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
       }
 
       const acquire = async (): Promise<Lease | string> => {
+        if (dynamic) {
+          const next = await pick()
+          if (next === undefined || next === '') {
+            return options.choose !== undefined
+              ? `ERROR: no browser profile is picked for this session. Call ${names('browser_profiles')} and pick one with ${names('browser_use')}.`
+              : 'ERROR: no browser profile is available right now. Retrying does not help; tell the person in one sentence so an admin creates or chooses one.'
+          }
+          if (next !== profileId) {
+            const p = await manager.profile(next)
+            if (p === null) {
+              return 'ERROR: this browser profile does not exist (anymore): it was deleted. Retrying does not help and no other tool replaces the browser. Tell the person in one sentence; an admin chooses another profile for you.'
+            }
+            await lease?.release().catch(() => undefined)
+            lease = undefined
+            profileId = next
+            current = p
+          }
+        }
         if (lease?.open) return lease
-        const result = await manager.lease(profileId, { kind: 'session', id: sessionId })
+        const result = await manager.lease(profileId as string, { kind: 'session', id: sessionId })
         if ('refused' in result) return result.text
         lease = result
         return result
@@ -690,7 +743,8 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
             const started = await ask(
               {
                 reason: input.reason,
-                profileId,
+                // acquire() succeeded, so the current profile is set
+                profileId: profileId as string,
                 sessionId: event.ctx.session.id,
                 waitId: event.waitId,
                 toolCallId: event.toolCallId,
@@ -734,6 +788,64 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
                 ? text
                 : untrustedContent(text, { source: 'browser', name: 'eval' })
             }),
+        } as never)
+      }
+
+      if (options.choose !== undefined) {
+        const choose = options.choose
+        const describe = (p: BrowserProfileChoice, active: string | undefined): string =>
+          [
+            `- ${p.name}`,
+            `(${p.adapter}${p.mode === undefined ? '' : `, ${p.mode === 'managed' ? 'runs on this server' : 'existing browser'}`})`,
+            p.running === undefined ? undefined : p.running ? 'running' : 'stopped',
+            p.trusted === true ? 'trusted' : undefined,
+            p.id === active ? '← in use by this session' : undefined,
+          ]
+            .filter((x) => x !== undefined)
+            .join(' ')
+        tools[names('browser_profiles')] = tool({
+          description:
+            'List the browser profiles you may use (name, engine, whether it runs, which one this session uses). Pick one with browser_use. Read-only.',
+          inputSchema: z.object({}),
+          metadata: { risk: risk('browser_profiles', 'read') },
+          execute: async (): Promise<string> => {
+            try {
+              const list = await choose.list(context)
+              if (list.length === 0) {
+                return 'There is no browser profile you may use. Tell the person in one sentence: an admin creates one on the Browser page.'
+              }
+              const active = chosen() ?? profileId
+              return `Browser profiles (${list.length}):\n${list.map((p) => describe(p, active)).join('\n')}`
+            } catch (error) {
+              return `ERROR: could not list the browser profiles (${errorText(error)}).`
+            }
+          },
+        } as never)
+        tools[names('browser_use')] = tool({
+          description:
+            'Use another browser profile for the rest of this session (by its name from browser_profiles). Its logins and cookies come with it.',
+          inputSchema: z.object({
+            profile: z.string().min(1).describe('Name (or id) of the profile'),
+          }),
+          metadata: { risk: risk('browser_use', 'write') },
+          execute: async (input: { profile: string }): Promise<string> => {
+            try {
+              const list = await choose.list(context)
+              const wanted = input.profile.trim().toLowerCase()
+              const byId = list.find((p) => p.id === input.profile.trim())
+              const byName = list.filter((p) => p.name.toLowerCase() === wanted)
+              const found = byId ?? (byName.length === 1 ? byName[0] : undefined)
+              if (found === undefined) {
+                return byName.length > 1
+                  ? `ERROR: several profiles are named "${input.profile}"; use its id from browser_profiles.`
+                  : `ERROR: there is no profile "${input.profile}" you may use. Call browser_profiles for the list.`
+              }
+              ctx.state.set('profile', found.id)
+              return `Now using the browser profile "${found.name}" (${found.adapter}) for this session.`
+            } catch (error) {
+              return `ERROR: could not switch the browser profile (${errorText(error)}).`
+            }
+          },
         } as never)
       }
 

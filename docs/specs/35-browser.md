@@ -241,6 +241,17 @@ fixed extractor run with `Runtime.evaluate` (no page script is trusted; the extr
 string). An adapter may provide a native reader (Lightpanda `LP.getMarkdown`). Capped at
 `limits.readChars` (default 30 000) with an offset.
 
+### Picking a profile (`choose`)
+
+`browser({ choose: { list } })` adds `browser_profiles` (read: the profiles `list` returns, with
+engine, mode, running, trusted, and the one this session uses) and `browser_use` (write: pick one
+by name or id for the rest of the session; kept in the plugin's session state, so it survives a
+restart). The pick wins over `profile`, which stays the default. A profile given as a function is
+looked up again on every call, so a deleted or replaced profile is noticed at once; the tool list
+stays the one of the session's start. Without a pick and without a default the browser tools
+answer that a profile must be picked. Apps decide who may pick: the team example offers `choose`
+only when an admin did not fix a profile in the agent's Browser connection.
+
 ### Engine differences handled by the CDP client
 
 - A page target the browser attached by itself (`Target.setAutoAttach` on the browser session) is
