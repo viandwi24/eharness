@@ -35,6 +35,7 @@
 	import { authLabel, customState, hostOf, initialsOf, toolCount } from '#lib/connectors/custom.js';
 	import { alwaysAsks, KIND_LABEL, KIND_VARIANT, modeOf, OAUTH_CLIENT_NEEDS_SETUP, splitMemory } from '#lib/connectors/view.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
+	import { copyText } from '#lib/clipboard.js';
 	
 	/** One connector in a wide dialog: what it can do, its connections, default permissions and actions. */
 	let {
@@ -83,13 +84,9 @@
 	let copied = $state(false);
 
 	async function copyUri(uri: string): Promise<void> {
-		try {
-			await navigator.clipboard.writeText(uri);
-			copied = true;
-			setTimeout(() => (copied = false), 1500);
-		} catch {
-			toast.error('Could not copy');
-		}
+		if (!(await copyText(uri))) return void toast.error('Could not copy');
+		copied = true;
+		setTimeout(() => (copied = false), 1500);
 	}
 	async function saveClient(e: SubmitEvent): Promise<void> {
 		e.preventDefault();

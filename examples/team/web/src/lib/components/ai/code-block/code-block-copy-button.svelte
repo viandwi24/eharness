@@ -2,6 +2,7 @@
 	import CheckIcon from 'phosphor-svelte/lib/Check';
 	import CopyIcon from 'phosphor-svelte/lib/Copy';
 	import { Button, type ButtonProps } from "#lib/components/ui/button/index.js";
+	import { copyText } from "#lib/clipboard.js";
 	import { cn } from "#lib/utils.js";
 	import { onDestroy } from "svelte";
 	import { useCodeBlockContext } from "./use-code-block.svelte.js";
@@ -24,19 +25,14 @@
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	async function copy() {
-		if (typeof window === "undefined" || !navigator?.clipboard?.writeText) {
-			onError?.(new Error("Clipboard API not available"));
+		if (!(await copyText(block.code))) {
+			onError?.(new Error("Could not copy"));
 			return;
 		}
-		try {
-			await navigator.clipboard.writeText(block.code);
-			isCopied = true;
-			onCopy?.();
-			clearTimeout(timer);
-			timer = setTimeout(() => (isCopied = false), timeout);
-		} catch (error) {
-			onError?.(error as Error);
-		}
+		isCopied = true;
+		onCopy?.();
+		clearTimeout(timer);
+		timer = setTimeout(() => (isCopied = false), timeout);
 	}
 
 	onDestroy(() => clearTimeout(timer));

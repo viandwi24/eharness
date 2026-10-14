@@ -41,11 +41,4 @@ export async function svgToPng(svg: string, scale = 2): Promise<Blob> {
 	return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not make the PNG'))), 'image/png'));
 }
 
-export async function copyText(text: string): Promise<boolean> {
-	try {
-		await navigator.clipboard.writeText(text);
-		return true;
-	} catch {
-		return false;
-	}
-}
+export { copyText } from '#lib/clipboard.js';

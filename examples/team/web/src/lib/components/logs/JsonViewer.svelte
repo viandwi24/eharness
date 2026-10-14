@@ -7,6 +7,7 @@
 	import { formatBytes } from '#lib/files/helpers.js';
 	import { truncationOf } from '#lib/logs/logs.js';
 	import JsonNode from './JsonNode.svelte';
+	import { copyText } from '#lib/clipboard.js';
 
 	/** A JSON value as a collapsible tree with a copy button. A value cut by the server shows its preview as text. */
 	let { value, title, empty = 'Nothing was recorded.' }: { value: unknown; title?: string; empty?: string } = $props();
@@ -21,11 +22,7 @@
 	const text = $derived(cut ? cut.preview : missing ? '' : JSON.stringify(value, null, 2));
 
 	async function copy(): Promise<void> {
-		try {
-			await navigator.clipboard.writeText(text);
-		} catch {
-			return;
-		}
+		if (!(await copyText(text))) return;
 		copied = true;
 		clearTimeout(timer);
 		timer = setTimeout(() => (copied = false), 1500);

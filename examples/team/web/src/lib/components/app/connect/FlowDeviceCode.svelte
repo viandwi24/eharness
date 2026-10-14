@@ -9,6 +9,7 @@
 	import { countdownText, deviceLink, safeUrl } from '#lib/connectors/flow-view.js';
 	import FlowFooter from './FlowFooter.svelte';
 	import { usePolling, useNow } from './waiting.svelte.js';
+	import { copyText } from '#lib/clipboard.js';
 
 	let { session, view, onCancel }: { session: FlowSession; view: Extract<FlowView, { type: 'deviceCode' }>; onCancel: () => void } = $props();
 
@@ -20,13 +21,10 @@
 	let copied = $state(false);
 
 	async function copy(): Promise<void> {
-		try {
-			await navigator.clipboard.writeText(view.userCode);
-			copied = true;
-			setTimeout(() => (copied = false), 1500);
-		} catch {
-			// clipboard unavailable: the code is selectable
-		}
+		// clipboard unavailable: the code is selectable
+		if (!(await copyText(view.userCode))) return;
+		copied = true;
+		setTimeout(() => (copied = false), 1500);
 	}
 </script>
 
