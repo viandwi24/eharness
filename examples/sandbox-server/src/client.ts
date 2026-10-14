@@ -2,6 +2,7 @@
  * Client of the sandbox server: `remoteSandbox()` is a `CodeSandbox` (AI SDK sandbox session) over
  * the `/v1` HTTP API (README.md). Runtime-neutral: `fetch` only.
  */
+import type { BrowserRuntime, ProcessUsage, RuntimeStatus } from 'eharness/browser'
 import type { CodeSandbox } from 'eharness/code'
 
 export interface RemoteSandboxOptions {
@@ -265,4 +266,94 @@ export async function remoteSandbox(options: RemoteSandboxOptions): Promise<Code
     },
   }
   return sandbox
+}
+
+// --- the browser (spec 35 §6, `/v1/browser` of the server) ---------------------------------------
+
+export interface RemoteBrowserRuntimeOptions {
+  /** Base URL of the sandbox server, e.g. `http://sandbox:4100`. */
+  baseUrl: string
+  /** The server's `SANDBOX_TOKEN`. */
+  token: string
+  fetch?: typeof fetch
+  /** Install polling period. Default 1 s. */
+  pollMs?: number
+}
+
+/**
+ * A `BrowserRuntime` (`eharness/browser`) that runs Chrome on the sandbox server. The `cdpUrl` of
+ * `start` is `ws(s)://<server>/v1/browser/cdp/<profile>?t=<signed token>`: the server proxies it to
+ * a Chrome that listens on its loopback only. The `t` value is short-lived (10 minutes, checked
+ * when the socket opens) and valid for that one profile, because a WebSocket client cannot set
+ * headers in every runtime; treat the URL as a secret (the library never logs endpoints) and call
+ * `start` again for a fresh one (the manager does on every lease).
+ */
+export function remoteBrowserRuntime(options: RemoteBrowserRuntimeOptions): BrowserRuntime {
+  const f: Fetch = options.fetch ?? fetch
+  const base = trim(options.baseUrl)
+  const headers = { authorization: `Bearer ${options.token}` }
+  const pollMs = options.pollMs ?? 1_000
+
+  async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+    let res: Response
+    try {
+      res = await f(`${base}/v1/browser${path}`, {
+        method,
+        headers: body === undefined ? headers : { ...headers, 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+    } catch (error) {
+      throw new Error(
+        `cannot reach the sandbox server at ${options.baseUrl}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+    if (res.status === 401) throw new Error('sandbox server rejected the token (401)')
+    if (!res.ok) throw new Error(await errorText(res))
+    if (res.status === 204) return undefined as T
+    return (await res.json()) as T
+  }
+
+  const status = (): Promise<RuntimeStatus> => call<RuntimeStatus>('GET', '/status')
+
+  return {
+    status,
+    async install(opts) {
+      let s = await call<RuntimeStatus>('POST', '/install')
+      while (s.state === 'installing') {
+        if (opts?.signal?.aborted) throw new Error('install aborted')
+        if (s.progress !== undefined) opts?.onProgress?.(s.progress)
+        await new Promise((r) => setTimeout(r, pollMs))
+        s = await status()
+      }
+      if (s.state === 'error') throw new Error(s.error ?? 'the install failed')
+    },
+    async start(profile, settings) {
+      const { endpoint } = await call<{ endpoint: { cdpPath: string; pid?: number } }>(
+        'POST',
+        '/start',
+        { profileId: profile.id, name: profile.name, settings },
+      )
+      const url = new URL(base)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      // keep a path prefix of the base URL (a reverse proxy mounting the server under /sandbox)
+      const prefix = url.pathname.replace(/\/+$/, '')
+      return { cdpUrl: `${url.protocol}//${url.host}${prefix}${endpoint.cdpPath}` }
+    },
+    async stop(profileId) {
+      await call('POST', '/stop', { profileId })
+    },
+    async removeProfileData(profileId) {
+      await call('DELETE', `/profiles/${encodeURIComponent(profileId)}`)
+    },
+    async uninstall() {
+      await call('POST', '/uninstall')
+    },
+    async usage(profileId) {
+      const { usage } = await call<{ usage: ProcessUsage | null }>(
+        'GET',
+        `/usage?profileId=${encodeURIComponent(profileId)}`,
+      )
+      return usage
+    },
+  }
 }

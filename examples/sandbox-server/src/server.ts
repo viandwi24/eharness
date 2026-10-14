@@ -9,8 +9,10 @@ import { existsSync } from 'node:fs'
 import { chmod, lchown, lstat, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import type { BrowserRuntime } from 'eharness/browser'
 import { removeStaleScratch, type ScratchSandbox, scratchSandbox } from 'eharness/shell'
 
+import { browserRoutes, type ProxyData } from './browser.ts'
 import {
   canIsolateUids,
   createUidPool,
@@ -56,6 +58,11 @@ export interface ServerOptions {
   uidBase?: number
   /** The wrapper script (see wrapperScript). Default `/usr/local/lib/eh-sandbox/bash` (the image). */
   shellWrapper?: string
+  /**
+   * Managed Chrome behind `/v1/browser` (`chromeRuntime` of `eharness/browser/node`, see
+   * `main.ts`). Absent: the routes answer 404 "the browser is off on this server".
+   */
+  browser?: BrowserRuntime
   /** Idle sweep period. Default 30 s. */
   sweepMs?: number
   log?: (line: string) => void
@@ -179,8 +186,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     log(SHARED_USER_WARNING)
   }
 
+  const browser =
+    options.browser === undefined ? undefined : browserRoutes({ runtime: options.browser, log })
+
   const info = {
     version: 1,
+    browser: browser !== undefined,
     python: probe.python,
     pythonCommand: python,
     packages: probe.packages,
@@ -436,14 +447,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return new Response(stream, { headers: { 'content-type': 'application/x-ndjson' } })
   }
 
-  async function handle(req: Request): Promise<Response> {
+  async function handle(req: Request): Promise<Response | undefined> {
     const url = new URL(req.url)
     const path = url.pathname
     if (path === '/healthz' && req.method === 'GET') return json(200, { ok: true })
     const auth = req.headers.get('authorization') ?? ''
+    if (
+      path.startsWith('/v1/browser/cdp/') &&
+      req.headers.get('upgrade')?.toLowerCase() === 'websocket'
+    ) {
+      // a signed query token (see browser.ts) stands in for the header
+      const bearerOk = auth.startsWith('Bearer ') && safeEqual(auth.slice(7), options.token)
+      if (browser === undefined || !(bearerOk || browser.tokenOk(url)))
+        return fail(401, 'unauthorized')
+      return browser.upgrade(req, url, bunServer as NonNullable<typeof bunServer>)
+    }
     const given = auth.startsWith('Bearer ') ? auth.slice(7) : ''
     if (!safeEqual(given, options.token)) return fail(401, 'unauthorized')
     if (path === '/v1/info' && req.method === 'GET') return json(200, info)
+    if (path === '/v1/browser' || path.startsWith('/v1/browser/')) {
+      if (browser === undefined) return fail(404, 'the browser is off on this server')
+      return (await browser.handle(req, url)) ?? fail(404, 'not found')
+    }
     if (path === '/v1/sessions' && req.method === 'POST') return createSession()
     const m = /^\/v1\/sessions\/([^/]+)(?:\/(files|run))?$/.exec(path)
     if (!m) return fail(404, 'not found')
@@ -463,24 +488,35 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return fail(405, 'method not allowed')
   }
 
-  const server = Bun.serve({
+  let bunServer: Bun.Server<ProxyData> | undefined
+  const server = Bun.serve<ProxyData>({
     port: options.port ?? 0,
     hostname: options.hostname ?? '127.0.0.1',
     idleTimeout: 0,
     maxRequestBodySize: (limits.maxFileMb + 1) * 1024 * 1024,
+    websocket: {
+      // screencast frames are large; the proxy only forwards
+      maxPayloadLength: 64 * 1024 * 1024,
+      open: (ws) => browser?.websocket.open(ws),
+      message: (ws, data) => browser?.websocket.message(ws, data as string | Buffer),
+      close: (ws) => browser?.websocket.close(ws),
+    },
     async fetch(req) {
       const started = Date.now()
-      let res: Response
+      let res: Response | undefined
       try {
         res = await handle(req)
       } catch (error) {
         res = fail(500, error instanceof Error ? error.message : String(error))
       }
-      // the path only (ids are random, the token is a header): no secrets in the line
-      log(`${req.method} ${new URL(req.url).pathname} ${res.status} ${Date.now() - started}ms`)
+      // the path only (ids are random, the token is a header or a query value): no secrets in the line
+      log(
+        `${req.method} ${new URL(req.url).pathname} ${res?.status ?? 'upgraded'} ${Date.now() - started}ms`,
+      )
       return res
     },
   })
+  bunServer = server
 
   return {
     url: `http://${server.hostname}:${server.port}`,
@@ -488,6 +524,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     sessions: () => sessions.size,
     async stop() {
       clearInterval(sweep)
+      await browser?.close()
       await server.stop(true)
       await Promise.all([...sessions.keys()].map((id) => dispose(id)))
     },

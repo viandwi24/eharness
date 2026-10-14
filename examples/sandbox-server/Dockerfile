@@ -31,6 +31,18 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends bubblewrap ca-certificates util-linux \
   && rm -rf /var/lib/apt/lists/* \
   && command -v setpriv
+# Managed Chrome for /v1/browser (P48 phase F), OFF by default: build with
+# `--build-arg SANDBOX_BROWSER_LIBS=1` to add the Chrome system libraries, unzip and Xvfb, then run
+# with SANDBOX_BROWSER=1 (Chrome itself is downloaded at runtime into SANDBOX_BROWSER_ROOT).
+ARG SANDBOX_BROWSER_LIBS=0
+RUN if [ "$SANDBOX_BROWSER_LIBS" = "1" ]; then \
+    apt-get update \
+    && ASOUND=$(apt-cache show libasound2t64 >/dev/null 2>&1 && echo libasound2t64 || echo libasound2) \
+    && apt-get install -y --no-install-recommends unzip fonts-liberation \
+       libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
+       libxdamage1 libxfixes3 libxrandr2 libgbm1 "$ASOUND" libpango-1.0-0 libcairo2 xvfb xauth \
+    && rm -rf /var/lib/apt/lists/*; \
+  fi
 COPY examples/sandbox-server/requirements.txt /tmp/requirements.txt
 RUN python -m venv /opt/eh-python \
   && /opt/eh-python/bin/pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements.txt \
@@ -59,7 +71,8 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PYTHON=/opt/eh-python/bin/python \
     SANDBOX_DATA=/tmp/eh-sandboxes \
-    SANDBOX_UID_BASE=20000
+    SANDBOX_UID_BASE=20000 \
+    SANDBOX_BROWSER_ROOT=/var/lib/eh-browser
 
 # No `USER`: the server runs as root ON PURPOSE. It gives every session its own Linux user
 # (uid pool from SANDBOX_UID_BASE) and drops privileges per command with `setpriv`, so a script

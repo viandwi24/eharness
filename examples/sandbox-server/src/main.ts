@@ -1,4 +1,6 @@
 /** Entry point: configuration from the environment, see README.md. */
+import { mkdirSync } from 'node:fs'
+import { chromeRuntime } from 'eharness/browser/node'
 import { DEFAULT_LIMITS, startServer } from './server.ts'
 
 const num = (name: string, fallback: number): number => {
@@ -15,11 +17,25 @@ if (!token || token.length < 8) {
   process.exit(1)
 }
 
+// SANDBOX_BROWSER=1 turns on /v1/browser (a managed Chrome, see README.md). Chrome listens on
+// loopback only; the image needs the system libraries (build arg SANDBOX_BROWSER_LIBS=1).
+const dataDir = process.env.SANDBOX_DATA ?? '/tmp/eh-sandboxes'
+const browserRoot = process.env.SANDBOX_BROWSER_ROOT ?? `${dataDir}/browser`
+if (process.env.SANDBOX_BROWSER === '1') {
+  // 0700: the per-session users of the code sandbox must not read profiles (logins) or Chrome
+  mkdirSync(browserRoot, { recursive: true, mode: 0o700 })
+}
+const browser =
+  process.env.SANDBOX_BROWSER === '1'
+    ? chromeRuntime({ root: browserRoot, xvfb: process.env.SANDBOX_BROWSER_XVFB === '1' })
+    : undefined
+
 const server = await startServer({
   token,
+  ...(browser === undefined ? {} : { browser }),
   port: num('PORT', 4100),
   hostname: process.env.HOST ?? '0.0.0.0',
-  dataDir: process.env.SANDBOX_DATA ?? '/tmp/eh-sandboxes',
+  dataDir,
   python: process.env.PYTHON ?? 'python3',
   osSandbox: process.env.SANDBOX_OS !== 'off',
   uidBase: num('SANDBOX_UID_BASE', 20_000),

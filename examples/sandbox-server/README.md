@@ -88,6 +88,35 @@ token, no query string).
 | `SANDBOX_UID_BASE` | 20000 | first uid of the per-session pool (size `SANDBOX_MAX_SESSIONS`) |
 | `SANDBOX_OS` | auto | `off` skips the bubblewrap probe |
 
+## Browser (`/v1/browser`, optional)
+
+A managed Chrome (`chromeRuntime` of `eharness/browser/node`) on this server, driven by a remote
+app through `remoteBrowserRuntime({ baseUrl, token })` from `src/client.ts` (a `BrowserRuntime`).
+Off by default: build with `--build-arg SANDBOX_BROWSER_LIBS=1` (Chrome libraries, unzip, Xvfb)
+and run with `SANDBOX_BROWSER=1`. Without it every `/v1/browser*` route answers 404.
+
+| Route | |
+|---|---|
+| `GET /v1/browser/status` | `RuntimeStatus` (state, version, disk, install progress, running profiles) |
+| `POST /v1/browser/install` | starts the download in the background, answers the status; poll `status` |
+| `POST /v1/browser/start` `{ profileId, name?, settings? }` | `{ endpoint: { cdpPath, pid? } }` |
+| `POST /v1/browser/stop` `{ profileId }` | 204 |
+| `DELETE /v1/browser/profiles/{id}` | stops and removes the profile's data |
+| `POST /v1/browser/uninstall` | removes the engine |
+| `GET /v1/browser/usage?profileId=` | `{ usage: { rssBytes, cpuPercent } \| null }` |
+| `GET /v1/browser/cdp/{profileId}` | WebSocket proxy to Chrome's CDP socket |
+
+Chrome listens on `127.0.0.1` only; the proxy is the sole way in. The upgrade accepts the bearer
+header or `?t=<signed token>` from `start` (HMAC with a per-boot key, valid for that profile for 10
+minutes, checked when the socket opens): WebSocket clients cannot set headers in every runtime.
+The URL is a credential, so it is never logged (the request log has no query string).
+
+Caveat: code run by the code sandbox on the same host can reach loopback unless the OS sandbox
+cuts the network, and a CDP socket is full control of a profile (logins). Enable the browser on a
+server that does not run untrusted scripts, or keep `SANDBOX_OS` on with its network off. The
+profile root (`SANDBOX_BROWSER_ROOT`) is created 0700. `SANDBOX_BROWSER_XVFB=1` runs headed Chrome
+through `xvfb-run`.
+
 ## Isolation notes
 
 - The container is the boundary. Run it with `--read-only`, a tmpfs for `/tmp`, `--cap-drop ALL`,
