@@ -363,3 +363,19 @@ Done by hand instead of a Playwright suite in CI (a real download per run):
   listed gets a precise message; the Vite dev proxy forwards WebSockets (`ws: true`); boolean
   fields of SchemaForm no longer bind `undefined` (the profile page crashed, new profiles were
   saved headed); a browser a person only watches is "Running", not "In use by an agent".
+
+## Lightpanda and token-auth check (2026-10-14, owner's dev app)
+
+- Lightpanda attaches a new tab by itself (auto-attach) and sends that page's events only to that
+  session: the CDP client now reuses an auto-attached session instead of attaching a second one
+  (navigation used to wait for a load event that never came).
+- Lightpanda takes PNG screenshots only: a refused JPEG is retried as PNG and remembered per
+  connection (screenshots and the polled live view).
+- Lightpanda's picture is approximate (its layout boxes do not match the drawn page), so the live
+  view says clicks on it can miss; the address bar, paste box and keyboard work.
+- With token auth a browser cannot send the bearer token on a WebSocket: the page asks for a
+  one-time ticket (`POST /browser/profiles/{id}/live-ticket`, one minute, one use, one profile) and
+  opens the live view with `?ticket=`.
+- The Browser connector's profile is a dropdown of the Browser page's profiles; empty means the
+  only profile when there is one, so a new connection works without a choice.
+
