@@ -18,6 +18,7 @@ import {
   type AgentEnablement,
   type AnyConnectorDefinition,
   activateConnectors,
+  builtinConnectionId,
   type CapabilityKind,
   type ConnectionCredentials,
   type ConnectionRecord,
@@ -33,6 +34,7 @@ import {
 } from 'eharness/connectors'
 import { listRemoteMcpTools, remoteMcpSource } from 'eharness/mcp'
 import type { ProfileStore, SecretVault } from 'eharness/providers'
+import { BROWSER_CONNECTOR_ID } from '../../app/browser.ts'
 import type { ConnectorsPort } from '../../app/ports.ts'
 import { type AgentDef, TOOL_ACCESS_AUTO_THRESHOLD, type ToolAccess } from '../../domain/agents.ts'
 import type {
@@ -545,10 +547,38 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
   const accessOf = (d: AgentDef): ToolAccess => d.toolAccess ?? options.toolAccess?.() ?? 'auto'
   const keyOf = (d: AgentDef): string => `${d.version}@${revision}@${accessOf(d)}`
 
+  /**
+   * The Browser connector became a built-in (one workspace connection every agent inherits; the
+   * agent picks a profile itself). Connections made before that go: the per-agent ones and any
+   * second workspace one; the built-in one is switched on for every agent once.
+   */
+  async function browserBecameBuiltin(): Promise<void> {
+    const keep = builtinConnectionId(BROWSER_CONNECTOR_ID)
+    for (const r of await connections.list()) {
+      if (r.definitionId !== BROWSER_CONNECTOR_ID) continue
+      if (r.id !== keep) {
+        await connections.delete(r.id)
+        continue
+      }
+      if (r.choices?.builtin === true) continue
+      const { statusMessage: _gone, ...rest } = r
+      await connections.put({
+        ...rest,
+        enabled: true,
+        status: 'connected',
+        defaultEnabled: true,
+        settings: {}, // a profile chosen before: the agent picks now
+        choices: { ...r.choices, builtin: true },
+        updatedAt: Date.now(),
+      })
+    }
+  }
+
   async function ensureBuiltins(list: readonly AgentDef[]): Promise<void> {
     const todo = list.filter((a) => !ensured.has(a.id))
     if (!ensured.has('')) {
       await ensureBuiltinConnections({ store: connections, definitions })
+      await browserBecameBuiltin()
       ensured.add('')
     }
     for (const a of todo) {

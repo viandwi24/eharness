@@ -523,11 +523,15 @@ function hookWith(
   manager: BrowserManager,
   trusted: boolean,
   calls: { takeovers: unknown[]; settled: unknown[] },
+  count = 1,
 ) {
   return createBrowserHook({
     service: {
       manager,
       profiles: {
+        list: async () => ({
+          items: [{ id: 'p1' }, { id: 'p2' }].slice(0, count),
+        }),
         get: async (id: string) =>
           id === 'p1'
             ? ({
@@ -554,48 +558,53 @@ function hookWith(
 
 describe('Browser connector', () => {
   const definition = browserConnector(() => undefined)
-  const activateCtx = (
-    profileId: string,
-    modes: Record<string, string> = { browse: 'allow', act: 'ask' },
-  ) =>
+  const activateCtx = () =>
     ({
-      settings: { profileId },
+      settings: {},
       agent: { id: 'agent-1' },
       connection: { id: 'conn-1' },
-      modes,
+      modes: { browse: 'allow', act: 'ask' },
     }) as never
 
-  test('capabilities: browse is allowed, acting asks', () => {
+  test('a built-in for the whole workspace: browse is allowed, acting asks', () => {
     const caps = Object.fromEntries(definition.capabilities.map((c) => [c.id, c]))
     expect(caps.browse?.defaultMode).toBe('allow')
     expect(caps.browse?.tools).toContain('browser_request_human')
+    expect(caps.browse?.tools).toContain('browser_profiles')
     expect(caps.act?.defaultMode).toBe('ask')
     expect(caps.act?.tools).toEqual(['browser_act'])
-    expect(definition.source).toBe('curated')
+    expect(definition.source).toBe('builtin')
+    expect(definition.scopes).toEqual(['workspace'])
+    expect(definition.scopeDefaults?.workspace?.defaultEnabled).toBe(true)
   })
 
-  test('activation adds the plugin for an existing profile and nothing for a missing one', async () => {
+  test('activation adds the plugin once a profile exists; none, or no browser, adds nothing', async () => {
     const calls = { takeovers: [] as unknown[], settled: [] as unknown[] }
-    const hooked = browserConnector(() => hookWith(fakeManager(), false, calls))
-    const activate = hooked.activate as (ctx: never) => Promise<unknown>
-    const plugin = (await activate(activateCtx('p1'))) as { name: string }
-    expect(plugin.name).toBe('browser')
-    expect(await activate(activateCtx('gone'))).toEqual([])
-    expect(calls.settled).toEqual([])
-    // no hook (browser off): nothing
-    expect(
-      await (definition.activate as (ctx: never) => Promise<unknown>)(activateCtx('p1')),
-    ).toEqual([])
+    const activateWith = (count: number) =>
+      (
+        browserConnector(() => hookWith(fakeManager(), false, calls, count)).activate as (
+          ctx: never,
+        ) => Promise<unknown>
+      )(activateCtx())
+    expect(((await activateWith(1)) as { name: string }).name).toBe('browser')
+    expect(((await activateWith(2)) as { name: string }).name).toBe('browser')
+    expect(await activateWith(0)).toEqual([])
+    expect(await (definition.activate as (ctx: never) => Promise<unknown>)(activateCtx())).toEqual(
+      [],
+    )
   })
 
-  test('a trusted profile with the default ask settles act to allow; an allowed one is left alone', async () => {
+  test('the test names the only profile, or says the agent picks', async () => {
     const calls = { takeovers: [] as unknown[], settled: [] as unknown[] }
-    const hooked = browserConnector(() => hookWith(fakeManager({ trusted: true }), true, calls))
-    const activate = hooked.activate as (ctx: never) => Promise<unknown>
-    await activate(activateCtx('p1'))
-    expect(calls.settled).toEqual([['conn-1', true]])
-    await activate(activateCtx('p1', { browse: 'allow', act: 'allow' }))
-    expect(calls.settled.length).toBe(1)
+    const testWith = (count: number) =>
+      (
+        browserConnector(() => hookWith(fakeManager(), false, calls, count)).test as (
+          ctx: never,
+        ) => Promise<{ ok: boolean; message?: string; accountLabel?: string }>
+      )({ settings: {} } as never)
+    expect(await testWith(1)).toMatchObject({ ok: true, accountLabel: 'Shop' })
+    expect(await testWith(2)).toMatchObject({ ok: true, accountLabel: 'Any profile' })
+    expect((await testWith(0)).message).toContain('create one')
   })
 
   test('browser_request_human becomes a takeover decision with the wait id of the call', async () => {

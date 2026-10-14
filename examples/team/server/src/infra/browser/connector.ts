@@ -1,17 +1,17 @@
 /**
- * The Browser connector (plan P48, spec 24): one connection per agent (or one shared) naming a
- * browser profile; activation adds the `browser()` plugin of `eharness/browser` for that profile.
+ * The Browser connector (plan P48, spec 24): a built-in, one workspace connection every agent
+ * inherits. The agent lists the profiles of the Browser page and picks one itself
+ * (`browser_profiles`, `browser_use`); with a single profile it is used without asking.
  *
  * Capabilities:
  *  - `browse` (read, allowed): open, snapshot, screenshot, read, tabs, and asking a person to
  *    take over;
- *  - `act` (external, asks by default): clicks, typing and forms. A profile an admin marks
- *    trusted makes the connections that name it allow it (`syncTrust`, `app/browser.ts`).
+ *  - `act` (external, asks by default): clicks, typing and forms. Set it to allow on the
+ *    connection to let every agent act without asking.
  */
 
 import type { HarnessPlugin } from 'eharness'
 import { type AnyConnectorDefinition, defineConnector } from 'eharness/connectors'
-import { ehMeta } from 'eharness/providers'
 import { z } from 'zod'
 import { BROWSER_CONNECTOR_ID } from '../../app/browser.ts'
 
@@ -32,23 +32,6 @@ export interface BrowserHook {
   settle(connectionId: string, trusted: boolean): void
   /** How many profiles exist (up to 2), and the id when there is exactly one. */
   profileCount(): Promise<{ count: number; only: string | undefined }>
-}
-
-/** The profile a connection uses: its choice, or the only profile when it chose none. */
-async function profileOf(
-  h: BrowserHook,
-  settings: unknown,
-): Promise<{ id: string } | { error: string }> {
-  const chosen = (settings as { profileId?: unknown } | undefined)?.profileId
-  if (typeof chosen === 'string' && chosen !== '') return { id: chosen }
-  const { count, only } = await h.profileCount()
-  if (only !== undefined) return { id: only }
-  return {
-    error:
-      count === 0
-        ? 'There is no browser profile yet: create one on the Browser page.'
-        : 'Choose a browser profile in this connection (there is more than one).',
-  }
 }
 
 export const BROWSER_BROWSE_TOOLS = [
@@ -72,24 +55,12 @@ export function browserConnector(hook: () => BrowserHook | undefined): AnyConnec
       'Let an agent use a real browser: read pages, click and type, see screenshots. You can watch it live and take over for a login or a CAPTCHA.',
     icon: 'browser',
     category: 'workspace',
-    // curated, not built-in: a connection needs a profile, so none is created on its own
-    source: 'curated',
+    source: 'builtin',
     auth: { type: 'none' },
-    scopes: ['workspace', 'agent'],
-    // one browser per agent by default; the tool names are fixed
+    scopes: ['workspace'],
     instances: 'single',
     toolPrefix: 'never',
-    settings: z.object({
-      profileId: z
-        .string()
-        .optional()
-        .meta({
-          title: 'Browser profile',
-          description:
-            'A profile made on the Browser page. Empty: the only profile, when there is just one. A profile keeps its logins, so give each agent its own.',
-          ...ehMeta({ group: 'endpoint' }),
-        }),
-    }),
+    settings: z.object({}),
     capabilities: [
       {
         id: 'browse',
@@ -110,49 +81,35 @@ export function browserConnector(hook: () => BrowserHook | undefined): AnyConnec
         defaultMode: 'ask',
       },
     ],
-    scopeDefaults: { workspace: { defaultEnabled: false } },
-    test: async (ctx) => {
+    scopeDefaults: { workspace: { label: 'Browser', defaultEnabled: true } },
+    test: async () => {
       const h = hook()
       if (h === undefined)
         return { ok: false, message: 'Browsers are not available on this server.' }
-      const fixedChoice = (ctx.settings as { profileId?: unknown } | undefined)?.profileId
-      if (typeof fixedChoice !== 'string' || fixedChoice === '') {
-        const { count } = await h.profileCount()
-        if (count > 1) {
-          return {
-            ok: true,
-            message: 'The agent picks one of the Browser page profiles.',
-            accountLabel: 'Any profile',
-          }
-        }
+      const { count, only } = await h.profileCount()
+      if (count === 0) {
+        return { ok: true, message: 'No browser profile yet: create one on the Browser page.' }
       }
-      const picked = await profileOf(h, ctx.settings)
-      if ('error' in picked) return { ok: false, message: picked.error }
-      const found = await h.describe(picked.id)
-      if (found === undefined) {
-        return { ok: false, message: 'That browser profile was deleted: choose another one.' }
-      }
+      const found = only === undefined ? undefined : await h.describe(only)
       return {
         ok: true,
-        message: `${found.name} (${found.adapter}, ${found.mode === 'managed' ? 'runs on this server' : 'existing browser'})`,
-        accountLabel: found.name,
+        message:
+          found === undefined
+            ? 'The agent picks one of the Browser page profiles.'
+            : `${found.name} (${found.adapter}, ${found.mode === 'managed' ? 'runs on this server' : 'existing browser'})`,
+        accountLabel: found?.name ?? 'Any profile',
       }
     },
     activate: async (ctx) => {
       const h = hook()
       if (h === undefined) return []
-      const chosen = (ctx.settings as { profileId?: unknown } | undefined)?.profileId
-      const fixed = typeof chosen === 'string' && chosen !== '' ? chosen : undefined
-      if (fixed !== undefined) {
-        const found = await h.describe(fixed)
-        // a profile that was deleted leaves the tools out (the connection shows it in its test)
-        if (found === undefined) return []
-        if (found.trusted && ctx.modes.act === 'ask') h.settle(ctx.connection.id, true)
-      } else if ((await h.profileCount()).count === 0) {
-        return [] // nothing to browse with yet
-      }
-      // no choice: the agent lists the profiles and picks one (the only one is used by itself)
-      return h.plugin({ agentId: ctx.agent.id, connectionId: ctx.connection.id, profileId: fixed })
+      if ((await h.profileCount()).count === 0) return [] // nothing to browse with yet
+      // the agent lists the profiles and picks one (the only one is used by itself)
+      return h.plugin({
+        agentId: ctx.agent.id,
+        connectionId: ctx.connection.id,
+        profileId: undefined,
+      })
     },
   })
 }
