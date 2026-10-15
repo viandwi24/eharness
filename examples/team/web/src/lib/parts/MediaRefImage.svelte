@@ -37,7 +37,7 @@
 		<img src={url} {alt} class="block max-h-96 max-w-full object-contain" loading="lazy" />
 	</a>
 {:else if failed}
-	<p class="text-xs text-muted-foreground">The screenshot is no longer available.</p>
+	<p class="text-xs text-muted-foreground" data-testid="screenshot-expired">This screenshot expired and is no longer available.</p>
 {:else}
 	<div class="h-40 w-64 max-w-full animate-pulse rounded-lg bg-muted" aria-label="Loading the screenshot"></div>
 {/if}

@@ -40,7 +40,7 @@ import { remoteSandboxConnector } from '../code/remote.ts'
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
 import { DECISION_TOOLS, PROGRAM_NOTE_TOOL } from './decisions-plugin.ts'
-import { type LibraryChange, libraryFs } from './library-fs.ts'
+import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { PERSONA_TOOLS } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
 import { sessionFileSystem } from './rehearsal-registry.ts'
@@ -461,7 +461,8 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
               ...PROGRAM_FILE_TOOLS,
             ]),
           ] as FileToolName[],
-          hiddenPrefixes: ['/memories'],
+          // tool media (screenshots of MCP tools) are for the chat, not for the model or the sandbox
+          hiddenPrefixes: ['/memories', TOOL_MEDIA_DIR],
           // the stored package list of the code sandbox is edited by `install_packages` only
           ...(options.code?.filesOption === undefined
             ? {}

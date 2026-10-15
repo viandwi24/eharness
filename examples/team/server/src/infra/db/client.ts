@@ -30,6 +30,11 @@ const MIGRATIONS = new URL('../../../drizzle', import.meta.url).pathname
 export function openDatabase(file: string): Connection {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true })
   const sqlite = new Database(file, { create: true, strict: true })
+  // a new database starts in INCREMENTAL mode (before WAL and the first table fix the mode), so
+  // freed media pages can go back to the file system; an existing one keeps its mode
+  const fresh =
+    sqlite.query<{ page_count: number }, []>('PRAGMA page_count').get()?.page_count === 0
+  if (fresh) sqlite.run('PRAGMA auto_vacuum = INCREMENTAL')
   sqlite.run('PRAGMA journal_mode = WAL')
   sqlite.run('PRAGMA busy_timeout = 5000')
   sqlite.run('PRAGMA synchronous = NORMAL')

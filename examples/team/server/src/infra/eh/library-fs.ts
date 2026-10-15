@@ -43,6 +43,9 @@ export interface LibraryChange {
   agentId: string | null
 }
 
+/** Where the core's `toolMedia` service keeps the media of MCP tool results (a library folder). */
+export const TOOL_MEDIA_DIR = '/.eharness/tool-media'
+
 export interface LibraryFsOptions {
   /** Stored as the author (the latest writer; none = a person) of files this instance writes. */
   agentId?: string

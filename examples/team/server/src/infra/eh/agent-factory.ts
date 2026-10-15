@@ -132,7 +132,7 @@ import type { ConnectorsRuntime } from './connectors.ts'
 import { DECISION_TOOLS, type DecisionIntake, decisions } from './decisions-plugin.ts'
 import { fileGrant } from './file-grant-plugin.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
-import { type LibraryChange, libraryFs } from './library-fs.ts'
+import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { memoryDiscipline } from './memory-discipline-plugin.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import { type PersonaIntake, persona } from './persona-plugin.ts'
@@ -1117,7 +1117,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       // programs it also defines the file tools (hidden from every session but a program run that
       // is granted them, `fileGrant`), so an agent without a Files connection can still be given
       // paths to write
-      ...((pluginNames.has('memory') || deps.programs !== undefined) &&
+      // MCP tools too: the filesystem plugin holds their screenshots as files (`toolMedia`)
+      ...((pluginNames.has('memory') || deps.programs !== undefined || out.mcpSources.length > 0) &&
       !pluginNames.has('filesystem')
         ? [
             filesystem({
@@ -1128,7 +1129,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
                 }),
               ),
               tools: deps.programs === undefined ? [] : (PROGRAM_FILE_TOOLS as FileToolName[]),
-              hiddenPrefixes: ['/memories'],
+              hiddenPrefixes: ['/memories', TOOL_MEDIA_DIR],
               ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
             }),
           ]

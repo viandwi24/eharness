@@ -4,6 +4,7 @@
 	import { cn } from '#lib/utils.js';
 	import { groupSummary, type ToolView } from './activity.js';
 	import MediaRefImage from './MediaRefImage.svelte';
+	import { toolImages } from './media.js';
 	import ToolPart from './ToolPart.svelte';
 	import type { ApprovalStanding } from '#lib/approval/chip.js';
 
@@ -14,8 +15,9 @@
 	// the newest image a tool of the group stored for the person (a browser screenshot)
 	const picture = $derived.by(() => {
 		for (let i = views.length - 1; i >= 0; i--) {
-			const o = views[i]?.output as { type?: unknown; path?: unknown; mediaType?: unknown } | null | undefined;
-			if (o && o.type === 'media-ref' && typeof o.path === 'string' && String(o.mediaType ?? '').startsWith('image/')) return o.path;
+			const images = toolImages(views[i]?.output);
+			const newest = images[images.length - 1];
+			if (newest) return newest.path;
 		}
 		return undefined;
 	});

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { cn } from "#lib/utils.js";
 	import MediaRefImage from "#lib/parts/MediaRefImage.svelte";
+	import { toolContent } from "#lib/parts/media.js";
 	import type { HTMLAttributes } from "svelte/elements";
 
 	let {
@@ -21,6 +22,8 @@
 			? (output as MediaRef)
 			: undefined
 	);
+	// an MCP result whose images were stored as files: its text and its pictures in order
+	const content = $derived(media ? undefined : toolContent(output));
 	const text = $derived(
 		media ? (media.text ?? "") : typeof output === "string" ? output : JSON.stringify(output, null, 2)
 	);
@@ -35,6 +38,16 @@
 		</div>
 		{#if errorText}
 			<pre class={cn(pre, "bg-destructive-soft text-destructive-text")}>{errorText}</pre>
+		{:else if content}
+			<div class="flex flex-col gap-2">
+				{#each content as part, i (i)}
+					{#if part.kind === "image"}
+						<MediaRefImage path={part.image.path} />
+					{:else}
+						<pre class={pre}>{part.text}</pre>
+					{/if}
+				{/each}
+			</div>
 		{:else if media}
 			<div class="flex flex-col gap-2">
 				<MediaRefImage path={media.path} />

@@ -49,6 +49,7 @@
  *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
+ *   TEAM_MEDIA_RETENTION_DAYS   tool media and browser screenshots kept this long (default 3; 0 = keep); TEAM_DB_COMPACT=1 converts the DB to auto_vacuum=INCREMENTAL once
  *   TEAM_EVENTS_RETENTION_HOURS / TEAM_EVENTS_MAX_ROWS   events feed retention (default 72 h, 100000 rows; 0 hours = by count only)
  *   TEAM_ROUTINE_RUNS_RETENTION_DAYS / TEAM_TASKS_RETENTION_DAYS / TEAM_LIBRARY_HISTORY_RETENTION_DAYS   finished routine runs, finished tasks, library history (default 30 / 90 / 180 days; 0 = keep)
  *
@@ -156,7 +157,12 @@ import { sqlitePersonaStore } from './infra/db/persona-repo.ts'
 import { sqliteProgramMemory } from './infra/db/program-memory-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
 import { sqliteProgramTestStore, sqliteRehearsalStore } from './infra/db/rehearsal-repo.ts'
-import { pruneTables, type TableRetention } from './infra/db/retention.ts'
+import {
+  compactDatabase,
+  pruneTables,
+  reclaimSpace,
+  type TableRetention,
+} from './infra/db/retention.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
@@ -288,7 +294,12 @@ export interface ServerConfig {
    * boot and every `pruneEveryMs` (default 10 min; 0 = never again). `retentionHours: 0` keeps by count only.
    */
   events?: { retentionHours?: number; maxRows?: number; pruneEveryMs?: number }
-  /** Retention of finished routine runs, finished tasks and library history (days; 0 = keep). */
+  /**
+   * One-time `VACUUM` into `auto_vacuum=INCREMENTAL` at boot (env `TEAM_DB_COMPACT=1`), so deleted
+   * media give their disk space back. Needs free disk of about the database size; see the README.
+   */
+  dbCompact?: boolean
+  /** Retention of finished routine runs, finished tasks, library history and media (days; 0 = keep). */
   retention?: TableRetention
   /** Routine ticker (interval, lookahead, grace, recovery). `tickMs: 0` = no timer. */
   routines?: RoutineEngineConfig
@@ -506,9 +517,19 @@ export function compose(config: ServerConfig): Server {
   }
   const pruneOld = (): void => {
     try {
-      pruneTables(conn.sqlite, config.retention)
+      const pruned = pruneTables(conn.sqlite, config.retention)
+      // deleted media (library files) are the bulk of the database: hand the pages back
+      if (pruned.media > 0) reclaimSpace(conn.sqlite)
     } catch (error) {
       console.warn(`team: pruning tables failed: ${String(error)}`)
+    }
+  }
+  if (config.dbCompact === true) {
+    try {
+      if (compactDatabase(conn.sqlite))
+        console.info('team: database converted to auto_vacuum=INCREMENTAL')
+    } catch (error) {
+      console.warn(`team: compacting the database failed: ${String(error)}`)
     }
   }
   pruneEvents()
@@ -1513,7 +1534,11 @@ if (import.meta.main) {
         : {}),
       ...(Number.isFinite(eventRows) && eventRows > 0 ? { maxRows: eventRows } : {}),
     },
+    ...(process.env.TEAM_DB_COMPACT === '1' ? { dbCompact: true } : {}),
     retention: {
+      ...(retentionDays('TEAM_MEDIA_RETENTION_DAYS') === undefined
+        ? {}
+        : { mediaDays: retentionDays('TEAM_MEDIA_RETENTION_DAYS') as number }),
       ...(retentionDays('TEAM_ROUTINE_RUNS_RETENTION_DAYS') === undefined
         ? {}
         : { routineRunsDays: retentionDays('TEAM_ROUTINE_RUNS_RETENTION_DAYS') as number }),

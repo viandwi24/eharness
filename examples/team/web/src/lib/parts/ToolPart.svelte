@@ -6,6 +6,7 @@
 	import { isRunning, type ToolView, toolNote } from './activity.js';
 	import { approvalChip, type ApprovalStanding } from '#lib/approval/chip.js';
 	import MediaRefImage from './MediaRefImage.svelte';
+	import { toolImages } from './media.js';
 
 	/** `nested`: a row inside a ToolGroup box (padded, no own indent). */
 	let {
@@ -19,11 +20,8 @@
 	const hasInput = $derived(view.input !== undefined && view.input !== null);
 	const hasOutput = $derived(view.output !== undefined && view.output !== null && view.output !== '');
 	const running = $derived(isRunning(view));
-	// an image the tool stored for the person (a browser screenshot) is shown right away
-	const picture = $derived.by(() => {
-		const o = view.output as { type?: unknown; path?: unknown; mediaType?: unknown } | null | undefined;
-		return o && o.type === 'media-ref' && typeof o.path === 'string' && String(o.mediaType ?? '').startsWith('image/') ? o.path : undefined;
-	});
+	// images the tool stored for the person (a browser screenshot, an MCP screenshot) are shown right away
+	const pictures = $derived(toolImages(view.output));
 	// A call that needed an approval says where it stands; the approval itself is in the dock.
 	const chip = $derived(approvalChip(view, view.approval ? standing?.(view.approval.id) : undefined));
 	const note = $derived(chip?.kind === 'declined' ? undefined : toolNote(view));
@@ -61,8 +59,10 @@
 		{/if}
 	{/if}
 	</div>
-	{#if picture && !open}
-		<div class="mt-2 mb-1"><MediaRefImage path={picture} /></div>
+	{#if pictures.length > 0 && !open}
+		<div class="mt-2 mb-1 flex flex-col gap-2">
+			{#each pictures as picture (picture.path)}<MediaRefImage path={picture.path} />{/each}
+		</div>
 	{/if}
 	{#if open}
 		<div class="mt-2 mb-1 flex flex-col gap-3">
