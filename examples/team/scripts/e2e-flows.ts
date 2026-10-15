@@ -49,8 +49,8 @@ const steps = [
     schedule: { cron: '0 8 * * 1', timezone: 'UTC' },
   }),
   { text: 'I put the plan in the Decision Center.' },
-  // 3. an escalation
-  call('escalate', {
+  // 3. an escalation that parks the run (`escalate` asks and goes on; `escalate_wait` waits)
+  call('escalate_wait', {
     title: 'Publish the weekly report?',
     question: 'The report is ready. Publish it to the shared channel?',
     options: ['publish', 'hold'],
