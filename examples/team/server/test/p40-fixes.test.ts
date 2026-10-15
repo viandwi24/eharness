@@ -227,6 +227,61 @@ describe('finding 1: the file tools a program grants', () => {
     expect(toolNames(models.researcher, lastCall)).toContain('read_file')
   })
 
+  test('a chat that is already open gets the tools of a connector change at its next message', async () => {
+    const { app, server, models } = instance({
+      researcher: [{ text: 'first' }, { text: 'second' }],
+    })
+    await turnOffFileEdit(server, 'researcher')
+    const say = async (text: string) =>
+      (
+        await app.request(
+          '/sessions/dm:researcher/chat',
+          postAs('dm:researcher', userMessage(text)),
+        )
+      ).text()
+    await say('one')
+    const first = (models.researcher?.calls.length ?? 1) - 1
+    expect(toolNames(models.researcher, first)).not.toContain('write_file')
+    // switched on again while the session is open (a busy group chat is never idle-evicted)
+    const def = server.deps.agents.getBySlug('researcher')
+    const res = await app.request(
+      `/agents/${def?.id}/connectors`,
+      json('PUT', { connections: { 'builtin:files': { capabilities: { edit: 'allow' } } } }),
+    )
+    expect(res.status).toBe(200)
+    await say('two')
+    const second = (models.researcher?.calls.length ?? 1) - 1
+    expect(second).toBeGreaterThan(first)
+    expect(toolNames(models.researcher, second)).toContain('write_file')
+    // the model is told once what changed (an earlier "I cannot" in the chat is outdated)
+    const res2 = await app.request(
+      `/sessions/${encodeURIComponent('dm:researcher')}/messages?limit=50`,
+    )
+    const body = JSON.stringify(await res2.json())
+    expect(body).toContain('agent.tools.changed')
+    expect(body).toContain('Now available: ')
+    expect(body).toMatch(/Now available: [^.]*write_file/)
+  })
+
+  test('a session object held across a connector change is replaced by the new build', async () => {
+    const { server } = instance({ researcher: [{ text: 'first' }, { text: 'second' }] })
+    await turnOffFileEdit(server, 'researcher')
+    const def = server.deps.agents.getBySlug('researcher')
+    if (def === undefined) throw new Error('seed')
+    // a channel chat keeps its session object between messages
+    const held = server.factory.openSession(def, 'channel:test:held')
+    await (await held.send({ text: 'one' } as never)).result
+    await server.app.request(
+      `/agents/${def.id}/connectors`,
+      json('PUT', { connections: { 'builtin:files': { capabilities: { edit: 'allow' } } } }),
+    )
+    await server.factory.prepare(def)
+    const next = server.factory.openSession(def, 'channel:test:held')
+    expect(next).not.toBe(held)
+    await (await next.send({ text: 'two' } as never)).result
+    expect(server.connectors.activated(def.id)?.rules.deny ?? []).not.toContain('write_file')
+  })
+
   test('a program with no write paths does not get the write tools', async () => {
     const { app, server, models } = instance({
       researcher: [finalReport({ status: 'done', summary: 'ok', outputs: [] })],

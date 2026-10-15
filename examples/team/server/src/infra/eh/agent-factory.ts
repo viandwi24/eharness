@@ -759,6 +759,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
    */
   const liveSessions = new Map<HarnessAgent, Map<string, WeakRef<HarnessSession>>>()
   const retired: HarnessAgent[] = []
+  /** The tools the model of a build is offered (connector tools that are not denied). */
+  const toolsOfBuild = new WeakMap<HarnessAgent, readonly string[]>()
+  /**
+   * Sessions an older build held when the tools changed: their next open on the new build tells the
+   * model once what changed, so an earlier "I cannot do that" in the chat is not repeated.
+   */
+  const toolNotices = new Map<string, { added: Set<string>; removed: Set<string> }>()
 
   const leadAgent = (): HarnessAgent => {
     const lead = deps.lead?.()
@@ -1601,11 +1608,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return { id, ...(info ?? {}) }
   }
 
-  /** The persona component of a cache key (`...@p<version>`). */
-  const personaPart = (key: string): string => key.slice(key.lastIndexOf('@p'))
-
   /**
-   * After a persona change: close the sessions of the replaced builds as soon as they are idle (no
+   * After a rebuild (persona, connectors, settings, models): close the sessions of the replaced builds as soon as they are idle (no
    * turn, nothing queued, no pending approval), so that the next message of a chat is run by the
    * new build and its persona. A session that is busy keeps its build until it is idle.
    */
@@ -1642,6 +1646,46 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       }
     }
     pruneSuperseded(agentId)
+  }
+
+  /** Remember, for every live session of `old`, which tools the new build adds and removes. */
+  function noteToolChange(old: HarnessAgent, now: readonly string[]): void {
+    const before = toolsOfBuild.get(old)
+    if (before === undefined) return
+    const was = new Set(before)
+    const is = new Set(now)
+    const added = now.filter((t) => !was.has(t))
+    const removed = before.filter((t) => !is.has(t))
+    if (added.length === 0 && removed.length === 0) return
+    for (const [id, ref] of liveSessions.get(old) ?? []) {
+      if (ref.deref() === undefined) continue
+      const n = toolNotices.get(id) ?? { added: new Set<string>(), removed: new Set<string>() }
+      for (const t of added) {
+        n.removed.delete(t)
+        n.added.add(t)
+      }
+      for (const t of removed) {
+        n.added.delete(t)
+        n.removed.add(t)
+      }
+      toolNotices.set(id, n)
+    }
+  }
+
+  /** The text of a tool change notice (lists capped: a big connector would flood the chat). */
+  const toolNoticeText = (n: { added: Set<string>; removed: Set<string> }): string => {
+    const list = (s: Set<string>): string => {
+      const all = [...s]
+      return `${all.slice(0, 20).join(', ')}${all.length > 20 ? ` and ${all.length - 20} more` : ''}`
+    }
+    return [
+      'Your tools changed since your last message here (connectors or settings were updated).',
+      n.added.size > 0 ? `Now available: ${list(n.added)}.` : '',
+      n.removed.size > 0 ? `No longer available: ${list(n.removed)}.` : '',
+      'What you said earlier in this chat about what you can or cannot do may be outdated: check your tools again before answering.',
+    ]
+      .filter((l) => l !== '')
+      .join(' ')
   }
 
   /** Forget replaced builds that hold no live session any more (the maps must not only grow). */
@@ -1682,18 +1726,22 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       setBudgetLimit(sqlite, workspaceScope(workspaceId), settings.budgetUsd)
       agent = build(def, settings, out)
       cache.set(key, agent)
+      const offered = Object.keys(out.toolNameMap).filter((t) => !out.rules.deny.includes(t))
+      toolsOfBuild.set(agent, offered)
       const previous = latest.get(def.id)
       if (previous !== undefined && previous !== key) {
         const old = cache.get(previous)
         if (old !== undefined) {
+          noteToolChange(old, offered)
           retired.push(old)
           cache.delete(previous)
-          if (personaPart(previous) !== personaPart(key)) {
-            superseded.set(def.id, [...(superseded.get(def.id) ?? []), old])
-          } else {
-            // replaced for another reason (settings, models): its sessions need no persona close
-            liveSessions.delete(old)
-          }
+          // whatever replaced it (persona, connectors and their tools, settings, models), a chat
+          // that the old build holds must move to the new one: a busy group session is never
+          // idle-evicted, so it would keep the old tools for good
+          superseded.set(def.id, [...(superseded.get(def.id) ?? []), old])
+          // close them as soon as they are idle, not only at the next prepare of this agent: a
+          // queued message must not be taken by the old build in the meantime
+          void closeSuperseded(def.id).catch(() => undefined)
         }
       }
       latest.set(def.id, key)
@@ -1724,14 +1772,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         if (a !== undefined) all.set(a.id, a)
       }
       await deps.connectors.prepare([...all.values()])
-      // a new persona reaches the next message of a chat that an older build still holds
-      const built = def === undefined ? undefined : latest.get(def.id)
-      if (
-        def !== undefined &&
-        deps.personas !== undefined &&
-        built !== undefined &&
-        personaPart(built) !== `@p${deps.personas.latestNumber(def.id)}`
-      ) {
+      // a new persona, new connector tools, settings or models reach the next message of a chat
+      // that an older build still holds: build the current one, then close the old sessions
+      if (def !== undefined && latest.get(def.id) !== undefined) {
         try {
           factoryAgentFor(def, def.archivedAt !== null)
         } catch {
@@ -1800,13 +1843,24 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         lock,
         runtime: { workspaceId, agentId: def.id },
       }) as HarnessSession
-      if (deps.personas !== undefined) {
-        const known = liveSessions.get(agent) ?? new Map<string, WeakRef<HarnessSession>>()
-        known.set(sessionId, new WeakRef(session))
-        // sweep the sessions the library already dropped
-        if (known.size > 64)
-          for (const [id, ref] of [...known]) if (ref.deref() === undefined) known.delete(id)
-        liveSessions.set(agent, known)
+      // every build knows its open sessions: a rebuild moves them over (`closeSuperseded`)
+      const known = liveSessions.get(agent) ?? new Map<string, WeakRef<HarnessSession>>()
+      known.set(sessionId, new WeakRef(session))
+      // sweep the sessions the library already dropped
+      if (known.size > 64)
+        for (const [id, ref] of [...known]) if (ref.deref() === undefined) known.delete(id)
+      liveSessions.set(agent, known)
+      const notice = toolNotices.get(sessionId)
+      if (notice !== undefined && toolsOfBuild.get(agent) !== undefined) {
+        toolNotices.delete(sessionId)
+        const at = `${[...notice.added].join(',')}|${[...notice.removed].join(',')}`
+        void session
+          .inject(
+            'eh.event',
+            { name: 'agent.tools.changed', text: toolNoticeText(notice) },
+            { key: `tools-changed:${at}`.slice(0, 200) },
+          )
+          .catch(() => undefined)
       }
       return session
     },
