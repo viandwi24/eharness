@@ -70,6 +70,7 @@ import {
   listenConfig,
   originOf,
 } from './app/auth.ts'
+import { suggestAuthority } from './app/authority-suggestions.ts'
 import { briefingsText } from './app/briefings.ts'
 import { settleTakeovers } from './app/browser.ts'
 import { checkChatBody, uploadFile } from './app/chat.ts'
@@ -82,7 +83,17 @@ import {
   rejectDecision,
 } from './app/decisions.ts'
 import { recheckTask } from './app/deliverables.ts'
-import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
+import { type HealthJobReport, runHealthJob } from './app/health.ts'
+import {
+  abandonBeat,
+  appendNote,
+  effectiveConfig,
+  ensureHeartbeats,
+  finishBeat,
+  postingOf,
+  reservePost,
+  teamStatus,
+} from './app/heartbeat.ts'
 import {
   applyProposal,
   ensureAllPersonas,
@@ -149,6 +160,7 @@ import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
 import { drizzleDecisionStore } from './infra/db/decisions-repo.ts'
+import { sqliteHealthStore } from './infra/db/health-repo.ts'
 import { sqliteHeartbeatStore } from './infra/db/heartbeat-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
@@ -185,6 +197,7 @@ import { createDecisionService, type DecisionService } from './infra/eh/decision
 import type { DecisionIntake } from './infra/eh/decisions-plugin.ts'
 import { createEventAppender } from './infra/eh/event-appender.ts'
 import { createTeamHttp } from './infra/eh/harness-http.ts'
+import { heartbeatChannels } from './infra/eh/heartbeat-channels.ts'
 import type { HeartbeatIntake } from './infra/eh/heartbeat-plugin.ts'
 import { createHeartbeatService, type HeartbeatService } from './infra/eh/heartbeat-service.ts'
 import { type LibraryChange, libraryFs } from './infra/eh/library-fs.ts'
@@ -301,8 +314,12 @@ export interface ServerConfig {
   dbCompact?: boolean
   /** Retention of finished routine runs, finished tasks, library history and media (days; 0 = keep). */
   retention?: TableRetention
+  /** Agent health scan (anomaly findings, bell notice for new high ones): every `everyMs` (default 10 min; 0 = never; off when `reconcile.everyMs` is 0). */
+  health?: { everyMs?: number }
   /** Routine ticker (interval, lookahead, grace, recovery). `tickMs: 0` = no timer. */
   routines?: RoutineEngineConfig
+  /** Heartbeat tuning (tests): how long new chat messages settle before an early beat starts. */
+  heartbeat?: { activitySettleMs?: number }
   /**
    * Repair pass (`reconcileSubagentWaits` + task drift): at boot (default on) and every
    * `everyMs` (default 60 000; 0 = never).
@@ -380,6 +397,8 @@ export interface Server {
   metrics: () => Record<string, number>
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
   activityLog: ActivityLog
+  /** One agent health pass now (what the timer runs): findings, bell notices and authority suggestions. */
+  healthScan(): Promise<HealthJobReport>
   /** Connectors: connections, flows, enablement, activation. */
   connectors: ConnectorsRuntime
   /** Resolves when the legacy migration ran and the connectors of every agent are activated. */
@@ -798,6 +817,10 @@ export function compose(config: ServerConfig): Server {
     agents,
     events,
     store: heartbeatStore,
+    channels: heartbeatChannels(() => channelGateway),
+    ...(config.heartbeat?.activitySettleMs === undefined
+      ? {}
+      : { activitySettleMs: config.heartbeat.activitySettleMs }),
     budget: async () => {
       const checked = await budgetLedger.check?.([`workspace:${WORKSPACE_ID}`])
       const scope = checked?.scopes[0]
@@ -903,6 +926,7 @@ export function compose(config: ServerConfig): Server {
     heartbeat: heartbeats.ports,
     events,
     modelCalls,
+    health: sqliteHealthStore(conn.sqlite),
     clock: { now: () => Date.now() },
     ids: { next: () => uuidv7() },
     workspaceId: WORKSPACE_ID,
@@ -1040,6 +1064,13 @@ export function compose(config: ServerConfig): Server {
     },
     canReadBriefings: (slug) => agents.getBySlug(slug)?.role === 'lead',
     briefings: (query) => briefingsText(deps, query),
+    heartbeatOn: (slug) => {
+      const def = agents.getBySlug(slug)
+      return def !== undefined && effectiveConfig(deps, def).enabled
+    },
+    note: (agentId, entry) => appendNote(deps, agentId, entry),
+    posting: (agentId) => postingOf(deps, agentId),
+    reservePost: (agentId, text) => reservePost(deps, agentId, text),
   }
   // bell alerts of the channels (breaker opened, outbox failure, a bot token rejected)
   const channelNotify = (n: {
@@ -1066,6 +1097,8 @@ export function compose(config: ServerConfig): Server {
   const channelFiles = libraryFs(conn.sqlite)
   channelGateway = createChannelGateway({
     sqlite: conn.sqlite,
+    // new messages in watched chats may start an early heartbeat (debounced in the service)
+    onObserved: (event) => void heartbeats.activity(event),
     // a Decision Center question answered in a chat, by a named owner or admin
     answerDecision: async ({ decisionId, choice, by }) => {
       const answerer = { via: 'chat' as const, name: by.name }
@@ -1372,6 +1405,13 @@ export function compose(config: ServerConfig): Server {
   const dispatchEveryMs = config.reconcile?.everyMs === 0 ? 0 : 10_000
   const dispatchTimer = dispatchEveryMs > 0 ? setInterval(dispatch, dispatchEveryMs) : undefined
   dispatchTimer?.unref()
+  // agent health: anomalies found in the data the server keeps, every 10 minutes
+  const healthScan = (): Promise<HealthJobReport> =>
+    runHealthJob(deps, { suggest: suggestAuthority })
+  const healthEveryMs = config.reconcile?.everyMs === 0 ? 0 : (config.health?.everyMs ?? 600_000)
+  const healthTimer =
+    healthEveryMs > 0 ? setInterval(() => void healthScan(), healthEveryMs) : undefined
+  healthTimer?.unref()
 
   // chat, sessions, attention answers and the activity feed: the library's HTTP module
   const harness = createTeamHttp({
@@ -1452,12 +1492,15 @@ export function compose(config: ServerConfig): Server {
     connectorsReady,
     ready,
     reconcile,
+    healthScan,
     async close() {
       if (timer !== undefined) clearInterval(timer)
+      if (healthTimer !== undefined) clearInterval(healthTimer)
       if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
       offBrowserEvents()
+      heartbeats.close()
       // kills the engines this process started
       await browserService.close()
       await telegram?.stop()

@@ -7,6 +7,7 @@ import ClockIcon from 'phosphor-svelte/lib/Clock';
 import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
 import GavelIcon from 'phosphor-svelte/lib/Gavel';
 import GearIcon from 'phosphor-svelte/lib/Gear';
+import HeartbeatIcon from 'phosphor-svelte/lib/Heartbeat';
 import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 import NewspaperIcon from 'phosphor-svelte/lib/Newspaper';
 import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
@@ -32,5 +33,6 @@ export const NAV_ICONS: Record<SectionId | RailId, Component> = {
 	connectors: PlugsConnectedIcon,
 	browser: GlobeIcon,
 	logs: PulseIcon,
+	health: HeartbeatIcon,
 	settings: GearIcon
 };

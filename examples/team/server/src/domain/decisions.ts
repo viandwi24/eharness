@@ -81,6 +81,11 @@ export interface AmendmentPayload {
   /** The authority to add to the program (what the run asked for; the client may narrow it). */
   authority: ProgramAuthority
   why: string
+  /**
+   * Set when agent health made the amendment from repeated denials (no run is parked on it):
+   * the tool and the evidence. A rejected one silences the same suggestion for that program.
+   */
+  suggestion?: { tool: string; runs: number; denials: number }
 }
 
 type Base = {

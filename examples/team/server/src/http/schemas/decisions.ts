@@ -80,6 +80,13 @@ export const AmendmentPayloadSchema = z
       description: 'The authority to add to the program (the client may narrow it).',
     }),
     why: z.string(),
+    suggestion: z
+      .object({ tool: z.string(), runs: z.number().int(), denials: z.number().int() })
+      .optional()
+      .openapi({
+        description:
+          'Set when agent health suggested it from repeated denials of a program (no run is parked on it).',
+      }),
   })
   .openapi('AmendmentPayload')
 

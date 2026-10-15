@@ -7313,7 +7313,7 @@
           },
           "trusted": {
             "type": "boolean",
-            "description": "An admin trusts the profile: its agents click and type without asking."
+            "description": "Kept for the library profile record. It changes nothing in this app: one Browser connection serves every profile, so acting tools follow the connection mode (Click and type: ask / allow), not the profile."
           },
           "createdAt": {
             "type": "integer"
@@ -8552,7 +8552,8 @@
               "tool-unavailable",
               "tool-off",
               "channel-not-bound",
-              "budget-below-minimum"
+              "budget-below-minimum",
+              "brief-needs-tool"
             ]
           },
           "field": {
@@ -8747,6 +8748,10 @@
             "type": "string",
             "minLength": 1,
             "description": "Agent id or slug."
+          },
+          "brief": {
+            "type": "string",
+            "description": "The brief as typed: checked against the authority (it asks for memory or a calculation the authority does not grant)."
           },
           "authority": {
             "type": "object",
@@ -10878,6 +10883,26 @@
           },
           "why": {
             "type": "string"
+          },
+          "suggestion": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "runs": {
+                "type": "integer"
+              },
+              "denials": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "tool",
+              "runs",
+              "denials"
+            ],
+            "description": "Set when agent health suggested it from repeated denials of a program (no run is parked on it)."
           }
         },
         "required": [
@@ -11138,13 +11163,64 @@
               "empty": {
                 "type": "boolean",
                 "description": "Only headings and comments: the beat is skipped, no model call."
+              },
+              "suggestion": {
+                "type": "string",
+                "description": "A short starting point to insert into the file (never written by itself)."
               }
             },
             "required": [
               "path",
               "exists",
-              "empty"
+              "empty",
+              "suggestion"
             ]
+          },
+          "destinations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeartbeatDestinationView"
+            },
+            "description": "The places the beat may report to: postable chats of the agent connections."
+          },
+          "watched": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "nodeId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "nodeId",
+                "title"
+              ]
+            },
+            "description": "The chats whose new messages wake the beat and are counted for it."
+          },
+          "postsToday": {
+            "type": "integer",
+            "description": "Posts to `reportTo` made today."
+          },
+          "notes": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "exists": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "exists"
+            ],
+            "description": "Today's observation notes (a library file, team timezone)."
           },
           "trigger": {
             "type": [
@@ -11195,6 +11271,10 @@
           "effectiveTimezone",
           "stored",
           "checklist",
+          "destinations",
+          "watched",
+          "postsToday",
+          "notes",
           "trigger",
           "beats",
           "digest"
@@ -11229,6 +11309,34 @@
             "minLength": 1,
             "maxLength": 64,
             "description": "IANA timezone; null = the team timezone (workspace setting)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "notes",
+              "speak"
+            ],
+            "description": "`off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`."
+          },
+          "reportTo": {
+            "$ref": "#/components/schemas/HeartbeatDestination"
+          },
+          "maxPostsPerDay": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50,
+            "description": "Posts to `reportTo` per local day; further ones are refused."
+          },
+          "wakeOnActivity": {
+            "type": "boolean",
+            "description": "Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in)."
+          },
+          "minGapMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440,
+            "description": "An early beat starts at the earliest this long after the previous beat."
           }
         },
         "required": [
@@ -11236,7 +11344,66 @@
           "everyMinutes",
           "activeFrom",
           "activeTo",
-          "timezone"
+          "timezone",
+          "mode",
+          "reportTo",
+          "maxPostsPerDay",
+          "wakeOnActivity",
+          "minGapMinutes"
+        ]
+      },
+      "HeartbeatDestination": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "connectionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "nodeId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The conversation (chat or topic) id."
+          }
+        },
+        "required": [
+          "connectionId",
+          "nodeId"
+        ],
+        "description": "The one chat or topic (of a connection bound to the agent) the beat may post to, unasked and through the chat proactive policy. null = it never posts."
+      },
+      "HeartbeatDestinationView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/HeartbeatDestination"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "The chat (and topic) name."
+              },
+              "platform": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "proactive": {
+                "type": "boolean",
+                "description": "false: the chat settings do not allow unasked posts, so every post is refused."
+              }
+            },
+            "required": [
+              "label",
+              "platform",
+              "kind",
+              "proactive"
+            ]
+          }
         ]
       },
       "BeatRecord": {
@@ -11264,6 +11431,14 @@
               "skipped",
               "failed"
             ]
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "schedule",
+              "activity"
+            ],
+            "description": "What started it: the interval (default) or new messages in a watched chat."
           },
           "reason": {
             "type": [
@@ -11322,6 +11497,19 @@
           },
           "fingerprint": {
             "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "note",
+              "say",
+              "escalate"
+            ],
+            "description": "What the beat did about it: noted, said it in the chat, or told the owner."
+          },
+          "reason": {
+            "type": "string",
+            "description": "One line: why (for the owner to audit)."
           }
         },
         "required": [
@@ -11417,6 +11605,34 @@
             "minLength": 1,
             "maxLength": 64,
             "description": "IANA timezone; null = the team timezone (workspace setting)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "notes",
+              "speak"
+            ],
+            "description": "`off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`."
+          },
+          "reportTo": {
+            "$ref": "#/components/schemas/HeartbeatDestination"
+          },
+          "maxPostsPerDay": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50,
+            "description": "Posts to `reportTo` per local day; further ones are refused."
+          },
+          "wakeOnActivity": {
+            "type": "boolean",
+            "description": "Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in)."
+          },
+          "minGapMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440,
+            "description": "An early beat starts at the earliest this long after the previous beat."
           },
           "createChecklist": {
             "type": "boolean",
@@ -15144,6 +15360,156 @@
           "nextId"
         ],
         "description": "One call with every JSON column."
+      },
+      "HealthFindingList": {
+        "type": "object",
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthFinding"
+            }
+          },
+          "open": {
+            "type": "integer",
+            "description": "Findings not dismissed (all filters off)."
+          },
+          "scannedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "findings",
+          "open",
+          "scannedAt"
+        ]
+      },
+      "HealthFinding": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "description": "Stable id of the problem: the same problem is the same finding on every scan."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "repeated-denial",
+              "tool-loop",
+              "repeated-error",
+              "approval-waiting",
+              "token-spike",
+              "big-output",
+              "program-run",
+              "provider-error"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agentName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "programId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "programName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "App path of the evidence (a task, a program or a chat)."
+          },
+          "firstSeen": {
+            "type": "integer",
+            "description": "Epoch ms."
+          },
+          "lastSeen": {
+            "type": "integer",
+            "description": "Epoch ms."
+          },
+          "count": {
+            "type": "integer"
+          },
+          "explanation": {
+            "type": "string",
+            "description": "One line: what is wrong."
+          },
+          "fix": {
+            "type": "string",
+            "description": "What to do about it."
+          },
+          "dismissed": {
+            "type": "boolean"
+          },
+          "dismissedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "fingerprint",
+          "kind",
+          "severity",
+          "agentId",
+          "agentName",
+          "sessionId",
+          "programId",
+          "programName",
+          "link",
+          "firstSeen",
+          "lastSeen",
+          "count",
+          "explanation",
+          "fix",
+          "dismissed",
+          "dismissedAt"
+        ]
+      },
+      "HealthFindingAck": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "ok"
+        ]
       }
     },
     "parameters": {}
@@ -23160,7 +23526,7 @@
           "browser"
         ],
         "summary": "Edit a browser profile",
-        "description": "Rename, change settings (keep-secret semantics), the allowed domains, or mark it trusted: the agents on a trusted profile click and type without asking.",
+        "description": "Rename, change settings (keep-secret semantics), the allowed domains.",
         "security": [
           {
             "Bearer": []
@@ -26821,7 +27187,7 @@
           "heartbeat"
         ],
         "summary": "Configure the heartbeat of an agent",
-        "description": "Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. The checklist is the memory file `HEARTBEAT.md` (edit it through `/memory`); `createChecklist` writes a template when there is none.",
+        "description": "Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. `reportTo` (a chat or topic from `destinations`, or null) is the one place the beat may post to, at most `maxPostsPerDay` times; `wakeOnActivity` adds early beats when watched chats get new messages (at most one per `minGapMinutes`). The checklist is the memory file `HEARTBEAT.md` (read and write it through `/memory/file`, scope `agent`); an empty one means the beat never runs. `createChecklist` writes an empty template when there is none.",
         "security": [
           {
             "Bearer": []
@@ -32504,6 +32870,234 @@
           },
           "404": {
             "description": "Unknown call (it may have been pruned)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent-health/findings": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Agent health findings",
+        "description": "Problems the server noticed in the last 24 hours from its own data: a tool denied again and again, a tool loop, the same tool error, an approval nobody answers, a context spike, a program run that ended partial or failed, provider errors. High severity ones raise a bell notice once. Dismissed findings are hidden unless `dismissed=true`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug."
+            },
+            "required": false,
+            "description": "Agent id or slug.",
+            "name": "agent",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "high",
+                "medium",
+                "low"
+              ]
+            },
+            "required": false,
+            "name": "severity",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "repeated-denial",
+                "tool-loop",
+                "repeated-error",
+                "approval-waiting",
+                "token-spike",
+                "big-output",
+                "program-run",
+                "provider-error"
+              ]
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "`true` also lists dismissed findings."
+            },
+            "required": false,
+            "description": "`true` also lists dismissed findings.",
+            "name": "dismissed",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Findings, high severity first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthFindingList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent-health/findings/{fingerprint}/dismiss": {
+      "post": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Dismiss a finding",
+        "description": "Hides the finding (by fingerprint) and keeps it from raising a notice.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "example": "denial:program:abc:list_topics"
+            },
+            "required": true,
+            "name": "fingerprint",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthFindingAck"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Show a dismissed finding again",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "example": "denial:program:abc:list_topics"
+            },
+            "required": true,
+            "name": "fingerprint",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthFindingAck"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`NOT_DISMISSED`",
             "content": {
               "application/json": {
                 "schema": {

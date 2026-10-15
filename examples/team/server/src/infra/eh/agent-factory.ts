@@ -29,6 +29,7 @@ import type { Database } from 'bun:sqlite'
 import type { LanguageModel } from 'ai'
 import {
   defineHarnessAgent,
+  errorText,
   type HarnessAgent,
   type HarnessSession,
   type HarnessWarning,
@@ -74,7 +75,13 @@ import {
   uploadPathOfUrl,
 } from '../../domain/chat.ts'
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
-import { HEARTBEAT_ALLOWED, heartbeatRefusal } from '../../domain/heartbeat.ts'
+import {
+  HEARTBEAT_ALLOWED,
+  HEARTBEAT_POST_TOOL,
+  type HeartbeatDestination,
+  heartbeatChannelRefusal,
+  heartbeatRefusal,
+} from '../../domain/heartbeat.ts'
 import {
   agentModeChoice,
   type ResolvedMode,
@@ -112,6 +119,7 @@ import {
   createArtifactsHook,
 } from '../artifacts/index.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
+import { resolveConnectionRef } from '../channels/connection-ref.ts'
 import {
   CHANNEL_TOOLS,
   type ChannelGateway,
@@ -992,13 +1000,65 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
                 'builtin',
           )
           .map(([name]) => name)
+        /**
+         * Chat tools of a beat: reads go through (a download writes a file: refused); the one
+         * post is allowed only as a new message to the configured `reportTo`, inside the daily
+         * cap and not as a repeat. Read from the config on every call, like a program's authority.
+         */
+        const channelCall = (call: { toolName: string; input: unknown }): string | undefined => {
+          const posting = deps.heartbeat?.()?.posting(def.id) ?? {
+            reportTo: null,
+            maxPostsPerDay: 0,
+          }
+          let target: HeartbeatDestination | { error: string } | undefined
+          const input = (call.input ?? {}) as Record<string, unknown>
+          const gw = deps.channels?.()
+          if (
+            call.toolName === HEARTBEAT_POST_TOOL &&
+            posting.reportTo !== null &&
+            gw !== undefined
+          ) {
+            try {
+              const str = (v: unknown): string | undefined =>
+                typeof v === 'string' ? v : undefined
+              const ref =
+                str(input.connection) === undefined
+                  ? undefined
+                  : resolveConnectionRef(gw.connectionsOf(def.id), input.connection as string)
+              if (ref !== undefined && !ref.ok) target = { error: ref.text }
+              else {
+                const conversation = str(input.conversation)
+                const topic = str(input.topic)
+                const t = gw.resolveTarget(def.id, sessionId, {
+                  ...(ref === undefined ? {} : { connection: ref.id }),
+                  ...(conversation === undefined ? {} : { conversation }),
+                  ...(topic === undefined ? {} : { topic }),
+                })
+                target = { connectionId: t.config.connectionId, nodeId: t.node.id }
+              }
+            } catch (error) {
+              target = { error: errorText(error) }
+            }
+          }
+          const refusal = heartbeatChannelRefusal(call, { reportTo: posting.reportTo, target })
+          if (refusal !== undefined || call.toolName !== HEARTBEAT_POST_TOOL) return refusal
+          const text = typeof input.text === 'string' ? input.text : ''
+          if (text.trim() === '') return 'Not posted: send needs text.'
+          return deps.heartbeat?.()?.reservePost(def.id, text)
+        }
         return {
-          rules: { allow: [...HEARTBEAT_ALLOWED, ...lookups], deny: [] },
-          refuse: (call) =>
-            lookups.includes(call.toolName) ||
-            HEARTBEAT_ALLOWED.some((rule) => matchRule(rule, call, { ...match, polarity: 'allow' }))
+          rules: { allow: [...HEARTBEAT_ALLOWED, HEARTBEAT_POST_TOOL, ...lookups], deny: [] },
+          refuse: (call) => {
+            if (call.toolName === HEARTBEAT_POST_TOOL || call.toolName === 'channel_read') {
+              return channelCall(call)
+            }
+            return lookups.includes(call.toolName) ||
+              HEARTBEAT_ALLOWED.some((rule) =>
+                matchRule(rule, call, { ...match, polarity: 'allow' }),
+              )
               ? undefined
-              : heartbeatRefusal(call.toolName),
+              : heartbeatRefusal(call.toolName)
+          },
           askedReason: heartbeatRefusal,
         }
       }

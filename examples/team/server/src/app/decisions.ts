@@ -92,7 +92,7 @@ export function listDecisions(deps: Deps, query: DecisionQuery): Decision[] {
 
 export const openDecisionCount = (deps: Deps): number => deps.decisions.countOpen()
 
-const changed = (deps: Deps, d: Decision, change: 'created' | 'decided'): void =>
+export const changed = (deps: Deps, d: Decision, change: 'created' | 'decided'): void =>
   deps.events.append({
     type: 'decision-changed',
     agentId: d.agentId,

@@ -9,18 +9,25 @@
  * findings and writes the proposal of a program, when it sees a pattern.
  */
 
-import { conflict } from '../domain/errors.ts'
+import { conflict, invalid } from '../domain/errors.ts'
 import {
+  activityLines,
+  activityTotal,
+  type BeatDecision,
   type BeatItem,
   type BeatRecord,
+  type BeatTrigger,
   beatPrompt,
   boardLine,
   buildDigest,
+  CHECKLIST_SUGGESTION,
   CHECKLIST_TEMPLATE,
+  type ChatActivity,
   checkDigestFields,
   checkHeartbeatFields,
   checklistIsEmpty,
   checklistPath,
+  checkPost,
   DIGEST_KEY,
   type DigestConfig,
   type DigestState,
@@ -28,25 +35,34 @@ import {
   defaultHeartbeat,
   type Finding,
   type HeartbeatConfig,
+  type HeartbeatDestination,
+  type HeartbeatDestinationView,
   type HeartbeatState,
   heartbeatKey,
   inActiveHours,
   localDay,
   MAX_DIGEST_BUFFER,
+  MAX_POST_HISTORY_MS,
+  noteLine,
+  notesPath,
   observe,
   parseBeatResult,
   periodStarts,
+  postsToday,
   pruneFingerprints,
   pushBeat,
   type RequestText,
   splitNew,
   statusText,
+  type WatchNode,
+  watchedNodes,
 } from '../domain/heartbeat.ts'
 import { parseProgramSession } from '../domain/programs.ts'
 import type { RoutineSpec } from '../domain/routines.ts'
 import { boardColumn, type Task } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
 import { postAlerts, postBriefing } from './briefings.ts'
+import { healthSummary } from './health.ts'
 import type { Deps } from './ports.ts'
 import { threadSessionsOf } from './threads.ts'
 import { sessionsWithOpenDecision } from './work-queue.ts'
@@ -68,7 +84,22 @@ export interface HeartbeatView {
   effectiveTimezone: string
   /** False while nothing was ever set: the config is the default of the agent's role. */
   stored: boolean
-  checklist: { path: string; exists: boolean; empty: boolean }
+  checklist: {
+    path: string
+    exists: boolean
+    /** Nothing to check (only headings and comments): every beat is skipped, no model call. */
+    empty: boolean
+    /** A short starting point the owner may insert (never written by itself). */
+    suggestion: string
+  }
+  /** Places a beat may report to (chosen from this list). */
+  destinations: HeartbeatDestinationView[]
+  /** The chats an activity wake and the beat's activity summary look at (the watch rule). */
+  watched: Array<{ nodeId: string; title: string }>
+  /** Posts the beat made to `reportTo` today (local day of its timezone). */
+  postsToday: number
+  /** Today's observation notes (library file, team timezone). */
+  notes: { path: string; exists: boolean }
   /** The routine that wakes it. */
   trigger: {
     status: 'active' | 'paused'
@@ -81,8 +112,13 @@ export interface HeartbeatView {
   digest: DigestConfig & { effectiveTimezone: string; buffered: number; lastSentAt: number | null }
 }
 
-export const effectiveConfig = (deps: Deps, agent: { id: string; role: string }): HeartbeatConfig =>
-  deps.heartbeat.store.config(agent.id) ?? defaultHeartbeat(agent)
+/** The stored config over the defaults (a config stored before a field existed gets its default). */
+export function effectiveConfig(deps: Deps, agent: { id: string; role: string }): HeartbeatConfig {
+  const stored = deps.heartbeat.store.config(agent.id)
+  const merged = { ...defaultHeartbeat(agent), ...stored }
+  // a config stored before modes existed keeps its meaning: with a report chat it may speak
+  return { ...merged, mode: stored?.mode ?? (merged.reportTo === null ? 'notes' : 'speak') }
+}
 
 /** The timezone in effect for an agent's active hours: its own, else the team's. */
 export const heartbeatTimezone = (deps: Deps, config: HeartbeatConfig): string =>
@@ -92,16 +128,26 @@ export async function getHeartbeat(deps: Deps, idOrSlug: string): Promise<Heartb
   const agent = getAgent(deps, idOrSlug)
   const file = await deps.library.read(checklistPath(agent.id))
   const routine = deps.routines.getByProgram(heartbeatKey(agent.id))
+  const config = effectiveConfig(deps, agent)
+  const timezone = heartbeatTimezone(deps, config)
   return {
     agentId: agent.id,
-    config: effectiveConfig(deps, agent),
-    effectiveTimezone: heartbeatTimezone(deps, effectiveConfig(deps, agent)),
+    config,
+    effectiveTimezone: timezone,
     stored: deps.heartbeat.store.config(agent.id) !== undefined,
     checklist: {
       path: checklistPath(agent.id),
       exists: file !== undefined,
       empty: checklistIsEmpty(file?.text),
+      suggestion: CHECKLIST_SUGGESTION,
     },
+    destinations: deps.heartbeat.channels?.destinations(agent.id) ?? [],
+    watched: watchedOf(deps, agent.id, file?.text ?? '').map((n) => ({
+      nodeId: n.nodeId,
+      title: n.title,
+    })),
+    postsToday: postsToday(deps.heartbeat.store.state(agent.id).posts, deps.clock.now(), timezone),
+    notes: await todaysNotes(deps, agent),
     trigger:
       routine === undefined
         ? null
@@ -113,6 +159,49 @@ export async function getHeartbeat(deps: Deps, idOrSlug: string): Promise<Heartb
     beats: deps.heartbeat.store.state(agent.id).beats,
     digest: digestView(deps),
   }
+}
+
+const DAY_MS = 24 * 3_600_000
+
+/** Today's notes file of an agent (day of the team timezone) and whether it exists. */
+async function todaysNotes(
+  deps: Deps,
+  agent: { slug: string },
+): Promise<{ path: string; exists: boolean }> {
+  const path = notesPath(agent.slug, localDay(deps.clock.now(), deps.settings.get().timezone))
+  return { path, exists: (await deps.library.read(path)) !== undefined }
+}
+
+/**
+ * Append one line to today's notes (append-only, one file per day). The only write a beat has, and
+ * it can only reach this path pattern: the path is built here, never taken from the model.
+ */
+export async function appendNote(
+  deps: Deps,
+  agentId: string,
+  entry: { chat: string; messageIds?: string[]; noticed: string; decision: BeatDecision },
+): Promise<string> {
+  const agent = getAgent(deps, agentId)
+  const config = effectiveConfig(deps, agent)
+  if (config.mode === 'off') return 'Notes are off for this heartbeat (mode off).'
+  if (entry.noticed.trim() === '' || entry.chat.trim() === '')
+    return 'ERROR: a note needs chat and noticed.'
+  const now = deps.clock.now()
+  const tz = deps.settings.get().timezone
+  const day = localDay(now, tz)
+  const path = notesPath(agent.slug, day)
+  const current = (await deps.library.read(path))?.text ?? `# Heartbeat notes ${day}\n\n`
+  await deps.library.writeText(
+    path,
+    `${current.replace(/\s*$/, '\n')}${noteLine(now, tz, entry)}\n`,
+  )
+  return `Noted in ${path}.`
+}
+
+/** The chats this agent's beat watches for new messages (`watchedNodes`). */
+function watchedOf(deps: Deps, agentId: string, checklist: string): WatchNode[] {
+  const nodes = deps.heartbeat.channels?.nodes(agentId) ?? []
+  return watchedNodes(nodes, checklist)
 }
 
 export function digestView(deps: Deps): HeartbeatView['digest'] {
@@ -145,7 +234,25 @@ export async function setHeartbeat(
   const clean = Object.fromEntries(
     Object.entries(fields).filter(([, v]) => v !== undefined),
   ) as Partial<HeartbeatConfig>
+  // a report destination is a conversation of one of the agent's own connections, nothing else
+  if (clean.reportTo != null) {
+    const to = clean.reportTo
+    const known = deps.heartbeat.channels
+      ?.destinations(agent.id)
+      .some((d) => d.connectionId === to.connectionId && d.nodeId === to.nodeId)
+    if (known !== true) {
+      throw invalid(
+        'reportTo must be a chat or topic of one of the connections bound to this agent',
+        'INVALID_HEARTBEAT',
+      )
+    }
+    clean.reportTo = { connectionId: to.connectionId, nodeId: to.nodeId }
+  }
   const next: HeartbeatConfig = { ...effectiveConfig(deps, agent), ...clean }
+  // the mode stays derived (a report chat means `speak`) until somebody chooses one
+  if (clean.mode === undefined && deps.heartbeat.store.config(agent.id)?.mode === undefined) {
+    delete (next as Partial<HeartbeatConfig>).mode
+  }
   deps.heartbeat.store.setConfig(agent.id, next, deps.clock.now())
   // turning it on gives the person a file to write the checklist in
   if (
@@ -155,6 +262,8 @@ export async function setHeartbeat(
     await deps.library.writeText(checklistPath(agent.id), CHECKLIST_TEMPLATE, null)
   }
   syncHeartbeatRoutine(deps, agent.id)
+  // a team without a lead still gets its digest once an agent has a heartbeat
+  syncDigestRoutine(deps)
   changed(deps, agent.id, 'config')
   return getHeartbeat(deps, agent.id)
 }
@@ -253,7 +362,12 @@ export function syncHeartbeatRoutine(deps: Deps, agentId: string): void {
 
 /** The daily digest's routine: a cron at the digest time in the digest timezone, on the lead. */
 export function syncDigestRoutine(deps: Deps): void {
-  const l = lead(deps)
+  // the digest is built from data, not by an agent: its routine row only needs a host. A team
+  // with no `lead` (all agents custom) still gets it, hosted by the first agent that beats
+  const l =
+    lead(deps) ??
+    deps.agents.list().find((a) => effectiveConfig(deps, a).enabled) ??
+    deps.agents.list()[0]
   if (l === undefined) return
   const config = deps.heartbeat.store.digestConfig()
   syncSystemRoutine(deps, {
@@ -382,7 +496,107 @@ export async function teamStatus(
     todayUsd: Math.min(todaySpent, monthSpent),
   }
   const board = boardLine(deps.tasks.list({ limit: 300 }))
-  return { text: statusText(fresh, now, spend, board), findings: fresh }
+  const activity = await activityOf(deps, agentId, state.window?.since ?? now - HOUR, now)
+  const lines = activityLines(activity, state.window)
+  return {
+    text: statusText(fresh, now, spend, [board, ...lines].join('\n')),
+    findings: fresh,
+  }
+}
+
+/** New messages per watched chat of an agent in `[since, until)` (none without channels). */
+async function activityOf(
+  deps: Deps,
+  agentId: string,
+  since: number,
+  until: number,
+): Promise<ChatActivity[]> {
+  const channels = deps.heartbeat.channels
+  if (channels === undefined) return []
+  const agent = getAgent(deps, agentId)
+  const file = await deps.library.read(checklistPath(agent.id))
+  const watched = watchedOf(deps, agent.id, file?.text ?? '')
+  if (watched.length === 0) return []
+  return channels.activity(watched, since, until)
+}
+
+// --- posting and waking from chats -------------------------------------------------------------
+
+/** Where the beat may post, and how many posts a day (the gate reads this on every call). */
+export function postingOf(
+  deps: Deps,
+  agentId: string,
+): { reportTo: HeartbeatDestination | null; maxPostsPerDay: number } {
+  const agent = getAgent(deps, agentId)
+  const { reportTo, maxPostsPerDay, mode } = effectiveConfig(deps, agent)
+  // only the `speak` mode may post: in `notes` the destination is where the owner reads, nothing more
+  return { reportTo: mode === 'speak' ? reportTo : null, maxPostsPerDay }
+}
+
+/**
+ * The beat is about to post `text` to its destination: refuse it (a readable reason the model can
+ * act on) over the daily cap or for a repeat, else count it. The count is taken here, before the
+ * send, so two posts in one step cannot both slip under the cap; a post the gateway then refuses
+ * still uses one.
+ */
+export function reservePost(
+  deps: Deps,
+  agentId: string,
+  text: string,
+  now = deps.clock.now(),
+): string | undefined {
+  const agent = getAgent(deps, agentId)
+  const config = effectiveConfig(deps, agent)
+  const timezone = heartbeatTimezone(deps, config)
+  let refusal: string | undefined
+  deps.heartbeat.store.updateState(
+    agentId,
+    (s) => {
+      const checked = checkPost(s, config, text, now, timezone)
+      if (!checked.ok) {
+        refusal = checked.reason
+        return s
+      }
+      return {
+        ...s,
+        fingerprints: { ...s.fingerprints, [checked.fingerprint]: now },
+        posts: [...(s.posts ?? []).filter((at) => now - at < MAX_POST_HISTORY_MS), now],
+      }
+    },
+    now,
+  )
+  return refusal
+}
+
+/**
+ * New messages arrived in a chat: should an early beat run, and how soon? Cheap and pure over the
+ * stores: the agent's beat is on and wakes on activity, the chat is one it watches (`watchedNodes`),
+ * inside the active hours, and an activity beat starts at the earliest `minGapMinutes` after the
+ * previous beat that ran. undefined = no.
+ */
+export async function planActivityWake(
+  deps: Deps,
+  input: { connectionId: string; nodeId: string; at: number },
+): Promise<{ agentId: string; notBefore: number } | undefined> {
+  const channels = deps.heartbeat.channels
+  const agentId = channels?.agentOf(input.connectionId)
+  if (channels === undefined || agentId === undefined) return undefined
+  const agent = deps.agents.get(agentId)
+  if (agent === undefined || agent.archivedAt !== null) return undefined
+  const config = effectiveConfig(deps, agent)
+  if (!config.enabled || !config.wakeOnActivity) return undefined
+  if (!inActiveHours(input.at, { ...config, timezone: heartbeatTimezone(deps, config) })) {
+    return undefined
+  }
+  const file = await deps.library.read(checklistPath(agent.id))
+  if (checklistIsEmpty(file?.text)) return undefined
+  const watched = watchedOf(deps, agent.id, file?.text ?? '')
+  if (!watched.some((n) => n.nodeId === input.nodeId)) return undefined
+  const last = deps.heartbeat.store.state(agent.id).last
+  return {
+    agentId,
+    notBefore: last === undefined ? input.at : last.at + config.minGapMinutes * 60_000,
+  }
 }
 
 // --- a beat ------------------------------------------------------------------------------------
@@ -396,12 +610,21 @@ export type BeatPlan = { run: true; prompt: string } | { run: false; reason: str
 export async function beginBeat(
   deps: Deps,
   agentId: string,
-  input: { id: string; at: number; session: { busy: boolean; waiting: boolean } },
+  input: {
+    id: string
+    at: number
+    session: { busy: boolean; waiting: boolean }
+    /** What started it (default: the interval). */
+    trigger?: BeatTrigger
+  },
 ): Promise<BeatPlan> {
   const agent = getAgent(deps, agentId)
   const config = effectiveConfig(deps, agent)
   const { at } = input
+  const trigger: BeatTrigger = input.trigger ?? 'schedule'
   const skip = (reason: string): BeatPlan => {
+    // an early beat that does not start is not worth a line in the history
+    if (trigger === 'activity') return { run: false, reason }
     pushRecord(deps, agent.id, at, {
       id: input.id,
       at,
@@ -427,6 +650,18 @@ export async function beginBeat(
   if (input.session.busy || (last !== undefined && at - last.at < STALE_BEAT_MS)) {
     return skip('the previous beat is still running')
   }
+  if (trigger === 'activity') {
+    if (!config.wakeOnActivity) return skip('waking on activity is off')
+    if (state.last !== undefined && at - state.last.at < config.minGapMinutes * 60_000) {
+      return skip('too soon after the previous beat')
+    }
+  }
+  // the window of this beat: the chats' new messages since the last beat that ran
+  const since = state.last?.at ?? at - config.everyMinutes * 60_000
+  if (trigger === 'activity') {
+    const activity = await activityOf(deps, agent.id, since, at)
+    if (activityTotal(activity) === 0) return skip('no new activity')
+  }
 
   // a beat that never ended (the process died) is closed so the history does not lie
   deps.heartbeat.store.updateState(
@@ -446,6 +681,11 @@ export async function beginBeat(
     }),
     at,
   )
+  deps.heartbeat.store.updateState(
+    agent.id,
+    (s) => ({ ...s, last: { at, trigger }, window: { since, trigger } }),
+    at,
+  )
   pushRecord(deps, agent.id, at, {
     id: input.id,
     at,
@@ -455,7 +695,24 @@ export async function beginBeat(
     count: 1,
     items: [],
     duplicates: 0,
+    trigger,
   })
+  const day = localDay(at, deps.settings.get().timezone)
+  const yesterday = localDay(at - DAY_MS, deps.settings.get().timezone)
+  const destination =
+    config.mode !== 'speak' || config.reportTo === null || config.maxPostsPerDay === 0
+      ? undefined
+      : deps.heartbeat.channels
+          ?.destinations(agent.id)
+          .find(
+            (d) =>
+              d.connectionId === config.reportTo?.connectionId &&
+              d.nodeId === config.reportTo?.nodeId,
+          )
+  const postsLeft = Math.max(
+    0,
+    config.maxPostsPerDay - postsToday(deps.heartbeat.store.state(agent.id).posts, at, timezone),
+  )
   return {
     run: true,
     prompt: beatPrompt({
@@ -463,6 +720,18 @@ export async function beginBeat(
       timezone,
       checklist: file?.text ?? '',
       agentName: agent.name,
+      trigger,
+      mode: config.mode,
+      notes: [notesPath(agent.slug, day), notesPath(agent.slug, yesterday)],
+      report:
+        destination === undefined || postsLeft === 0
+          ? null
+          : {
+              connectionId: destination.connectionId,
+              nodeId: destination.nodeId,
+              label: destination.label,
+              postsLeft,
+            },
     }),
   }
 }
@@ -514,12 +783,14 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
         count: 1,
         items: fresh,
         duplicates,
+        ...(open?.trigger === undefined ? {} : { trigger: open.trigger }),
       }
       const beats =
         open === undefined
           ? pushBeat(s.beats, record)
           : s.beats.map((b) => (b.id === open.id ? (record as BeatRecord) : b))
       return {
+        ...s,
         fingerprints: {
           ...pruneFingerprints(s.fingerprints, at),
           ...Object.fromEntries(fresh.map((i) => [i.fingerprint, at])),
@@ -531,16 +802,22 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
   )
 
   if (fresh.length > 0) {
-    deps.heartbeat.store.updateDigest(
-      (d) => ({
-        ...d,
-        buffer: [...d.buffer, ...fresh.map((item) => ({ at, agentId, item }))].slice(
-          -MAX_DIGEST_BUFFER,
-        ),
-      }),
-      at,
-    )
-    const urgent = fresh.filter((i) => i.urgent)
+    // an item that was only noted stays in the beat log and the notes: the digest is for what
+    // the owner should see (a note per chat message would bury it)
+    const forDigest = fresh.filter((i) => i.decision !== 'note')
+    if (forDigest.length > 0) {
+      deps.heartbeat.store.updateDigest(
+        (d) => ({
+          ...d,
+          buffer: [...d.buffer, ...forDigest.map((item) => ({ at, agentId, item }))].slice(
+            -MAX_DIGEST_BUFFER,
+          ),
+        }),
+        at,
+      )
+    }
+    // an escalation is an owner notice at once, like an urgent finding
+    const urgent = fresh.filter((i) => i.urgent || i.decision === 'escalate')
     if (urgent.length > 0) {
       // urgent findings go to the bell, one alert each: no chat message, no interruption
       postAlerts(deps, { agentId, beatId: record?.id ?? String(at), items: urgent, at })
@@ -611,6 +888,10 @@ export async function runDigest(deps: Deps, at = deps.clock.now()): Promise<Dige
     // test runs (rehearsals) are not part of the day's work
     costUsd: Math.max(0, cost() - deps.rehearsals.spentBetween(since, at)),
     heartbeatCostUsd: deps.agents.list().reduce((sum, a) => sum + cost(`heartbeat:${a.id}`), 0),
+    // what the Health page found (a failed scan never stops the digest)
+    ...(await healthSummary(deps)
+      .then((h) => ({ health: { open: h.open, high: h.high } }))
+      .catch(() => ({}))),
   })
   // the digest is a page (one briefing per day) plus one bell notification, not a chat message
   if (!digest.empty) postBriefing(deps, { day, body: digest.text, items: digest.items, at })

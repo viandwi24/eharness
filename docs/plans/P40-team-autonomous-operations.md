@@ -678,3 +678,36 @@ lead no longer turns "remind me" into a proposal. No library change.
   authority or lift a gate. Chat tool `program_note` (list / add / remove, `dm` origin, risk
   `write`, approved by rule) changes only `notes`; the channel role check refuses members by risk.
   `memory_view` joined `PROGRAM_BASE_TOOLS` (read-only memory for runs).
+
+## Proactive heartbeat (chats, report destination, activity wake)
+
+- **Checklist visible**: the heartbeat panel says plainly when `HEARTBEAT.md` is empty ("every beat
+  is skipped, the heartbeat does nothing") and offers an inserted suggestion (never auto-seeded);
+  the file is edited through `/memory/file` (the app has one trust level: the owner). Agents with a
+  heartbeat on are told in their chats to write "be proactive about X" as a line of that file.
+- **Chats in a beat**: the read-only channel tools (`channel_describe`, `channel_read`,
+  `channel_status`, `list_topics`, `member_lookup`, `chat_history`, `people_find`) join
+  `HEARTBEAT_ALLOWED`; `channel_read download` (writes a file) is refused in the gate.
+- **Report destination**: config `reportTo` (a node of the agent's own connections, chosen from
+  `destinations` in the heartbeat view) and `maxPostsPerDay` (6). The gate allows `channel_send`
+  only as action `send` to exactly that node; the post is counted before it is sent (cap per local
+  day), a repeat of the same text inside 24 h is refused, and the post still goes through
+  `gw.proactive.submit` (allowed flag, mentions, quiet hours, digest). No `reportTo`: no posts.
+- **Activity wake**: `wakeOnActivity` (off by default) and `minGapMinutes` (10). The gateway calls
+  `onObserved` for a stored, unaddressed message; the service plans one early beat per agent
+  (settle 30 s, never sooner than the gap after the previous beat, active hours, real checklist).
+  Watched chats = the chats named in the checklist (title, or id), else every allowed group,
+  channel and topic of the agent's connections; never DMs and never `reportTo` itself. `team_status`
+  lists new messages per watched chat since the last beat; an activity beat with none makes no
+  model call and leaves no history line.
+- **Urgent findings** go to the bell (global, not tied to a lead). A team with no `lead` now still
+  gets its digest: the digest routine is hosted by the first agent with a heartbeat on.
+- **Modes and notes**: config `mode` = `off` (findings only), `notes` (reads the chats, keeps notes,
+  never posts) or `speak` (may post to `reportTo`, which may be the very chat it watches). Default
+  `notes`; a config stored without a mode keeps speaking when it has a `reportTo`. The only write a
+  beat has is the `heartbeat_note` tool: one append-only file per day,
+  `/library/notes/heartbeat/<slug>/<YYYY-MM-DD>.md` (team timezone), path built server-side. The
+  prompt asks it to read today's and yesterday's notes first and carries a short speak rubric
+  (`SPEAK_RUBRIC`) only when posting is possible. Result items carry `decision` (note / say /
+  escalate) and a one-line `reason`, shown in the beat log; `note` items stay out of the digest,
+  `escalate` rings the bell like an urgent item.

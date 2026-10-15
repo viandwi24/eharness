@@ -5,7 +5,12 @@ export { AGENT_ROLES, PERMISSION_MODES, TOOL_ACCESS } from '../domain/agents.ts'
 export { MAX_NOTE_CHARS } from '../domain/approvals.ts'
 export { CAPABILITY_MODES, ENABLED_STATES } from '../domain/connectors.ts'
 export { EVENT_TYPES } from '../domain/events.ts'
-export { BEAT_STATUSES, MAX_EVERY_MINUTES, MIN_EVERY_MINUTES } from '../domain/heartbeat.ts'
+export {
+  BEAT_STATUSES,
+  MAX_EVERY_MINUTES,
+  MAX_POSTS_PER_DAY,
+  MIN_EVERY_MINUTES,
+} from '../domain/heartbeat.ts'
 export { MODEL_CALL_KINDS, MODEL_CALL_STATUSES } from '../domain/model-calls.ts'
 export { TEAM_MODES } from '../domain/modes.ts'
 export {

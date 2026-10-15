@@ -332,6 +332,11 @@ export interface GatewayDeps {
       deliver(reminder: ReminderRow, slot: number): Promise<{ posted: boolean; reason?: string }>
     }
   }
+  /**
+   * A message of somebody else was stored in a chat without waking the agent (observed): the
+   * heartbeat may beat early because of it (debounced there). Never awaited, errors are ignored.
+   */
+  onObserved?: (event: { connectionId: string; nodeId: string; at: number }) => void
   /** Where `chat_recap_save` writes its note (the library). Absent = the tool cannot save. */
   library?: { write(path: string, text: string): Promise<void> }
   /** Period of the maintenance pass: approvals that expired, proactive posts that are due (default 60 s; 0 = off, tests call the methods). */
@@ -5248,6 +5253,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const node = event.node === null ? undefined : nodes.byNative(connectionId, event.node.nativeId)
     if (node === undefined) return
     nodes.touch(node.id, event.at)
+    if (type === 'observed' && event.type === 'message.created') {
+      try {
+        deps.onObserved?.({ connectionId, nodeId: node.id, at: event.at })
+      } catch {
+        // a listener never breaks ingest
+      }
+    }
     const nativeId = event.type === 'message.created' ? event.message.nativeId : undefined
     activity({
       connectionId,

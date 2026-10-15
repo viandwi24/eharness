@@ -7344,7 +7344,7 @@ export interface paths {
         head?: never;
         /**
          * Edit a browser profile
-         * @description Rename, change settings (keep-secret semantics), the allowed domains, or mark it trusted: the agents on a trusted profile click and type without asking.
+         * @description Rename, change settings (keep-secret semantics), the allowed domains.
          */
         patch: {
             parameters: {
@@ -10632,7 +10632,7 @@ export interface paths {
         head?: never;
         /**
          * Configure the heartbeat of an agent
-         * @description Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. The checklist is the memory file `HEARTBEAT.md` (edit it through `/memory`); `createChecklist` writes a template when there is none.
+         * @description Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. `reportTo` (a chat or topic from `destinations`, or null) is the one place the beat may post to, at most `maxPostsPerDay` times; `wakeOnActivity` adds early beats when watched chats get new messages (at most one per `minGapMinutes`). The checklist is the memory file `HEARTBEAT.md` (read and write it through `/memory/file`, scope `agent`); an empty one means the beat never runs. `createChecklist` writes an empty template when there is none.
          */
         patch: {
             parameters: {
@@ -15125,6 +15125,178 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent-health/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent health findings
+         * @description Problems the server noticed in the last 24 hours from its own data: a tool denied again and again, a tool loop, the same tool error, an approval nobody answers, a context spike, a program run that ended partial or failed, provider errors. High severity ones raise a bell notice once. Dismissed findings are hidden unless `dismissed=true`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Agent id or slug. */
+                    agent?: string;
+                    severity?: "high" | "medium" | "low";
+                    kind?: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error";
+                    /** @description `true` also lists dismissed findings. */
+                    dismissed?: "true" | "false";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Findings, high severity first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthFindingList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent-health/findings/{fingerprint}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss a finding
+         * @description Hides the finding (by fingerprint) and keeps it from raising a notice.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    fingerprint: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dismissed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthFindingAck"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        /** Show a dismissed finding again */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    fingerprint: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Restored */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthFindingAck"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_DISMISSED` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -17182,7 +17354,7 @@ export interface components {
             };
             /** @description Only these hosts may be opened (`*.example.com`); absent: any public host. */
             allowDomains?: string[];
-            /** @description An admin trusts the profile: its agents click and type without asking. */
+            /** @description Kept for the library profile record. It changes nothing in this app: one Browser connection serves every profile, so acting tools follow the connection mode (Click and type: ask / allow), not the profile. */
             trusted?: boolean;
             createdAt: number;
             updatedAt: number;
@@ -18104,6 +18276,12 @@ export interface components {
         AmendmentPayload: {
             authority: components["schemas"]["ProgramAuthority"] & unknown;
             why: string;
+            /** @description Set when agent health suggested it from repeated denials of a program (no run is parked on it). */
+            suggestion?: {
+                tool: string;
+                runs: number;
+                denials: number;
+            };
         };
         /** @enum {string} */
         DecisionKind: "proposal" | "escalation" | "amendment";
@@ -18175,6 +18353,22 @@ export interface components {
                 exists: boolean;
                 /** @description Only headings and comments: the beat is skipped, no model call. */
                 empty: boolean;
+                /** @description A short starting point to insert into the file (never written by itself). */
+                suggestion: string;
+            };
+            /** @description The places the beat may report to: postable chats of the agent connections. */
+            destinations: components["schemas"]["HeartbeatDestinationView"][];
+            /** @description The chats whose new messages wake the beat and are counted for it. */
+            watched: {
+                nodeId: string;
+                title: string;
+            }[];
+            /** @description Posts to `reportTo` made today. */
+            postsToday: number;
+            /** @description Today's observation notes (a library file, team timezone). */
+            notes: {
+                path: string;
+                exists: boolean;
             };
             trigger: {
                 /** @enum {string} */
@@ -18195,6 +18389,32 @@ export interface components {
             activeTo: string;
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone: string | null;
+            /**
+             * @description `off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`.
+             * @enum {string}
+             */
+            mode: "off" | "notes" | "speak";
+            reportTo: components["schemas"]["HeartbeatDestination"];
+            /** @description Posts to `reportTo` per local day; further ones are refused. */
+            maxPostsPerDay: number;
+            /** @description Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in). */
+            wakeOnActivity: boolean;
+            /** @description An early beat starts at the earliest this long after the previous beat. */
+            minGapMinutes: number;
+        };
+        /** @description The one chat or topic (of a connection bound to the agent) the beat may post to, unasked and through the chat proactive policy. null = it never posts. */
+        HeartbeatDestination: {
+            connectionId: string;
+            /** @description The conversation (chat or topic) id. */
+            nodeId: string;
+        } | null;
+        HeartbeatDestinationView: components["schemas"]["HeartbeatDestination"] & {
+            /** @description The chat (and topic) name. */
+            label: string;
+            platform: string;
+            kind: string;
+            /** @description false: the chat settings do not allow unasked posts, so every post is refused. */
+            proactive: boolean;
         };
         BeatRecord: {
             /** @description The routine slot of the beat. */
@@ -18203,6 +18423,11 @@ export interface components {
             endedAt: number | null;
             /** @enum {string} */
             status: "running" | "ok" | "attention" | "skipped" | "failed";
+            /**
+             * @description What started it: the interval (default) or new messages in a watched chat.
+             * @enum {string}
+             */
+            trigger?: "schedule" | "activity";
             /** @description Why it was skipped or failed. */
             reason: string | null;
             /** @description Identical skips in a row, collapsed. */
@@ -18219,6 +18444,13 @@ export interface components {
             links: string[];
             urgent: boolean;
             fingerprint: string;
+            /**
+             * @description What the beat did about it: noted, said it in the chat, or told the owner.
+             * @enum {string}
+             */
+            decision?: "note" | "say" | "escalate";
+            /** @description One line: why (for the owner to audit). */
+            reason?: string;
         };
         DigestView: components["schemas"]["DigestConfig"] & {
             /** @description The timezone in effect. */
@@ -18242,6 +18474,18 @@ export interface components {
             activeTo?: string;
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
+            /**
+             * @description `off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`.
+             * @enum {string}
+             */
+            mode?: "off" | "notes" | "speak";
+            reportTo?: components["schemas"]["HeartbeatDestination"];
+            /** @description Posts to `reportTo` per local day; further ones are refused. */
+            maxPostsPerDay?: number;
+            /** @description Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in). */
+            wakeOnActivity?: boolean;
+            /** @description An early beat starts at the earliest this long after the previous beat. */
+            minGapMinutes?: number;
             /** @description Create `HEARTBEAT.md` with a template when the agent has none yet. */
             createChecklist?: boolean;
         };
@@ -19249,6 +19493,42 @@ export interface components {
             prevId: string | null;
             /** @description The row below in the list (older) under the same filters. */
             nextId: string | null;
+        };
+        HealthFindingList: {
+            findings: components["schemas"]["HealthFinding"][];
+            /** @description Findings not dismissed (all filters off). */
+            open: number;
+            scannedAt: number;
+        };
+        HealthFinding: {
+            /** @description Stable id of the problem: the same problem is the same finding on every scan. */
+            fingerprint: string;
+            /** @enum {string} */
+            kind: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error";
+            /** @enum {string} */
+            severity: "high" | "medium" | "low";
+            agentId: string | null;
+            agentName: string | null;
+            sessionId: string | null;
+            programId: string | null;
+            programName: string | null;
+            /** @description App path of the evidence (a task, a program or a chat). */
+            link: string | null;
+            /** @description Epoch ms. */
+            firstSeen: number;
+            /** @description Epoch ms. */
+            lastSeen: number;
+            count: number;
+            /** @description One line: what is wrong. */
+            explanation: string;
+            /** @description What to do about it. */
+            fix: string;
+            dismissed: boolean;
+            dismissedAt: number | null;
+        };
+        HealthFindingAck: {
+            /** @enum {boolean} */
+            ok: true;
         };
     };
     responses: never;

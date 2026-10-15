@@ -38,7 +38,7 @@ const patchRoute = createRoute({
   tags: ['heartbeat'],
   summary: 'Configure the heartbeat of an agent',
   description:
-    'Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. The checklist is the memory file `HEARTBEAT.md` (edit it through `/memory`); `createChecklist` writes a template when there is none.',
+    'Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. `reportTo` (a chat or topic from `destinations`, or null) is the one place the beat may post to, at most `maxPostsPerDay` times; `wakeOnActivity` adds early beats when watched chats get new messages (at most one per `minGapMinutes`). The checklist is the memory file `HEARTBEAT.md` (read and write it through `/memory/file`, scope `agent`); an empty one means the beat never runs. `createChecklist` writes an empty template when there is none.',
   security,
   request: { params: IdParam, body: { required: true, content: json(HeartbeatPatchSchema) } },
   responses: {

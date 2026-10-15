@@ -15,7 +15,7 @@ export const KIND_ORDER: DecisionKind[] = ['escalation', 'amendment', 'proposal'
 
 export const KIND_INFO: Record<DecisionKind, { group: string; badge: string; hint: string }> = {
 	escalation: { group: 'Questions from running work', badge: 'Question', hint: 'A run stopped and waits for your answer. It continues in the same conversation.' },
-	amendment: { group: 'Requests for more authority', badge: 'More authority', hint: 'A run needs something it was not granted. Approving widens its program and resumes it.' },
+	amendment: { group: 'Requests for more authority', badge: 'More authority', hint: 'A run needs something it was not granted, or runs were refused the same tool again and again. Approving widens the program and resumes a waiting run.' },
 	proposal: { group: 'Proposed plans', badge: 'Proposal', hint: 'Nothing starts until you approve. You can edit the authority first.' }
 };
 

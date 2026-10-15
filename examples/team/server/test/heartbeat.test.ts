@@ -565,6 +565,25 @@ describe('domain', () => {
       heartbeatCostUsd: 0,
     })
     expect(quiet.empty).toBe(true)
+    // a serious Health finding is listed and makes the digest worth sending
+    const sick = buildDigest({
+      since: 0,
+      until: NOW,
+      runs: [],
+      decisions: [],
+      waiting: [],
+      items: [],
+      costUsd: 0,
+      heartbeatCostUsd: 0,
+      health: {
+        open: 2,
+        high: [{ explanation: 'run_python failed 5 times', fix: 'Check the sandbox', link: null }],
+      },
+    })
+    expect(sick.empty).toBe(false)
+    expect(sick.text).toContain('### Agent health')
+    expect(sick.text).toContain('2 open finding(s) on /health.')
+    expect(sick.items.at(-1)).toMatchObject({ kind: 'noticed', link: '/health' })
   })
 })
 

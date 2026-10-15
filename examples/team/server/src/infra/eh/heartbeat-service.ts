@@ -13,14 +13,22 @@
  */
 import { errorText } from 'eharness'
 import { z } from 'zod'
-import { abandonBeat, beginBeat, type DigestOutcome, runDigest } from '../../app/heartbeat.ts'
+import {
+  abandonBeat,
+  beginBeat,
+  type DigestOutcome,
+  planActivityWake,
+  runDigest,
+} from '../../app/heartbeat.ts'
 import type {
   AgentRepo,
   Deps,
   EventAppender,
+  HeartbeatChannels,
   HeartbeatPorts,
   HeartbeatStore,
 } from '../../app/ports.ts'
+import type { BeatTrigger } from '../../domain/heartbeat.ts'
 import type { AgentFactory } from './agent-factory.ts'
 
 /** The rolling session of an agent's heartbeat. */
@@ -54,6 +62,17 @@ export const BEAT_SCHEMA = z.object({
           .max(200)
           .optional()
           .describe('The fingerprint of the team_status finding this is about, unchanged.'),
+        decision: z
+          .enum(['note', 'say', 'escalate'])
+          .optional()
+          .describe(
+            'What you did about it: note (only noted), say (you posted it in the chat), escalate (the owner must look).',
+          ),
+        reason: z
+          .string()
+          .max(300)
+          .optional()
+          .describe('One line: why you noted, spoke or escalated (the owner audits this).'),
       }),
     )
     .max(20),
@@ -63,7 +82,7 @@ export interface SystemRunner {
   /** Fire the heartbeat of `agentId` for `slot`. `skipped` costs no model call. */
   heartbeat(
     agentId: string,
-    input: { slot: number },
+    input: { slot: number; trigger?: BeatTrigger },
   ): Promise<{ started: boolean; reason?: string; sessionId: string }>
   /** Build and send the digest of `slot`'s day. */
   digest(input: { slot: number }): Promise<DigestOutcome>
@@ -79,12 +98,26 @@ export interface HeartbeatServiceDeps {
   store: HeartbeatStore
   /** The workspace budget ledger scope: spend and limit of this month. */
   budget: () => Promise<{ spentUsd: number; limitUsd: number | null } | null>
+  /** The chat gateway side (destinations, watched chats, activity); absent = no chat features. */
+  channels?: HeartbeatChannels
+  /**
+   * How long new messages settle before an early beat starts (default 30 s), so a burst of
+   * messages is one beat that sees all of it.
+   */
+  activitySettleMs?: number
   log?: { warn(message: string): void }
 }
 
 export interface HeartbeatService extends SystemRunner {
   /** The ports `Deps.heartbeat` needs. */
   ports: HeartbeatPorts
+  /**
+   * A message arrived in a chat (the gateway's ingest): maybe wake the beat of the agent early,
+   * debounced to one early beat per `minGapMinutes`. Never throws.
+   */
+  activity(event: { connectionId: string; nodeId: string; at: number }): Promise<void>
+  /** Cancel pending early beats (shutdown). */
+  close(): void
   /** Beats started by this process that have not ended (tests wait for them). */
   idle(): Promise<void>
 }
@@ -102,10 +135,13 @@ export function createHeartbeatService(
 ): HeartbeatService {
   const log = options.log ?? { warn() {} }
   const inflight = new Set<Promise<unknown>>()
+  /** One pending early beat per agent. */
+  const wakes = new Map<string, ReturnType<typeof setTimeout>>()
 
   const ports: HeartbeatPorts = {
     store: options.store,
     budget: options.budget,
+    ...(options.channels === undefined ? {} : { channels: options.channels }),
 
     run: (agentId, at) => service.heartbeat(agentId, { slot: at }),
 
@@ -129,7 +165,32 @@ export function createHeartbeatService(
   const service: HeartbeatService = {
     ports,
 
-    async heartbeat(agentId, { slot }) {
+    async activity(event) {
+      try {
+        const plan = await planActivityWake(options.deps(), event)
+        if (plan === undefined || wakes.has(plan.agentId)) return
+        const settle = options.activitySettleMs ?? 30_000
+        const delay = Math.max(plan.notBefore - Date.now(), 0) + settle
+        const timer = setTimeout(() => {
+          wakes.delete(plan.agentId)
+          const at = Date.now()
+          service.heartbeat(plan.agentId, { slot: at, trigger: 'activity' }).catch((error) => {
+            log.warn(`early heartbeat of ${plan.agentId} failed: ${errorText(error)}`)
+          })
+        }, delay)
+        timer.unref?.()
+        wakes.set(plan.agentId, timer)
+      } catch (error) {
+        log.warn(`heartbeat activity wake failed: ${errorText(error)}`)
+      }
+    },
+
+    close() {
+      for (const timer of wakes.values()) clearTimeout(timer)
+      wakes.clear()
+    },
+
+    async heartbeat(agentId, { slot, trigger }) {
       const sessionId = heartbeatSessionId(agentId)
       const def = options.agents.get(agentId)
       const d = options.deps()
@@ -142,6 +203,7 @@ export function createHeartbeatService(
         id: String(slot),
         at: slot,
         session: { busy: (await peek.busy()) !== null, waiting: (await peek.pending()) !== null },
+        ...(trigger === undefined ? {} : { trigger }),
       })
       if (!plan.run) return { started: false, reason: plan.reason, sessionId }
 

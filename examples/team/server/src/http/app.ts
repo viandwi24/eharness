@@ -13,6 +13,7 @@ import { DomainError } from '../app/errors.ts'
 import { createLoginAuth, createLoginThrottle, SESSION_COOKIE } from '../app/login.ts'
 import type { Deps } from '../app/ports.ts'
 import { liveProfileOf, takeLiveTicket } from './live-tickets.ts'
+import { agentHealthRoutes } from './routes/agent-health.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
 import { authRoutes } from './routes/auth.ts'
@@ -397,6 +398,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', channelRoutes(options.deps))
   app.route('/', peopleRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
+  app.route('/', agentHealthRoutes(options.deps))
 
   const content = options.content
   if (content !== undefined) app.all('/art/*', (c) => content.fetch(c.req.raw))

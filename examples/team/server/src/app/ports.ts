@@ -69,11 +69,15 @@ import type {
 } from '../domain/decisions.ts'
 import type { DeliverableResult } from '../domain/deliverables.ts'
 import type { NewEvent } from '../domain/events.ts'
+import type { ToolEvent } from '../domain/health.ts'
 import type {
+  ChatActivity,
   DigestConfig,
   DigestState,
   HeartbeatConfig,
+  HeartbeatDestinationView,
   HeartbeatState,
+  WatchNode,
 } from '../domain/heartbeat.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
 import type {
@@ -552,6 +556,20 @@ export interface HeartbeatPorts {
   requests(sessionId: string, limit: number): Promise<Array<{ text: string; at: number }>>
   /** Fire one beat now (the web's "Run now"); a skip says why and costs no model call. */
   run(agentId: string, at: number): Promise<{ started: boolean; reason?: string }>
+  /** The chat side of the heartbeat; absent when channels are not set up. */
+  channels?: HeartbeatChannels
+}
+
+/** What the heartbeat reads of the chat gateway (`infra/eh/heartbeat-channels.ts`). */
+export interface HeartbeatChannels {
+  /** The places a beat may report to: postable conversations of the agent's connections. */
+  destinations(agentId: string): HeartbeatDestinationView[]
+  /** Every conversation of the agent's connections (the watch rule picks among them). */
+  nodes(agentId: string): WatchNode[]
+  /** New messages of others in each node in `[since, until)`. */
+  activity(nodes: readonly WatchNode[], since: number, until: number): Promise<ChatActivity[]>
+  /** The agent bound to a connection. */
+  agentOf(connectionId: string): string | undefined
 }
 
 /** A decision to store (always `open`). */
@@ -718,6 +736,40 @@ export interface ModelCallStore {
       costUsd: number
     }>
   }
+}
+
+/** A tool call of a stored session, before the session is resolved to an agent or a program. */
+export type StoredTool = Omit<ToolEvent, 'agentId' | 'programId' | 'link'>
+
+/** A row of the model call log, the columns agent health reads. */
+export interface StoredCall {
+  id: string
+  sessionId: string | null
+  agentId: string | null
+  at: number
+  kind: string
+  status: string
+  inputTokens: number | null
+  errorName: string | null
+  errorMessage: string | null
+}
+
+/** What agent health reads and keeps (`infra/db/health-repo.ts`). */
+export interface HealthStore {
+  /** Tool calls and error notices of the assistant messages created since `since` (ms), newest first. */
+  scanMessages(since: number): {
+    tools: StoredTool[]
+    notices: Array<{ sessionId: string; at: number; code: string; message: string }>
+  }
+  /** Model calls started since `since`, oldest first. */
+  calls(since: number): StoredCall[]
+  /** Creation time of the newest message of a session (when a pending approval started waiting). */
+  lastMessageAt(sessionId: string): number | null
+  /** Dismissed fingerprints and when. */
+  dismissed(): Map<string, number>
+  dismiss(fingerprint: string, now: number): void
+  /** False when it was not dismissed. */
+  restore(fingerprint: string): boolean
 }
 
 /** Appends app events to the feed from use cases (routines, settings). Never throws. */
@@ -1200,6 +1252,7 @@ export interface Deps {
   heartbeat: HeartbeatPorts
   events: EventAppender
   modelCalls: ModelCallStore
+  health: HealthStore
   clock: Clock
   ids: IdGenerator
   workspaceId: string
