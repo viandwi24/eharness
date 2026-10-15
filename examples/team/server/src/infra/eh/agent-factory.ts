@@ -1449,7 +1449,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           }
         : {}),
       compaction: { summarizeAt: 0.8, prune: {} },
-      toolOutput: { maxChars: 30_000, strategy: 'evict' },
+      // screenshots (browser, phone and other MCP tools) pile up: the model sees the newest three
+      toolOutput: { maxChars: 30_000, strategy: 'evict', keepImages: 3 },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
     })
     if (worker) workerSelf = agent

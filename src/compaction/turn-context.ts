@@ -182,6 +182,9 @@ export function createTurnCompaction(args: {
     ...(config.models === undefined
       ? {}
       : { refuseFile: fileRefuser(config.models, () => info.model) }),
+    ...(config.toolOutput?.keepImages === undefined
+      ? {}
+      : { keepToolImages: Math.max(0, config.toolOutput.keepImages) }),
   }
 
   async function fixed(): Promise<number> {

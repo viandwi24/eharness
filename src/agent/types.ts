@@ -419,6 +419,11 @@ export interface ToolOutputConfig {
   perTool?: Record<string, number | false>
   /** Default `'truncate'`. */
   strategy?: 'truncate' | 'evict'
+  /**
+   * Media (screenshots, images) in tool results the model sees: the newest N; older ones become a
+   * short note. Default: all. The stored messages keep every image.
+   */
+  keepImages?: number
 }
 
 /**

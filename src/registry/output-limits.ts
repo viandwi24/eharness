@@ -105,9 +105,61 @@ function evictNote(path: string): string {
   return `Full output saved to ${path}; use read_file with offset/limit to see more.`
 }
 
+/** A part of an MCP `CallToolResult` that carries media bytes (base64 `data`). */
+function isMediaPart(part: unknown): boolean {
+  if (typeof part !== 'object' || part === null) return false
+  const p = part as { type?: unknown; data?: unknown }
+  return (p.type === 'image' || p.type === 'audio') && typeof p.data === 'string'
+}
+
+/** An MCP `CallToolResult`-shaped output (`{ content: [{ type, ... }] }`) that carries media. */
+function mediaResult(output: unknown): { content: unknown[] } | undefined {
+  if (typeof output !== 'object' || output === null) return undefined
+  const content = (output as { content?: unknown }).content
+  if (!Array.isArray(content) || !content.some(isMediaPart)) return undefined
+  return output as { content: unknown[] }
+}
+
+/**
+ * Media bytes are not text the budget is about: an image of a screenshot is sent to the model as an
+ * image (or left out by its `toModelOutput`), never as characters. The output is measured without
+ * them; over budget, only its text parts are shortened and the media parts and the shape are kept,
+ * so the tool's `toModelOutput` still applies.
+ */
+function limitMediaResult(
+  result: { content: unknown[] },
+  budget: number,
+): { output: unknown; chars: number } | undefined {
+  const { structuredContent: _dup, ...rest } = result as { structuredContent?: unknown }
+  const measured = serialize({
+    ...result,
+    content: result.content.map((p) =>
+      isMediaPart(p) ? { type: (p as { type: string }).type } : p,
+    ),
+  }).length
+  if (measured <= budget) return undefined
+  const texts = result.content.filter(
+    (p): p is { type: 'text'; text: string } =>
+      typeof p === 'object' &&
+      p !== null &&
+      (p as { type?: unknown }).type === 'text' &&
+      typeof (p as { text?: unknown }).text === 'string',
+  )
+  const total = texts.reduce((n, p) => n + p.text.length, 0)
+  const content = result.content.map((p) => {
+    if (!texts.includes(p as { type: 'text'; text: string })) return p
+    const part = p as { type: 'text'; text: string }
+    const share = total === 0 ? budget : Math.floor((budget * part.text.length) / total)
+    return { ...part, text: truncateMiddle(part.text, share) }
+  })
+  // `structuredContent` repeats the text in JSON: it goes when the result is over budget
+  return { output: { ...rest, content }, chars: measured }
+}
+
 /**
  * Apply the output limit of `toolName` to a final output. Returns the output unchanged when it
- * is within budget. Strings are measured by length, other values by their JSON serialization.
+ * is within budget. Strings are measured by length, other values by their JSON serialization;
+ * media parts of an MCP result (base64 images, audio) are not counted and never cut (spec 09 §4).
  */
 export async function limitToolOutput(
   toolName: string,
@@ -117,6 +169,26 @@ export async function limitToolOutput(
 ): Promise<unknown> {
   const budget = toolOutputBudget(deps.config, toolName)
   if (budget === undefined) return output
+  const media = mediaResult(output)
+  if (media !== undefined) {
+    const limited = limitMediaResult(media, budget)
+    if (limited === undefined) return output
+    deps.warn(
+      {
+        code: 'W_TOOL_OUTPUT_LIMITED',
+        message: `Text of tool '${toolName}' had ${limited.chars} characters (limit ${budget}) and was truncated; its media were kept.`,
+        details: {
+          tool: toolName,
+          toolCallId,
+          originalChars: limited.chars,
+          maxChars: budget,
+          strategy: 'truncate',
+        },
+      },
+      toolCallId,
+    )
+    return limited.output
+  }
   const isText = typeof output === 'string'
   const text = isText ? output : serialize(output)
   if (text.length <= budget) return output

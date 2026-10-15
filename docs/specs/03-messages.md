@@ -284,6 +284,10 @@ project(view: HarnessUIMessage[], ctx: { registry; tools; model; sessionId;   //
        convertDataPart: part => registry.dataPart(part.type)?.model …   // 'omit' | 'text' | fn
      })
   7. sanitize: remove tool results without calls and empty messages (spec 06 §6)
+  8. media of tool results: a media item (image or file) of a tool result's `content` output becomes
+     `refuseFile`'s note when the model cannot take its modality; of the rest only the newest
+     `toolOutput.keepImages` stay, older ones become `OLDER_TOOL_IMAGE_NOTE` (default: all stay).
+     Stored messages keep every item.
 ```
 
 **Prune (turn wire only, 0.4.0).** With `compaction.prune` on, the wire builder of a turn (spec 06

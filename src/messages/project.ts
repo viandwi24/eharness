@@ -59,7 +59,16 @@ export interface ProjectOptions {
    * `undefined` to keep the file; the stored message is never changed (spec 03 §6).
    */
   refuseFile?: (file: { mediaType: string; filename?: string }) => string | undefined
+  /**
+   * `toolOutput.keepImages`: the newest N media parts of tool results stay; older ones become a
+   * short text note (screenshots pile up otherwise). `undefined` keeps all (spec 03 §6).
+   */
+  keepToolImages?: number
 }
+
+/** What replaces a tool result's media part the model does not get any more. */
+export const OLDER_TOOL_IMAGE_NOTE =
+  '[An older image from this tool was left out to save context. Take a new one if you need to see it.]'
 
 /**
  * Project an assembled view (`[boundary?] + visible messages`, id order) to model messages.
@@ -141,8 +150,54 @@ export async function project(
     }
   }
 
-  // 7. sanitize
-  return sanitizeModelMessages(wire)
+  // 7. sanitize, 8. media of tool results
+  return toolMedia(sanitizeModelMessages(wire), options)
+}
+
+type ContentItem = { type: string; mediaType?: string; text?: string }
+
+/** A media item of a tool result's `content` output (any AI SDK form that carries a file). */
+const isMediaItem = (item: ContentItem): boolean => item.type !== 'text' && item.type !== 'custom'
+
+/**
+ * 8. Media in tool results: a model that cannot take the file's modality gets `refuseFile`'s note
+ * instead; of the rest only the newest `keepToolImages` stay. The stored messages never change.
+ */
+function toolMedia(wire: ModelMessage[], options: ProjectOptions): ModelMessage[] {
+  const keep = options.keepToolImages
+  if (keep === undefined && options.refuseFile === undefined) return wire
+  let kept = 0
+  const out = [...wire]
+  for (let i = out.length - 1; i >= 0; i--) {
+    const message = out[i] as ModelMessage
+    if (message.role !== 'tool') continue
+    let changed = false
+    const content = message.content.map((part) => {
+      if (part.type !== 'tool-result' || part.output.type !== 'content') return part
+      const items = part.output.value as ContentItem[]
+      const next = [...items]
+      for (let j = next.length - 1; j >= 0; j--) {
+        const item = next[j] as ContentItem
+        if (!isMediaItem(item)) continue
+        const mediaType = item.mediaType ?? (item.type.startsWith('image') ? 'image/*' : '')
+        const refused = mediaType === '' ? undefined : options.refuseFile?.({ mediaType })
+        if (refused !== undefined) {
+          next[j] = { type: 'text', text: refused }
+        } else if (keep !== undefined && kept >= keep) {
+          next[j] = { type: 'text', text: OLDER_TOOL_IMAGE_NOTE }
+        } else {
+          kept++
+          continue
+        }
+        changed = true
+      }
+      return next.every((item, j) => item === items[j])
+        ? part
+        : { ...part, output: { ...part.output, value: next as typeof part.output.value } }
+    })
+    if (changed) out[i] = { ...message, content } as ModelMessage
+  }
+  return out
 }
 
 /** The boundary kind message with the highest id, if any. */

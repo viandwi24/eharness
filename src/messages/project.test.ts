@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import type { FlexibleSchema } from 'ai'
+import { type FlexibleSchema, type ToolSet, tool } from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
 import { z } from 'zod/v4'
 import { defineDataPart } from './data-parts.ts'
 import { createKindMessage, defineMessageKind } from './kinds.ts'
-import { project } from './project.ts'
+import { OLDER_TOOL_IMAGE_NOTE, project } from './project.ts'
 import { createCoreMessageRegistry } from './registry.ts'
 import { sanitizeModelMessages } from './sanitize.ts'
 import { INTERRUPTED_UNKNOWN } from './texts.ts'
@@ -453,5 +453,52 @@ describe('sanitizeModelMessages', () => {
     } finally {
       g.AI_SDK_LOG_WARNINGS = previous
     }
+  })
+})
+
+describe('media in tool results', () => {
+  const tools = {
+    weather: tool({
+      inputSchema: z.object({ city: z.string() }),
+      toModelOutput: ({ output }: { output: unknown }) => ({
+        type: 'content' as const,
+        value: [
+          { type: 'text' as const, text: 'shot' },
+          { type: 'image-data' as const, data: String(output), mediaType: 'image/png' },
+        ],
+      }),
+    }),
+  } as unknown as ToolSet
+  const view = [
+    user('01', 'Look'),
+    assistant('02', [
+      stepStart,
+      toolDone('c1', 'AAA1'),
+      stepStart,
+      toolDone('c2', 'AAA2'),
+      stepStart,
+      toolDone('c3', 'AAA3'),
+      stepStart,
+      text('Done.'),
+    ]),
+  ]
+
+  test('keepToolImages keeps the newest images; older ones become a note', async () => {
+    const wire = JSON.stringify(await project(view, { ...base, tools, keepToolImages: 1 }))
+    expect(wire).toContain('AAA3')
+    expect(wire).not.toContain('AAA1')
+    expect(wire).not.toContain('AAA2')
+    expect(wire.split(OLDER_TOOL_IMAGE_NOTE.slice(0, 30)).length - 1).toBe(2)
+    // without the option every image stays
+    const all = JSON.stringify(await project(view, { ...base, tools }))
+    for (const d of ['AAA1', 'AAA2', 'AAA3']) expect(all).toContain(d)
+  })
+
+  test('a model that cannot take images gets the note instead of any image', async () => {
+    const wire = JSON.stringify(
+      await project(view, { ...base, tools, refuseFile: () => '[no images]' }),
+    )
+    expect(wire).not.toContain('AAA')
+    expect(wire.split('[no images]').length - 1).toBe(3)
   })
 })

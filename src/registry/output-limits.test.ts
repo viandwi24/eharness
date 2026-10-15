@@ -33,6 +33,26 @@ describe('limitToolOutput', () => {
     return { result, warnings }
   }
 
+  test('an MCP image is not counted and never cut; only the text is shortened', async () => {
+    const image = { type: 'image', data: 'A'.repeat(200_000), mimeType: 'image/jpeg' }
+    const small = { content: [{ type: 'text', text: 'Screenshot 540x1200' }, image] }
+    const kept = run(small, { maxChars: 1000 })
+    expect(await kept.result).toBe(small)
+    expect(kept.warnings).toEqual([])
+
+    const long = {
+      content: [{ type: 'text', text: 'x'.repeat(5000) }, image],
+      structuredContent: { text: 'x'.repeat(5000) },
+    }
+    const cut = run(long, { maxChars: 1000 })
+    const out = (await cut.result) as { content: Array<{ type: string; text?: string }> }
+    expect(isLimitedOutput(out)).toBe(false)
+    expect(out.content[1]).toBe(image)
+    expect((out.content[0]?.text ?? '').length).toBeLessThan(1200)
+    expect('structuredContent' in out).toBe(false)
+    expect(cut.warnings[0]?.code).toBe('W_TOOL_OUTPUT_LIMITED')
+  })
+
   test('within budget: unchanged, no warning (same reference)', async () => {
     const value = { a: 1 }
     const { result, warnings } = run(value, { maxChars: 100 })

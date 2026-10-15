@@ -201,6 +201,10 @@ toolOutput?: {
 - A tool's own `toModelOutput` is bypassed for the `{ truncated: true, … }` form (it is sent as
   a `json` output), because that form no longer has the shape the converter expects (e.g. MCP
   `CallToolResult`s).
+- Media bytes are not counted: an MCP `CallToolResult` (`{ content: [...] }`) with `image`/`audio`
+  parts is measured without their base64 `data`. Over budget, only its `text` parts are shortened
+  (sharing the budget by length), `structuredContent` is dropped and the media parts and the shape
+  are kept, so the tool's `toModelOutput` still applies.
 - Media outputs (spec 08 §12) are not limited: `read_file` stores a small `media-ref` object and its
   `toModelOutput` produces the image; a custom tool that returns base64 inside its output is limited
   like any structured output (return a reference and read the bytes in `toModelOutput` instead).
