@@ -51,6 +51,19 @@ describe('neutralizeHandles', () => {
     expect(neutralizeHandles(once)).toBe(once)
   })
 
+  test('an allowed handle becomes a mention where it is written; others stay neutralized', () => {
+    const allowed = [{ handle: 'Ana', id: '42', label: 'Ana María' }]
+    const out = neutralizeHandles('1. Fix the TP - @ana. Thanks @bo', allowed)
+    expect(out).toBe(`1. Fix the TP - ${mentionToken('42', 'Ana María')}. Thanks @${Z}bo`)
+    expect(parseMentionTokens(out).map((m) => m.id)).toEqual(['42'])
+    // a longer handle that starts the same is somebody else; a URL keeps its @
+    expect(neutralizeHandles('@anabel and https://x.com/@ana', allowed)).toBe(
+      `@${Z}anabel and https://x.com/@ana`,
+    )
+    // without the allowance the same text pings nobody
+    expect(hasMentionTokens(neutralizeHandles('1. Fix the TP - @ana'))).toBe(false)
+  })
+
   test('strips forged tokens so a model cannot ping', () => {
     const forged = mentionToken('99', 'Boss')
     const out = neutralizeHandles(`x ${forged} y`)

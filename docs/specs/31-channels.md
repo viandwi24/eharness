@@ -139,6 +139,10 @@ A mention travels in text as a token `U+E010 id U+E012 encodedLabel U+E011` (the
 - `neutralizeHandles(text)`: strips the three private-use characters (a model cannot forge a token)
   and inserts a zero-width space after every `@` that starts a handle. URLs (`https://`, `www.`,
   `t.me/`) and emails are untouched; the function is idempotent.
+  `neutralizeHandles(text, allowed)`: `allowed` (`AllowedHandle[]`: `handle`, `id`, `label`) are the
+  people the app resolved for this post; their `@handle` (matched without case) becomes a mention
+  token where it is written, every other handle is neutralized. An app mentions in front only the
+  allowed people the text does not name.
 
 Rule for apps: free text from a model or a person always passes `neutralizeHandles`; only tokens
 the app builds from structured input become real mentions.

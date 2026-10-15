@@ -165,7 +165,7 @@ const sendSchema = z.object({
     .array(z.string())
     .optional()
     .describe(
-      'People to mention (ping): their platform user ids (from the message header or member_lookup). This is the only way to ping anybody: @handles typed in the text do nothing.',
+      'People to mention (ping): their platform user ids (from the message header or member_lookup). Only people listed here are pinged. Write their @username in the text where the tag belongs (once, for example "1. Fix the TP - @ana"): it becomes the tag there. Anybody listed but not written in the text is tagged at the start. Any other @handle in the text pings nobody.',
     ),
   text: z.string().optional().describe('send / reply: the text; upload: the caption.'),
   replyTo: z.string().optional().describe('reply: platform message id to quote.'),

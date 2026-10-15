@@ -540,7 +540,7 @@ describe('self-knowledge tools', () => {
 })
 
 describe('mentions', () => {
-  test('channel_send mentions by id; free text @handles are neutralized in sends and replies', async () => {
+  test('channel_send mentions by id, in place when the text names them; other @handles are neutralized', async () => {
     const i = instance([
       call(
         'channel_send',
@@ -557,8 +557,11 @@ describe('mentions', () => {
     const post = mock.sent.find((s) => s.message.text.includes('please')) as NonNullable<
       (typeof mock.sent)[number]
     >
-    expect(parseMentions(post.message.text)).toMatchObject([{ id: budi.id, name: 'Budi' }])
-    expect(post.message.text).toContain('@​budi please')
+    // the mentioned person's @username becomes the tag where it is written, not a second one in front
+    const tags = parseMentions(post.message.text)
+    expect(tags).toMatchObject([{ id: budi.id, name: 'Budi' }])
+    expect(post.message.text.startsWith('ping ')).toBe(true)
+    expect(post.message.text.slice(tags[0]?.start ?? 0)).toEndWith(' please')
     const reply = mock.sent.find((s) => s.message.text.startsWith('Thanks')) as NonNullable<
       (typeof mock.sent)[number]
     >

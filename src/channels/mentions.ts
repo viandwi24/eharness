@@ -72,19 +72,42 @@ export function readableMentions(text: string): string {
   return text.replace(TOKEN, (_m, _id: string, label: string) => `@${decode(label)}`)
 }
 
+/** A person free text may mention by `@handle`: the app resolved and allowed them for this post. */
+export interface AllowedHandle {
+  /** The handle as written after `@` (matched without case). */
+  handle: string
+  /** The platform's own id of the person (the token's id). */
+  id: string
+  /** The label the mention is written as. */
+  label: string
+}
+
 /**
  * Make free text safe to post: strip forged tokens and put a zero-width space after every `@` that
  * starts a handle (`@ana` becomes `@​ana`). URLs (`tiktok.com/@name`) and emails (`a@b.com`)
  * are left alone. Idempotent.
+ *
+ * `allowed`: people the app resolved for this post. Their `@handle` in the text becomes a mention
+ * token where it is written (the mention stays in place instead of being listed in front); every
+ * other handle is neutralized as usual.
  */
-export function neutralizeHandles(text: string): string {
+export function neutralizeHandles(text: string, allowed: readonly AllowedHandle[] = []): string {
+  const byHandle = new Map(allowed.map((a) => [a.handle.replace(/^[@＠]/, '').toLowerCase(), a]))
   return text
     .replace(FORGED, '')
     .split(URL_PART)
     .map((part, i) =>
       i % 2 === 1
         ? part
-        : part.replace(/(^|[^\p{L}\p{N}_])([@＠])(?=[\p{L}\p{N}_])/gu, `$1$2${ZWSP}`),
+        : part.replace(
+            /(^|[^\p{L}\p{N}_])([@＠])([\p{L}\p{N}_]+)/gu,
+            (_m, before: string, at: string, handle: string) => {
+              const person = byHandle.get(handle.toLowerCase())
+              return person === undefined
+                ? `${before}${at}${ZWSP}${handle}`
+                : `${before}${mentionToken(person.id, person.label)}`
+            },
+          ),
     )
     .join('')
 }

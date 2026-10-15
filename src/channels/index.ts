@@ -23,6 +23,7 @@ export {
 } from './governor.ts'
 export { type MemoryOutboxStoreOptions, memoryOutboxStore } from './memory.ts'
 export {
+  type AllowedHandle,
   hasMentionTokens,
   mentionToken,
   neutralizeHandles,

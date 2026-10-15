@@ -69,7 +69,13 @@ import { type MessageMeta, renderHeader, renderLinePrefix } from './header.ts'
 import { type IdentityStore, sqliteIdentityStore } from './identities.ts'
 import { migrateLegacyMessages, migrateLegacyStructure } from './legacy-migration.ts'
 import { isMentionOnly, isSmallTalk, mediumContext, systemRules } from './medium.ts'
-import { mentionToken, neutralizeHandles, plainMentions, readableMentions } from './mentions.ts'
+import {
+  mentionToken,
+  neutralizeHandles,
+  parseMentions,
+  plainMentions,
+  readableMentions,
+} from './mentions.ts'
 import { type ChannelLog, type LogMessage, sqliteChannelLog } from './messages.ts'
 import type { IdentityRow, NodeRow } from './model.ts'
 import { channelNodeOf, type NodeStore, sqliteNodeStore } from './nodes.ts'
@@ -1971,15 +1977,26 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return { ids }
   }
 
-  /** Mention tokens of identities, then the text: free text can never mention (it is neutralized). */
+  /**
+   * The text with its mentions. Free text can never mention by itself (it is neutralized), except
+   * the people of `identityIds`: their `@username` in the text becomes the mention where it is
+   * written. Whoever the text does not name that way is mentioned in front, as before.
+   */
   const withMentions = (text: string, identityIds: readonly string[]): string => {
-    const tokens: string[] = []
-    for (const id of identityIds) {
+    const rows = identityIds.flatMap((id) => {
       const row = identities.get(id)
-      if (row === undefined) continue
-      tokens.push(mentionToken(row.nativeId, row.displayName ?? row.username ?? row.nativeId))
-    }
-    const body = neutralizeHandles(text)
+      return row === undefined ? [] : [row]
+    })
+    const allowed = rows.flatMap((r) =>
+      r.username === undefined || r.username === null || r.username === ''
+        ? []
+        : [{ handle: r.username, id: r.nativeId, label: r.displayName ?? r.username }],
+    )
+    const body = neutralizeHandles(text, allowed)
+    const inline = new Set(parseMentions(body).map((m) => m.id))
+    const tokens = rows
+      .filter((r) => !inline.has(r.nativeId))
+      .map((r) => mentionToken(r.nativeId, r.displayName ?? r.username ?? r.nativeId))
     return tokens.length === 0 ? body : `${tokens.join(' ')} ${body}`.trimEnd()
   }
 
