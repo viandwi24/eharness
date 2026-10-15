@@ -434,6 +434,12 @@ export interface ToolOutputConfig {
 export interface ToolCallsConfig {
   /** Calls executed per step. Default 24. */
   maxPerStep?: number
+  /**
+   * Per turn: the same tool with the same input returning the same result (or the same error text)
+   * this many times in a row stops running; the model reads a refusal. Different results reset the
+   * count (polling stays allowed). Default 3; 0 disables.
+   */
+  maxIdenticalResults?: number
 }
 
 /**

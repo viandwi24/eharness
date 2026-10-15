@@ -226,7 +226,7 @@ toolOutput?: {
 
 ### 4.1 Tool calls of one step
 
-`toolCalls: { maxPerStep?: number }` (default 24). A model can degenerate and emit hundreds of
+`toolCalls: { maxPerStep?: number; maxIdenticalResults?: number }` (defaults 24 and 3). A model can degenerate and emit hundreds of
 parallel calls in one step. Every wrapped tool call is admitted per step:
 
 - an exact repeat of a call of the same step (same tool, same JSON input) does not run: it is
@@ -234,7 +234,15 @@ parallel calls in one step. Every wrapped tool call is admitted per step:
 - past `maxPerStep` admitted calls, a call does not run: `Skipped: more than N tool calls in one
   step. ...`.
 
-Both are tool errors (`HarnessToolError`, same text in the UI, storage and on the wire); the model
+Across the steps of one turn the guard also counts results: when the same tool with the same
+input has returned the same output (or the same error text) `maxIdenticalResults` times in a row
+in this turn (default 3; `0` disables), the next identical call does not run and is answered
+`Skipped: <tool> with this input already returned the same result 3 times in this turn; it will
+not change now. Use that result or try something else.` Outputs are compared by a cheap hash of a
+size-capped, key-sorted serialization (base64 `data` skipped); nothing large is kept. A different
+result resets the count, so polling a changing tool stays allowed.
+
+All of these are tool errors (`HarnessToolError`, same text in the UI, storage and on the wire); the model
 continues in the next step. Unwrapped tools (`tool_search`, client and provider tools) are not
 counted.
 

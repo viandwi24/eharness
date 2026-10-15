@@ -62,17 +62,92 @@ export const DEFAULT_MAX_TOOL_CALLS_PER_STEP = 24
 /** Admits the calls of a step (spec 09 §4.1). */
 export interface ToolCallGuard {
   admit(toolName: string, input: unknown): string | undefined
+  /** Record what an admitted call returned (its output, or its error text). */
+  record?(toolName: string, input: unknown, result: { output: unknown } | { error: string }): void
+}
+
+/** Default `toolCalls.maxIdenticalResults`. */
+export const DEFAULT_MAX_IDENTICAL_RESULTS = 3
+
+const HASH_CAP = 65_536
+
+/** FNV-1a over a text, two seeds, with the length: a cheap fingerprint, nothing large is kept. */
+function hashText(text: string): string {
+  let a = 0x811c9dc5
+  let b = 0x9747b28c
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    a = Math.imul(a ^ c, 0x01000193)
+    b = Math.imul(b ^ c, 0x85ebca6b)
+  }
+  return `${text.length}.${(a >>> 0).toString(36)}.${(b >>> 0).toString(36)}`
+}
+
+/** Serialize with sorted keys, base64 `data` strings and media bodies skipped, capped in size. */
+function stableText(value: unknown): string {
+  let budget = HASH_CAP
+  const seen = new WeakSet<object>()
+  const walk = (v: unknown, key?: string): unknown => {
+    if (typeof v === 'string') {
+      if (key === 'data' || key === 'base64' || key === 'bytes') return `[${v.length}]`
+      if (v.length > budget) {
+        const head = v.slice(0, Math.max(budget, 0))
+        budget = 0
+        return `${head}[${v.length}]`
+      }
+      budget -= v.length
+      return v
+    }
+    if (typeof v !== 'object' || v === null) return v
+    if (v instanceof Uint8Array) return `[bytes ${v.length}]`
+    if (budget <= 0 || seen.has(v)) return '[cut]'
+    seen.add(v)
+    if (Array.isArray(v)) return v.map((x) => walk(x))
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(v).sort()) {
+      if (budget <= 0) break
+      out[k] = walk((v as Record<string, unknown>)[k], k)
+    }
+    return out
+  }
+  try {
+    return JSON.stringify(walk(value)) ?? ''
+  } catch {
+    return String(value).slice(0, HASH_CAP)
+  }
 }
 
 /**
  * The per-step guard of a turn: at most `max` calls run in one step, and an exact repeat of a call
  * of the same step (same tool, same input) does not run again.
  */
-export function toolCallGuard(stepOf: () => number | undefined, max: number): ToolCallGuard {
+export function toolCallGuard(
+  stepOf: () => number | undefined,
+  max: number,
+  maxIdentical: number = DEFAULT_MAX_IDENTICAL_RESULTS,
+): ToolCallGuard {
   let step: number | undefined
   let count = 0
   const seen = new Set<string>()
+  // per turn: the last result of a (tool, input) and how many times in a row it came back
+  const results = new Map<string, { hash: string; count: number }>()
+  const keyOf = (toolName: string, input: unknown): string =>
+    `${toolName}\u0000${hashText(stableText(input))}`
   return {
+    record(toolName, input, result) {
+      if (maxIdentical <= 0) return
+      const key = keyOf(toolName, input)
+      const hash = hashText(
+        'error' in result ? `E${result.error.slice(0, HASH_CAP)}` : `O${stableText(result.output)}`,
+      )
+      const prev = results.get(key)
+      results.set(
+        key,
+        prev !== undefined && prev.hash === hash
+          ? { hash, count: prev.count + 1 }
+          : { hash, count: 1 },
+      )
+    },
     admit(toolName, input) {
       const now = stepOf() ?? 0
       if (now !== step) {
@@ -88,6 +163,12 @@ export function toolCallGuard(stepOf: () => number | undefined, max: number): To
       }
       if (seen.has(key)) {
         return `Skipped: the same ${toolName} call with the same input was already made in this step; use that result instead of repeating it.`
+      }
+      if (maxIdentical > 0) {
+        const prev = results.get(keyOf(toolName, input))
+        if (prev !== undefined && prev.count >= maxIdentical) {
+          return `Skipped: ${toolName} with this input already returned the same result ${maxIdentical} times in this turn; it will not change now. Use that result or try something else.`
+        }
       }
       seen.add(key)
       count++
@@ -241,14 +322,21 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
         }
         if (has) {
           const final = await finish(input, last, options.toolCallId)
+          deps.callGuard?.record?.(name, input, { output: final })
           if (final !== last) yield final
         }
       })()
     }
     return Promise.resolve(result).then(
-      (output) => finish(input, output, options.toolCallId),
+      async (output) => {
+        const final = await finish(input, output, options.toolCallId)
+        deps.callGuard?.record?.(name, input, { output: final })
+        return final
+      },
       (error: unknown) => {
-        throw toToolError(error, options.toolCallId)
+        const wrappedError = toToolError(error, options.toolCallId)
+        deps.callGuard?.record?.(name, input, { error: String(wrappedError) })
+        throw wrappedError
       },
     )
   }

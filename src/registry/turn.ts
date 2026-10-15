@@ -47,6 +47,7 @@ import {
   type ApprovalGrants,
   buildApproval,
   buildRefinement,
+  DEFAULT_MAX_IDENTICAL_RESULTS,
   DEFAULT_MAX_TOOL_CALLS_PER_STEP,
   type ToolWrapDeps,
   toolCallGuard,
@@ -330,6 +331,7 @@ export async function resolveTurnRegistry(args: {
     callGuard: toolCallGuard(
       () => contextOf('core').step?.index,
       args.toolCalls?.maxPerStep ?? DEFAULT_MAX_TOOL_CALLS_PER_STEP,
+      args.toolCalls?.maxIdenticalResults ?? DEFAULT_MAX_IDENTICAL_RESULTS,
     ),
     limits: {
       config: args.toolOutput,

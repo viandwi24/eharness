@@ -10,10 +10,12 @@ import {
   detectTokenSpikes,
   detectToolLoops,
   detectWaitingApprovals,
+  fingerprintOf,
   HEALTH,
   normalizeError,
   readToolPart,
   safeToSuggest,
+  stableJson,
   type ToolEvent,
 } from '../src/domain/health.ts'
 
@@ -84,25 +86,66 @@ describe('repeated denial', () => {
 })
 
 describe('tool loop', () => {
-  test('same tool and input five times in a turn', () => {
-    const out = detectToolLoops(many(5, { toolName: 'read_file', inputKey: '{"path":"/a"}' }), NOW)
+  const same = (n: number, over: Partial<ToolEvent> = {}): ToolEvent[] =>
+    many(n, { toolName: 'read_file', inputKey: 'in', outputKey: 'out', ...over })
+  test('same full input and same output three times in a turn', () => {
+    const out = detectToolLoops(same(3), NOW)
     expect(out).toHaveLength(1)
-    expect(out[0]).toMatchObject({ kind: 'tool-loop', count: 5 })
+    expect(out[0]).toMatchObject({ kind: 'tool-loop', count: 3 })
+    expect(out[0]?.explanation).toContain('same result')
+    expect(detectToolLoops(same(2), NOW)).toEqual([])
   })
-  test('similar inputs (numbers differ) count; four do not', () => {
-    const similar = Array.from({ length: 5 }, (_, i) =>
-      tool({ toolName: 'poll', inputKey: `{"id":${100 + i}}` }),
+  test('different inputs of one tool are not a loop (61 searches with different queries)', () => {
+    const searches = Array.from({ length: 61 }, (_, i) =>
+      tool({
+        toolName: 'telegram_user_search_messages',
+        inputKey: fingerprintOf(stableJson({ query: `giveaway ${i}`, limit: 20 })),
+        outputKey: 'same-empty-result',
+      }),
     )
-    expect(detectToolLoops(similar, NOW)).toHaveLength(1)
-    expect(detectToolLoops(many(4, { toolName: 'read_file', inputKey: '{"p":1}' }), NOW)).toEqual(
-      [],
+    expect(detectToolLoops(searches, NOW)).toEqual([])
+  })
+  test('polling: same input, changing outputs is not a loop', () => {
+    const polls = Array.from({ length: 12 }, (_, i) =>
+      tool({ toolName: 'browser_snapshot', inputKey: '{}', outputKey: `screen-${i}` }),
     )
+    expect(detectToolLoops(polls, NOW)).toEqual([])
+  })
+  test('identical rate-limit errors with the same input are a loop', () => {
+    const out = detectToolLoops(
+      many(4, {
+        toolName: 'telegram_user_read',
+        inputKey: 'in',
+        error: 'ERROR: rate limited, retry after 30 s',
+      }),
+      NOW,
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0]?.count).toBe(4)
+  })
+  test('stableJson sorts keys and fingerprints differ for long inputs with a common prefix', () => {
+    expect(stableJson({ b: 1, a: { d: 2, c: 3 } })).toBe(stableJson({ a: { c: 3, d: 2 }, b: 1 }))
+    const prefix = 'x'.repeat(500)
+    expect(fingerprintOf(stableJson({ q: `${prefix}a` }))).not.toBe(
+      fingerprintOf(stableJson({ q: `${prefix}b` })),
+    )
+  })
+  test('readToolPart keys the full input and the output', () => {
+    const mk = (q: string, output: string): Record<string, unknown> => ({
+      type: 'tool-search',
+      state: 'output-available',
+      input: { q, n: 1 },
+      output,
+    })
+    const a = readToolPart(mk('giveaway', 'r1'))
+    const b = readToolPart(mk('undian', 'r1'))
+    const c = readToolPart(mk('giveaway', 'r2'))
+    expect(a?.inputKey).not.toBe(b?.inputKey)
+    expect(a?.outputKey).toBe(b?.outputKey)
+    expect(a?.outputKey).not.toBe(c?.outputKey)
   })
   test('different turns do not add up; tool_search repeats whatever the query', () => {
-    const split = [
-      ...many(3, { messageId: 'm1', toolName: 'read_file', inputKey: '{}' }),
-      ...many(3, { messageId: 'm2', toolName: 'read_file', inputKey: '{}' }),
-    ]
+    const split = [...same(2, { messageId: 'm1' }), ...same(2, { messageId: 'm2' })]
     expect(detectToolLoops(split, NOW)).toEqual([])
     const search = Array.from({ length: 19 }, (_, i) =>
       tool({ toolName: 'tool_search', inputKey: `{"query":"telegram ${'x'.repeat(i)}"}` }),

@@ -45,7 +45,10 @@ export const HEALTH = {
   /** The window every scan looks at. */
   windowMs: 24 * 3_600_000,
   denialCount: 3,
-  loopCount: 5,
+  /** The same input giving the same result this many times in one turn is a loop. */
+  loopCount: 3,
+  /** `tool_search` calls in one turn, whatever the query. */
+  searchLoopCount: 5,
   errorCount: 3,
   approvalWaitMs: 15 * 60_000,
   spikeFactor: 2,
@@ -70,8 +73,10 @@ export interface ToolEvent {
   programId: string | null
   link: string | null
   toolName: string
-  /** Stable text of the input (cut), for "same input" comparisons. */
+  /** Fingerprint of the FULL input (stable JSON, sorted keys), for "same input" comparisons. */
   inputKey: string
+  /** Fingerprint of the output (`''` when unknown); with `error` it is what "same result" means. */
+  outputKey?: string
   denied: boolean
   denialReason: string | null
   /** Error text of a failed call (an `ERROR:` result counts), else null. */
@@ -151,8 +156,28 @@ export function normalizeError(text: string): string {
     .slice(0, 160)
 }
 
-/** Input text for "similar input": same shape, digits and ids blurred. */
-export const similarKey = (inputKey: string): string => normalizeError(inputKey).slice(0, 120)
+/** JSON with object keys sorted, so equal values give equal text. */
+export function stableJson(value: unknown): string {
+  const seen = new WeakSet<object>()
+  const walk = (v: unknown): unknown => {
+    if (typeof v !== 'object' || v === null) return v
+    if (seen.has(v)) return '[circular]'
+    seen.add(v)
+    if (Array.isArray(v)) return v.map(walk)
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(v).sort()) out[k] = walk((v as Record<string, unknown>)[k])
+    return out
+  }
+  try {
+    return JSON.stringify(walk(value)) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** A fingerprint of a whole text (length plus two hashes; never a cut of it). */
+export const fingerprintOf = (text: string): string =>
+  `${text.length}.${shortHash(text)}.${shortHash(`~${text}`)}`
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`
 
@@ -226,21 +251,25 @@ export function detectRepeatedDenials(events: readonly ToolEvent[], now: number)
 }
 
 /**
- * The same tool with the same (or a similar) input at least 5 times in one turn; `tool_search` at
- * least 5 times in one turn whatever the query (the agent looks for a tool that is not there).
+ * The same tool with the same FULL input giving the same result (output or error) at least 3 times
+ * in one turn; `tool_search` at least 5 times in one turn whatever the query (the agent looks for a
+ * tool that is not there). Same input with changing outputs is polling, not a loop.
  */
 export function detectToolLoops(events: readonly ToolEvent[], now: number): Finding[] {
-  const recent = window(events, now)
+  const recent = window(events, now).filter((e) => !e.denied)
   const groups = groupBy(recent, (e) =>
     e.toolName === 'tool_search'
       ? `${e.sessionId}|${e.messageId}|tool_search|`
-      : `${e.sessionId}|${e.messageId}|${e.toolName}|${similarKey(e.inputKey)}`,
+      : `${e.sessionId}|${e.messageId}|${e.toolName}|${e.inputKey}|${
+          e.error !== null ? `E${fingerprintOf(normalizeError(e.error))}` : `O${e.outputKey ?? ''}`
+        }`,
   )
   // one finding per session and tool: the turns that loop are added up
   const perSession = new Map<string, ToolEvent[]>()
   for (const list of groups.values()) {
-    if (list.length < HEALTH.loopCount) continue
     const head = list[0] as ToolEvent
+    const min = head.toolName === 'tool_search' ? HEALTH.searchLoopCount : HEALTH.loopCount
+    if (list.length < min) continue
     const key = `${head.sessionId}|${head.toolName}`
     perSession.set(key, [...(perSession.get(key) ?? []), ...list])
   }
@@ -262,10 +291,10 @@ export function detectToolLoops(events: readonly ToolEvent[], now: number): Find
       count: list.length,
       explanation: search
         ? `The agent called tool_search ${list.length} times in one turn: it looks for a tool it does not have.`
-        : `${head.toolName} was called ${list.length} times with the same input in one turn.`,
+        : `${head.toolName} was called ${list.length} times with the same input and gave the same result each time, in one turn.`,
       fix: search
         ? 'Check that the tool exists and is enabled for this agent (Connectors, Tool access); tell the agent in its instructions what to do when a tool is unavailable.'
-        : `Open the session: the agent repeats ${head.toolName} without progress. Steer it, fix the tool, or add a note to its instructions.`,
+        : `Open the session: the agent repeats ${head.toolName} with the same input and gets the same result. Steer it, fix the tool, or add a note to its instructions.`,
     })
   }
   return out
@@ -521,6 +550,18 @@ const textOf = (v: unknown): string | null => {
   return null
 }
 
+/** Output without base64 payloads (a screenshot is compared by its other fields). */
+function stripMedia(value: unknown): unknown {
+  if (typeof value === 'string') return value.length > 20_000 ? value.slice(0, 20_000) : value
+  if (typeof value !== 'object' || value === null) return value
+  if (Array.isArray(value)) return value.map(stripMedia)
+  const o = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(o))
+    out[k] = k === 'data' && typeof o[k] === 'string' ? '[data]' : stripMedia(o[k])
+  return out
+}
+
 const ERROR_TEXT = /^\s*(error|failed|exception|traceback)\b/i
 
 /** What a stored tool part says about the call; undefined when it is not a finished call. */
@@ -528,6 +569,7 @@ export function readToolPart(part: Record<string, unknown>):
   | {
       toolName: string
       inputKey: string
+      outputKey: string
       denied: boolean
       denialReason: string | null
       error: string | null
@@ -545,18 +587,13 @@ export function readToolPart(part: Record<string, unknown>):
         : ''
   if (toolName === '') return undefined
   const state = part.state
-  let inputKey = ''
-  try {
-    inputKey = JSON.stringify(part.input ?? {}) ?? ''
-  } catch {
-    inputKey = ''
-  }
-  inputKey = inputKey.slice(0, 400)
+  const inputKey = fingerprintOf(stableJson(part.input ?? {}))
   if (state === 'output-denied') {
     const reason = (part.approval as { reason?: unknown } | undefined)?.reason
     return {
       toolName,
       inputKey,
+      outputKey: '',
       denied: true,
       denialReason: typeof reason === 'string' ? reason : '',
       error: null,
@@ -569,6 +606,7 @@ export function readToolPart(part: Record<string, unknown>):
     return {
       toolName,
       inputKey,
+      outputKey: '',
       denied,
       denialReason: denied ? text : null,
       error: denied ? null : text,
@@ -591,6 +629,9 @@ export function readToolPart(part: Record<string, unknown>):
     return {
       toolName,
       inputKey,
+      outputKey: fingerprintOf(
+        typeof output === 'string' ? output : stableJson(stripMedia(output)),
+      ),
       denied,
       denialReason: denied ? text : null,
       error: !denied && text !== null && ERROR_TEXT.test(text) ? text.slice(0, 600) : null,

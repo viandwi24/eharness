@@ -314,6 +314,11 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('toolOutput.maxChars', config.toolOutput?.maxChars, 'positive-int')
   checkNumber('toolOutput.keepImages', config.toolOutput?.keepImages, 'non-negative-int')
   checkNumber('toolCalls.maxPerStep', config.toolCalls?.maxPerStep, 'positive-int')
+  checkNumber(
+    'toolCalls.maxIdenticalResults',
+    config.toolCalls?.maxIdenticalResults,
+    'non-negative-int',
+  )
   for (const [name, value] of Object.entries(config.toolOutput?.perTool ?? {})) {
     if (value !== false) checkNumber(`toolOutput.perTool.${name}`, value, 'non-negative-int')
   }

@@ -605,3 +605,69 @@ describe('tool calls of one step', () => {
     expect(result.stop).toBe('complete')
   })
 })
+
+describe('identical results across the steps of a turn', () => {
+  const stepsOf = (n: number, input: unknown): Array<Record<string, unknown>> => [
+    ...Array.from({ length: n }, () => ({ toolCalls: [{ toolName: 'poll', input }] })),
+    { text: 'Done.' },
+  ]
+  test('the same call returning the same output runs 3 times, then is refused', async () => {
+    let runs = 0
+    const poll = tool({
+      inputSchema: z.object({ q: z.string() }),
+      execute: async () => {
+        runs++
+        return 'rate limited'
+      },
+    })
+    const model = scriptedModel(stepsOf(5, { q: 'a' }) as never)
+    const { agent } = makeAgent({ model, tools: { poll } })
+    const run = agent.session('s1').send('Go')
+    await collect(run.stream)
+    const result = await run.result
+    expect(runs).toBe(3)
+    expect(JSON.stringify(model.prompts[5])).toContain(
+      'Skipped: poll with this input already returned the same result 3 times in this turn',
+    )
+    expect(result.stop).toBe('complete')
+  })
+  test('a changing output (polling) runs every time', async () => {
+    let runs = 0
+    const poll = tool({
+      inputSchema: z.object({ q: z.string() }),
+      execute: async () => `screen ${runs++}`,
+    })
+    const model = scriptedModel(stepsOf(5, { q: 'a' }) as never)
+    const { agent } = makeAgent({ model, tools: { poll } })
+    const run = agent.session('s1').send('Go')
+    await collect(run.stream)
+    await run.result
+    expect(runs).toBe(5)
+  })
+  test('a repeated error text is refused after 3; maxIdenticalResults 0 disables', async () => {
+    let runs = 0
+    const poll = tool({
+      inputSchema: z.object({ q: z.string() }),
+      execute: async (): Promise<string> => {
+        runs++
+        throw new Error('429 too many requests')
+      },
+    })
+    const model = scriptedModel(stepsOf(5, { q: 'a' }) as never)
+    const { agent } = makeAgent({ model, tools: { poll } })
+    const run = agent.session('s1').send('Go')
+    await collect(run.stream)
+    await run.result
+    expect(runs).toBe(3)
+    runs = 0
+    const off = makeAgent({
+      model: scriptedModel(stepsOf(5, { q: 'a' }) as never),
+      tools: { poll },
+      toolCalls: { maxIdenticalResults: 0 },
+    })
+    const run2 = off.agent.session('s2').send('Go')
+    await collect(run2.stream)
+    await run2.result
+    expect(runs).toBe(5)
+  })
+})
