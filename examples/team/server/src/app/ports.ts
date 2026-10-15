@@ -107,6 +107,7 @@ import type {
 } from '../domain/providers.ts'
 import type { Rehearsal, RehearsalSample, TestCase, TestResult } from '../domain/rehearsal.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
+import type { ConfiguredGroup, LastCallTools } from '../domain/session-tools.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
 import type { Thread, ThreadSeed, ThreadSource } from '../domain/threads.ts'
@@ -238,6 +239,38 @@ export interface ChatToolsPort {
   get(agent: AgentDef, sessionId: string): Promise<ChatToolsState>
   /** Replace the connections switched off in this chat. */
   set(agent: AgentDef, sessionId: string, off: string[], now: number): Promise<ChatToolsState>
+}
+
+/** What tools a session has, and the forced reload of them (the chat's "Tools in this session"). */
+export interface SessionToolsView {
+  sessionId: string
+  agentId: string
+  /** Offered by the agent's current activation, grouped by connection. */
+  configured: ConfiguredGroup[]
+  /** What the newest model call of the session carried; null with a reason when unknown. */
+  lastCall: LastCallTools | null
+  lastCallNote: string | null
+  /** Configured and allowed, yet neither loaded nor deferred in the last call. */
+  missing: string[]
+  /** Carried by the last call but not configured (plugin tools such as `tool_search`). */
+  extra: string[]
+}
+
+export interface ReloadView {
+  /** Open sessions the reload looked at. */
+  sessions: number
+  closed: number
+  /** True when a session was busy: it closes right after its turn. */
+  pending: boolean
+  /** Tools the agent is configured with now. */
+  tools: string[]
+}
+
+export interface SessionToolsPort {
+  /** Read-only: stored data and the last activation, no model call, no session opened. */
+  tools(sessionId: string): Promise<SessionToolsView>
+  reload(sessionId: string): Promise<ReloadView>
+  reloadAgent(agent: AgentDef): Promise<ReloadView>
 }
 
 export interface ToolInfo {
@@ -1224,6 +1257,7 @@ export interface Deps {
   persona: PersonaStore
   chat: ChatPort
   chatTools: ChatToolsPort
+  sessionTools: SessionToolsPort
   threads: ThreadStore
   notifications: NotificationStore
   briefings: BriefingStore

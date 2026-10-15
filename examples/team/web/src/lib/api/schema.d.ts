@@ -1991,6 +1991,231 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Which tools a session has: configured, loaded in its last model call, missing
+         * @description Read-only and cheap (stored data and the agent's last activation; no model call, the session is not opened). `configured` is what the agent offers now, per connection. `lastCall` is read from the request of the newest model call of the session (`tools` = loaded, the "Deferred tools:" block = loadable with `tool_search`); it is null with a note when there is no call yet or its request was too large to keep. `missing` lists configured, allowed tools the last call neither loaded nor deferred.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Session id, as the other `/sessions/{id}` routes take it (URL-encoded). */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The tools */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SessionTools"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown session */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Force a reload of the tools of a session
+         * @description For urgent cases. The agent's connectors are activated again (remote MCP lists are fetched anew), the agent is rebuilt, and the session object is closed as soon as it is idle, so the next message opens a fresh one. A running turn is never cut: `pending` is true and the session closes right after the turn. The model is told once that its tools were reloaded.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Session id, as the other `/sessions/{id}` routes take it (URL-encoded). */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description What was reloaded */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReloadResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown session */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Force a reload of the tools in every open chat of an agent
+         * @description The same as `POST /sessions/{id}/reload` for every session of the agent that is open on this server.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description What was reloaded */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReloadResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}": {
         parameters: {
             query?: never;
@@ -15870,6 +16095,54 @@ export interface components {
         };
         Dismissed: {
             dismissed: number;
+        };
+        SessionTools: {
+            sessionId: string;
+            agentId: string;
+            /** @description What the agent's current activation offers, per connection. */
+            configured: {
+                connectionId: string | null;
+                /** @example phone */
+                connectorId: string;
+                /** @description Connector name. */
+                name: string;
+                /** @description Connection label. */
+                label: string;
+                tools: {
+                    name: string;
+                    /** @enum {string} */
+                    mode: "allow" | "ask" | "off";
+                    /** @description Switched off for this chat only (composer tools menu). */
+                    chatOff: boolean;
+                }[];
+            }[];
+            /** @description Tools of the newest model call; null when unknown (see the note). */
+            lastCall: {
+                /** @description Id of the call on the Logs page. */
+                id: string;
+                /** @description Start of the call (epoch ms). */
+                at: number;
+                /** @description Tools sent with their schemas. */
+                loaded: string[];
+                /** @description Tools listed as loadable with `tool_search`. */
+                deferred: string[];
+            } | null;
+            /** @description Why `lastCall` is null. */
+            lastCallNote: string | null;
+            /** @description Configured and allowed, yet neither loaded nor deferred in the last call: the red flag. */
+            missing: string[];
+            /** @description Carried by the last call but not configured (plugin tools such as `tool_search`). */
+            extra: string[];
+        };
+        ReloadResult: {
+            /** @description Open sessions the reload looked at. */
+            sessions: number;
+            /** @description Closed at once (they were idle). */
+            closed: number;
+            /** @description A session is busy: it is closed right after its running turn. */
+            pending: boolean;
+            /** @description Tools the agent is configured with now. */
+            tools: string[];
         };
         /** @description The stored state of a session (`eharness/http`). */
         SessionSnapshot: {

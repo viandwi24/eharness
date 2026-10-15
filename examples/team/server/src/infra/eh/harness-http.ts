@@ -26,10 +26,10 @@ import { DomainError } from '../../app/errors.ts'
 import type { Actor, AgentRepo, TaskStore, ThreadStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import { MAX_NOTE_CHARS, userDeclinedText } from '../../domain/approvals.ts'
-import { dmSessionId, isDmSession } from '../../domain/chat.ts'
+import { isDmSession } from '../../domain/chat.ts'
 import { notFound } from '../../domain/errors.ts'
-import { parseChatSession } from '../../domain/threads.ts'
 import type { AgentFactory } from './agent-factory.ts'
+import { createSessionResolver } from './session-resolve.ts'
 import type { TeamService } from './team-service.ts'
 
 export interface TeamHttpOptions {
@@ -74,35 +74,7 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
   const { factory, agents, tasks, team } = options
 
   /** The agent that runs a session, and the canonical id (`dm:<slug>` is accepted for `dm:<id>`). */
-  const resolve = (sessionId: string): { def: AgentDef; id: string } | undefined => {
-    // a background worker belongs to the agent of the session that started it
-    const worker = sessionId.lastIndexOf(':worker:')
-    if (worker > 0) {
-      const parent = resolve(sessionId.slice(0, worker))
-      return parent === undefined ? undefined : { def: parent.def, id: sessionId }
-    }
-    const chat = parseChatSession(sessionId)
-    if (chat !== undefined && !chat.child && chat.threadId !== null) {
-      // a `chat:` id of a thread that was never created is not a session
-      const thread = options.threads.getBySession(sessionId)
-      const def = thread === undefined ? undefined : agents.get(thread.agentId)
-      return def === undefined ? undefined : { def, id: sessionId }
-    }
-    if (sessionId.startsWith('channel:')) {
-      // a channel conversation exists only as a thread row (`infra/channels`)
-      const thread = options.threads.getBySession(sessionId)
-      const def = thread === undefined ? undefined : agents.get(thread.agentId)
-      return def === undefined ? undefined : { def, id: sessionId }
-    }
-    if (isDmSession(sessionId)) {
-      const key = sessionId.slice('dm:'.length)
-      const def = agents.get(key) ?? agents.getBySlug(key)
-      return def === undefined ? undefined : { def, id: dmSessionId(def.id) }
-    }
-    const task = tasks.getBySession(sessionId)
-    const def = task === undefined ? undefined : agents.get(task.agentId)
-    return def === undefined ? undefined : { def, id: sessionId }
-  }
+  const resolve = createSessionResolver({ agents, tasks, threads: options.threads })
   const need = (sessionId: string): { def: AgentDef; id: string } => {
     const found = resolve(sessionId)
     if (found === undefined) throw notFound('session', sessionId)

@@ -12,6 +12,8 @@
 	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import { toast } from '#lib/components/ui/sonner/index.js';
+	import { api } from '#lib/api/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
 	import { MODE_LABEL } from '#lib/connectors/core.js';
@@ -34,6 +36,26 @@
 	let reconnectId = $state<string | undefined>(undefined);
 
 	const groups = $derived(groupConnectors(list));
+
+	let reloadingAll = $state(false);
+	/** Urgent cases: refresh the connectors and give every open chat of this agent fresh tools. */
+	async function reloadAll(): Promise<void> {
+		reloadingAll = true;
+		try {
+			const r = await api.post('/agents/{id}/reload', { params: { id: agentId } });
+			toast.success(
+				r.sessions === 0
+					? 'Tools reloaded. No chat of this agent is open right now.'
+					: r.pending
+						? `Tools reloaded in ${r.sessions} ${r.sessions === 1 ? 'chat' : 'chats'}; busy ones switch right after their turn.`
+						: `Tools reloaded in ${r.sessions} ${r.sessions === 1 ? 'chat' : 'chats'}.`
+			);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not reload the tools');
+		} finally {
+			reloadingAll = false;
+		}
+	}
 
 	async function reload(): Promise<void> {
 		try {
@@ -214,6 +236,12 @@
 		{@render section('Apps', groups.connected, 'No apps yet. Add an account from your workspace, or connect a new one for this agent.', true)}
 		{#if groups.builtin.length}{@render section('Built in', groups.builtin, '')}{/if}
 		<ToolAccessControl {agentId} tools={thirdPartyToolCount(list)} />
+		<div class="flex items-center justify-between gap-3">
+			<p class="text-xs text-muted-foreground">A chat that is already open can miss tools you just allowed. Reload gives every open chat of this agent fresh tools on its next message.</p>
+			<Button size="xs" variant="ghost" class="shrink-0" onclick={reloadAll} disabled={reloadingAll}>
+				{#if reloadingAll}<Spinner class="size-3" />{:else}<ArrowClockwiseIcon class="size-3" />{/if} Reload tools in all chats
+			</Button>
+		</div>
 	{/if}
 </div>
 

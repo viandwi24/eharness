@@ -1831,6 +1831,176 @@
           "dismissed"
         ]
       },
+      "SessionTools": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "configured": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "connectionId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "connectorId": {
+                  "type": "string",
+                  "example": "phone"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Connector name."
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Connection label."
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "allow",
+                          "ask",
+                          "off"
+                        ]
+                      },
+                      "chatOff": {
+                        "type": "boolean",
+                        "description": "Switched off for this chat only (composer tools menu)."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "mode",
+                      "chatOff"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "connectionId",
+                "connectorId",
+                "name",
+                "label",
+                "tools"
+              ]
+            },
+            "description": "What the agent's current activation offers, per connection."
+          },
+          "lastCall": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Id of the call on the Logs page."
+              },
+              "at": {
+                "type": "integer",
+                "description": "Start of the call (epoch ms)."
+              },
+              "loaded": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Tools sent with their schemas."
+              },
+              "deferred": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Tools listed as loadable with `tool_search`."
+              }
+            },
+            "required": [
+              "id",
+              "at",
+              "loaded",
+              "deferred"
+            ],
+            "description": "Tools of the newest model call; null when unknown (see the note)."
+          },
+          "lastCallNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why `lastCall` is null."
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Configured and allowed, yet neither loaded nor deferred in the last call: the red flag."
+          },
+          "extra": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Carried by the last call but not configured (plugin tools such as `tool_search`)."
+          }
+        },
+        "required": [
+          "sessionId",
+          "agentId",
+          "configured",
+          "lastCall",
+          "lastCallNote",
+          "missing",
+          "extra"
+        ]
+      },
+      "ReloadResult": {
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "type": "integer",
+            "description": "Open sessions the reload looked at."
+          },
+          "closed": {
+            "type": "integer",
+            "description": "Closed at once (they were idle)."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "A session is busy: it is closed right after its running turn."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tools the agent is configured with now."
+          }
+        },
+        "required": [
+          "sessions",
+          "closed",
+          "pending",
+          "tools"
+        ]
+      },
       "SessionSnapshot": {
         "type": "object",
         "properties": {
@@ -17729,6 +17899,236 @@
           },
           "404": {
             "description": "Unknown notification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{id}/tools": {
+      "get": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Which tools a session has: configured, loaded in its last model call, missing",
+        "description": "Read-only and cheap (stored data and the agent's last activation; no model call, the session is not opened). `configured` is what the agent offers now, per connection. `lastCall` is read from the request of the newest model call of the session (`tools` = loaded, the \"Deferred tools:\" block = loadable with `tool_search`); it is null with a note when there is no call yet or its request was too large to keep. `missing` lists configured, allowed tools the last call neither loaded nor deferred.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dm:0198f0a2-0000-7000-8000-000000000000",
+              "description": "Session id, as the other `/sessions/{id}` routes take it (URL-encoded)."
+            },
+            "required": true,
+            "description": "Session id, as the other `/sessions/{id}` routes take it (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tools",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionTools"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions/{id}/reload": {
+      "post": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Force a reload of the tools of a session",
+        "description": "For urgent cases. The agent's connectors are activated again (remote MCP lists are fetched anew), the agent is rebuilt, and the session object is closed as soon as it is idle, so the next message opens a fresh one. A running turn is never cut: `pending` is true and the session closes right after the turn. The model is told once that its tools were reloaded.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dm:0198f0a2-0000-7000-8000-000000000000",
+              "description": "Session id, as the other `/sessions/{id}` routes take it (URL-encoded)."
+            },
+            "required": true,
+            "description": "Session id, as the other `/sessions/{id}` routes take it (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was reloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReloadResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/reload": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Force a reload of the tools in every open chat of an agent",
+        "description": "The same as `POST /sessions/{id}/reload` for every session of the agent that is open on this server.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was reloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReloadResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Archived agent",
             "content": {
               "application/json": {
                 "schema": {

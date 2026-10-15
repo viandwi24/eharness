@@ -35,6 +35,7 @@ import { programRoutes } from './routes/programs.ts'
 import { providerRoutes } from './routes/providers.ts'
 import { rehearsalRoutes } from './routes/rehearsals.ts'
 import { routineRoutes } from './routes/routines.ts'
+import { sessionToolsRoutes } from './routes/session-tools.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { taskRoutes } from './routes/tasks.ts'
 import { threadRoutes } from './routes/threads.ts'
@@ -380,6 +381,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', chatRoutes(options.deps))
   app.route('/', threadRoutes(options.deps))
   app.route('/', briefingRoutes(options.deps))
+  app.route('/', sessionToolsRoutes(options.deps))
   app.route('/', harnessRoutes(options.harness))
   app.route('/', uploadRoutes(options.deps))
   app.route('/', taskRoutes(options.deps))

@@ -224,6 +224,8 @@ import {
 } from './infra/eh/routine-service.ts'
 import { teamVaultFromEnv } from './infra/eh/secret-vault.ts'
 import { sqliteSessionQueue } from './infra/eh/session-queue.ts'
+import { createSessionResolver } from './infra/eh/session-resolve.ts'
+import { createSessionToolsService } from './infra/eh/session-tools-service.ts'
 import { setBudgetLimit, sqliteBudgetLedger, sqliteLock } from './infra/eh/storage.ts'
 import {
   createTeamService,
@@ -878,6 +880,10 @@ export function compose(config: ServerConfig): Server {
   let channelsPort: ChannelsPort | undefined
   let channelInboxPort: ChannelInboxPort | undefined
   let peoplePort: PeoplePort | undefined
+  const chatToolsService = createChatToolsService({
+    store: chatToolsStore,
+    agentConnectors: (agent) => connectors.agentConnectors(agent),
+  })
   const deps: Deps = {
     agents,
     persona: personaStore,
@@ -885,9 +891,13 @@ export function compose(config: ServerConfig): Server {
     threads: threadStore,
     notifications: sqliteNotificationStore(conn.sqlite),
     briefings: sqliteBriefingStore(conn.sqlite),
-    chatTools: createChatToolsService({
-      store: chatToolsStore,
-      agentConnectors: (agent) => connectors.agentConnectors(agent),
+    chatTools: chatToolsService,
+    sessionTools: createSessionToolsService({
+      factory,
+      connectors,
+      resolve: createSessionResolver({ agents, tasks, threads: threadStore }),
+      modelCalls,
+      chatTools: chatToolsService,
     }),
     uploads: sqliteUploadStore(conn.sqlite, { onChange: onFileChange }),
     tasks,

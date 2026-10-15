@@ -137,6 +137,12 @@ export interface ConnectorsRuntime extends ConnectorsPort {
    * agent factory is synchronous: call this before `agentFor` / `openSession`.
    */
   prepare(defs: readonly AgentDef[]): Promise<void>
+  /**
+   * Mark the last activation of an agent (every agent without an id) stale: the next `prepare`
+   * activates again, with new tool sources (remote MCP lists are fetched anew). A forced reload.
+   * `activated` keeps answering with the old one until then.
+   */
+  invalidate(agentId?: string): void
   /** A fresh access token of a connection (server side only; never in a view). */
   accessTokenFor(connectionId: string): Promise<string>
   /** A runtime learned that a credential no longer works (revoked bot token): the connection needs a reconnect. */
@@ -1039,6 +1045,11 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     definitions,
     rev: () => revision,
     prepare,
+    invalidate: (agentId) => {
+      // stale, not gone: `activated` keeps answering with the old activation until the next
+      // `prepare` replaced it (a message that arrives meanwhile must still find its tools)
+      for (const [id, entry] of cache) if (agentId === undefined || id === agentId) entry.key = ''
+    },
     accessTokenFor: (connectionId) => service.accessToken(connectionId),
     markNeedsAuth: (connectionId, message) => service.markNeedsAuth(connectionId, message),
     credentialsOf: (connectionId) => service.credentials(connectionId),

@@ -378,10 +378,33 @@ export interface AgentFactory {
    * no `session.start` hooks, nothing resumes. Use it for every pure read (spec 05 `agent.peek`).
    */
   peek(sessionId: string): SessionPeek
+  /**
+   * Force a reload of one chat (urgent cases: the model lacks tools the owner allowed): the
+   * connectors of the agent are activated again (remote MCP lists are fetched anew), the agent is
+   * rebuilt, and the session object of `sessionId` is closed on every build as soon as it is idle
+   * (a running turn is never cut: `pending` is then true and it closes right after the turn).
+   * The next message opens a fresh session, and the model is told once that its tools were
+   * reloaded. Nothing is stored here.
+   */
+  reloadSession(def: AgentDef, sessionId: string): Promise<ReloadResult>
+  /** The same for every session of the agent that is open in this process. */
+  reloadAgent(def: AgentDef): Promise<ReloadResult>
   /** Permission modes of sessions (per-session mode, inheritance, Auto state). */
   modes: SessionModes
   /** Close every agent built (shutdown). */
   close(): Promise<void>
+}
+
+/** What a forced reload did. */
+export interface ReloadResult {
+  /** Open sessions the reload looked at. */
+  sessions: number
+  /** Closed at once (idle). */
+  closed: number
+  /** Busy: they close right after their turn. */
+  pending: number
+  /** The tools the agent is configured with now. */
+  tools: string[]
 }
 
 /** A model id and its catalog entry (no entry fields = unknown to the catalog). */
@@ -744,6 +767,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     })
   }
 
+  const RELOAD_WAIT_MS = 30 * 60_000
+  const RELOAD_POLL_MS = 250
   const cache = new Map<string, HarnessAgent>()
   const latest = new Map<string, string>()
   /**
@@ -766,6 +791,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
    * model once what changed, so an earlier "I cannot do that" in the chat is not repeated.
    */
   const toolNotices = new Map<string, { added: Set<string>; removed: Set<string> }>()
+  /** Sessions a forced reload closed: their next open tells the model so, once. */
+  const reloadNotices = new Set<string>()
+  let reloadSeq = 0
+  let shutdown = false
 
   const leadAgent = (): HarnessAgent => {
     const lead = deps.lead?.()
@@ -1704,6 +1733,107 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     else superseded.set(agentId, keep)
   }
 
+  /** Every build of an agent that may hold a session: current, superseded and worker. */
+  function buildsOf(agentId: string): HarnessAgent[] {
+    const out = new Set<HarnessAgent>()
+    for (const [k, a] of cache) if (k.startsWith(`${agentId}@`)) out.add(a)
+    for (const a of superseded.get(agentId) ?? []) out.add(a)
+    for (const [k, a] of workers) if (k.startsWith(`${agentId}@`)) out.add(a)
+    return [...out]
+  }
+
+  /** No turn, nothing queued, no pending approval (a session no one else opened is read from storage). */
+  async function idleNow(build: HarnessAgent, id: string): Promise<boolean> {
+    const session = liveSessions.get(build)?.get(id)?.deref()
+    if (session !== undefined) {
+      const quiet = await Promise.race([
+        session.idle().then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+      ])
+      if (!quiet) return false
+    }
+    const peek = build.peek(id)
+    return (await peek.busy()) === null && (await peek.pending()) === null
+  }
+
+  async function closeOn(build: HarnessAgent, id: string, agentId: string): Promise<void> {
+    try {
+      await build.closeSession(id)
+    } catch {
+      // already closed or evicted
+    }
+    liveSessions.get(build)?.delete(id)
+    pruneSuperseded(agentId)
+  }
+
+  /** Close a busy session right after its turn (polled; gives up after `RELOAD_WAIT_MS`). */
+  async function closeWhenIdle(build: HarnessAgent, id: string, agentId: string): Promise<void> {
+    const end = Date.now() + RELOAD_WAIT_MS
+    while (!shutdown && Date.now() < end) {
+      await new Promise((resolve) => setTimeout(resolve, RELOAD_POLL_MS))
+      try {
+        if (await idleNow(build, id)) {
+          // a message may have been queued while the check ran
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          if (await idleNow(build, id)) return await closeOn(build, id, agentId)
+        }
+      } catch {
+        return
+      }
+    }
+  }
+
+  /** `only`: one session id; without it every session of the agent that is open here. */
+  async function reloadFor(def: AgentDef, only?: string): Promise<ReloadResult> {
+    const targets: Array<{ build: HarnessAgent; id: string }> = []
+    for (const build of buildsOf(def.id)) {
+      for (const [id, ref] of liveSessions.get(build) ?? []) {
+        if (ref.deref() === undefined) continue
+        if (only === undefined || id === only) targets.push({ build, id })
+      }
+    }
+    const ids = new Set(targets.map((t) => t.id))
+    if (only !== undefined) ids.add(only)
+    deps.connectors.invalidate(def.id)
+    await prepareAgent(def)
+    for (const id of ids) reloadNotices.add(id)
+    let closed = 0
+    let pending = 0
+    for (const { build, id } of targets) {
+      if (await idleNow(build, id)) {
+        await closeOn(build, id, def.id)
+        closed++
+      } else {
+        pending++
+        void closeWhenIdle(build, id, def.id).catch(() => undefined)
+      }
+    }
+    let tools: string[] = []
+    try {
+      tools = [...(toolsOfBuild.get(factoryAgentFor(def, def.archivedAt !== null)) ?? [])]
+    } catch {
+      // an agent that cannot be built yet (no provider)
+    }
+    return { sessions: ids.size, closed, pending, tools }
+  }
+
+  /** The text of the one-time notice after a forced reload. */
+  const reloadNoticeText = (tools: readonly string[], n: { added: Set<string> } | undefined) => {
+    const shown = tools.slice(0, 40).join(', ')
+    return [
+      'Your tools were reloaded by the owner (connectors were refreshed).',
+      tools.length > 0
+        ? `You now have ${tools.length} tools configured: ${shown}${tools.length > 40 ? ` and ${tools.length - 40} more` : ''}.`
+        : '',
+      n !== undefined && n.added.size > 0
+        ? `Newly available: ${[...n.added].slice(0, 20).join(', ')}.`
+        : '',
+      'What you said earlier in this chat about what you can or cannot do may be outdated: check your tools again (load deferred ones with tool_search) before answering.',
+    ]
+      .filter((l) => l !== '')
+      .join(' ')
+  }
+
   /**
    * `bare`: a read-only handle (`peek`) may be built without connectors when none were prepared;
    * it never runs a turn.
@@ -1749,6 +1879,25 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return agent
   }
 
+  async function prepareAgent(def?: AgentDef): Promise<void> {
+    const all = new Map<string, AgentDef>()
+    for (const a of [def, deps.lead?.(), ...(deps.roster?.() ?? [])]) {
+      if (a !== undefined) all.set(a.id, a)
+    }
+    await deps.connectors.prepare([...all.values()])
+    // a new persona, new connector tools, settings or models reach the next message of a chat
+    // that an older build still holds: build the current one, then close the old sessions
+    if (def !== undefined && latest.get(def.id) !== undefined) {
+      try {
+        factoryAgentFor(def, def.archivedAt !== null)
+      } catch {
+        // an agent that cannot be built yet (no provider): the caller meets that error as before
+        return
+      }
+      await closeSuperseded(def.id)
+    }
+  }
+
   return {
     storage,
     lock,
@@ -1766,24 +1915,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         engines.get(sessionId)?.autoState() ?? { paused: false, consecutive: 0, total: 0 },
       resumeAuto: (sessionId) => engines.get(sessionId)?.resumeAuto(),
     },
-    prepare: async (def) => {
-      const all = new Map<string, AgentDef>()
-      for (const a of [def, deps.lead?.(), ...(deps.roster?.() ?? [])]) {
-        if (a !== undefined) all.set(a.id, a)
-      }
-      await deps.connectors.prepare([...all.values()])
-      // a new persona, new connector tools, settings or models reach the next message of a chat
-      // that an older build still holds: build the current one, then close the old sessions
-      if (def !== undefined && latest.get(def.id) !== undefined) {
-        try {
-          factoryAgentFor(def, def.archivedAt !== null)
-        } catch {
-          // an agent that cannot be built yet (no provider): the caller meets that error as before
-          return
-        }
-        await closeSuperseded(def.id)
-      }
-    },
+    prepare: prepareAgent,
+    reloadSession: (def, sessionId) => reloadFor(def, sessionId),
+    reloadAgent: (def) => reloadFor(def),
     agentFor: (def, sessionId) =>
       sessionId !== undefined && isWorkerSession(sessionId)
         ? workerAgentFor(def)
@@ -1851,7 +1985,21 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         for (const [id, ref] of [...known]) if (ref.deref() === undefined) known.delete(id)
       liveSessions.set(agent, known)
       const notice = toolNotices.get(sessionId)
-      if (notice !== undefined && toolsOfBuild.get(agent) !== undefined) {
+      if (reloadNotices.has(sessionId) && toolsOfBuild.get(agent) !== undefined) {
+        reloadNotices.delete(sessionId)
+        toolNotices.delete(sessionId)
+        reloadSeq += 1
+        void session
+          .inject(
+            'eh.event',
+            {
+              name: 'agent.tools.reloaded',
+              text: reloadNoticeText(toolsOfBuild.get(agent) ?? [], notice),
+            },
+            { key: `tools-reloaded:${Date.now()}:${reloadSeq}` },
+          )
+          .catch(() => undefined)
+      } else if (notice !== undefined && toolsOfBuild.get(agent) !== undefined) {
         toolNotices.delete(sessionId)
         const at = `${[...notice.added].join(',')}|${[...notice.removed].join(',')}`
         void session
@@ -1865,6 +2013,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       return session
     },
     async close() {
+      shutdown = true
       await Promise.allSettled([...cache.values(), ...retired].map((a) => a.close()))
       cache.clear()
       retired.length = 0

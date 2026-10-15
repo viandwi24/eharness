@@ -34,6 +34,7 @@
 	import { chatOutputs, formatBadge, latestTodoList, markdownTitle, todoPercent, toolViews, usedSummary } from '#lib/session/derive.js';
 	import { openTask } from '#lib/stores/drawer.svelte.js';
 	import { openEditAgent } from '#lib/stores/dialogs.svelte.js';
+	import SessionTools from './SessionTools.svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 
@@ -200,6 +201,7 @@
 			.join(' · ')
 	);
 
+	let toolsOpen = $state(false);
 	const routinesCount = $derived(context?.routines.length ?? 0);
 	const colorOf = (id: string): string | undefined => agentsStore.find(id)?.color;
 	const loading = $derived(context === null && sessions === null && messages.length === 0);
@@ -349,8 +351,13 @@
 		<button type="button" class="rounded underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring" onclick={() => openEditAgent(agentId, 'memory')} disabled={!agent}>
 			Agent memory
 		</button>
+		<button type="button" class="rounded underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring" onclick={() => (toolsOpen = true)}>
+			Tools in this session
+		</button>
 		<a href="/logs?sessionId={encodeURIComponent(thread.sessionId)}" class="rounded underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
 			Model calls
 		</a>
 	</nav>
 </SessionPanel>
+
+<SessionTools bind:open={toolsOpen} sessionId={thread.sessionId} />
