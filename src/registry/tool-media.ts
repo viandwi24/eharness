@@ -55,8 +55,9 @@ export async function offloadToolMedia(
   if (typeof output !== 'object' || output === null) return output
   const content = (output as { content?: unknown }).content
   if (!Array.isArray(content) || !content.some(isRawMedia)) return output
-  const next = [...content]
+  const next: unknown[] = []
   for (const [index, part] of content.entries()) {
+    next.push(part)
     if (!isRawMedia(part)) continue
     const mediaType = part.mimeType ?? (part.type === 'image' ? 'image/png' : 'audio/wav')
     try {
@@ -72,7 +73,10 @@ export async function offloadToolMedia(
         bytes: stored.bytes,
       }
       const replaced: OffloadedMediaPart = { type: part.type, mimeType: mediaType, ref }
-      next[index] = replaced
+      next[next.length - 1] = replaced
+      // the model sees the picture, but to pass it on (upload it to a chat, attach it, keep it) it
+      // needs the file: say where it is, like a browser screenshot does
+      next.push({ type: 'text', text: savedMediaText(stored.path, mediaType, stored.bytes) })
     } catch (error) {
       deps.warn(
         {
@@ -85,6 +89,11 @@ export async function offloadToolMedia(
     }
   }
   return { ...(output as object), content: next }
+}
+
+/** The line after an offloaded media part: where the file is and that it can be sent on. */
+export function savedMediaText(path: string, mediaType: string, bytes: number): string {
+  return `[Saved as ${path} (${mediaType}, ${Math.max(1, Math.round(bytes / 1024))} KB). To send or attach this ${mediaType.startsWith('image/') ? 'image' : 'file'}, use this path with a tool that uploads files.]`
 }
 
 /** Cached base64 of a stored tool media file (path + version), per `toolMedia` service (= per session). */

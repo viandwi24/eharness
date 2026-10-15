@@ -100,7 +100,9 @@ export async function listSourceTools(args: {
         // `defer: true` marks every tool of the source deferred (spec 02 §3.3)
         tool: source.defer === true ? withToolFields(tool, { deferLoading: true }) : tool,
       }))
-      if (source.refresh !== 'turn') args.cache.set(source, listed)
+      // a 'turn' source keeps its last good list too: one failed listing must not take its tools
+      // away for a turn (they would come and go)
+      args.cache.set(source, listed)
       args.failures?.delete(source)
       return listed
     }),
@@ -108,6 +110,10 @@ export async function listSourceTools(args: {
   const out: TurnToolEntry[] = []
   for (const [index, { owner, source }] of args.sources.entries()) {
     const result = settled[index] as PromiseSettledResult<Array<{ name: string; tool: Tool }>>
+    // a 'turn' source whose listing failed keeps its last good list (its calls fail on their own
+    // when the server is really gone); the failure is still warned and backed off
+    const stale = source.refresh === 'turn' ? args.cache.get(source) : undefined
+    let listed: Array<{ name: string; tool: Tool }>
     if (result.status === 'rejected') {
       const error: unknown = result.reason
       if (error instanceof SourceBackoff) {
@@ -117,24 +123,26 @@ export async function listSourceTools(args: {
           source: source.id,
           owner,
         })
-        continue
+        if (stale === undefined) continue
+        listed = stale
+      } else {
+        if (args.failures !== undefined) {
+          const failures = (args.failures.get(source)?.failures ?? 0) + 1
+          const wait = Math.min(MAX_SOURCE_RETRY_MS, retryBase * 2 ** (failures - 1))
+          args.failures.set(source, { failures, retryAt: now() + wait })
+        }
+        args.warn(
+          {
+            code: 'W_TOOL_SOURCE_FAILED',
+            message: `Tool source '${source.id}' failed to list its tools: ${errorText(error)}`,
+            details: { source: source.id, owner },
+          },
+          source.id,
+        )
+        if (stale === undefined) continue
+        listed = stale
       }
-      if (args.failures !== undefined) {
-        const failures = (args.failures.get(source)?.failures ?? 0) + 1
-        const wait = Math.min(MAX_SOURCE_RETRY_MS, retryBase * 2 ** (failures - 1))
-        args.failures.set(source, { failures, retryAt: now() + wait })
-      }
-      args.warn(
-        {
-          code: 'W_TOOL_SOURCE_FAILED',
-          message: `Tool source '${source.id}' failed to list its tools: ${errorText(error)}`,
-          details: { source: source.id, owner },
-        },
-        source.id,
-      )
-      continue
-    }
-    const listed = result.value
+    } else listed = result.value
     for (const { name, tool } of listed) {
       if (!TOOL_NAME_PATTERN.test(name)) {
         args.warn(

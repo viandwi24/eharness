@@ -86,7 +86,9 @@ export interface ToolSourceDef {
 }
 ```
 
-Sources are listed concurrently; results keep source order. A `list()` that does not settle within
+A `refresh: 'turn'` source keeps its last good list: when a later listing fails (or is backed
+off), that list stands in for the turn, so one failed call to a remote server does not take its
+tools away (the failure is still warned and backed off). Sources are listed concurrently; results keep source order. A `list()` that does not settle within
 `config.toolSources.timeoutMs` (default 30 000) fails like a throwing one: it contributes nothing
 for that turn (`W_TOOL_SOURCE_FAILED`) and is not asked again for `toolSources.retryAfterMs`
 (default 5 000, doubling per consecutive failure up to 60 000; `0` = retry at the next turn). A

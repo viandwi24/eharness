@@ -141,6 +141,30 @@ describe('tool sources: lifecycle and refresh', () => {
     expect(toolNames(model.calls[2])).toEqual(['v2'])
   })
 
+  test("a 'turn' source whose listing fails keeps its last good tools", async () => {
+    let calls = 0
+    const source = defineToolSource({
+      id: 'phone',
+      refresh: 'turn',
+      list: (): ToolSet => {
+        calls++
+        if (calls === 2) throw new Error('server hiccup')
+        return { shot: echo('shot') }
+      },
+    })
+    const { agent, model } = setup([{ text: 'one' }, { text: 'two' }, { text: 'three' }], {
+      tools: [source],
+    })
+    const session = agent.session('s1')
+    await session.send('one').result
+    await session.send('two').result
+    await session.send('three').result
+    expect(toolNames(model.calls[0])).toEqual(['shot'])
+    // the failed listing of the second turn did not take the tool away
+    expect(toolNames(model.calls[1])).toEqual(['shot'])
+    expect(toolNames(model.calls[2])).toEqual(['shot'])
+  })
+
   test('a failing list() warns W_TOOL_SOURCE_FAILED, the turn continues, retried next turn', async () => {
     let calls = 0
     const source = defineToolSource({

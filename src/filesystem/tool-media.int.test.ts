@@ -82,12 +82,16 @@ describe('toolMedia', () => {
     const last = outputs[2] as { content: Array<Record<string, unknown>> }
     const ref = (last.content[1] as { ref: { path: string; version: string } }).ref
     expect(ref.path).toBe('/.eharness/tool-media/s1-c3-1.png')
+    // the model is told where the file is, so it can send it on (upload it to a chat)
+    expect(last.content[2]).toMatchObject({ type: 'text' })
+    expect(String(last.content[2]?.text)).toContain('Saved as /.eharness/tool-media/s1-c3-1.png')
     const file = await fs.readBytes?.(ref.path)
     expect(Array.from(file?.bytes ?? [])).toEqual([0x89, 0x50, 0x4e, 0x47, 3])
     expect(file?.meta.version).toBe(ref.version)
     // the model of the last step gets the bytes back (base64 data), not the reference
     const wire = JSON.stringify(model.prompts[3])
     expect(wire).toContain(PNG(3))
+    expect(wire).toContain('Saved as /.eharness/tool-media/s1-c3-1.png')
     expect(wire).toContain(PNG(1))
     expect(wire).not.toContain('media-ref')
     await new Promise((r) => setTimeout(r, 10))

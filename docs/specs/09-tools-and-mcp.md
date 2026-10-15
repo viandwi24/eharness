@@ -212,7 +212,9 @@ toolOutput?: {
   `audio` part of an MCP-style result (`{ content: [...] }`) is written as a file after the limit
   and `tool.after` hooks ran, and replaced in the **stored** output by
   `{ type, mimeType, ref: { type: 'media-ref', path, version, mediaType, bytes } }` (no `data`),
-  so screenshots do not accumulate base64 in the message store. Text parts and the shape stay. The
+  followed by a text part `[Saved as <path> (<mediaType>, N KB). To send or attach this image, use
+  this path with a tool that uploads files.]`, so the model can pass the file on (a chat upload);
+  screenshots do not accumulate base64 in the message store. Other text parts and the shape stay. The
   tool's `toModelOutput` gets the bytes back as `data` (live step wire and projection, spec 03 §6
   step 5b, which also applies `keepImages`). A failed write keeps the original part and raises
   `W_TOOL_MEDIA_OFFLOAD`; without the service nothing changes. Applications that persist the
