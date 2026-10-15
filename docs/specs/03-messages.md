@@ -278,6 +278,13 @@ project(view: HarnessUIMessage[], ctx: { registry; tools; model; sessionId;   //
   5. foreign reasoning: for assistant messages whose metadata.eharness.model has a different
                  provider than ctx.model, drop reasoning parts and provider metadata
                  (signatures / item ids are provider-specific)
+  5b. offloaded tool media (before 6): in tool outputs of the form `{ content: [{ type: 'image' | 'audio',
+     mimeType, ref: { type: 'media-ref', path, version, mediaType, bytes } }] }` (spec 09 §4), the
+     newest `toolOutput.keepImages` media (all when unset) are read back through `readMedia`
+     (base64 into `data`, so the tool's `toModelOutput` works unchanged); older ones become a text
+     part `OLDER_OFFLOADED_MEDIA_NOTE`, and files that are gone or changed (`version` differs)
+     `EXPIRED_OFFLOADED_MEDIA_NOTE`. Without `readMedia` every such part is the expired note.
+     Stored messages are not changed; `readMedia` is cached per session.
   6. convertToModelMessages(msgs, {
        tools,                          // turn tool set, for tool output conversion
        ignoreIncompleteToolCalls: true, // safety net; step 3 already answered them

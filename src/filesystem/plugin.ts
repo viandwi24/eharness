@@ -25,12 +25,19 @@ import type {
   FileSystem,
   FilesystemOptions,
   FileToolName,
+  ToolMediaStore,
   ToolOutputStore,
 } from './types.ts'
 import { contentVersion } from './version.ts'
 
 /** Default directory of the `toolOutputs` service. */
 export const DEFAULT_TOOL_OUTPUTS_DIR = '/.eharness/tool-outputs'
+
+/** Default directory of the `toolMedia` service. */
+export const DEFAULT_TOOL_MEDIA_DIR = '/.eharness/tool-media'
+
+/** Default `toolMedia.keep`. */
+export const DEFAULT_TOOL_MEDIA_KEEP = 20
 
 /** Default `maxReadChars`. */
 export const DEFAULT_MAX_READ_CHARS = 50_000
@@ -108,6 +115,81 @@ function toolOutputStore(fs: FileSystem, dir: string): ToolOutputStore {
           `toolOutputs: could not write ${path} (${result.reason})`,
         )
       return path
+    },
+  }
+}
+
+const MEDIA_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/mpeg': 'mp3',
+  'audio/ogg': 'ogg',
+}
+
+/**
+ * The `toolMedia` service over `fs`: `<dir>/<session>-<toolCallId>-<index>.<ext>`, the newest
+ * `keep` files of a session stay (best-effort deletes). The order is the order of `put` in this
+ * process; the first `put` of a session seeds it from the directory (by `updatedAt`).
+ */
+function toolMediaStore(
+  fs: FileSystem,
+  dir: string,
+  keep: number,
+  sessionId: string,
+): ToolMediaStore {
+  const clean = (s: string): string => s.replace(/[^A-Za-z0-9_-]/g, '_')
+  const prefix = `${clean(sessionId).slice(0, 40)}-`
+  let order: string[] | undefined
+  const seed = async (): Promise<string[]> => {
+    if (order !== undefined) return order
+    order = []
+    try {
+      const listed = (await fs.list(`${dir}/`)).filter((f) =>
+        f.path.slice(f.path.lastIndexOf('/') + 1).startsWith(prefix),
+      )
+      listed.sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0) || (a.path < b.path ? -1 : 1))
+      order = listed.map((f) => f.path)
+    } catch {
+      // the retention starts from this process
+    }
+    return order
+  }
+  return {
+    async put(_sessionId, toolCallId, index, bytes, mediaType) {
+      if (typeof fs.writeBytes !== 'function' || typeof fs.readBytes !== 'function') return null
+      const ext = MEDIA_EXTENSIONS[mediaType.toLowerCase()] ?? 'bin'
+      const path = joinPath(dir, `${prefix}${clean(String(toolCallId))}-${index}.${ext}`)
+      const files = await seed()
+      const written = await fs.writeBytes(path, bytes, { mediaType, author: 'tool-media' })
+      if (!written.ok) {
+        throw new HarnessError(
+          'EH_STORAGE',
+          `toolMedia: could not write ${path} (${written.reason})`,
+        )
+      }
+      const at = files.indexOf(path)
+      if (at !== -1) files.splice(at, 1)
+      files.push(path)
+      while (files.length > keep) {
+        const old = files.shift() as string
+        void Promise.resolve(fs.delete(old)).catch(() => undefined)
+      }
+      return { path, version: written.version, bytes: bytes.length }
+    },
+    async read(path) {
+      try {
+        const file = await fs.readBytes?.(path)
+        return file === null || file === undefined
+          ? null
+          : { bytes: file.bytes, version: file.meta.version }
+      } catch {
+        return null
+      }
     },
   }
 }
@@ -238,9 +320,33 @@ export function filesystem(
     if (!readonly.includes(outputsDir)) readonly.push(outputsDir)
   }
 
+  let mediaDir: string | undefined
+  let mediaKeep = DEFAULT_TOOL_MEDIA_KEEP
+  if (opts.toolMedia !== false) {
+    if (
+      opts.toolMedia !== undefined &&
+      (typeof opts.toolMedia !== 'object' || opts.toolMedia === null)
+    ) {
+      invalid('`toolMedia` must be false or { dir?: string; keep?: number }.')
+    }
+    mediaDir = directory(opts.toolMedia?.dir ?? DEFAULT_TOOL_MEDIA_DIR, 'toolMedia.dir')
+    if (mediaDir === '/') invalid('`toolMedia.dir` must not be the root.')
+    const keep = opts.toolMedia?.keep
+    if (keep !== undefined) {
+      if (!Number.isInteger(keep) || keep < 1) invalid('`toolMedia.keep` must be an integer >= 1.')
+      mediaKeep = keep
+    }
+    if (!readonly.includes(mediaDir)) readonly.push(mediaDir)
+  }
+
   return definePlugin({
     name: 'filesystem',
-    provides: outputsDir === undefined ? ['fs', 'filePolicy'] : ['fs', 'toolOutputs', 'filePolicy'],
+    provides: [
+      'fs',
+      ...(outputsDir === undefined ? [] : ['toolOutputs']),
+      ...(mediaDir === undefined ? [] : ['toolMedia']),
+      'filePolicy',
+    ],
     dataParts: { change: changePart },
     setup() {
       const store = opts.checkpoints
@@ -274,8 +380,9 @@ export function filesystem(
               sessionId: ctx.session.id,
               turnKey: () => (ctx.turn === undefined ? undefined : checkpointTurnKey(ctx.turn)),
               skip: (path) =>
-                outputsDir !== undefined &&
-                (path === outputsDir || path.startsWith(`${outputsDir}/`)),
+                [outputsDir, mediaDir].some(
+                  (dir) => dir !== undefined && (path === dir || path.startsWith(`${dir}/`)),
+                ),
               onError: (path, error) =>
                 ctx.log.warn(`checkpoint of ${path} failed: ${String(error)}`),
             })
@@ -286,10 +393,14 @@ export function filesystem(
         isUndeletable: opts.isUndeletable,
       })
       const contribution: SessionContribution<FilesystemDataParts> = {
-        services:
-          outputsDir === undefined
-            ? { fs: visible, filePolicy }
-            : { fs: visible, toolOutputs: toolOutputStore(fs, outputsDir), filePolicy },
+        services: {
+          fs: visible,
+          ...(outputsDir === undefined ? {} : { toolOutputs: toolOutputStore(fs, outputsDir) }),
+          ...(mediaDir === undefined
+            ? {}
+            : { toolMedia: toolMediaStore(fs, mediaDir, mediaKeep, ctx.session.id) }),
+          filePolicy,
+        },
         tools: createFileTools(
           {
             fs: visible,
@@ -297,7 +408,7 @@ export function filesystem(
             change: (data) => ctx.stream.data('change', data, { id: data.path }),
             hidden,
             readonly,
-            unlisted: outputsDir === undefined ? [] : [outputsDir],
+            unlisted: [outputsDir, mediaDir].filter((d): d is string => d !== undefined),
             allowedExtensions,
             isUndeletable: opts.isUndeletable,
             maxReadChars,

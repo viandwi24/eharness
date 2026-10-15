@@ -179,6 +179,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_MODEL_UNPRICED` | a budget is configured but the step model has no pricing in `models` (`details.model`) |
 | `W_LOOP_STUCK` | the progress guard found the turn stuck and reminded the model (`details: { kind: 'repeat' | 'errors' | 'tool-errors', toolName?, count, stepIndex }`, spec 05 §3.2) |
 | `W_TOOL_OUTPUT_LIMITED` | a tool output exceeded `toolOutput.maxChars` and was truncated or evicted (spec 09 §4) |
+| `W_TOOL_MEDIA_OFFLOAD` | media of a tool result could not be written to the `toolMedia` service; the part stays in the output (`details: { tool, toolCallId, index }`, spec 09 §4) |
 | `W_CACHE_BUST` | the cached prompt prefix changed within a session (instructions/tools changed, spec 02 §6); `details.reason: 'client-tools'` (0.5.0): the request-scoped client tool declarations differ from the previous turn (spec 11 §7.1 rule 4) |
 | `W_WEB_NO_RESOLVER` | `webFetch()` created without `resolveHost` (and without `onlyAllowed`): names that resolve to private addresses are not refused (spec 22 §2); once per session |
 | `W_TOOL_ORDER` | `config.toolOrder` names tools that do not exist in the session (`details: { tools }`); ignored, reported once per session per name (spec 02 §6) |

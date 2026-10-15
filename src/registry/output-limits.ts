@@ -9,6 +9,7 @@
 import type { ToolOutputConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { truncateMiddle } from '../messages/truncate.ts'
+import type { ToolMediaSink } from './tool-media.ts'
 
 /** Default `toolOutput.maxChars`. */
 export const DEFAULT_TOOL_OUTPUT_MAX_CHARS = 50_000
@@ -34,6 +35,10 @@ export interface OutputLimitDeps {
   config: ToolOutputConfig | undefined
   /** The session's `toolOutputs` service, when a plugin provides it. */
   toolOutputs: ToolOutputSink | undefined
+  /** The session's `toolMedia` service, when a plugin provides it (spec 09 §4). */
+  toolMedia?: ToolMediaSink | undefined
+  /** The session id passed to `toolMedia.put`. */
+  sessionId?: string | undefined
   warn(warning: HarnessWarning, key?: string): void
 }
 

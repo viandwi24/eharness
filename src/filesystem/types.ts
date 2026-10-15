@@ -233,6 +233,29 @@ export interface ToolOutputStore {
   put(toolCallId: string, text: string): Promise<string>
 }
 
+/**
+ * The `toolMedia` service: keeps the media bytes (screenshots, audio) of MCP-style tool results
+ * outside the stored messages (spec 09 §4, spec 08 §2). Needs a file system with `writeBytes` and
+ * `readBytes`; without them `put` returns `null` and the media stay in the output.
+ *
+ * @see docs/specs/08-filesystem-plugin.md#2-plugin
+ */
+export interface ToolMediaStore {
+  /**
+   * Write one media file to `<dir>/<session>-<toolCallId>-<index>.<ext>` and drop the oldest files
+   * of that session beyond `keep` (best effort). `null` when the adapter cannot hold binary files.
+   */
+  put(
+    sessionId: string,
+    toolCallId: string,
+    index: number,
+    bytes: Uint8Array,
+    mediaType: string,
+  ): Promise<{ path: string; version: string; bytes: number } | null>
+  /** The stored file, or `null` when it is missing (expired or deleted). */
+  read(path: string): Promise<{ bytes: Uint8Array; version: string } | null>
+}
+
 /** Names of the file tools. */
 export type FileToolName =
   | 'list_files'
@@ -308,6 +331,12 @@ export interface FilesystemOptions {
    * `{ dir: '/.eharness/tool-outputs' }`; `false` disables the service.
    */
   toolOutputs?: false | { dir?: string }
+  /**
+   * The `toolMedia` service (media of MCP tool results kept as files instead of base64 in the
+   * messages, spec 09 §4). Default `{ dir: '/.eharness/tool-media', keep: 20 }` (`keep`: files of
+   * one session that stay); `false` disables it. Needs `writeBytes` / `readBytes` on the adapter.
+   */
+  toolMedia?: false | { dir?: string; keep?: number }
   /**
    * Record the content of a file before the first change of each turn (`write_file`,
    * `edit_file`, `delete_file`, and any other writer going through the `fs` service) so the app

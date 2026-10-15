@@ -35,6 +35,7 @@ import {
 } from './request-tools.ts'
 import type { NormalizedInstruction } from './static.ts'
 import { withToolFields } from './tool-copy.ts'
+import type { ToolMediaSink } from './tool-media.ts'
 import { buildToolSearch } from './tool-search.ts'
 import { TOOL_SEARCH_NAME, type TurnToolEntry } from './tools.ts'
 import {
@@ -321,6 +322,8 @@ export async function resolveTurnRegistry(args: {
       config: args.toolOutput,
       // looked up by name without throwing: absent when no plugin provides it (spec 09 §4)
       toolOutputs: open.services.get('toolOutputs') as ToolOutputSink | undefined,
+      toolMedia: open.services.get('toolMedia') as ToolMediaSink | undefined,
+      sessionId: args.sessionId,
     },
   }
   let raw: TurnToolEntry[] = collected.entries

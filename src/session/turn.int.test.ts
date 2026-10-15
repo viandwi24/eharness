@@ -550,3 +550,30 @@ describe('scenario 36: chunk cloning', () => {
     expect(session.attach()).toBeUndefined()
   })
 })
+
+describe('screenshots in one long turn', () => {
+  test('toolOutput.keepImages: the step wire keeps only the newest images of this turn', async () => {
+    const shot = tool({
+      inputSchema: z.object({ n: z.number() }),
+      execute: async ({ n }) => `IMG${n}`,
+      toModelOutput: ({ output }: { output: unknown }) => ({
+        type: 'content' as const,
+        value: [{ type: 'image-data' as const, data: String(output), mediaType: 'image/png' }],
+      }),
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'shot', input: { n: 1 } }] },
+      { toolCalls: [{ toolName: 'shot', input: { n: 2 } }] },
+      { toolCalls: [{ toolName: 'shot', input: { n: 3 } }] },
+      { text: 'Done.' },
+    ])
+    const { agent } = makeAgent({ model, tools: { shot }, toolOutput: { keepImages: 2 } })
+    const run = agent.session('s1').send('Look three times')
+    await collect(run.stream)
+    await run.result
+    const last = JSON.stringify(model.prompts[3])
+    expect(last).toContain('IMG3')
+    expect(last).toContain('IMG2')
+    expect(last).not.toContain('IMG1')
+  })
+})

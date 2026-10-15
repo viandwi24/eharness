@@ -128,6 +128,8 @@ export interface FilesystemOptions {
   onAdapterError?: (error: unknown, info: { tool: FileToolName; path: string }) => string | undefined
   /** The `toolOutputs` service (evicted tool outputs, spec 09 §4). Default `{ dir: '/.eharness/tool-outputs' }`; `false` disables it. */
   toolOutputs?: false | { dir?: string }
+  /** The `toolMedia` service (below). Default `{ dir: '/.eharness/tool-media', keep: 20 }`; `false` disables it. */
+  toolMedia?: false | { dir?: string; keep?: number }
   /** Record files before the first change of each turn (§11). Default: off. */
   checkpoints?: CheckpointStore
   /** Binary files `read_file` shows to the model (§12). Needs an adapter with `readBytes`. */
@@ -147,7 +149,8 @@ case-insensitively with the last `.ext` of the file name (a name without extensi
 `hiddenPrefixes` and `readonlyPrefixes` are compared **case-insensitively** on NFC-folded segments
 with trailing dots and spaces ignored (`foldSegment`, the permissions engine's rule): `/Secrets` and
 `/secrets.` are under `/secrets`, since an extra match only hides or protects a little more.
-Exported constants: `DEFAULT_MAX_READ_CHARS` (50_000) and `DEFAULT_TOOL_OUTPUTS_DIR`.
+Exported constants: `DEFAULT_MAX_READ_CHARS` (50_000), `DEFAULT_TOOL_OUTPUTS_DIR`,
+`DEFAULT_TOOL_MEDIA_DIR` and `DEFAULT_TOOL_MEDIA_KEEP`.
 
 The `filePolicy` service exposes the path rules the file tools apply, so other plugins that move
 files outside the tools (for example `code()`, spec 28) honour them:
@@ -181,6 +184,26 @@ contentVersion(id)>` appended, so distinct ids never share a file (`call/1` →
 rejected) and omitted from `list_files` and `grep` unless the requested prefix is the directory or
 inside it; `read_file` with `offset`/`limit` pages through evicted outputs. Evicted files are never
 cleaned up by the core (the application owns retention). `dir` must not be `/`.
+
+The `toolMedia` service (provided unless `toolMedia: false`) keeps the media bytes of MCP-style tool
+results outside the stored messages (spec 09 §4):
+
+```ts
+export interface ToolMediaStore {
+  put(sessionId: string, toolCallId: string, index: number, bytes: Uint8Array, mediaType: string):
+    Promise<{ path: string; version: string; bytes: number } | null>
+  read(path: string): Promise<{ bytes: Uint8Array; version: string } | null>
+}
+```
+
+`put` writes `<dir>/<session-slug>-<toolCallId>-<index>.<ext>` with `writeBytes` (characters outside
+`[A-Za-z0-9_-]` become `_`; `index` is the position of the part in `content`; `ext` from the media
+type, `bin` when unknown) and returns `null` when the adapter has no `writeBytes` / `readBytes`
+(the media then stay in the output). Retention: the newest `keep` files of the session (order of
+`put` in this process, seeded from the directory by `updatedAt` at the first `put`) stay; older
+ones are deleted best effort. `read` returns `null` for a missing file and never throws. The
+directory is read-only for the model and omitted from `list_files` / `grep` like the `toolOutputs`
+directory, and is not checkpointed. Other cleanup (age based) is the application's.
 
 ## 3. Tools
 

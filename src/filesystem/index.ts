@@ -7,7 +7,7 @@
  * @see docs/specs/08-filesystem-plugin.md
  */
 import type { ProjectInstructionsInfo } from './project-instructions.ts'
-import type { FilePolicy, FileSystem, ToolOutputStore } from './types.ts'
+import type { FilePolicy, FileSystem, ToolMediaStore, ToolOutputStore } from './types.ts'
 
 export {
   type CheckpointKey,
@@ -60,6 +60,7 @@ export type {
   FileVersion,
   GrepHit,
   MoveResult,
+  ToolMediaStore,
   ToolOutputStore,
   WriteResult,
 } from './types.ts'
@@ -75,6 +76,11 @@ declare module 'eharness' {
      * `EH_SERVICE_MISSING` (declare `requires: ['toolOutputs']` to get a boot error instead).
      */
     toolOutputs: ToolOutputStore
+    /**
+     * Store for the media of MCP-style tool results, provided by the `filesystem()` plugin (spec
+     * 08 §2). Absent with `filesystem({ toolMedia: false })`.
+     */
+    toolMedia: ToolMediaStore
     /**
      * The hidden / read-only / extension / undeletable rules of the file tools, provided by the
      * `filesystem()` plugin (spec 08 §2); plugins that move files outside the tools use it.

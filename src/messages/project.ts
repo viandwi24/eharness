@@ -19,6 +19,7 @@ import { kindOf } from './kinds.ts'
 import type { MessageRegistry } from './registry.ts'
 import { sanitizeModelMessages } from './sanitize.ts'
 import { INTERRUPTED_UNKNOWN } from './texts.ts'
+import { type ReadToolMedia, rehydrateToolMedia } from './tool-media.ts'
 import {
   answerDanglingToolParts,
   isToolPart,
@@ -64,6 +65,11 @@ export interface ProjectOptions {
    * short text note (screenshots pile up otherwise). `undefined` keeps all (spec 03 §6).
    */
   keepToolImages?: number
+  /**
+   * Reads the base64 of a tool media file offloaded to the `toolMedia` service (`null` when gone
+   * or changed). Without it, offloaded media become an "no longer available" note (spec 03 §6).
+   */
+  readMedia?: ReadToolMedia
 }
 
 /** What replaces a tool result's media part the model does not get any more. */
@@ -84,7 +90,13 @@ export async function project(
 ): Promise<ModelMessage[]> {
   const { registry } = options
   const boundary = newestBoundary(view as readonly AnyUIMessage[], registry)
-  const messages = trimPartial(view as readonly AnyUIMessage[], boundary)
+  const messages = await rehydrateToolMedia(
+    trimPartial(view as readonly AnyUIMessage[], boundary),
+    {
+      keep: options.keepToolImages,
+      read: options.readMedia ?? (async () => null),
+    },
+  )
   const targetProvider = providerOf(options.model)
   const pendingApprovals = new Set(
     options.pending?.approvals.map((a) => a.toolCallId) ?? ([] as string[]),
@@ -164,6 +176,18 @@ const isMediaItem = (item: ContentItem): boolean => item.type !== 'text' && item
  * instead; of the rest only the newest `keepToolImages` stay. The stored messages never change.
  */
 function toolMedia(wire: ModelMessage[], options: ProjectOptions): ModelMessage[] {
+  return limitToolMedia(wire, options)
+}
+
+/**
+ * Step 8 on any model wire (also the live wire of a running turn, whose newest steps come from AI
+ * SDK response messages, not from `project`): media of tool results the model cannot take become
+ * `refuseFile`'s note, and only the newest `keepToolImages` stay. Keeps the message count.
+ */
+export function limitToolMedia(
+  wire: ModelMessage[],
+  options: Pick<ProjectOptions, 'keepToolImages' | 'refuseFile'>,
+): ModelMessage[] {
   const keep = options.keepToolImages
   if (keep === undefined && options.refuseFile === undefined) return wire
   let kept = 0

@@ -10,13 +10,14 @@
 
 import type { LanguageModel, LanguageModelUsage, ModelMessage, Tool, UIMessageChunk } from 'ai'
 import { hookFailed } from '../internal/hook-run.ts'
-import { project } from '../messages/project.ts'
+import { limitToolMedia, project } from '../messages/project.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
 import type { ContextStats, HarnessUIMessage, PendingState } from '../messages/types.ts'
 import { fileRefuser } from '../models/catalog.ts'
 import { toolSetTokens, wireTokens } from '../models/tokens.ts'
 import type { TurnInfo } from '../plugin/types.ts'
 import { instructionBlockStats, toolSourceStats } from '../registry/inventory.ts'
+import { type ToolMediaSink, toolMediaReader } from '../registry/tool-media.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import type { BudgetOverrun, CompactOutcome, SessionCompaction } from './compact.ts'
@@ -185,6 +186,7 @@ export function createTurnCompaction(args: {
     ...(config.toolOutput?.keepImages === undefined
       ? {}
       : { keepToolImages: Math.max(0, config.toolOutput.keepImages) }),
+    readMedia: toolMediaReader(rt.open?.services.get('toolMedia') as ToolMediaSink | undefined),
   }
 
   async function fixed(): Promise<number> {
@@ -344,7 +346,7 @@ export function createTurnCompaction(args: {
     sanitize(wire, turnStart) {
       const total = segments.reduce((a, b) => a + b, 0)
       if (total !== turnStart || turnStart > wire.length) {
-        const current = sanitizeModelMessages(wire)
+        const current = limitToolMedia(sanitizeModelMessages(wire), projectOptions)
         return { prior: [], current, flat: current }
       }
       const prior: ModelMessage[][] = []
@@ -354,7 +356,18 @@ export function createTurnCompaction(args: {
         at += length
       }
       const current = sanitizeModelMessages(wire.slice(turnStart))
-      return { prior, current, flat: [...prior.flat(), ...current] }
+      // screenshots of this turn count with the earlier ones: only the newest stay (spec 03 §6 step 8)
+      if (projectOptions.keepToolImages === undefined && projectOptions.refuseFile === undefined) {
+        return { prior, current, flat: [...prior.flat(), ...current] }
+      }
+      const flat = limitToolMedia([...prior.flat(), ...current], projectOptions)
+      const limitedPrior: ModelMessage[][] = []
+      at = 0
+      for (const segment of prior) {
+        limitedPrior.push(flat.slice(at, at + segment.length))
+        at += segment.length
+      }
+      return { prior: limitedPrior, current: flat.slice(at), flat }
     },
     async hardCap({ wire, rewrite, model, maxOutputTokens, tools, reminder }) {
       const limits = engine.limits(model, {

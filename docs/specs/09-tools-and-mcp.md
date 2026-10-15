@@ -208,6 +208,16 @@ toolOutput?: {
 - Media outputs (spec 08 §12) are not limited: `read_file` stores a small `media-ref` object and its
   `toModelOutput` produces the image; a custom tool that returns base64 inside its output is limited
   like any structured output (return a reference and read the bytes in `toModelOutput` instead).
+- **Media offload.** With the `toolMedia` service (filesystem plugin, spec 08 §2) every `image` /
+  `audio` part of an MCP-style result (`{ content: [...] }`) is written as a file after the limit
+  and `tool.after` hooks ran, and replaced in the **stored** output by
+  `{ type, mimeType, ref: { type: 'media-ref', path, version, mediaType, bytes } }` (no `data`),
+  so screenshots do not accumulate base64 in the message store. Text parts and the shape stay. The
+  tool's `toModelOutput` gets the bytes back as `data` (live step wire and projection, spec 03 §6
+  step 5b, which also applies `keepImages`). A failed write keeps the original part and raises
+  `W_TOOL_MEDIA_OFFLOAD`; without the service nothing changes. Applications that persist the
+  messages elsewhere resolve `ref.path` through the same file system (the team example serves it
+  as a library view URL).
 - Every limited result raises `W_TOOL_OUTPUT_LIMITED` (details: `tool`, `toolCallId`,
   `originalChars`, `maxChars`, `strategy`).
 - The guard (spec 06 §6) and the compaction transcript use the same truncation helper.

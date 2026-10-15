@@ -21,11 +21,13 @@ import { HarnessToolError, type HarnessWarning } from '../errors.ts'
 import { hookFailed, runHook } from '../internal/hook-run.ts'
 import type { Observer } from '../internal/observe.ts'
 import { errorText } from '../internal/util.ts'
+import { rehydrateOutputMedia } from '../messages/tool-media.ts'
 import type { ApprovalDecision, HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
 import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
 import { toolTraits } from './risk.ts'
 import { withToolExecute, withToolFields } from './tool-copy.ts'
+import { offloadToolMedia, toolMediaReader } from './tool-media.ts'
 import { buildTranscript, type GuardTranscriptEntry } from './transcript.ts'
 
 /** The text of a thrown tool error when `toolErrorText` throws or returns a non-string. */
@@ -88,7 +90,7 @@ export function isUnwrapped(name: string, tool: Tool): boolean {
 export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
   if (isUnwrapped(name, tool)) {
     // client tools: their outputs (respond(), spec 09 §6) are limited like server outputs
-    const convert = limitAware(tool)
+    const convert = limitAware(tool, deps)
     const isClient = typeof tool.execute !== 'function' && tool.type !== 'provider'
     return isClient && deps.limits !== undefined && convert !== undefined
       ? withToolFields(tool, { toModelOutput: convert })
@@ -195,7 +197,7 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
       },
     )
   }
-  const convert = limitAware(tool)
+  const convert = limitAware(tool, deps)
   if (limits === undefined || convert === undefined) return withToolExecute(tool, wrapped)
   return withToolFields(withToolExecute(tool, wrapped), { toModelOutput: convert })
 }
@@ -204,15 +206,21 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
  * The tool's own `toModelOutput`, skipped for a limited structured output (it no longer has the
  * shape the tool's converter expects), or `undefined` when the tool has none.
  */
-function limitAware(tool: Tool): Tool['toModelOutput'] | undefined {
+function limitAware(tool: Tool, deps: ToolWrapDeps): Tool['toModelOutput'] | undefined {
   const toModelOutput = tool.toModelOutput as
     | ((options: { toolCallId: string; input: unknown; output: unknown }) => unknown)
     | undefined
   if (toModelOutput === undefined) return undefined
-  return ((options: { toolCallId: string; input: unknown; output: unknown }) =>
-    isLimitedOutput(options.output)
-      ? { type: 'json', value: options.output }
-      : toModelOutput(options)) as Tool['toModelOutput']
+  const sink = deps.limits?.toolMedia
+  const read = sink === undefined ? undefined : toolMediaReader(sink)
+  return ((options: { toolCallId: string; input: unknown; output: unknown }) => {
+    if (isLimitedOutput(options.output)) return { type: 'json', value: options.output }
+    // offloaded media (spec 09 §4): the converter gets the bytes back as `data`
+    if (read === undefined) return toModelOutput(options)
+    return rehydrateOutputMedia(options.output, read).then((output) =>
+      toModelOutput({ ...options, output }),
+    )
+  }) as Tool['toModelOutput']
 }
 
 /**
@@ -247,7 +255,15 @@ export async function finishToolOutput(
     limits === undefined
       ? current
       : await limitToolOutput(name, toolCallId, current, { ...limits, warn: deps.warn })
-  return cloneableOutput(name, limited)
+  const stored =
+    limits?.toolMedia === undefined
+      ? limited
+      : await offloadToolMedia(name, toolCallId, limited, {
+          sessionId: limits.sessionId,
+          toolMedia: limits.toolMedia,
+          warn: deps.warn,
+        })
+  return cloneableOutput(name, stored)
 }
 
 /**
