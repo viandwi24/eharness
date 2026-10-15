@@ -52,6 +52,51 @@ export interface ToolWrapDeps {
   observe?: Observer | undefined
   sessionId?: string | undefined
   turnId?: string | undefined
+  /** Per-step call limits (spec 09 §4.1): a refusal text, or undefined to run the call. */
+  callGuard?: ToolCallGuard
+}
+
+/** Default `toolCalls.maxPerStep`. */
+export const DEFAULT_MAX_TOOL_CALLS_PER_STEP = 24
+
+/** Admits the calls of a step (spec 09 §4.1). */
+export interface ToolCallGuard {
+  admit(toolName: string, input: unknown): string | undefined
+}
+
+/**
+ * The per-step guard of a turn: at most `max` calls run in one step, and an exact repeat of a call
+ * of the same step (same tool, same input) does not run again.
+ */
+export function toolCallGuard(stepOf: () => number | undefined, max: number): ToolCallGuard {
+  let step: number | undefined
+  let count = 0
+  const seen = new Set<string>()
+  return {
+    admit(toolName, input) {
+      const now = stepOf() ?? 0
+      if (now !== step) {
+        step = now
+        count = 0
+        seen.clear()
+      }
+      let key: string
+      try {
+        key = `${toolName}\u0000${JSON.stringify(input) ?? ''}`
+      } catch {
+        key = `${toolName}\u0000${String(input)}`
+      }
+      if (seen.has(key)) {
+        return `Skipped: the same ${toolName} call with the same input was already made in this step; use that result instead of repeating it.`
+      }
+      seen.add(key)
+      count++
+      if (count > max) {
+        return `Skipped: more than ${max} tool calls in one step. Make fewer calls at a time and wait for their results before the next ones.`
+      }
+      return undefined
+    },
+  }
 }
 
 /** Run one hook bounded by the hook timeout and the turn signal (see {@link runHook}). */
@@ -120,6 +165,16 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
     finishToolOutput(name, toolCallId, input, output, deps)
 
   const wrapped = (input: unknown, options: ToolExecutionOptions<unknown>): unknown => {
+    const refused = deps.callGuard?.admit(name, input)
+    if (refused !== undefined) {
+      return Promise.reject(
+        new HarnessToolError(new Error(refused), {
+          toolName: name,
+          toolCallId: options.toolCallId,
+          text: refused,
+        }),
+      )
+    }
     deps.status(name)
     if (deps.observe === undefined) return run(input, options)
     const observe = deps.observe

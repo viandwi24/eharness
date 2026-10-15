@@ -222,6 +222,20 @@ toolOutput?: {
   `originalChars`, `maxChars`, `strategy`).
 - The guard (spec 06 §6) and the compaction transcript use the same truncation helper.
 
+### 4.1 Tool calls of one step
+
+`toolCalls: { maxPerStep?: number }` (default 24). A model can degenerate and emit hundreds of
+parallel calls in one step. Every wrapped tool call is admitted per step:
+
+- an exact repeat of a call of the same step (same tool, same JSON input) does not run: it is
+  answered `Skipped: the same <tool> call with the same input was already made in this step; ...`;
+- past `maxPerStep` admitted calls, a call does not run: `Skipped: more than N tool calls in one
+  step. ...`.
+
+Both are tool errors (`HarnessToolError`, same text in the UI, storage and on the wire); the model
+continues in the next step. Unwrapped tools (`tool_search`, client and provider tools) are not
+counted.
+
 ## 5. Timeouts, retries, repair, preliminary results
 
 | Concern | Mechanism |

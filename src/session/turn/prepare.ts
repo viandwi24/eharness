@@ -230,6 +230,7 @@ export async function prepare(t: TurnCtx): Promise<Prepared> {
       open,
       approval: t.config.approval,
       toolOutput: t.config.toolOutput,
+      toolCalls: t.config.toolCalls,
       toolOrder: t.config.toolOrder,
       deferTools: t.config.deferTools,
       toolErrorText: t.config.toolErrorText,

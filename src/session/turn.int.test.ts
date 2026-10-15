@@ -577,3 +577,31 @@ describe('screenshots in one long turn', () => {
     expect(last).not.toContain('IMG1')
   })
 })
+
+describe('tool calls of one step', () => {
+  test('a degenerate step runs each distinct call once and at most toolCalls.maxPerStep', async () => {
+    let runs = 0
+    const ping = tool({
+      inputSchema: z.object({ n: z.number() }),
+      execute: async ({ n }) => {
+        runs++
+        return `pong ${n}`
+      },
+    })
+    // 40 calls: 20 distinct inputs, each twice
+    const calls = Array.from({ length: 40 }, (_, i) => ({
+      toolName: 'ping',
+      input: { n: i % 20 },
+    }))
+    const model = scriptedModel([{ toolCalls: calls }, { text: 'Done.' }])
+    const { agent } = makeAgent({ model, tools: { ping }, toolCalls: { maxPerStep: 5 } })
+    const run = agent.session('s1').send('Go')
+    await collect(run.stream)
+    const result = await run.result
+    expect(runs).toBe(5)
+    const errors = JSON.stringify(model.prompts[1])
+    expect(errors).toContain('Skipped: the same ping call with the same input')
+    expect(errors).toContain('Skipped: more than 5 tool calls in one step')
+    expect(result.stop).toBe('complete')
+  })
+})

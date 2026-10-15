@@ -427,6 +427,16 @@ export interface ToolOutputConfig {
 }
 
 /**
+ * Limits on the tool calls of one model step (spec 09 §4.1). A model that degenerates can emit
+ * hundreds of parallel calls in one step; past the limit, and for an exact repeat of a call of the
+ * same step, the call is not executed and the model reads why.
+ */
+export interface ToolCallsConfig {
+  /** Calls executed per step. Default 24. */
+  maxPerStep?: number
+}
+
+/**
  * Compaction configuration.
  *
  * @see docs/specs/06-compaction.md#1-configuration
@@ -573,6 +583,8 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   /** Prompt caching. Default `'auto'` mode. */
   cache?: CacheConfig | false
   toolOutput?: ToolOutputConfig
+  /** Limits on the tool calls of one model step (spec 09 §4.1). */
+  toolCalls?: ToolCallsConfig
   /**
    * The text a tool's thrown error becomes — in the UI stream, in storage and on the model wire
    * (identical everywhere). Default `String(error)`, which may carry secrets (connection strings,

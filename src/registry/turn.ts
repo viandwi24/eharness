@@ -10,7 +10,12 @@
  * @see docs/specs/02-context-registry.md#8-registry-api-internal-but-tested
  */
 import type { GenericToolApprovalFunction, Tool, ToolInputRefinement, ToolSet } from 'ai'
-import type { ApprovalConfig, ToolErrorTextFn, ToolOutputConfig } from '../agent/types.ts'
+import type {
+  ApprovalConfig,
+  ToolCallsConfig,
+  ToolErrorTextFn,
+  ToolOutputConfig,
+} from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { Observer } from '../internal/observe.ts'
 import { neutralizeTags } from '../messages/framing.ts'
@@ -42,7 +47,9 @@ import {
   type ApprovalGrants,
   buildApproval,
   buildRefinement,
+  DEFAULT_MAX_TOOL_CALLS_PER_STEP,
   type ToolWrapDeps,
+  toolCallGuard,
   wrapTool,
 } from './wrap.ts'
 
@@ -232,6 +239,8 @@ export async function resolveTurnRegistry(args: {
   approval: ApprovalConfig | undefined
   /** `config.toolOutput` (spec 09 §4). */
   toolOutput?: ToolOutputConfig | undefined
+  /** `config.toolCalls` (spec 09 §4.1). */
+  toolCalls?: ToolCallsConfig | undefined
   /** `config.toolOrder` (spec 02 §6). */
   toolOrder?: readonly string[] | undefined
   /** `config.deferTools` (spec 02 §3.3). */
@@ -318,6 +327,10 @@ export async function resolveTurnRegistry(args: {
     ...(args.hookTimeoutMs === undefined ? {} : { hookTimeoutMs: args.hookTimeoutMs }),
     ...(args.signal === undefined ? {} : { signal: args.signal }),
     ...(args.toolErrorText === undefined ? {} : { toolErrorText: args.toolErrorText }),
+    callGuard: toolCallGuard(
+      () => contextOf('core').step?.index,
+      args.toolCalls?.maxPerStep ?? DEFAULT_MAX_TOOL_CALLS_PER_STEP,
+    ),
     limits: {
       config: args.toolOutput,
       // looked up by name without throwing: absent when no plugin provides it (spec 09 §4)
