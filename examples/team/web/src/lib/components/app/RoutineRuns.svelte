@@ -7,6 +7,7 @@
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
+	import { retryTask } from '#lib/tasks/actions.js';
 
 	type Routine = components['schemas']['Routine'];
 	type Run = components['schemas']['RoutineRun'];
@@ -35,9 +36,11 @@
 	});
 
 	const variant = (s: Run['status']): 'success' | 'destructive' | 'warning' | 'info' | 'outline' =>
-		s === 'succeeded' ? 'success' : s === 'failed' ? 'destructive' : s === 'needs_action' ? 'warning' : s === 'skipped' ? 'outline' : 'info';
+		s === 'succeeded' ? 'success' : s === 'failed' ? 'destructive' : s === 'needs_action' || s === 'retrying' ? 'warning' : s === 'skipped' ? 'outline' : 'info';
 
 	const when = (ms: number): string => formatDateTime(ms);
+	/** The task of a task-mode run (its session), for the Retry button of a failed run. */
+	const taskOf = (r: Run) => (routine.sessionMode === 'task' ? live.state.tasks.find((t) => t.sessionId === r.sessionId) : undefined);
 </script>
 
 <section class="flex flex-col gap-2" aria-label="Run history">
@@ -56,6 +59,10 @@
 					<Badge variant={variant(r.status)}>{r.status.replace('_', ' ')}</Badge>
 					{#if r.trigger === 'manual'}<Badge variant="outline">manual</Badge>{/if}
 					{#if r.reason}<span class="min-w-0 flex-1 truncate text-muted-foreground" title={r.reason}>{r.reason}</span>{:else}<span class="flex-1"></span>{/if}
+					{#if r.status === 'failed' || r.status === 'retrying'}
+						{@const task = taskOf(r)}
+						{#if task}<button type="button" class="text-info-text underline underline-offset-4" onclick={() => void retryTask(task.id)}>Retry</button>{/if}
+					{/if}
 					{#if routine.sessionMode === 'task' && r.status !== 'skipped'}
 						<button type="button" class="text-info-text underline underline-offset-4" onclick={() => void openSession(r.sessionId)}>Open task</button>
 					{/if}

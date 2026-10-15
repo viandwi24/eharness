@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { APICallError } from 'ai'
 import { webCryptoVault } from 'eharness/providers'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { z } from 'zod'
@@ -53,7 +54,12 @@ async function until(what: string, condition: () => boolean | Promise<boolean>, 
 }
 
 const KEY = new Uint8Array(32).fill(7)
-const TUNING = { streams: { flushMs: 5, pollMs: 20 }, inbox: { pollMs: 30 }, abortPollMs: 40 }
+const TUNING = {
+  streams: { flushMs: 5, pollMs: 20 },
+  inbox: { pollMs: 30 },
+  abortPollMs: 40,
+  modelMaxRetries: 0,
+}
 const COLLECT = { quietMs: 25, maxWaitMs: 300, maxItems: 20 }
 
 type Slug = 'lead' | 'researcher'
@@ -111,6 +117,8 @@ function instance(
     eventsPollMs: 30,
     reconcile: { onBoot: false, everyMs: 0 },
     routines: { tickMs: 0 },
+    // a transient failure is retried when the test ticks (no timer), at once
+    turnRetry: { tickMs: 0, delayMs: () => 0 },
     channels: {
       vault: webCryptoVault(KEY),
       collect: COLLECT,
@@ -204,6 +212,16 @@ const sid = (i: Instance, native: string, connectionId = 'c1'): string => {
 }
 
 const textStep = (text: string): ScriptedStepInput => ({ text })
+/** The provider is down (a 502, as OpenRouter answered in production). */
+const unavailableStep = (): ScriptedStepInput => ({
+  throws: new APICallError({
+    message: 'no capacity available for this model right now',
+    url: 'https://provider.example/v1/chat',
+    requestBodyValues: {},
+    statusCode: 502,
+    isRetryable: true,
+  }),
+})
 
 /** A node as an adapter receives it to act on (for calling a mock directly). */
 const chatNode = (native: string): ChannelNode => ({
@@ -536,8 +554,15 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
   test('a turn that fails tells the chat in one generic line instead of leaving it in silence', async () => {
     const i = instance({
       lead: [
+        // a request the provider rejects is not transient: no retry, the chat is told at once
         () => {
-          throw new Error('provider exploded: key sk-secret-123 account 99')
+          throw new APICallError({
+            message: 'provider exploded: key sk-secret-123 account 99',
+            url: 'https://provider.example/v1/chat',
+            requestBodyValues: {},
+            statusCode: 400,
+            isRetryable: false,
+          })
         },
         textStep('Back again.'),
       ],
@@ -551,6 +576,38 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
     expect(notice?.replyTo).toBe('w1')
     await mock.say({ from: ana, text: '@team_bot again', id: 'w2', mentionSelf: true })
     await until('the next answer', () => mock.sent.some((s) => s.message.text === 'Back again.'))
+  })
+
+  test('a transient provider failure is retried: no notice in between, the retry answers the same message', async () => {
+    const i = instance({ lead: [unavailableStep(), textStep('Here is the answer.')] })
+    const mock = await connect(i)
+    await mock.say({ from: ana, text: '@team_bot go', id: 'w1', mentionSelf: true })
+    await until('the retry waits', () => i.server.turnRetry.waiting().size === 1)
+    await sleep(150)
+    expect(mock.sent).toHaveLength(0) // nobody is told "something went wrong" while it is retried
+    await i.server.turnRetry.tick(Date.now() + 1)
+    await i.server.turnRetry.idle()
+    await until('the answer', () => mock.sent.length === 1)
+    expect(mock.sent[0]?.message.text).toBe('Here is the answer.')
+    expect(mock.sent[0]?.message.replyTo).toBe('w1')
+  })
+
+  test('a provider failure that never stops is retried four times, then the chat gets the one existing notice', async () => {
+    const i = instance({
+      lead: [1, 2, 3, 4, 5].map(() => unavailableStep()),
+    })
+    const mock = await connect(i)
+    await mock.say({ from: ana, text: '@team_bot go', id: 'w1', mentionSelf: true })
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      await until(`retry ${attempt} waits`, () => i.server.turnRetry.waiting().size === 1)
+      expect(mock.sent).toHaveLength(0)
+      await i.server.turnRetry.tick(Date.now() + 1)
+      await i.server.turnRetry.idle()
+    }
+    await until('the notice', () => mock.sent.length === 1)
+    expect(mock.sent[0]?.message.text).toContain('could not answer')
+    expect(mock.sent[0]?.message.replyTo).toBe('w1')
+    expect(i.server.turnRetry.waiting().size).toBe(0)
   })
 
   test('an image attachment reaches the agent as a file part; an unsupported one is a note', async () => {

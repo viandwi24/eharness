@@ -55,6 +55,13 @@ describe('board', () => {
 });
 
 describe('work queue columns', () => {
+	test('a task that waits for its automatic retry is running work with a retrying badge', () => {
+		const retrying = t('r', 'retrying');
+		expect(columnOf(retrying)).toBe('running');
+		expect(badgeFor('retrying')).toEqual({ label: 'retrying', variant: 'warning' });
+		expect(groupBoard([retrying]).running.map((x) => x.id)).toEqual(['r']);
+	});
+
 	test('a run parked on an open decision is waiting for you, not running', () => {
 		const parked = t('p', 'running', { sessionId: 'program:x:1' });
 		expect(columnOf(parked)).toBe('running');

@@ -39,6 +39,25 @@ export async function getTask(
   return { task, messages, approvals, job: job ?? null }
 }
 
+/**
+ * Retry a task now: continue its session from where the failed turn stopped (nothing already done
+ * is done twice). For a task that failed, stopped, was interrupted, or waits for its automatic retry.
+ */
+export async function retryTask(deps: Deps, id: string): Promise<Task> {
+  const task = taskOrThrow(deps, id)
+  if (!['failed', 'retrying', 'interrupted', 'timed_out', 'stopped'].includes(task.status)) {
+    throw conflict(
+      'Only a task that stopped without finishing can be retried.',
+      'TASK_NOT_RETRYABLE',
+    )
+  }
+  if (isQueuedSession(task.sessionId)) {
+    throw conflict('A queued task has no session yet: start it instead.', 'TASK_QUEUED')
+  }
+  await deps.turnRetry.retryNow(task.sessionId)
+  return deps.tasks.get(id) ?? task
+}
+
 /** Stop the long-run job of a background worker task (the report to its parent says `stopped`). */
 export async function stopWorkerTask(deps: Deps, id: string): Promise<Task> {
   const task = taskOrThrow(deps, id)

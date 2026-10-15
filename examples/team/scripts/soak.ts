@@ -316,7 +316,14 @@ async function drain(): Promise<void> {
     const rows = all?.tasks ?? []
     const queued = rows.filter((t) => t.status === 'queued')
     if (queued.length > 0) await api('POST', `/programs/${workerId}/run`)
-    const busy = rows.filter((t) => ['running', 'queued', 'needs_action'].includes(t.status))
+    // a turn that failed on an injected provider fault waits for its automatic retry (30 s and
+    // more): run those retries now instead of waiting out the backoff
+    for (const t of rows.filter((x) => x.status === 'retrying')) {
+      await api('POST', `/tasks/${t.id}/retry`)
+    }
+    const busy = rows.filter((t) =>
+      ['running', 'queued', 'needs_action', 'retrying'].includes(t.status),
+    )
     const open = await api<{ decisions: unknown[] }>('GET', '/decisions?status=open')
     if (busy.length === 0 && (open?.decisions ?? []).length === 0) {
       await sleep(1500) // let the last hooks (outcomes, beat records) land

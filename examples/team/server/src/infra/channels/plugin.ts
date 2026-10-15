@@ -79,6 +79,20 @@ export const CHANNEL_OWN_WRITE_TOOLS: readonly string[] = SELF_WRITE_TOOLS.filte
 )
 
 export interface ChannelsPluginOptions {
+  /**
+   * The automatic retry of transient failures: a chat turn that will be retried posts no failure
+   * notice (the retry answers, or the last attempt's failure is the notice). Late-bound.
+   */
+  retry?: () =>
+    | {
+        observe(f: {
+          sessionId: string
+          turnId: string
+          stop: string
+          error?: { code: string; message: string } | undefined
+        }): { state: string } | undefined
+      }
+    | undefined
   /** Late-bound: the plugin is built before the gateway. */
   gateway: () => ChannelGateway | undefined
   /** The agent (id) of a hook context (`ctx.agent.id` is the slug of the definition). */
@@ -941,6 +955,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           'turn.end': async (
             hookCtx: HarnessContext,
             e: {
+              turnId: string
               stop: string
               messages: Array<{ role: string; parts?: unknown; metadata?: unknown }>
               pending?: PendingView
@@ -948,8 +963,15 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
             },
           ): Promise<void> => {
             try {
+              const plan = options.retry?.()?.observe({
+                sessionId,
+                turnId: e.turnId,
+                stop: e.stop,
+                error: e.error,
+              })
               await gw.turnEnded({
                 sessionId,
+                ...(plan?.state === 'retrying' ? { retrying: true } : {}),
                 stop: e.stop,
                 messages: e.messages,
                 pending: e.pending,

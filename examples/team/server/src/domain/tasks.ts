@@ -1,11 +1,14 @@
 /** Tasks and the board: status is derived from session facts (plan §6.4). Pure. */
 import type { DeliverableResult } from './deliverables.ts'
 import type { ProgramAuthority } from './programs.ts'
+import type { PendingRetry } from './turn-retry.ts'
 
 export const TASK_STATUSES = [
   'queued',
   'needs_action',
   'running',
+  /** A transient failure; the same turn is tried again at `retry.nextAt` (`domain/turn-retry.ts`). */
+  'retrying',
   'done',
   'failed',
   'stopped',
@@ -17,6 +20,8 @@ export const TASK_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
 export type TaskPriority = (typeof TASK_PRIORITIES)[number]
 export type TaskOrigin = 'user' | 'lead' | 'routine' | 'program'
 export type PendingKind = 'approval' | 'question'
+/** What a `retrying` task waits for: attempt, limit, the next time. */
+export type TaskRetry = Omit<PendingRetry, 'sessionId'>
 
 /** The structured report a program run ends with (`SendOptions.output`, stored on the task row). */
 export interface TaskReport {
@@ -71,6 +76,8 @@ export interface Task {
   review: boolean
   /** Extra permissions given with the task on top of the agent's own (null = none). */
   grants: ProgramAuthority | null
+  /** Set while `status` is `retrying`: the automatic retry that waits (or runs). */
+  retry?: TaskRetry | null
 }
 
 /** The board of the web app: where a task is shown. */
@@ -109,7 +116,7 @@ export function boardColumn(
 ): BoardColumn {
   if (t.status === 'queued') return 'queued'
   if (t.status === 'needs_action' || (t.status === 'running' && openDecision)) return 'waiting'
-  if (t.status === 'running') return 'running'
+  if (t.status === 'running' || t.status === 'retrying') return 'running'
   // a finished run whose deliverables failed and that waits on a decision is the client's turn
   if (t.deliverables?.status === 'fail' && openDecision) return 'waiting'
   return inReview(t) ? 'review' : 'done'

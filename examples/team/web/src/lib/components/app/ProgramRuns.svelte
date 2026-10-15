@@ -8,6 +8,7 @@
 	import { REPORT_LABELS, type Program } from '#lib/programs/form.js';
 	import { openTask } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
+	import { retryLine, retryTask } from '#lib/tasks/actions.js';
 	import { formatDateTime, formatUsd } from '#lib/time.js';
 
 	type Task = components['schemas']['Task'];
@@ -59,10 +60,13 @@
 						{#if t.deliverables}<Badge variant={t.deliverables.status === 'pass' ? 'success' : 'destructive'}>{t.deliverables.status === 'pass' ? 'deliverables ok' : 'deliverables failed'}</Badge>{/if}
 						<span class="flex-1"></span>
 						{#if t.costUsd > 0}<span class="font-mono text-muted-foreground">{formatUsd(t.costUsd)}</span>{/if}
+						{#if t.status === 'failed' || t.status === 'retrying'}
+							<button type="button" class="text-info-text underline underline-offset-4" onclick={() => void retryTask(t.id)}>{t.status === 'retrying' ? 'Retry now' : 'Retry'}</button>
+						{/if}
 						<button type="button" class="text-info-text underline underline-offset-4" onclick={() => openTask(t.id)}>Open task</button>
 						<span class="text-muted-foreground">{when(t.startedAt)}</span>
 					</div>
-					{#if t.summary}<p class="text-muted-foreground">{t.summary}</p>{/if}
+					{#if t.status === 'retrying'}<p class="text-warning-text" data-testid="run-retrying">{retryLine(t, when)}. {t.retry?.errorMessage ?? ''}</p>{:else if t.summary}<p class="text-muted-foreground">{t.summary}</p>{/if}
 					{#if t.report?.outputs.length}
 						<ul class="flex flex-wrap gap-1.5">
 							{#each t.report.outputs as path (path)}<li class="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{path}</li>{/each}

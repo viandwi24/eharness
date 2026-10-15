@@ -23,7 +23,8 @@ export const inReview = (t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | '
 export function columnOf(t: ColumnInput, waiting: WaitingSessions = new Set()): Column {
 	if (t.status === 'queued') return 'queued';
 	if (t.status === 'needs_action' || (t.status === 'running' && waiting.has(t.sessionId))) return 'waiting';
-	if (t.status === 'running') return 'running';
+	// a task that waits for its automatic retry is still work in progress
+	if (t.status === 'running' || t.status === 'retrying') return 'running';
 	if (t.deliverables?.status === 'fail' && waiting.has(t.sessionId)) return 'waiting';
 	return inReview(t) ? 'review' : 'done';
 }
@@ -71,7 +72,9 @@ export const badgeFor = (status: Task['status'], summary?: string | null): { lab
 			? { label: 'waiting for you', variant: 'warning' }
 			: status === 'running'
 				? { label: 'running', variant: 'info' }
-				: status === 'failed'
+				: status === 'retrying'
+					? { label: 'retrying', variant: 'warning' }
+					: status === 'failed'
 					? { label: summary === 'Failed to start' ? 'failed to start' : 'failed', variant: 'destructive' }
 					: status === 'stopped'
 						? { label: 'stopped', variant: 'outline' }

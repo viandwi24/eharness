@@ -9,6 +9,7 @@ import {
   listApprovals,
   listTasks,
   messageTask,
+  retryTask,
   stopWorkerTask,
 } from '../../app/tasks.ts'
 import {
@@ -146,6 +147,23 @@ const stopTaskRoute = createRoute({
     200: { description: 'The task', content: json(TaskSchema) },
     404: jsonError('Unknown task'),
     409: jsonError('`TASK_NOT_RUNNING`'),
+    ...errorResponses,
+  },
+})
+
+const retryTaskRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/retry',
+  tags: ['tasks'],
+  summary: 'Retry a task that stopped without finishing',
+  description:
+    'Continues the task session from where the failed turn stopped (the tool results already stored stay; nothing done is done twice) and cancels the waiting automatic retry, if any. For a task that is `retrying`, `failed`, `interrupted`, `timed_out` or `stopped`. Answers at once with the task; the continuation runs in the background (watch `status`). A failure of the continuation starts a fresh series of automatic retries when it is temporary.',
+  security,
+  request: { params: TaskIdParam },
+  responses: {
+    202: { description: 'The continuation started', content: json(TaskSchema) },
+    404: jsonError('Unknown task'),
+    409: jsonError('`TASK_NOT_RETRYABLE`, `TASK_QUEUED`, `SESSION_BUSY` or `RETRY_RUNNING`'),
     ...errorResponses,
   },
 })
@@ -327,6 +345,9 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
     )
     .openapi(stopTaskRoute, async (c) =>
       c.json((await stopWorkerTask(deps, c.req.valid('param').id)) as never, 200),
+    )
+    .openapi(retryTaskRoute, async (c) =>
+      c.json((await retryTask(deps, c.req.valid('param').id)) as never, 202),
     )
     .openapi(startTaskRoute, (c) =>
       c.json(startTaskNow(deps, c.req.valid('param').id) as never, 200),

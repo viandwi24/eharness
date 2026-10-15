@@ -59,6 +59,27 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 const isBusy = (error: unknown): boolean =>
   (error as { code?: unknown } | null)?.code === 'EH_SESSION_BUSY'
 
+/**
+ * The options of a continuation turn of a session: a program run continues with its report spec, a
+ * heartbeat with its result spec (`output` is not carried over a stop, spec 05 §3.3 rule 7). Shared
+ * by the decision hand-back and the automatic retry of a failed turn (`turn-retry-service.ts`).
+ */
+export function continuationOptions(factory: AgentFactory, def: AgentDef, sessionId: string) {
+  if (sessionId.startsWith('heartbeat:')) {
+    return { output: { schema: BEAT_SCHEMA, description: 'The result of this heartbeat.' } }
+  }
+  return parseProgramSession(sessionId) === undefined
+    ? {}
+    : {
+        output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
+        // the continuation is a new turn: without this it gets the agent's default step limit
+        // and a long (chunked) run that parked once is cut off early
+        maxSteps: PROGRAM_RUN_MAX_STEPS,
+        // and the output cap its budget can afford, as in the first turn
+        ...factory.programTurn(def, sessionId),
+      }
+}
+
 export function createDecisionService(
   factory: AgentFactory,
   deps: DecisionServiceDeps,
@@ -76,22 +97,7 @@ export function createDecisionService(
     inflight.add(watched)
     void watched.finally(() => inflight.delete(watched))
   }
-  /** A program run continues with its report spec, a heartbeat with its result spec. */
-  const options = (def: AgentDef, sessionId: string) => {
-    if (sessionId.startsWith('heartbeat:')) {
-      return { output: { schema: BEAT_SCHEMA, description: 'The result of this heartbeat.' } }
-    }
-    return parseProgramSession(sessionId) === undefined
-      ? {}
-      : {
-          output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
-          // the continuation is a new turn: without this it gets the agent's default step limit
-          // and a long (chunked) run that parked once is cut off early
-          maxSteps: PROGRAM_RUN_MAX_STEPS,
-          // and the output cap its budget can afford, as in the first turn
-          ...factory.programTurn(def, sessionId),
-        }
-  }
+  const options = (def: AgentDef, sessionId: string) => continuationOptions(factory, def, sessionId)
 
   return {
     async resume(decision, answer) {

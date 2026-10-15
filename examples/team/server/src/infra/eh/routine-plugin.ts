@@ -7,6 +7,7 @@
 import { definePlugin, errorText, type HarnessPlugin } from 'eharness'
 import { parseReport } from '../../domain/programs.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
+import type { TurnRetryHooks } from './turn-retry-service.ts'
 
 interface InputLike {
   metadata?: { eharness?: { inboxId?: string } }
@@ -14,6 +15,8 @@ interface InputLike {
 
 export function routineOutcomes(options: {
   outcomes: RoutineOutcomes
+  /** The automatic retry of transient failures: a failed turn that will be retried leaves its run `retrying`. */
+  retry?: () => TurnRetryHooks | undefined
 }): HarnessPlugin<'routine-outcomes'> {
   const inboxByTurn = new Map<string, string>()
   return definePlugin({
@@ -27,6 +30,7 @@ export function routineOutcomes(options: {
         'turn.end': (
           ctx,
           e: {
+            turnId: string
             stop: string
             /** The validated structured output of a turn that asked for one (program runs). */
             output?: unknown
@@ -45,6 +49,12 @@ export function routineOutcomes(options: {
             (e.pending.approvals.length > 0 ||
               e.pending.clientTools.some((c) => c.result === undefined))
           const report = parseReport(e.output)
+          const plan = options.retry?.()?.observe({
+            sessionId: ctx.session.id,
+            turnId: e.turnId,
+            stop: e.stop,
+            error: e.error,
+          })
           // not awaited: matching a DM fire may wait a moment for its run row
           void options.outcomes
             .turnEnded({
@@ -55,6 +65,18 @@ export function routineOutcomes(options: {
                 ? {}
                 : { errorMessage: e.error.message, errorCode: e.error.code }),
               needsPerson,
+              ...(plan?.state === 'retrying'
+                ? {
+                    retry: {
+                      attempt: plan.attempt,
+                      max: plan.max,
+                      nextAt: plan.nextAt,
+                      errorMessage: plan.errorMessage,
+                    },
+                  }
+                : plan?.state === 'exhausted'
+                  ? { retryGaveUp: true }
+                  : {}),
               ...(report === undefined
                 ? {}
                 : { reportStatus: report.status, reportSummary: report.summary }),

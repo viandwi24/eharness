@@ -61,6 +61,8 @@ export const RUN_STATUSES = [
   'claimed',
   'enqueued',
   'needs_action',
+  /** A transient failure: the turn is tried again later (`domain/turn-retry.ts`); the run is not over. */
+  'retrying',
   'succeeded',
   'failed',
   'skipped',

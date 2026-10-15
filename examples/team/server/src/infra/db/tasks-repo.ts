@@ -83,7 +83,7 @@ const toGrants = (v: unknown): Task['grants'] => {
   })
 }
 
-const toTask = (r: TaskRow): Task => ({
+const baseTask = (r: TaskRow): Task => ({
   id: r.id,
   agentId: r.agent_id,
   sessionId: r.session_id,
@@ -152,6 +152,38 @@ const QUEUE_ORDER = `CASE priority ${Object.entries(PRIORITY_RANK)
 export type SqliteTaskStore = TaskStore & TaskWriter
 
 export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
+  const retryOf = sqlite.query<
+    {
+      attempt: number
+      max_attempts: number
+      next_at: number
+      error_message: string
+      state: string
+    },
+    [string]
+  >(
+    "SELECT attempt, max_attempts, next_at, error_message, state FROM turn_retries WHERE session_id = ? AND state IN ('pending', 'running')",
+  )
+  const toTask = (r: TaskRow): Task => withRetry(baseTask(r))
+  /** A `retrying` task carries the attempt and the next time of its automatic retry. */
+  const withRetry = (t: Task): Task => {
+    if (t.status !== 'retrying') return t
+    const r = retryOf.get(t.sessionId)
+    return {
+      ...t,
+      retry:
+        r === null
+          ? null
+          : {
+              attempt: r.attempt,
+              max: r.max_attempts,
+              nextAt: r.next_at,
+              errorCode: '',
+              errorMessage: r.error_message,
+              running: r.state === 'running',
+            },
+    }
+  }
   const taskBySession = sqlite.query<TaskRow, [string]>('SELECT * FROM tasks WHERE session_id = ?')
   const taskById = sqlite.query<TaskRow, [string]>('SELECT * FROM tasks WHERE id = ?')
 

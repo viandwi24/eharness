@@ -12,7 +12,7 @@ import { RoutineSchema } from './routines.ts'
 
 export const TaskStatusSchema = z.enum(TASK_STATUSES).openapi('TaskStatus', {
   description:
-    '`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).',
+    '`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `retrying` (a temporary error, such as an unavailable AI provider, stopped the turn: it is continued automatically at `retry.nextAt`; see `retry`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).',
 })
 
 export const TaskPrioritySchema = z.enum(TASK_PRIORITIES).openapi('TaskPriority')
@@ -148,6 +148,23 @@ export const TaskSchema = z
       description:
         'Queued tasks only: when a `slot` wait is held by a task that waits for the client, a sentence naming it ("waiting: <task> needs your approval first"). null otherwise.',
     }),
+    retry: z
+      .object({
+        attempt: z.number().int().openapi({ description: 'The retry that waits (1-based).' }),
+        max: z.number().int(),
+        nextAt: z.number().int().openapi({ description: 'When it starts (epoch ms).' }),
+        errorCode: z.string(),
+        errorMessage: z
+          .string()
+          .openapi({ description: 'The last error, as the AI provider said it.' }),
+        running: z.boolean().openapi({ description: 'The retry turn runs right now.' }),
+      })
+      .nullable()
+      .optional()
+      .openapi({
+        description:
+          'Only while `status` is `retrying`: the automatic retry of a temporary failure. A task that failed after its last attempt has `status: failed` and no `retry`; `POST /tasks/{id}/retry` continues it by hand.',
+      }),
     column: z.enum(BOARD_COLUMNS).optional().openapi({
       description:
         'Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`.',

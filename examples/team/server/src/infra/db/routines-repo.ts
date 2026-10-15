@@ -139,6 +139,11 @@ export interface SqliteRoutineStore extends RoutineStore {
   previousFiredRun(routineId: string, exceptId: string): RoutineRun | undefined
   markEnqueued(runId: string, info: { inboxId: string; firedAt: number; reason?: string }): void
   markSkipped(runId: string, reason: string, now: number): void
+  /**
+   * A transient failure waits for its automatic retry: the run is `retrying` (not over, not counted
+   * as a failure). A finished run stays as it is. Returns the run, undefined when nothing changed.
+   */
+  markRetrying(runId: string, reason: string): RoutineRun | undefined
   /** Runs whose session needs an answer (a DM run waiting for an approval). */
   needsActionRuns(sessionId: string): RoutineRun[]
   /**
@@ -390,6 +395,16 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
              WHERE id = ? AND status = 'claimed'`,
         )
         .run(info.inboxId, info.firedAt, info.reason ?? null, runId)
+    },
+
+    markRetrying(runId, reason) {
+      const res = sqlite
+        .query(
+          `UPDATE routine_runs SET status = 'retrying', reason = ?, finished_at = NULL
+             WHERE id = ? AND status IN ('claimed', 'enqueued', 'needs_action', 'succeeded', 'retrying')`,
+        )
+        .run(reason, runId)
+      return res.changes === 0 ? undefined : getRun(runId)
     },
 
     markSkipped(runId, reason, now) {

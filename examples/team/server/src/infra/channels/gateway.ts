@@ -957,6 +957,8 @@ export interface ChannelGateway {
     pending?: PendingView | undefined
     /** Why a turn that stopped with `error` failed (provider text; never posted as is). */
     error?: { code: string; message: string } | undefined
+    /** The failure is transient and the same turn is tried again later: no notice now. */
+    retrying?: boolean | undefined
   }): Promise<void>
   /**
    * A delegated agent (a child of a channel session) ended a turn. When it waits for an approval
@@ -5849,6 +5851,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     pending?: PendingView | undefined
     /** Why a turn that stopped with `error` failed (provider text; never posted as is). */
     error?: { code: string; message: string } | undefined
+    /** The failure is transient and the same turn is tried again later: no notice now. */
+    retrying?: boolean | undefined
   }): Promise<void> {
     stopTyping(end.sessionId)
     const row = sessions.bySession(end.sessionId)
@@ -5869,6 +5873,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       triggerKey ??
       (wakeKey === undefined ? turnTriggers.get(end.sessionId) : delegations.get(end.sessionId))
     const trigger = replyKey === undefined ? undefined : await triggerMessage(row, replyKey)
+    if (end.retrying === true) {
+      // a transient failure that is tried again later: the retry's turn answers the same message,
+      // so its trigger is kept and nobody is told "something went wrong" in between
+      if (trigger !== undefined && wakeKey === undefined)
+        turnTriggers.set(end.sessionId, trigger.id)
+      return
+    }
     if (end.stop === 'tool-pending') {
       if (trigger !== undefined && wakeKey === undefined)
         turnTriggers.set(end.sessionId, trigger.id)

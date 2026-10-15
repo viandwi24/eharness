@@ -31,7 +31,9 @@ import type { NewEvent } from '../../domain/events.ts'
 import { parseReport, programRunOutcome } from '../../domain/programs.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import { previewOf, statusFromStop, titleFromText } from '../../domain/tasks.ts'
+import { gaveUpText, retryingText } from '../../domain/turn-retry.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
+import type { TurnRetryHooks } from './turn-retry-service.ts'
 
 export interface TaskIndexOptions {
   store: TaskWriter
@@ -44,6 +46,11 @@ export interface TaskIndexOptions {
    * chat in the sidebar and the summary of a failed run.
    */
   describeStop?(sessionId: string, stop: string): string | undefined
+  /**
+   * The automatic retry of transient failures (`turn-retry-service.ts`): a failed turn that will be
+   * tried again leaves the task `retrying`, not `failed`. Late-bound.
+   */
+  retry?: () => TurnRetryHooks | undefined
   now?: () => number
 }
 
@@ -165,6 +172,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
           (
             ctx,
             e: {
+              turnId: string
               stop: string
               /** `TurnResult.error`: `code` is always set (`EH_PROVIDER_AUTH`, `EH_LOCK_UNAVAILABLE`, ...). */
               error?: { code: string; message: string }
@@ -214,7 +222,19 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 taskOrigin(ctx) !== 'program' &&
                 e.stop === 'tool-pending' &&
                 pendingKinds(e.pending) !== null
-              const status = parked ? 'needs_action' : (program?.status ?? statusFromStop(e.stop))
+              // a transient failure that will be tried again is not a failed task
+              const plan = options.retry?.()?.observe({
+                sessionId: ctx.session.id,
+                turnId: e.turnId,
+                stop: e.stop,
+                error: e.error,
+              })
+              const retrying = plan?.state === 'retrying' ? plan : undefined
+              const status = retrying
+                ? 'retrying'
+                : parked
+                  ? 'needs_action'
+                  : (program?.status ?? statusFromStop(e.stop))
               const kind = status === 'needs_action' ? pendingKinds(e.pending) : null
               // a `tool-pending` turn that waits on an external wait only (the task's own park)
               // is still running work, not a thing for a person
@@ -224,23 +244,28 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 pendingKind: kind,
                 now: t,
                 ...(report === undefined ? {} : { report }),
-                summary:
-                  program?.summary != null && e.error === undefined
-                    ? previewOf(
-                        (e.stop === 'cost-cap'
-                          ? options.describeStop?.(ctx.session.id, e.stop)
-                          : undefined) ?? program.summary,
-                        500,
-                      )
-                    : e.error?.code === 'EH_PROVIDER_AUTH'
-                      ? 'The model provider rejected the API key. Set it in Settings > Providers.'
-                      : e.stop === 'error' && e.error !== undefined
-                        ? // a failed run says why (a later turn's summary replaces an older one)
-                          previewOf(`${e.error.code}: ${e.error.message}`, 500)
-                        : assistantText === ''
-                          ? previewOf(options.describeStop?.(ctx.session.id, e.stop) ?? '', 500) ||
-                            null
-                          : previewOf(assistantText, 500),
+                summary: retrying
+                  ? retryingText(retrying)
+                  : plan?.state === 'exhausted'
+                    ? gaveUpText(plan.max, plan.errorMessage)
+                    : program?.summary != null && e.error === undefined
+                      ? previewOf(
+                          (e.stop === 'cost-cap'
+                            ? options.describeStop?.(ctx.session.id, e.stop)
+                            : undefined) ?? program.summary,
+                          500,
+                        )
+                      : e.error?.code === 'EH_PROVIDER_AUTH'
+                        ? 'The model provider rejected the API key. Set it in Settings > Providers.'
+                        : e.stop === 'error' && e.error !== undefined
+                          ? // a failed run says why (a later turn's summary replaces an older one)
+                            previewOf(`${e.error.code}: ${e.error.message}`, 500)
+                          : assistantText === ''
+                            ? previewOf(
+                                options.describeStop?.(ctx.session.id, e.stop) ?? '',
+                                500,
+                              ) || null
+                            : previewOf(assistantText, 500),
                 addCostUsd: e.usage.costUsd ?? 0,
                 addTokens: e.usage.totalTokens,
               })

@@ -182,6 +182,7 @@ import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
 import { sqliteThreadStore } from './infra/db/threads-repo.ts'
+import { sqliteTurnRetryStore } from './infra/db/turn-retries-repo.ts'
 import { type ActivityLog, createActivityLog } from './infra/eh/activity-log.ts'
 import {
   type AgentFactory,
@@ -233,6 +234,7 @@ import {
   type TeamService,
 } from './infra/eh/team-service.ts'
 import { withThreadActivity } from './infra/eh/thread-activity.ts'
+import { createTurnRetryService, type TurnRetryService } from './infra/eh/turn-retry-service.ts'
 import { sqliteUploadStore } from './infra/eh/upload-store.ts'
 import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
 import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
@@ -321,6 +323,8 @@ export interface ServerConfig {
   retention?: TableRetention
   /** Agent health scan (anomaly findings, bell notice for new high ones): every `everyMs` (default 10 min; 0 = never; off when `reconcile.everyMs` is 0). */
   health?: { everyMs?: number }
+  /** Automatic retry of transient turn failures: timer interval (0 = none) and the delay per attempt (tests shorten it). */
+  turnRetry?: { tickMs?: number; delayMs?: (attempt: number) => number; retryUnknown?: boolean }
   /** Routine ticker (interval, lookahead, grace, recovery). `tickMs: 0` = no timer. */
   routines?: RoutineEngineConfig
   /** Heartbeat tuning (tests): how long new chat messages settle before an early beat starts. */
@@ -416,6 +420,8 @@ export interface Server {
   ready: Promise<void>
   /** Run the repair pass now (idempotent; every instance may run it). */
   reconcile(): Promise<ReconcileReport>
+  /** Automatic retry of transient turn failures (tests tick it and read what waits). */
+  turnRetry: TurnRetryService
   close(): Promise<void>
 }
 
@@ -698,6 +704,8 @@ export function compose(config: ServerConfig): Server {
   const sessionModes = sqliteSessionModes(conn.sqlite)
   const chatToolsStore = sqliteChatTools(conn.sqlite)
   let routines: RoutineService | undefined
+  // the automatic retry of transient failures: late-bound, it needs the factory and the app deps
+  let turnRetries: TurnRetryService | undefined
   const observer = createObserver({ log: (message) => console.warn(message) })
   const logWarning = createDedupedWarningLog({})
   const factory = createAgentFactory({
@@ -760,6 +768,7 @@ export function compose(config: ServerConfig): Server {
       return { ...s, rev: s.updatedAt }
     },
     routineOutcomes: () => routines?.outcomes,
+    turnRetry: () => turnRetries,
     onFileChange,
     ...(config.limits === undefined ? {} : { limits: config.limits }),
     onWarning: (w) => {
@@ -802,17 +811,68 @@ export function compose(config: ServerConfig): Server {
     ids: () => uuidv7(),
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
+  // a run the client let continue after failed deliverables is checked again when it ends
+  const afterResumed = async (sessionId: string): Promise<void> => {
+    // a transient failure waits for its retry: the retry's end is the end of the run
+    if (turnRetries?.pending(sessionId) !== undefined) return
+    const task = tasks.getBySession(sessionId)
+    if (task?.deliverables?.status === 'fail') await recheckTask(deps, task.id)
+    // a run that parked before it reported was never checked: check it now (with the fix-up turn)
+    else await programRunner.verifyResumed(sessionId)
+  }
+  turnRetries = createTurnRetryService(factory, {
+    store: sqliteTurnRetryStore(conn.sqlite),
+    agents,
+    tasks,
+    resolve: createSessionResolver({ agents, tasks, threads: threadStore }),
+    app: () => deps,
+    afterRun: afterResumed,
+    ...(config.turnRetry?.tickMs === undefined ? {} : { tickMs: config.turnRetry.tickMs }),
+    ...(config.turnRetry?.delayMs === undefined ? {} : { delayMs: config.turnRetry.delayMs }),
+    ...(config.turnRetry?.retryUnknown === undefined
+      ? {}
+      : { retryUnknown: config.turnRetry.retryUnknown }),
+    // a retry dropped without a turn must not leave its task or run showing "retrying"
+    onAbandon: (sessionId, why) => {
+      const t = Date.now()
+      const task = tasks.getBySession(sessionId)
+      if (task?.status === 'retrying') {
+        tasks.update(sessionId, {
+          status: 'failed',
+          pendingKind: null,
+          now: t,
+          summary: `Not retried: ${why}`,
+        })
+        events.append({
+          type: 'task-changed',
+          agentId: task.agentId,
+          sessionId,
+          payload: {
+            taskId: task.id,
+            status: 'failed',
+            pendingKind: null,
+            title: task.title,
+            parentSessionId: task.parentSessionId,
+          },
+          at: t,
+        })
+      }
+      if (/^(program|routine):/.test(sessionId)) {
+        void routines?.outcomes.turnEnded({
+          sessionId,
+          stop: 'error',
+          errorMessage: `not retried: ${why}`,
+          needsPerson: false,
+        })
+      }
+    },
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
   const decisionService = createDecisionService(factory, {
     agents,
     // a decided takeover gives the browser back to the agent
     handBack: (profileId) => browserService.manager.handBack(profileId, 'The client'),
-    // a run the client let continue after failed deliverables is checked again when it ends
-    afterRun: async (sessionId) => {
-      const task = tasks.getBySession(sessionId)
-      if (task?.deliverables?.status === 'fail') await recheckTask(deps, task.id)
-      // a run that parked before it reported was never checked: check it now (with the fix-up turn)
-      else await programRunner.verifyResumed(sessionId)
-    },
+    afterRun: afterResumed,
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const heartbeatStore = sqliteHeartbeatStore(conn.sqlite)
@@ -901,6 +961,7 @@ export function compose(config: ServerConfig): Server {
     }),
     uploads: sqliteUploadStore(conn.sqlite, { onChange: onFileChange }),
     tasks,
+    turnRetry: turnRetries,
     team,
     library: sqliteLibraryStore(conn.sqlite, { onChange: onFileChange }),
     artifacts,
@@ -1529,6 +1590,7 @@ export function compose(config: ServerConfig): Server {
       : undefined,
   })
   routines.start()
+  turnRetries.start()
   // phantom connector names of stored programs (a tool prefix instead of the id) are repaired once
   // (after the connectors are prepared: the repair itself never opens a connection)
   void connectorsReady.then(() => repairProgramAuthorities(deps)).catch(() => undefined)
@@ -1557,6 +1619,7 @@ export function compose(config: ServerConfig): Server {
     ready,
     reconcile,
     healthScan,
+    turnRetry: turnRetries,
     async close() {
       if (timer !== undefined) clearInterval(timer)
       if (healthTimer !== undefined) clearInterval(healthTimer)
@@ -1571,6 +1634,7 @@ export function compose(config: ServerConfig): Server {
       await telegramUser?.stop()
       await channels.stop()
       await routines?.stop()
+      await turnRetries?.stop()
       await ready
       await repairing?.catch(() => undefined)
       await factory.close()

@@ -2873,6 +2873,45 @@
             ],
             "description": "Queued tasks only: when a `slot` wait is held by a task that waits for the client, a sentence naming it (\"waiting: <task> needs your approval first\"). null otherwise."
           },
+          "retry": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "attempt": {
+                "type": "integer",
+                "description": "The retry that waits (1-based)."
+              },
+              "max": {
+                "type": "integer"
+              },
+              "nextAt": {
+                "type": "integer",
+                "description": "When it starts (epoch ms)."
+              },
+              "errorCode": {
+                "type": "string"
+              },
+              "errorMessage": {
+                "type": "string",
+                "description": "The last error, as the AI provider said it."
+              },
+              "running": {
+                "type": "boolean",
+                "description": "The retry turn runs right now."
+              }
+            },
+            "required": [
+              "attempt",
+              "max",
+              "nextAt",
+              "errorCode",
+              "errorMessage",
+              "running"
+            ],
+            "description": "Only while `status` is `retrying`: the automatic retry of a temporary failure. A task that failed after its last attempt has `status: failed` and no `retry`; `POST /tasks/{id}/retry` continues it by hand."
+          },
           "column": {
             "type": "string",
             "enum": [
@@ -2921,13 +2960,14 @@
           "queued",
           "needs_action",
           "running",
+          "retrying",
           "done",
           "failed",
           "stopped",
           "interrupted",
           "timed_out"
         ],
-        "description": "`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit)."
+        "description": "`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `retrying` (a temporary error, such as an unavailable AI provider, stopped the turn: it is continued automatically at `retry.nextAt`; see `retry`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit)."
       },
       "TaskReport": {
         "type": [
@@ -8144,6 +8184,7 @@
               "claimed",
               "enqueued",
               "needs_action",
+              "retrying",
               "succeeded",
               "failed",
               "skipped"
@@ -19412,6 +19453,86 @@
           },
           "409": {
             "description": "`TASK_NOT_RUNNING`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/retry": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Retry a task that stopped without finishing",
+        "description": "Continues the task session from where the failed turn stopped (the tool results already stored stay; nothing done is done twice) and cancels the waiting automatic retry, if any. For a task that is `retrying`, `failed`, `interrupted`, `timed_out` or `stopped`. Answers at once with the task; the continuation runs in the background (watch `status`). A failure of the continuation starts a fresh series of automatic retries when it is temporary.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The continuation started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`TASK_NOT_RETRYABLE`, `TASK_QUEUED`, `SESSION_BUSY` or `RETRY_RUNNING`",
             "content": {
               "application/json": {
                 "schema": {

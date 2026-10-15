@@ -29,6 +29,7 @@ import {
   type StandingOrder,
 } from './standing-orders.ts'
 import type { Task } from './tasks.ts'
+import { willRetryText } from './turn-retry.ts'
 
 // --- configuration -----------------------------------------------------------------------------
 
@@ -501,6 +502,20 @@ export function observe(input: ObserveInput): Finding[] {
           t.id,
           `Waiting for you: ${t.title}`,
           `Needs an ${t.pendingKind === 'question' ? 'answer' : 'approval'} for ${ago(now - t.lastActivityAt)}.`,
+          [`/tasks/${t.id}`],
+        ),
+      )
+    } else if (t.status === 'retrying') {
+      // not failed: a temporary error stopped it and the server continues it by itself; a beat may
+      // mention it, never re-run it
+      out.push(
+        f(
+          'task.retrying',
+          t.id,
+          `Task retrying after a temporary error: ${t.title}`,
+          t.retry == null
+            ? (t.summary ?? 'It will be continued automatically.')
+            : `${willRetryText(t.retry)}. Last error: ${t.retry.errorMessage}`,
           [`/tasks/${t.id}`],
         ),
       )

@@ -26,6 +26,8 @@
 	import { live } from '#lib/stores/live.svelte.js';
 	import { followSessionStream } from 'eharness/client';
 	import { isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
+	import { retryLine, retryTask } from '#lib/tasks/actions.js';
+	import { formatDateTime } from '#lib/time.js';
 	import {
 		Conversation,
 		ConversationContent,
@@ -182,6 +184,12 @@
 
 	/** A task that stopped without finishing its work (its process died, it ran too long, it never started). */
 	const resumable = $derived(task !== undefined && ['interrupted', 'timed_out', 'failed', 'stopped'].includes(task.status));
+	/** A temporary error (an unavailable AI provider, a rate limit) stopped the turn; the server continues it by itself. */
+	const retrying = $derived(task?.status === 'retrying');
+	async function retryNow(): Promise<void> {
+		if (!task) return;
+		if (await retryTask(task.id)) void load(task.id);
+	}
 	async function continueTask(): Promise<void> {
 		if (!task) return;
 		try {
@@ -338,11 +346,22 @@
 				bind:clientHeight={dockHeight}
 			>
 				<div class="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3">
+					{#if retrying && task}
+						<div class="mb-2 flex items-center gap-2 rounded-lg border border-border bg-popover px-3 py-2 text-sm" role="status" data-testid="task-retrying">
+							<WarningCircleIcon class="size-4 shrink-0 text-muted-foreground" />
+							<span class="min-w-0 flex-1">{retryLine(task, formatDateTime)}. {task.retry?.errorMessage ?? ''}</span>
+							<Button size="xs" variant="outline" onclick={() => void retryNow()}>Retry now</Button>
+						</div>
+					{/if}
 					{#if resumable && task}
 						<div class="mb-2 flex items-center gap-2 rounded-lg border border-border bg-popover px-3 py-2 text-sm" role="status" data-testid="task-resumable">
 							<WarningCircleIcon class="size-4 shrink-0 text-muted-foreground" />
 							<span class="min-w-0 flex-1">{task.status === 'interrupted' ? 'This task was interrupted before it finished.' : task.status === 'timed_out' ? 'This task ran past its time limit.' : task.summary === 'Failed to start' ? 'This task did not start.' : 'This task stopped before it finished.'}</span>
-							<Button size="xs" variant="outline" onclick={() => void continueTask()}>Continue</Button>
+							{#if task.status === 'failed'}
+								<Button size="xs" variant="outline" onclick={() => void retryNow()}>Retry</Button>
+							{:else}
+								<Button size="xs" variant="outline" onclick={() => void continueTask()}>Continue</Button>
+							{/if}
 						</div>
 					{/if}
 					{#if approvals.length}

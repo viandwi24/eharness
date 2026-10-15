@@ -527,6 +527,34 @@ export const routineRuns = sqliteTable(
 )
 
 /**
+ * A failed turn waiting for its automatic retry (`domain/turn-retry.ts`, `infra/eh/turn-retry-service.ts`):
+ * one row per session. `pending` waits for `next_at`; `running` is the retry turn; `failed` is the
+ * last attempt that did not help (kept until a new turn or a manual retry, so the page can say why).
+ * `claimed_until` is the lease of the instance that runs the due retry.
+ */
+export const turnRetries = sqliteTable(
+  'turn_retries',
+  {
+    sessionId: text('session_id').primaryKey(),
+    agentId: text('agent_id').notNull(),
+    /** The turn whose end made or advanced this row (the same turn is never counted twice). */
+    turnId: text('turn_id').notNull(),
+    /** The retry that waits (pending) or runs (running); the last one made (failed). */
+    attempt: integer('attempt').notNull(),
+    maxAttempts: integer('max_attempts').notNull(),
+    nextAt: integer('next_at').notNull(),
+    errorCode: text('error_code').notNull(),
+    errorMessage: text('error_message').notNull(),
+    /** `pending` | `running` | `failed` */
+    state: text('state').notNull(),
+    claimedUntil: integer('claimed_until'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('turn_retries_due').on(t.state, t.nextAt)],
+)
+
+/**
  * Caller ids of inbox items (`session.enqueue(…, { id })`, spec 05 §12 rule 17). `expires_at` is
  * null while the item is stored and `ack time + 24 h` afterwards (the dedupe horizon).
  */

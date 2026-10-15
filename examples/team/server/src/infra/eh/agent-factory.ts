@@ -160,6 +160,8 @@ import {
 } from './storage.ts'
 import { sqliteStreamLog } from './stream-log.ts'
 import { taskIndex } from './task-index.ts'
+import { turnRetry } from './turn-retry-plugin.ts'
+import type { TurnRetryHooks } from './turn-retry-service.ts'
 import { WORK_QUEUE_TOOLS, type WorkQueueIntake, workQueue } from './work-queue-plugin.ts'
 
 /** Limits of delegation (plan decision D4: multi-agent runs cost many times a chat). */
@@ -301,6 +303,11 @@ export interface AgentFactoryDeps {
   }) => void
   /** Receives the end of every turn so routine runs get their outcome (see `routine-plugin.ts`). */
   routineOutcomes?: () => RoutineOutcomes | undefined
+  /**
+   * The automatic retry of turns that failed transiently (`turn-retry-service.ts`). Late-bound: the
+   * service is built after the factory. Absent = a failed turn is simply failed.
+   */
+  turnRetry?: () => TurnRetryHooks | undefined
   /** Called after a library file changed (event feed, M4). */
   onFileChange?: (change: LibraryChange) => void
   onWarning?: (warning: HarnessWarning) => void
@@ -317,7 +324,13 @@ export interface AgentFactoryDeps {
    */
   instanceId?: string
   /** Timers of the stream log and the inbox (ms); tests shorten them. */
-  tuning?: { streams?: StreamsTuning; inbox?: { pollMs?: number }; abortPollMs?: number }
+  tuning?: {
+    streams?: StreamsTuning
+    inbox?: { pollMs?: number }
+    abortPollMs?: number
+    /** AI SDK retries of one model call before the turn fails (default: the SDK's 2, with 2 s and 4 s backoff). Tests set 0. */
+    modelMaxRetries?: number
+  }
 }
 
 export interface StreamsTuning {
@@ -1304,6 +1317,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               gateway: deps.channels,
               agentOf: (slug) => deps.agentBySlug?.(slug),
               ...(deps.taskMayPost === undefined ? {} : { taskMayPost: deps.taskMayPost }),
+              ...(deps.turnRetry === undefined ? {} : { retry: deps.turnRetry }),
             }),
           ]),
       // the `reminder` tool of a person's own chat thread (a channel session has its own)
@@ -1417,6 +1431,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               outcomes: {
                 turnEnded: (e) => deps.routineOutcomes?.()?.turnEnded(e) ?? Promise.resolve(),
               },
+              ...(deps.turnRetry === undefined ? {} : { retry: deps.turnRetry }),
             }),
           ]),
       ...(deps.taskStore === undefined || deps.events === undefined
@@ -1431,8 +1446,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               },
               describeStop: (sessionId, stop) =>
                 stop === 'cost-cap' ? capTextOf(sessionId) : undefined,
+              ...(deps.turnRetry === undefined ? {} : { retry: deps.turnRetry }),
             }),
           ]),
+      // a waiting automatic retry is cancelled by any other turn; a failure schedules one
+      ...(deps.turnRetry === undefined ? [] : [turnRetry({ retries: deps.turnRetry })]),
       // a chat turn that stops on a budget leaves a readable notice (which limit, where to raise it)
       // (`text` peeks the refusal itself: the task index reads the same one for its stop text)
       budgetNotice({
@@ -1503,6 +1521,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       settings: {
         maxOutputTokens: outputCapOf(modelInfoOf(def, settings).maxOutputTokens),
         timeout: { firstChunkMs: MODEL_IDLE_TIMEOUT_MS, chunkMs: MODEL_IDLE_TIMEOUT_MS },
+        ...(deps.tuning?.modelMaxRetries === undefined
+          ? {}
+          : { maxRetries: deps.tuning.modelMaxRetries }),
       },
       hooks: { timeoutMs: HOOK_TIMEOUT_MS },
       toolSources: { timeoutMs: TOOL_SOURCE_TIMEOUT_MS, retryAfterMs: TOOL_SOURCE_RETRY_MS },

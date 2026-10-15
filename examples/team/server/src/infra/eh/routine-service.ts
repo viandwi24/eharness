@@ -51,6 +51,7 @@ import {
   type RoutineSpec,
   routineSessionId,
 } from '../../domain/routines.ts'
+import { willRetryText } from '../../domain/turn-retry.ts'
 import type { SqliteRoutineStore } from '../db/routines-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
@@ -92,6 +93,10 @@ export interface TurnOutcome {
   errorCode?: string
   /** Approvals or questions wait for a person. */
   needsPerson: boolean
+  /** The turn failed transiently and will be tried again (`turn-retry-service.ts`): the run is `retrying`. */
+  retry?: { attempt: number; max: number; nextAt: number; errorMessage: string }
+  /** The automatic retries are used up: the run fails, and says so. */
+  retryGaveUp?: boolean
   /** Program runs: the status of the structured final report, when the turn produced one. */
   reportStatus?: string
   reportSummary?: string
@@ -259,6 +264,7 @@ export function createRoutineService(
       const previous = store.previousFiredRun(routine.id, run.id)
       if (previous === undefined) return undefined
       if (previous.status === 'claimed') return 'overlap: the previous fire is being started'
+      if (previous.status === 'retrying') return 'overlap: the previous run is waiting to retry'
       sessionId = previous.sessionId
     }
     // read handle: looking never opens a session or runs its hooks
@@ -633,6 +639,16 @@ export function createRoutineService(
       }
       const now = clock()
       for (const run of runs) {
+        if (e.retry !== undefined) {
+          // a transient failure waits for its retry: not failed, not counted, not over
+          const waiting = store.markRetrying(
+            run.id,
+            `${willRetryText(e.retry)}; last error: ${e.retry.errorMessage}`.slice(0, 500),
+          )
+          const owner = waiting === undefined ? undefined : store.get(waiting.routineId)
+          if (waiting !== undefined && owner !== undefined) emitRun(owner, waiting, now)
+          continue
+        }
         let outcome: Parameters<SqliteRoutineStore['finishRun']>[1]
         if (e.stop === 'tool-pending') {
           if (!e.needsPerson) {
@@ -675,7 +691,10 @@ export function createRoutineService(
           // every later run fails the same way until someone fixes the key
           outcome = { status: 'failed', reason: `${PROVIDER_AUTH_HINT}${suffix(e.errorMessage)}` }
         } else {
-          outcome = { status: 'failed', reason: `${e.stop}${suffix(e.errorMessage)}` }
+          outcome = {
+            status: 'failed',
+            reason: `${e.stop}${suffix(e.errorMessage)}${e.retryGaveUp === true ? ' (automatic retries did not help)' : ''}`,
+          }
         }
         // a program run whose later turn (a decision hand-back) fails after the run was recorded
         // as succeeded ends failed: the run mirrors the task's final state

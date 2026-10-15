@@ -20,6 +20,7 @@ import {
 } from '../domain/health.ts'
 import { parseProgramSession } from '../domain/programs.ts'
 import { parseChatSession } from '../domain/threads.ts'
+import { willRetryText } from '../domain/turn-retry.ts'
 import { postNotice } from './briefings.ts'
 import type { Deps } from './ports.ts'
 
@@ -172,12 +173,31 @@ export interface HealthQuery {
 }
 
 /** The Health page: findings of the last 24 hours, newest problems first within a severity. */
+/**
+ * A failure that waits for its automatic retry says when, and is not high (no bell yet: the owner
+ * need not act; the retry service rings once if the last attempt fails).
+ */
+function withRetries(deps: Deps, findings: HealthFinding[]): HealthFinding[] {
+  const waiting = deps.turnRetry?.waiting() ?? new Map()
+  if (waiting.size === 0) return findings
+  return findings.map((f) => {
+    const retry = f.sessionId === null ? undefined : waiting.get(f.sessionId)
+    return retry === undefined
+      ? f
+      : {
+          ...f,
+          explanation: `${f.explanation} (${willRetryText(retry)})`,
+          severity: f.severity === 'high' ? 'medium' : f.severity,
+        }
+  })
+}
+
 export async function listHealth(
   deps: Deps,
   query: HealthQuery = {},
 ): Promise<{ findings: HealthFinding[]; open: number; scannedAt: number }> {
   const now = deps.clock.now()
-  const all = findingsOf(deps, await gatherFacts(deps, now), now)
+  const all = withRetries(deps, findingsOf(deps, await gatherFacts(deps, now), now))
   const agentId =
     query.agentId === undefined
       ? undefined
@@ -245,7 +265,7 @@ export async function runHealthJob(
   const now = deps.clock.now()
   try {
     const facts = await gatherFacts(deps, now)
-    const findings = findingsOf(deps, facts, now)
+    const findings = withRetries(deps, findingsOf(deps, facts, now))
     const notified = notifyFindings(deps, findings, now)
     if (hooks.suggest !== undefined) {
       try {

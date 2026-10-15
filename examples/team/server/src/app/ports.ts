@@ -111,6 +111,7 @@ import type { ConfiguredGroup, LastCallTools } from '../domain/session-tools.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
 import type { Thread, ThreadSeed, ThreadSource } from '../domain/threads.ts'
+import type { PendingRetry } from '../domain/turn-retry.ts'
 
 export interface Clock {
   now(): number
@@ -305,6 +306,16 @@ export interface AgentActivity {
 }
 
 /** Read side of the task index and the event feed (written by the `taskIndex` plugin). */
+/** Automatic retry of turns that failed transiently (`infra/eh/turn-retry-service.ts`). */
+export interface TurnRetryPort {
+  /** The retry that waits (or runs) for a session. */
+  pending(sessionId: string): PendingRetry | undefined
+  /** Every waiting retry by session id (Health reads this for "will retry at ..."). */
+  waiting(): Map<string, PendingRetry>
+  /** Continue the session now. Throws a conflict when something is working on it. */
+  retryNow(sessionId: string): Promise<{ started: true }>
+}
+
 export interface TaskStore {
   list(query: { status?: TaskStatus; agentId?: string; limit: number }): Task[]
   get(id: string): Task | undefined
@@ -1263,6 +1274,7 @@ export interface Deps {
   briefings: BriefingStore
   uploads: UploadStore
   tasks: TaskStore
+  turnRetry: TurnRetryPort
   team: TeamPort
   library: LibraryStore
   artifacts: ArtifactsPort

@@ -3387,6 +3387,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry a task that stopped without finishing
+         * @description Continues the task session from where the failed turn stopped (the tool results already stored stay; nothing done is done twice) and cancels the waiting automatic retry, if any. For a task that is `retrying`, `failed`, `interrupted`, `timed_out` or `stopped`. Answers at once with the task; the continuation runs in the background (watch `status`). A failure of the continuation starts a fresh series of automatic retries when it is temporary.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The continuation started */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `TASK_NOT_RETRYABLE`, `TASK_QUEUED`, `SESSION_BUSY` or `RETRY_RUNNING` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/start": {
         parameters: {
             query?: never;
@@ -16395,6 +16473,19 @@ export interface components {
             queue?: "hold" | "worker" | "slot" | "starting" | null;
             /** @description Queued tasks only: when a `slot` wait is held by a task that waits for the client, a sentence naming it ("waiting: <task> needs your approval first"). null otherwise. */
             queueNote?: string | null;
+            /** @description Only while `status` is `retrying`: the automatic retry of a temporary failure. A task that failed after its last attempt has `status: failed` and no `retry`; `POST /tasks/{id}/retry` continues it by hand. */
+            retry?: {
+                /** @description The retry that waits (1-based). */
+                attempt: number;
+                max: number;
+                /** @description When it starts (epoch ms). */
+                nextAt: number;
+                errorCode: string;
+                /** @description The last error, as the AI provider said it. */
+                errorMessage: string;
+                /** @description The retry turn runs right now. */
+                running: boolean;
+            } | null;
             /**
              * @description Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`.
              * @enum {string}
@@ -16402,10 +16493,10 @@ export interface components {
             column?: "queued" | "running" | "waiting" | "review" | "done";
         };
         /**
-         * @description `queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).
+         * @description `queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `retrying` (a temporary error, such as an unavailable AI provider, stopped the turn: it is continued automatically at `retry.nextAt`; see `retry`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).
          * @enum {string}
          */
-        TaskStatus: "queued" | "needs_action" | "running" | "done" | "failed" | "stopped" | "interrupted" | "timed_out";
+        TaskStatus: "queued" | "needs_action" | "running" | "retrying" | "done" | "failed" | "stopped" | "interrupted" | "timed_out";
         /** @description The final report of a program run; null for other tasks and while it runs. */
         TaskReport: {
             /** @enum {string} */
@@ -17892,7 +17983,7 @@ export interface components {
             /** @enum {string} */
             trigger: "schedule" | "manual";
             /** @enum {string} */
-            status: "claimed" | "enqueued" | "needs_action" | "succeeded" | "failed" | "skipped";
+            status: "claimed" | "enqueued" | "needs_action" | "retrying" | "succeeded" | "failed" | "skipped";
             sessionId: string;
             inboxId: string | null;
             reason: string | null;

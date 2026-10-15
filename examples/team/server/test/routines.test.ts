@@ -74,6 +74,8 @@ function instance(
     eventsPollMs: 30,
     reconcile: { onBoot: false, everyMs: 0 },
     routines: { tickMs: 0, recoverAfterMs: options.recoverAfterMs ?? 30_000 },
+    // these tests are about plain failures: an unnamed error is not retried here
+    turnRetry: { tickMs: 0, retryUnknown: false },
   })
   servers.push(server)
   if (options.first) {

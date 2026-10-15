@@ -48,3 +48,15 @@ export const startTask = (id: string): Promise<boolean> => run('start the task',
 /** Hold a queued task (it does not start on its own) or release it (it starts when the agent is free). */
 export const setHold = (id: string, hold: boolean): Promise<boolean> =>
 	run(hold ? 'hold the task' : 'release the task', () => api.patch('/tasks/{id}', { params: { id }, body: { hold } }), hold ? 'On hold' : 'Released');
+
+/**
+ * Continue a task that stopped without finishing (a failed run, or one waiting for its automatic
+ * retry) from where it stopped: nothing it already did is done twice.
+ */
+export const retryTask = (id: string): Promise<boolean> => run('retry the task', () => api.post('/tasks/{id}/retry', { params: { id } }), 'Retrying now');
+
+/** "Retrying (attempt 2 of 4) at 14:05" for a task that waits for its automatic retry. */
+export function retryLine(task: { retry?: { attempt: number; max: number; nextAt: number } | null }, format: (ms: number) => string): string {
+	const r = task.retry;
+	return r ? `Retrying (attempt ${r.attempt} of ${r.max}) at ${format(r.nextAt)}` : 'Retrying';
+}
