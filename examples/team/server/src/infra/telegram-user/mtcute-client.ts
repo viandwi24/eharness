@@ -598,6 +598,27 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         await ready()
         await tg.unbanChatMember({ chatId: Number(chatId), participantId: peerRef(userId) })
       },
+      async promoteMember(chatId, userId, r, title) {
+        await ready()
+        await tg.editAdminRights({
+          chatId: Number(chatId),
+          userId: peerRef(userId),
+          rights: {
+            ...(r.changeInfo === true ? { changeInfo: true } : {}),
+            ...(r.deleteMessages === true ? { deleteMessages: true } : {}),
+            ...(r.banUsers === true ? { banUsers: true } : {}),
+            ...(r.inviteUsers === true ? { inviteUsers: true } : {}),
+            ...(r.pinMessages === true ? { pinMessages: true } : {}),
+            ...(r.manageTopics === true ? { manageTopics: true } : {}),
+            ...(r.manageCall === true ? { manageCall: true } : {}),
+          },
+          ...(title === undefined ? {} : { rank: title }),
+        })
+      },
+      async demoteMember(chatId, userId) {
+        await ready()
+        await tg.editAdminRights({ chatId: Number(chatId), userId: peerRef(userId), rights: {} })
+      },
       async restrictMember(chatId, userId, r, untilMs) {
         await ready()
         await tg.restrictChatMember({
@@ -737,6 +758,8 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
       'setTopicClosed',
       'banMember',
       'unbanMember',
+      'promoteMember',
+      'demoteMember',
       'restrictMember',
       'deleteMemberMessages',
       'createInviteLink',

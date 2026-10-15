@@ -128,6 +128,17 @@ export interface TgDelete {
   chatId?: string
 }
 
+/** The admin rights the account may hand out: a safe subset, never `addAdmins`, never anonymous. */
+export interface TgAdminRights {
+  changeInfo?: boolean
+  deleteMessages?: boolean
+  banUsers?: boolean
+  inviteUsers?: boolean
+  pinMessages?: boolean
+  manageTopics?: boolean
+  manageCall?: boolean
+}
+
 export interface TgAdminEvent {
   id: string
   at: number
@@ -273,6 +284,15 @@ export interface TgUserClient {
   setTopicClosed?(chatId: string, topicId: number, closed: boolean): Promise<void>
   banMember?(chatId: string, userId: string, untilMs?: number): Promise<void>
   unbanMember?(chatId: string, userId: string): Promise<void>
+  /** Make a person an admin with exactly these rights (`editAdmin`); `title` is the badge. */
+  promoteMember?(
+    chatId: string,
+    userId: string,
+    rights: TgAdminRights,
+    title?: string,
+  ): Promise<void>
+  /** Take every admin right away (the person stays a member). */
+  demoteMember?(chatId: string, userId: string): Promise<void>
   restrictMember?(
     chatId: string,
     userId: string,

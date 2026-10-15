@@ -30,7 +30,8 @@ import {
   type SentMessage,
 } from '../channels/types.ts'
 import { toTelegramHtml } from '../telegram/format.ts'
-import { accountActions } from './actions.ts'
+import { accountActions, DELETED_HINT } from './actions.ts'
+import type { AdminLogQuery } from './adminlog.ts'
 import type { TgChat, TgDelete, TgMessage, TgTopic, TgUser, TgUserClient } from './client.ts'
 import { classifyError, describeError, type TgErrorKind } from './errors.ts'
 import {
@@ -84,8 +85,8 @@ export interface UserAdapterHooks {
   onFatal(fatal: UserFatal): void
   /** A flood wait happened (for the Channels page). */
   onFlood?(info: { chatId: string | undefined; seconds: number; until: number; text: string }): void
-  /** The admin log of a chat, as text (the `admin_log` action). */
-  adminLogText?(chatId: string, limit: number): string
+  /** The admin log of a chat, read fresh and filtered, as text (the `admin_log` action). */
+  adminLogRead?(chatId: string, query: AdminLogQuery): Promise<string>
   /** The live dialog list was read: record the chats (not chosen) so the Channels page lists them. */
   dialogsSeen?(list: TgChat[]): void
   /** Choose a chat for ingest (observe-only) and back-fill `days` (0 = none); a sentence for the model. */
@@ -627,6 +628,10 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     idFormats: USER_ID_FORMATS,
     self: () => self,
     actions,
+    noResultHint: (nativeId) => {
+      const c = chats.get(connectionId, splitNativeId(nativeId).chatId)
+      return c?.admin && c.kind !== 'dm' ? DELETED_HINT : undefined
+    },
     getCapabilities: () => USER_CAPABILITIES,
     async getNodeInfo(nativeId) {
       if (splitNativeId(nativeId).topicId !== undefined) return undefined

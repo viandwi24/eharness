@@ -438,5 +438,10 @@ export interface ChannelAdapter {
    * "this chat, topic 6" without knowing how ids are composed.
    */
   childNativeId?(parent: ChannelNode, key: string): string | undefined
+  /**
+   * One line to append when a read of this chat found nothing (a place to look next, e.g. the
+   * platform's moderation log). `nativeId` is the node's native id. Absent or undefined = no hint.
+   */
+  noResultHint?(nativeId: string): string | undefined
   readonly actions?: readonly NativeAction[]
 }

@@ -71,6 +71,65 @@ const INVALID = [
   'CHAT_ID_INVALID',
   'REACTION_INVALID',
   'MEDIA_EMPTY',
+  'RIGHT_FORBIDDEN',
+  'USER_NOT_MUTUAL_CONTACT',
+  'ADMINS_TOO_MUCH',
+  'USER_CREATOR',
+  'USER_ADMIN_INVALID',
+  'USER_NOT_PARTICIPANT',
+  'USER_ID_INVALID',
+  'USER_BOT',
+  'BOT_CHANNELS_NA',
+  'ADMIN_RANK_INVALID',
+  'ADMIN_RANK_EMOJI_NOT_ALLOWED',
+  'CHAT_ADMIN_INVITE_REQUIRED',
+  'CHAT_NOT_MODIFIED',
+  'CHANNEL_INVALID',
+  'PARTICIPANT_ID_INVALID',
+]
+
+/** Sentences for refusals a person (or the model) has to act on. */
+const INVALID_DETAIL: Array<[string, string]> = [
+  [
+    'CHAT_ADMIN_REQUIRED',
+    'This account is not an admin of that chat, or lacks the admin right this needs (CHAT_ADMIN_REQUIRED).',
+  ],
+  [
+    'RIGHT_FORBIDDEN',
+    'The account may not grant one of those rights: an admin can only give rights it holds itself (RIGHT_FORBIDDEN).',
+  ],
+  [
+    'USER_NOT_MUTUAL_CONTACT',
+    'Telegram only lets an admin add this person if they are a mutual contact or already in the chat (USER_NOT_MUTUAL_CONTACT).',
+  ],
+  [
+    'ADMINS_TOO_MUCH',
+    'The chat already has the most admins Telegram allows (ADMINS_TOO_MUCH). Demote one first.',
+  ],
+  ['USER_CREATOR', 'That person created the chat: their rights cannot be changed (USER_CREATOR).'],
+  [
+    'USER_ADMIN_INVALID',
+    'That person is an admin who was not promoted by this account: only the creator, or the admin who promoted them, can change them (USER_ADMIN_INVALID).',
+  ],
+  ['USER_NOT_PARTICIPANT', 'That person is not a member of the chat (USER_NOT_PARTICIPANT).'],
+  ['USER_BOT', 'Telegram does not allow a bot here (USER_BOT / BOT_CHANNELS_NA).'],
+  ['BOT_CHANNELS_NA', 'Telegram does not allow a bot here (BOT_CHANNELS_NA).'],
+  [
+    'ADMIN_RANK_INVALID',
+    'The admin title is not accepted: at most 16 characters (ADMIN_RANK_INVALID).',
+  ],
+  [
+    'ADMIN_RANK_EMOJI_NOT_ALLOWED',
+    'The admin title may not contain emoji (ADMIN_RANK_EMOJI_NOT_ALLOWED).',
+  ],
+  [
+    'CHAT_ADMIN_INVITE_REQUIRED',
+    'The account needs the right to invite users to do that (CHAT_ADMIN_INVITE_REQUIRED).',
+  ],
+  [
+    'CHAT_NOT_MODIFIED',
+    'Nothing changed: the person already has exactly these rights (CHAT_NOT_MODIFIED).',
+  ],
 ]
 
 /** The sentence for a chat or person the account has no access data for (mtcute's peer cache). */
@@ -108,7 +167,10 @@ export function classifyError(error: unknown): TgErrorKind {
   if (upper.startsWith('API_ID_INVALID') || upper.startsWith('API_ID_PUBLISHED_FLOOD')) {
     return { kind: 'app-invalid', text: upper }
   }
-  if (INVALID.some((c) => upper.startsWith(c))) return { kind: 'invalid', text: upper }
+  if (INVALID.some((c) => upper.startsWith(c))) {
+    const detail = INVALID_DETAIL.find(([c]) => upper.startsWith(c))?.[1]
+    return { kind: 'invalid', text: upper, ...(detail === undefined ? {} : { detail }) }
+  }
   return { kind: 'transient', text: text.slice(0, 200) }
 }
 

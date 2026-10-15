@@ -557,7 +557,7 @@ export function sqliteNodeStore(sqlite: Database): NodeStore {
         where.push(`(json_extract(a.history, '$.days') IS NOT NULL) = ${q.history ? 1 : 0}`)
       if (q.adminLog !== undefined)
         where.push(
-          `COALESCE(json_extract(a.extra, '$.adminLog.enabled'), 0) = ${q.adminLog ? 1 : 0}`,
+          `COALESCE(json_extract(a.extra, '$.adminLog.enabled'), 1) = ${q.adminLog ? 1 : 0}`,
         )
       if (q.q !== undefined && q.q.trim() !== '') {
         const like = likePattern(q.q.trim())

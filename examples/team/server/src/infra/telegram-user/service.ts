@@ -26,11 +26,18 @@ import type {
 } from '../../domain/channels.ts'
 import type { Collector } from '../../domain/collectors.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
+import { localTime } from '../channels/header.ts'
 import type { ChannelGateway } from '../channels/index.ts'
 import { listNodeViews, nodeView, pageNodeViews, writePolicy } from '../channels/node-views.ts'
 import { type ConnectionConfig, RateLimitsSchema, type ScopePolicy } from '../channels/policy.ts'
 import { createTelegramUserAdapter, type TelegramUserAdapter, type UserFatal } from './adapter.ts'
-import { type AdminLog, createAdminLog, eventText } from './adminlog.ts'
+import {
+  type AdminLog,
+  type AdminLogQuery,
+  createAdminLog,
+  eventText,
+  storedAdminEvents,
+} from './adminlog.ts'
 import { type Backfill, createBackfill } from './backfill.ts'
 import type { TgAdminEvent, TgClientFactory, TgMessage, TgUserClient } from './client.ts'
 import { ADMIN_EVENT_PREFIX, collectorId, telegramUserCollector } from './collector.ts'
@@ -257,6 +264,28 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       },
       signals: { mentionedSelf: false, replyToSelf: false },
     })
+    if (inserted) {
+      // the structured event next to its line, so admin_log can filter on it
+      const room = gateway.nodes.byNative(id, chatId)
+      if (room !== undefined) {
+        sqlite
+          .query(
+            "UPDATE ch_messages SET meta = json_set(meta, '$.adminEvent', json(?)) WHERE node_id = ? AND native_id = ?",
+          )
+          .run(
+            JSON.stringify({
+              kind: ev.kind,
+              ...(ev.actor === undefined ? {} : { actorId: ev.actor.id, actorName: ev.actor.name }),
+              ...(ev.target === undefined
+                ? {}
+                : { targetId: ev.target.id, targetName: ev.target.name }),
+              ...(ev.messageId === undefined ? {} : { messageId: ev.messageId }),
+            }),
+            room.id,
+            `${ADMIN_EVENT_PREFIX}${ev.id}`,
+          )
+      }
+    }
     if (inserted && ev.kind === 'delete' && ev.messageId !== undefined) {
       // the message is gone: mark the one we may have stored (the event text keeps what it said)
       const room = gateway.nodes.byNative(id, chatId)
@@ -430,7 +459,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
             e.lastFloodAt = now()
             warn(`telegram-user: ${id} flood wait ${info.seconds}s (${info.text})`)
           },
-          adminLogText: (chatId, limit) => adminLogText(id, chatId, limit),
+          adminLogRead: (chatId, query) => adminLogRead(id, chatId, query),
           // agent tools of the account (`list_dialogs`, `choose_chat`, `backfill`): the same
           // effect as the Channels page, chosen chats stay observe-only
           dialogsSeen: (list) => {
@@ -644,18 +673,44 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     }) as ChannelNodeView
   }
 
-  function adminLogText(id: string, chatId: string, limit: number): string {
+  /** The admin log of a chat: read fresh (a poll now), then the stored events that match. */
+  async function adminLogRead(id: string, chatId: string, q: AdminLogQuery): Promise<string> {
     const room = gateway.nodes.byNative(id, chatId)
-    if (room === undefined) return ''
-    const rows = sqlite
-      .query<{ n: number }, [string, string, string]>(
-        `SELECT COUNT(*) AS n FROM ch_messages m JOIN ch_nodes n ON n.id = m.node_id
-           WHERE m.connection_id = ? AND m.kind = 'system' AND (n.path = ? OR n.path LIKE ?)`,
-      )
-      .get(id, room.path, `${room.path}/%`)
-    if ((rows?.n ?? 0) === 0) return ''
-    void limit
-    return `${rows?.n} admin log events are stored for this chat; read them with channel_read on conversation ${chatId} (rows start with "[admin log]").`
+    if (room === undefined) return 'No admin log events are stored for that chat.'
+    const chat = chats.get(id, chatId)
+    const notes: string[] = []
+    const poll = await entries.get(id)?.adminLog?.pollChat(chatId)
+    if (poll !== undefined && poll.status !== 'ok') {
+      if (poll.status === 'not-admin' || poll.status === 'off') {
+        // nothing fresh is possible; what was stored earlier is still shown below
+        notes.push(poll.text ?? '')
+      } else if (poll.status === 'parked') {
+        notes.push(
+          `Not refreshed: ${poll.text ?? 'Telegram asked to slow down'}${poll.parkedUntil === undefined ? '' : ` (retry after ${new Date(poll.parkedUntil).toISOString().slice(11, 16)} UTC)`}. The events below may miss the latest ones.`,
+        )
+      } else {
+        notes.push(`Not refreshed: ${poll.text ?? 'the admin log could not be read'}`)
+      }
+    }
+    const rows = storedAdminEvents(sqlite, id, room.path, q)
+    const filtered = Object.keys(q).some(
+      (k) => k !== 'limit' && q[k as keyof AdminLogQuery] !== undefined,
+    )
+    const tz = gateway.timezone()
+    const head =
+      rows.length === 0
+        ? filtered
+          ? `No admin log events of "${chat?.title ?? chatId}" match (Telegram keeps about 48 hours).`
+          : `No admin log events are stored for "${chat?.title ?? chatId}" (Telegram keeps about 48 hours).`
+        : `${rows.length} admin log event(s) of "${chat?.title ?? chatId}", newest first (${tz}; Telegram keeps about 48 hours):`
+    return [
+      ...notes.filter((n) => n !== ''),
+      head,
+      ...rows.map((r) => {
+        const t = localTime(r.sent_at, tz)
+        return `- ${t.date} ${t.clock} ${r.content ?? ''}`
+      }),
+    ].join('\n')
   }
 
   async function viewOf(record: ConnectionRecord): Promise<ChannelConnectionView> {
@@ -990,7 +1045,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       chats.setSelected(id, chat.chatId, selected, now())
       if (!selected) {
         chats.setBackfillDays(id, chat.chatId, null, now())
-        chats.setAdminLog(id, chat.chatId, false, now())
+        chats.setAdminLog(id, chat.chatId, null, now())
       }
       return chatView(chatOf(id, nodeId))
     },

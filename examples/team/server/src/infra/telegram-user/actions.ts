@@ -5,8 +5,8 @@
  *
  * Who may (decided in code, never by what a message says):
  *  - members and guests of a chat never get a native tool (`roles.ts`); owners and admins do, by risk;
- *  - `ownerOnly` actions (ban, unban, restrict, delete a member's messages, invite links, join,
- *    leave) are refused unless the person asking is an owner (a web chat is the client: allowed);
+ *  - `ownerOnly` actions (ban, unban, restrict, promote, demote, delete a member's messages, invite
+ *    links, join, leave) are refused unless the person asking is an owner (a web chat is the client: allowed);
  *  - every write, external and destructive action still asks for approval (the permission engine).
  *
  * What it may touch:
@@ -25,7 +25,8 @@ import { z } from 'zod'
 import { localTime } from '../channels/header.ts'
 import { neutralizeHandles } from '../channels/mentions.ts'
 import type { NativeAction } from '../channels/types.ts'
-import type { TgChat, TgMessage, TgTopic, TgUserClient } from './client.ts'
+import { ADMIN_EVENT_KINDS, type AdminLogQuery } from './adminlog.ts'
+import type { TgAdminRights, TgChat, TgMessage, TgTopic, TgUserClient } from './client.ts'
 import type { AccountSettings, ChatStore, CounterStore } from './store.ts'
 
 export interface AccountActionDeps {
@@ -50,11 +51,26 @@ export interface AccountActionDeps {
     dialogsSeen?(list: TgChat[]): void
     chooseChat?(chatId: string, days: number): Promise<string>
     backfill?(chatId: string, days: number): Promise<string>
-    adminLogText?(chatId: string, limit: number): string
+    adminLogRead?(chatId: string, query: AdminLogQuery): Promise<string>
     /** A chat was joined or left by an action: refresh what the Channels page lists. */
     chatsChanged?(): void
   }
 }
+
+/** Appended when a search or a message id finds nothing in a chat the account administers. */
+export const DELETED_HINT =
+  'If it may have been deleted: admin_log of that chat shows deleted messages with their text (Telegram keeps them about 48 hours).'
+
+/** The admin rights `promote_member` may hand out (never add_admins, never anonymous). */
+export const PROMOTE_RIGHTS = [
+  'change_info',
+  'delete_messages',
+  'ban_users',
+  'invite_users',
+  'pin_messages',
+  'manage_topics',
+  'manage_video_chats',
+] as const
 
 const RESOLVE_PER_MINUTE = 5
 const RESOLVE_PER_DAY = 30
@@ -145,6 +161,18 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
     c.admin
       ? undefined
       : `ERROR: this account is not an admin of "${c.title}": Telegram refuses this.`
+
+  /** The hint line for an empty result, only where the account can read the admin log. */
+  const deletedHint = (c: TgChat): string => (c.admin && c.kind !== 'dm' ? `\n${DELETED_HINT}` : '')
+
+  /** A past moment: `YYYY-MM-DD` (start of day) or `YYYY-MM-DD HH:MM`, in the team timezone. */
+  function readPast(text: string, endOfDay: boolean): number | string {
+    const m = /^(\d{4}-\d{2}-\d{2})(?:[T\s]+(\d{1,2}):(\d{2}))?$/.exec(text.trim())
+    if (m === null) return `ERROR: "${text}" is not a time like 2026-10-13 or 2026-10-13 14:30.`
+    const day = readAtDay(m[1] as string, d.timezone())
+    if (m[2] === undefined) return endOfDay ? day + 86_400_000 - 1 : day
+    return day + Number(m[2]) * 3_600_000 + Number(m[3]) * 60_000
+  }
 
   /** A future moment from `at` ("YYYY-MM-DD HH:MM" in the team zone, or ISO with offset). */
   function readAt(text: string): number | string {
@@ -450,7 +478,7 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
           }),
         )
         const found = list.filter((m) => !m.service)
-        if (found.length === 0) return `Nothing found in "${c.title}".`
+        if (found.length === 0) return `Nothing found in "${c.title}".${deletedHint(c)}`
         return [
           `${found.length} message(s) in "${c.title}" (newest first, ${d.timezone()}):`,
           ...found.map(line),
@@ -471,31 +499,82 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
         if (typeof c === 'string') return c
         const ids = (input.ids as number[]) ?? []
         const list = await d.call(c.id, () => client.messagesById(c.id, ids))
-        return ids
-          .map((id, i) => {
-            const m = list[i]
-            return m === null || m === undefined
-              ? `- ${id}: not found (deleted, or not in this chat)`
-              : line(m)
-          })
-          .join('\n')
+        const missing = ids.some((_, i) => list[i] === null || list[i] === undefined)
+        return (
+          ids
+            .map((id, i) => {
+              const m = list[i]
+              return m === null || m === undefined
+                ? `- ${id}: not found (deleted, or not in this chat)`
+                : line(m)
+            })
+            .join('\n') + (missing ? deletedHint(c) : '')
+        )
       },
     },
     {
       name: 'admin_log',
       risk: 'read',
-      local: true,
       summary:
-        'Moderation events stored for a chat the account administers (deletions with their text, edits, bans, promotions). Telegram keeps them only briefly: this is what we stored.',
+        'The "Recent actions" of a chat the account administers: deleted messages with their text, edits, bans, promotions. Telegram keeps them only about 48 hours; this reads them from Telegram now and adds what was stored earlier. Filter by kind, words, time or person.',
       schema: z.object({
-        chat: z.string().min(1).describe('The chat id, as `list_chats` shows it.'),
+        chat: chatField,
+        kind: z
+          .enum(ADMIN_EVENT_KINDS)
+          .optional()
+          .describe('Only this kind of event (delete, edit, ban, ...).'),
+        query: z
+          .string()
+          .max(200)
+          .optional()
+          .describe('Words inside the event (e.g. the text of a deleted message).'),
+        from_time: z
+          .string()
+          .max(40)
+          .optional()
+          .describe('From this time: YYYY-MM-DD or YYYY-MM-DD HH:MM (team timezone).'),
+        to_time: z
+          .string()
+          .max(40)
+          .optional()
+          .describe('Up to this time (a bare day includes the whole day).'),
+        user: z
+          .string()
+          .max(64)
+          .optional()
+          .describe(
+            'The admin who acted or the person acted on: user id (preferred) or part of the name.',
+          ),
         limit: z.number().int().min(1).max(100).default(30),
       }),
       run: async (input) => {
-        const text = d.hooks.adminLogText?.(String(input.chat), Number(input.limit ?? 30))
-        return text === undefined || text === ''
-          ? 'No admin log events are stored for that chat.'
-          : text
+        if (d.hooks.adminLogRead === undefined) return unavailable('admin_log')
+        const c = await chosenChat(String(input.chat))
+        if (typeof c === 'string') return c
+        if (c.kind === 'group' && !c.admin) {
+          return `ERROR: this account is not an admin of "${c.title}": Telegram only shows the admin log to admins, and only for supergroups and channels.`
+        }
+        const from =
+          typeof input.from_time === 'string' ? readPast(input.from_time, false) : undefined
+        const to = typeof input.to_time === 'string' ? readPast(input.to_time, true) : undefined
+        if (typeof from === 'string') return from
+        if (typeof to === 'string') return to
+        if (!c.admin) {
+          return `ERROR: this account is not an admin of "${c.title}": Telegram only shows the admin log to admins.`
+        }
+        const query: AdminLogQuery = {
+          limit: Number(input.limit ?? 30),
+          ...(typeof input.kind === 'string' ? { kind: input.kind } : {}),
+          ...(typeof input.query === 'string' && input.query.trim() !== ''
+            ? { query: input.query }
+            : {}),
+          ...(from === undefined ? {} : { from }),
+          ...(to === undefined ? {} : { to }),
+          ...(typeof input.user === 'string' && input.user.trim() !== ''
+            ? { user: input.user }
+            : {}),
+        }
+        return d.hooks.adminLogRead(c.id, query)
       },
     },
     // --- ingest ----------------------------------------------------------------------------------
@@ -870,6 +949,97 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
           (client.unbanMember as NonNullable<TgUserClient['unbanMember']>)(c.id, user),
         )
         return `Lifted the ban and restrictions of user ${user} in "${c.title}".`
+      },
+    },
+    {
+      name: 'promote_member',
+      risk: 'destructive',
+      ownerOnly: true,
+      summary:
+        'Make a person an admin of a chosen supergroup or channel with exactly the rights you list (change_info, delete_messages, ban_users, invite_users, pin_messages, manage_topics, manage_video_chats) and an optional title. Adding other admins and anonymous admins are never allowed. Owner only; always asks for approval; the account must be an admin holding those rights.',
+      schema: z.object({
+        chat: chatField,
+        user: z
+          .string()
+          .regex(/^\d+$/)
+          .describe('The Telegram user id (never a username: ids cannot be confused).'),
+        rights: z
+          .array(z.string().max(40))
+          .min(1)
+          .max(12)
+          .describe(
+            `The rights to give, from: ${PROMOTE_RIGHTS.join(', ')}. List only what is needed.`,
+          ),
+        title: z
+          .string()
+          .min(1)
+          .max(16)
+          .optional()
+          .describe('Admin badge, at most 16 characters, no emoji.'),
+      }),
+      run: async (input) => {
+        if (client.promoteMember === undefined) return unavailable('promote_member')
+        const asked = ((input.rights as string[]) ?? []).map((r) => r.trim().toLowerCase())
+        const allowed = new Set<string>(PROMOTE_RIGHTS)
+        const bad = asked.filter((r) => !allowed.has(r))
+        if (bad.length > 0) {
+          return `ERROR: ${bad.join(', ')} cannot be given. The allowed rights are: ${PROMOTE_RIGHTS.join(', ')}. Adding admins and anonymous admins are never granted by this account.`
+        }
+        const rights: TgAdminRights = {
+          ...(asked.includes('change_info') ? { changeInfo: true } : {}),
+          ...(asked.includes('delete_messages') ? { deleteMessages: true } : {}),
+          ...(asked.includes('ban_users') ? { banUsers: true } : {}),
+          ...(asked.includes('invite_users') ? { inviteUsers: true } : {}),
+          ...(asked.includes('pin_messages') ? { pinMessages: true } : {}),
+          ...(asked.includes('manage_topics') ? { manageTopics: true } : {}),
+          ...(asked.includes('manage_video_chats') ? { manageCall: true } : {}),
+        }
+        if (Object.keys(rights).length === 0) return 'ERROR: list at least one right to give.'
+        if (typeof input.title === 'string' && /\p{Extended_Pictographic}/u.test(input.title)) {
+          return 'ERROR: the admin title may not contain emoji.'
+        }
+        const c = await chosenChat(String(input.chat))
+        if (typeof c === 'string') return c
+        if (c.kind === 'dm') return 'ERROR: that is a direct chat.'
+        const notAdmin = ownerAdmin(c)
+        if (notAdmin !== undefined) return notAdmin
+        const user = String(input.user)
+        if (user === d.selfId) return 'ERROR: the account cannot change its own admin rights.'
+        const title = typeof input.title === 'string' ? input.title.trim() : undefined
+        await d.call(c.id, () =>
+          (client.promoteMember as NonNullable<TgUserClient['promoteMember']>)(
+            c.id,
+            user,
+            rights,
+            title === '' ? undefined : title,
+          ),
+        )
+        return `Made user ${user} an admin of "${c.title}" with: ${asked.join(', ')}${title === undefined || title === '' ? '' : ` (title "${title}")`}. Only the creator, or this account (who promoted them), can change or remove them later.`
+      },
+    },
+    {
+      name: 'demote_member',
+      risk: 'destructive',
+      ownerOnly: true,
+      summary:
+        'Remove all admin rights of a person in a chosen supergroup or channel (they stay a member). An admin can only demote admins it promoted itself, unless it is the creator. Owner only; always asks for approval.',
+      schema: z.object({
+        chat: chatField,
+        user: z.string().regex(/^\d+$/).describe('The Telegram user id.'),
+      }),
+      run: async (input) => {
+        if (client.demoteMember === undefined) return unavailable('demote_member')
+        const c = await chosenChat(String(input.chat))
+        if (typeof c === 'string') return c
+        if (c.kind === 'dm') return 'ERROR: that is a direct chat.'
+        const notAdmin = ownerAdmin(c)
+        if (notAdmin !== undefined) return notAdmin
+        const user = String(input.user)
+        if (user === d.selfId) return 'ERROR: the account cannot remove its own admin rights.'
+        await d.call(c.id, () =>
+          (client.demoteMember as NonNullable<TgUserClient['demoteMember']>)(c.id, user),
+        )
+        return `Removed the admin rights of user ${user} in "${c.title}". (An admin can only demote admins it promoted itself, unless it is the creator: a refusal means someone else promoted them.)`
       },
     },
     {

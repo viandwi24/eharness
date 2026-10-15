@@ -861,8 +861,8 @@ Built (example only, `src/` of the library unchanged):
     `edit_forum_topic` (rename, close, reopen);
   - external: `forward_message`, `send_poll`, `schedule_message` (Telegram's scheduler: fires while we are down;
     1 minute to 365 days ahead);
-  - destructive + `ownerOnly`: `ban_member`, `unban_member`, `restrict_member`, `delete_member_messages`,
-    `create_invite_link`, `join_chat`, `leave_chat`.
+  - destructive + `ownerOnly`: `ban_member`, `unban_member`, `restrict_member`, `promote_member` (safe rights only, never add_admins), `demote_member`,
+    `delete_member_messages`, `create_invite_link`, `join_chat`, `leave_chat`.
 - **Safety rules** (multi-person groups: founder, CEO, employees):
   - members and guests get no native tool (roles); `NativeAction.ownerOnly` is checked on the current requester
     before the action runs (web turns are the client); every non-read action still asks for approval;

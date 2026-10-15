@@ -260,6 +260,13 @@
       "when": 1791964812167,
       "tag": "0036_mushy_mesmero",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1792043337258,
+      "tag": "0037_admin_log_default_on",
+      "breakpoints": true
     }
   ]
 }

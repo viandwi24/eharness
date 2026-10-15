@@ -510,6 +510,9 @@ const ACTION_VERB: Record<string, [string, string]> = {
 	send_poll: ['posted a poll in', ''],
 	ban_member: ['banned a member from', ''],
 	unban_member: ['unbanned a member of', ''],
+	promote_member: ['made a member an admin of', ''],
+	demote_member: ['removed the admin rights of a member of', ''],
+	admin_log: ['read the admin log of', ''],
 	create_forum_topic: ['created a topic in', '']
 };
 

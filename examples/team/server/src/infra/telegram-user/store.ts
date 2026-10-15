@@ -73,7 +73,8 @@ export interface ChatStore {
   noteMessage(connectionId: string, chatId: string, id: number, live: boolean): void
   setBackfillDays(connectionId: string, chatId: string, days: number | null, now: number): void
   patchBackfill(connectionId: string, chatId: string, patch: BackfillPatch, now: number): void
-  setAdminLog(connectionId: string, chatId: string, enabled: boolean, now: number): void
+  /** `null` forgets the owner's choice (back to the default: on). */
+  setAdminLog(connectionId: string, chatId: string, enabled: boolean | null, now: number): void
   patchAdminLog(connectionId: string, chatId: string, patch: AdminLogPatch, now: number): void
   setParked(connectionId: string, chatId: string, until: number | null, now: number): void
   /** Jobs left `running` by a crash go back to `queued`. */
@@ -94,6 +95,8 @@ const POLICY_KEYS = [
 
 interface AdminLogState {
   enabled?: boolean
+  /** The owner chose `enabled` (a default or a migrated value carries no choice). */
+  explicit?: boolean
   lastId?: string
   lastAt?: number
   count?: number
@@ -140,7 +143,8 @@ export function nodeChatStore(deps: {
       backfillCount: h.count ?? 0,
       backfillError: h.error,
       parkedUntil: h.parkedUntil,
-      adminLogEnabled: log.enabled === true,
+      // on unless the owner turned it off (a chat the account administers is collected by default)
+      adminLogEnabled: log.enabled !== false,
       adminLogLastId: log.lastId,
       adminLogLastAt: log.lastAt,
       adminLogCount: log.count ?? 0,
@@ -246,7 +250,14 @@ export function nodeChatStore(deps: {
     },
     setAdminLog(connectionId, chatId, enabled, now) {
       const n = nodeOf(connectionId, chatId)
-      if (n !== undefined) patchLog(n, { enabled, error: null }, now)
+      if (n === undefined) return
+      patchLog(
+        n,
+        enabled === null
+          ? { enabled: null, explicit: null, error: null }
+          : { enabled, explicit: true, error: null },
+        now,
+      )
     },
     patchAdminLog(connectionId, chatId, patch, now) {
       const n = nodeOf(connectionId, chatId)
