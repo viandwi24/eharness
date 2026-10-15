@@ -1,9 +1,11 @@
 /**
- * The proactive heartbeat (docs/plans/P40-team-autonomous-operations.md, D9): the checklist is
- * visible (empty = does nothing, a suggestion to insert), a beat reads the chats of the agent's
- * connections, posts only to its `reportTo` (daily cap, no repeats, through the proactive policy),
- * wakes early on new messages (debounced, no activity = no model call), and urgent findings reach
- * the bell in a team with no lead. Scripted models and a mock chat adapter only.
+ * The proactive heartbeat (docs/plans/P51-proactive-and-health.md): standing orders in
+ * `HEARTBEAT.md` drive it. A beat runs by itself when there is an order (no order and an empty
+ * checklist: no model call), reads the chats of the agent's connections, posts only to the
+ * destination of an active order (daily cap per destination, no repeats, through the proactive
+ * policy), reports to a web chat through a notice and the bell, wakes early on new messages
+ * (debounced, no activity = no model call), and urgent findings reach the bell in a team with no
+ * lead. Scripted models and a mock chat adapter only.
  */
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -13,6 +15,7 @@ import { webCryptoVault } from 'eharness/providers'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { createAgent, updateAgent } from '../src/app/agents.ts'
 import { planActivityWake } from '../src/app/heartbeat.ts'
+import { addOrder } from '../src/app/standing-orders.ts'
 import {
   activityLines,
   checklistPath,
@@ -21,6 +24,7 @@ import {
   heartbeatChannelRefusal,
   watchedNodes,
 } from '../src/domain/heartbeat.ts'
+import { PER_DESTINATION_DAILY_CAP, type StandingOrder } from '../src/domain/standing-orders.ts'
 import { createMockAdapter, type MockAdapter } from '../src/infra/channels/index.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
@@ -164,12 +168,16 @@ const view = async (i: Instance) => {
   expect(res.status).toBe(200)
   return (await res.json()) as {
     config: Record<string, unknown>
-    checklist: { exists: boolean; empty: boolean; suggestion: string }
-    destinations: Array<{ nodeId: string; label: string; proactive: boolean }>
+    orders: Array<StandingOrder & { reportLabel: string }>
+    checklist: { exists: boolean; empty: boolean }
     watched: Array<{ nodeId: string; title: string }>
-    postsToday: number
     notes: { path: string; exists: boolean }
-    beats: Array<{ status: string; reason: string | null; trigger?: string }>
+    beats: Array<{
+      status: string
+      reason: string | null
+      trigger?: string
+      items: Array<{ decision?: string }>
+    }>
   }
 }
 const configure = async (i: Instance, body: Record<string, unknown>) => {
@@ -193,105 +201,190 @@ async function beatsEnd(i: Instance, count: number) {
 const bell = async (i: Instance) =>
   (
     (await (await i.app.request('/notifications')).json()) as {
-      notifications: Array<{ kind: string; title: string }>
+      notifications: Array<{ kind: string; title: string; body: string }>
     }
   ).notifications
-
-describe('the checklist is visible', () => {
-  test('empty = does nothing, with a suggestion to insert; a real line makes it run', async () => {
-    const i = instance([])
-    await connect(i)
-    await configure(i, { enabled: true, ...ALWAYS })
-    let v = await view(i)
-    expect(v.checklist).toMatchObject({ exists: false, empty: true })
-    expect(v.checklist.suggestion).toContain('community chats')
-    // the suggestion itself is a real checklist; inserting it is the owner's click, never automatic
-    expect(v.checklist.exists).toBe(false)
-    await write(i, '# Heartbeat checklist\n<!-- nothing yet -->\n')
-    v = await view(i)
-    expect(v.checklist).toMatchObject({ exists: true, empty: true })
-    expect(await fire(i)).toMatchObject({ started: false, reason: 'empty checklist' })
-    await write(i, v.checklist.suggestion)
-    expect((await view(i)).checklist.empty).toBe(false)
+const EMPTY = 'nothing to watch: no standing order and an empty checklist'
+const WATCH = 'Watch the community chat for anything unusual and report it to me here'
+/** An order of an admin that reports to the internal group, tagging them. */
+const order = (
+  i: Instance,
+  report: StandingOrder['report'],
+  over: Partial<Parameters<typeof addOrder>[2]> = {},
+) =>
+  addOrder(i.server.deps, i.agentId, {
+    text: WATCH,
+    by: 'ident-1',
+    name: 'Vian',
+    role: 'admin',
+    uid: '1001',
+    report,
+    mention: true,
+    ...over,
   })
 
-  test('reportTo must be a conversation of the agent connections; the list names them', async () => {
+describe('orders make the heartbeat run', () => {
+  test('nothing to watch means no model call; an order (or a plain line) makes the beat run', async () => {
+    const i = instance(OK)
+    const rooms = await connect(i)
+    await configure(i, ALWAYS)
+    // there is no enabled toggle: it is on, and a beat with nothing to watch costs nothing
+    let v = await view(i)
+    expect(v.config).toMatchObject({ enabled: true, everyMinutes: 30 })
+    expect(v.checklist).toMatchObject({ exists: false, empty: true })
+    expect(await fire(i)).toMatchObject({ started: false, reason: EMPTY })
+    expect(i.model.calls).toHaveLength(0)
+    await write(i, '# Heartbeat checklist\n<!-- nothing yet -->\n')
+    expect(await fire(i)).toMatchObject({ started: false, reason: EMPTY })
+    expect(i.model.calls).toHaveLength(0)
+    // an order is a readable line in the file, with its tail, and it appears in the view
+    const added = await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
+    expect(added.created).toBe(true)
+    const file = (await i.server.deps.library.read(checklistPath(i.agentId)))?.text ?? ''
+    expect(file).toContain(
+      `- ${WATCH} <!-- order:${added.order.id} by:ident-1 name:Vian role:admin`,
+    )
+    expect(file).toContain(`report:chat:c1/${rooms.internal}`)
+    expect(file).toContain('mention:yes')
+    v = await view(i)
+    expect(v.checklist.empty).toBe(false)
+    expect(v.orders).toHaveLength(1)
+    expect(v.orders[0]).toMatchObject({ text: WATCH, reportLabel: 'Internal', mention: true })
+    expect((await fire(i)).started).toBe(true)
+    await beatsEnd(i, 1)
+    const text = await beatSession(i)
+    expect(text).toContain('## Standing orders')
+    expect(text).toContain(`[${added.order.id}] ${WATCH}`)
+    expect(text).toContain('Report to an order only when')
+    expect(text).toContain(`/library/notes/heartbeat/${i.slug}/`)
+    expect(text).toContain('platform user id 1001')
+  })
+
+  test('a hand-written line is a checklist item that reports nowhere but the digest', async () => {
+    const i = instance([
+      call('team_status', {}),
+      call('channel_send', {
+        action: 'send',
+        connection: 'c1',
+        conversation: 'internal',
+        text: 'hi',
+      }),
+      final('ok'),
+    ])
+    const rooms = await connect(i)
+    await configure(i, ALWAYS)
+    await write(i, '- look at the community chat for a spam wave')
+    expect((await view(i)).orders).toEqual([])
+    expect((await view(i)).checklist.empty).toBe(false)
+    await fire(i)
+    await beatsEnd(i, 1)
+    expect(await beatSession(i)).toContain('No standing order reports to a chat')
+    expect(rooms.mock.sent).toEqual([])
+  })
+
+  test('an order can be removed from the app: only its line goes', async () => {
     const i = instance([])
     const rooms = await connect(i)
-    const v = await view(i)
-    expect(v.destinations.map((d) => d.label).sort()).toEqual(['Community', 'Internal'])
-    expect(v.destinations.find((d) => d.nodeId === rooms.internal)?.proactive).toBe(true)
-    expect(v.destinations.find((d) => d.nodeId === rooms.community)?.proactive).toBe(false)
-    const bad = await configure(i, { reportTo: { connectionId: 'c1', nodeId: 'nope' } })
-    expect(bad.status).toBeGreaterThanOrEqual(400)
-    const ok = await configure(i, {
-      reportTo: { connectionId: 'c1', nodeId: rooms.internal },
-      maxPostsPerDay: 3,
-    })
-    expect(ok.status).toBe(200)
-    expect((await view(i)).config).toMatchObject({
-      reportTo: { connectionId: 'c1', nodeId: rooms.internal },
-      maxPostsPerDay: 3,
-      wakeOnActivity: false,
-      minGapMinutes: 10,
-    })
-    expect((await configure(i, { maxPostsPerDay: -1 })).status).toBeGreaterThanOrEqual(400)
+    await write(i, '# Mine\n- my own item\n')
+    const a = await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
+    const b = await order(i, { kind: 'web', sessionId: `dm:${i.agentId}` }, { text: 'Another job' })
+    const res = await i.app.request(
+      `/agents/${i.agentId}/heartbeat/orders/${a.order.id}`,
+      json('DELETE'),
+    )
+    expect(res.status).toBe(200)
+    const file = (await i.server.deps.library.read(checklistPath(i.agentId)))?.text ?? ''
+    expect(file).toContain('- my own item')
+    expect(file).toContain(`order:${b.order.id}`)
+    expect(file).not.toContain(`order:${a.order.id}`)
+    expect(
+      (await i.app.request(`/agents/${i.agentId}/heartbeat/orders/${a.order.id}`, json('DELETE')))
+        .status,
+    ).toBe(404)
   })
 })
 
 describe('the gate (pure)', () => {
   const to = { connectionId: 'c1', nodeId: 'n1' }
-  test('reads pass, download and every other post is refused, only the destination is allowed', () => {
-    const send = (input: Record<string, unknown>, target: never, reportTo: typeof to | null = to) =>
-      heartbeatChannelRefusal({ toolName: 'channel_send', input }, { reportTo, target })
+  test('reads pass, download and every other post is refused, only the order destinations are allowed', () => {
+    const send = (input: Record<string, unknown>, target: never, allowed = [to]) =>
+      heartbeatChannelRefusal({ toolName: 'channel_send', input }, { allowed, target })
     expect(
       heartbeatChannelRefusal(
         { toolName: 'channel_read', input: { action: 'history' } },
-        { reportTo: null, target: undefined },
+        { allowed: [], target: undefined },
       ),
     ).toBeUndefined()
     expect(
       heartbeatChannelRefusal(
         { toolName: 'channel_read', input: { action: 'download' } },
-        { reportTo: to, target: undefined },
+        { allowed: [to], target: undefined },
       ),
     ).toContain('download')
-    expect(send({ action: 'send' }, to as never, null)).toContain('No place to report to')
+    expect(send({ action: 'send' }, to as never, [])).toContain('No standing order reports')
     expect(send({ action: 'send' }, to as never)).toBeUndefined()
+    expect(
+      send({ action: 'send' }, to as never, [{ connectionId: 'c2', nodeId: 'x' }, to]),
+    ).toBeUndefined()
     expect(send({ action: 'reply' }, to as never)).toContain('action "reply"')
     expect(send({ action: 'upload' }, to as never)).toContain('action "upload"')
     expect(send({ action: 'react' }, to as never)).toContain('action "react"')
     expect(send({ action: 'send', member: 'ana' }, to as never)).toContain('member')
     expect(send({ action: 'send' }, { connectionId: 'c1', nodeId: 'other' } as never)).toContain(
-      'only to its report destination',
+      'only to the destination of a standing order',
     )
     expect(send({ action: 'send' }, { error: 'unknown conversation' } as never)).toContain(
       'unknown conversation',
     )
   })
 
-  test('the daily cap and the repeat check', () => {
+  test('the daily cap is per destination, and a repeat is refused', () => {
     const now = Date.UTC(2026, 9, 12, 9, 0)
-    const state = { fingerprints: {}, posts: [now - 3_600_000, now - 1_000] }
-    const r = checkPost(state, { maxPostsPerDay: 2 }, 'New spam wave!', now, 'UTC')
+    const here = 'chat:c1/n1'
+    const other = 'chat:c1/n2'
+    const posts = [
+      ...Array.from({ length: PER_DESTINATION_DAILY_CAP - 1 }, (_, k) => ({
+        at: now - 3_600_000 + k,
+        to: here,
+      })),
+      { at: now - 1_000, to: other },
+    ]
+    const state = { fingerprints: {}, posts }
+    expect(checkPost(state, here, 'New spam wave!', now, 'UTC').ok).toBe(true)
+    const full = { fingerprints: {}, posts: [...posts, { at: now - 500, to: here }] }
+    const r = checkPost(full, here, 'New spam wave!', now, 'UTC')
     expect(r).toMatchObject({ ok: false })
-    expect((r as { reason: string }).reason).toContain('limit of 2')
-    // yesterday's posts do not count
-    const old = { fingerprints: {}, posts: [now - 30 * 3_600_000] }
-    const ok = checkPost(old, { maxPostsPerDay: 1 }, 'New spam wave!', now, 'UTC')
+    expect((r as { reason: string }).reason).toContain(`limit of ${PER_DESTINATION_DAILY_CAP}`)
+    // another destination still has room, and yesterday's posts do not count
+    expect(checkPost(full, other, 'New spam wave!', now, 'UTC').ok).toBe(true)
+    const old = { fingerprints: {}, posts: [{ at: now - 30 * 3_600_000, to: here }] }
+    const ok = checkPost(old, here, 'New spam wave!', now, 'UTC', 1)
     expect(ok.ok).toBe(true)
     const again = checkPost(
       { fingerprints: { [(ok as { fingerprint: string }).fingerprint]: now - 60_000 }, posts: [] },
-      { maxPostsPerDay: 6 },
+      here,
       'new spam wave',
       now,
       'UTC',
     )
     expect(again).toMatchObject({ ok: false })
     expect((again as { reason: string }).reason).toContain('same message')
+    // the same words to another place are not a repeat
+    expect(
+      checkPost(
+        {
+          fingerprints: { [(ok as { fingerprint: string }).fingerprint]: now - 60_000 },
+          posts: [],
+        },
+        other,
+        'new spam wave',
+        now,
+        'UTC',
+      ).ok,
+    ).toBe(true)
   })
 
-  test('the watch rule: named chats, else every group; never a DM; the report chat is watched too', () => {
+  test('the watch rule: named chats, else every group; never a DM', () => {
     const nodes = [
       { connectionId: 'c1', nodeId: 'node-aaaa', title: 'Community', kind: 'room', allowed: true },
       { connectionId: 'c1', nodeId: 'node-bbbb', title: 'Signals', kind: 'room', allowed: true },
@@ -326,7 +419,15 @@ describe('a beat in the chats', () => {
   const community = { connection: 'c1', conversation: 'community' }
   const internal = { connection: 'c1', conversation: 'internal' }
 
-  test('reads the chats, posts only to reportTo: not elsewhere, not twice, not over the cap', async () => {
+  test('reads the chats, posts only to the order destination, tags the asker: not elsewhere, not twice, not over the cap', async () => {
+    const sends = Array.from({ length: PER_DESTINATION_DAILY_CAP + 1 }, (_, k) =>
+      call('channel_send', {
+        action: 'send',
+        ...internal,
+        mention: ['1001'],
+        text: `Finding number ${k + 1}: something different`,
+      }),
+    )
     const i = instance([
       call('team_status', {}),
       call('channel_read', { action: 'history', ...community }),
@@ -336,18 +437,18 @@ describe('a beat in the chats', () => {
       call('channel_send', { action: 'reply', ...internal, replyTo: '1', text: 'a reply' }),
       call('channel_send', { action: 'send', ...internal, text: 'Spam wave in Community' }),
       call('channel_send', { action: 'send', ...internal, text: 'spam wave in community!' }),
-      call('channel_send', { action: 'send', ...internal, text: 'An angry member in Community' }),
-      call('channel_send', { action: 'send', ...internal, text: 'A question waits for hours' }),
+      ...sends,
       final('attention', [{ title: 'Spam wave in Community' }]),
     ])
     const rooms = await connect(i)
-    await configure(i, {
-      enabled: true,
-      ...ALWAYS,
-      reportTo: { connectionId: 'c1', nodeId: rooms.internal },
-      maxPostsPerDay: 2,
+    await configure(i, ALWAYS)
+    await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
+    // the asker is a known person of the connection (a mention needs one)
+    await rooms.mock.say({
+      chat: 'community',
+      from: { id: '1001', name: 'Vian', username: 'vian' },
+      text: 'hello team',
     })
-    await write(i, '- watch the community chat for anything unusual')
     await rooms.mock.say({
       chat: 'community',
       from: { id: '9', name: 'Eve' },
@@ -359,22 +460,23 @@ describe('a beat in the chats', () => {
     // reads: the chat history came back, a download was refused
     expect(text).toContain('buy my coin now!!!')
     expect(text).toContain('channel_read download')
-    // posts: not to another chat, not a reply, only the destination; a repeat and the 3rd are refused
-    expect(text).toContain('only to its report destination')
+    // posts: not to another chat, not a reply; a repeat and the posts over the cap are refused
+    expect(text).toContain('only to the destination of a standing order')
     expect(text).toContain('action \\"reply\\"')
     expect(text).toContain('the same message was posted')
-    expect(text).toContain('limit of 2')
-    await until('two posts sent', () => rooms.mock.sent.length >= 2)
-    await sleep(60)
-    expect(rooms.mock.sent.map((m) => m.message.text)).toEqual([
-      'Spam wave in Community',
-      'An angry member in Community',
-    ])
+    expect(text).toContain(`limit of ${PER_DESTINATION_DAILY_CAP}`)
+    await until('the allowed posts sent', () => rooms.mock.sent.length >= PER_DESTINATION_DAILY_CAP)
+    await sleep(80)
+    expect(rooms.mock.sent).toHaveLength(PER_DESTINATION_DAILY_CAP)
     expect(rooms.mock.sent.every((m) => m.conversationId === 'internal')).toBe(true)
-    expect((await view(i)).postsToday).toBe(2)
+    expect(rooms.mock.sent[0]?.rendered).toContain('Spam wave in Community')
+    // the asker is tagged (the mention is a platform user id)
+    expect(
+      rooms.mock.sent.find((m) => m.rendered.includes('Finding number 1'))?.rendered,
+    ).toContain('@Vian')
   })
 
-  test('without reportTo a beat cannot post at all, and reads still work', async () => {
+  test('without an order a beat cannot post at all, and reads still work', async () => {
     const i = instance([
       call('team_status', {}),
       call('channel_describe', {}),
@@ -382,14 +484,41 @@ describe('a beat in the chats', () => {
       final('ok'),
     ])
     const rooms = await connect(i)
-    await configure(i, { enabled: true, ...ALWAYS })
     await write(i, '- look around')
+    await configure(i, ALWAYS)
     await fire(i)
     await beatsEnd(i, 1)
     const text = await beatSession(i)
     expect(text).toContain('Conversation')
-    expect(text).toContain('No place to report to')
+    expect(text).toContain('No standing order reports to a chat')
     expect(rooms.mock.sent).toEqual([])
+  })
+
+  test('the gate follows the orders: a removed order no longer allows its chat on the next beat', async () => {
+    const i = instance([
+      call('team_status', {}),
+      call('channel_send', { action: 'send', ...internal, text: 'first' }),
+      final('ok'),
+      call('team_status', {}),
+      call('channel_send', { action: 'send', ...internal, text: 'second' }),
+      final('ok'),
+    ])
+    const rooms = await connect(i)
+    await configure(i, ALWAYS)
+    const a = await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
+    await write(
+      i,
+      `${(await i.server.deps.library.read(checklistPath(i.agentId)))?.text ?? ''}- keep this plain item\n`,
+    )
+    await fire(i)
+    await beatsEnd(i, 1)
+    await until('first post', () => rooms.mock.sent.length === 1)
+    const { removeOrder } = await import('../src/app/standing-orders.ts')
+    await removeOrder(i.server.deps, i.agentId, a.order.id)
+    await fire(i)
+    await beatsEnd(i, 2)
+    expect(await beatSession(i)).toContain('No standing order reports to a chat')
+    expect(rooms.mock.sent).toHaveLength(1)
   })
 
   test('a post goes through the proactive policy: refused where the chat does not allow it', async () => {
@@ -400,31 +529,56 @@ describe('a beat in the chats', () => {
     ])
     const rooms = await connect(i)
     // the destination is a chat that does not allow unasked posts
-    await configure(i, {
-      enabled: true,
-      ...ALWAYS,
-      reportTo: { connectionId: 'c1', nodeId: rooms.community },
-    })
-    await write(i, '- look around')
+    await configure(i, ALWAYS)
+    await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.community })
     await fire(i)
     await beatsEnd(i, 1)
     expect(rooms.mock.sent).toEqual([])
     expect((await beatSession(i)).toLowerCase()).toContain('proactive')
   })
+
+  test('an order asked in the web chat reports into that thread and rings the bell', async () => {
+    const ref = { id: '' }
+    const i = instance([
+      call('team_status', {}),
+      call('heartbeat_report', { order: 'nope', text: 'x' }),
+      () => call('heartbeat_report', { order: ref.id, text: 'Spam wave in Community' }),
+      () => call('heartbeat_report', { order: ref.id, text: 'spam wave in community!' }),
+      final('attention', [
+        { title: 'Spam wave', decision: 'report', reason: 'five posts in a row' } as never,
+      ]),
+    ] as never)
+    await connect(i)
+    await configure(i, ALWAYS)
+    const sessionId = `dm:${i.agentId}`
+    const web = await order(
+      i,
+      { kind: 'web', sessionId },
+      { by: 'web:owner', name: 'the owner', role: 'owner', mention: false, uid: undefined },
+    )
+    ref.id = web.order.id
+    expect((await view(i)).orders[0]).toMatchObject({ reportLabel: 'the web chat' })
+    await fire(i)
+    await beatsEnd(i, 1)
+    const text = await beatSession(i)
+    expect(text).toContain('there is no active standing order nope')
+    expect(text).toContain('Reported to the web chat')
+    expect(text).toContain('the same message was posted')
+    // the report is in the thread (a notice, no model call) and in the bell
+    const thread = JSON.stringify(await i.server.factory.peek(sessionId).messages({ limit: 50 }))
+    expect(thread).toContain('Spam wave in Community')
+    const alerts = (await bell(i)).filter((n) => n.body === 'Spam wave in Community')
+    expect(alerts).toHaveLength(1)
+    expect((await view(i)).beats[0]?.items[0]).toMatchObject({ decision: 'report' })
+  })
 })
 
 describe('waking on activity', () => {
-  test('new messages start one early beat, debounced; the model sees where the activity is', async () => {
+  test('new messages start one early beat, debounced to 10 minutes; the model sees where the activity is', async () => {
     const i = instance([call('team_status', {}), final('ok'), ...OK])
     const rooms = await connect(i)
-    await configure(i, {
-      enabled: true,
-      ...ALWAYS,
-      wakeOnActivity: true,
-      minGapMinutes: 10,
-      reportTo: { connectionId: 'c1', nodeId: rooms.internal },
-    })
-    await write(i, '- keep an eye on the chats')
+    await configure(i, ALWAYS)
+    await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
     // a burst in the community chat: one early beat after the settle time
     for (const t of ['one', 'two', 'three'])
       await rooms.mock.say({ chat: 'community', from: { id: '9', name: 'Eve' }, text: t })
@@ -446,6 +600,7 @@ describe('waking on activity', () => {
     })
     expect(plan?.agentId).toBe(i.agentId)
     expect((plan?.notBefore ?? 0) - Date.now()).toBeGreaterThan(9 * 60_000 - 5_000)
+    expect((plan?.notBefore ?? 0) - Date.now()).toBeLessThan(10 * 60_000)
     // the place it reports to is watched like any other (the internal group it sits in)
     expect(
       await planActivityWake(i.server.deps, {
@@ -456,7 +611,7 @@ describe('waking on activity', () => {
     ).toBeDefined()
   })
 
-  test('off by default, only inside active hours, and with a real checklist', async () => {
+  test('always on, only inside active hours, and only with something to watch', async () => {
     const i = instance([])
     const rooms = await connect(i)
     const wake = () =>
@@ -465,14 +620,12 @@ describe('waking on activity', () => {
         nodeId: rooms.community,
         at: Date.now(),
       })
-    await configure(i, { enabled: true, ...ALWAYS })
-    await write(i, '- look')
-    expect(await wake()).toBeUndefined() // wakeOnActivity is off
-    await configure(i, { wakeOnActivity: true })
-    expect(await wake()).toBeDefined()
+    await configure(i, ALWAYS)
+    expect(await wake()).toBeUndefined() // nothing to watch: no order, no checklist
     await write(i, '# nothing\n')
-    expect(await wake()).toBeUndefined() // empty checklist
-    await write(i, '- look')
+    expect(await wake()).toBeUndefined()
+    await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
+    expect(await wake()).toBeDefined()
     const m = new Date().getUTCHours()
     await configure(i, {
       activeFrom: `${String((m + 3) % 24).padStart(2, '0')}:00`,
@@ -484,9 +637,9 @@ describe('waking on activity', () => {
 
   test('an activity beat with no new messages makes no model call and leaves no record', async () => {
     const i = instance([])
-    await connect(i)
-    await configure(i, { enabled: true, ...ALWAYS, wakeOnActivity: true })
-    await write(i, '- keep an eye on the chats')
+    const rooms = await connect(i)
+    await configure(i, ALWAYS)
+    await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
     const out = await i.server.heartbeats.heartbeat(i.agentId, {
       slot: ++slot,
       trigger: 'activity',
@@ -507,7 +660,7 @@ describe('urgent findings in a team without a lead', () => {
       { custom: true },
     )
     expect(i.server.deps.agents.list().some((a) => a.role === 'lead')).toBe(false)
-    await configure(i, { enabled: true, ...ALWAYS })
+    await configure(i, ALWAYS)
     await write(i, '- look at the chats')
     // the digest routine exists although nobody is the lead
     expect(i.server.deps.routines.getByProgram(DIGEST_KEY)).toBeDefined()
@@ -515,13 +668,11 @@ describe('urgent findings in a team without a lead', () => {
     await beatsEnd(i, 1)
     const alerts = (await bell(i)).filter((x) => x.kind === 'alert')
     expect(alerts.map((a) => a.title)).toEqual(['Spam wave'])
-    // the same finding is not rung twice
     expect((await view(i)).beats[0]?.status).toBe('attention')
   })
 })
 
-describe('modes, notes and decisions', () => {
-  const internal = { connection: 'c1', conversation: 'internal' }
+describe('notes and decisions', () => {
   const noteStep = (extra: Record<string, unknown> = {}) =>
     call('heartbeat_note', {
       chat: 'Internal',
@@ -530,58 +681,6 @@ describe('modes, notes and decisions', () => {
       decision: 'note',
       ...extra,
     })
-
-  test('notes mode never posts, even to its own report chat; speak mode posts to the chat it observes', async () => {
-    const steps = [
-      call('team_status', {}),
-      call('channel_send', { action: 'send', ...internal, text: 'Budi, the report is due' }),
-      final('ok'),
-    ]
-    const a = instance(steps)
-    const ra = await connect(a)
-    await configure(a, {
-      enabled: true,
-      ...ALWAYS,
-      mode: 'notes',
-      reportTo: { connectionId: 'c1', nodeId: ra.internal },
-    })
-    await write(a, '- watch the internal group')
-    await fire(a)
-    await beatsEnd(a, 1)
-    expect(await beatSession(a)).toContain('No place to report to')
-    expect(ra.mock.sent).toEqual([])
-    // the same chat is both observed and the place to speak
-    const b = instance(steps)
-    const rb = await connect(b)
-    await configure(b, {
-      enabled: true,
-      ...ALWAYS,
-      mode: 'speak',
-      wakeOnActivity: true,
-      reportTo: { connectionId: 'c1', nodeId: rb.internal },
-    })
-    await write(b, '- watch the internal group')
-    expect((await view(b)).watched.map((w) => w.nodeId)).toContain(rb.internal)
-    await fire(b)
-    await beatsEnd(b, 1)
-    await until('the post', () => rb.mock.sent.length === 1)
-    expect(rb.mock.sent[0]?.conversationId).toBe('internal')
-  })
-
-  test('default mode: notes without a report chat, speak for a stored config that has one', async () => {
-    const i = instance([])
-    const rooms = await connect(i)
-    expect((await view(i)).config).toMatchObject({ mode: 'notes', reportTo: null })
-    // a config stored before modes existed (no `mode`) with a report chat keeps speaking
-    const stored = {
-      ...((await view(i)).config as object),
-      reportTo: { connectionId: 'c1', nodeId: rooms.internal },
-    } as Record<string, unknown>
-    delete stored.mode
-    i.server.deps.heartbeat.store.setConfig(i.agentId, stored as never, Date.now())
-    expect((await view(i)).config).toMatchObject({ mode: 'speak' })
-    expect((await configure(i, { mode: 'loud' })).status).toBeGreaterThanOrEqual(400)
-  })
 
   test('notes go to one append-only file per day under the agent path, and nowhere else', async () => {
     const i = instance([
@@ -593,7 +692,7 @@ describe('modes, notes and decisions', () => {
       final('ok'),
     ])
     await connect(i)
-    await configure(i, { enabled: true, ...ALWAYS })
+    await configure(i, ALWAYS)
     await write(i, '- watch the internal group')
     await fire(i)
     await beatsEnd(i, 1)
@@ -606,25 +705,12 @@ describe('modes, notes and decisions', () => {
     const lines = (file?.text ?? '').split('\n').filter((l) => l.startsWith('- '))
     expect(lines).toHaveLength(2)
     expect(lines[0]).toContain('[Internal] ids 12,13: Budi promised the report by 15:00 (note)')
-    // append-only: the first line is still there after the second
     const body = file?.text ?? ''
     expect(body.indexOf('Budi promised')).toBeLessThan(body.indexOf('Ana asked'))
-    // any other path is refused by the gate
     const text = await beatSession(i)
     expect(text).toContain('Not available in a heartbeat: memory_create')
     expect(await i.server.deps.library.read('/library/elsewhere.md')).toBeUndefined()
     expect(await i.server.deps.library.read('/library/notes/heartbeat/other/x.md')).toBeUndefined()
-  })
-
-  test('off mode keeps no notes', async () => {
-    const i = instance([call('team_status', {}), noteStep(), final('ok')])
-    await connect(i)
-    await configure(i, { enabled: true, ...ALWAYS, mode: 'off' })
-    await write(i, '- look')
-    await fire(i)
-    await beatsEnd(i, 1)
-    expect(await beatSession(i)).toContain('Notes are off')
-    expect((await view(i)).notes.exists).toBe(false)
   })
 
   test('decisions and reasons are recorded; a note stays out of the digest, an escalation rings the bell', async () => {
@@ -633,7 +719,7 @@ describe('modes, notes and decisions', () => {
       final('attention', [
         {
           title: 'Promise due',
-          decision: 'say',
+          decision: 'report',
           reason: 'Budi promised it for 15:00 and it is 16:00',
         },
         { title: 'Pricing chat', decision: 'note', reason: 'banter, nobody needs anything' },
@@ -641,7 +727,7 @@ describe('modes, notes and decisions', () => {
       ] as never),
     ])
     await connect(i)
-    await configure(i, { enabled: true, ...ALWAYS })
+    await configure(i, ALWAYS)
     await write(i, '- look')
     await fire(i)
     await beatsEnd(i, 1)
@@ -656,7 +742,7 @@ describe('modes, notes and decisions', () => {
         x.reason !== undefined && x.reason !== '',
       ]),
     ).toEqual([
-      ['Promise due', 'say', true],
+      ['Promise due', 'report', true],
       ['Pricing chat', 'note', true],
       ['Wrong signal', 'escalate', true],
     ])
@@ -664,30 +750,31 @@ describe('modes, notes and decisions', () => {
     expect((await bell(i)).map((a) => a.title)).toEqual(['Wrong signal'])
   })
 
-  test('the prompt carries the rubric only where speaking is possible, and the notes to read', async () => {
-    const speak = instance(OK)
-    const rs = await connect(speak)
-    await configure(speak, {
-      enabled: true,
-      ...ALWAYS,
-      mode: 'speak',
-      reportTo: { connectionId: 'c1', nodeId: rs.internal },
-    })
-    await write(speak, '- look')
-    await fire(speak)
-    await beatsEnd(speak, 1)
-    const text = await beatSession(speak)
-    expect(text).toContain('Speak in a chat only when')
+  test('the prompt names the order of a member with a privacy limit, and web orders the report tool', async () => {
+    const i = instance(OK)
+    const rooms = await connect(i)
+    await configure(i, ALWAYS)
+    await order(
+      i,
+      { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal },
+      { role: 'member', mention: false },
+    )
+    await order(
+      i,
+      { kind: 'web', sessionId: `dm:${i.agentId}` },
+      {
+        text: 'Tell me about failed runs',
+        by: 'web:owner',
+        role: 'owner',
+        uid: undefined,
+        mention: false,
+      },
+    )
+    await fire(i)
+    await beatsEnd(i, 1)
+    const text = await beatSession(i)
+    expect(text).toContain('asked by a member: report only what that member could read themselves')
+    expect(text).toContain('heartbeat_report with the order id')
     expect(text).toContain('When in doubt, write a note')
-    expect(text).toContain(`/library/notes/heartbeat/${speak.slug}/`)
-    const notes = instance(OK)
-    await connect(notes)
-    await configure(notes, { enabled: true, ...ALWAYS, mode: 'notes' })
-    await write(notes, '- look')
-    await fire(notes)
-    await beatsEnd(notes, 1)
-    const t2 = await beatSession(notes)
-    expect(t2).not.toContain('Speak in a chat only when')
-    expect(t2).toContain('You never post to a chat in this mode')
   })
 })

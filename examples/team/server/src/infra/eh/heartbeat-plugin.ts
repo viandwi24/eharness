@@ -14,8 +14,15 @@ import { tool } from 'ai'
 import { definePlugin, errorText, type HarnessContext, type HarnessPlugin } from 'eharness'
 import { z } from 'zod'
 import { READ_BRIEFINGS_DESCRIPTION, READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
-import { BEAT_DECISIONS, NOTE_TOOL, TEAM_STATUS_TOOL } from '../../domain/heartbeat.ts'
+import {
+  BEAT_DECISIONS,
+  type HeartbeatDestination,
+  NOTE_TOOL,
+  TEAM_STATUS_TOOL,
+} from '../../domain/heartbeat.ts'
 import { originOfSession } from '../../domain/run-profiles.ts'
+import { HEARTBEAT_REPORT_TOOL, STANDING_ORDERS_NOTE } from '../../domain/standing-orders.ts'
+import type { StandingOrderApi } from './standing-order-plugin.ts'
 
 /** What the plugin needs from the app (`app/heartbeat.ts` over the deps, built in `main.ts`). */
 export interface HeartbeatIntake {
@@ -35,15 +42,16 @@ export interface HeartbeatIntake {
       decision: (typeof BEAT_DECISIONS)[number]
     },
   ): Promise<string>
-  /** The agent (slug) has a heartbeat that is on: its chats are told how to set the checklist. */
+  /** The agent (slug) has a heartbeat that is on: its chats are told about standing orders. */
   heartbeatOn(agentSlug: string): boolean
-  /** Where the beat may post (`reportTo`) and its daily cap; read by the gate on every call. */
-  posting(agentId: string): {
-    reportTo: { connectionId: string; nodeId: string } | null
-    maxPostsPerDay: number
-  }
-  /** Count a post the beat is about to make; a readable refusal over the cap or for a repeat. */
-  reservePost(agentId: string, text: string): string | undefined
+  /** The chats of the active standing orders as of the running beat; read by the gate on every call. */
+  allowed(agentId: string): HeartbeatDestination[]
+  /** Count a post the beat is about to make to a destination; a readable refusal over the cap or for a repeat. */
+  reservePost(agentId: string, to: string, text: string): string | undefined
+  /** Report to the web chat of a standing order. A readable string either way. */
+  reportWeb(agentId: string, orderId: string, text: string): Promise<string>
+  /** The standing orders (`standing_order` tool of the chats). */
+  orders: StandingOrderApi
 }
 
 export interface HeartbeatPluginOptions {
@@ -57,20 +65,8 @@ export const TEAM_STATUS_DESCRIPTION =
   'connectors that need sign-in, the budget, new messages in the chats it watches, and requests ' +
   'the client repeated that may deserve a standing program. Read-only. Findings already reported are not listed again.'
 
-/**
- * Said (once, static) in the chats of an agent whose heartbeat is on, so "be proactive about X"
- * becomes a line of its checklist instead of a promise nobody keeps.
- */
-export const HEARTBEAT_NOTE = [
-  '## Your heartbeat',
-  '',
-  'You have a heartbeat: a quiet check-in on a schedule (and when watched chats get new messages) that',
-  'runs only if your checklist, the memory file `HEARTBEAT.md` in your own memory, has real lines in it',
-  '(headings and comments do not count). When the owner asks you to be proactive or to keep an eye on',
-  'something ("tell the group if you notice spam"), write it there as one short line with your memory',
-  'tools, keeping the lines already in the file, and say so. The heartbeat only reads; it may post',
-  'only to the report chat the owner chose in your heartbeat settings, and nowhere else.',
-].join('\n')
+/** Said (once, static) in the chats of an agent whose heartbeat is on: standing orders. */
+export const HEARTBEAT_NOTE = STANDING_ORDERS_NOTE
 
 export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heartbeat'> {
   return definePlugin({
@@ -85,8 +81,7 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
         return found
       }
       const note =
-        (origin === 'dm' || origin === 'lead') &&
-        options.intake()?.heartbeatOn(ctx.agent.id) === true
+        origin === 'dm' && options.intake()?.heartbeatOn(ctx.agent.id) === true
           ? { instructions: [{ text: HEARTBEAT_NOTE, id: 'heartbeat-note' }] as never }
           : {}
       // the lead reads the briefings from any chat thread (the digest is a page, not a message)
@@ -135,9 +130,25 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
               }
             },
           }),
+          [HEARTBEAT_REPORT_TOOL]: tool({
+            description:
+              'Report to the web chat of a standing order that was given there: pass the order id and one or two short lines. The text appears in that chat and rings the bell. Only for an order whose report destination is the web chat (for a chat order use channel_send). Refused over the daily limit or when you already said it.',
+            inputSchema: z.object({
+              order: z.string().min(1).max(80).describe('The id of the standing order.'),
+              text: z.string().min(1).max(1500).describe('What to tell the person, short.'),
+            }),
+            metadata: { risk: 'external', idempotent: false },
+            execute: async (input): Promise<string> => {
+              try {
+                return await intake().reportWeb(agentId, input.order, input.text)
+              } catch (error) {
+                return `ERROR: could not report: ${errorText(error)}`
+              }
+            },
+          }),
           [NOTE_TOOL]: tool({
             description:
-              "Append one line to today's observation notes (append-only, one file per day under /library/notes/heartbeat/). Write what you noticed in a chat: the chat or topic, the message ids, what it is, and your decision (note, say, escalate). Read-only otherwise: this is the only thing you can write.",
+              "Append one line to today's observation notes (append-only, one file per day under /library/notes/heartbeat/). Write what you noticed in a chat: the chat or topic, the message ids, what it is, and your decision (note, report, escalate). Read-only otherwise: this is the only thing you can write.",
             inputSchema: z.object({
               chat: z.string().min(1).max(120).describe('The chat or topic name.'),
               messageIds: z.array(z.string().max(80)).max(10).optional(),

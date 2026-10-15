@@ -128,6 +128,7 @@ const beatResult = (
     items: items.map((i) => ({ kind: 'note', detail: 'detail', links: [], ...i })),
   })
 const OK = [call('team_status', {}), beatResult('ok')]
+const EMPTY = 'nothing to watch: no standing order and an empty checklist'
 
 interface BeatView {
   id: string
@@ -588,7 +589,7 @@ describe('domain', () => {
 })
 
 describe('configuration', () => {
-  test('on for the lead only by default; the routine follows the config', async () => {
+  test('on by default for every agent; the routine follows the config', async () => {
     const i = instance({})
     const lead = await view(i.app, i.leadId)
     expect(lead.config).toMatchObject({
@@ -599,9 +600,9 @@ describe('configuration', () => {
     })
     expect(lead.stored).toBe(false)
     expect(lead.trigger?.status).toBe('active')
-    const researcher = (await view(i.app, 'researcher')).config
-    expect(researcher.enabled).toBe(false)
-    expect((await view(i.app, 'researcher')).trigger).toBeNull()
+    // every agent has one: with nothing to watch a beat is skipped without a model call
+    expect((await view(i.app, 'researcher')).config.enabled).toBe(true)
+    expect((await view(i.app, 'researcher')).trigger?.status).toBe('active')
     // the routines of the heartbeat and the digest are internal: not listed as routines
     const routines = (await (await i.app.request('/routines')).json()) as { routines: unknown[] }
     expect(routines.routines).toEqual([])
@@ -615,10 +616,26 @@ describe('configuration', () => {
     // off pauses, on resumes
     expect((await configure(i.app, i.leadId, { enabled: false })).trigger?.status).toBe('paused')
     expect((await configure(i.app, i.leadId, { enabled: true })).trigger?.status).toBe('active')
-    // another agent gets a heartbeat and a checklist template to write in
-    const on = await configure(i.app, 'researcher', { enabled: true, createChecklist: true })
-    expect(on.trigger?.status).toBe('active')
-    expect(on.checklist).toMatchObject({ exists: true, empty: true })
+    // a config stored by an earlier version (modes, report chat) is read without those fields
+    i.server.deps.heartbeat.store.setConfig(
+      i.leadId,
+      {
+        enabled: true,
+        everyMinutes: 15,
+        mode: 'speak',
+        reportTo: { connectionId: 'c', nodeId: 'n' },
+        maxPostsPerDay: 3,
+      } as never,
+      Date.now(),
+    )
+    const old = await view(i.app, i.leadId)
+    expect(old.config).toEqual({
+      enabled: true,
+      everyMinutes: 15,
+      activeFrom: '08:00',
+      activeTo: '20:00',
+      timezone: null,
+    })
     // validation
     for (const bad of [{ everyMinutes: 1 }, { activeFrom: '8am' }, { timezone: 'Mars/Base' }]) {
       expect((await i.app.request(`/agents/lead/heartbeat`, json('PATCH', bad))).status).toBe(400)
@@ -675,13 +692,13 @@ describe('team timezone', () => {
     expect((await view(i.app, i.leadId)).config.timezone).toBeNull()
     await set('Asia/Jakarta')
     // inside 08:00-20:00 there, so the beat gets as far as the (missing) checklist
-    expect(await reason(0)).toBe('empty checklist')
+    expect(await reason(0)).toBe(EMPTY)
     await set('UTC')
     expect(await reason(1)).toBe('outside active hours')
     // an own timezone wins over the team's
     const own = await configure(i.app, i.leadId, { timezone: 'Asia/Jakarta' })
     expect(own).toMatchObject({ effectiveTimezone: 'Asia/Jakarta' })
-    expect(await reason(2)).toBe('empty checklist')
+    expect(await reason(2)).toBe(EMPTY)
     // null goes back to following the team
     const back = await configure(i.app, i.leadId, { timezone: null })
     expect(back).toMatchObject({ effectiveTimezone: 'UTC' })
@@ -694,14 +711,14 @@ describe('a beat', () => {
     const i = instance({})
     await setUp(i, null)
     // no file at all, then a file with only headings and comments
-    expect(await fire(i)).toMatchObject({ started: false, reason: 'empty checklist' })
+    expect(await fire(i)).toMatchObject({ started: false, reason: EMPTY })
     await i.server.deps.library.writeText(checklistPath(i.leadId), '# Checklist\n<!-- later -->\n')
-    expect(await fire(i)).toMatchObject({ started: false, reason: 'empty checklist' })
+    expect(await fire(i)).toMatchObject({ started: false, reason: EMPTY })
     expect(callsOf(i)).toBe(0)
     const beats = (await view(i.app, i.leadId)).beats
     // identical skips collapse into one record
     expect(beats).toHaveLength(1)
-    expect(beats[0]).toMatchObject({ status: 'skipped', reason: 'empty checklist', count: 2 })
+    expect(beats[0]).toMatchObject({ status: 'skipped', reason: EMPTY, count: 2 })
   })
 
   test('outside the active hours it is skipped, with no model call', async () => {

@@ -10573,7 +10573,7 @@ export interface paths {
         };
         /**
          * Heartbeat of an agent
-         * @description The ambient monitor of an agent: its configuration (on for the lead by default), the state of its checklist (`HEARTBEAT.md` in its memory), the routine that wakes it and the last beats (ok, attention, skipped, failed). Also the daily digest settings.
+         * @description The ambient monitor of an agent: its standing orders (the ongoing instructions people gave it in chat, kept as lines of `HEARTBEAT.md` in its memory), the advanced settings, the routine that wakes it and the last beats (ok, attention, skipped, failed). It runs by itself when there is at least one order or checklist item; no toggle.
          */
         get: {
             parameters: {
@@ -10632,7 +10632,7 @@ export interface paths {
         head?: never;
         /**
          * Configure the heartbeat of an agent
-         * @description Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. `reportTo` (a chat or topic from `destinations`, or null) is the one place the beat may post to, at most `maxPostsPerDay` times; `wakeOnActivity` adds early beats when watched chats get new messages (at most one per `minGapMinutes`). The checklist is the memory file `HEARTBEAT.md` (read and write it through `/memory/file`, scope `agent`); an empty one means the beat never runs. `createChecklist` writes an empty template when there is none.
+         * @description Advanced settings: the interval (5 minutes to 24 hours, default 30), the active hours and their timezone. The routine that wakes it follows. Orders are given to the agent in chat (its `standing_order` tool) or written in the memory file `HEARTBEAT.md` (read and write it through `/memory/file`, scope `agent`); removing one is the delete route below.
          */
         patch: {
             parameters: {
@@ -10710,7 +10710,7 @@ export interface paths {
         put?: never;
         /**
          * Run a beat now
-         * @description Fires one beat outside the schedule. The same rules apply: outside the active hours, with an empty checklist or while the previous beat runs it is skipped (`started: false` with the reason) and costs no model call.
+         * @description Fires one beat outside the schedule. The same rules apply: outside the active hours, with nothing to watch or while the previous beat runs it is skipped (`started: false` with the reason) and costs no model call.
          */
         post: {
             parameters: {
@@ -10763,6 +10763,75 @@ export interface paths {
             };
         };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/heartbeat/orders/{orderId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a standing order
+         * @description Deletes the order line from the agent HEARTBEAT.md; the rest of the file stays. The heartbeat stops reporting for it from the next beat.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    orderId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The heartbeat */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Heartbeat"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or order */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -18345,26 +18414,22 @@ export interface components {
             config: components["schemas"]["HeartbeatConfig"];
             /** @description The timezone of the active hours in effect: its own, else the team timezone. */
             effectiveTimezone: string;
-            /** @description false while nothing was ever set: the config is the default of the role. */
+            /** @description false while nothing was ever set: the config is the default. */
             stored: boolean;
+            /** @description The standing orders: lines of `HEARTBEAT.md` the agent keeps when a person gives it an ongoing instruction in chat. Oldest first. */
+            orders: components["schemas"]["StandingOrder"][];
             checklist: {
                 /** @description A memory file of the agent. */
                 path: string;
                 exists: boolean;
-                /** @description Only headings and comments: the beat is skipped, no model call. */
+                /** @description No order and only headings and comments: the beat is skipped, no model call. */
                 empty: boolean;
-                /** @description A short starting point to insert into the file (never written by itself). */
-                suggestion: string;
             };
-            /** @description The places the beat may report to: postable chats of the agent connections. */
-            destinations: components["schemas"]["HeartbeatDestinationView"][];
             /** @description The chats whose new messages wake the beat and are counted for it. */
             watched: {
                 nodeId: string;
                 title: string;
             }[];
-            /** @description Posts to `reportTo` made today. */
-            postsToday: number;
             /** @description Today's observation notes (a library file, team timezone). */
             notes: {
                 path: string;
@@ -18381,6 +18446,7 @@ export interface components {
             digest: components["schemas"]["DigestView"];
         };
         HeartbeatConfig: {
+            /** @description Advanced. The monitor runs unless this is false; with no standing order and an empty checklist a beat costs nothing anyway. */
             enabled: boolean;
             everyMinutes: number;
             /** @description Start of the active hours, in `timezone`. */
@@ -18389,32 +18455,37 @@ export interface components {
             activeTo: string;
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone: string | null;
-            /**
-             * @description `off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`.
-             * @enum {string}
-             */
-            mode: "off" | "notes" | "speak";
-            reportTo: components["schemas"]["HeartbeatDestination"];
-            /** @description Posts to `reportTo` per local day; further ones are refused. */
-            maxPostsPerDay: number;
-            /** @description Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in). */
-            wakeOnActivity: boolean;
-            /** @description An early beat starts at the earliest this long after the previous beat. */
-            minGapMinutes: number;
         };
-        /** @description The one chat or topic (of a connection bound to the agent) the beat may post to, unasked and through the chat proactive policy. null = it never posts. */
-        HeartbeatDestination: {
+        StandingOrder: {
+            id: string;
+            /** @description The person's words, lightly cleaned. */
+            text: string;
+            /** @description Who asked: an identity id, or `web:owner`. */
+            by: string;
+            name: string;
+            role: string;
+            /** @description Platform user id of the asker (for a mention). */
+            uid?: string;
+            report: components["schemas"]["OrderDestination"];
+            /** @description Where it reports, named for a person. */
+            reportLabel: string;
+            /** @description Mention the asker when reporting. */
+            mention: boolean;
+            /** @description When it was given. */
+            at: number;
+            active: boolean;
+        };
+        OrderDestination: {
+            /** @enum {string} */
+            kind: "chat";
             connectionId: string;
             /** @description The conversation (chat or topic) id. */
             nodeId: string;
-        } | null;
-        HeartbeatDestinationView: components["schemas"]["HeartbeatDestination"] & {
-            /** @description The chat (and topic) name. */
-            label: string;
-            platform: string;
-            kind: string;
-            /** @description false: the chat settings do not allow unasked posts, so every post is refused. */
-            proactive: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "web";
+            /** @description The web chat thread (session) it reports into. */
+            sessionId: string;
         };
         BeatRecord: {
             /** @description The routine slot of the beat. */
@@ -18445,10 +18516,10 @@ export interface components {
             urgent: boolean;
             fingerprint: string;
             /**
-             * @description What the beat did about it: noted, said it in the chat, or told the owner.
+             * @description What the beat did about it: noted, reported to the destination of an order, or told the owner (`say` is the old word for report).
              * @enum {string}
              */
-            decision?: "note" | "say" | "escalate";
+            decision?: "note" | "report" | "say" | "escalate";
             /** @description One line: why (for the owner to audit). */
             reason?: string;
         };
@@ -18466,6 +18537,7 @@ export interface components {
             timezone: string | null;
         };
         HeartbeatPatch: {
+            /** @description Advanced. The monitor runs unless this is false; with no standing order and an empty checklist a beat costs nothing anyway. */
             enabled?: boolean;
             everyMinutes?: number;
             /** @description Start of the active hours, in `timezone`. */
@@ -18474,20 +18546,6 @@ export interface components {
             activeTo?: string;
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
-            /**
-             * @description `off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`.
-             * @enum {string}
-             */
-            mode?: "off" | "notes" | "speak";
-            reportTo?: components["schemas"]["HeartbeatDestination"];
-            /** @description Posts to `reportTo` per local day; further ones are refused. */
-            maxPostsPerDay?: number;
-            /** @description Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in). */
-            wakeOnActivity?: boolean;
-            /** @description An early beat starts at the earliest this long after the previous beat. */
-            minGapMinutes?: number;
-            /** @description Create `HEARTBEAT.md` with a template when the agent has none yet. */
-            createChecklist?: boolean;
         };
         BeatRun: {
             started: boolean;

@@ -31,6 +31,7 @@ import type { AgentDef } from '../../domain/agents.ts'
 import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
+import { STANDING_ORDER_TOOL } from '../../domain/standing-orders.ts'
 import { type ArtifactsHook, artifactsConnector } from '../artifacts/index.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { type BrowserHook, browserConnector } from '../browser/connector.ts'
@@ -96,6 +97,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       ...CHANNEL_READ_TOOLS,
       // a recap note and a reminder stay in the team's own space; roles decide who may use them
       ...CHANNEL_OWN_WRITE_TOOLS,
+      // an ongoing instruction kept as a line of the agent's own memory file; roles decide who (in code)
+      STANDING_ORDER_TOOL,
       // the persona tool decides in code who may do what; apply and revert always ask the person
       ...PERSONA_TOOLS,
     ],

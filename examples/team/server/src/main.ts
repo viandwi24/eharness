@@ -86,11 +86,13 @@ import { recheckTask } from './app/deliverables.ts'
 import { type HealthJobReport, runHealthJob } from './app/health.ts'
 import {
   abandonBeat,
+  allowedDestinations,
   appendNote,
+  destinationLabel,
   effectiveConfig,
   ensureHeartbeats,
   finishBeat,
-  postingOf,
+  reportToWeb,
   reservePost,
   teamStatus,
 } from './app/heartbeat.ts'
@@ -105,6 +107,7 @@ import {
 import type { ChannelInboxPort, ChannelsPort, Deps, PeoplePort } from './app/ports.ts'
 import { programNoteAction, repairProgramAuthorities } from './app/programs.ts'
 import { seedAgents } from './app/seed.ts'
+import { addOrder, chatDestinations, listOrders, removeOrder } from './app/standing-orders.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
   CLIENT,
@@ -923,7 +926,44 @@ export function compose(config: ServerConfig): Server {
     decisions: decisionStore,
     decisionResolver: decisionService,
     decisionHandoff: createDecisionHandoff(decisionStore, decisionService),
-    heartbeat: heartbeats.ports,
+    heartbeat: {
+      ...heartbeats.ports,
+      // a report of a standing order that was given in a web chat: the text lands in that thread as
+      // a notice (stored at once, no model call) and rings the bell
+      web: {
+        deliver: async ({ agentId, sessionId, text, key }) => {
+          const def = agents.get(agentId)
+          if (def === undefined || def.archivedAt !== null)
+            return { posted: false, reason: 'the agent is gone' }
+          try {
+            await factory.prepare(def)
+            await factory
+              .openSession(def, sessionId)
+              .inject(
+                'eh.notice',
+                { level: 'info', code: 'EH_STANDING_ORDER', message: text },
+                { key },
+              )
+          } catch (error) {
+            return { posted: false, reason: `the chat is gone (${errorText(error)})` }
+          }
+          events.append({
+            type: 'message-added',
+            agentId: def.id,
+            sessionId,
+            payload: { role: 'assistant', preview: text.slice(0, 120) },
+          })
+          channelNotify({
+            key: `standing-order:${key}`,
+            title: `${def.name} reports`,
+            body: text,
+            agentId: def.id,
+            link: `/a/${def.id}?t=${encodeURIComponent(sessionId)}`,
+          })
+          return { posted: true }
+        },
+      },
+    },
     events,
     modelCalls,
     health: sqliteHealthStore(conn.sqlite),
@@ -1069,8 +1109,22 @@ export function compose(config: ServerConfig): Server {
       return def !== undefined && effectiveConfig(deps, def).enabled
     },
     note: (agentId, entry) => appendNote(deps, agentId, entry),
-    posting: (agentId) => postingOf(deps, agentId),
-    reservePost: (agentId, text) => reservePost(deps, agentId, text),
+    allowed: (agentId) => allowedDestinations(deps, agentId),
+    reservePost: (agentId, to, text) => reservePost(deps, agentId, to, text),
+    reportWeb: (agentId, orderId, text) => reportToWeb(deps, agentId, orderId, text),
+    orders: {
+      list: (agentId) => listOrders(deps, agentId),
+      add: (agentId, input) => addOrder(deps, agentId, input),
+      remove: (agentId, id) => removeOrder(deps, agentId, id),
+      chats: (agentId) =>
+        chatDestinations(deps, agentId).map((d) => ({
+          connectionId: d.connectionId,
+          nodeId: d.nodeId,
+          label: d.label,
+          proactive: d.proactive,
+        })),
+      label: (agentId, d) => destinationLabel(deps, agentId, d),
+    },
   }
   // bell alerts of the channels (breaker opened, outbox failure, a bot token rejected)
   const channelNotify = (n: {

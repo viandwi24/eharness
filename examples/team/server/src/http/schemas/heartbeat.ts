@@ -1,32 +1,49 @@
 import { z } from '@hono/zod-openapi'
-import {
-  BEAT_STATUSES,
-  MAX_EVERY_MINUTES,
-  MAX_POSTS_PER_DAY,
-  MIN_EVERY_MINUTES,
-} from '../../app/catalog.ts'
+import { BEAT_STATUSES, MAX_EVERY_MINUTES, MIN_EVERY_MINUTES } from '../../app/catalog.ts'
 
-export const HeartbeatDestinationSchema = z
+export const OrderDestinationSchema = z
+  .discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('chat'),
+      connectionId: z.string(),
+      nodeId: z.string().openapi({ description: 'The conversation (chat or topic) id.' }),
+    }),
+    z.object({
+      kind: z.literal('web'),
+      sessionId: z
+        .string()
+        .openapi({ description: 'The web chat thread (session) it reports into.' }),
+    }),
+  ])
+  .openapi('OrderDestination')
+
+export const StandingOrderSchema = z
   .object({
-    connectionId: z.string().min(1),
-    nodeId: z.string().min(1).openapi({ description: 'The conversation (chat or topic) id.' }),
+    id: z.string(),
+    text: z.string().openapi({ description: "The person's words, lightly cleaned." }),
+    by: z.string().openapi({ description: 'Who asked: an identity id, or `web:owner`.' }),
+    name: z.string(),
+    role: z.string(),
+    uid: z
+      .string()
+      .optional()
+      .openapi({ description: 'Platform user id of the asker (for a mention).' }),
+    report: OrderDestinationSchema,
+    reportLabel: z.string().openapi({ description: 'Where it reports, named for a person.' }),
+    mention: z.boolean().openapi({ description: 'Mention the asker when reporting.' }),
+    at: z.number().int().openapi({ description: 'When it was given.' }),
+    active: z.boolean(),
   })
-  .openapi('HeartbeatDestination')
-
-export const HeartbeatDestinationViewSchema = HeartbeatDestinationSchema.extend({
-  label: z.string().openapi({ description: 'The chat (and topic) name.' }),
-  platform: z.string(),
-  kind: z.string(),
-  proactive: z.boolean().openapi({
-    description: 'false: the chat settings do not allow unasked posts, so every post is refused.',
-  }),
-}).openapi('HeartbeatDestinationView')
+  .openapi('StandingOrder')
 
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM, 24 hours')
 
 export const HeartbeatConfigSchema = z
   .object({
-    enabled: z.boolean(),
+    enabled: z.boolean().openapi({
+      description:
+        'Advanced. The monitor runs unless this is false; with no standing order and an empty checklist a beat costs nothing anyway.',
+    }),
     everyMinutes: z.number().int().min(MIN_EVERY_MINUTES).max(MAX_EVERY_MINUTES),
     activeFrom: clock.openapi({ description: 'Start of the active hours, in `timezone`.' }),
     activeTo: clock.openapi({
@@ -35,34 +52,10 @@ export const HeartbeatConfigSchema = z
     timezone: z.string().min(1).max(64).nullable().openapi({
       description: 'IANA timezone; null = the team timezone (workspace setting).',
     }),
-    mode: z.enum(['off', 'notes', 'speak']).openapi({
-      description:
-        '`off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`.',
-    }),
-    reportTo: HeartbeatDestinationSchema.nullable().openapi({
-      description:
-        'The one chat or topic (of a connection bound to the agent) the beat may post to, unasked and through the chat proactive policy. null = it never posts.',
-    }),
-    maxPostsPerDay: z.number().int().min(0).max(MAX_POSTS_PER_DAY).openapi({
-      description: 'Posts to `reportTo` per local day; further ones are refused.',
-    }),
-    wakeOnActivity: z.boolean().openapi({
-      description:
-        'Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in).',
-    }),
-    minGapMinutes: z.number().int().min(1).max(MAX_EVERY_MINUTES).openapi({
-      description: 'An early beat starts at the earliest this long after the previous beat.',
-    }),
   })
   .openapi('HeartbeatConfig')
 
-export const HeartbeatPatchSchema = HeartbeatConfigSchema.partial()
-  .extend({
-    createChecklist: z.boolean().optional().openapi({
-      description: 'Create `HEARTBEAT.md` with a template when the agent has none yet.',
-    }),
-  })
-  .openapi('HeartbeatPatch')
+export const HeartbeatPatchSchema = HeartbeatConfigSchema.partial().openapi('HeartbeatPatch')
 
 export const BeatItemSchema = z
   .object({
@@ -72,8 +65,9 @@ export const BeatItemSchema = z
     links: z.array(z.string()),
     urgent: z.boolean(),
     fingerprint: z.string(),
-    decision: z.enum(['note', 'say', 'escalate']).optional().openapi({
-      description: 'What the beat did about it: noted, said it in the chat, or told the owner.',
+    decision: z.enum(['note', 'report', 'say', 'escalate']).optional().openapi({
+      description:
+        'What the beat did about it: noted, reported to the destination of an order, or told the owner (`say` is the old word for report).',
     }),
     reason: z
       .string()
@@ -127,25 +121,22 @@ export const HeartbeatSchema = z
       description: 'The timezone of the active hours in effect: its own, else the team timezone.',
     }),
     stored: z.boolean().openapi({
-      description: 'false while nothing was ever set: the config is the default of the role.',
+      description: 'false while nothing was ever set: the config is the default.',
+    }),
+    orders: z.array(StandingOrderSchema).openapi({
+      description:
+        'The standing orders: lines of `HEARTBEAT.md` the agent keeps when a person gives it an ongoing instruction in chat. Oldest first.',
     }),
     checklist: z.object({
       path: z.string().openapi({ description: 'A memory file of the agent.' }),
       exists: z.boolean(),
       empty: z.boolean().openapi({
-        description: 'Only headings and comments: the beat is skipped, no model call.',
+        description: 'No order and only headings and comments: the beat is skipped, no model call.',
       }),
-      suggestion: z.string().openapi({
-        description: 'A short starting point to insert into the file (never written by itself).',
-      }),
-    }),
-    destinations: z.array(HeartbeatDestinationViewSchema).openapi({
-      description: 'The places the beat may report to: postable chats of the agent connections.',
     }),
     watched: z.array(z.object({ nodeId: z.string(), title: z.string() })).openapi({
       description: 'The chats whose new messages wake the beat and are counted for it.',
     }),
-    postsToday: z.number().int().openapi({ description: 'Posts to `reportTo` made today.' }),
     notes: z.object({ path: z.string(), exists: z.boolean() }).openapi({
       description: "Today's observation notes (a library file, team timezone).",
     }),

@@ -240,7 +240,7 @@ describe('migration of the tool checklist and MCP servers', () => {
     expect(before).not.toBe('[]')
 
     // reader: read files, memory, todos; as a role agent it also has the child side `send_message`,
-    // and in a chat `propose_plan` (the Decision Center), `persona` and `reminder` (not connectors, always there)
+    // and in a chat `propose_plan` (the Decision Center), `persona`, `reminder` and `standing_order` (not connectors, always there)
     const reader = await offeredTools(server, 'reader', model)
     expect(reader).toEqual(
       [
@@ -253,6 +253,7 @@ describe('migration of the tool checklist and MCP servers', () => {
         'person_note',
         'persona',
         'reminder',
+        'standing_order',
         // the clock and the agent's own background worker (always there)
         'datetime',
         'agent',

@@ -11148,7 +11148,14 @@
           },
           "stored": {
             "type": "boolean",
-            "description": "false while nothing was ever set: the config is the default of the role."
+            "description": "false while nothing was ever set: the config is the default."
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StandingOrder"
+            },
+            "description": "The standing orders: lines of `HEARTBEAT.md` the agent keeps when a person gives it an ongoing instruction in chat. Oldest first."
           },
           "checklist": {
             "type": "object",
@@ -11162,26 +11169,14 @@
               },
               "empty": {
                 "type": "boolean",
-                "description": "Only headings and comments: the beat is skipped, no model call."
-              },
-              "suggestion": {
-                "type": "string",
-                "description": "A short starting point to insert into the file (never written by itself)."
+                "description": "No order and only headings and comments: the beat is skipped, no model call."
               }
             },
             "required": [
               "path",
               "exists",
-              "empty",
-              "suggestion"
+              "empty"
             ]
-          },
-          "destinations": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/HeartbeatDestinationView"
-            },
-            "description": "The places the beat may report to: postable chats of the agent connections."
           },
           "watched": {
             "type": "array",
@@ -11201,10 +11196,6 @@
               ]
             },
             "description": "The chats whose new messages wake the beat and are counted for it."
-          },
-          "postsToday": {
-            "type": "integer",
-            "description": "Posts to `reportTo` made today."
           },
           "notes": {
             "type": "object",
@@ -11270,10 +11261,9 @@
           "config",
           "effectiveTimezone",
           "stored",
+          "orders",
           "checklist",
-          "destinations",
           "watched",
-          "postsToday",
           "notes",
           "trigger",
           "beats",
@@ -11284,7 +11274,8 @@
         "type": "object",
         "properties": {
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Advanced. The monitor runs unless this is false; with no standing order and an empty checklist a beat costs nothing anyway."
           },
           "everyMinutes": {
             "type": "integer",
@@ -11309,34 +11300,6 @@
             "minLength": 1,
             "maxLength": 64,
             "description": "IANA timezone; null = the team timezone (workspace setting)."
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "notes",
-              "speak"
-            ],
-            "description": "`off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`."
-          },
-          "reportTo": {
-            "$ref": "#/components/schemas/HeartbeatDestination"
-          },
-          "maxPostsPerDay": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 50,
-            "description": "Posts to `reportTo` per local day; further ones are refused."
-          },
-          "wakeOnActivity": {
-            "type": "boolean",
-            "description": "Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in)."
-          },
-          "minGapMinutes": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 1440,
-            "description": "An early beat starts at the earliest this long after the previous beat."
           }
         },
         "required": [
@@ -11344,64 +11307,107 @@
           "everyMinutes",
           "activeFrom",
           "activeTo",
-          "timezone",
-          "mode",
-          "reportTo",
-          "maxPostsPerDay",
-          "wakeOnActivity",
-          "minGapMinutes"
+          "timezone"
         ]
       },
-      "HeartbeatDestination": {
-        "type": [
-          "object",
-          "null"
-        ],
+      "StandingOrder": {
+        "type": "object",
         "properties": {
-          "connectionId": {
-            "type": "string",
-            "minLength": 1
+          "id": {
+            "type": "string"
           },
-          "nodeId": {
+          "text": {
             "type": "string",
-            "minLength": 1,
-            "description": "The conversation (chat or topic) id."
+            "description": "The person's words, lightly cleaned."
+          },
+          "by": {
+            "type": "string",
+            "description": "Who asked: an identity id, or `web:owner`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "uid": {
+            "type": "string",
+            "description": "Platform user id of the asker (for a mention)."
+          },
+          "report": {
+            "$ref": "#/components/schemas/OrderDestination"
+          },
+          "reportLabel": {
+            "type": "string",
+            "description": "Where it reports, named for a person."
+          },
+          "mention": {
+            "type": "boolean",
+            "description": "Mention the asker when reporting."
+          },
+          "at": {
+            "type": "integer",
+            "description": "When it was given."
+          },
+          "active": {
+            "type": "boolean"
           }
         },
         "required": [
-          "connectionId",
-          "nodeId"
-        ],
-        "description": "The one chat or topic (of a connection bound to the agent) the beat may post to, unasked and through the chat proactive policy. null = it never posts."
+          "id",
+          "text",
+          "by",
+          "name",
+          "role",
+          "report",
+          "reportLabel",
+          "mention",
+          "at",
+          "active"
+        ]
       },
-      "HeartbeatDestinationView": {
-        "allOf": [
+      "OrderDestination": {
+        "oneOf": [
           {
-            "$ref": "#/components/schemas/HeartbeatDestination"
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "chat"
+                ]
+              },
+              "connectionId": {
+                "type": "string"
+              },
+              "nodeId": {
+                "type": "string",
+                "description": "The conversation (chat or topic) id."
+              }
+            },
+            "required": [
+              "kind",
+              "connectionId",
+              "nodeId"
+            ]
           },
           {
             "type": "object",
             "properties": {
-              "label": {
-                "type": "string",
-                "description": "The chat (and topic) name."
-              },
-              "platform": {
-                "type": "string"
-              },
               "kind": {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "web"
+                ]
               },
-              "proactive": {
-                "type": "boolean",
-                "description": "false: the chat settings do not allow unasked posts, so every post is refused."
+              "sessionId": {
+                "type": "string",
+                "description": "The web chat thread (session) it reports into."
               }
             },
             "required": [
-              "label",
-              "platform",
               "kind",
-              "proactive"
+              "sessionId"
             ]
           }
         ]
@@ -11502,10 +11508,11 @@
             "type": "string",
             "enum": [
               "note",
+              "report",
               "say",
               "escalate"
             ],
-            "description": "What the beat did about it: noted, said it in the chat, or told the owner."
+            "description": "What the beat did about it: noted, reported to the destination of an order, or told the owner (`say` is the old word for report)."
           },
           "reason": {
             "type": "string",
@@ -11580,7 +11587,8 @@
         "type": "object",
         "properties": {
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Advanced. The monitor runs unless this is false; with no standing order and an empty checklist a beat costs nothing anyway."
           },
           "everyMinutes": {
             "type": "integer",
@@ -11605,38 +11613,6 @@
             "minLength": 1,
             "maxLength": 64,
             "description": "IANA timezone; null = the team timezone (workspace setting)."
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "notes",
-              "speak"
-            ],
-            "description": "`off`: findings only (digest, bell). `notes`: also reads the chats and keeps daily notes, never posts. `speak`: may also post to `reportTo`. Stored configs without it: `speak` with a `reportTo`, else `notes`."
-          },
-          "reportTo": {
-            "$ref": "#/components/schemas/HeartbeatDestination"
-          },
-          "maxPostsPerDay": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 50,
-            "description": "Posts to `reportTo` per local day; further ones are refused."
-          },
-          "wakeOnActivity": {
-            "type": "boolean",
-            "description": "Also beat early when a watched chat gets new messages (the chats the checklist names, else every group, channel and topic the agent is allowed in)."
-          },
-          "minGapMinutes": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 1440,
-            "description": "An early beat starts at the earliest this long after the previous beat."
-          },
-          "createChecklist": {
-            "type": "boolean",
-            "description": "Create `HEARTBEAT.md` with a template when the agent has none yet."
           }
         }
       },
@@ -27119,7 +27095,7 @@
           "heartbeat"
         ],
         "summary": "Heartbeat of an agent",
-        "description": "The ambient monitor of an agent: its configuration (on for the lead by default), the state of its checklist (`HEARTBEAT.md` in its memory), the routine that wakes it and the last beats (ok, attention, skipped, failed). Also the daily digest settings.",
+        "description": "The ambient monitor of an agent: its standing orders (the ongoing instructions people gave it in chat, kept as lines of `HEARTBEAT.md` in its memory), the advanced settings, the routine that wakes it and the last beats (ok, attention, skipped, failed). It runs by itself when there is at least one order or checklist item; no toggle.",
         "security": [
           {
             "Bearer": []
@@ -27187,7 +27163,7 @@
           "heartbeat"
         ],
         "summary": "Configure the heartbeat of an agent",
-        "description": "Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. `reportTo` (a chat or topic from `destinations`, or null) is the one place the beat may post to, at most `maxPostsPerDay` times; `wakeOnActivity` adds early beats when watched chats get new messages (at most one per `minGapMinutes`). The checklist is the memory file `HEARTBEAT.md` (read and write it through `/memory/file`, scope `agent`); an empty one means the beat never runs. `createChecklist` writes an empty template when there is none.",
+        "description": "Advanced settings: the interval (5 minutes to 24 hours, default 30), the active hours and their timezone. The routine that wakes it follows. Orders are given to the agent in chat (its `standing_order` tool) or written in the memory file `HEARTBEAT.md` (read and write it through `/memory/file`, scope `agent`); removing one is the delete route below.",
         "security": [
           {
             "Bearer": []
@@ -27277,7 +27253,7 @@
           "heartbeat"
         ],
         "summary": "Run a beat now",
-        "description": "Fires one beat outside the schedule. The same rules apply: outside the active hours, with an empty checklist or while the previous beat runs it is skipped (`started: false` with the reason) and costs no model call.",
+        "description": "Fires one beat outside the schedule. The same rules apply: outside the active hours, with nothing to watch or while the previous beat runs it is skipped (`started: false` with the reason) and costs no model call.",
         "security": [
           {
             "Bearer": []
@@ -27330,6 +27306,82 @@
           },
           "404": {
             "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/heartbeat/orders/{orderId}": {
+      "delete": {
+        "tags": [
+          "heartbeat"
+        ],
+        "summary": "Remove a standing order",
+        "description": "Deletes the order line from the agent HEARTBEAT.md; the rest of the file stays. The heartbeat stops reporting for it from the next beat.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "orderId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The heartbeat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Heartbeat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or order",
             "content": {
               "application/json": {
                 "schema": {

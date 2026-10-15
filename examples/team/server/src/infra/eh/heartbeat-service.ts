@@ -63,10 +63,10 @@ export const BEAT_SCHEMA = z.object({
           .optional()
           .describe('The fingerprint of the team_status finding this is about, unchanged.'),
         decision: z
-          .enum(['note', 'say', 'escalate'])
+          .enum(['note', 'report', 'escalate'])
           .optional()
           .describe(
-            'What you did about it: note (only noted), say (you posted it in the chat), escalate (the owner must look).',
+            'What you did about it: note (only noted), report (you told the destination of a standing order), escalate (the owner must look).',
           ),
         reason: z
           .string()
@@ -113,7 +113,7 @@ export interface HeartbeatService extends SystemRunner {
   ports: HeartbeatPorts
   /**
    * A message arrived in a chat (the gateway's ingest): maybe wake the beat of the agent early,
-   * debounced to one early beat per `minGapMinutes`. Never throws.
+   * debounced to one early beat per `ACTIVITY_MIN_GAP_MS`. Never throws.
    */
   activity(event: { connectionId: string; nodeId: string; at: number }): Promise<void>
   /** Cancel pending early beats (shutdown). */

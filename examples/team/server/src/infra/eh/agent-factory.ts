@@ -111,6 +111,7 @@ import { HAND_OVER_REMINDER, LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain
 import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
+import { destKey } from '../../domain/standing-orders.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { taskGrantRules } from '../../domain/work-queue.ts'
 import {
@@ -148,6 +149,7 @@ import type { ModelConfig } from './provider.ts'
 import { rehearsalSessions, sessionFileSystem } from './rehearsal-registry.ts'
 import { routineOutcomes } from './routine-plugin.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
+import { standingOrders } from './standing-order-plugin.ts'
 import {
   setBudgetLimit,
   sqliteBudgetLedger,
@@ -1002,22 +1004,15 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           .map(([name]) => name)
         /**
          * Chat tools of a beat: reads go through (a download writes a file: refused); the one
-         * post is allowed only as a new message to the configured `reportTo`, inside the daily
-         * cap and not as a repeat. Read from the config on every call, like a program's authority.
+         * post is allowed only as a new message to the chat of an active standing order, inside the
+         * daily cap of that chat and not as a repeat. Read on every call, like a program's authority.
          */
         const channelCall = (call: { toolName: string; input: unknown }): string | undefined => {
-          const posting = deps.heartbeat?.()?.posting(def.id) ?? {
-            reportTo: null,
-            maxPostsPerDay: 0,
-          }
+          const allowed = deps.heartbeat?.()?.allowed(def.id) ?? []
           let target: HeartbeatDestination | { error: string } | undefined
           const input = (call.input ?? {}) as Record<string, unknown>
           const gw = deps.channels?.()
-          if (
-            call.toolName === HEARTBEAT_POST_TOOL &&
-            posting.reportTo !== null &&
-            gw !== undefined
-          ) {
+          if (call.toolName === HEARTBEAT_POST_TOOL && allowed.length > 0 && gw !== undefined) {
             try {
               const str = (v: unknown): string | undefined =>
                 typeof v === 'string' ? v : undefined
@@ -1040,11 +1035,16 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               target = { error: errorText(error) }
             }
           }
-          const refusal = heartbeatChannelRefusal(call, { reportTo: posting.reportTo, target })
+          const refusal = heartbeatChannelRefusal(call, { allowed, target })
           if (refusal !== undefined || call.toolName !== HEARTBEAT_POST_TOOL) return refusal
           const text = typeof input.text === 'string' ? input.text : ''
           if (text.trim() === '') return 'Not posted: send needs text.'
-          return deps.heartbeat?.()?.reservePost(def.id, text)
+          const to = destKey({
+            kind: 'chat',
+            connectionId: (target as HeartbeatDestination).connectionId,
+            nodeId: (target as HeartbeatDestination).nodeId,
+          })
+          return deps.heartbeat?.()?.reservePost(def.id, to, text)
         }
         return {
           rules: { allow: [...HEARTBEAT_ALLOWED, HEARTBEAT_POST_TOOL, ...lookups], deny: [] },
@@ -1274,6 +1274,18 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...(deps.channels === undefined
         ? []
         : [webReminders({ gateway: deps.channels, agentOf: (slug) => deps.agentBySlug?.(slug) })]),
+      // the `standing_order` tool of a person's own chat (web or a channel): ongoing instructions
+      // the heartbeat carries out (P51)
+      ...(deps.channels === undefined
+        ? []
+        : [
+            standingOrders({
+              gateway: deps.channels,
+              agentOf: (slug) => deps.agentBySlug?.(slug),
+              orders: () => deps.heartbeat?.()?.orders,
+              enabled: (slug) => deps.heartbeat?.()?.heartbeatOn(slug) === true,
+            }),
+          ]),
       // `person_note` of a person's own chat thread, and no communication style in memory
       ...(deps.channels === undefined ? [] : [webPersonNote({ gateway: deps.channels })]),
       // a delegated agent of a chat waits for approval there too

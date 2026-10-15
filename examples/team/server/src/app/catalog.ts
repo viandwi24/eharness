@@ -8,7 +8,6 @@ export { EVENT_TYPES } from '../domain/events.ts'
 export {
   BEAT_STATUSES,
   MAX_EVERY_MINUTES,
-  MAX_POSTS_PER_DAY,
   MIN_EVERY_MINUTES,
 } from '../domain/heartbeat.ts'
 export { MODEL_CALL_KINDS, MODEL_CALL_STATUSES } from '../domain/model-calls.ts'

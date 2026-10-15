@@ -9,7 +9,7 @@
  * findings and writes the proposal of a program, when it sees a pattern.
  */
 
-import { conflict, invalid } from '../domain/errors.ts'
+import { conflict } from '../domain/errors.ts'
 import {
   activityLines,
   activityTotal,
@@ -20,23 +20,20 @@ import {
   beatPrompt,
   boardLine,
   buildDigest,
-  CHECKLIST_SUGGESTION,
-  CHECKLIST_TEMPLATE,
   type ChatActivity,
   checkDigestFields,
   checkHeartbeatFields,
   checklistIsEmpty,
   checklistPath,
   checkPost,
+  configOf,
   DIGEST_KEY,
   type DigestConfig,
   type DigestState,
   dailyCron,
-  defaultHeartbeat,
   type Finding,
   type HeartbeatConfig,
   type HeartbeatDestination,
-  type HeartbeatDestinationView,
   type HeartbeatState,
   heartbeatKey,
   inActiveHours,
@@ -46,6 +43,7 @@ import {
   noteLine,
   notesPath,
   observe,
+  type PromptOrder,
   parseBeatResult,
   periodStarts,
   postsToday,
@@ -59,6 +57,14 @@ import {
 } from '../domain/heartbeat.ts'
 import { parseProgramSession } from '../domain/programs.ts'
 import type { RoutineSpec } from '../domain/routines.ts'
+import {
+  ACTIVITY_MIN_GAP_MS,
+  destKey,
+  type OrderDestination,
+  PER_DESTINATION_DAILY_CAP,
+  parseChecklist,
+  type StandingOrder,
+} from '../domain/standing-orders.ts'
 import { boardColumn, type Task } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
 import { postAlerts, postBriefing } from './briefings.ts'
@@ -77,27 +83,29 @@ const lead = (deps: Deps) => deps.agents.list().find((a) => a.role === 'lead')
 
 // --- configuration -----------------------------------------------------------------------------
 
+export interface OrderView extends StandingOrder {
+  /** Where it reports, named for a person (`Community / Signals`, `the web chat`). */
+  reportLabel: string
+}
+
 export interface HeartbeatView {
   agentId: string
+  /** The advanced settings (interval, active hours). */
   config: HeartbeatConfig
   /** The timezone of the active hours in effect (the agent's own, else the team timezone). */
   effectiveTimezone: string
-  /** False while nothing was ever set: the config is the default of the agent's role. */
+  /** False while nothing was ever set: the config is the default. */
   stored: boolean
+  /** The standing orders in `HEARTBEAT.md` (also paused ones), oldest first. */
+  orders: OrderView[]
   checklist: {
     path: string
     exists: boolean
-    /** Nothing to check (only headings and comments): every beat is skipped, no model call. */
+    /** Nothing to check (no order, only headings and comments): every beat is skipped, no model call. */
     empty: boolean
-    /** A short starting point the owner may insert (never written by itself). */
-    suggestion: string
   }
-  /** Places a beat may report to (chosen from this list). */
-  destinations: HeartbeatDestinationView[]
   /** The chats an activity wake and the beat's activity summary look at (the watch rule). */
   watched: Array<{ nodeId: string; title: string }>
-  /** Posts the beat made to `reportTo` today (local day of its timezone). */
-  postsToday: number
   /** Today's observation notes (library file, team timezone). */
   notes: { path: string; exists: boolean }
   /** The routine that wakes it. */
@@ -112,12 +120,16 @@ export interface HeartbeatView {
   digest: DigestConfig & { effectiveTimezone: string; buffered: number; lastSentAt: number | null }
 }
 
-/** The stored config over the defaults (a config stored before a field existed gets its default). */
+/** A destination named for a person. */
+export function destinationLabel(deps: Deps, agentId: string, d: OrderDestination): string {
+  if (d.kind === 'web') return 'the web chat'
+  const node = deps.heartbeat.channels?.nodes(agentId).find((n) => n.nodeId === d.nodeId)
+  return node?.title ?? d.nodeId
+}
+
+/** The stored config over the defaults (fields that no longer exist in an old stored config are ignored). */
 export function effectiveConfig(deps: Deps, agent: { id: string; role: string }): HeartbeatConfig {
-  const stored = deps.heartbeat.store.config(agent.id)
-  const merged = { ...defaultHeartbeat(agent), ...stored }
-  // a config stored before modes existed keeps its meaning: with a report chat it may speak
-  return { ...merged, mode: stored?.mode ?? (merged.reportTo === null ? 'notes' : 'speak') }
+  return configOf(agent, deps.heartbeat.store.config(agent.id))
 }
 
 /** The timezone in effect for an agent's active hours: its own, else the team's. */
@@ -135,18 +147,19 @@ export async function getHeartbeat(deps: Deps, idOrSlug: string): Promise<Heartb
     config,
     effectiveTimezone: timezone,
     stored: deps.heartbeat.store.config(agent.id) !== undefined,
+    orders: parseChecklist(file?.text).orders.map((o) => ({
+      ...o,
+      reportLabel: destinationLabel(deps, agent.id, o.report),
+    })),
     checklist: {
       path: checklistPath(agent.id),
       exists: file !== undefined,
       empty: checklistIsEmpty(file?.text),
-      suggestion: CHECKLIST_SUGGESTION,
     },
-    destinations: deps.heartbeat.channels?.destinations(agent.id) ?? [],
     watched: watchedOf(deps, agent.id, file?.text ?? '').map((n) => ({
       nodeId: n.nodeId,
       title: n.title,
     })),
-    postsToday: postsToday(deps.heartbeat.store.state(agent.id).posts, deps.clock.now(), timezone),
     notes: await todaysNotes(deps, agent),
     trigger:
       routine === undefined
@@ -182,8 +195,6 @@ export async function appendNote(
   entry: { chat: string; messageIds?: string[]; noticed: string; decision: BeatDecision },
 ): Promise<string> {
   const agent = getAgent(deps, agentId)
-  const config = effectiveConfig(deps, agent)
-  if (config.mode === 'off') return 'Notes are off for this heartbeat (mode off).'
   if (entry.noticed.trim() === '' || entry.chat.trim() === '')
     return 'ERROR: a note needs chat and noticed.'
   const now = deps.clock.now()
@@ -225,42 +236,16 @@ const changed = (deps: Deps, agentId: string | null, change: string): void =>
 export async function setHeartbeat(
   deps: Deps,
   idOrSlug: string,
-  patch: Partial<HeartbeatConfig> & { createChecklist?: boolean | undefined },
+  patch: Partial<HeartbeatConfig>,
 ): Promise<HeartbeatView> {
   const agent = getAgent(deps, idOrSlug)
   if (agent.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
-  const { createChecklist, ...fields } = patch
-  checkHeartbeatFields(fields)
+  checkHeartbeatFields(patch)
   const clean = Object.fromEntries(
-    Object.entries(fields).filter(([, v]) => v !== undefined),
+    Object.entries(patch).filter(([, v]) => v !== undefined),
   ) as Partial<HeartbeatConfig>
-  // a report destination is a conversation of one of the agent's own connections, nothing else
-  if (clean.reportTo != null) {
-    const to = clean.reportTo
-    const known = deps.heartbeat.channels
-      ?.destinations(agent.id)
-      .some((d) => d.connectionId === to.connectionId && d.nodeId === to.nodeId)
-    if (known !== true) {
-      throw invalid(
-        'reportTo must be a chat or topic of one of the connections bound to this agent',
-        'INVALID_HEARTBEAT',
-      )
-    }
-    clean.reportTo = { connectionId: to.connectionId, nodeId: to.nodeId }
-  }
   const next: HeartbeatConfig = { ...effectiveConfig(deps, agent), ...clean }
-  // the mode stays derived (a report chat means `speak`) until somebody chooses one
-  if (clean.mode === undefined && deps.heartbeat.store.config(agent.id)?.mode === undefined) {
-    delete (next as Partial<HeartbeatConfig>).mode
-  }
   deps.heartbeat.store.setConfig(agent.id, next, deps.clock.now())
-  // turning it on gives the person a file to write the checklist in
-  if (
-    createChecklist === true &&
-    (await deps.library.read(checklistPath(agent.id))) === undefined
-  ) {
-    await deps.library.writeText(checklistPath(agent.id), CHECKLIST_TEMPLATE, null)
-  }
   syncHeartbeatRoutine(deps, agent.id)
   // a team without a lead still gets its digest once an agent has a heartbeat
   syncDigestRoutine(deps)
@@ -522,37 +507,36 @@ async function activityOf(
 
 // --- posting and waking from chats -------------------------------------------------------------
 
-/** Where the beat may post, and how many posts a day (the gate reads this on every call). */
-export function postingOf(
-  deps: Deps,
-  agentId: string,
-): { reportTo: HeartbeatDestination | null; maxPostsPerDay: number } {
-  const agent = getAgent(deps, agentId)
-  const { reportTo, maxPostsPerDay, mode } = effectiveConfig(deps, agent)
-  // only the `speak` mode may post: in `notes` the destination is where the owner reads, nothing more
-  return { reportTo: mode === 'speak' ? reportTo : null, maxPostsPerDay }
+/**
+ * The chats a beat may send to: the destinations of the active standing orders as of the running
+ * beat (`beginBeat` writes the snapshot; the gate reads it on every call and cannot wait for I/O).
+ */
+export function allowedDestinations(deps: Deps, agentId: string): HeartbeatDestination[] {
+  return (deps.heartbeat.store.state(agentId).allowed ?? []).flatMap((d) =>
+    d.kind === 'chat' ? [{ connectionId: d.connectionId, nodeId: d.nodeId }] : [],
+  )
 }
 
 /**
- * The beat is about to post `text` to its destination: refuse it (a readable reason the model can
- * act on) over the daily cap or for a repeat, else count it. The count is taken here, before the
- * send, so two posts in one step cannot both slip under the cap; a post the gateway then refuses
- * still uses one.
+ * The beat is about to post `text` to a destination (`destKey`): refuse it (a readable reason the
+ * model can act on) over the daily cap of that destination or for a repeat, else count it. The
+ * count is taken here, before the send, so two posts in one step cannot both slip under the cap; a
+ * post the gateway then refuses still uses one.
  */
 export function reservePost(
   deps: Deps,
   agentId: string,
+  to: string,
   text: string,
   now = deps.clock.now(),
 ): string | undefined {
   const agent = getAgent(deps, agentId)
-  const config = effectiveConfig(deps, agent)
-  const timezone = heartbeatTimezone(deps, config)
+  const timezone = heartbeatTimezone(deps, effectiveConfig(deps, agent))
   let refusal: string | undefined
   deps.heartbeat.store.updateState(
     agentId,
     (s) => {
-      const checked = checkPost(s, config, text, now, timezone)
+      const checked = checkPost(s, to, text, now, timezone)
       if (!checked.ok) {
         refusal = checked.reason
         return s
@@ -560,7 +544,12 @@ export function reservePost(
       return {
         ...s,
         fingerprints: { ...s.fingerprints, [checked.fingerprint]: now },
-        posts: [...(s.posts ?? []).filter((at) => now - at < MAX_POST_HISTORY_MS), now],
+        posts: [
+          ...(s.posts ?? []).filter(
+            (p) => typeof p === 'object' && now - p.at < MAX_POST_HISTORY_MS,
+          ),
+          { at: now, to },
+        ],
       }
     },
     now,
@@ -569,10 +558,42 @@ export function reservePost(
 }
 
 /**
+ * A beat reports to an order that reports to a web chat: the text lands in that thread as a notice
+ * (stored at once, no model call) and rings the bell. A readable string either way.
+ */
+export async function reportToWeb(
+  deps: Deps,
+  agentId: string,
+  orderId: string,
+  text: string,
+): Promise<string> {
+  const body = text.replace(/\s+/g, ' ').trim()
+  if (body === '') return 'Not posted: the report needs text.'
+  const file = await deps.library.read(checklistPath(agentId))
+  const order = parseChecklist(file?.text).active.find((o) => o.id === orderId)
+  if (order === undefined) return `Not posted: there is no active standing order ${orderId}.`
+  if (order.report.kind !== 'web') {
+    return `Not posted: order ${orderId} reports to a chat, not to the web: use channel_send with its connection and conversation.`
+  }
+  const refusal = reservePost(deps, agentId, destKey(order.report), body)
+  if (refusal !== undefined) return refusal
+  const out = await deps.heartbeat.web?.deliver({
+    agentId,
+    sessionId: order.report.sessionId,
+    text: body,
+    key: `order:${order.id}:${deps.clock.now()}`,
+  })
+  if (out === undefined) return 'Not posted: web chats are not available here.'
+  return out.posted
+    ? 'Reported to the web chat (it also rings the bell).'
+    : `Not posted: ${out.reason ?? 'the chat is gone'}.`
+}
+
+/**
  * New messages arrived in a chat: should an early beat run, and how soon? Cheap and pure over the
- * stores: the agent's beat is on and wakes on activity, the chat is one it watches (`watchedNodes`),
- * inside the active hours, and an activity beat starts at the earliest `minGapMinutes` after the
- * previous beat that ran. undefined = no.
+ * stores: the agent's beat is on, there is something to look at, the chat is one it watches
+ * (`watchedNodes`), inside the active hours, and an activity beat starts at the earliest
+ * `ACTIVITY_MIN_GAP_MS` after the previous beat that ran. undefined = no.
  */
 export async function planActivityWake(
   deps: Deps,
@@ -584,7 +605,7 @@ export async function planActivityWake(
   const agent = deps.agents.get(agentId)
   if (agent === undefined || agent.archivedAt !== null) return undefined
   const config = effectiveConfig(deps, agent)
-  if (!config.enabled || !config.wakeOnActivity) return undefined
+  if (!config.enabled) return undefined
   if (!inActiveHours(input.at, { ...config, timezone: heartbeatTimezone(deps, config) })) {
     return undefined
   }
@@ -595,7 +616,7 @@ export async function planActivityWake(
   const last = deps.heartbeat.store.state(agent.id).last
   return {
     agentId,
-    notBefore: last === undefined ? input.at : last.at + config.minGapMinutes * 60_000,
+    notBefore: last === undefined ? input.at : last.at + ACTIVITY_MIN_GAP_MS,
   }
 }
 
@@ -644,15 +665,15 @@ export async function beginBeat(
   const timezone = heartbeatTimezone(deps, config)
   if (!inActiveHours(at, { ...config, timezone })) return skip('outside active hours')
   const file = await deps.library.read(checklistPath(agent.id))
-  if (checklistIsEmpty(file?.text)) return skip('empty checklist')
+  if (checklistIsEmpty(file?.text))
+    return skip('nothing to watch: no standing order and an empty checklist')
   if (input.session.waiting) return skip('the previous beat waits for a decision')
   const last = state.beats.find((b) => b.status === 'running')
   if (input.session.busy || (last !== undefined && at - last.at < STALE_BEAT_MS)) {
     return skip('the previous beat is still running')
   }
   if (trigger === 'activity') {
-    if (!config.wakeOnActivity) return skip('waking on activity is off')
-    if (state.last !== undefined && at - state.last.at < config.minGapMinutes * 60_000) {
+    if (state.last !== undefined && at - state.last.at < ACTIVITY_MIN_GAP_MS) {
       return skip('too soon after the previous beat')
     }
   }
@@ -681,9 +702,19 @@ export async function beginBeat(
     }),
     at,
   )
+  const parsed = parseChecklist(file?.text)
+  // the gate of this beat: it may send only to the chats of the active orders
+  const chats = new Map<string, OrderDestination>()
+  for (const o of parsed.active)
+    if (o.report.kind === 'chat') chats.set(destKey(o.report), o.report)
   deps.heartbeat.store.updateState(
     agent.id,
-    (s) => ({ ...s, last: { at, trigger }, window: { since, trigger } }),
+    (s) => ({
+      ...s,
+      last: { at, trigger },
+      window: { since, trigger },
+      allowed: [...chats.values()],
+    }),
     at,
   )
   pushRecord(deps, agent.id, at, {
@@ -699,39 +730,25 @@ export async function beginBeat(
   })
   const day = localDay(at, deps.settings.get().timezone)
   const yesterday = localDay(at - DAY_MS, deps.settings.get().timezone)
-  const destination =
-    config.mode !== 'speak' || config.reportTo === null || config.maxPostsPerDay === 0
-      ? undefined
-      : deps.heartbeat.channels
-          ?.destinations(agent.id)
-          .find(
-            (d) =>
-              d.connectionId === config.reportTo?.connectionId &&
-              d.nodeId === config.reportTo?.nodeId,
-          )
-  const postsLeft = Math.max(
-    0,
-    config.maxPostsPerDay - postsToday(deps.heartbeat.store.state(agent.id).posts, at, timezone),
-  )
+  const posts = deps.heartbeat.store.state(agent.id).posts
+  const orders: PromptOrder[] = parsed.active.map((order) => ({
+    order,
+    label: destinationLabel(deps, agent.id, order.report),
+    postsLeft: Math.max(
+      0,
+      PER_DESTINATION_DAILY_CAP - postsToday(posts, destKey(order.report), at, timezone),
+    ),
+  }))
   return {
     run: true,
     prompt: beatPrompt({
       now: at,
       timezone,
-      checklist: file?.text ?? '',
+      plain: parsed.plain,
       agentName: agent.name,
       trigger,
-      mode: config.mode,
+      orders,
       notes: [notesPath(agent.slug, day), notesPath(agent.slug, yesterday)],
-      report:
-        destination === undefined || postsLeft === 0
-          ? null
-          : {
-              connectionId: destination.connectionId,
-              nodeId: destination.nodeId,
-              label: destination.label,
-              postsLeft,
-            },
     }),
   }
 }

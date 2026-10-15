@@ -1,18 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import type { BeatRecord, HeartbeatConfig } from './model';
-import { BEAT_LABEL, beatDetail, beatTone, checklistNotice, decisionLine, destinationWarning, filesLink, formErrors, formOf, patchOf, scheduleSummary } from './model';
+import type { BeatRecord, HeartbeatConfig, StandingOrder } from './model';
+import { BEAT_LABEL, beatDetail, beatTone, decisionLine, filesLink, formErrors, formOf, NO_ORDERS, orderWhere, orderWho, patchOf, scheduleSummary } from './model';
 
 const config: HeartbeatConfig = {
 	enabled: true,
 	everyMinutes: 30,
 	activeFrom: '08:00',
 	activeTo: '20:00',
-	timezone: 'UTC',
-	mode: 'notes',
-	reportTo: null,
-	maxPostsPerDay: 6,
-	wakeOnActivity: false,
-	minGapMinutes: 10
+	timezone: 'UTC'
 };
 const beat = (over: Partial<BeatRecord>): BeatRecord => ({
 	id: '1',
@@ -41,7 +36,7 @@ describe('heartbeat form', () => {
 
 	test('the patch holds only what changed', () => {
 		expect(patchOf(config, formOf(config))).toEqual({});
-		expect(patchOf(config, { ...formOf(config), enabled: false, everyMinutes: 60 })).toEqual({ enabled: false, everyMinutes: 60 });
+		expect(patchOf(config, { ...formOf(config), everyMinutes: 60 })).toEqual({ everyMinutes: 60 });
 	});
 
 	test('an empty timezone follows the team timezone', () => {
@@ -60,39 +55,35 @@ describe('heartbeat form', () => {
 	});
 });
 
-describe('proactive settings', () => {
-	const dest = { connectionId: 'c1', nodeId: 'n1', label: 'Internal', platform: 'telegram', kind: 'room', proactive: true };
-	test('the report chat is chosen from the list and sent with its connection', () => {
-		const f = formOf(config);
-		expect(patchOf(config, { ...f, reportTo: 'n1' }, [dest])).toEqual({ reportTo: { connectionId: 'c1', nodeId: 'n1' } });
-		const set = { ...config, reportTo: { connectionId: 'c1', nodeId: 'n1' } };
-		expect(formOf(set).reportTo).toBe('n1');
-		expect(patchOf(set, formOf(set), [dest])).toEqual({});
-		expect(patchOf(set, { ...formOf(set), reportTo: '' }, [dest])).toEqual({ reportTo: null });
-		expect(patchOf(config, { ...f, wakeOnActivity: true, maxPostsPerDay: 3, minGapMinutes: 15 })).toEqual({ wakeOnActivity: true, maxPostsPerDay: 3, minGapMinutes: 15 });
+describe('standing orders', () => {
+	const order = (over: Partial<StandingOrder> = {}): StandingOrder => ({
+		id: 'o1',
+		text: 'Watch the community channel',
+		by: 'ident-1',
+		name: 'Ana',
+		role: 'admin',
+		report: { kind: 'chat', connectionId: 'c1', nodeId: 'n1' },
+		reportLabel: 'Internal',
+		mention: true,
+		at: 0,
+		active: true,
+		...over
 	});
 
-	test('the caps are checked', () => {
-		expect(Object.keys(formErrors({ ...formOf(config), maxPostsPerDay: 51, minGapMinutes: 0 })).sort()).toEqual(['maxPostsPerDay', 'minGapMinutes']);
-		expect(formErrors({ ...formOf(config), maxPostsPerDay: 0 })).toEqual({});
+	test('who asked and where it reports read as short phrases', () => {
+		expect(orderWho(order())).toBe('Ana (admin)');
+		expect(orderWho(order({ by: 'web:owner', name: 'the owner', role: 'owner' }))).toBe('You (owner)');
+		expect(orderWho(order({ name: ' ' }))).toBe('Someone (admin)');
+		expect(orderWhere(order())).toBe('Reports to Internal, tagging them');
+		expect(orderWhere(order({ mention: false }))).toBe('Reports to Internal');
+		expect(orderWhere(order({ report: { kind: 'web', sessionId: 's' }, mention: false }))).toBe('Reports in the web chat');
+		expect(NO_ORDERS).toContain('Tell the agent in chat');
 	});
 
-	test('an empty checklist says plainly that the heartbeat does nothing', () => {
-		expect(checklistNotice({ exists: true, empty: false }, true)).toBeNull();
-		expect(checklistNotice({ exists: false, empty: true }, true)).toMatchObject({ tone: 'warning' });
-		expect(checklistNotice({ exists: true, empty: true }, true)?.text).toContain('does nothing');
-		expect(checklistNotice({ exists: true, empty: true }, false)).toMatchObject({ tone: 'muted' });
-	});
-
-	test('a chat that does not allow proactive posts is flagged', () => {
-		expect(destinationWarning(dest)).toBeNull();
-		expect(destinationWarning({ ...dest, proactive: false })).toContain('proactive');
-		expect(destinationWarning(undefined)).toBeNull();
-	});
-
-	test('the mode is part of the patch; decisions read as an audit line; the notes link points at the file', () => {
-		expect(patchOf(config, { ...formOf(config), mode: 'speak' })).toEqual({ mode: 'speak' });
-		expect(decisionLine({ decision: 'say', reason: 'due at 15:00' })).toBe('Said it: due at 15:00');
+	test('the form has only the advanced fields; decisions read as an audit line; the notes link points at the file', () => {
+		expect(Object.keys(formOf(config)).sort()).toEqual(['activeFrom', 'activeTo', 'everyMinutes', 'timezone']);
+		expect(decisionLine({ decision: 'report', reason: 'due at 15:00' })).toBe('Reported: due at 15:00');
+		expect(decisionLine({ decision: 'say', reason: 'old word' })).toBe('Reported: old word');
 		expect(decisionLine({ decision: 'note' })).toBe('Noted');
 		expect(decisionLine({})).toBe('');
 		expect(filesLink('/library/notes/heartbeat/a/2026-10-15.md')).toBe('/files?path=%2Flibrary%2Fnotes%2Fheartbeat%2Fa%2F2026-10-15.md');

@@ -558,6 +558,15 @@ export interface HeartbeatPorts {
   run(agentId: string, at: number): Promise<{ started: boolean; reason?: string }>
   /** The chat side of the heartbeat; absent when channels are not set up. */
   channels?: HeartbeatChannels
+  /** Reports to a web chat thread (the destination of an order that was asked there). */
+  web?: {
+    deliver(input: {
+      agentId: string
+      sessionId: string
+      text: string
+      key: string
+    }): Promise<{ posted: boolean; reason?: string }>
+  }
 }
 
 /** What the heartbeat reads of the chat gateway (`infra/eh/heartbeat-channels.ts`). */

@@ -68,6 +68,8 @@ export const MEMBER_TOOLS: readonly string[] = [
   'persona',
   // what to call me: a member sets their own note
   'person_note',
+  // an ongoing instruction: a member's orders report back to them privately (checked in code)
+  'standing_order',
 ]
 
 /**
