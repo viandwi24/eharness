@@ -318,7 +318,9 @@ Details (normative for the implementation in `src/messages/project.ts`):
 - Files the current model cannot take (0.9.0): with `ctx.refuseFile` (built from `config.models`,
   spec 12 §1.1) a `file` part whose modality the **current** step model lacks (`inputModalities`
   known; unknown never changes anything) is replaced by the text `[Attachment <name> (<mediaType>)
-  not shown: the model <id> does not accept <modality> input]` before it is resolved, for `data:`
+  not shown: the model <id> does not accept <modality> input. …]` (the note then tells the model to
+  say in one sentence that it cannot see that file with the current model and to ask the person to
+  describe it or switch model, no OCR or other workarounds) before it is resolved, for `data:`
   URLs and references alike, in stored messages and `data-eh.input` steers. Storage is never
   changed, so a session keeps working after a model switch and the file returns when a model that
   accepts it is used. Projections without a model (token estimates) are unchanged.

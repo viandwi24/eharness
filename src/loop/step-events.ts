@@ -55,6 +55,27 @@ function isUnavailableToolOutput(output: unknown): boolean {
   )
 }
 
+/**
+ * The step's response with the text of every "unavailable tool" error replaced by `textFor(tool)`
+ * (a short readable text instead of AI SDK's list of every available tool). Unchanged messages are
+ * returned as they are.
+ */
+export function rewriteUnavailable(
+  response: readonly ModelMessage[],
+  textFor: (toolName: string) => string,
+): ModelMessage[] {
+  return response.map((message) => {
+    if (message.role !== 'tool' || typeof message.content === 'string') return message
+    let changed = false
+    const content = message.content.map((part) => {
+      if (part.type !== 'tool-result' || !isUnavailableToolOutput(part.output)) return part
+      changed = true
+      return { ...part, output: { type: 'error-text' as const, value: textFor(part.toolName) } }
+    })
+    return changed ? ({ ...message, content } as ModelMessage) : message
+  })
+}
+
 export function collectDiscovered(response: readonly ModelMessage[], into: Set<string>): void {
   for (const message of response) {
     if (message.role !== 'tool' && message.role !== 'assistant') continue

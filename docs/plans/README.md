@@ -59,6 +59,7 @@ Update this table in the same commit that changes a phase's status.
 | P47 | [Products adopt the P46 modules fully](P47-module-adoption.md) — scheduler and outbox follow-ups; the team's people directory, decision center, outbox and rate governor on `identity`, `handoff` and `channels`; the coder on `limits` and `clock` | done | P46 | — |
 | P48 | [Browser agent](P48-browser.md) — `eharness/browser`: adapters (Chrome, Lightpanda; Camoufox as a separate package) over an operation-level connection with a CDP client in core, manual and managed modes (Chrome for Testing / Lightpanda runtimes in `eharness/browser/node`), profiles, snapshots with refs, screenshots in the next model step, live view and human takeover; team Browser page (ADR-0064, spec 35) | done | P46 | P47 |
 | P49 | [Long-run jobs](P49-long-run.md) — `longRun()` (checkpointed chunks on the durable inbox, cost and time limits, resume after restarts), `stepBudget({ onCap })` hand-over; the team's workers run for hours and chats never see "ran out of steps"; the coder runs unlimited while on track | done | P47 | P48 |
+| P50 | [Production feedback hardening](P50-production-feedback.md) — OS sandbox probe and fallback, Allowed run_python, approvals reach owners, tool_search explains what is missing, readable id errors, mention-only turns, program base tools and brief warnings | done | P49 | P49 |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

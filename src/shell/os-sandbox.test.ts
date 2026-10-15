@@ -149,3 +149,13 @@ describe.skipIf(!available)('real OS sandbox', () => {
     expect(Date.now() - started).toBeLessThan(6000)
   })
 })
+
+describe('probeOsSandbox', () => {
+  test('never rejects and reports a reason when the sandbox does not work', async () => {
+    const { probeOsSandbox } = await import('./os-sandbox.ts')
+    const probe = await probeOsSandbox()
+    expect(typeof probe.ok).toBe('boolean')
+    if (!probe.ok) expect(probe.reason).toBeTruthy()
+    if (detectOsSandbox().kind === 'none') expect(probe.kind).toBe('none')
+  })
+})

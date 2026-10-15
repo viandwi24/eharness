@@ -394,6 +394,7 @@
     "detectOsSandbox",
     "killAllSandboxProcesses",
     "localSandbox",
+    "probeOsSandbox",
     "removeStaleScratch",
     "scratchSandbox",
     "shell"

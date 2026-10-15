@@ -5,8 +5,9 @@ import type { FinishReason, LanguageModelUsage, StepResult, ToolSet } from 'ai'
 import { hookFailed } from '../internal/hook-run.ts'
 import { describeModel } from '../internal/model.ts'
 import { costOf } from '../models/cost.ts'
+import { noSuchToolText } from '../registry/tool-search.ts'
 import type { LoopResult, StepRequest, StepRun, StepsCtx } from './step-ctx.ts'
-import { collectDiscovered, guarded, stepEndEvent } from './step-events.ts'
+import { collectDiscovered, guarded, rewriteUnavailable, stepEndEvent } from './step-events.ts'
 import { aborted, runBounded, totalUsage } from './step-guards.ts'
 import { addUsage, totalUsageOf } from './usage.ts'
 
@@ -30,10 +31,12 @@ export async function recordStep(
   const { stepModel, settings, capped } = req
   const { result, response, turnState, stepAborted, endStep, noteWire } = run
   if (response !== undefined) {
+    const raw = response
+    const readable = rewriteUnavailable(raw, (name) => noSuchToolText(name, st.registry.tools))
+    collectDiscovered(raw, st.input.discovered)
     // the notes sit between the tool result message and the model's answer (stored order)
     const split = noteWire.length === 0 ? 0 : response[0]?.role === 'tool' ? 1 : 0
-    st.wire.push(...response.slice(0, split), ...noteWire, ...response.slice(split))
-    collectDiscovered(response, st.input.discovered)
+    st.wire.push(...readable.slice(0, split), ...noteWire, ...readable.slice(split))
   }
   await st.input.barrier()
   st.sinceBarrier = st.wire.length

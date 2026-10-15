@@ -192,7 +192,8 @@ export function unsupportedFileNote(
   const refused = refusedModality(info, file)
   if (refused === undefined) return undefined
   const name = file.filename === undefined || file.filename === '' ? 'file' : file.filename
-  return `[Attachment ${name} (${file.mediaType}) not shown: the model ${modelName} does not accept ${refused.modality} input]`
+  const m = refused.modality
+  return `[Attachment ${name} (${file.mediaType}) not shown: the model ${modelName} does not accept ${m} input. Tell the person in one sentence that you cannot see ${m === 'image' ? 'images' : `${m} files`} with the current model and ask them to describe it or switch to a model that can. Do not try OCR or other workarounds.]`
 }
 
 /**

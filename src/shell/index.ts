@@ -12,6 +12,8 @@
 export {
   detectOsSandbox,
   type OsSandboxKind,
+  type OsSandboxProbe,
+  probeOsSandbox,
 } from './os-sandbox.ts'
 export {
   BASH_OUTPUT_TOOL,

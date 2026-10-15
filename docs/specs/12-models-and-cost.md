@@ -61,7 +61,9 @@ model that accepts <modality> input.` Nothing is stored (spec 05 §3 early failu
 steers) is accepted and stored whole: the user's text is not lost and the model sees a note
 instead of the file. **History** is projected the same way: a stored file whose modality the
 current model lacks becomes `[Attachment <name> (<type>) not shown: the model <id> does not accept
-<modality> input]` (spec 03 §6), never stored, so a session survives a model switch and one
+<modality> input. …]` (spec 03 §6; the note goes on to tell the model to say in one sentence that it
+cannot see that kind of file with the current model and to ask the person to describe it or switch
+model, without OCR or other workarounds), never stored, so a session survives a model switch and one
 unreadable image cannot fail every later turn.
 
 Known limit: a catalog entry is per model id, not per routed upstream (OpenRouter may route an

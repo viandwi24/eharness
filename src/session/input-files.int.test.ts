@@ -244,7 +244,7 @@ describe('files the current model cannot take (history, enqueue, steer)', () => 
   const textOnly = { 'mock/scripted': { inputModalities: ['text'] } }
   const png = withFile('data:image/png;base64,aGk=', 'what is this?')
   const note = (id: string) =>
-    `[Attachment x.png (image/png) not shown: the model ${id} does not accept image input]`
+    `[Attachment x.png (image/png) not shown: the model ${id} does not accept image input. Tell the person in one sentence that you cannot see images with the current model and ask them to describe it or switch to a model that can. Do not try OCR or other workarounds.]`
   const userContent = (prompt: unknown): Array<{ type: string; text?: string }> =>
     ((prompt as Array<{ role: string; content: unknown }>).find((m) => m.role === 'user')
       ?.content ?? []) as Array<{ type: string; text?: string }>

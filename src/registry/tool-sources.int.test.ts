@@ -298,6 +298,67 @@ describe('deferred tools and tool_search', () => {
     expect(typeof error).toBe('string')
   })
 
+  test('select: loads the named tools; a name that cannot be loaded says why, and a repeat is stopped', async () => {
+    const withWhy = defineToolSource({
+      id: 'catalog',
+      defer: true,
+      list: () => ({ get_invoice: echo('invoice', 'Fetch an invoice by number.') }),
+      explain: (name) =>
+        name === 'secret_tool' ? 'only an owner may use it; the person is not one' : undefined,
+    })
+    const call = (query: string) => ({ toolCalls: [{ toolName: 'tool_search', input: { query } }] })
+    const { agent, model } = setup(
+      [
+        call('select:secret_tool'),
+        call('select:secret_tool'),
+        call('select:get_invoice_x'),
+        call('select:get_invoice'),
+        call('select:get_invoice'),
+        call('nomatchatall'),
+        call('nomatchatall'),
+        { text: 'done' },
+      ],
+      { tools: [withWhy] },
+    )
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('complete')
+    const outs = toolOutputs(assistantOf(result))
+    expect(outs[3]).toEqual([
+      'tool_search',
+      { tools: [{ name: 'get_invoice', description: 'Fetch an invoice by number.' }] },
+    ])
+    const wire = JSON.stringify(model.prompts.at(-1))
+    expect(wire).toContain('secret_tool is not available: only an owner may use it')
+    expect(wire).toContain('Do not search for it again')
+    expect(wire).toContain('Close matches: get_invoice')
+    expect(wire).toContain('No new tool matches')
+    expect(wire).toContain('get_invoice is already loaded: call it directly')
+    expect(wire).not.toContain('"tools":[]')
+  })
+
+  test('a call to an unloaded deferred tool gets a short text, not the list of available tools', async () => {
+    const { agent, model } = setup(
+      [
+        { toolCalls: [{ toolName: 'get_invoice', input: {} }] },
+        { toolCalls: [{ toolName: 'get_invoce', input: {} }] },
+        { text: 'sorry' },
+      ],
+      { tools: [{ a: echo('a'), b: echo('b') }, catalog()] },
+    )
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('complete')
+    const outs = (assistantOf(result)?.parts ?? [])
+      .filter((p) => p.type === 'dynamic-tool' || p.type.startsWith('tool-'))
+      .map((p) => [p.type, (p as { errorText?: string }).errorText]) as Array<[string, string]>
+    expect(outs[0]?.[1]).toContain("unavailable tool 'get_invoice': it was not loaded yet")
+    expect(outs[0]?.[1]).toContain('select:get_invoice')
+    expect(outs[0]?.[1]).not.toContain('Available tools')
+    expect(outs[1]?.[1]).toContain("'get_invoce': no tool has that name")
+    expect(outs[1]?.[1]).toContain('Close matches: get_invoice')
+    expect(outs[1]?.[1]).not.toContain('Available tools')
+    expect(JSON.stringify(model.prompts.at(-1))).not.toContain('Available tools')
+  })
+
   test('tools marked deferLoading by the developer also enable tool_search', async () => {
     const hidden = { ...echo('hidden', 'Hidden helper.'), deferLoading: true } as Tool
     const { agent, model } = setup([{ text: 'ok' }], { tools: { shown: echo('s'), hidden } })

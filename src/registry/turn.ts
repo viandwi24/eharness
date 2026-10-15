@@ -35,7 +35,8 @@ import {
 } from './request-tools.ts'
 import type { NormalizedInstruction } from './static.ts'
 import { withToolFields } from './tool-copy.ts'
-import type { TurnToolEntry } from './tools.ts'
+import { buildToolSearch } from './tool-search.ts'
+import { TOOL_SEARCH_NAME, type TurnToolEntry } from './tools.ts'
 import {
   type ApprovalGrants,
   buildApproval,
@@ -357,7 +358,38 @@ export async function resolveTurnRegistry(args: {
       )
     }
   }
-  const entries = raw.map((entry) => ({ ...entry, tool: wrapTool(entry.name, entry.tool, deps) }))
+  // `tool_search` of the turn: `select:` support, reasons from the tool sources, loop stop
+  let discoveredNow: ReadonlySet<string> = new Set()
+  let toolSet: ToolSet = {}
+  const explainers = open.toolSources.filter(
+    (s): s is typeof s & { source: { explain: NonNullable<typeof s.source.explain> } } =>
+      typeof s.source.explain === 'function',
+  )
+  const searchTool = buildToolSearch({
+    tools: () => toolSet,
+    discovered: () => discoveredNow,
+    explain:
+      explainers.length === 0
+        ? undefined
+        : async (name) => {
+            for (const { owner, source } of explainers) {
+              try {
+                const why = await source.explain(name, contextOf(owner))
+                if (why !== undefined && why !== '') return why
+              } catch {
+                // an explainer that fails knows nothing
+              }
+            }
+            return undefined
+          },
+  })
+  const entries = raw.map((entry) => ({
+    ...entry,
+    tool:
+      entry.name === TOOL_SEARCH_NAME && entry.owner === 'eh'
+        ? searchTool
+        : wrapTool(entry.name, entry.tool, deps),
+  }))
   // no prototype: a plugin or client tool name can never reach `Object.prototype` (`__proto__`)
   const tools: ToolSet = Object.create(null) as ToolSet
   const clientTools = new Set<string>()
@@ -370,6 +402,7 @@ export async function resolveTurnRegistry(args: {
       if (meta !== undefined) externals.set(entry.name, { owner: entry.owner, meta })
     }
   }
+  toolSet = tools
   const toolOrder = entries.map((e) => e.name)
   return {
     block1,
@@ -388,6 +421,7 @@ export async function resolveTurnRegistry(args: {
     approval: buildApproval(args.approval, deps, args.grants),
     skills: skills.entries,
     toolsForStep(discovered) {
+      discoveredNow = discovered
       let changed = false
       const out: ToolSet = {}
       for (const [name, tool] of Object.entries(tools)) {

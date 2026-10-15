@@ -74,6 +74,12 @@ export interface ToolSourceDef {
   refresh?: 'session' | 'turn'
   /** Mark returned tools `deferLoading: true` → discovered via tool search (§3.3). Default false. */
   defer?: boolean
+  /**
+   * Why a tool this source would offer under `name` is not listed right now (capability off,
+   * owner only, connection not connected, ...); `undefined` when it does not know the name.
+   * `tool_search` shows it for `select:<name>` (§3.3). Cheap, must not throw.
+   */
+  explain?(name: string, ctx: HarnessContext): Promise<string | undefined> | string | undefined
   /** Optional lifecycle, called at session open / close. */
   open?(ctx: HarnessContext): Promise<void> | void
   close?(): Promise<void> | void
@@ -93,8 +99,20 @@ If at least one tool in the turn's tool set has `deferLoading: true` (from a `de
 set by the developer), the core adds AI SDK's `toolSearch()` under the reserved name
 `tool_search`. The model initially sees only non-deferred tools plus `tool_search`.
 
+**`tool_search` queries.** `select:<name>[,<name>]` loads exactly the named deferred tools; any
+other query is a keyword search (AI SDK's ranking over name and description words). A `select:`
+name that cannot be loaded is answered in words, never with unrelated tools: `<name> is already
+loaded` (call it directly), the reason a tool source gives through `ToolSourceDef.explain`, or "not
+available in this session" with close matches. The same search repeated in a turn finds nothing
+new and says so ("do not search again: tell the person what you cannot do"), which stops search
+loops. This text is the model-facing output (`toModelOutput`) of an empty search; the stored result
+stays `{ tools: [] }`.
+
 A call to a deferred tool that was not discovered yet fails for that step (AI SDK answers it with
-`NoSuchToolError`, "unavailable tool"); the core then counts the call as a discovery, so the tool is
+`NoSuchToolError`, "unavailable tool"; the core replaces AI SDK's text, which lists every available tool,
+with a short one: "not loaded yet ... it is loaded now: call it again", "exists but is not offered in
+this step", or "no tool has that name" with close matches, in the UI stream, storage and wire alike);
+the core then counts the call as a discovery, so the tool is
 in the tool set of the next step and the model can call it again without a `tool_search` round. A
 name that is not a deferred tool of the turn is ignored.
 

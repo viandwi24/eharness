@@ -104,8 +104,8 @@ export interface BuiltinConnectorsOptions {
   files?: {
     plugin: BuiltinFactory
     /**
-     * Also offer the code sandbox capabilities (`run`, and `install` with `install: true`), both
-     * defaulting to `ask`. The factory decides what to build: it adds `code()` when `run_python`
+     * Also offer the code sandbox capabilities (`run`, and `install` with `install: true`); `run`
+     * defaults to `allow`, `install` to `ask`. The factory decides what to build: it adds `code()` when `run_python`
      * is in `input.tools` (and package install when `install_packages` is).
      */
     code?: boolean | { install?: boolean }
@@ -162,7 +162,7 @@ const inputOf = (ctx: ConnectorActivationContext): BuiltinInput => ({
 
 /**
  * The built-in connector definitions for the factories the app supplies. Built-in capabilities
- * default to `allow` (except the files code capabilities `run` and `install`, which default to `ask`), which adds no rule (the app's permission mode decides: reading is free,
+ * default to `allow` (except the files code capability `install`, which defaults to `ask`), which adds no rule (the app's permission mode decides: reading is free,
  * writing asks in `default` mode); `ask` adds an ask rule, `off` a deny rule. Built-in tools are
  * never pinned (spec 24 §7): `bypassPermissions` skips their asks like any other built-in tool.
  *

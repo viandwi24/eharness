@@ -63,6 +63,13 @@ export interface ToolSourceDef {
   refresh?: 'session' | 'turn'
   /** Mark returned tools `deferLoading: true` (discovered via tool search). Default false. */
   defer?: boolean
+  /**
+   * Why a tool this source would offer under `name` is not listed right now (capability off,
+   * owner only, connection not connected, ...), or `undefined` when the source does not know the
+   * name. `tool_search` with `select:<name>` shows the sentence to the model instead of a bare
+   * "not found". Must be cheap and must not throw.
+   */
+  explain?(name: string, ctx: HarnessContext): Promise<string | undefined> | string | undefined
   /** Optional lifecycle, called at session open. */
   open?(ctx: HarnessContext): Promise<void> | void
   /** Optional lifecycle, called at session close / eviction. */

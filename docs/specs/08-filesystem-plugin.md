@@ -272,6 +272,10 @@ Exact formats (model-visible, api-stability.md):
 - `grep`: `pattern` is a JavaScript regular expression without flags, matched per line (only
   the first 2 000 characters of a line are matched; a pattern without regex metacharacters is a
   plain substring search); `ERROR: invalid pattern: <message>` when it does not compile.
+  A **leading inline flag group** `(?i)`, `(?s)`, `(?m)` (models write it from other engines) is
+  stripped and becomes the matching JS flag (`i`, `s`, `m`); a literal pattern with a flag is
+  matched as a regex, not as a plain substring. Inline groups anywhere else are not JS syntax:
+  the error then adds a hint that they are accepted only at the very start.
   **Safe subset** — a conservative guard against slow backtracking, so an accepted
   pattern is at worst quadratic in the 2 000 scanned characters (a few ms per line). The rule,
   exactly: at most 512 characters; **at most one variable-width quantifier in the whole pattern**,

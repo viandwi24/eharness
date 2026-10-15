@@ -52,7 +52,9 @@ interface OsSandboxOptions {
   home?: string                     // home for denyReadHome, default os.homedir()
 }
 
-detectOsSandbox(): { kind: 'seatbelt' | 'bubblewrap' | 'none'; path?: string }
+detectOsSandbox(): { kind: 'seatbelt' | 'bubblewrap' | 'none'; path?: string }  // the tool exists
+probeOsSandbox(o?: { timeoutMs?: number }): Promise<OsSandboxProbe>              // the tool WORKS here
+interface OsSandboxProbe { kind: OsSandboxKind; ok: boolean; path?: string; reason?: string }
 killAllSandboxProcesses(signal = 'SIGTERM'): void
 ```
 
@@ -276,6 +278,12 @@ empty when the sandbox is not active).
   directory stays visible; `--unshare-pid --unshare-ipc --new-session` (no view of or signals to host processes),
   `--unshare-net` unless network, `--die-with-parent`, `--chdir <root>`.
 - Other platforms or a missing tool: `kind: 'none'`, the command runs unwrapped.
+- **The tool existing is not the sandbox working.** `detectOsSandbox()` only looks for the binary;
+  bubblewrap fails in most containers (and on hardened kernels) that forbid unprivileged user
+  namespaces ("No permissions to create a new namespace"). `probeOsSandbox()` runs a trivial
+  command through the same mounts and namespaces as `wrapCommand` (short timeout, never rejects)
+  and returns `{ kind, ok, reason }`. An application calls it once at start-up and, when `ok` is
+  false, treats the host like `none` (and says why) instead of letting every command fail.
 
 Not covered: reads outside `denyRead` (secrets under `$HOME` stay readable unless `denyReadHome`),
 exact memory limits on macOS (sampled watchdog only), local unix-socket IPC on macOS. It is defence in depth, not a jail for hostile code: use a container or

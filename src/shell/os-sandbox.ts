@@ -10,6 +10,7 @@
  * (see `limits` of the local sandbox) and, on macOS, local unix-socket IPC (allowed on purpose so
  * tools like git, ssh-agent and DNS lookups through mDNSResponder keep working).
  */
+import { execFile } from 'node:child_process'
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, sep } from 'node:path'
@@ -60,6 +61,86 @@ export function detectOsSandbox(): { kind: OsSandboxKind; path?: string } {
     return path ? { kind: 'bubblewrap', path } : { kind: 'none' }
   }
   return { kind: 'none' }
+}
+
+/** Result of {@link probeOsSandbox}. */
+export interface OsSandboxProbe {
+  kind: OsSandboxKind
+  /** True when a trivial command really ran inside the sandbox (the tool exists AND works here). */
+  ok: boolean
+  path?: string
+  /** Why the sandbox is not usable (`ok` false), in plain words; the tool's own message when it gave one. */
+  reason?: string
+}
+
+/**
+ * Check that the OS sandbox of this platform actually works, not only that its tool exists: runs
+ * a trivial command through it with the same mounts and namespaces {@link wrapCommand} uses
+ * (bubblewrap needs unprivileged user namespaces, which many containers and hardened kernels
+ * refuse; `sandbox-exec` can be blocked when the process is already sandboxed). Never rejects.
+ * Call it once at start-up and treat `ok: false` like `none`.
+ *
+ * @param options `timeoutMs` bounds the probe (default 5000).
+ */
+export async function probeOsSandbox(
+  options: { timeoutMs?: number } = {},
+): Promise<OsSandboxProbe> {
+  const detected = detectOsSandbox()
+  if (detected.kind === 'none' || detected.path === undefined) {
+    return {
+      kind: 'none',
+      ok: false,
+      reason:
+        process.platform === 'linux'
+          ? 'bubblewrap (bwrap) is not installed'
+          : process.platform === 'darwin'
+            ? 'sandbox-exec is missing'
+            : 'no OS sandbox on this platform',
+    }
+  }
+  const argv =
+    detected.kind === 'seatbelt'
+      ? ['-p', '(version 1)(allow default)', '/usr/bin/true']
+      : [
+          '--ro-bind',
+          '/',
+          '/',
+          '--dev',
+          '/dev',
+          '--proc',
+          '/proc',
+          '--tmpfs',
+          '/tmp',
+          '--unshare-pid',
+          '--unshare-ipc',
+          '--unshare-net',
+          '--new-session',
+          '--die-with-parent',
+          '--',
+          existsSync('/bin/true') ? '/bin/true' : '/usr/bin/true',
+        ]
+  return await new Promise<OsSandboxProbe>((resolve) => {
+    execFile(
+      detected.path as string,
+      argv,
+      { timeout: options.timeoutMs ?? 5000, windowsHide: true },
+      (error, _stdout, stderr) => {
+        if (error === null) return resolve({ kind: detected.kind, ok: true, path: detected.path })
+        const said = String(stderr).trim().split('\n')[0]?.trim()
+        const timedOut = (error as { killed?: boolean }).killed === true
+        resolve({
+          kind: detected.kind,
+          ok: false,
+          ...(detected.path === undefined ? {} : { path: detected.path }),
+          reason: timedOut
+            ? 'the sandbox probe timed out'
+            : said !== undefined && said !== ''
+              ? said
+              : error.message,
+        })
+      },
+    )
+  })
 }
 
 /** Escape a string for an SBPL string literal. */

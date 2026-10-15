@@ -6,6 +6,7 @@ import {
   DownloadError,
   isStepCount,
   type ModelMessage,
+  NoSuchToolError,
   streamText,
   toUIMessageStream,
   type UIMessageChunk,
@@ -14,6 +15,7 @@ import { experimentalStreamOptions } from '../internal/ai-compat.ts'
 import { inputWireMessage } from '../messages/input-wire.ts'
 import { observeForSession } from '../models/model-calls.ts'
 import { noCallModel } from '../models/no-call.ts'
+import { noSuchToolText } from '../registry/tool-search.ts'
 import { describeError } from '../stream/describe-error.ts'
 import type { LoopResult, StepRequest, StepRun, StepsCtx } from './step-ctx.ts'
 import { guarded, isToolCallError, withReasoningDuration } from './step-events.ts'
@@ -39,7 +41,7 @@ export async function streamStep(st: StepsCtx, req: StepRequest): Promise<StepRu
   /** An error chunk before the step's first start-step, held back for overflow recovery. */
   let held: UIMessageChunk | undefined
   let rawError: unknown
-  const toolErrorTexts = new Set<string>()
+  const toolErrorTexts = new Map<string, string>()
   // step 0 of a continuation: the notes of approved calls follow the tool result message, and
   // `endTurn` runs the approved tools against a model that makes no call (spec 11 §4)
   const endStep = firstOfContinuation(st) && st.input.endAfterContinuation === true
@@ -111,11 +113,18 @@ export async function streamStep(st: StepsCtx, req: StepRequest): Promise<StepRu
       // tool call errors: the text the wire got (spec 04 §8). For invalid/unknown tool calls AI
       // SDK reports the error object (tool-input-error), then its text (tool-output-error).
       if (isToolCallError(error)) {
-        const text = String(error)
-        toolErrorTexts.add(text)
+        const text = NoSuchToolError.isInstance(error)
+          ? noSuchToolText(error.toolName, st.registry.tools)
+          : String(error)
+        // the tool-output-error chunk then carries AI SDK's own text: it maps to ours
+        toolErrorTexts.set(text, text)
+        toolErrorTexts.set(String(error), text)
         return text
       }
-      if (typeof error === 'string' && toolErrorTexts.has(error)) return error
+      if (typeof error === 'string') {
+        const mapped = toolErrorTexts.get(error)
+        if (mapped !== undefined) return mapped
+      }
       rawError ??= error
       return describeError(error, (m, d) => st.rt.log.error(m, d))
     },

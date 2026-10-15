@@ -620,6 +620,13 @@ export function createFileTools(
         prefix: z.string().optional().describe('Only search under this directory. Default: /'),
       }),
       execute: async ({ pattern, prefix }): Promise<string> => {
+        // a leading inline flag group, (?i) / (?s) / (?m), is the model's habit from other engines
+        let flags = ''
+        const inline = /^\(\?([ims]+)\)/.exec(pattern)
+        if (inline !== null) {
+          flags = [...new Set(inline[1])].join('')
+          pattern = pattern.slice(inline[0].length)
+        }
         // no catastrophic backtracking: the event loop must never freeze on a model's pattern
         const unsafe = unsafePatternReason(pattern)
         if (unsafe !== undefined) {
@@ -627,15 +634,23 @@ export function createFileTools(
         }
         let regex: RegExp
         try {
-          regex = new RegExp(pattern)
+          regex = new RegExp(pattern, flags)
         } catch (error) {
-          return `ERROR: invalid pattern: ${errorText(error)}`
+          const text = errorText(error)
+          const hint = /\(\?[^:=!<]/.test(pattern)
+            ? ' Inline flag groups are only accepted at the very start of the pattern: (?i), (?s), (?m).'
+            : ''
+          return `ERROR: invalid pattern: ${text}.${hint}`
         }
         const resolved = resolvePath(prefix ?? '/')
         if (!resolved.ok) return resolved.text
         const root = resolved.path
         if (isUnderAnyFolded(root, env.hidden)) return 'No matches.'
-        const hits = await search(root, regex, isLiteralPattern(pattern) ? pattern : undefined)
+        const hits = await search(
+          root,
+          regex,
+          isLiteralPattern(pattern) && flags === '' ? pattern : undefined,
+        )
         if (hits.length === 0) return 'No matches.'
         const matcher = statelessPattern(regex)
         const shown = hits.slice(0, GREP_MAX_HITS).map((hit) => {

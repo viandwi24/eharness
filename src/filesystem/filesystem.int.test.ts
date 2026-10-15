@@ -398,6 +398,8 @@ describe('read_file windows, list_files and grep', () => {
               call('grep', { pattern: '(' }),
               call('grep', { pattern: 'absent' }),
               call('grep', { pattern: '^hit' }),
+              call('grep', { pattern: '(?i)todo one' }),
+              call('grep', { pattern: 'a(?i)b' }),
             ],
           },
           { text: 'done' },
@@ -410,6 +412,8 @@ describe('read_file windows, list_files and grep', () => {
       expect(out[1]).toBe('/src/b.md:2: TODO two')
       expect(out[2]).toStartWith('ERROR: invalid pattern:')
       expect(out[3]).toBe('No matches.')
+      expect(out[5]).toBe('/a.md:1: TODO one')
+      expect(out[6]).toContain('Inline flag groups are only accepted at the very start')
       const capped = (out[4] as string).split('\n')
       expect(capped).toHaveLength(51)
       expect(capped[0]).toBe('/many.md:1: hit 0')
