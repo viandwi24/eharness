@@ -132,8 +132,11 @@ const text = (m: HarnessUIMessage): string =>
 function toolOutputs(messages: HarnessUIMessage[], toolName: string): string[] {
   const out: string[] = []
   for (const m of messages) {
-    for (const p of m.parts as Array<{ type: string; output?: unknown }>) {
-      if (p.type === `tool-${toolName}` && typeof p.output === 'string') out.push(p.output)
+    for (const p of m.parts as Array<{ type: string; output?: unknown; errorText?: string }>) {
+      if (p.type !== `tool-${toolName}`) continue
+      if (typeof p.output === 'string') out.push(p.output)
+      // a call the core stopped (spec 09 §4.1) is an error result
+      else if (typeof p.errorText === 'string') out.push(p.errorText)
     }
   }
   return out
@@ -297,7 +300,10 @@ describe("send_message with approvals: 'park' (ADR-0041)", () => {
     )
     await session.send('now').result
     const outputs = toolOutputs((await session.messages()) as HarnessUIMessage[], 'send_message')
-    expect(outputs.filter((o) => o.startsWith('Not sent: an identical')).length).toBe(1)
+    // an exact repeat in the same step is stopped by the core (spec 09 §4.1) before the plugin
+    expect(
+      outputs.filter((o) => o.includes('same send_message call with the same input')).length,
+    ).toBe(1)
     expect(outputs.filter((o) => o.includes('rate limit')).length).toBe(1)
     await p.main.close()
     await p.worker.close()

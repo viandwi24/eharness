@@ -119,7 +119,8 @@ function outputs(messages: HarnessUIMessage[], toolName: string): Record<string,
   for (const message of messages) {
     for (const part of message.parts as unknown as ToolPart[]) {
       if (part.type === `tool-${toolName}` && part.toolCallId !== undefined) {
-        out[part.toolCallId] = String(part.output)
+        // a call the core stopped (spec 09 §4.1) is an error result: its text is errorText
+        out[part.toolCallId] = String(part.output ?? (part as { errorText?: string }).errorText)
       }
     }
   }
@@ -434,7 +435,7 @@ describe('send_message', () => {
       {
         toolCalls: [
           spawnCall('c1', { name: 'dup' }),
-          spawnCall('c2', { name: 'dup' }),
+          spawnCall('c2', { name: 'dup' }, 'do something else'),
           spawnCall('c3', { name: 'main' }),
           spawnCall('c4', { name: 'Bad Name' }),
         ],
@@ -486,7 +487,8 @@ describe('send_message', () => {
     await session.send('go').result
     const out = outputs(await session.messages(), 'send_message')
     expect(out.s1).toContain('Message delivered')
-    expect(out.s2).toContain('identical message')
+    // an exact repeat in the same step is stopped by the core (spec 09 §4.1) before the plugin
+    expect(out.s2).toContain('same send_message call with the same input')
     expect(out.s3).toContain('Message delivered')
     expect(out.s4).toContain('rate limit')
     g.open()
