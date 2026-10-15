@@ -677,7 +677,15 @@ export function createRoutineService(
         } else {
           outcome = { status: 'failed', reason: `${e.stop}${suffix(e.errorMessage)}` }
         }
-        const done = store.finishRun(run.id, outcome, now)
+        // a program run whose later turn (a decision hand-back) fails after the run was recorded
+        // as succeeded ends failed: the run mirrors the task's final state
+        const done = store.finishRun(
+          run.id,
+          program !== undefined && outcome.status === 'failed'
+            ? { ...outcome, supersede: true }
+            : outcome,
+          now,
+        )
         if (done === undefined) continue
         emitRun(done.routine, done.run, now)
         if (done.paused) {

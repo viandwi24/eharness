@@ -152,6 +152,12 @@ export interface SqliteRoutineStore extends RoutineStore {
       status: 'succeeded' | 'failed' | 'needs_action'
       reason?: string
       countFailure?: boolean
+      /**
+       * A later turn of the same program session (a decision hand-back) failed after the run was
+       * recorded as `succeeded`: the failure overrides it, so the run mirrors the task's final
+       * state. Only `succeeded` can be overridden, and only by `failed`.
+       */
+      supersede?: boolean
     },
     now: number,
   ): { run: RoutineRun; routine: Routine; paused: boolean } | undefined
@@ -414,7 +420,12 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
         const run = getRun(runId)
         if (run === undefined) return undefined
         // finished runs are final; needs_action may still turn into succeeded / failed
-        if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'skipped') {
+        const supersede =
+          outcome.supersede === true && outcome.status === 'failed' && run.status === 'succeeded'
+        if (
+          !supersede &&
+          (run.status === 'succeeded' || run.status === 'failed' || run.status === 'skipped')
+        ) {
           return undefined
         }
         const finished = outcome.status !== 'needs_action'

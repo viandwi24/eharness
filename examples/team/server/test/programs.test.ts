@@ -692,6 +692,47 @@ describe('schedule trigger on the routine scheduler', () => {
     expect(server.deps.routines.getByProgram(p.id)?.failures).toBe(1)
   })
 
+  test('a decision hand-back turn that fails after the run succeeded fails the routine run', async () => {
+    const { app, server } = instance({
+      researcher: [finalReport({ status: 'done', summary: 'first turn done', outputs: [] })],
+    })
+    const p = await create(app, {
+      trigger: { kind: 'schedule', spec: { kind: 'every', everyMs: 3_600_000 } },
+    })
+    const owned = server.deps.routines.getByProgram(p.id)
+    const now = Date.now()
+    server.conn.sqlite
+      .query('UPDATE routines SET next_fire_at = ? WHERE id = ?')
+      .run(now - 1000, owned?.id as string)
+    await server.routines.tick(now)
+    const run = await firstRun(app, p.id)
+    const status = async (): Promise<string | undefined> =>
+      (
+        (await (await app.request(`/routines/${owned?.id}/runs`)).json()) as {
+          runs: Array<{ status: string }>
+        }
+      ).runs[0]?.status
+    await until('routine run succeeded', async () => (await status()) === 'succeeded')
+    expect(server.deps.routines.getByProgram(p.id)?.failures).toBe(0)
+    // the answer of a decision continues the session in a later turn, and that turn fails
+    await server.routines.outcomes.turnEnded({
+      sessionId: run.sessionId,
+      stop: 'error',
+      errorCode: 'EH_RUN_FAILED',
+      errorMessage: 'Unexpected error',
+      needsPerson: false,
+    })
+    expect(await status()).toBe('failed')
+    expect(server.deps.routines.getByProgram(p.id)?.failures).toBe(1)
+    // a failed run is final: a later success does not reopen it
+    await server.routines.outcomes.turnEnded({
+      sessionId: run.sessionId,
+      stop: 'complete',
+      needsPerson: false,
+    })
+    expect(await status()).toBe('failed')
+  })
+
   test('a program deleted while a fire was claimed fails that fire', async () => {
     const { app, server } = instance({})
     const p = await create(app, {
