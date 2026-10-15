@@ -635,7 +635,10 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         accessToken: (id) => service.accessToken(id),
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
         // bounded connect/list (EH_MCP_TIMEOUT): a dead server costs one timeout, not a hung turn
-        mcp: (spec) => remoteMcpSource({ ...spec, timeoutMs: MCP_TIMEOUT_MS }),
+        // listed before every turn, not once per session: a long-lived chat (a Telegram group) must
+        // see the tools a server adds or changes (a new version of the server, a device that came
+        // online); a failing server backs off and does not hold the turn up
+        mcp: (spec) => remoteMcpSource({ ...spec, timeoutMs: MCP_TIMEOUT_MS, refresh: 'turn' }),
         // the app's own rules merge with the connector rules (most restrictive wins)
         appRules: appRulesOf(d),
       })

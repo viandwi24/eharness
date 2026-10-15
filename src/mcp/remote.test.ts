@@ -68,6 +68,17 @@ describe('remote MCP helpers', () => {
     expect(Object.keys(await source.list(ctx))).toEqual(['docs_search'])
   })
 
+  test('refresh is passed to the source (a long-lived session sees new tools)', () => {
+    const load = async () => ({ createMCPClient: () => ({}) as never })
+    expect(
+      createRemoteMcpSource({ name: 'p', url: 'https://x.example/mcp', refresh: 'turn' }, load)
+        .refresh,
+    ).toBe('turn')
+    expect(
+      createRemoteMcpSource({ name: 'p', url: 'https://x.example/mcp' }, load).refresh,
+    ).not.toBe('turn')
+  })
+
   test('listRemoteMcpTools returns names, descriptions and annotations, and closes the client', async () => {
     const server = fakeMcpServer([
       { name: 'search', description: 'Search.', annotations: { readOnlyHint: true } },

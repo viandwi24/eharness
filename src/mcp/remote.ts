@@ -37,6 +37,11 @@ export interface RemoteMcpSpec {
   risk?: ToolRisk
   /** Connect/list timeout in ms (default 15000), as `McpServerSourceOptions.timeoutMs`. */
   timeoutMs?: number
+  /**
+   * When to list the tools, as `McpServerSourceOptions.refresh`: once per session (default) or
+   * before every turn, so a long-lived session sees tools the server added or changed.
+   */
+  refresh?: 'session' | 'turn'
 }
 
 /**
@@ -111,6 +116,8 @@ export function createRemoteMcpSource(
       ...(spec.deny === undefined ? {} : { deny: spec.deny }),
       ...(spec.defer === undefined ? {} : { defer: spec.defer }),
       ...(spec.risk === undefined ? {} : { risk: spec.risk }),
+      ...(spec.refresh === undefined ? {} : { refresh: spec.refresh }),
+      ...(spec.timeoutMs === undefined ? {} : { timeoutMs: spec.timeoutMs }),
     },
     load as never,
   )
