@@ -28,8 +28,6 @@ export interface BrowserHook {
   describe(
     profileId: string,
   ): Promise<{ name: string; adapter: string; mode: string; trusted: boolean } | undefined>
-  /** Make the default mode of `act` follow the profile's trust (never lowers a choice). */
-  settle(connectionId: string, trusted: boolean): void
   /** How many profiles exist (up to 2), and the id when there is exactly one. */
   profileCount(): Promise<{ count: number; only: string | undefined }>
 }
@@ -74,8 +72,7 @@ export function browserConnector(hook: () => BrowserHook | undefined): AnyConnec
       {
         id: 'act',
         title: 'Click and type',
-        description:
-          'Click, fill forms and press keys on pages. A trusted profile lets the agent do this without asking.',
+        description: 'Click, fill forms and press keys on pages.',
         kind: 'external',
         tools: [...BROWSER_ACT_TOOLS],
         defaultMode: 'ask',

@@ -10,7 +10,6 @@ import { join } from 'node:path'
 import type { BrowserManager } from 'eharness/browser'
 import { scriptedModel } from 'eharness/testing'
 import { websocket } from 'hono/bun'
-import { trustNewConnection } from '../src/app/browser.ts'
 import { createEscalation } from '../src/app/decisions.ts'
 import { packFrame } from '../src/http/routes/browser.ts'
 import { browserConnector } from '../src/infra/browser/connector.ts'
@@ -572,7 +571,6 @@ function hookWith(
       return { id: 'decision-1' }
     },
     images: () => false,
-    settle: (connectionId, t) => calls.settled.push([connectionId, t]),
   })
 }
 
@@ -671,43 +669,6 @@ describe('Browser connector', () => {
       profileId: 'p1',
       decisionId: 'decision-1',
     })
-  })
-})
-
-describe('trusted profile and a new connection', () => {
-  const connection = (defaultModes?: Record<string, string>) =>
-    ({
-      id: 'conn-1',
-      definitionId: 'browser',
-      settings: { profileId: 'p1' },
-      ...(defaultModes === undefined ? {} : { defaultModes }),
-    }) as never
-  const depsWith = (trusted: boolean, updates: unknown[]) =>
-    ({
-      browser: { profiles: { get: async () => ({ id: 'p1', trusted }) } },
-      connectors: {
-        updateConnection: async (id: string, patch: unknown) => {
-          updates.push([id, patch])
-          return { id, ...(patch as object) }
-        },
-      },
-    }) as never
-
-  test('a new connection to a trusted profile gets act: allow at once', async () => {
-    const updates: unknown[] = []
-    await trustNewConnection(depsWith(true, updates), connection())
-    expect(updates).toEqual([['conn-1', { defaultModes: { act: 'allow' } }]])
-  })
-
-  test('untrusted profiles, other connectors and an existing choice are left alone', async () => {
-    const updates: unknown[] = []
-    await trustNewConnection(depsWith(false, updates), connection())
-    await trustNewConnection(depsWith(true, updates), connection({ act: 'ask' }))
-    await trustNewConnection(depsWith(true, updates), {
-      ...(connection() as object),
-      definitionId: 'web',
-    } as never)
-    expect(updates).toEqual([])
   })
 })
 

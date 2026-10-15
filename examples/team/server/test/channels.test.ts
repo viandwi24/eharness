@@ -578,6 +578,30 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
     expect(stored.length).toBe(1)
   })
 
+  test('an attachment the adapter lists twice is stored and shown once', async () => {
+    const i = instance({ lead: [textStep('ok')] })
+    const mock = await connect(i)
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3])
+    await mock.say({
+      from: ana,
+      text: '@team_bot look',
+      id: 'd1',
+      mentionSelf: true,
+      attachments: [
+        { id: 'photo-1', name: 'photo-1.jpg', mediaType: 'image/png', bytes: png },
+        { id: 'photo-1', name: 'photo-1.jpg', mediaType: 'image/png', bytes: png },
+      ],
+    })
+    await until('reply', () => mock.sent.length === 1)
+    const rows = i.server.conn.sqlite
+      .query<{ parts: string }, []>("SELECT parts FROM eh_messages WHERE role = 'user'")
+      .all()
+    const files = rows.flatMap((r) =>
+      (JSON.parse(r.parts) as Array<{ type: string }>).filter((p) => p.type === 'file'),
+    )
+    expect(files).toHaveLength(1)
+  })
+
   test('an image for a text-only model keeps the text; the model sees a note and later turns work', async () => {
     const i = instance(
       { lead: [textStep('Got the text.'), textStep('Second.')] },

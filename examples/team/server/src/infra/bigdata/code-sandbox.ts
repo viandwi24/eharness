@@ -22,7 +22,7 @@
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
-import { detectOsSandbox, localSandbox } from 'eharness/shell'
+import { detectOsSandbox, localSandbox, type OsSandboxProbe, probeOsSandbox } from 'eharness/shell'
 
 export interface CodeLimits {
   /** Wall-clock limit of one run (ms). */
@@ -55,6 +55,8 @@ export const DEFAULT_LIMITS: CodeLimits = {
 }
 
 export interface CodeRunnerOptions {
+  /** The OS sandbox check (default `probeOsSandbox`); tests inject a result. */
+  probe?: () => Promise<OsSandboxProbe>
   /** The Bun binary. Default: the running one. */
   bunPath?: string
   /** Where scratch directories are made. Default: the OS temp directory. */
@@ -253,14 +255,29 @@ export function createCodeRunner(options: CodeRunnerOptions = {}): CodeRunner {
   const bun = options.bunPath ?? process.execPath
   const detected = detectOsSandbox()
   const wantOs = options.osSandbox !== false
-  const osOn = wantOs && detected.kind !== 'none'
-  const kind = osOn ? detected.kind : 'none'
+  // an installed bubblewrap may still be unusable (a container without user namespaces): it is
+  // probed once with a trivial command, and when it fails code runs like on a host without one
+  let osOn = wantOs && detected.kind !== 'none'
+  let kind = osOn ? detected.kind : 'none'
+  let probing: Promise<void> | undefined
+  const probe = (): Promise<void> => {
+    if (!osOn) return Promise.resolve()
+    probing ??= (options.probe ?? (() => probeOsSandbox()))()
+      .catch((error): OsSandboxProbe => ({ kind: 'none', ok: false, reason: String(error) }))
+      .then((r) => {
+        if (r.ok) return
+        osOn = false
+        kind = 'none'
+      })
+    return probing
+  }
 
   return {
     limits,
     describe: () => ({ os: osOn, kind, network: false }),
     async run(request) {
       const started = Date.now()
+      await probe()
       const empty: CodeResult = {
         exitCode: null,
         timedOut: false,

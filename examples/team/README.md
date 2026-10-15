@@ -307,13 +307,17 @@ library (`/library/work/analyze.py`), runs it, and the files the script creates 
 (`report.md`, `chart.png`) are saved back into the library, where `read_file` and the Library page
 show them. The sandbox is a disposable cache synchronised around every run
 ([spec 28](../../docs/specs/28-code-plugin.md), [P44](../../docs/plans/P44-code-sandbox.md)); the
-database is the source of truth, so **no volume is needed** for code. Capability "Run Python" asks
-before it runs by default. Settings shows the driver, the Python version and whether it runs isolated.
+database is the source of truth, so **no volume is needed** for code. Capability "Run Python" is
+Allowed by default ("Ask first" makes it ask). Settings shows the driver, the Python version and whether it runs isolated.
 
 - `TEAM_CODE_DRIVER=local` (default when `python3` is on the PATH): a scratch directory per session
   under the OS sandbox (macOS Seatbelt, Linux bubblewrap): no network, writes only in the scratch
   directory, the server's data directory (database, key files) and `$HOME` unreadable, 120 s CPU,
-  1 GiB memory (Linux), 128 processes and 64 MiB per file. Without an OS sandbox on the host it runs unisolated, and Settings says so.
+  1 GiB memory (Linux), 128 processes and 64 MiB per file. Without an OS sandbox on the host it runs unisolated, and Settings says so. The server probes the
+  sandbox once at boot (a trivial command through it): bubblewrap installed in a container that forbids
+  user namespaces counts as "no sandbox" (code still runs, not isolated, with a boot warning and the reason
+  in Settings). In Docker, give the container `--security-opt seccomp=unconfined --security-opt apparmor=unconfined`
+  (or use the Remote sandbox) to get isolation.
   Use it for development and trusted agents. Packages: the interpreter as it is, or a base
   environment built from `TEAM_CODE_REQUIREMENTS` (for example `examples/team/python/requirements.txt`),
   plus `TEAM_CODE_INSTALL` for packages agents ask for.

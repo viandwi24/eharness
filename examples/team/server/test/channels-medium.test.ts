@@ -18,6 +18,7 @@ import {
   type MockAdapter,
 } from '../src/infra/channels/index.ts'
 import {
+  isMentionOnly,
   isSmallTalk,
   mediumContext,
   memoryWriteRefusal,
@@ -133,7 +134,12 @@ describe('pure rules', () => {
     expect(isSmallTalk('halo')).toBe(true)
     expect(isSmallTalk('@team_bot halo apakah sudah terhubung?')).toBe(true)
     expect(isSmallTalk('makasih ya')).toBe(true)
-    expect(isSmallTalk('@team_bot')).toBe(true)
+    // a bare mention only calls the agent: the request is in the sender's earlier messages
+    expect(isSmallTalk('@team_bot')).toBe(false)
+    expect(isSmallTalk('')).toBe(false)
+    expect(isMentionOnly('@team_bot')).toBe(true)
+    expect(isMentionOnly(' @team_bot! ')).toBe(true)
+    expect(isMentionOnly('@team_bot halo')).toBe(false)
     expect(isSmallTalk('halo, task apa aja yang belum selesai?')).toBe(false)
     expect(isSmallTalk('rangkum diskusi kemarin')).toBe(false)
   })
@@ -271,6 +277,25 @@ describe('memory discipline in chat sessions', () => {
     await say(mock, ceo, 'halo', 'm1')
     await until('reply', () => mock.sent.some((s) => s.message.text === 'halo!'))
     expect(wire(i.lead)).toContain('only a greeting or small talk')
+  })
+
+  test('a bare mention is not small talk: memory stays readable and the earlier message is context', async () => {
+    const i = instance([call('memory_view', { path: '/memories/workspace/' }, 'v1'), text('siap')])
+    const mock = await connect(i, { forum: { topics: { produksi: {} } } })
+    i.gw.pairing.link('c1', ceo.id, 'owner', ceo.name)
+    await mock.say({
+      chat: 'forum',
+      topic: 'produksi',
+      from: ceo,
+      text: 'tolong rekap stok gudang minggu ini',
+      id: 'm0',
+    })
+    await say(mock, ceo, '@team_bot', 'm1')
+    await until('reply', () => mock.sent.some((s) => s.message.text === 'siap'))
+    const w = wire(i.lead)
+    expect(w).not.toContain('only a greeting or small talk')
+    expect(w).toContain('only calls you')
+    expect(w).toContain('tolong rekap stok gudang minggu ini')
   })
 })
 

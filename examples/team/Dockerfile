@@ -39,7 +39,10 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 # ─── runtime ─────────────────────────────────────────────────────────────────
 FROM oven/bun:${BUN_VERSION} AS runtime
 # Python for `run_python` (TEAM_CODE_DRIVER=local runs it under bubblewrap in the container; the
-# container needs user namespaces: if the OS sandbox is unavailable Settings says "not isolated").
+# container needs unprivileged user namespaces: run it with `--security-opt seccomp=unconfined
+# --security-opt apparmor=unconfined` (Docker's default profile blocks them). The server probes
+# bubblewrap at boot; when it cannot create a namespace, code runs NOT isolated, Settings says why
+# and the boot log warns. Or connect the Remote sandbox instead).
 # The environment is built from wheels only, outside /data: nothing about code needs a volume.
 USER root
 RUN apt-get update \

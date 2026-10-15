@@ -1,6 +1,6 @@
 /**
  * The activation side of the Browser connector: the `browser()` plugin of one agent's
- * connection, the takeover that becomes a Decision Center card, and the trust sync.
+ * connection, the takeover that becomes a Decision Center card,.
  *
  * `browser_request_human` parks the turn on an external wait; `requestHuman` gets the wait id the
  * decision card needs (the answer resolves that wait).
@@ -25,8 +25,6 @@ export interface BrowserHookDeps {
   takeover: (request: TakeoverRequest) => { id: string }
   /** Does the agent's model accept images (spec 12)? Default true. */
   images?: (agentId: string) => boolean
-  /** Make the connection's `act` default follow a trusted profile (fire and forget). */
-  settle: (connectionId: string, trusted: boolean) => void
 }
 
 export function createBrowserHook(deps: BrowserHookDeps): BrowserHook {
@@ -45,7 +43,6 @@ export function createBrowserHook(deps: BrowserHookDeps): BrowserHook {
         only: page.items.length === 1 ? page.items[0]?.id : undefined,
       }
     },
-    settle: deps.settle,
     plugin({ agentId, profileId }): HarnessPlugin {
       // no choice in the connection: the only profile, looked up on every call (profiles change
       // while a session is open: one deleted, another created)

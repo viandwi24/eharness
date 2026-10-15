@@ -132,7 +132,8 @@ export const BrowserProfileSchema = z
       description: 'Only these hosts may be opened (`*.example.com`); absent: any public host.',
     }),
     trusted: z.boolean().optional().openapi({
-      description: 'An admin trusts the profile: its agents click and type without asking.',
+      description:
+        'Kept for the library profile record. It changes nothing in this app: one Browser connection serves every profile, so acting tools follow the connection mode (Click and type: ask / allow), not the profile.',
     }),
     createdAt: z.number().int(),
     updatedAt: z.number().int(),

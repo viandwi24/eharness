@@ -91,7 +91,13 @@ export const ProgramTriggerStateSchema = z
 
 export const ProgramWarningSchema = z
   .object({
-    code: z.enum(['tool-unavailable', 'tool-off', 'channel-not-bound', 'budget-below-minimum']),
+    code: z.enum([
+      'tool-unavailable',
+      'tool-off',
+      'channel-not-bound',
+      'budget-below-minimum',
+      'brief-needs-tool',
+    ]),
     field: z.string().openapi({ example: 'authority.tools' }),
     message: z.string(),
   })
@@ -226,6 +232,10 @@ export const ProgramPatchSchema = z
 export const ProgramCheckSchema = z
   .object({
     agentId: z.string().min(1).openapi({ description: 'Agent id or slug.' }),
+    brief: z.string().optional().openapi({
+      description:
+        'The brief as typed: checked against the authority (it asks for memory or a calculation the authority does not grant).',
+    }),
     authority: ProgramAuthoritySchema.partial().optional(),
     budget: ProgramBudgetSchema.partial().optional(),
   })

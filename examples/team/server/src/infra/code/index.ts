@@ -10,7 +10,13 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type { HarnessPlugin } from 'eharness'
 import { type CodeSandbox, code } from 'eharness/code'
-import { detectOsSandbox, localSandbox, removeStaleScratch, scratchSandbox } from 'eharness/shell'
+import {
+  localSandbox,
+  type OsSandboxProbe,
+  probeOsSandbox,
+  removeStaleScratch,
+  scratchSandbox,
+} from 'eharness/shell'
 import type { ProgramStore } from '../../app/ports.ts'
 import type { CodeDriver, CodeInstall, CodeSandboxInfo } from '../../domain/code-sandbox.ts'
 import { programPathAccess } from '../bigdata/authority.ts'
@@ -162,9 +168,26 @@ export function remoteCodePlugin(input: {
   })
 }
 
+/** Why code does not run isolated on this host, in words an operator can act on. */
+export function notIsolatedWhy(probe: OsSandboxProbe): string {
+  if (probe.ok) return 'isolated'
+  if (probe.kind === 'bubblewrap') {
+    return `bubblewrap is installed but this container does not allow user namespaces: run the container with seccomp/apparmor unconfined (or --cap-add SYS_ADMIN), or connect the Remote sandbox${probe.reason === undefined ? '' : ` (${probe.reason})`}`
+  }
+  if (probe.kind === 'seatbelt') {
+    return `sandbox-exec does not work here${probe.reason === undefined ? '' : ` (${probe.reason})`}`
+  }
+  return 'no OS sandbox on this host'
+}
+
 export function createCodeRuntime(
   config: CodeConfig,
-  deps: { programs: () => Pick<ProgramStore, 'get'> | undefined; warn?: (message: string) => void },
+  deps: {
+    programs: () => Pick<ProgramStore, 'get'> | undefined
+    warn?: (message: string) => void
+    /** The OS sandbox check (default `probeOsSandbox`); tests inject a result. */
+    probe?: () => Promise<OsSandboxProbe>
+  },
 ): CodeRuntime {
   const warn = deps.warn ?? ((m) => console.warn(`team: ${m}`))
   const on = config.driver !== 'off'
@@ -174,7 +197,16 @@ export function createCodeRuntime(
       : []
   const building =
     config.driver === 'local' && (config.install !== 'off' || requirements.length > 0)
-  const detected = detectOsSandbox().kind !== 'none'
+  // The OS sandbox is probed once (a trivial command through it): bubblewrap is often installed
+  // in a container that does not allow user namespaces, and then every run would fail. When it
+  // does not work, code runs like on a host without one (not isolated), and Settings says why.
+  let probing: Promise<OsSandboxProbe> | undefined
+  const probe = (): Promise<OsSandboxProbe> => {
+    probing ??= (deps.probe ?? (() => probeOsSandbox()))().catch(
+      (error): OsSandboxProbe => ({ kind: 'none', ok: false, reason: String(error) }),
+    )
+    return probing
+  }
   let installer: ReturnType<typeof localSandbox> | undefined
 
   // the interpreter may live under the home directory (pyenv, a virtualenv): reading it stays allowed
@@ -189,10 +221,11 @@ export function createCodeRuntime(
    */
   const createCodeSandbox = async (_ctx?: unknown): Promise<CodeSandbox> => {
     mkdirSync(config.scratchRoot, { recursive: true })
+    const isolated = (await probe()).ok
     return scratchSandbox({
       parent: config.scratchRoot,
       os: {
-        enabled: true,
+        enabled: isolated,
         network: false,
         denyReadHome: true,
         // the database, its -wal/-shm files and the key files live here; this session's own
@@ -211,9 +244,10 @@ export function createCodeRuntime(
     })
   }
 
-  const getInstaller = (): ReturnType<typeof localSandbox> => {
+  const getInstaller = async (): Promise<ReturnType<typeof localSandbox>> => {
     mkdirSync(config.envRoot, { recursive: true })
-    installer ??= localSandbox({ root: config.envRoot, os: { enabled: true, network: true } })
+    const usable = (await probe()).ok
+    installer ??= localSandbox({ root: config.envRoot, os: { enabled: usable, network: true } })
     return installer
   }
 
@@ -252,7 +286,8 @@ export function createCodeRuntime(
           install: 'off',
           label: 'Code sandbox is off',
         }
-      const isolated = detected
+      const found = await probe()
+      const isolated = found.ok
       const python = await pythonVersion(config.python)
       return {
         driver: config.driver,
@@ -261,7 +296,7 @@ export function createCodeRuntime(
         install: config.install,
         label: isolated
           ? 'local scratch directory under an OS sandbox, no network'
-          : 'local scratch directory, NOT isolated (no OS sandbox on this host)',
+          : `local scratch directory, NOT isolated (${notIsolatedWhy(found)})`,
       }
     },
     async start() {
@@ -272,7 +307,8 @@ export function createCodeRuntime(
       } catch (error) {
         warn(`could not clean the code scratch directory: ${String(error)}`)
       }
-      if (!detected) warn('code sandbox: no OS sandbox on this host, code runs without isolation')
+      const found = await probe()
+      if (!found.ok) warn(`code sandbox: ${notIsolatedWhy(found)}; code runs without isolation`)
     },
   }
 }

@@ -20,7 +20,7 @@ export type TgErrorKind =
   | { kind: 'phone-invalid'; text: string }
   | { kind: 'app-invalid'; text: string }
   /** The request is wrong or not permitted (no rights, blocked, bad id): never retried. */
-  | { kind: 'invalid'; text: string }
+  | { kind: 'invalid'; text: string; detail?: string }
   | { kind: 'transient'; text: string }
 
 export class TgRpcError extends Error {
@@ -73,10 +73,19 @@ const INVALID = [
   'MEDIA_EMPTY',
 ]
 
+/** The sentence for a chat or person the account has no access data for (mtcute's peer cache). */
+export function unknownPeerDetail(text: string): string {
+  const id = /Peer (-?\d+)/i.exec(text)?.[1]
+  return `Telegram does not let this account reach ${id === undefined ? 'that chat' : `the chat or person ${id}`}: it is not among the account's conversations (it has to be a chat the account is a member of, or a person who wrote to it). A chat joined a moment ago may need a minute; otherwise it cannot be read or written from this account.`
+}
+
 /** Classify an error thrown by the client. */
 export function classifyError(error: unknown): TgErrorKind {
   const text = rpcText(error)
   const upper = text.toUpperCase()
+  if (/not found in local cache/i.test(text)) {
+    return { kind: 'invalid', text: 'PEER_UNKNOWN', detail: unknownPeerDetail(text) }
+  }
   const wait = /^(?:FLOOD_(?:PREMIUM_)?WAIT|SLOWMODE_WAIT)_(\d+)/.exec(upper)
   if (wait !== null) return { kind: 'flood', seconds: Number(wait[1]), text: upper }
   if (upper.startsWith('PEER_FLOOD')) return { kind: 'peer-flood', text: upper }
@@ -127,7 +136,7 @@ export function describeError(kind: TgErrorKind): string {
     case 'app-invalid':
       return 'Telegram rejected the api_id / api_hash. Check them at my.telegram.org/apps.'
     case 'invalid':
-      return `Telegram refused the request (${kind.text}).`
+      return kind.detail ?? `Telegram refused the request (${kind.text}).`
     case 'transient':
       return `Telegram request failed: ${kind.text}`
   }

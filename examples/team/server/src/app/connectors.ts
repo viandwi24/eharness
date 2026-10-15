@@ -11,7 +11,6 @@ import type {
 import { normalizeConnectors, parseCustomInput } from '../domain/connectors.ts'
 import { invalid } from '../domain/errors.ts'
 import { getAgent } from './agents.ts'
-import { trustNewConnection } from './browser.ts'
 import type { Deps } from './ports.ts'
 
 export const listCatalog = (deps: Deps) => deps.connectors.catalog()
@@ -34,20 +33,14 @@ export const startConnectFlow = (deps: Deps, input: FlowStartInput) => {
 }
 export const getConnectFlow = (deps: Deps, id: string) => deps.connectors.getFlow(id)
 export async function actOnFlow(deps: Deps, id: string, input: FlowActInput) {
-  const result = await deps.connectors.act(id, input)
-  // a new Browser connection to a trusted profile may act without asking from the start
-  if (result.ok && result.connection !== undefined) {
-    return { ...result, connection: await trustNewConnection(deps, result.connection) }
-  }
-  return result
+  return deps.connectors.act(id, input)
 }
 export const oauthCallback = (
   deps: Deps,
   query: Parameters<Deps['connectors']['oauthCallback']>[0],
 ) => deps.connectors.oauthCallback(query)
 export async function updateConnection(deps: Deps, id: string, patch: ConnectionPatchInput) {
-  const updated = await deps.connectors.updateConnection(id, patch)
-  return patch.settings === undefined ? updated : trustNewConnection(deps, updated)
+  return deps.connectors.updateConnection(id, patch)
 }
 export const removeConnection = (deps: Deps, id: string) => deps.connectors.removeConnection(id)
 export function setConnectionAccess(deps: Deps, id: string, input: ConnectionAccessInput) {

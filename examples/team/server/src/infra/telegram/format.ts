@@ -19,6 +19,8 @@ const SAFE_URL = /^(https?:\/\/|tg:\/\/|mailto:)[^\s<>"]+$/i
 const open = '\uE000'
 const close = '\uE001'
 
+const count = (text: string, ch: string): number => text.split(ch).length - 1
+
 /** Telegram HTML for `text` (Markdown subset). Plain text without markup comes out escaped only. */
 export function toTelegramHtml(text: string): string {
   const stash: string[] = []
@@ -53,6 +55,27 @@ export function toTelegramHtml(text: string): string {
   s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, label: string, url: string) =>
     SAFE_URL.test(url) ? keep(`<a href="${escapeAttr(url)}">${escapeHtml(label)}</a>`) : m,
   )
+  // bare urls: an explicit link without the punctuation that follows it ("see https://a.b/c," is
+  // not clickable for Telegram when the comma sticks), and no emphasis inside the url (`_`, `*`)
+  s = s.replace(/https?:\/\/[^\s<>"\uE000\uE001]+/g, (m) => {
+    let url = m
+    let tail = ''
+    for (;;) {
+      const last = url.slice(-1)
+      const unbalanced =
+        (last === ')' && count(url, '(') < count(url, ')')) ||
+        (last === ']' && count(url, '[') < count(url, ']')) ||
+        (last === '}' && count(url, '{') < count(url, '}'))
+      if (/[.,;:!?'"\u2019\u201d\u00bb\u2026>]/.test(last) || unbalanced) {
+        tail = last + tail
+        url = url.slice(0, -1)
+        continue
+      }
+      break
+    }
+    if (!SAFE_URL.test(url) || url.length <= 'https://'.length) return m
+    return `${keep(`<a href="${escapeAttr(url)}">${escapeHtml(url)}</a>`)}${tail}`
+  })
   s = escapeHtml(s)
   // headings and bullets
   s = s.replace(/^#{1,6}[^\S\n]+(.+)$/gm, '<b>$1</b>')

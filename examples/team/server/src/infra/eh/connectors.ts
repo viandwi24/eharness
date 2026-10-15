@@ -653,13 +653,18 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         if (capability !== undefined) kinds[tool] = capability.kind
         // A built-in READ capability shown as "Allowed" runs without asking in Manual mode (D13 of
         // the e2e pass: a researcher whose web tools are Allowed was asked for every search).
+        // The same goes for `run_python` of Files & Sandbox: it is a `write` capability (it saves
+        // files), but the person who sees "Run Python: Allowed" expects no approval; its own
+        // sandbox is the guard (the library adds no rule for an Allowed built-in).
         // The library leaves built-ins to the chat's permission mode, and Auto and Bypass keep
         // their own handling (the classifier still looks at the call in Auto).
         const mode = out.connections.find((c) => origin.connectionIds.includes(c.connectionId))
           ?.modes[origin.capabilityId]
         if (
           def.source === 'builtin' &&
-          (capability?.kind === 'read' || capability?.kind === 'external') &&
+          (capability?.kind === 'read' ||
+            capability?.kind === 'external' ||
+            origin.tool === 'run_python') &&
           mode === 'allow' &&
           !out.rules.deny.includes(tool) &&
           !out.rules.ask.includes(tool)

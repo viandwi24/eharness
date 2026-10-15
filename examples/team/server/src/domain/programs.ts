@@ -340,7 +340,12 @@ export function programMaxOutputTokens(
 // --- what the authority and the budget cannot do (warnings) -------------------------------------
 
 export interface ProgramWarning {
-  code: 'tool-unavailable' | 'tool-off' | 'channel-not-bound' | 'budget-below-minimum'
+  code:
+    | 'tool-unavailable'
+    | 'tool-off'
+    | 'channel-not-bound'
+    | 'budget-below-minimum'
+    | 'brief-needs-tool'
   /** The form field it is about (`authority.tools`, `budget.perRunUsd`, ...). */
   field: string
   message: string
@@ -418,6 +423,52 @@ export function budgetWarnings(
   return out
 }
 
+/**
+ * A brief that asks for something the authority does not grant (a heuristic, never a block): saving
+ * memory without a memory write tool, running a script or calculation without `run_python`.
+ */
+export function briefWarnings(
+  brief: string,
+  authority: Pick<ProgramAuthority, 'tools' | 'connectors'>,
+): ProgramWarning[] {
+  const out: ProgramWarning[] = []
+  const names = authority.tools.map(baseName)
+  const granted = (...tools: string[]): boolean => tools.some((t) => names.includes(t))
+  const text = brief.toLowerCase()
+  if (
+    /\b(memori|memory|memories)\b/.test(text) &&
+    /\b(update|simpan|save|catat|tulis|write|perbarui|store|record)\b/.test(text) &&
+    !granted(
+      'memory_create',
+      'memory_str_replace',
+      'memory_insert',
+      'memory_delete',
+      'memory_rename',
+    )
+  ) {
+    out.push({
+      code: 'brief-needs-tool',
+      field: 'authority.tools',
+      message:
+        'The brief asks to update or save memory, but no memory write tool is granted (memory_view is read-only): the run cannot write it. Add memory_create / memory_str_replace to the tools, or take it out of the brief.',
+    })
+  }
+  if (
+    /\b(python|hitung|menghitung|calculate|calculation|kalkulasi|run_python|jalankan kode|run code|python script)\b/.test(
+      text,
+    ) &&
+    !granted('run_python')
+  ) {
+    out.push({
+      code: 'brief-needs-tool',
+      field: 'authority.tools',
+      message:
+        'The brief asks for a calculation or Python code, but run_python is not granted: the run can only compute in its head. Add run_python to the tools, or take it out of the brief.',
+    })
+  }
+  return out
+}
+
 // --- sessions ----------------------------------------------------------------------------------
 
 /** Session of one run: `program:<programId>:<runAt>`. */
@@ -457,6 +508,15 @@ export const PROGRAM_BASE_TOOLS = [
   'datetime',
   // the agent's own memory, read-only: what was agreed in chat may live there (writes stay outside)
   'memory_view',
+  // the agent's own place in its chat connections, read-only facts about the setup: which
+  // conversations and topics it ingests (`channel_describe`, `list_topics`) and its own rights and
+  // status (`channel_status`). They return names and settings, never message content, never a
+  // person's accounts, notes or fields, and no file: nothing beyond what the program may read is
+  // reachable. `member_lookup` and `people_find` stay out: they return people's data, which only an
+  // authority that names them may open. (A name here is harmless for an agent without channels.)
+  'channel_describe',
+  'channel_status',
+  'list_topics',
   // asking the client for a decision or for more authority is never outside the authority
   'escalate',
   'escalate_wait',
@@ -528,10 +588,20 @@ export function programRules(
 }
 
 /** What the agent reads when the engine refuses a call outside the authority. */
-export function outsideAuthorityReason(programName: string, toolName: string): string {
+export function outsideAuthorityReason(
+  programName: string,
+  toolName: string,
+  readable: readonly string[] = [],
+): string {
+  // a search or listing without a path covers the whole tree, which only a grant of the whole tree
+  // allows; the rules never widen, so the reason names the roots that can be searched instead
+  const where =
+    readable.length === 0
+      ? ''
+      : ` If this was a search or listing: pass a path (prefix) inside what this run may read (${readable.join(', ')}); a call without a path covers everything and is refused.`
   return (
     `Outside the authority of program "${programName}": ${toolName} (with this input) is not ` +
-    'granted to this run, and nobody can approve a single call now. Do not retry the same call. ' +
+    `granted to this run, and nobody can approve a single call now.${where} Do not retry the same call. ` +
     'If you need it to finish the brief, call request_authority (name the tool, connector or ' +
     'path and why): your run pauses until the client decides, then continues here. If it is ' +
     'rejected, finish the work that is inside your authority and report what you could not do ' +

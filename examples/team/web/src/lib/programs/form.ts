@@ -261,7 +261,7 @@ export function bodyFromForm(f: ProgramForm): Omit<ProgramCreate, 'agentId'> {
 export function checkFromForm(f: ProgramForm, agentId: string): ProgramCheck | undefined {
 	if (!agentId) return undefined;
 	const { authority, budget } = bodyFromForm(f);
-	return { agentId, authority, budget };
+	return { agentId, brief: f.brief, authority, budget };
 }
 
 /** The warnings of one form field (`authority.tools`, `budget.perRunUsd`, ...). */

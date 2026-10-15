@@ -17519,7 +17519,7 @@ export interface components {
         /** @description Something the program cannot do as configured: a tool in its authority its agent never has (its connector is off, or the agent is not bound to a channel), or a budget below the cost of one model call. Warnings never block a save. */
         ProgramWarning: {
             /** @enum {string} */
-            code: "tool-unavailable" | "tool-off" | "channel-not-bound" | "budget-below-minimum";
+            code: "tool-unavailable" | "tool-off" | "channel-not-bound" | "budget-below-minimum" | "brief-needs-tool";
             /** @example authority.tools */
             field: string;
             message: string;
@@ -17567,6 +17567,8 @@ export interface components {
         ProgramCheck: {
             /** @description Agent id or slug. */
             agentId: string;
+            /** @description The brief as typed: checked against the authority (it asks for memory or a calculation the authority does not grant). */
+            brief?: string;
             authority?: {
                 /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
                 tools?: string[];

@@ -108,7 +108,7 @@
 			? ''
 			: codeSandbox.driver === 'off'
 				? 'Code sandbox: off'
-				: `Code sandbox: ${codeSandbox.python ? `Python ${codeSandbox.python}` : 'Python (version unknown)'} · ${codeSandbox.driver} · ${codeSandbox.isolated ? 'isolated' : 'not isolated'}${codeSandbox.install === 'off' ? '' : ` · installs: ${codeSandbox.install}`}`
+				: `Code sandbox: ${codeSandbox.python ? `Python ${codeSandbox.python}` : 'Python (version unknown)'} · ${codeSandbox.driver} · ${codeSandbox.isolated ? 'isolated' : `not isolated (${codeSandbox.label})`}${codeSandbox.install === 'off' ? '' : ` · installs: ${codeSandbox.install}`}`
 	);
 	const remoteSummary = $derived(
 		codeSandbox?.remote

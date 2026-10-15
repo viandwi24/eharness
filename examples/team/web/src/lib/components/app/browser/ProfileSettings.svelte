@@ -6,17 +6,15 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
-	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { type BrowserAdapter, type BrowserProfile, parseDomains } from '#lib/browser/model.js';
 	import { buildSettings, initialValues, type FormValues } from '#lib/providers/form.js';
 
-	/** Name, trusted flag, allowed domains, the adapter form (edit) and delete. */
+	/** Name, allowed domains, the adapter form (edit) and delete. */
 	let { profile, adapter, onChange, onDeleted }: { profile: BrowserProfile; adapter: BrowserAdapter | undefined; onChange: (p: BrowserProfile) => void; onDeleted: () => void } = $props();
 
 	const fields = $derived(adapter?.forms[profile.mode]?.fields ?? []);
 	let name = $state('');
-	let trusted = $state(false);
 	let domains = $state('');
 	let values = $state<FormValues>({});
 	let errors = $state<Record<string, string>>({});
@@ -30,7 +28,6 @@
 		if (key === loadedFor) return;
 		loadedFor = key;
 		name = profile.name;
-		trusted = profile.trusted === true;
 		domains = (profile.allowDomains ?? []).join('\n');
 		values = initialValues(fields, profile.settings);
 		errors = {};
@@ -45,7 +42,7 @@
 		errors = {};
 		busy = true;
 		try {
-			const p = await api.patch('/browser/profiles/{id}', { params: { id: profile.id }, body: { name: name.trim(), trusted, allowDomains: parseDomains(domains), settings: built.settings } });
+			const p = await api.patch('/browser/profiles/{id}', { params: { id: profile.id }, body: { name: name.trim(), allowDomains: parseDomains(domains), settings: built.settings } });
 			onChange(p);
 			toast.success('Saved');
 		} catch (e) {
@@ -69,10 +66,6 @@
 <section class="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-label="Settings" data-testid="browser-settings">
 	<h2 class="text-sm font-medium">Settings</h2>
 	<label class="flex flex-col gap-1"><span class="text-xs font-medium">Name</span><Input bind:value={name} maxlength={80} /></label>
-	<div class="flex items-start gap-3">
-		<Switch bind:checked={trusted} aria-label="Trusted" data-testid="trusted-toggle" />
-		<div class="flex flex-col"><span class="text-sm">Trusted</span><span class="text-xs text-muted-foreground">Agents on this profile click and type without asking first. Turn it on only for profiles you would let them use unattended.</span></div>
-	</div>
 	<label class="flex flex-col gap-1">
 		<span class="text-xs font-medium">Allowed domains</span>
 		<Textarea bind:value={domains} rows={3} placeholder={'example.com\n*.example.org'} data-testid="allow-domains" />

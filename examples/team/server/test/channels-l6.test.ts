@@ -1007,3 +1007,18 @@ describe('approvals: new input and expiry', () => {
     expect(mock.edits[0]?.text).toContain('Expired: not answered')
   })
 })
+
+describe('a forum named for reading', () => {
+  test('the error lists the topics of the forum', async () => {
+    const i = instance([text('x')])
+    await connect(i, { forum: { label: 'Crew', ack: false, topics: { Billing: {}, Chat: {} } } })
+    i.gw.settings.ensureNode('c1', {
+      nativeId: 'forum',
+      kind: 'room',
+      traits: { postable: false },
+    } as never)
+    expect(() => i.gw.resolveTarget(i.leadId, undefined, { conversation: 'forum' })).toThrow(
+      /only holds topics\): name one of its topics with `topic`: "Billing" \(forum\/Billing\), "Chat" \(forum\/Chat\)/,
+    )
+  })
+})

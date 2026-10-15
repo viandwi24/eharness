@@ -1014,17 +1014,23 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
       }
       // a deleted program leaves nothing granted: its session can still be read, never act
-      const current = (): { name: string; rules: { allow: string[]; deny: string[] } } => {
+      const current = (): {
+        name: string
+        rules: { allow: string[]; deny: string[] }
+        readable: string[]
+      } => {
         const program = deps.programs?.get(parsed.programId)
         return {
           name: program?.name ?? parsed.programId,
+          readable:
+            program === undefined ? [] : [...program.authority.read, ...program.authority.write],
           rules: program === undefined ? { allow: [], deny: [] } : programRules(program, tools),
         }
       }
       return {
         rules: current().rules,
         refuse(call) {
-          const { name, rules } = current()
+          const { name, rules, readable } = current()
           for (const rule of rules.deny) {
             if (matchRule(rule, call, { ...match, polarity: 'restrict' })) {
               return forbiddenReason(name, call.toolName, rule)
@@ -1033,7 +1039,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           const granted = rules.allow.some((rule) =>
             matchRule(rule, call, { ...match, polarity: 'allow' }),
           )
-          return granted ? undefined : outsideAuthorityReason(name, call.toolName)
+          if (granted) return undefined
+          // a search or listing without a path scans the whole tree: say where it may look
+          const listing =
+            (match.toolKinds as Record<string, { listing?: unknown } | undefined>)[call.toolName]
+              ?.listing !== undefined
+          return outsideAuthorityReason(name, call.toolName, listing ? readable : [])
         },
         askedReason: (toolName) => outsideAuthorityReason(current().name, toolName),
         // a rehearsal does not call external systems that would change something: the call is

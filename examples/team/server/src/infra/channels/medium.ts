@@ -77,14 +77,25 @@ const SMALL_TALK = new Set(
   ).split(' '),
 )
 
-/** A message that only greets, thanks or pings: it needs no memory, history or tools. */
-export function isSmallTalk(text: string): boolean {
-  const cleaned = text
+const withoutMentions = (text: string): string =>
+  text
     .toLowerCase()
     .replace(/@\w+/g, ' ')
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .trim()
-  if (cleaned === '') return true
+
+/**
+ * A message that only calls the agent (a bare mention, or nothing at all): the request is in what
+ * the same person wrote just before, so it is neither small talk nor a request of its own.
+ */
+export function isMentionOnly(text: string): boolean {
+  return withoutMentions(text) === ''
+}
+
+/** A message that only greets, thanks or pings: it needs no memory, history or tools. */
+export function isSmallTalk(text: string): boolean {
+  const cleaned = withoutMentions(text)
+  if (cleaned === '') return false
   const words = cleaned.split(/\s+/)
   return words.length <= 6 && words.every((w) => SMALL_TALK.has(w))
 }

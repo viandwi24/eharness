@@ -70,7 +70,7 @@ import {
   originOf,
 } from './app/auth.ts'
 import { briefingsText } from './app/briefings.ts'
-import { settleConnection, settleTakeovers } from './app/browser.ts'
+import { settleTakeovers } from './app/browser.ts'
 import { checkChatBody, uploadFile } from './app/chat.ts'
 import {
   approveDecision,
@@ -974,7 +974,6 @@ export function compose(config: ServerConfig): Server {
       const modalities = factory.modelInfo(def).inputModalities
       return modalities === undefined || modalities.includes('image')
     },
-    settle: (connectionId, trusted) => settleConnection(deps, connectionId, trusted),
   })
   const offBrowserEvents = browserService.manager.on((e) => {
     if (e.type !== 'handback') return
@@ -1185,6 +1184,10 @@ export function compose(config: ServerConfig): Server {
       return thread === undefined
         ? undefined
         : `${webUrl}/a/${agentId}?t=${encodeURIComponent(thread.id)}`
+    },
+    sessionPath: ({ agentId, sessionId }) => {
+      const thread = threadStore.getBySession(sessionId)
+      return thread === undefined ? undefined : `/a/${agentId}?t=${encodeURIComponent(thread.id)}`
     },
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })

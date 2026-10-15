@@ -15,6 +15,7 @@ import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharn
 import { updateAgent } from '../src/app/agents.ts'
 import type { Program } from '../src/domain/programs.ts'
 import {
+  briefWarnings,
   checkProgramFields,
   outsideAuthorityReason,
   parseProgramSession,
@@ -228,6 +229,41 @@ describe('program domain', () => {
     expect(rules.allow).toContain('Read(/library/out)')
     expect(rules.allow).toContain('todo_write') // base tools
     expect(rules.deny).toEqual(['Edit(/library/reports/locked/**)'])
+  })
+
+  test('read-only channel discovery is a base tool; people data and path-less searches stay closed', () => {
+    const rules = programRules(program)
+    for (const t of ['channel_describe', 'channel_status', 'list_topics']) {
+      expect(rules.allow).toContain(t)
+    }
+    expect(rules.allow).not.toContain('member_lookup')
+    expect(rules.allow).not.toContain('people_find')
+    const roots = { roots: [{ virtual: '/', real: '/' }], polarity: 'allow' as const }
+    // a search without a path covers the whole tree: never widened
+    expect(
+      rules.allow.some((r) => matchRule(r, { toolName: 'grep', input: { pattern: 'x' } }, roots)),
+    ).toBe(false)
+    expect(
+      rules.allow.some((r) =>
+        matchRule(r, { toolName: 'grep', input: { pattern: 'x', prefix: '/library/in/a' } }, roots),
+      ),
+    ).toBe(true)
+    expect(outsideAuthorityReason('P', 'grep', ['/library/in/**'])).toContain('pass a path')
+    expect(outsideAuthorityReason('P', 'grep')).not.toContain('pass a path')
+  })
+
+  test('a brief that asks for what the authority lacks gets a warning, never a block', () => {
+    const none = { tools: [], connectors: [] }
+    const codes = (brief: string, tools: string[] = []): number =>
+      briefWarnings(brief, { tools, connectors: [] }).length
+    expect(briefWarnings('Update memori setelah selesai', none)[0]?.code).toBe('brief-needs-tool')
+    expect(codes('save the result to memory')).toBe(1)
+    expect(codes('save the result to memory', ['memory_create'])).toBe(0)
+    expect(codes('hitung total stok dengan python')).toBe(1)
+    expect(codes('hitung total stok dengan python', ['run_python'])).toBe(0)
+    expect(codes('summarise the news')).toBe(0)
+    // a video script is writing, not code
+    expect(codes('Write the script of the task.')).toBe(0)
   })
 
   test('a granted directory can be listed, globbed and grepped, siblings stay out', () => {

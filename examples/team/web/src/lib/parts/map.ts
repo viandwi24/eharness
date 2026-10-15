@@ -275,6 +275,9 @@ export function viewModel(message: UIMessage, live = true): PartView[] {
 				partial: d.partial === true ? true : undefined
 			});
 		} else if (type === 'file') {
+			// the same stored file twice in one message (a re-delivered attachment) is one chip
+			const url = String(part.url ?? '');
+			if (url !== '' && out.some((v) => v.kind === 'file' && v.url === url)) return;
 			out.push({ kind: 'file', key, url: String(part.url ?? ''), mediaType: String(part.mediaType ?? 'application/octet-stream'), filename: str(part.filename) });
 		} else if (type === 'source-url') {
 			out.push({ kind: 'source', key, sourceType: 'url', url: str(part.url), title: str(part.title) ?? String(part.url ?? 'source') });

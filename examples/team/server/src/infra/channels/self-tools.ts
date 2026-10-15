@@ -17,11 +17,13 @@
  * chats of their divisions and sets reminders only for themselves; a guest gets nothing. Every
  * tool returns text, including errors.
  */
+
 import { tool } from 'ai'
 import { errorText } from 'eharness'
 import { z } from 'zod'
 import { checkPersonNote, MAX_PERSON_NOTE } from '../../domain/persona.ts'
 import type { RunOrigin } from '../../domain/run-profiles.ts'
+import { connectionList, resolveConnectionRef } from './connection-ref.ts'
 import type { ChannelGateway, PersonView, Requester } from './gateway.ts'
 import { flat, localTime, personLabel, renderLinePrefix, timeLine } from './header.ts'
 import type { LogMessage } from './messages.ts'
@@ -324,17 +326,21 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
     const current = gw.conversationOf(sessionId)
     const requester = await gw.requesterOf(sessionId)
     const bound = gw.connectionsOf(agentId)
+    let named = input.connection
+    if (named !== undefined) {
+      const ref = resolveConnectionRef(bound, named)
+      if (!ref.ok) return ref.text
+      named = ref.id
+    }
     const connectionId =
-      input.connection ??
-      current?.connectionId ??
-      (bound.length === 1 ? bound[0]?.connectionId : undefined)
+      named ?? current?.connectionId ?? (bound.length === 1 ? bound[0]?.connectionId : undefined)
     if (connectionId === undefined) {
       return bound.length === 0
         ? 'You have no channel connection.'
         : `Name the connection: one of ${bound.map((c) => c.connectionId).join(', ')}.`
     }
     if (!gw.isBound(agentId, connectionId))
-      return `The connection "${connectionId}" is not one of yours.`
+      return `The connection "${connectionId}" is not one of yours. Your connections (use the id): ${connectionList(bound)}.`
     let base: NodeRow | undefined
     if (input.chat !== undefined) {
       base = gw.nodeOf(connectionId, input.chat)

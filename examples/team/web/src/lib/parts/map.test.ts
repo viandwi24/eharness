@@ -7,6 +7,13 @@ const msg = (parts: unknown[], extra: Partial<UIMessage> = {}): UIMessage =>
 	({ id: 'm1', role: 'assistant', parts, ...extra }) as UIMessage;
 
 describe('viewModel', () => {
+	test('the same stored file twice in one message is one chip', () => {
+		const file = { type: 'file', mediaType: 'image/jpeg', url: 'library:///uploads/a-photo-1.jpg', filename: 'a-photo-1.jpg' };
+		const other = { ...file, url: 'library:///uploads/b-photo-2.jpg', filename: 'b-photo-2.jpg' };
+		const v = viewModel(msg([{ type: 'text', text: 'look' }, file, { ...file }, other], { role: 'user' }));
+		expect(v.filter((x) => x.kind === 'file').map((x) => (x as { url: string }).url)).toEqual([file.url, other.url]);
+	});
+
 	test('text and reasoning with duration', () => {
 		const v = viewModel(
 			msg([

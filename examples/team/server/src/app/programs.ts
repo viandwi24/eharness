@@ -10,6 +10,7 @@ import { normalizeDeliverables } from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import {
   type AuthorityInspection,
+  briefWarnings,
   checkProgramFields,
   cleanList,
   cleanNotes,
@@ -258,7 +259,29 @@ export function programNoteAction(deps: Deps, input: ProgramNoteInput): string {
   }
   const lower = ref.toLowerCase()
   const exact = all.filter((p) => p.id === ref || p.name.toLowerCase() === lower)
-  const found = exact.length > 0 ? exact : all.filter((p) => p.name.toLowerCase().includes(lower))
+  let found = exact.length > 0 ? exact : all.filter((p) => p.name.toLowerCase().includes(lower))
+  if (found.length === 0) {
+    // the id of a proposal that became a program (the agent saw the proposal id, not the program id)
+    const proposal = deps.decisions.get(ref)
+    if (proposal !== undefined && proposal.kind === 'proposal') {
+      const became = proposal.outcome?.programId
+      const program = became === undefined ? undefined : all.find((p) => p.id === became)
+      if (program !== undefined) found = [program]
+      else if (proposal.status === 'open') {
+        throw notFound(
+          'program',
+          `${ref} is a proposal ("${proposal.title}") the client has not decided yet, so there is no program to note on`,
+        )
+      } else if (became !== undefined) {
+        throw notFound('program', `${ref} is a proposal whose program (${became}) no longer exists`)
+      } else {
+        throw notFound(
+          'program',
+          `${ref} is a proposal ("${proposal.title}") that did not become a program`,
+        )
+      }
+    }
+  }
   if (found.length === 0) {
     throw notFound('program', `${ref} (programs: ${all.map((p) => p.name).join(', ') || 'none'})`)
   }
@@ -379,20 +402,23 @@ export async function checkProgramDraft(
   deps: Deps,
   draft: {
     agentId: string
+    brief?: string | undefined
     authority?: Partial<ProgramAuthority> | undefined
     budget?: Partial<ProgramBudget> | undefined
   },
 ): Promise<ProgramWarning[]> {
   const agent = getAgent(deps, draft.agentId)
-  return deps.programRunner.check({
+  const authority = normalizeAuthority(draft.authority)
+  const found = await deps.programRunner.check({
     agentId: agent.id,
-    authority: normalizeAuthority(draft.authority),
+    authority,
     budget: {
       perRunUsd: draft.budget?.perRunUsd ?? null,
       perDayUsd: draft.budget?.perDayUsd ?? null,
       maxOutputTokens: draft.budget?.maxOutputTokens ?? null,
     },
   })
+  return draft.brief === undefined ? found : [...found, ...briefWarnings(draft.brief, authority)]
 }
 
 /** The effective grant of an authority (resolved tools per connector), for the editor and cards. */

@@ -284,10 +284,13 @@ describe('migration of the tool checklist and MCP servers', () => {
     expect(rules?.deny).toContain('grep')
     expect(rules?.deny).not.toContain('write_file')
 
-    // bare: nothing is on
+    // bare: nothing of its old checklist is on (the Browser built-in came later and is every
+    // agent's; it has no tools until a profile exists)
     expect(
       Object.keys(server.connectors.activated('id-bare')?.toolNameMap ?? {}).filter(
-        (n) => !(server.connectors.activated('id-bare')?.rules.deny ?? []).includes(n),
+        (n) =>
+          !(server.connectors.activated('id-bare')?.rules.deny ?? []).includes(n) &&
+          !n.startsWith('browser_'),
       ),
     ).toEqual([])
 

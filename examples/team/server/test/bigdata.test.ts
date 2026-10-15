@@ -287,6 +287,17 @@ describe('run_code sandbox', () => {
     expect(runner.describe().os).toBe(r.sandbox.os)
   })
 
+  test('an OS sandbox that cannot start (no user namespaces) falls back instead of failing', async () => {
+    const runner = createCodeRunner({
+      probe: async () => ({ kind: 'bubblewrap', ok: false, reason: 'no namespaces' }),
+    })
+    const r = await runner.run({ inputs, code: `print(1 + 1)` })
+    expect(r.error).toBeUndefined()
+    expect(r.stdout).toContain('2')
+    expect(r.sandbox.os).toBe(false)
+    expect(runner.describe().os).toBe(false)
+  })
+
   test('requireOsSandbox refuses to run unsandboxed', async () => {
     const strict = createCodeRunner({ osSandbox: false, requireOsSandbox: true })
     const r = await strict.run({ inputs, code: `print(1)` })

@@ -413,9 +413,6 @@ export async function updateBrowserProfile(
   )
   if (!result.ok) throw notFound('browser profile', id)
   // a running engine keeps the settings it started with: the next start uses the new ones
-  if (patch.trusted !== undefined && patch.trusted !== (current.trusted === true)) {
-    await syncTrust(deps, id, patch.trusted).catch(() => undefined)
-  }
   return viewOf(deps, result.profile, await context(deps))
 }
 
@@ -627,63 +624,4 @@ export async function settleTakeovers(
       }
     }
   }
-}
-
-// --- trust ------------------------------------------------------------------------------------
-
-/**
- * A trusted profile lets its acting tools (`browser_act`) run without asking: the Browser
- * connections that name it get `act: allow` as their default mode (and back to `ask` when the
- * trust is withdrawn). A per-agent choice still wins.
- */
-export async function syncTrust(deps: Deps, profileId: string, trusted: boolean): Promise<void> {
-  for (const c of await browserConnections(deps)) {
-    if (profileOf(c) !== profileId) continue
-    const modes = { ...(c.defaultModes ?? {}) }
-    if (trusted) modes.act = 'allow'
-    else if (modes.act === 'allow') modes.act = 'ask'
-    else continue
-    await deps.connectors.updateConnection(c.id, { defaultModes: modes })
-  }
-}
-
-/**
- * A connection just saved (a finished connect flow, or new settings) that names a trusted profile
- * gets `act: allow` at once, so the agent does not ask for it until its first activation. Only when
- * the connection has no choice for `act` yet; returns the connection as it is now.
- */
-export async function trustNewConnection(
-  deps: Deps,
-  connection: ConnectionView,
-): Promise<ConnectionView> {
-  if (connection.definitionId !== BROWSER_CONNECTOR_ID || deps.browser === undefined) {
-    return connection
-  }
-  const profileId = profileOf(connection)
-  if (profileId === undefined || connection.defaultModes?.act !== undefined) return connection
-  try {
-    if ((await deps.browser.profiles.get(profileId))?.trusted !== true) return connection
-    return await deps.connectors.updateConnection(connection.id, {
-      defaultModes: { ...(connection.defaultModes ?? {}), act: 'allow' },
-    })
-  } catch {
-    return connection // activation settles it later
-  }
-}
-
-/**
- * Fire and forget (called while an agent is being activated): a connection that names a trusted
- * profile and still has the default `act: ask` gets `act: allow`. Never lowers a mode.
- */
-export function settleConnection(deps: Deps, connectionId: string, trusted: boolean): void {
-  if (!trusted) return
-  setTimeout(() => {
-    void (async () => {
-      const c = (await browserConnections(deps)).find((x) => x.id === connectionId)
-      if (c === undefined || (c.defaultModes?.act ?? 'ask') !== 'ask') return
-      await deps.connectors.updateConnection(c.id, {
-        defaultModes: { ...(c.defaultModes ?? {}), act: 'allow' },
-      })
-    })().catch(() => undefined)
-  }, 0)
 }

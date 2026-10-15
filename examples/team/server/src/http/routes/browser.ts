@@ -138,8 +138,7 @@ const patch = createRoute({
   path: '/browser/profiles/{id}',
   tags,
   summary: 'Edit a browser profile',
-  description:
-    'Rename, change settings (keep-secret semantics), the allowed domains, or mark it trusted: the agents on a trusted profile click and type without asking.',
+  description: 'Rename, change settings (keep-secret semantics), the allowed domains.',
   security,
   request: {
     params: BrowserProfileIdParam,

@@ -144,7 +144,7 @@ describe('program form', () => {
 	test('the check request is the agent, the authority and the budget as typed; warnings are picked by field', () => {
 		const form = formFromProgram(program, 'UTC');
 		expect(checkFromForm(form, '')).toBeUndefined();
-		expect(checkFromForm(form, 'a1')).toEqual({ agentId: 'a1', authority: program.authority, budget: { perRunUsd: 2, perDayUsd: null, maxOutputTokens: null } });
+		expect(checkFromForm(form, 'a1')).toEqual({ agentId: 'a1', brief: program.brief, authority: program.authority, budget: { perRunUsd: 2, perDayUsd: null, maxOutputTokens: null } });
 		const warnings = [
 			{ code: 'tool-unavailable' as const, field: 'authority.tools', message: 'write_file: no such tool' },
 			{ code: 'budget-below-minimum' as const, field: 'budget.perRunUsd', message: 'too small' }

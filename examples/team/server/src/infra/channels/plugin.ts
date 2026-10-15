@@ -13,12 +13,19 @@
  * Every tool returns text, including errors: the model reads it and corrects itself.
  */
 import { tool } from 'ai'
-import { definePlugin, errorText, type HarnessContext, type HarnessPlugin } from 'eharness'
+import {
+  definePlugin,
+  defineToolSource,
+  errorText,
+  type HarnessContext,
+  type HarnessPlugin,
+} from 'eharness'
 import { z } from 'zod'
 import { isAllowedMediaType, MAX_UPLOAD_BYTES, mediaTypeOfName } from '../../domain/chat.ts'
 import { simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession } from '../../domain/run-profiles.ts'
 import { rehearsalSessions } from '../eh/rehearsal-registry.ts'
+import { resolveConnectionRef } from './connection-ref.ts'
 import {
   type ChannelGateway,
   ChannelUserError,
@@ -133,11 +140,18 @@ const readSchema = z.object({
     .describe(
       'history: `log` (default, what the gateway stored) or `platform` (ask the platform).',
     ),
-  messageId: z.string().optional().describe('download: the platform message id.'),
+  messageId: z
+    .string()
+    .optional()
+    .describe(
+      'download: the platform message id (optional when the file name is unique in the recent messages).',
+    ),
   attachment: z
     .string()
     .optional()
-    .describe('download: the attachment id or its number (1, 2, ...) from the history.'),
+    .describe(
+      'download: the attachment id, its number (1, 2, ...) or its file name, from the history.',
+    ),
 })
 
 const sendSchema = z.object({
@@ -207,8 +221,16 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         return simulatedText(toolName, input)
       }
 
-      const resolve = (input: TargetInput): ResolvedTarget =>
-        gw.resolveTarget(agentId, sessionId, input)
+      const resolve = (input: TargetInput): ResolvedTarget => {
+        let named = input
+        if (input.connection !== undefined) {
+          // the connection id, or the connector id when the agent has one connection of it
+          const ref = resolveConnectionRef(gw.connectionsOf(agentId), input.connection)
+          if (!ref.ok) throw new ChannelUserError(ref.text)
+          named = { ...input, connection: ref.id }
+        }
+        return gw.resolveTarget(agentId, sessionId, named)
+      }
 
       /**
        * Runs a tool body for the person it is for: the API governor records who asked on every
@@ -351,6 +373,14 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           )
           .join('\n')
 
+      /** An attachment by id, name, or the library name `<id>-<name>` the gateway stored it under. */
+      const attachmentMatches = (
+        a: { id: string; name?: string | undefined },
+        wanted: string,
+      ): boolean =>
+        a.id === wanted ||
+        (a.name !== undefined && (a.name === wanted || wanted.endsWith(`-${a.name}`)))
+
       const read = async (input: z.infer<typeof readSchema>): Promise<string> => {
         const t = resolve(input)
         const asking = await gw.requesterOf(sessionId).catch(() => undefined)
@@ -365,21 +395,34 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           return `${got.scope === 'full' ? 'Members' : got.scope === 'admins' ? 'Administrators only' : 'Some of the members'}:\n${got.members.map((m) => `${m.id} ${senderLabel(m)}`).join('\n')}`
         }
         if (input.action === 'download') {
-          if (input.messageId === undefined || input.attachment === undefined) {
-            return 'ERROR: download needs messageId and attachment.'
+          if (input.attachment === undefined) {
+            return 'ERROR: download needs attachment (an id, a number, or a file name) and, when known, messageId.'
           }
-          const row = await gw.log.find(t.node.id, input.messageId)
-          if (row === undefined)
+          const wanted = input.attachment
+          let row =
+            input.messageId === undefined
+              ? undefined
+              : await gw.log.find(t.node.id, input.messageId)
+          if (row === undefined && input.messageId !== undefined)
             return `ERROR: no stored message ${input.messageId} in this conversation.`
-          const n = Number(input.attachment)
+          if (row === undefined) {
+            // no message id: the file name the agent saw in its own message names the message
+            const recent = await gw.log.recent(t.node.id, { limit: 100 })
+            row = recent.find((m) => m.attachments.some((a) => attachmentMatches(a, wanted)))
+            if (row === undefined)
+              return `ERROR: no recent message of this conversation has an attachment "${wanted}"; pass messageId.`
+          }
+          const n = Number(wanted)
           const meta =
-            row.attachments.find((a) => a.id === input.attachment) ??
+            row.attachments.find((a) => attachmentMatches(a, wanted)) ??
             (Number.isInteger(n) ? row.attachments[n - 1] : undefined)
-          if (meta === undefined)
-            return `ERROR: the message has no attachment "${input.attachment}" (it has ${row.attachments.length}).`
+          if (meta === undefined) {
+            const names = row.attachments.map((a, i) => `${i + 1}: ${a.name ?? a.id}`).join('; ')
+            return `ERROR: the message has no attachment "${wanted}" (it has ${row.attachments.length}${names === '' ? '' : `: ${names}`}). Use an id, a number or one of these names.`
+          }
           if (t.adapter.fetchAttachment === undefined)
             return `ERROR: ${t.adapter.platform} cannot download files.`
-          const got = await t.adapter.fetchAttachment(t.view, input.messageId, meta.id)
+          const got = await t.adapter.fetchAttachment(t.view, row.nativeId, meta.id)
           const name = got.name ?? meta.name ?? meta.id
           const type = (
             got.mediaType ??
@@ -648,31 +691,90 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
             : def
       }
 
-      // native actions: one deferred tool each (found with tool_search), grouped by tool name
-      const natives = new Map<
+      // native actions: one deferred tool each (found with tool_search), grouped by tool name. A
+      // per-turn source: a connection that came up after the session opened (an MTProto account
+      // logging in, a reconnect) offers its actions from the next turn, not never
+      const nativeSource = defineToolSource({
+        id: 'channels:native',
+        refresh: 'turn',
+        defer: true,
+        list: () => {
+          const out: Record<string, unknown> = {}
+          for (const [name, entries] of nativeActions()) {
+            const first = entries[0]
+            if (first === undefined) continue
+            out[name] = nativeTool(name, first, entries)
+          }
+          return out as never
+        },
+        explain: (name) => explainNative(name),
+      })
+
+      /** The native actions of the agent's connections right now, by tool name. */
+      const nativeActions = (): Map<
         string,
         Array<{
           connectionId: string
           platform: string
           action: NonNullable<ChannelAdapter['actions']>[number]
         }>
-      >()
-      for (const c of bound) {
-        const adapter = gw.adapter(c.connectionId)
-        for (const action of adapter?.actions ?? []) {
-          const name = nativeToolName(adapter?.platform ?? 'channel', action.name)
-          const list = natives.get(name) ?? []
-          list.push({
-            connectionId: c.connectionId,
-            platform: adapter?.platform ?? 'channel',
-            action,
-          })
-          natives.set(name, list)
+      > => {
+        const natives = new Map<
+          string,
+          Array<{
+            connectionId: string
+            platform: string
+            action: NonNullable<ChannelAdapter['actions']>[number]
+          }>
+        >()
+        for (const c of gw.connectionsOf(agentId)) {
+          const adapter = gw.adapter(c.connectionId)
+          for (const action of adapter?.actions ?? []) {
+            const name = nativeToolName(adapter?.platform ?? 'channel', action.name)
+            const list = natives.get(name) ?? []
+            list.push({
+              connectionId: c.connectionId,
+              platform: adapter?.platform ?? 'channel',
+              action,
+            })
+            natives.set(name, list)
+          }
         }
+        return natives
       }
-      for (const [name, entries] of natives) {
-        const first = entries[0]
-        if (first === undefined || name in tools) continue
+
+      /** Why a native action tool is not offered, for `tool_search select:<name>`. */
+      const explainNative = (name: string): string | undefined => {
+        const mine = gw.connectionsOf(agentId)
+        // the connections whose platform this tool name belongs to (`<platform>_<action>`)
+        const ofPlatform = mine.filter((c) => name.startsWith(`${nativeToolName(c.platform, '')}`))
+        if (ofPlatform.length === 0) return undefined
+        const live = ofPlatform.filter((c) => gw.adapter(c.connectionId) !== undefined)
+        if (live.length === 0 || ofPlatform.every((c) => !c.connected)) {
+          const names = ofPlatform.map((c) => c.connectionId).join(', ')
+          return `your ${ofPlatform[0]?.platform} connection (${names}) is not connected right now, so its platform actions are not offered. Tell the person to check the connection on the Channels page.`
+        }
+        const base = name.slice(nativeToolName(ofPlatform[0]?.platform ?? '', '').length)
+        const offered = [...nativeActions().keys()]
+        const close = offered.filter(
+          (n) => n.includes(base) || base.includes(n.split('_').pop() ?? ''),
+        )
+        return `${ofPlatform[0]?.platform} has no action of that name.${close.length > 0 ? ` Actions it offers: ${close.slice(0, 8).join(', ')}.` : ''}`
+      }
+
+      const nativeTool = (
+        name: string,
+        first: {
+          connectionId: string
+          platform: string
+          action: NonNullable<ChannelAdapter['actions']>[number]
+        },
+        entries: Array<{
+          connectionId: string
+          platform: string
+          action: NonNullable<ChannelAdapter['actions']>[number]
+        }>,
+      ): unknown => {
         const risk: ActionRisk = first.action.risk
         const schema = first.action.schema.extend({
           connection: z
@@ -680,45 +782,42 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
             .optional()
             .describe('Connection id; needed when several connections offer this action.'),
         })
-        tools[name] = {
-          ...tool({
-            description: `${first.action.summary} (${first.platform} action)`,
-            inputSchema: schema,
-            metadata: { risk, idempotent: risk === 'read' },
-            execute: (input: Record<string, unknown>): Promise<string> =>
-              guard(async () => {
-                if (rehearsal && risk !== 'read') return simulate(name, input)
-                const { connection, ...rest } = input as { connection?: string }
-                const pick =
-                  connection === undefined
-                    ? entries.length === 1
-                      ? entries[0]
-                      : undefined
-                    : entries.find((e) => e.connectionId === connection)
-                if (pick === undefined) {
-                  return `ERROR: name the connection: one of ${entries.map((e) => e.connectionId).join(', ')}.`
+        return tool({
+          description: `${first.action.summary} (${first.platform} action)`,
+          inputSchema: schema,
+          metadata: { risk, idempotent: risk === 'read' },
+          execute: (input: Record<string, unknown>): Promise<string> =>
+            guard(async () => {
+              if (rehearsal && risk !== 'read') return simulate(name, input)
+              const { connection, ...rest } = input as { connection?: string }
+              const pick =
+                connection === undefined
+                  ? entries.length === 1
+                    ? entries[0]
+                    : undefined
+                  : entries.find((e) => e.connectionId === connection)
+              if (pick === undefined) {
+                return `ERROR: name the connection: one of ${entries.map((e) => e.connectionId).join(', ')}.`
+              }
+              if (!gw.isBound(agentId, pick.connectionId))
+                return 'ERROR: that connection is not one of yours.'
+              if (pick.action.ownerOnly === true) {
+                // decided on the current requester, never on what the message says
+                const requester = await gw.requesterOf(sessionId)
+                if (requester !== undefined && requester.role !== 'owner') {
+                  return `Not allowed: only an owner of the team can ask for ${name}. ${requester.name ?? requester.username ?? requester.nativeId} has the role "${requester.role}". Tell them in one plain sentence to ask an owner; do not retry or look for a way around it.`
                 }
-                if (!gw.isBound(agentId, pick.connectionId))
-                  return 'ERROR: that connection is not one of yours.'
-                if (pick.action.ownerOnly === true) {
-                  // decided on the current requester, never on what the message says
-                  const requester = await gw.requesterOf(sessionId)
-                  if (requester !== undefined && requester.role !== 'owner') {
-                    return `Not allowed: only an owner of the team can ask for ${name}. ${requester.name ?? requester.username ?? requester.nativeId} has the role "${requester.role}". Tell them in one plain sentence to ask an owner; do not retry or look for a way around it.`
-                  }
-                  if (requester === undefined && gw.unresolvedChatTurn(sessionId)) {
-                    return `Not allowed: ${name} needs an owner, and the sender of this chat message could not be identified.`
-                  }
+                if (requester === undefined && gw.unresolvedChatTurn(sessionId)) {
+                  return `Not allowed: ${name} needs an owner, and the sender of this chat message could not be identified.`
                 }
-                return pick.action.run(rest)
-              }),
-          }),
-          deferLoading: true,
-        }
+              }
+              return pick.action.run(rest)
+            }),
+        })
       }
 
       return {
-        tools: tools as never,
+        tools: [tools, nativeSource] as never,
         instructions: [
           (c: HarnessContext) => gw.sessionNote(c.session.id),
           {

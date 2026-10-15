@@ -116,6 +116,11 @@ export function createBackfill(options: BackfillOptions): Backfill {
         hooks.onFatal({ kind: k.kind, text: k.text })
         return { state: 'error', message: describeError(k) }
       case 'invalid':
+        // a chat the account has no access data for may appear with the next dialogs read
+        if (k.text === 'PEER_UNKNOWN') {
+          chats.setParked(connectionId, chatId, now() + 300_000, now())
+          return { state: 'parked', message: describeError(k) }
+        }
         return { state: 'error', message: describeError(k) }
       default: {
         // a glitch: look again in a few minutes
