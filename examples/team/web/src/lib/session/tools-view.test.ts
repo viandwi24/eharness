@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { groupSessionTools, type SessionTools } from './tools-view';
+import { groupSessionTools, type SessionTools, TOOL_STATE_LABEL } from './tools-view';
 
 const group = (name: string, label: string, tools: Array<[string, 'allow' | 'ask' | 'off', boolean?]>) => ({
 	connectionId: `c-${name}`,
@@ -17,6 +17,7 @@ const base = (over: Partial<SessionTools>): SessionTools => ({
 	lastCallNote: null,
 	missing: [],
 	extra: [],
+	blocked: [],
 	...over
 });
 
@@ -57,5 +58,42 @@ describe('groupSessionTools', () => {
 		expect(view.groups[0]!.summary).toBe('Phone · work — 1 tool');
 		expect(view.groups[0]!.rows.map((r) => r.state)).toEqual(['unchecked', 'off']);
 		expect(view.groups[0]!.missing).toBe(0);
+	});
+});
+
+describe('tools changed on the server', () => {
+	test('a blocked tool gets its own badge and is not counted as available or missing', () => {
+		const view = groupSessionTools(
+			base({
+				configured: [group('Phone', 'phone', [['phone_list_devices', 'allow'], ['phone_tap', 'allow'], ['phone_swipe', 'allow']])],
+				lastCall: { id: 'c1', at: 1, loaded: ['phone_list_devices'], deferred: [] },
+				blocked: [
+					{ name: 'phone_tap', connectionId: 'c-Phone', server: 'phone' },
+					{ name: 'phone_swipe', connectionId: 'c-Phone', server: 'phone' }
+				]
+			})
+		);
+		expect(view.blocked).toEqual(['phone_tap', 'phone_swipe']);
+		expect(view.missing).toEqual([]);
+		const phone = view.groups[0]!;
+		expect(phone.rows.map((r) => [r.name, r.state])).toEqual([
+			['phone_swipe', 'blocked'],
+			['phone_tap', 'blocked'],
+			['phone_list_devices', 'loaded']
+		]);
+		expect(TOOL_STATE_LABEL.blocked).toBe('Changed on the server');
+		expect(phone.changed).toBe(2);
+		expect(phone.summary).toBe('Phone — 1 of 3 available');
+	});
+
+	test('blocked shows even when the last call is unknown', () => {
+		const view = groupSessionTools(
+			base({
+				configured: [group('Phone', 'phone', [['phone_tap', 'allow']])],
+				blocked: [{ name: 'phone_tap', connectionId: 'c-Phone', server: 'phone' }]
+			})
+		);
+		expect(view.groups[0]!.rows[0]!.state).toBe('blocked');
+		expect(view.groups[0]!.summary).toBe('Phone — 0 of 1 available');
 	});
 });

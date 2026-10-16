@@ -4,6 +4,8 @@
  * of the instructions = loadable with `tool_search`). Pure rules; the use case reads the stores.
  */
 
+import type { DriftNote } from './mcp-pins.ts'
+
 export type ToolMode = 'allow' | 'ask' | 'off'
 
 /** A tool the agent's current activation offers. */
@@ -98,6 +100,38 @@ export function toolsOfRequestBody(
 }
 
 /**
+ * A tool the library keeps off in this chat because the remote MCP server changed its definition
+ * after the chat pinned it (`W_MCP_DRIFT`): it stays off until the owner accepts the new definitions.
+ */
+export interface BlockedTool {
+  /** The tool as the agent calls it (with the connection's prefix). */
+  name: string
+  connectionId: string | null
+  /** The MCP server (the connection's slug). */
+  server: string
+}
+
+/** The drifted tools of a session as the agent names them, resolved to their connection. */
+export function blockedTools(
+  notes: readonly DriftNote[],
+  connections: ReadonlyArray<{ connectionId: string; slug: string; toolPrefix: string }>,
+): BlockedTool[] {
+  const out: BlockedTool[] = []
+  for (const note of notes) {
+    const connection = connections.find((c) => c.slug === note.server)
+    const prefix = connection?.toolPrefix ?? `${note.server}_`
+    for (const tool of note.tools) {
+      out.push({
+        name: `${prefix}${tool}`,
+        connectionId: connection?.connectionId ?? null,
+        server: note.server,
+      })
+    }
+  }
+  return out
+}
+
+/**
  * Configured tools the model should have (allowed or asked, not off in the agent and not switched
  * off in this chat) that the last call neither loaded nor deferred: the red flag. `extra` is the
  * reverse: sent but not configured (plugin tools such as `tool_search`).
@@ -105,6 +139,7 @@ export function toolsOfRequestBody(
 export function compareTools(
   groups: readonly ConfiguredGroup[],
   call: Pick<LastCallTools, 'loaded' | 'deferred'>,
+  blocked: ReadonlySet<string> = new Set(),
 ): { missing: string[]; extra: string[] } {
   const seen = new Set([...call.loaded, ...call.deferred])
   const known = new Set<string>()
@@ -112,7 +147,7 @@ export function compareTools(
   for (const group of groups) {
     for (const tool of group.tools) {
       known.add(tool.name)
-      if (tool.mode === 'off' || tool.chatOff) continue
+      if (tool.mode === 'off' || tool.chatOff || blocked.has(tool.name)) continue
       if (!seen.has(tool.name) && !missing.includes(tool.name)) missing.push(tool.name)
     }
   }

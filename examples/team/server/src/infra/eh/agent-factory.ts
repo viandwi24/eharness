@@ -39,6 +39,7 @@ import {
   type ObserveEvent,
   type SessionLock,
   type SessionPeek,
+  type SessionStateSnapshot,
 } from 'eharness'
 import { type ActivityStore, activity } from 'eharness/activity'
 import { clock, nowLine } from 'eharness/clock'
@@ -82,6 +83,7 @@ import {
   heartbeatChannelRefusal,
   heartbeatRefusal,
 } from '../../domain/heartbeat.ts'
+import { type DriftNote, pinnedServers, stripMcpPins } from '../../domain/mcp-pins.ts'
 import {
   agentModeChoice,
   type ResolvedMode,
@@ -400,8 +402,22 @@ export interface AgentFactory {
    * reloaded. Nothing is stored here.
    */
   reloadSession(def: AgentDef, sessionId: string): Promise<ReloadResult>
-  /** The same for every session of the agent that is open in this process. */
-  reloadAgent(def: AgentDef): Promise<ReloadResult>
+  /**
+   * The same for every session of the agent that is open in this process. `stored`: further
+   * session ids of the agent (not open here) whose pinned remote MCP definitions are cleared too;
+   * `servers`: clear the pins of these servers only (connection slugs), default every server.
+   */
+  reloadAgent(
+    def: AgentDef,
+    opts?: { stored?: readonly string[]; servers?: ReadonlySet<string> },
+  ): Promise<ReloadResult>
+  /**
+   * Sessions whose remote MCP tools were excluded because the server changed their definitions
+   * (the library's `W_MCP_DRIFT`, noted at the last turn of each session; in memory).
+   */
+  drifts(): Array<{ sessionId: string } & DriftNote>
+  /** Stored sessions that hold pinned MCP definitions (every agent). */
+  pinnedSessions(): Array<{ sessionId: string; servers: string[] }>
   /** Permission modes of sessions (per-session mode, inheritance, Auto state). */
   modes: SessionModes
   /** Close every agent built (shutdown). */
@@ -418,6 +434,12 @@ export interface ReloadResult {
   pending: number
   /** The tools the agent is configured with now. */
   tools: string[]
+  /**
+   * Pinned MCP definition sets cleared: the owner accepted the servers' current definitions
+   * (tools the server changed are offered again at the next turn). Sets of a chat that is busy
+   * are cleared right after its turn and not counted here.
+   */
+  pinsCleared: number
 }
 
 /** A model id and its catalog entry (no entry fields = unknown to the catalog). */
@@ -1581,7 +1603,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       compaction: { summarizeAt: 0.8, prune: {} },
       // screenshots (browser, phone and other MCP tools) pile up: the model sees the newest three
       toolOutput: { maxChars: 30_000, strategy: 'evict', keepImages: 3 },
-      ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
+      onWarning: (w: HarnessWarning) => {
+        noteDrift(w)
+        deps.onWarning?.(w)
+      },
     })
     if (worker) workerSelf = agent
     else selves.set(def.id, agent)
@@ -1788,7 +1813,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   }
 
   /** Close a busy session right after its turn (polled; gives up after `RELOAD_WAIT_MS`). */
-  async function closeWhenIdle(build: HarnessAgent, id: string, agentId: string): Promise<void> {
+  async function closeWhenIdle(
+    build: HarnessAgent,
+    id: string,
+    agentId: string,
+    servers?: ReadonlySet<string>,
+  ): Promise<void> {
     const end = Date.now() + RELOAD_WAIT_MS
     while (!shutdown && Date.now() < end) {
       await new Promise((resolve) => setTimeout(resolve, RELOAD_POLL_MS))
@@ -1796,7 +1826,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         if (await idleNow(build, id)) {
           // a message may have been queued while the check ran
           await new Promise((resolve) => setTimeout(resolve, 20))
-          if (await idleNow(build, id)) return await closeOn(build, id, agentId)
+          if (await idleNow(build, id)) {
+            await closeOn(build, id, agentId)
+            await clearPins(id, servers)
+            return
+          }
         }
       } catch {
         return
@@ -1804,8 +1838,79 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     }
   }
 
-  /** `only`: one session id; without it every session of the agent that is open here. */
-  async function reloadFor(def: AgentDef, only?: string): Promise<ReloadResult> {
+  /** Sessions whose pinned remote MCP tools drifted (`W_MCP_DRIFT`): session id to server to note. */
+  const drifted = new Map<string, Map<string, DriftNote>>()
+  const noteDrift = (w: HarnessWarning): void => {
+    if (w.code !== 'W_MCP_DRIFT') return
+    const d = w.details ?? {}
+    const sessionId = d.sessionId
+    const source = d.source
+    if (typeof sessionId !== 'string' || typeof source !== 'string') return
+    const tools = Array.isArray(d.tools)
+      ? d.tools.filter((t): t is string => typeof t === 'string')
+      : []
+    const server = source.replace(/^mcp:/, '')
+    const bySession = drifted.get(sessionId) ?? new Map<string, DriftNote>()
+    bySession.set(server, { server, tools, at: Date.now() })
+    drifted.set(sessionId, bySession)
+  }
+
+  /**
+   * Remove the pinned MCP definitions of one stored session (`servers`: only these) so the next
+   * listing pins what the servers offer now. Called after the session was closed: a live session
+   * would write its old pins back at the end of its turn. Returns the number of pin sets removed.
+   */
+  async function clearPins(sessionId: string, servers?: ReadonlySet<string>): Promise<number> {
+    const bySession = drifted.get(sessionId)
+    if (bySession !== undefined) {
+      if (servers === undefined) drifted.delete(sessionId)
+      else {
+        for (const s of servers) bySession.delete(s)
+        if (bySession.size === 0) drifted.delete(sessionId)
+      }
+    }
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const stored = await storage.state.get(sessionId)
+      if (stored === null) return 0
+      const next = stripMcpPins(stored, servers)
+      if (next === undefined) return 0
+      const write = { ...next.state, rev: (typeof stored.rev === 'number' ? stored.rev : 0) + 1 }
+      if (storage.state.setIf === undefined) {
+        await storage.state.set(sessionId, write)
+        return next.cleared
+      }
+      if (await storage.state.setIf(sessionId, write, stored.rev)) return next.cleared
+    }
+    return 0
+  }
+
+  function pinnedSessions(): Array<{ sessionId: string; servers: string[] }> {
+    const rows = sqlite
+      .query<{ session_id: string; state: string }, []>(
+        `SELECT session_id, state FROM eh_state WHERE state LIKE '%:pins"%'`,
+      )
+      .all()
+    const out: Array<{ sessionId: string; servers: string[] }> = []
+    for (const row of rows) {
+      try {
+        const servers = pinnedServers(JSON.parse(row.state) as SessionStateSnapshot)
+        if (servers.length > 0) out.push({ sessionId: row.session_id, servers })
+      } catch {
+        // an unreadable state has no pins we can clear
+      }
+    }
+    return out
+  }
+
+  /**
+   * `only`: one session id; without it every session of the agent that is open here, plus
+   * `extra.stored` (stored sessions of the agent that are not open here: only their pins are cleared).
+   */
+  async function reloadFor(
+    def: AgentDef,
+    only?: string,
+    extra: { stored?: readonly string[]; servers?: ReadonlySet<string> } = {},
+  ): Promise<ReloadResult> {
     const targets: Array<{ build: HarnessAgent; id: string }> = []
     for (const build of buildsOf(def.id)) {
       for (const [id, ref] of liveSessions.get(build) ?? []) {
@@ -1820,14 +1925,24 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     for (const id of ids) reloadNotices.add(id)
     let closed = 0
     let pending = 0
+    let pinsCleared = 0
+    const cleared = new Set<string>()
     for (const { build, id } of targets) {
       if (await idleNow(build, id)) {
         await closeOn(build, id, def.id)
         closed++
+        cleared.add(id)
+        pinsCleared += await clearPins(id, extra.servers)
       } else {
         pending++
-        void closeWhenIdle(build, id, def.id).catch(() => undefined)
+        void closeWhenIdle(build, id, def.id, extra.servers).catch(() => undefined)
       }
+    }
+    // chats nobody has open here (and a session of `only` that is not open): only their pins
+    for (const id of [...ids, ...(extra.stored ?? [])]) {
+      if (cleared.has(id) || targets.some((t) => t.id === id)) continue
+      cleared.add(id)
+      pinsCleared += await clearPins(id, extra.servers)
     }
     let tools: string[] = []
     try {
@@ -1835,7 +1950,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     } catch {
       // an agent that cannot be built yet (no provider)
     }
-    return { sessions: ids.size, closed, pending, tools }
+    return { sessions: ids.size, closed, pending, tools, pinsCleared }
   }
 
   /** The text of the one-time notice after a forced reload. */
@@ -1938,7 +2053,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     },
     prepare: prepareAgent,
     reloadSession: (def, sessionId) => reloadFor(def, sessionId),
-    reloadAgent: (def) => reloadFor(def),
+    reloadAgent: (def, opts) => reloadFor(def, undefined, opts),
+    drifts: () =>
+      [...drifted].flatMap(([sessionId, byServer]) =>
+        [...byServer.values()].map((note) => ({ sessionId, ...note })),
+      ),
+    pinnedSessions,
     agentFor: (def, sessionId) =>
       sessionId !== undefined && isWorkerSession(sessionId)
         ? workerAgentFor(def)

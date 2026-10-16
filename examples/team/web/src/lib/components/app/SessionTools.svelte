@@ -51,9 +51,9 @@
 		try {
 			const r = await api.post('/sessions/{id}/reload', { params: { id: sessionId } });
 			toast.success(
-				r.pending
+				(r.pending
 					? 'The agent is busy: its tools reload right after this turn. The next message uses the fresh tools.'
-					: 'Tools reloaded. The next message uses the fresh tools.'
+					: 'Tools reloaded. The next message uses the fresh tools.') + (r.pinsCleared > 0 ? ' The new tool definitions of the servers are accepted.' : '')
 			);
 			await load();
 		} catch (e) {
@@ -68,6 +68,7 @@
 		loaded: 'success',
 		deferred: 'info',
 		missing: 'destructive',
+		blocked: 'warning',
 		off: 'secondary',
 		'chat-off': 'secondary',
 		unchecked: 'outline'
@@ -96,6 +97,17 @@
 			{:else if view === null}
 				<div class="space-y-2" aria-busy="true" aria-label="Loading"><Skeleton class="h-5 w-2/3" /><Skeleton class="h-4 w-full" /><Skeleton class="h-4 w-4/5" /></div>
 			{:else}
+				{#if view.blocked.length}
+					<Alert variant="warning">
+						<WarningIcon weight="fill" aria-hidden="true" />
+						<AlertTitle>Changed on the server</AlertTitle>
+						<AlertDescription>
+							<p class="text-xs">The server changed these tools after this chat first saw them. For safety they stay off until you accept the new definitions.</p>
+							<p class="font-mono text-xs break-words">{view.blocked.join(', ')}</p>
+							<div class="pt-1"><Button size="sm" variant="outline" onclick={reload} disabled={reloading}>{#if reloading}<Spinner class="size-3.5" /> Accepting...{:else}Accept &amp; reload{/if}</Button></div>
+						</AlertDescription>
+					</Alert>
+				{/if}
 				{#if view.missing.length}
 					<Alert variant="warning">
 						<WarningIcon weight="fill" aria-hidden="true" />

@@ -4,14 +4,18 @@
  * no session is opened.
  */
 import type {
+  AgentRepo,
   ChatToolsPort,
+  ConnectionDrift,
   ConnectorsPort,
   ModelCallStore,
   ReloadView,
   SessionToolsPort,
 } from '../../app/ports.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
+import type { DriftFact } from '../../domain/health.ts'
 import {
+  blockedTools,
   type ConfiguredGroup,
   compareTools,
   isTruncatedBody,
@@ -24,6 +28,7 @@ import type { SessionResolver } from './session-resolve.ts'
 
 export function createSessionToolsService(deps: {
   factory: AgentFactory
+  agents: Pick<AgentRepo, 'list'>
   connectors: ConnectorsRuntime & Pick<ConnectorsPort, 'agentConnectors'>
   resolve: SessionResolver
   modelCalls: ModelCallStore
@@ -40,6 +45,7 @@ export function createSessionToolsService(deps: {
     closed: r.closed,
     pending: r.pending > 0,
     tools: r.tools,
+    pinsCleared: r.pinsCleared,
   })
 
   /** The tool names of the newest model call of the session, or why they are not known. */
@@ -106,8 +112,17 @@ export function createSessionToolsService(deps: {
       }
       const configured = [...groups.values()]
       const { call, note } = lastCallOf(id)
+      const blocked = blockedTools(
+        deps.factory
+          .drifts()
+          .filter((d) => d.sessionId === id)
+          .map((d) => ({ server: d.server, tools: d.tools, at: d.at })),
+        out?.connections ?? [],
+      )
       const { missing, extra } =
-        call === null ? { missing: [], extra: [] } : compareTools(configured, call)
+        call === null
+          ? { missing: [], extra: [] }
+          : compareTools(configured, call, new Set(blocked.map((b) => b.name)))
       return {
         sessionId: id,
         agentId: def.id,
@@ -116,6 +131,7 @@ export function createSessionToolsService(deps: {
         lastCallNote: note,
         missing,
         extra,
+        blocked,
       }
     },
     async reload(sessionId) {
@@ -128,7 +144,79 @@ export function createSessionToolsService(deps: {
       if (agent.archivedAt !== null) {
         throw conflict(`agent is archived: ${agent.slug}`, 'AGENT_ARCHIVED')
       }
-      return view(await deps.factory.reloadAgent(agent))
+      const stored = deps.factory
+        .pinnedSessions()
+        .filter((p) => deps.resolve(p.sessionId)?.def.id === agent.id)
+        .map((p) => p.sessionId)
+      return view(await deps.factory.reloadAgent(agent, { stored }))
+    },
+    drifts() {
+      const out: DriftFact[] = []
+      for (const d of deps.factory.drifts()) {
+        const found = deps.resolve(d.sessionId)
+        if (found === undefined) continue
+        const connections = deps.connectors.activated(found.def.id)?.connections ?? []
+        out.push({
+          sessionId: d.sessionId,
+          agentId: found.def.id,
+          link: null,
+          at: d.at,
+          connection: d.server,
+          tools: blockedTools([d], connections).map((b) => b.name),
+        })
+      }
+      return out
+    },
+    connectionDrift(connectionId): ConnectionDrift | null {
+      const tools = new Set<string>()
+      const sessions = new Set<string>()
+      const agentIds = new Set<string>()
+      for (const d of deps.factory.drifts()) {
+        const found = deps.resolve(d.sessionId)
+        const connections =
+          found === undefined ? [] : (deps.connectors.activated(found.def.id)?.connections ?? [])
+        if (
+          found === undefined ||
+          !connections.some((c) => c.connectionId === connectionId && c.slug === d.server)
+        )
+          continue
+        for (const t of d.tools) tools.add(t)
+        sessions.add(d.sessionId)
+        agentIds.add(found.def.id)
+      }
+      return sessions.size === 0
+        ? null
+        : { tools: tools.size, sessions: sessions.size, agentIds: [...agentIds] }
+    },
+    async acceptConnection(connectionId) {
+      const total = {
+        sessions: 0,
+        closed: 0,
+        pending: false,
+        tools: [] as string[],
+        pinsCleared: 0,
+        agents: 0,
+      }
+      const pinned = deps.factory.pinnedSessions()
+      for (const def of deps.agents.list({ includeArchived: false })) {
+        if (deps.connectors.activated(def.id) === undefined) {
+          await deps.connectors.prepare([def]).catch(() => undefined)
+        }
+        const slug = deps.connectors
+          .activated(def.id)
+          ?.connections.find((c) => c.connectionId === connectionId)?.slug
+        if (slug === undefined) continue
+        const stored = pinned
+          .filter((p) => p.servers.includes(slug) && deps.resolve(p.sessionId)?.def.id === def.id)
+          .map((p) => p.sessionId)
+        const r = await deps.factory.reloadAgent(def, { stored, servers: new Set([slug]) })
+        total.agents++
+        total.sessions += r.sessions
+        total.closed += r.closed
+        total.pending ||= r.pending > 0
+        total.pinsCleared += r.pinsCleared
+      }
+      return total
     },
   }
 }

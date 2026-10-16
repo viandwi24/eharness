@@ -6931,6 +6931,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{id}/accept-definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept the current tool definitions of a remote server in every chat
+         * @description A chat pins the tool definitions a remote MCP server first showed it and keeps tools the server changed afterwards off (a server must not silently rewrite what a tool does). This is the owner accepting what the server offers now: the pins of this connection are cleared in every chat of every agent that uses it, and those chats reload (a running turn is not cut). `pinsCleared` counts the sets cleared.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description What was reloaded */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AcceptDefinitions"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/connectors": {
         parameters: {
             query?: never;
@@ -15514,7 +15582,7 @@ export interface paths {
                     /** @description Agent id or slug. */
                     agent?: string;
                     severity?: "high" | "medium" | "low";
-                    kind?: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error";
+                    kind?: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed";
                     /** @description `true` also lists dismissed findings. */
                     dismissed?: "true" | "false";
                 };
@@ -16211,6 +16279,14 @@ export interface components {
             missing: string[];
             /** @description Carried by the last call but not configured (plugin tools such as `tool_search`). */
             extra: string[];
+            /** @description Kept off in this chat because the remote server changed their definitions after the chat first saw them (safety pin). They come back after Accept & reload (`POST /sessions/{id}/reload`). Known from the last turns of the chat on this server; empty after a restart until the chat runs again. */
+            blocked: {
+                /** @description The tool as the agent calls it. */
+                name: string;
+                connectionId: string | null;
+                /** @description The MCP server (connection slug). */
+                server: string;
+            }[];
         };
         ReloadResult: {
             /** @description Open sessions the reload looked at. */
@@ -16221,6 +16297,8 @@ export interface components {
             pending: boolean;
             /** @description Tools the agent is configured with now. */
             tools: string[];
+            /** @description Pinned remote tool definition sets cleared: the owner accepted what the servers offer now. A busy chat is cleared right after its turn and not counted. */
+            pinsCleared: number;
         };
         /** @description The stored state of a session (`eharness/http`). */
         SessionSnapshot: {
@@ -17623,7 +17701,19 @@ export interface components {
             message?: string;
             accountLabel?: string;
             tools?: number;
+            /** @description Present when some chats pinned older definitions of this server and keep the changed tools off. Accept them with `POST /connections/{id}/accept-definitions`. */
+            drift?: {
+                /** @description Tools kept off in at least one chat. */
+                tools: number;
+                /** @description Chats that keep them off. */
+                sessions: number;
+                agentIds: string[];
+            };
             connection: components["schemas"]["Connection"];
+        };
+        AcceptDefinitions: components["schemas"]["ReloadResult"] & {
+            /** @description Agents that use the connection and were reloaded. */
+            agents: number;
         };
         AgentConnectorList: {
             connectors: components["schemas"]["AgentConnector"][];
@@ -19926,7 +20016,7 @@ export interface components {
             /** @description Stable id of the problem: the same problem is the same finding on every scan. */
             fingerprint: string;
             /** @enum {string} */
-            kind: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error";
+            kind: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed";
             /** @enum {string} */
             severity: "high" | "medium" | "low";
             agentId: string | null;

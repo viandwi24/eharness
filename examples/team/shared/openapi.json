@@ -1959,6 +1959,34 @@
               "type": "string"
             },
             "description": "Carried by the last call but not configured (plugin tools such as `tool_search`)."
+          },
+          "blocked": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The tool as the agent calls it."
+                },
+                "connectionId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "server": {
+                  "type": "string",
+                  "description": "The MCP server (connection slug)."
+                }
+              },
+              "required": [
+                "name",
+                "connectionId",
+                "server"
+              ]
+            },
+            "description": "Kept off in this chat because the remote server changed their definitions after the chat first saw them (safety pin). They come back after Accept & reload (`POST /sessions/{id}/reload`). Known from the last turns of the chat on this server; empty after a restart until the chat runs again."
           }
         },
         "required": [
@@ -1968,7 +1996,8 @@
           "lastCall",
           "lastCallNote",
           "missing",
-          "extra"
+          "extra",
+          "blocked"
         ]
       },
       "ReloadResult": {
@@ -1992,13 +2021,18 @@
               "type": "string"
             },
             "description": "Tools the agent is configured with now."
+          },
+          "pinsCleared": {
+            "type": "integer",
+            "description": "Pinned remote tool definition sets cleared: the owner accepted what the servers offer now. A busy chat is cleared right after its turn and not counted."
           }
         },
         "required": [
           "sessions",
           "closed",
           "pending",
-          "tools"
+          "tools",
+          "pinsCleared"
         ]
       },
       "SessionSnapshot": {
@@ -6956,6 +6990,31 @@
           "tools": {
             "type": "integer"
           },
+          "drift": {
+            "type": "object",
+            "properties": {
+              "tools": {
+                "type": "integer",
+                "description": "Tools kept off in at least one chat."
+              },
+              "sessions": {
+                "type": "integer",
+                "description": "Chats that keep them off."
+              },
+              "agentIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "tools",
+              "sessions",
+              "agentIds"
+            ],
+            "description": "Present when some chats pinned older definitions of this server and keep the changed tools off. Accept them with `POST /connections/{id}/accept-definitions`."
+          },
           "connection": {
             "$ref": "#/components/schemas/Connection"
           }
@@ -6963,6 +7022,25 @@
         "required": [
           "ok",
           "connection"
+        ]
+      },
+      "AcceptDefinitions": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReloadResult"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "agents": {
+                "type": "integer",
+                "description": "Agents that use the connection and were reloaded."
+              }
+            },
+            "required": [
+              "agents"
+            ]
+          }
         ]
       },
       "AgentConnectorList": {
@@ -15588,7 +15666,8 @@
               "token-spike",
               "big-output",
               "program-run",
-              "provider-error"
+              "provider-error",
+              "tools-changed"
             ]
           },
           "severity": {
@@ -23315,6 +23394,73 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ConnectionTest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/{id}/accept-definitions": {
+      "post": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Accept the current tool definitions of a remote server in every chat",
+        "description": "A chat pins the tool definitions a remote MCP server first showed it and keeps tools the server changed afterwards off (a server must not silently rewrite what a tool does). This is the owner accepting what the server offers now: the pins of this connection are cleared in every chat of every agent that uses it, and those chats reload (a running turn is not cut). `pinsCleared` counts the sets cleared.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was reloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptDefinitions"
                 }
               }
             }
@@ -33501,7 +33647,8 @@
                 "token-spike",
                 "big-output",
                 "program-run",
-                "provider-error"
+                "provider-error",
+                "tools-changed"
               ]
             },
             "required": false,

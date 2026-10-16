@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import {
+  acceptConnectionDefinitions,
   actOnFlow,
   createCustomConnector,
   getAgentConnectors,
@@ -44,6 +45,7 @@ import {
   OAuthCallbackQuery,
   OAuthClientPutSchema,
 } from '../schemas/connectors.ts'
+import { AcceptDefinitionsSchema } from '../schemas/session-tools.ts'
 
 const security = [{ Bearer: [] }]
 const content = <T extends z.ZodType>(schema: T) => ({ 'application/json': { schema } })
@@ -208,6 +210,22 @@ const test = createRoute({
   request: { params: ConnectionIdParam },
   responses: {
     200: { description: 'Result', content: content(ConnectionTestSchema) },
+    404: jsonError('Unknown connection'),
+    ...errorResponses,
+  },
+})
+
+const acceptDefinitions = createRoute({
+  method: 'post',
+  path: '/connections/{id}/accept-definitions',
+  tags: ['connectors'],
+  summary: 'Accept the current tool definitions of a remote server in every chat',
+  description:
+    'A chat pins the tool definitions a remote MCP server first showed it and keeps tools the server changed afterwards off (a server must not silently rewrite what a tool does). This is the owner accepting what the server offers now: the pins of this connection are cleared in every chat of every agent that uses it, and those chats reload (a running turn is not cut). `pinsCleared` counts the sets cleared.',
+  security,
+  request: { params: ConnectionIdParam },
+  responses: {
+    200: { description: 'What was reloaded', content: content(AcceptDefinitionsSchema) },
     404: jsonError('Unknown connection'),
     ...errorResponses,
   },
@@ -398,6 +416,9 @@ export function connectorRoutes(deps: Deps): OpenAPIHono {
       return c.body(null, 204)
     })
     .openapi(test, async (c) => c.json(await testConnection(deps, c.req.valid('param').id), 200))
+    .openapi(acceptDefinitions, async (c) =>
+      c.json(await acceptConnectionDefinitions(deps, c.req.valid('param').id), 200),
+    )
     .openapi(agentGet, async (c) =>
       c.json({ connectors: await getAgentConnectors(deps, c.req.valid('param').id) }, 200),
     )

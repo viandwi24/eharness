@@ -548,7 +548,7 @@ export function createMcpServer(
         ctx.warn({
           code: 'W_MCP_DRIFT',
           message: `MCP server '${name}': the definitions of ${drifted.map((t) => `'${t}'`).join(', ')} changed or were added since they were pinned; excluded until the pins are cleared (clearMcpPins).`,
-          details: { source: id, tools: drifted },
+          details: { source: id, tools: drifted, sessionId: ctx.session.id },
         })
       }
       const deferred = defer === 'auto' ? exposed.length > MCP_AUTO_DEFER_THRESHOLD : defer

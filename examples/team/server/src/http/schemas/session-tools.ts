@@ -45,6 +45,18 @@ export const SessionToolsSchema = z
       description:
         'Carried by the last call but not configured (plugin tools such as `tool_search`).',
     }),
+    blocked: z
+      .array(
+        z.object({
+          name: z.string().openapi({ description: 'The tool as the agent calls it.' }),
+          connectionId: z.string().nullable(),
+          server: z.string().openapi({ description: 'The MCP server (connection slug).' }),
+        }),
+      )
+      .openapi({
+        description:
+          'Kept off in this chat because the remote server changed their definitions after the chat first saw them (safety pin). They come back after Accept & reload (`POST /sessions/{id}/reload`). Known from the last turns of the chat on this server; empty after a restart until the chat runs again.',
+      }),
   })
   .openapi('SessionTools')
 
@@ -56,5 +68,16 @@ export const ReloadResultSchema = z
       description: 'A session is busy: it is closed right after its running turn.',
     }),
     tools: z.array(z.string()).openapi({ description: 'Tools the agent is configured with now.' }),
+    pinsCleared: z.number().int().openapi({
+      description:
+        'Pinned remote tool definition sets cleared: the owner accepted what the servers offer now. A busy chat is cleared right after its turn and not counted.',
+    }),
   })
   .openapi('ReloadResult')
+
+export const AcceptDefinitionsSchema = ReloadResultSchema.extend({
+  agents: z
+    .number()
+    .int()
+    .openapi({ description: 'Agents that use the connection and were reloaded.' }),
+}).openapi('AcceptDefinitions')

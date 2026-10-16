@@ -352,6 +352,17 @@ export const ConnectionTestSchema = z
     message: z.string().optional(),
     accountLabel: z.string().optional(),
     tools: z.number().int().optional(),
+    drift: z
+      .object({
+        tools: z.number().int().openapi({ description: 'Tools kept off in at least one chat.' }),
+        sessions: z.number().int().openapi({ description: 'Chats that keep them off.' }),
+        agentIds: z.array(z.string()),
+      })
+      .optional()
+      .openapi({
+        description:
+          'Present when some chats pinned older definitions of this server and keep the changed tools off. Accept them with `POST /connections/{id}/accept-definitions`.',
+      }),
     connection: ConnectionSchema,
   })
   .openapi('ConnectionTest')

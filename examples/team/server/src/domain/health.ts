@@ -16,6 +16,7 @@ export const FINDING_KINDS = [
   'big-output',
   'program-run',
   'provider-error',
+  'tools-changed',
 ] as const
 export type FindingKind = (typeof FINDING_KINDS)[number]
 
@@ -129,6 +130,18 @@ export interface ProgramRunFact {
   status: string
   reportStatus: string | null
   summary: string | null
+}
+
+/** A chat that keeps tools of a remote MCP server off because the server changed them. */
+export interface DriftFact {
+  sessionId: string
+  agentId: string | null
+  link: string | null
+  at: number
+  /** The connection's name as the owner knows it (falls back to the server slug). */
+  connection: string
+  /** Tools as the agent calls them. */
+  tools: string[]
 }
 
 // --- helpers ------------------------------------------------------------------------------------
@@ -508,6 +521,36 @@ export function detectProviderErrors(
   return out
 }
 
+/** Tools a chat keeps off because their server changed them: one finding per agent and connection. */
+export function detectToolsChanged(drifts: readonly DriftFact[], now: number): Finding[] {
+  const out: Finding[] = []
+  for (const [key, list] of groupBy(
+    window(drifts, now),
+    (d) => `${d.agentId ?? '-'}|${d.connection}`,
+  )) {
+    const last = latest(list)
+    const tools = [...new Set(list.flatMap((d) => d.tools))]
+    const chats = new Set(list.map((d) => d.sessionId)).size
+    const { first, last: lastSeen } = minMax(list.map((d) => d.at))
+    const shown = tools.slice(0, 6).join(', ')
+    out.push({
+      fingerprint: `tools-changed:${shortHash(key)}`,
+      kind: 'tools-changed',
+      severity: 'medium',
+      agentId: last.agentId,
+      sessionId: last.sessionId,
+      programId: null,
+      link: last.link,
+      firstSeen: first,
+      lastSeen,
+      count: chats,
+      explanation: `${tools.length} ${tools.length === 1 ? 'tool' : 'tools'} of ${last.connection} changed on the server after ${chats === 1 ? 'a chat' : `${chats} chats`} first saw them and stay off for safety: ${shown}${tools.length > 6 ? ` and ${tools.length - 6} more` : ''}.`,
+      fix: "Open the chat's Tools panel and choose Accept & reload, or Reload tools in all chats.",
+    })
+  }
+  return out
+}
+
 export interface ScanInput {
   now: number
   tools: readonly ToolEvent[]
@@ -515,6 +558,8 @@ export interface ScanInput {
   notices: readonly NoticeEvent[]
   pending: readonly PendingApproval[]
   runs: readonly ProgramRunFact[]
+  /** Chats that keep tools off because their server changed them (optional: older callers). */
+  drifts?: readonly DriftFact[]
 }
 
 const RANK: Record<FindingSeverity, number> = { high: 0, medium: 1, low: 2 }
@@ -530,6 +575,7 @@ export function detectAll(input: ScanInput): Finding[] {
     ...detectTokenSpikes(input.calls, input.tools, now),
     ...detectProgramRuns(input.runs, now),
     ...detectProviderErrors(input.calls, input.notices, now),
+    ...detectToolsChanged(input.drifts ?? [], now),
   ].sort((a, b) => RANK[a.severity] - RANK[b.severity] || b.lastSeen - a.lastSeen)
 }
 

@@ -954,6 +954,7 @@ export function compose(config: ServerConfig): Server {
     chatTools: chatToolsService,
     sessionTools: createSessionToolsService({
       factory,
+      agents,
       connectors,
       resolve: createSessionResolver({ agents, tasks, threads: threadStore }),
       modelCalls,

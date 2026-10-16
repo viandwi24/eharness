@@ -69,7 +69,7 @@ import type {
 } from '../domain/decisions.ts'
 import type { DeliverableResult } from '../domain/deliverables.ts'
 import type { NewEvent } from '../domain/events.ts'
-import type { ToolEvent } from '../domain/health.ts'
+import type { DriftFact, ToolEvent } from '../domain/health.ts'
 import type {
   ChatActivity,
   DigestConfig,
@@ -107,7 +107,7 @@ import type {
 } from '../domain/providers.ts'
 import type { Rehearsal, RehearsalSample, TestCase, TestResult } from '../domain/rehearsal.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
-import type { ConfiguredGroup, LastCallTools } from '../domain/session-tools.ts'
+import type { BlockedTool, ConfiguredGroup, LastCallTools } from '../domain/session-tools.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
 import type { Thread, ThreadSeed, ThreadSource } from '../domain/threads.ts'
@@ -255,6 +255,8 @@ export interface SessionToolsView {
   missing: string[]
   /** Carried by the last call but not configured (plugin tools such as `tool_search`). */
   extra: string[]
+  /** Kept off because the remote server changed their definitions since this chat pinned them. */
+  blocked: BlockedTool[]
 }
 
 export interface ReloadView {
@@ -265,6 +267,17 @@ export interface ReloadView {
   pending: boolean
   /** Tools the agent is configured with now. */
   tools: string[]
+  /** Pinned remote tool definitions the owner accepted (sets cleared). */
+  pinsCleared: number
+}
+
+/** A connection whose remote tools changed on the server after some chats pinned them. */
+export interface ConnectionDrift {
+  /** Distinct tools that are kept off in at least one chat. */
+  tools: number
+  /** Chats that keep them off. */
+  sessions: number
+  agentIds: string[]
 }
 
 export interface SessionToolsPort {
@@ -272,6 +285,15 @@ export interface SessionToolsPort {
   tools(sessionId: string): Promise<SessionToolsView>
   reload(sessionId: string): Promise<ReloadView>
   reloadAgent(agent: AgentDef): Promise<ReloadView>
+  /** Chats that keep remote tools off because the server changed them (the Health page). */
+  drifts(): DriftFact[]
+  /** The drift of one connection, or null when no chat is known to keep its tools off. */
+  connectionDrift(connectionId: string): ConnectionDrift | null
+  /**
+   * The owner accepts the current definitions of a connection's server in every chat of every agent
+   * that uses it: pins are cleared, chats reload. Returns the totals.
+   */
+  acceptConnection(connectionId: string): Promise<ReloadView & { agents: number }>
 }
 
 export interface ToolInfo {

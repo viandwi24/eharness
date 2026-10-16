@@ -153,6 +153,11 @@ export function createConnectorsCore(api: ApiClient, state: ConnectorsState) {
 			return res;
 		},
 
+		/** The owner accepts the server's current tool definitions in every chat that pinned older ones. */
+		acceptDefinitions(id: string) {
+			return api.post('/connections/{id}/accept-definitions', { params: { id } });
+		},
+
 		/** Save the OAuth app credentials of a connector (admin), then reload the catalog. */
 		async saveOAuthClient(definitionId: string, clientId: string, clientSecret?: string): Promise<void> {
 			await api.put('/connectors/{id}/oauth-client', { params: { id: definitionId }, body: { clientId, ...(clientSecret ? { clientSecret } : {}) } });

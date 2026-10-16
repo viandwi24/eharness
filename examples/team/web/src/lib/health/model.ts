@@ -13,7 +13,8 @@ export const KIND_LABEL: Record<FindingKind, string> = {
 	'token-spike': 'Context spike',
 	'big-output': 'Oversized tool output',
 	'program-run': 'Program run',
-	'provider-error': 'Provider error'
+	'provider-error': 'Provider error',
+	'tools-changed': 'Tools changed on the server'
 };
 
 export const SEVERITY_LABEL: Record<Severity, string> = { high: 'High', medium: 'Medium', low: 'Low' };

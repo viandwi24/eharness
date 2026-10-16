@@ -7,6 +7,7 @@
 import { conflict, notFound } from '../domain/errors.ts'
 import {
   type CallEvent,
+  type DriftFact,
   detectAll,
   FINDING_KINDS,
   type Finding,
@@ -37,6 +38,7 @@ export interface HealthFacts {
   notices: NoticeEvent[]
   pending: PendingApproval[]
   runs: ProgramRunFact[]
+  drifts: DriftFact[]
 }
 
 /** Agent, program and link of a session, resolved once per scan. */
@@ -146,7 +148,16 @@ export async function gatherFacts(
       })
     }
   }
-  return { tools, calls, notices, pending, runs }
+  let drifts: DriftFact[] = []
+  try {
+    drifts = deps.sessionTools
+      .drifts()
+      .filter((d) => d.at >= since)
+      .map((d) => ({ ...d, link: resolve(d.sessionId).link }))
+  } catch {
+    // one source among several
+  }
+  return { tools, calls, notices, pending, runs, drifts }
 }
 
 /** Findings of the current facts, dismissed ones marked. */

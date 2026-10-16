@@ -113,7 +113,8 @@ Lifecycle:
   `plugins[<owner plugin>]['mcp:<name>:pins']`, keyed by the **server** tool name (before
   prefixing). On later lists `detectToolDrift()` runs; changed or added tools are **excluded**
   and reported with one `W_MCP_DRIFT` per listing (`details.tools`: the excluded server names
-  that allow/deny would have exposed). Pins are never updated by a drifted listing.
+  that allow/deny would have exposed; `details.sessionId`: the session that listed, so an app can
+  show the owner which chat is affected). Pins are never updated by a drifted listing.
 - Re-pinning is an explicit application action:
   `clearMcpPins(agent, sessionId, name, opts?: { stateAdapter?: StateAdapter }): Promise<void>`
   (exported from `eharness/mcp`). The server is resolved through the agent's own configuration:
@@ -130,6 +131,15 @@ Lifecycle:
   (`ready()`, without connecting the MCP server) and clears through the live state. Pins are
   re-created on the next listing that finds none (for a live `refresh: 'session'` source: the next
   session open).
+- **Accepting changed definitions (owner flow).** A server that is upgraded changes descriptions or
+  schemas, so a long-lived session keeps those tools excluded for good (only its first three
+  unchanged tools stay). The app should surface `W_MCP_DRIFT` (`details.sessionId`, `details.tools`)
+  as "changed on the server" instead of letting the tools look merely missing, and give the owner
+  an explicit accept action that clears the pins: `clearMcpPins()` per session, or, when the app
+  closes sessions anyway and owns the state store (as `examples/team` does), removing the
+  `mcp:<name>:pins` keys from the stored session states after the sessions are closed. Accepting is
+  the owner's decision that the server's current definitions are trusted; never clear pins
+  automatically.
 - MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) stay
   in the tool's `metadata.annotations` exactly as `@ai-sdk/mcp` copied them (only the hints the
   server sent). They are untrusted and only tighten the derived risk (spec 11 §3.2):

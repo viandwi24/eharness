@@ -9,7 +9,7 @@ import type {
   FlowStartInput,
 } from '../domain/connectors.ts'
 import { normalizeConnectors, parseCustomInput } from '../domain/connectors.ts'
-import { invalid } from '../domain/errors.ts'
+import { invalid, notFound } from '../domain/errors.ts'
 import { getAgent } from './agents.ts'
 import type { Deps } from './ports.ts'
 
@@ -59,7 +59,18 @@ export function setConnectionAccess(deps: Deps, id: string, input: ConnectionAcc
       : { excludedAgentIds: [...new Set(input.excludedAgentIds.map(resolve))] }),
   })
 }
-export const testConnection = (deps: Deps, id: string) => deps.connectors.testConnection(id)
+export async function testConnection(deps: Deps, id: string) {
+  const result = await deps.connectors.testConnection(id)
+  const drift = deps.sessionTools.connectionDrift(id)
+  return drift === null ? result : { ...result, drift }
+}
+
+/** The owner accepts the server's current tool definitions in every chat that pinned older ones. */
+export async function acceptConnectionDefinitions(deps: Deps, id: string) {
+  const known = (await deps.connectors.connections()).some((c) => c.id === id)
+  if (!known) throw notFound('connection', id)
+  return deps.sessionTools.acceptConnection(id)
+}
 
 export async function getAgentConnectors(deps: Deps, agentId: string) {
   return deps.connectors.agentConnectors(getAgent(deps, agentId))

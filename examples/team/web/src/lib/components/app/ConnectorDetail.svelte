@@ -32,6 +32,7 @@
 	import { connectionStatus, runTest, visibleStatusMessage, type TestOutcome } from '#lib/config/status.js';
 	import { capabilitiesOf, categoryLabel, MODE_LABEL } from '#lib/connectors/core.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
+	import { acceptedText, driftText, type ConnectionDrift } from '#lib/connectors/drift.js';
 	import { authLabel, customState, hostOf, initialsOf, toolCount } from '#lib/connectors/custom.js';
 	import { alwaysAsks, KIND_LABEL, KIND_VARIANT, modeOf, OAUTH_CLIENT_NEEDS_SETUP, splitMemory } from '#lib/connectors/view.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -116,12 +117,27 @@
 
 	// --- connection actions -------------------------------------------------------------------
 	let results = $state<Record<string, TestOutcome>>({});
+	/** Tools some chats keep off because the server changed them (known after a test). */
+	let drifts = $state<Record<string, ConnectionDrift | undefined>>({});
+	let accepting = $state<string | null>(null);
 	async function test(c: Connection): Promise<void> {
 		results[c.id] = { ok: false, busy: true };
 		results[c.id] = await runTest(async () => {
 			const r = await connectorsStore.test(c.id);
+			drifts[c.id] = r.drift;
 			return { ok: r.ok, message: r.message, tools: r.tools };
 		});
+	}
+	async function acceptDefinitions(c: Connection): Promise<void> {
+		accepting = c.id;
+		try {
+			toast.success(acceptedText(await connectorsStore.acceptDefinitions(c.id)));
+			drifts[c.id] = undefined;
+		} catch (err) {
+			toast.error(message(err));
+		} finally {
+			accepting = null;
+		}
 	}
 
 	let renaming = $state<string | null>(null);
@@ -222,6 +238,7 @@
 								}}>Rename</DropdownMenu.Item
 							>
 							{#if !c.custom || c.settings.authMode === 'oauth'}<DropdownMenu.Item onSelect={() => reconnect(c)}>{c.custom ? 'Sign in again' : 'Reconnect'}</DropdownMenu.Item>{/if}
+							{#if c.custom}<DropdownMenu.Item onSelect={() => acceptDefinitions(c)}>Accept new definitions in all chats</DropdownMenu.Item>{/if}
 							<DropdownMenu.Separator />
 							<DropdownMenu.Item variant="destructive" onSelect={() => (confirmRemove = c)}>{c.custom ? 'Remove' : 'Disconnect'}</DropdownMenu.Item>
 						</DropdownMenu.Content>
@@ -232,6 +249,12 @@
 
 		{#if visibleStatusMessage(c.status, c.statusMessage, res)}<p class="px-3.5 pb-3 text-xs text-destructive-text" role="alert">{visibleStatusMessage(c.status, c.statusMessage, res)}</p>{/if}
 		{#if res}<div class="px-3.5 pb-3"><TestResult result={res} /></div>{/if}
+		{#if drifts[c.id]}
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 pb-3">
+				<p class="text-xs text-warning-text" role="status">{driftText(drifts[c.id]!)}. For safety they stay off in those chats until you accept the new definitions.</p>
+				<Button size="sm" variant="outline" disabled={accepting === c.id} onclick={() => acceptDefinitions(c)}>Accept new definitions in all chats</Button>
+			</div>
+		{/if}
 
 		{#if !c.builtin}<AccessControl connection={c} />{/if}
 
