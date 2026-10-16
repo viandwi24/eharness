@@ -17,14 +17,18 @@
 		filesLink,
 		formErrors,
 		formOf,
+		groupOrders,
 		NO_ORDERS,
+		orderTiming,
 		orderWhere,
 		orderWho,
 		patchOf,
+		refLink,
 		scheduleSummary,
 		timezoneOptions,
 		type Heartbeat,
-		type HeartbeatForm
+		type HeartbeatForm,
+		type StandingOrder
 	} from '#lib/heartbeat/model.js';
 	import { live } from '#lib/stores/live.svelte.js';
 
@@ -97,6 +101,8 @@
 			if (checklist === checklistSaved) void loadChecklist();
 		});
 	});
+
+	const grouped = $derived(hb ? groupOrders(hb.orders) : { groups: [], closed: [] });
 
 	const dirty = $derived(hb !== null && form !== null && Object.keys(patchOf(hb.config, form)).length > 0);
 
@@ -193,22 +199,62 @@
 				<Button size="sm" variant="outline" disabled={running || !hb.config.enabled} onclick={() => void runNow()}>Run a beat now</Button>
 			</div>
 
+			{#snippet orderRow(o: StandingOrder)}
+				<li class="flex items-start gap-3 px-3 py-2">
+					<div class="min-w-0 flex-1">
+						<div class="break-words">
+							{o.text}
+							{#if o.state === 'paused'} <Badge variant="outline">paused</Badge>{/if}
+							{#if o.state === 'expired'} <Badge variant="outline">expired</Badge>{/if}
+							{#if o.state === 'done'} <Badge variant="success">done</Badge>{/if}
+						</div>
+						<div class="text-[11px] text-muted-foreground">
+							{orderWho(o)} · {orderWhere(o)} · {formatTime(o.at)}
+							{#each orderTiming(o, formatTime) as t (t)} · {t}{/each}
+						</div>
+						{#if o.done}<div class="text-[11px]">Outcome: {o.done.outcome}</div>{/if}
+						{#if o.refs.length || o.needs.length || o.ledger}
+							<div class="mt-1 flex flex-wrap items-center gap-1 text-[11px]">
+								{#each o.refs as r (r)}
+									{@const l = refLink(r)}
+									{#if l.href}<a class="underline" href={l.href} target={l.href.startsWith('http') ? '_blank' : undefined} rel="noreferrer">{l.text}</a>{:else}<span class="text-muted-foreground">{l.text}</span>{/if}
+								{/each}
+								{#each o.needs as n (n)}<Badge variant="outline">{n}</Badge>{/each}
+								{#if o.ledger}<a class="underline" href={filesLink(o.ledger)}>Ledger: {o.ledger}</a>{/if}
+							</div>
+						{/if}
+					</div>
+					<Button size="sm" variant="ghost" disabled={removing === o.id} onclick={() => void removeOrder(o.id)} aria-label={`Remove: ${o.text}`}>Remove</Button>
+				</li>
+			{/snippet}
+
 			{#if !hb.orders.length}
 				<p class="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">{NO_ORDERS}</p>
 			{:else}
-				<ul class="flex flex-col divide-y divide-border rounded-lg border border-border">
-					{#each hb.orders as o (o.id)}
-						<li class="flex items-start gap-3 px-3 py-2">
-							<div class="min-w-0 flex-1">
-								<div class="break-words">{o.text}{#if !o.active} <Badge variant="outline">paused</Badge>{/if}</div>
-								<div class="text-[11px] text-muted-foreground">
-									{orderWho(o)} · {orderWhere(o)} · {formatTime(o.at)}
-								</div>
-							</div>
-							<Button size="sm" variant="ghost" disabled={removing === o.id} onclick={() => void removeOrder(o.id)} aria-label={`Remove: ${o.text}`}>Remove</Button>
-						</li>
+				{#each grouped.groups as g (g.kind)}
+					<div class="flex flex-col gap-1">
+						<div class="text-xs font-medium">{g.label} <span class="font-normal text-muted-foreground">· {g.hint}</span></div>
+						<ul class="flex flex-col divide-y divide-border rounded-lg border border-border">
+							{#each g.orders as o (o.id)}{@render orderRow(o)}{/each}
+						</ul>
+					</div>
+				{/each}
+				{#if grouped.closed.length}
+					<details class="rounded-lg border border-border px-3 py-2">
+						<summary class="cursor-pointer text-xs font-medium">Done and expired ({grouped.closed.length})</summary>
+						<ul class="mt-2 flex flex-col divide-y divide-border">
+							{#each grouped.closed as o (o.id)}{@render orderRow(o)}{/each}
+						</ul>
+					</details>
+				{/if}
+			{/if}
+			{#if hb.hygiene.length}
+				<div class="flex flex-col gap-1 rounded-lg border border-warning/40 px-3 py-2" role="status">
+					<div class="text-xs font-medium">Needs a look</div>
+					{#each hb.hygiene as h (h.fingerprint)}
+						<p class="text-xs"><span class="text-muted-foreground">{h.text}</span> {h.fix}</p>
 					{/each}
-				</ul>
+				</div>
 			{/if}
 			{#if hb.watched.length}
 				<p class="text-xs text-muted-foreground">

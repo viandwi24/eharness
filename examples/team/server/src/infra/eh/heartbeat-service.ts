@@ -82,7 +82,7 @@ export interface SystemRunner {
   /** Fire the heartbeat of `agentId` for `slot`. `skipped` costs no model call. */
   heartbeat(
     agentId: string,
-    input: { slot: number; trigger?: BeatTrigger },
+    input: { slot: number; trigger?: BeatTrigger; orderId?: string },
   ): Promise<{ started: boolean; reason?: string; sessionId: string }>
   /** Build and send the digest of `slot`'s day. */
   digest(input: { slot: number }): Promise<DigestOutcome>
@@ -98,6 +98,8 @@ export interface HeartbeatServiceDeps {
   store: HeartbeatStore
   /** The workspace budget ledger scope: spend and limit of this month. */
   budget: () => Promise<{ spentUsd: number; limitUsd: number | null } | null>
+  /** The tools the agent has for the needs of an order (from its last activation). */
+  needsTools?: (agentId: string, needs: readonly string[]) => { tools: string[]; missing: string[] }
   /** The chat gateway side (destinations, watched chats, activity); absent = no chat features. */
   channels?: HeartbeatChannels
   /**
@@ -145,6 +147,16 @@ export function createHeartbeatService(
 
     run: (agentId, at) => service.heartbeat(agentId, { slot: at }),
 
+    ...(options.needsTools === undefined ? {} : { needsTools: options.needsTools }),
+
+    async sessionExists(sessionId) {
+      try {
+        return (await factory.peek(sessionId).messages({ limit: 1 })).length > 0
+      } catch {
+        return false
+      }
+    },
+
     async requests(sessionId, limit) {
       const messages = await factory.peek(sessionId).messages({ limit })
       const out: Array<{ text: string; at: number }> = []
@@ -160,6 +172,25 @@ export function createHeartbeatService(
       }
       return out
     },
+  }
+
+  const RETRY_MS = 90_000
+  const MAX_RETRIES = 6
+  const retryDeadline = (agentId: string, orderId: string, tries: number): void => {
+    if (tries >= MAX_RETRIES) return
+    const timer = setTimeout(() => {
+      wakes.delete(`${agentId}:${orderId}`)
+      service
+        .heartbeat(agentId, { slot: Date.now(), trigger: 'deadline', orderId })
+        .then((out) => {
+          if (!out.started && /still running/.test(out.reason ?? '')) {
+            retryDeadline(agentId, orderId, tries + 1)
+          }
+        })
+        .catch((error) => log.warn(`deadline beat of ${agentId} failed: ${errorText(error)}`))
+    }, RETRY_MS)
+    timer.unref?.()
+    wakes.set(`${agentId}:${orderId}`, timer)
   }
 
   const service: HeartbeatService = {
@@ -190,7 +221,7 @@ export function createHeartbeatService(
       wakes.clear()
     },
 
-    async heartbeat(agentId, { slot, trigger }) {
+    async heartbeat(agentId, { slot, trigger, orderId }) {
       const sessionId = heartbeatSessionId(agentId)
       const def = options.agents.get(agentId)
       const d = options.deps()
@@ -204,8 +235,15 @@ export function createHeartbeatService(
         at: slot,
         session: { busy: (await peek.busy()) !== null, waiting: (await peek.pending()) !== null },
         ...(trigger === undefined ? {} : { trigger }),
+        ...(orderId === undefined ? {} : { orderId }),
       })
-      if (!plan.run) return { started: false, reason: plan.reason, sessionId }
+      if (!plan.run) {
+        // the exact wake of a deadline fires once: when the previous beat is still running, try again soon
+        if (trigger === 'deadline' && orderId !== undefined && /still running/.test(plan.reason)) {
+          retryDeadline(agentId, orderId, 0)
+        }
+        return { started: false, reason: plan.reason, sessionId }
+      }
 
       try {
         const run = factory.openSession(def, sessionId).send(plan.prompt, {

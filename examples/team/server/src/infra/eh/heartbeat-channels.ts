@@ -84,5 +84,9 @@ export function heartbeatChannels(gateway: () => ChannelGateway | undefined): He
     agentOf(connectionId) {
       return gateway()?.config(connectionId)?.agentId
     },
+
+    roleOf(identityId) {
+      return gateway()?.roleOfIdentity(identityId)
+    },
   }
 }

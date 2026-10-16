@@ -8,6 +8,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scriptedModel } from 'eharness/testing'
+import { SESSION_CONTEXT_TOOLS } from '../src/domain/session-context.ts'
 import { scriptedModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server, type ServerConfig } from '../src/main.ts'
 
@@ -254,6 +255,8 @@ describe('migration of the tool checklist and MCP servers', () => {
         'persona',
         'reminder',
         'standing_order',
+        // the read-only tools over the agent's other sessions and runs (always there)
+        ...SESSION_CONTEXT_TOOLS,
         // the clock and the agent's own background worker (always there)
         'datetime',
         'agent',

@@ -17,6 +17,7 @@ export const FINDING_KINDS = [
   'program-run',
   'provider-error',
   'tools-changed',
+  'order-hygiene',
 ] as const
 export type FindingKind = (typeof FINDING_KINDS)[number]
 

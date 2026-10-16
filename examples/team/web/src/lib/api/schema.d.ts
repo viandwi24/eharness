@@ -15582,7 +15582,7 @@ export interface paths {
                     /** @description Agent id or slug. */
                     agent?: string;
                     severity?: "high" | "medium" | "low";
-                    kind?: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed";
+                    kind?: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed" | "order-hygiene";
                     /** @description `true` also lists dismissed findings. */
                     dismissed?: "true" | "false";
                 };
@@ -18872,6 +18872,8 @@ export interface components {
             stored: boolean;
             /** @description The standing orders: lines of `HEARTBEAT.md` the agent keeps when a person gives it an ongoing instruction in chat. Oldest first. */
             orders: components["schemas"]["StandingOrder"][];
+            /** @description What the server found about the orders on its own (no model call): gone destination or giver, expired, overdue, overlapping. */
+            hygiene: components["schemas"]["OrderHygiene"][];
             checklist: {
                 /** @description A memory file of the agent. */
                 path: string;
@@ -18928,6 +18930,28 @@ export interface components {
             /** @description When it was given. */
             at: number;
             active: boolean;
+            /**
+             * @description watch (ongoing), rule (react when X happens), deadline (one-shot at `due`, then done) or ledger (keeps a tracker).
+             * @enum {string}
+             */
+            kind: "watch" | "rule" | "deadline" | "ledger";
+            /** @enum {string} */
+            state: "active" | "paused" | "done" | "expired";
+            /** @description Deadline: the exact wake. */
+            due?: number;
+            /** @description After this the order is inactive. */
+            expires?: number;
+            /** @description A finished deadline order and its outcome. */
+            done?: {
+                at: number;
+                outcome: string;
+            };
+            /** @description Context references: session ids, platform message ids, URLs, library paths. */
+            refs: string[];
+            /** @description Tool groups the order needs: web, browser, phone/<slug>, files:<glob>. */
+            needs: string[];
+            /** @description Library path of its tracker. */
+            ledger?: string;
         };
         OrderDestination: {
             /** @enum {string} */
@@ -18941,6 +18965,17 @@ export interface components {
             /** @description The web chat thread (session) it reports into. */
             sessionId: string;
         };
+        OrderHygiene: {
+            /** @enum {string} */
+            kind: "destination-gone" | "giver-gone" | "giver-not-staff" | "expired" | "overdue" | "conflict";
+            orderIds: string[];
+            /** @enum {string} */
+            severity: "high" | "medium" | "low";
+            /** @description One sentence: what is wrong. */
+            text: string;
+            fix: string;
+            fingerprint: string;
+        };
         BeatRecord: {
             /** @description The routine slot of the beat. */
             id: string;
@@ -18952,7 +18987,7 @@ export interface components {
              * @description What started it: the interval (default) or new messages in a watched chat.
              * @enum {string}
              */
-            trigger?: "schedule" | "activity";
+            trigger?: "schedule" | "activity" | "deadline";
             /** @description Why it was skipped or failed. */
             reason: string | null;
             /** @description Identical skips in a row, collapsed. */
@@ -18976,6 +19011,8 @@ export interface components {
             decision?: "note" | "report" | "say" | "escalate";
             /** @description One line: why (for the owner to audit). */
             reason?: string;
+            /** @description The standing order it is about. */
+            order?: string;
         };
         DigestView: components["schemas"]["DigestConfig"] & {
             /** @description The timezone in effect. */
@@ -20016,7 +20053,7 @@ export interface components {
             /** @description Stable id of the problem: the same problem is the same finding on every scan. */
             fingerprint: string;
             /** @enum {string} */
-            kind: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed";
+            kind: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed" | "order-hygiene";
             /** @enum {string} */
             severity: "high" | "medium" | "low";
             agentId: string | null;

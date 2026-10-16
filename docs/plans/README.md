@@ -61,6 +61,7 @@ Update this table in the same commit that changes a phase's status.
 | P49 | [Long-run jobs](P49-long-run.md) — `longRun()` (checkpointed chunks on the durable inbox, cost and time limits, resume after restarts), `stepBudget({ onCap })` hand-over; the team's workers run for hours and chats never see "ran out of steps"; the coder runs unlimited while on track | done | P47 | P48 |
 | P50 | [Production feedback hardening](P50-production-feedback.md) — OS sandbox probe and fallback, Allowed run_python, approvals reach owners, tool_search explains what is missing, readable id errors, mention-only turns, program base tools and brief warnings | done | P49 | P49 |
 | P51 | [Proactive heartbeat and agent health](P51-proactive-and-health.md) — heartbeat reads channels, keeps notes and speaks only when it should (modes, reportTo, rubric, activity wake); Health page and authority suggestions; health in the digest | done | P50 | P50 |
+| P52 | [Context and standing orders v2](P52-context-and-orders.md) — sessions_search / session_read / runs_list / run_read with a privacy gate; order kinds (watch, rule, deadline, ledger), exact deadline wakes, order needs grant tools, evidence-backed notes, weekly patterns, order hygiene | done | P51 | P51 |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

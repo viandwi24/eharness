@@ -14,7 +14,8 @@ export const KIND_LABEL: Record<FindingKind, string> = {
 	'big-output': 'Oversized tool output',
 	'program-run': 'Program run',
 	'provider-error': 'Provider error',
-	'tools-changed': 'Tools changed on the server'
+	'tools-changed': 'Tools changed on the server',
+	'order-hygiene': 'Standing order needs a look'
 };
 
 export const SEVERITY_LABEL: Record<Severity, string> = { high: 'High', medium: 'Medium', low: 'Low' };

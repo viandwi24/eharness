@@ -31,6 +31,7 @@ import type { AgentDef } from '../../domain/agents.ts'
 import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
+import { SESSION_CONTEXT_TOOLS } from '../../domain/session-context.ts'
 import { STANDING_ORDER_TOOL } from '../../domain/standing-orders.ts'
 import { type ArtifactsHook, artifactsConnector } from '../artifacts/index.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
@@ -82,6 +83,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       // standing agreements of a program; roles refuse it for members (risk write)
       PROGRAM_NOTE_TOOL,
       ...WORK_QUEUE_TOOLS,
+      // reading other sessions and runs of the agent (read-only; what a caller may see is decided in code)
+      ...SESSION_CONTEXT_TOOLS,
       // reading the Briefing page is read-only
       READ_BRIEFINGS_TOOL,
       // the clock is read-only

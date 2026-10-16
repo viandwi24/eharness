@@ -20,6 +20,7 @@ import {
   NOTE_TOOL,
   TEAM_STATUS_TOOL,
 } from '../../domain/heartbeat.ts'
+import { NOTES_TOOL, ORDER_DONE_TOOL, PATTERN_TOOL } from '../../domain/heartbeat-notes.ts'
 import { originOfSession } from '../../domain/run-profiles.ts'
 import { HEARTBEAT_REPORT_TOOL, STANDING_ORDERS_NOTE } from '../../domain/standing-orders.ts'
 import type { StandingOrderApi } from './standing-order-plugin.ts'
@@ -40,12 +41,23 @@ export interface HeartbeatIntake {
       messageIds?: string[]
       noticed: string
       decision: (typeof BEAT_DECISIONS)[number]
+      confidence?: string | undefined
+      evidence?: string[] | undefined
+      order?: string | undefined
     },
   ): Promise<string>
+  /** The notes of the given days with unresolved references marked. */
+  readNotes(agentId: string, days: string[]): Promise<string>
+  /** Append a confirmed pattern (evidence on at least two days). */
+  pattern(agentId: string, input: { pattern: string; days: string[] }): Promise<string>
+  /** End a deadline order with its outcome. */
+  orderDone(agentId: string, orderId: string, outcome: string): Promise<string>
   /** The agent (slug) has a heartbeat that is on: its chats are told about standing orders. */
   heartbeatOn(agentSlug: string): boolean
   /** The chats of the active standing orders as of the running beat; read by the gate on every call. */
   allowed(agentId: string): HeartbeatDestination[]
+  /** What the live orders of owners and admins open for the running beat (needs, ledger paths). */
+  grants(agentId: string): { needs: string[]; writes: string[] }
   /** Count a post the beat is about to make to a destination; a readable refusal over the cap or for a repeat. */
   reservePost(agentId: string, to: string, text: string): string | undefined
   /** Report to the web chat of a standing order. A readable string either way. */
@@ -148,16 +160,36 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
           }),
           [NOTE_TOOL]: tool({
             description:
-              "Append one line to today's observation notes (append-only, one file per day under /library/notes/heartbeat/). Write what you noticed in a chat: the chat or topic, the message ids, what it is, and your decision (note, report, escalate). Read-only otherwise: this is the only thing you can write.",
+              "Append one line to today's observation notes (append-only, one file per day under /library/notes/heartbeat/). A note is a fact with its proof: the chat or topic, the platform message ids (or another evidence reference: a URL, a /library/... path, session:<id>#<message id>), how sure you are (seen: you read it yourself; inferred), what it is, and your decision (note, report, escalate). A note without evidence is refused. Pass `order` when it is about a standing order.",
             inputSchema: z.object({
               chat: z.string().min(1).max(120).describe('The chat or topic name.'),
-              messageIds: z.array(z.string().max(80)).max(10).optional(),
+              messageIds: z
+                .array(z.string().max(80))
+                .max(10)
+                .optional()
+                .describe('Platform message ids of that chat (evidence).'),
+              evidence: z
+                .array(z.string().max(300))
+                .max(6)
+                .optional()
+                .describe(
+                  'Other evidence: https URL, /library/... path, session:<id>#<message id>.',
+                ),
+              confidence: z
+                .enum(['seen', 'inferred'])
+                .optional()
+                .describe('seen: you read it yourself. inferred: you concluded it. Required.'),
               noticed: z
                 .string()
                 .min(1)
                 .max(500)
                 .describe('What you noticed, one or two sentences.'),
               decision: z.enum(BEAT_DECISIONS),
+              order: z
+                .string()
+                .max(80)
+                .optional()
+                .describe('The id of the standing order it is about.'),
             }),
             metadata: { risk: 'write', idempotent: false },
             execute: async (input): Promise<string> => {
@@ -165,6 +197,59 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
                 return await intake().note(agentId, input)
               } catch (error) {
                 return `ERROR: could not write the note: ${errorText(error)}`
+              }
+            },
+          }),
+          [NOTES_TOOL]: tool({
+            description:
+              'Read your observation notes of given days (YYYY-MM-DD, team timezone; default today and yesterday). A line whose library file or session no longer exists is marked "no longer resolves": do not build on it.',
+            inputSchema: z.object({
+              days: z
+                .array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/))
+                .max(8)
+                .optional(),
+            }),
+            metadata: { risk: 'read', idempotent: true },
+            execute: async (input): Promise<string> => {
+              try {
+                return await intake().readNotes(agentId, input.days ?? [])
+              } catch (error) {
+                return `ERROR: could not read the notes: ${errorText(error)}`
+              }
+            },
+          }),
+          [PATTERN_TOOL]: tool({
+            description:
+              'Weekly review: write one confirmed pattern. Only what has notes with evidence on at least two different days is a pattern; name those days. Refused otherwise.',
+            inputSchema: z.object({
+              pattern: z.string().min(1).max(500),
+              days: z
+                .array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/))
+                .min(1)
+                .max(8),
+            }),
+            metadata: { risk: 'write', idempotent: false },
+            execute: async (input): Promise<string> => {
+              try {
+                return await intake().pattern(agentId, input)
+              } catch (error) {
+                return `ERROR: could not write the pattern: ${errorText(error)}`
+              }
+            },
+          }),
+          [ORDER_DONE_TOOL]: tool({
+            description:
+              'End a `deadline` standing order with its outcome (what you found, what you did, what you reported). The order stays listed as done. Do not call it when you could not find out.',
+            inputSchema: z.object({
+              order: z.string().min(1).max(80).describe('The id of the deadline order.'),
+              outcome: z.string().min(1).max(600),
+            }),
+            metadata: { risk: 'write', idempotent: false },
+            execute: async (input): Promise<string> => {
+              try {
+                return await intake().orderDone(agentId, input.order, input.outcome)
+              } catch (error) {
+                return `ERROR: could not end the order: ${errorText(error)}`
               }
             },
           }),

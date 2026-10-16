@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { BeatRecord, HeartbeatConfig, StandingOrder } from './model';
-import { BEAT_LABEL, beatDetail, beatTone, decisionLine, filesLink, formErrors, formOf, NO_ORDERS, orderWhere, orderWho, patchOf, scheduleSummary } from './model';
+import { BEAT_LABEL, beatDetail, beatTone, decisionLine, filesLink, formErrors, formOf, groupOrders, NO_ORDERS, orderTiming, orderWhere, orderWho, patchOf, refLink, scheduleSummary } from './model';
 
 const config: HeartbeatConfig = {
 	enabled: true,
@@ -67,6 +67,10 @@ describe('standing orders', () => {
 		mention: true,
 		at: 0,
 		active: true,
+		kind: 'watch',
+		state: 'active',
+		refs: [],
+		needs: [],
 		...over
 	});
 
@@ -91,6 +95,48 @@ describe('standing orders', () => {
 
 	test('a beat started by chat activity says so', () => {
 		expect(beatDetail(beat({ status: 'ok', trigger: 'activity' }))).toContain('chat activity');
+	});
+});
+
+describe('orders by kind', () => {
+	const o = (over: Partial<StandingOrder>): StandingOrder => ({
+		id: 'x',
+		text: 't',
+		by: 'b',
+		name: 'n',
+		role: 'owner',
+		report: { kind: 'web', sessionId: 's' },
+		reportLabel: 'the web chat',
+		mention: false,
+		at: 1,
+		active: true,
+		kind: 'watch',
+		state: 'active',
+		refs: [],
+		needs: [],
+		...over
+	});
+
+	test('grouped by kind, deadlines by due time; done and expired ones apart', () => {
+		const { groups, closed } = groupOrders([
+			o({ id: 'w' }),
+			o({ id: 'd2', kind: 'deadline', due: 20 }),
+			o({ id: 'd1', kind: 'deadline', due: 10 }),
+			o({ id: 'r', kind: 'rule' }),
+			o({ id: 'done', kind: 'deadline', state: 'done', done: { at: 5, outcome: 'ok' } }),
+			o({ id: 'exp', state: 'expired', expires: 3 })
+		]);
+		expect(groups.map((g) => g.kind)).toEqual(['deadline', 'rule', 'watch']);
+		expect(groups[0]?.orders.map((x) => x.id)).toEqual(['d1', 'd2']);
+		expect(closed.map((x) => x.id)).toEqual(['done', 'exp']);
+		expect(orderTiming(o({ due: 1, expires: 2 }), (ms) => `t${ms}`)).toEqual(['Due t1', 'Expires t2']);
+		expect(orderTiming(o({ state: 'expired', expires: 2 }), (ms) => `t${ms}`)).toEqual(['Expired t2']);
+	});
+
+	test('references link to what the app can open', () => {
+		expect(refLink('https://youtube.com/@x')).toEqual({ text: 'https://youtube.com/@x', href: 'https://youtube.com/@x' });
+		expect(refLink('/library/a.md').href).toBe('/files?path=%2Flibrary%2Fa.md');
+		expect(refLink('General #12345')).toEqual({ text: 'General #12345' });
 	});
 });
 

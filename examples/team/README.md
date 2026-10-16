@@ -244,6 +244,25 @@ risk is yours). Read the [API terms](https://core.telegram.org/api/terms); this 
 Run one server process per session. This transport has no automated tests; see the manual checklist
 in [P41](../../docs/plans/P41-team-channels.md).
 
+## Session context (what the agent knows of its other chats)
+
+Every agent has four read-only tools to recover what was said or decided elsewhere before it says
+"I don't know": `sessions_search` (recent sessions, or a text search over messages, grouped per
+session with a snippet, the messages around each hit and the compaction summary), `session_read` (one
+session: summary plus a window around a message id, a chat message number such as "pesan 12345", or
+the latest N; scroll by re-anchoring), `runs_list` and `run_read` (program, routine and task runs:
+status with error and retry state, report, decisions and how they were answered). Search is plain
+SQL (a LIKE prefilter over the stored message parts, newest first, verified against the real text),
+no FTS5 table to keep in sync. Everything returned is framed as untrusted content.
+
+Who may read what is decided in code from the requester of the turn: the owner in the web app and an
+owner or admin in a chat read every session of the agent; a member or guest reads only the
+conversation they are in (and runs reported to it), never a web DM or another chat ("That chat is
+private to its participants."); a program run reads its own earlier runs and the sessions its brief
+names; the heartbeat reads its agent's sessions, web chats only when a standing order names them.
+Only the lead, or an owner asking, can pass `agent` to read another agent's sessions.
+Details: `docs/plans/P52-context-and-orders.md`.
+
 ## Docker
 
 One image runs the whole example on one port: the server serves the built web at `/` and the API

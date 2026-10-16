@@ -33,8 +33,48 @@ export const StandingOrderSchema = z
     mention: z.boolean().openapi({ description: 'Mention the asker when reporting.' }),
     at: z.number().int().openapi({ description: 'When it was given.' }),
     active: z.boolean(),
+    kind: z.enum(['watch', 'rule', 'deadline', 'ledger']).openapi({
+      description:
+        'watch (ongoing), rule (react when X happens), deadline (one-shot at `due`, then done) or ledger (keeps a tracker).',
+    }),
+    state: z.enum(['active', 'paused', 'done', 'expired']),
+    due: z.number().int().optional().openapi({ description: 'Deadline: the exact wake.' }),
+    expires: z
+      .number()
+      .int()
+      .optional()
+      .openapi({ description: 'After this the order is inactive.' }),
+    done: z
+      .object({ at: z.number().int(), outcome: z.string() })
+      .optional()
+      .openapi({ description: 'A finished deadline order and its outcome.' }),
+    refs: z.array(z.string()).openapi({
+      description: 'Context references: session ids, platform message ids, URLs, library paths.',
+    }),
+    needs: z.array(z.string()).openapi({
+      description: 'Tool groups the order needs: web, browser, phone/<slug>, files:<glob>.',
+    }),
+    ledger: z.string().optional().openapi({ description: 'Library path of its tracker.' }),
   })
   .openapi('StandingOrder')
+
+export const OrderHygieneSchema = z
+  .object({
+    kind: z.enum([
+      'destination-gone',
+      'giver-gone',
+      'giver-not-staff',
+      'expired',
+      'overdue',
+      'conflict',
+    ]),
+    orderIds: z.array(z.string()),
+    severity: z.enum(['high', 'medium', 'low']),
+    text: z.string().openapi({ description: 'One sentence: what is wrong.' }),
+    fix: z.string(),
+    fingerprint: z.string(),
+  })
+  .openapi('OrderHygiene')
 
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM, 24 hours')
 
@@ -73,6 +113,7 @@ export const BeatItemSchema = z
       .string()
       .optional()
       .openapi({ description: 'One line: why (for the owner to audit).' }),
+    order: z.string().optional().openapi({ description: 'The standing order it is about.' }),
   })
   .openapi('BeatItem')
 
@@ -82,7 +123,7 @@ export const BeatRecordSchema = z
     at: z.number().int(),
     endedAt: z.number().int().nullable(),
     status: z.enum(BEAT_STATUSES),
-    trigger: z.enum(['schedule', 'activity']).optional().openapi({
+    trigger: z.enum(['schedule', 'activity', 'deadline']).optional().openapi({
       description: 'What started it: the interval (default) or new messages in a watched chat.',
     }),
     reason: z.string().nullable().openapi({ description: 'Why it was skipped or failed.' }),
@@ -126,6 +167,10 @@ export const HeartbeatSchema = z
     orders: z.array(StandingOrderSchema).openapi({
       description:
         'The standing orders: lines of `HEARTBEAT.md` the agent keeps when a person gives it an ongoing instruction in chat. Oldest first.',
+    }),
+    hygiene: z.array(OrderHygieneSchema).openapi({
+      description:
+        'What the server found about the orders on its own (no model call): gone destination or giver, expired, overdue, overlapping.',
     }),
     checklist: z.object({
       path: z.string().openapi({ description: 'A memory file of the agent.' }),

@@ -55,12 +55,17 @@ import {
   type WatchNode,
   watchedNodes,
 } from '../domain/heartbeat.ts'
+import { checkNoteEvidence } from '../domain/heartbeat-notes.ts'
+import type { HygieneFinding } from '../domain/order-hygiene.ts'
 import { parseProgramSession } from '../domain/programs.ts'
 import type { RoutineSpec } from '../domain/routines.ts'
 import {
   ACTIVITY_MIN_GAP_MS,
   destKey,
+  isStaffRole,
   type OrderDestination,
+  type OrderState,
+  orderState,
   PER_DESTINATION_DAILY_CAP,
   parseChecklist,
   type StandingOrder,
@@ -69,6 +74,15 @@ import { boardColumn, type Task } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
 import { postAlerts, postBriefing } from './briefings.ts'
 import { healthSummary } from './health.ts'
+import {
+  giverRole,
+  grantsFor,
+  hygieneOf,
+  noteFired,
+  raiseConflicts,
+  syncOrderWakes,
+  weeklyReview,
+} from './order-care.ts'
 import type { Deps } from './ports.ts'
 import { threadSessionsOf } from './threads.ts'
 import { sessionsWithOpenDecision } from './work-queue.ts'
@@ -86,6 +100,8 @@ const lead = (deps: Deps) => deps.agents.list().find((a) => a.role === 'lead')
 export interface OrderView extends StandingOrder {
   /** Where it reports, named for a person (`Community / Signals`, `the web chat`). */
   reportLabel: string
+  /** `active`, `paused`, `done` or `expired` (past its expiry). */
+  state: OrderState
 }
 
 export interface HeartbeatView {
@@ -96,8 +112,10 @@ export interface HeartbeatView {
   effectiveTimezone: string
   /** False while nothing was ever set: the config is the default. */
   stored: boolean
-  /** The standing orders in `HEARTBEAT.md` (also paused ones), oldest first. */
+  /** The standing orders in `HEARTBEAT.md` (also paused, done and expired ones), oldest first. */
   orders: OrderView[]
+  /** What the server found about the orders (no model call): shown here and on the Health page. */
+  hygiene: HygieneFinding[]
   checklist: {
     path: string
     exists: boolean
@@ -142,19 +160,23 @@ export async function getHeartbeat(deps: Deps, idOrSlug: string): Promise<Heartb
   const routine = deps.routines.getByProgram(heartbeatKey(agent.id))
   const config = effectiveConfig(deps, agent)
   const timezone = heartbeatTimezone(deps, config)
+  const now = deps.clock.now()
+  const parsedOrders = parseChecklist(file?.text, now).orders
   return {
     agentId: agent.id,
     config,
     effectiveTimezone: timezone,
     stored: deps.heartbeat.store.config(agent.id) !== undefined,
-    orders: parseChecklist(file?.text).orders.map((o) => ({
+    orders: parsedOrders.map((o) => ({
       ...o,
       reportLabel: destinationLabel(deps, agent.id, o.report),
+      state: orderState(o, now),
     })),
+    hygiene: hygieneOf(deps, agent.id, parsedOrders, now),
     checklist: {
       path: checklistPath(agent.id),
       exists: file !== undefined,
-      empty: checklistIsEmpty(file?.text),
+      empty: checklistIsEmpty(file?.text, now),
     },
     watched: watchedOf(deps, agent.id, file?.text ?? '').map((n) => ({
       nodeId: n.nodeId,
@@ -192,11 +214,22 @@ async function todaysNotes(
 export async function appendNote(
   deps: Deps,
   agentId: string,
-  entry: { chat: string; messageIds?: string[]; noticed: string; decision: BeatDecision },
+  entry: {
+    chat: string
+    messageIds?: string[]
+    noticed: string
+    decision: BeatDecision
+    confidence?: string | undefined
+    evidence?: string[] | undefined
+    order?: string | undefined
+  },
 ): Promise<string> {
   const agent = getAgent(deps, agentId)
   if (entry.noticed.trim() === '' || entry.chat.trim() === '')
     return 'ERROR: a note needs chat and noticed.'
+  // a note is a fact with its proof: no evidence, no note (a readable refusal the model can fix)
+  const refusal = checkNoteEvidence(entry)
+  if (refusal !== undefined) return refusal
   const now = deps.clock.now()
   const tz = deps.settings.get().timezone
   const day = localDay(now, tz)
@@ -204,8 +237,14 @@ export async function appendNote(
   const current = (await deps.library.read(path))?.text ?? `# Heartbeat notes ${day}\n\n`
   await deps.library.writeText(
     path,
-    `${current.replace(/\s*$/, '\n')}${noteLine(now, tz, entry)}\n`,
+    `${current.replace(/\s*$/, '\n')}${noteLine(now, tz, {
+      ...entry,
+      confidence: entry.confidence as string,
+    })}\n`,
   )
+  if (entry.order !== undefined && entry.decision !== 'note') {
+    noteFired(deps, agent.id, entry.order, now)
+  }
   return `Noted in ${path}.`
 }
 
@@ -570,7 +609,7 @@ export async function reportToWeb(
   const body = text.replace(/\s+/g, ' ').trim()
   if (body === '') return 'Not posted: the report needs text.'
   const file = await deps.library.read(checklistPath(agentId))
-  const order = parseChecklist(file?.text).active.find((o) => o.id === orderId)
+  const order = parseChecklist(file?.text, deps.clock.now()).active.find((o) => o.id === orderId)
   if (order === undefined) return `Not posted: there is no active standing order ${orderId}.`
   if (order.report.kind !== 'web') {
     return `Not posted: order ${orderId} reports to a chat, not to the web: use channel_send with its connection and conversation.`
@@ -610,7 +649,7 @@ export async function planActivityWake(
     return undefined
   }
   const file = await deps.library.read(checklistPath(agent.id))
-  if (checklistIsEmpty(file?.text)) return undefined
+  if (checklistIsEmpty(file?.text, input.at)) return undefined
   const watched = watchedOf(deps, agent.id, file?.text ?? '')
   if (!watched.some((n) => n.nodeId === input.nodeId)) return undefined
   const last = deps.heartbeat.store.state(agent.id).last
@@ -637,6 +676,8 @@ export async function beginBeat(
     session: { busy: boolean; waiting: boolean }
     /** What started it (default: the interval). */
     trigger?: BeatTrigger
+    /** A deadline beat: the order it is for. */
+    orderId?: string
   },
 ): Promise<BeatPlan> {
   const agent = getAgent(deps, agentId)
@@ -663,9 +704,12 @@ export async function beginBeat(
   if (state.beats.some((b) => b.id === input.id)) return { run: false, reason: 'duplicate' }
   if (!config.enabled || agent.archivedAt !== null) return skip('the heartbeat is off')
   const timezone = heartbeatTimezone(deps, config)
-  if (!inActiveHours(at, { ...config, timezone })) return skip('outside active hours')
+  // a deadline order named its own time: active hours do not hold it back
+  if (trigger !== 'deadline' && !inActiveHours(at, { ...config, timezone })) {
+    return skip('outside active hours')
+  }
   const file = await deps.library.read(checklistPath(agent.id))
-  if (checklistIsEmpty(file?.text))
+  if (checklistIsEmpty(file?.text, at))
     return skip('nothing to watch: no standing order and an empty checklist')
   if (input.session.waiting) return skip('the previous beat waits for a decision')
   const last = state.beats.find((b) => b.status === 'running')
@@ -702,7 +746,18 @@ export async function beginBeat(
     }),
     at,
   )
-  const parsed = parseChecklist(file?.text)
+  const parsed = parseChecklist(file?.text, at)
+  if (trigger === 'deadline') {
+    const wanted = parsed.active.find((o) => o.id === input.orderId && o.kind === 'deadline')
+    if (wanted === undefined) return skip('the deadline order is no longer active')
+  }
+  // exact wakes follow the orders; hygiene is looked at on every beat (no model call)
+  syncOrderWakes(deps, agent, parsed.orders, at)
+  const hygiene = hygieneOf(deps, agent.id, parsed.orders, at)
+  raiseConflicts(deps, agent, hygiene, parsed.orders, at)
+  const grants = grantsFor(deps, agent.id, parsed.orders, at)
+  const weekly =
+    trigger === 'schedule' ? await weeklyReview(deps, agent, parsed.orders, at) : undefined
   // the gate of this beat: it may send only to the chats of the active orders
   const chats = new Map<string, OrderDestination>()
   for (const o of parsed.active)
@@ -714,6 +769,7 @@ export async function beginBeat(
       last: { at, trigger },
       window: { since, trigger },
       allowed: [...chats.values()],
+      grants,
     }),
     at,
   )
@@ -731,14 +787,37 @@ export async function beginBeat(
   const day = localDay(at, deps.settings.get().timezone)
   const yesterday = localDay(at - DAY_MS, deps.settings.get().timezone)
   const posts = deps.heartbeat.store.state(agent.id).posts
-  const orders: PromptOrder[] = parsed.active.map((order) => ({
-    order,
-    label: destinationLabel(deps, agent.id, order.report),
-    postsLeft: Math.max(
-      0,
-      PER_DESTINATION_DAILY_CAP - postsToday(posts, destKey(order.report), at, timezone),
-    ),
-  }))
+  const staffNow = (o: StandingOrder): boolean =>
+    isStaffRole(o.role) && isStaffRole(giverRole(deps, o))
+  const orders: PromptOrder[] = parsed.active.map((order) => {
+    const wantsTools = order.needs.length > 0 || order.ledger !== undefined
+    const granted: PromptOrder['granted'] | undefined = wantsTools
+      ? staffNow(order)
+        ? {
+            ...(deps.heartbeat.needsTools?.(agent.id, order.needs) ?? {
+              tools: [],
+              missing: order.needs,
+            }),
+            ledger: order.ledger !== undefined && grants.writes.includes(order.ledger),
+          }
+        : {
+            tools: [],
+            missing: order.needs,
+            ledger: false,
+            refused:
+              'its giver is not an owner or an admin now, so its tools and ledger are off: tell the giver',
+          }
+      : undefined
+    return {
+      order,
+      label: destinationLabel(deps, agent.id, order.report),
+      postsLeft: Math.max(
+        0,
+        PER_DESTINATION_DAILY_CAP - postsToday(posts, destKey(order.report), at, timezone),
+      ),
+      ...(granted === undefined ? {} : { granted }),
+    }
+  })
   return {
     run: true,
     prompt: beatPrompt({
@@ -749,6 +828,8 @@ export async function beginBeat(
       trigger,
       orders,
       notes: [notesPath(agent.slug, day), notesPath(agent.slug, yesterday)],
+      ...(trigger === 'deadline' && input.orderId !== undefined ? { focus: input.orderId } : {}),
+      ...(weekly === undefined ? {} : { weekly }),
     }),
   }
 }
@@ -783,6 +864,15 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
     const split = splitNew(parsed.items, state.fingerprints, at)
     fresh = split.fresh
     duplicates = split.duplicates
+    // what led to a report or an escalation counts for the order (the weekly review reads it)
+    for (const item of parsed.items) {
+      if (
+        item.order !== undefined &&
+        (item.decision === 'report' || item.decision === 'escalate')
+      ) {
+        noteFired(deps, agentId, item.order, at)
+      }
+    }
     status = fresh.length > 0 ? 'attention' : 'ok'
   }
 

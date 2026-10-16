@@ -622,6 +622,13 @@ export interface HeartbeatPorts {
   requests(sessionId: string, limit: number): Promise<Array<{ text: string; at: number }>>
   /** Fire one beat now (the web's "Run now"); a skip says why and costs no model call. */
   run(agentId: string, at: number): Promise<{ started: boolean; reason?: string }>
+  /**
+   * The tools the agent has for the needs of an order (`web`, `browser`, `phone/<slug>`), and the
+   * needs it has no tool for. Absent = none are known.
+   */
+  needsTools?(agentId: string, needs: readonly string[]): { tools: string[]; missing: string[] }
+  /** A session still has stored messages (a note's reference to it resolves). Absent = unknown. */
+  sessionExists?(sessionId: string): Promise<boolean>
   /** The chat side of the heartbeat; absent when channels are not set up. */
   channels?: HeartbeatChannels
   /** Reports to a web chat thread (the destination of an order that was asked there). */
@@ -645,6 +652,8 @@ export interface HeartbeatChannels {
   activity(nodes: readonly WatchNode[], since: number, until: number): Promise<ChatActivity[]>
   /** The agent bound to a connection. */
   agentOf(connectionId: string): string | undefined
+  /** What a person (identity id) is today: undefined when the identity is gone. */
+  roleOf?(identityId: string): string | undefined
 }
 
 /** A decision to store (always `open`). */

@@ -78,10 +78,13 @@ import {
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
 import {
   HEARTBEAT_ALLOWED,
+  HEARTBEAT_FILE_WRITES,
   HEARTBEAT_POST_TOOL,
   type HeartbeatDestination,
   heartbeatChannelRefusal,
   heartbeatRefusal,
+  isFileWrite,
+  ledgerWriteRefusal,
 } from '../../domain/heartbeat.ts'
 import { type DriftNote, pinnedServers, stripMcpPins } from '../../domain/mcp-pins.ts'
 import {
@@ -113,7 +116,7 @@ import { HAND_OVER_REMINDER, LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain
 import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
-import { destKey } from '../../domain/standing-orders.ts'
+import { destKey, needTools } from '../../domain/standing-orders.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { taskGrantRules } from '../../domain/work-queue.ts'
 import {
@@ -145,12 +148,14 @@ import { fileGrant } from './file-grant-plugin.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { memoryDiscipline } from './memory-discipline-plugin.ts'
+import { toolFactsOf } from './order-tools.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import { type PersonaIntake, persona } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
 import { rehearsalSessions, sessionFileSystem } from './rehearsal-registry.ts'
 import { routineOutcomes } from './routine-plugin.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
+import { sessionContext } from './session-context-plugin.ts'
 import { standingOrders } from './standing-order-plugin.ts'
 import {
   setBudgetLimit,
@@ -282,6 +287,11 @@ export interface AgentFactoryDeps {
   personas?: Pick<PersonaStore, 'latest' | 'latestNumber'>
   /** The `persona` tool (`persona-plugin.ts`). Late-bound; absent = no persona tool. */
   personaIntake?: () => PersonaIntake | undefined
+  /**
+   * Session ids the standing orders of an agent reference (the heartbeat may read those web chats
+   * with `sessions_search` / `session_read`, `canReadForHeartbeat`). Absent = none.
+   */
+  sessionRefs?: (agentId: string) => readonly string[]
   /** The work queue intake (`work-queue-plugin.ts`): `create_task`, `list_tasks`, `update_task`, `complete_task`. */
   workQueue?: () => WorkQueueIntake | undefined
   /** The big-data toolkit (`infra/bigdata`): sources and `run_code` limits. Needs `programs`. */
@@ -1117,16 +1127,53 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           })
           return deps.heartbeat?.()?.reservePost(def.id, to, text)
         }
+        // what the live orders of owners and admins open for the running beat (P52): the tools of
+        // their `needs` that the agent actually has, and writing their ledger paths. The snapshot is
+        // read on every call; the engine rules below only make the candidates callable, `refuse`
+        // is what decides.
+        const facts = toolFactsOf(out, deps.connectors.toolKinds(def.id) ?? {})
+        const candidates = facts
+          .filter(
+            (f) =>
+              f.connectorId === 'web' ||
+              f.connectorId === 'browser' ||
+              deps.connectors.definitions.find((d) => d.id === f.connectorId)?.source !== 'builtin',
+          )
+          .map((f) => f.name)
+        const grants = (): { needs: string[]; writes: string[] } =>
+          deps.heartbeat?.()?.grants(def.id) ?? { needs: [], writes: [] }
+        const fileWrites = HEARTBEAT_FILE_WRITES.filter(
+          (t) => t in out.toolNameMap && !out.rules.deny.includes(t),
+        )
         return {
-          rules: { allow: [...HEARTBEAT_ALLOWED, HEARTBEAT_POST_TOOL, ...lookups], deny: [] },
+          rules: {
+            allow: [
+              ...HEARTBEAT_ALLOWED,
+              HEARTBEAT_POST_TOOL,
+              ...lookups,
+              ...candidates,
+              ...fileWrites,
+            ],
+            deny: [],
+          },
           refuse: (call) => {
             if (call.toolName === HEARTBEAT_POST_TOOL || call.toolName === 'channel_read') {
               return channelCall(call)
             }
-            return lookups.includes(call.toolName) ||
-              HEARTBEAT_ALLOWED.some((rule) =>
-                matchRule(rule, call, { ...match, polarity: 'allow' }),
-              )
+            if (isFileWrite(call.toolName)) {
+              return fileWrites.includes(call.toolName) || call.toolName === 'delete_file'
+                ? ledgerWriteRefusal(call, grants().writes)
+                : heartbeatRefusal(call.toolName)
+            }
+            if (lookups.includes(call.toolName)) return undefined
+            if (candidates.includes(call.toolName)) {
+              return needTools(grants().needs, facts, out.rules).includes(call.toolName)
+                ? undefined
+                : `Not available in a heartbeat: ${call.toolName}. No live standing order of an owner or an admin needs it (an order lists its needs: web, browser, phone/<slug>).`
+            }
+            return HEARTBEAT_ALLOWED.some((rule) =>
+              matchRule(rule, call, { ...match, polarity: 'allow' }),
+            )
               ? undefined
               : heartbeatRefusal(call.toolName)
           },
@@ -1331,6 +1378,15 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       }),
       // a worker is one long job: chunks with checkpoints, bounded by cost and time, resumable
       ...(worker ? [workerLongRun()] : []),
+      // read-only tools over the agent's other sessions and runs (P52); every session kind gets them
+      sessionContext({
+        sqlite: deps.sqlite,
+        agentOf: (slug) => deps.agentBySlug?.(slug),
+        agentByRef: (ref) => deps.agentById?.(ref) ?? deps.agentBySlug?.(ref),
+        gateway: () => deps.channels?.(),
+        timezone: () => currentSettings().timezone,
+        ...(deps.sessionRefs === undefined ? {} : { heartbeatRefs: deps.sessionRefs }),
+      }),
       ...(deps.heartbeat === undefined ? [] : [heartbeat({ intake: deps.heartbeat })]),
       ...(deps.channels === undefined
         ? []
@@ -1356,6 +1412,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               agentOf: (slug) => deps.agentBySlug?.(slug),
               orders: () => deps.heartbeat?.()?.orders,
               enabled: (slug) => deps.heartbeat?.()?.heartbeatOn(slug) === true,
+              zone: () => currentSettings().timezone,
+              now: () => Date.now(),
             }),
           ]),
       // `person_note` of a person's own chat thread, and no communication style in memory

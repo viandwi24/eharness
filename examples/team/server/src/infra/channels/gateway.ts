@@ -841,6 +841,8 @@ export interface ChannelGateway {
    * message started (web, program) are unrestricted by design and are not flagged.
    */
   unresolvedChatTurn(sessionId: string): boolean
+  /** What an identity is today (directory role); undefined when the identity is gone. */
+  roleOfIdentity(identityId: string): Role | undefined
   /**
    * A child session (worker, delegated agent) of a channel session opens: it acts for the person
    * who asked in the parent turn (their role and scope). Call when the child session opens.
@@ -6465,6 +6467,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     proactive: proactiveApi,
     timezone: zoneNow,
     requesterOf,
+    roleOfIdentity: (identityId) => {
+      const id = identities.get(identityId)
+      return id === undefined ? undefined : resolveIdentityRole(id.connectionId, id).role
+    },
     unresolvedChatTurn: (sessionId) =>
       unresolvedTurns.has(sessionId) ||
       childRequesters.get(sessionId) === null ||

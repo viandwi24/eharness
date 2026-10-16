@@ -22,7 +22,11 @@ import {
   cleanOrderText,
   mayPostToGroups,
   mayRemoveOrder,
+  NEEDS_HELP,
+  ORDER_KINDS,
   type OrderDestination,
+  type OrderKind,
+  orderState,
   STANDING_ORDER_DESCRIPTION,
   STANDING_ORDER_TOOL,
   type StandingOrder,
@@ -30,6 +34,7 @@ import {
 } from '../../domain/standing-orders.ts'
 import { resolveConnectionRef } from '../channels/connection-ref.ts'
 import type { ChannelGateway } from '../channels/gateway.ts'
+import { resolveOrderTime } from './order-due.ts'
 
 /** What the tool needs of the app (`app/standing-orders.ts` over the deps, built in `main.ts`). */
 export interface StandingOrderApi {
@@ -44,9 +49,17 @@ export interface StandingOrderApi {
       uid?: string | undefined
       report: OrderDestination
       mention: boolean
+      kind?: OrderKind | undefined
+      due?: number | undefined
+      expires?: number | undefined
+      refs?: string[] | undefined
+      needs?: string[] | undefined
+      ledger?: string | undefined
     },
   ): Promise<{ order: StandingOrder; created: boolean }>
   remove(agentId: string, id: string): Promise<StandingOrder | undefined>
+  /** Finish a deadline order with its outcome. */
+  complete(agentId: string, id: string, outcome: string): Promise<StandingOrder | undefined>
   /** The chats the agent may report to (postable, allowed), with whether unasked posts are allowed there. */
   chats(
     agentId: string,
@@ -63,10 +76,13 @@ export interface StandingOrderPluginOptions {
   orders: () => StandingOrderApi | undefined
   /** The heartbeat of the agent (slug) is on (an agent with it off is not offered the tool). */
   enabled: (agentSlug: string) => boolean
+  /** The team timezone and the clock: `due` and `expires` are read in that zone. */
+  zone: () => string
+  now: () => number
 }
 
 const schema = z.object({
-  action: z.enum(['add', 'list', 'remove']),
+  action: z.enum(['add', 'list', 'remove', 'done']),
   instruction: z
     .string()
     .max(2000)
@@ -93,7 +109,41 @@ const schema = z.object({
     .describe(
       'add: tag the person when reporting. Default: yes in a group where they asked, no elsewhere.',
     ),
-  id: z.string().optional().describe('remove: the id of the order (from list).'),
+  kind: z
+    .enum(ORDER_KINDS)
+    .optional()
+    .describe(
+      'add: watch (ongoing, default), rule (react when X happens), deadline (one-shot at `due`, then done) or ledger (keeps a tracker file).',
+    ),
+  due: z
+    .string()
+    .max(60)
+    .optional()
+    .describe(
+      'add, deadline: when to check, exactly: "YYYY-MM-DD HH:MM" in the team timezone, "today 12:00", "tomorrow 09:00" or "in 2 hours". Resolve words like "Friday around noon" to a date yourself.',
+    ),
+  expires: z
+    .string()
+    .max(60)
+    .optional()
+    .describe('add: after this time the order is inactive. Same formats as due.'),
+  refs: z
+    .array(z.string().max(200))
+    .max(8)
+    .optional()
+    .describe(
+      'add: where the context is: session ids, or chat message ids like "General #12345" the beat opens with session_read.',
+    ),
+  needs: z.array(z.string().max(120)).max(6).optional().describe(`add: ${NEEDS_HELP}`),
+  ledger: z
+    .string()
+    .max(200)
+    .optional()
+    .describe(
+      'add: library path of the tracker the order keeps (a ledger order defaults to /library/trackers/<name>.md).',
+    ),
+  outcome: z.string().max(600).optional().describe('done: what came out of the order.'),
+  id: z.string().optional().describe('remove, done: the id of the order (from list).'),
   match: z.string().optional().describe('remove: words of the order, when you have no id.'),
 })
 
@@ -156,8 +206,26 @@ export function standingOrders(
       const visible = (orders: StandingOrder[], asker: Asker): StandingOrder[] =>
         mayPostToGroups(asker.role) ? orders : orders.filter((o) => o.by === asker.by)
 
+      const stateTag = (o: StandingOrder): string => {
+        const st = orderState(o, options.now())
+        return st === 'active' ? '' : ` [${st}]`
+      }
+      const extras = (o: StandingOrder): string =>
+        [
+          o.due === undefined
+            ? ''
+            : `, due ${new Date(o.due).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+          o.expires === undefined
+            ? ''
+            : `, expires ${new Date(o.expires).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+          o.refs.length === 0 ? '' : `, refs: ${o.refs.join(' | ')}`,
+          o.needs.length === 0 ? '' : `, needs: ${o.needs.join(', ')}`,
+          o.ledger === undefined ? '' : `, ledger ${o.ledger}`,
+          o.done === undefined ? '' : `, outcome: ${clip(o.done.outcome, 160)}`,
+        ].join('')
+
       const describe = (o: StandingOrder): string =>
-        `- ${o.id}${o.active ? '' : ' [paused]'} "${clip(o.text, 200)}": asked by ${o.name === '' ? o.by : o.name} (${o.role}), reports to ${api().label(agentId, o.report)}${o.mention ? ', tagging them' : ''}, given ${new Date(o.at).toISOString().slice(0, 16).replace('T', ' ')} UTC`
+        `- ${o.id}${o.kind === 'watch' ? '' : ` [${o.kind}]`}${stateTag(o)} "${clip(o.text, 200)}": asked by ${o.name === '' ? o.by : o.name} (${o.role}), reports to ${api().label(agentId, o.report)}${o.mention ? ', tagging them' : ''}, given ${new Date(o.at).toISOString().slice(0, 16).replace('T', ' ')} UTC${extras(o)}`
 
       const add = async (input: z.infer<typeof schema>, asker: Asker): Promise<string> => {
         const text = cleanOrderText(input.instruction ?? '')
@@ -220,6 +288,28 @@ export function standingOrders(
         if (mention && asker.uid === undefined)
           return 'ERROR: I cannot tag the person here (no chat account): leave out mention.'
 
+        const kind = input.kind ?? 'watch'
+        const staff = mayPostToGroups(asker.role)
+        if (
+          !staff &&
+          (input.needs !== undefined || input.ledger !== undefined || kind === 'ledger')
+        ) {
+          return 'Not allowed: tools (needs) and a ledger belong to orders of an owner or an admin. A member gets a plain watch that only looks. Leave out needs and ledger, or ask an owner or an admin.'
+        }
+        let due: number | undefined
+        let expires: number | undefined
+        for (const [name, raw] of [
+          ['due', input.due],
+          ['expires', input.expires],
+        ] as const) {
+          if (raw === undefined) continue
+          const at = resolveOrderTime(raw, options.zone(), options.now())
+          if ('error' in at) return `ERROR: ${name}: ${at.error}`
+          if (name === 'due') due = at.at
+          else expires = at.at
+        }
+        if (kind === 'deadline' && due === undefined)
+          return 'ERROR: a deadline order needs due: the exact time it must be checked ("YYYY-MM-DD HH:MM" in the team timezone).'
         const out = await api().add(agentId, {
           text,
           by: asker.by,
@@ -228,6 +318,12 @@ export function standingOrders(
           uid: asker.uid,
           report,
           mention,
+          kind,
+          due,
+          expires,
+          refs: input.refs,
+          needs: input.needs,
+          ledger: input.ledger,
         })
         const where =
           report.kind === 'web'
@@ -245,7 +341,12 @@ export function standingOrders(
           chat !== undefined && !chat.proactive
             ? ' Note: that chat does not allow unasked posts yet (its settings), so a report there is refused until an owner allows "proactive" posts for it; tell the person.'
             : ''
-        return `Standing order saved (id ${out.order.id}): "${clip(out.order.text, 200)}". The heartbeat looks at it about every 30 minutes (and early when the chats I watch get new messages) and reports ${where}. It is a readable line in my HEARTBEAT.md. To end it, say "stop" and I remove it.${warn} Tell the person, in one plain sentence, what you will watch and where you will report.`
+        const when =
+          out.order.kind === 'deadline' && out.order.due !== undefined
+            ? `A beat runs for it at exactly ${new Date(out.order.due).toISOString().slice(0, 16).replace('T', ' ')} UTC, ends it with an outcome, and reports ${where}.`
+            : `The heartbeat looks at it about every 30 minutes (and early when the chats I watch get new messages) and reports ${where}.`
+        const ledger = out.order.ledger === undefined ? '' : ` Its tracker is ${out.order.ledger}.`
+        return `Standing order saved (id ${out.order.id}, ${out.order.kind}): "${clip(out.order.text, 200)}". ${when}${ledger} It is a readable line in my HEARTBEAT.md. To end it, say "stop" and I remove it.${warn} Tell the person, in one plain sentence, what you will watch and where you will report.`
       }
 
       const run = async (input: z.infer<typeof schema>): Promise<string> => {
@@ -258,6 +359,20 @@ export function standingOrders(
           if (input.action === 'list') {
             if (orders.length === 0) return 'There are no standing orders.'
             return `Standing orders (${orders.length}):\n${orders.map(describe).join('\n')}`
+          }
+          if (input.action === 'done') {
+            const found = visible(await api().list(agentId), asker).find((o) => o.id === input.id)
+            if (found === undefined)
+              return `ERROR: no standing order ${input.id ?? ''} of yours. Use list.`
+            if (found.kind !== 'deadline')
+              return 'ERROR: only a deadline order is ended with done; use remove to stop a watch, rule or ledger.'
+            if (!mayRemoveOrder(found, asker))
+              return 'Not allowed: only the person who gave this order, an owner or an admin can end it.'
+            const outcome = input.outcome?.trim()
+            if (outcome === undefined || outcome === '')
+              return 'ERROR: done needs outcome: what came out of the order.'
+            await api().complete(agentId, found.id, outcome)
+            return `Order ${found.id} is done: ${clip(outcome, 160)}`
           }
           // remove
           const all = await api().list(agentId)

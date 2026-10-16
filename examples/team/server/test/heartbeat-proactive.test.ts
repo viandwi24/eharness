@@ -679,6 +679,7 @@ describe('notes and decisions', () => {
       messageIds: ['12', '13'],
       noticed: 'Budi promised the report by 15:00',
       decision: 'note',
+      confidence: 'seen',
       ...extra,
     })
 
@@ -704,7 +705,9 @@ describe('notes and decisions', () => {
     const file = await i.server.deps.library.read(notes.notes.path)
     const lines = (file?.text ?? '').split('\n').filter((l) => l.startsWith('- '))
     expect(lines).toHaveLength(2)
-    expect(lines[0]).toContain('[Internal] ids 12,13: Budi promised the report by 15:00 (note)')
+    expect(lines[0]).toContain(
+      '[Internal] ids 12,13: Budi promised the report by 15:00 (note, seen)',
+    )
     const body = file?.text ?? ''
     expect(body.indexOf('Budi promised')).toBeLessThan(body.indexOf('Ana asked'))
     const text = await beatSession(i)

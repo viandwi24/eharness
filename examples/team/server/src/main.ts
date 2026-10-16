@@ -96,6 +96,7 @@ import {
   reservePost,
   teamStatus,
 } from './app/heartbeat.ts'
+import { appendPattern, noteFired, readNotes } from './app/order-care.ts'
 import {
   applyProposal,
   ensureAllPersonas,
@@ -107,7 +108,13 @@ import {
 import type { ChannelInboxPort, ChannelsPort, Deps, PeoplePort } from './app/ports.ts'
 import { programNoteAction, repairProgramAuthorities } from './app/programs.ts'
 import { seedAgents } from './app/seed.ts'
-import { addOrder, chatDestinations, listOrders, removeOrder } from './app/standing-orders.ts'
+import {
+  addOrder,
+  chatDestinations,
+  completeOrder,
+  listOrders,
+  removeOrder,
+} from './app/standing-orders.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
   CLIENT,
@@ -121,6 +128,7 @@ import {
 } from './app/work-queue.ts'
 import type { Collector } from './domain/collectors.ts'
 import type { Decision } from './domain/decisions.ts'
+import { localDay } from './domain/heartbeat.ts'
 import { areaOf } from './domain/library.ts'
 import { nameOf } from './domain/persona.ts'
 import { parseProgramSession } from './domain/programs.ts'
@@ -208,6 +216,7 @@ import { type LibraryChange, libraryFs } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
 import { createObserver } from './infra/eh/observe.ts'
+import { needsToolsOf } from './infra/eh/order-tools.ts'
 import type { PersonaIntake } from './infra/eh/persona-plugin.ts'
 import { sqliteProfileStore } from './infra/eh/profile-store.ts'
 import { createProgramService, type ProgramService } from './infra/eh/program-service.ts'
@@ -739,6 +748,8 @@ export function compose(config: ServerConfig): Server {
     artifacts: { service: artifacts, decisions: () => artifactDecisions },
     decisions: () => decisionIntake,
     heartbeat: () => heartbeatIntake,
+    // sessions the live orders of owners and admins name: the beat may read those web chats (P52)
+    sessionRefs: (agentId) => heartbeatStore.state(agentId).grants?.sessions ?? [],
     workQueue: () => workQueueIntake,
     personas: personaStore,
     personaIntake: () => personaIntake,
@@ -883,6 +894,8 @@ export function compose(config: ServerConfig): Server {
     events,
     store: heartbeatStore,
     channels: heartbeatChannels(() => channelGateway),
+    needsTools: (agentId, needs) =>
+      needsToolsOf(connectors.activated(agentId), connectors.toolKinds(agentId), needs),
     ...(config.heartbeat?.activitySettleMs === undefined
       ? {}
       : { activitySettleMs: config.heartbeat.activitySettleMs }),
@@ -1181,13 +1194,39 @@ export function compose(config: ServerConfig): Server {
       return def !== undefined && effectiveConfig(deps, def).enabled
     },
     note: (agentId, entry) => appendNote(deps, agentId, entry),
+    readNotes: (agentId, days) => {
+      const def = agents.get(agentId)
+      const tz = deps.settings.get().timezone
+      const now = Date.now()
+      const list = days.length > 0 ? days : [localDay(now, tz), localDay(now - 24 * 3_600_000, tz)]
+      return def === undefined
+        ? Promise.resolve('ERROR: unknown agent')
+        : readNotes(deps, def, list)
+    },
+    pattern: async (agentId, input) => {
+      const def = agents.get(agentId)
+      return def === undefined
+        ? 'ERROR: unknown agent'
+        : appendPattern(deps, def, input, Date.now())
+    },
+    orderDone: async (agentId, orderId, outcome) => {
+      const done = await completeOrder(deps, agentId, orderId, outcome)
+      if (done === undefined) return `ERROR: no standing order ${orderId}.`
+      noteFired(deps, agentId, orderId, Date.now())
+      return `Order ${orderId} is done and no longer watched.`
+    },
     allowed: (agentId) => allowedDestinations(deps, agentId),
+    grants: (agentId) => {
+      const g = heartbeatStore.state(agentId).grants
+      return { needs: g?.needs ?? [], writes: g?.writes ?? [] }
+    },
     reservePost: (agentId, to, text) => reservePost(deps, agentId, to, text),
     reportWeb: (agentId, orderId, text) => reportToWeb(deps, agentId, orderId, text),
     orders: {
       list: (agentId) => listOrders(deps, agentId),
       add: (agentId, input) => addOrder(deps, agentId, input),
       remove: (agentId, id) => removeOrder(deps, agentId, id),
+      complete: (agentId, id, outcome) => completeOrder(deps, agentId, id, outcome),
       chats: (agentId) =>
         chatDestinations(deps, agentId).map((d) => ({
           connectionId: d.connectionId,

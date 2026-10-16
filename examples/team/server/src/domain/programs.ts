@@ -19,6 +19,7 @@ import {
 } from './deliverables.ts'
 import { invalid } from './errors.ts'
 import type { RoutineSpec } from './routines.ts'
+import { SESSION_CONTEXT_TOOLS } from './session-context.ts'
 import type { TaskReport, TaskStatus } from './tasks.ts'
 
 export const PROGRAM_STATUSES = ['active', 'paused'] as const
@@ -517,6 +518,9 @@ export const PROGRAM_BASE_TOOLS = [
   'channel_describe',
   'channel_status',
   'list_topics',
+  // the agent's own other sessions and runs, read-only and scoped in code (`domain/session-context.ts`):
+  // a run reads its own earlier runs and the sessions its brief names, nothing else
+  ...SESSION_CONTEXT_TOOLS,
   // asking the client for a decision or for more authority is never outside the authority
   'escalate',
   'escalate_wait',

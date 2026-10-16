@@ -11,6 +11,7 @@ export const FINDING_KINDS = [
   'program-run',
   'provider-error',
   'tools-changed',
+  'order-hygiene',
 ] as const
 export const FINDING_SEVERITIES = ['high', 'medium', 'low'] as const
 

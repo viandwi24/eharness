@@ -23,6 +23,7 @@ import { parseProgramSession } from '../domain/programs.ts'
 import { parseChatSession } from '../domain/threads.ts'
 import { willRetryText } from '../domain/turn-retry.ts'
 import { postNotice } from './briefings.ts'
+import { hygieneFindings } from './order-care.ts'
 import type { Deps } from './ports.ts'
 
 export interface HealthFinding extends Finding {
@@ -161,10 +162,15 @@ export async function gatherFacts(
 }
 
 /** Findings of the current facts, dismissed ones marked. */
-export function findingsOf(deps: Deps, facts: HealthFacts, now: number): HealthFinding[] {
+export function findingsOf(
+  deps: Deps,
+  facts: HealthFacts,
+  now: number,
+  extra: readonly Finding[] = [],
+): HealthFinding[] {
   const dismissed = deps.health.dismissed()
   const agents = new Map(deps.agents.list({ includeArchived: true }).map((a) => [a.id, a.name]))
-  return detectAll({ now, ...facts }).map((f) => {
+  return [...detectAll({ now, ...facts }), ...extra].map((f) => {
     const at = dismissed.get(f.fingerprint)
     return {
       ...f,
@@ -208,7 +214,10 @@ export async function listHealth(
   query: HealthQuery = {},
 ): Promise<{ findings: HealthFinding[]; open: number; scannedAt: number }> {
   const now = deps.clock.now()
-  const all = withRetries(deps, findingsOf(deps, await gatherFacts(deps, now), now))
+  const all = withRetries(
+    deps,
+    findingsOf(deps, await gatherFacts(deps, now), now, await hygieneFindings(deps, now)),
+  )
   const agentId =
     query.agentId === undefined
       ? undefined
@@ -276,7 +285,10 @@ export async function runHealthJob(
   const now = deps.clock.now()
   try {
     const facts = await gatherFacts(deps, now)
-    const findings = withRetries(deps, findingsOf(deps, facts, now))
+    const findings = withRetries(
+      deps,
+      findingsOf(deps, facts, now, await hygieneFindings(deps, now)),
+    )
     const notified = notifyFindings(deps, findings, now)
     if (hooks.suggest !== undefined) {
       try {

@@ -425,6 +425,17 @@ export function createRoutineService(
           store.markSkipped(run.id, out.reason ?? 'skipped', now)
           return store.getRun(run.id) as RoutineRun
         }
+      } else if (key.kind === 'order') {
+        // the exact wake of a deadline order: a beat for that order only
+        const out = await system.heartbeat(key.agentId, {
+          slot: run.scheduledAt,
+          trigger: 'deadline',
+          orderId: key.orderId,
+        })
+        if (!out.started) {
+          store.markSkipped(run.id, out.reason ?? 'skipped', now)
+          return store.getRun(run.id) as RoutineRun
+        }
       } else if (key.kind === 'heartbeat') {
         const out = await system.heartbeat(key.agentId, { slot: run.scheduledAt })
         if (!out.started) {

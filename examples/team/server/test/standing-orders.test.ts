@@ -59,6 +59,9 @@ const sample = (over: Partial<StandingOrder> = {}): StandingOrder => ({
   mention: true,
   at: 1_700_000_000_000,
   active: true,
+  kind: 'watch',
+  refs: [],
+  needs: [],
   ...over,
 })
 

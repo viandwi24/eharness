@@ -82,6 +82,55 @@ export function orderWhere(o: Pick<StandingOrder, 'reportLabel' | 'report' | 'me
 	return o.report.kind === 'web' ? 'Reports in the web chat' : `Reports to ${o.reportLabel}${o.mention ? ', tagging them' : ''}`;
 }
 
+export type OrderKind = StandingOrder['kind'];
+
+export const KIND_ORDER: readonly OrderKind[] = ['deadline', 'rule', 'ledger', 'watch'];
+
+export const KIND_LABEL: Record<OrderKind, string> = {
+	deadline: 'Deadlines',
+	rule: 'Rules',
+	ledger: 'Ledgers',
+	watch: 'Watching'
+};
+
+export const KIND_HINT: Record<OrderKind, string> = {
+	deadline: 'One check at an exact time, then done with an outcome.',
+	rule: 'React when something happens.',
+	ledger: 'Keeps a tracker file and warns on its rule.',
+	watch: 'Ongoing: keeps an eye on something.'
+};
+
+/** Orders still doing something, grouped by kind (empty groups left out), and the done or expired ones apart. */
+export function groupOrders(orders: readonly StandingOrder[]): {
+	groups: Array<{ kind: OrderKind; label: string; hint: string; orders: StandingOrder[] }>;
+	closed: StandingOrder[];
+} {
+	const open = orders.filter((o) => o.state === 'active' || o.state === 'paused');
+	const groups = KIND_ORDER.map((kind) => ({
+		kind,
+		label: KIND_LABEL[kind],
+		hint: KIND_HINT[kind],
+		orders: open.filter((o) => o.kind === kind).sort((a, b) => (a.due ?? a.at) - (b.due ?? b.at))
+	})).filter((g) => g.orders.length > 0);
+	return { groups, closed: orders.filter((o) => o.state === 'done' || o.state === 'expired') };
+}
+
+/** `Due 16 Oct, 12:00` / `Expires ...` / `Done ...: outcome`, as short phrases. */
+export function orderTiming(o: StandingOrder, format: (ms: number) => string): string[] {
+	const out: string[] = [];
+	if (o.due !== undefined) out.push(`Due ${format(o.due)}`);
+	if (o.expires !== undefined) out.push(o.state === 'expired' ? `Expired ${format(o.expires)}` : `Expires ${format(o.expires)}`);
+	if (o.done) out.push(`Done ${format(o.done.at)}`);
+	return out;
+}
+
+/** A reference of an order as text and, when it points somewhere the app can open, a link. */
+export function refLink(ref: string): { text: string; href?: string } {
+	if (/^https?:\/\//i.test(ref)) return { text: ref, href: ref };
+	if (ref.startsWith('/library/')) return { text: ref, href: filesLink(ref) };
+	return { text: ref };
+}
+
 /** The sentence under an empty list of orders. */
 export const NO_ORDERS =
 	'No standing orders yet. Tell the agent in chat what to keep an eye on, for example: "watch the community channel all the time and tell me anything strange".';

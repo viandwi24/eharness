@@ -19,6 +19,19 @@ export type OrderDestination =
   | { kind: 'chat'; connectionId: string; nodeId: string }
   | { kind: 'web'; sessionId: string }
 
+/**
+ * What kind of job an order is. Old lines carry no kind and are `watch`.
+ *  - `watch`    ongoing: keep an eye on something and report what is worth it
+ *  - `rule`     react when X happens ("if someone posts ... report it")
+ *  - `deadline` one-shot at `due` (an exact wake), then `done` with its outcome
+ *  - `ledger`   keeps a tracker file (`ledger`) of things it was told about, and warns on its rules
+ */
+export const ORDER_KINDS = ['watch', 'rule', 'deadline', 'ledger'] as const
+export type OrderKind = (typeof ORDER_KINDS)[number]
+
+export const isOrderKind = (v: unknown): v is OrderKind =>
+  (ORDER_KINDS as readonly unknown[]).includes(v)
+
 export interface StandingOrder {
   id: string
   /** The person's words, lightly cleaned. One line. */
@@ -34,6 +47,19 @@ export interface StandingOrder {
   mention: boolean
   at: number
   active: boolean
+  kind: OrderKind
+  /** `deadline`: the instant (epoch ms) the exact wake fires. */
+  due?: number
+  /** After this instant the order is inactive (listed as expired). */
+  expires?: number
+  /** A finished deadline order: when, and what came out of it. */
+  done?: { at: number; outcome: string }
+  /** Context references: session ids, platform message ids ("General #12345"), URLs, library paths. */
+  refs: string[]
+  /** Tool groups the order needs: `web`, `browser`, `phone/<slug>`, `files:<library glob>`. */
+  needs: string[]
+  /** The library path of the order's tracker (always set for a `ledger` order). */
+  ledger?: string
 }
 
 export const WEB_OWNER = 'web:owner'
@@ -44,7 +70,7 @@ export const HEARTBEAT_REPORT_TOOL = 'heartbeat_report'
 export const PER_DESTINATION_DAILY_CAP = 8
 /** An early beat on chat activity starts at the earliest this long after the previous beat. */
 export const ACTIVITY_MIN_GAP_MS = 10 * 60_000
-export const MAX_ORDER_CHARS = 500
+export const MAX_ORDER_CHARS = 800
 
 /** The key of a destination: the daily cap and the repeat check count per key. */
 export const destKey = (d: OrderDestination): string =>
@@ -94,6 +120,20 @@ function destinationOf(raw: string | undefined): OrderDestination | undefined {
   return undefined
 }
 
+const decList = (v: string | undefined): string[] =>
+  v === undefined || v === ''
+    ? []
+    : v
+        .split(',')
+        .map((x) => dec(x).trim())
+        .filter((x) => x !== '')
+
+const instant = (v: string | undefined): number | undefined => {
+  if (v === undefined || v === '') return undefined
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
 /** One line as an order, or undefined when it has no valid tail (then it is a plain checklist item). */
 export function parseOrderLine(line: string): StandingOrder | undefined {
   const m = ORDER_LINE.exec(line)
@@ -108,6 +148,11 @@ export function parseOrderLine(line: string): StandingOrder | undefined {
   if (report === undefined || text === '') return undefined
   const at = Number(fields.get('at'))
   const uid = fields.get('uid')
+  const kind = fields.get('kind')
+  const due = instant(fields.get('due'))
+  const expires = instant(fields.get('expires'))
+  const doneAt = instant(fields.get('done'))
+  const ledger = fields.get('ledger')
   return {
     id: m[3] as string,
     text,
@@ -119,8 +164,30 @@ export function parseOrderLine(line: string): StandingOrder | undefined {
     mention: fields.get('mention') === 'yes',
     at: Number.isFinite(at) ? at : 0,
     active: fields.get('active') !== 'no',
+    // a line from before kinds existed is an ongoing watch
+    kind: isOrderKind(kind) ? kind : 'watch',
+    ...(due === undefined ? {} : { due }),
+    ...(expires === undefined ? {} : { expires }),
+    ...(doneAt === undefined
+      ? {}
+      : { done: { at: doneAt, outcome: dec(fields.get('outcome') ?? '') } }),
+    refs: decList(fields.get('refs')),
+    needs: decList(fields.get('needs')),
+    ...(ledger === undefined || ledger === '' ? {} : { ledger: dec(ledger) }),
   }
 }
+
+/** `active` (the beat acts on it), `paused`, `done` (a finished deadline) or `expired` (past `expires`). */
+export type OrderState = 'active' | 'paused' | 'done' | 'expired'
+
+export function orderState(o: StandingOrder, now?: number): OrderState {
+  if (o.done !== undefined) return 'done'
+  if (now !== undefined && o.expires !== undefined && o.expires <= now) return 'expired'
+  return o.active ? 'active' : 'paused'
+}
+
+/** The beat acts on it: not paused, not done, not past its expiry (`now` unset: expiry is not looked at). */
+export const isLive = (o: StandingOrder, now?: number): boolean => orderState(o, now) === 'active'
 
 export interface ParsedChecklist {
   /** Every order of the file (also the paused ones). */
@@ -131,7 +198,7 @@ export interface ParsedChecklist {
   plain: string[]
 }
 
-export function parseChecklist(text: string | null | undefined): ParsedChecklist {
+export function parseChecklist(text: string | null | undefined, now?: number): ParsedChecklist {
   const orders: StandingOrder[] = []
   const rest: string[] = []
   for (const line of (text ?? '').split('\n')) {
@@ -141,14 +208,14 @@ export function parseChecklist(text: string | null | undefined): ParsedChecklist
   }
   return {
     orders,
-    active: orders.filter((o) => o.active),
+    active: orders.filter((o) => isLive(o, now)),
     plain: contentLines(rest.join('\n')),
   }
 }
 
 /** Nothing to do: no plain item and no active order. The beat is then skipped without a model call. */
-export const checklistIsBlank = (text: string | null | undefined): boolean => {
-  const p = parseChecklist(text)
+export const checklistIsBlank = (text: string | null | undefined, now?: number): boolean => {
+  const p = parseChecklist(text, now)
   return p.plain.length === 0 && p.active.length === 0
 }
 
@@ -191,6 +258,16 @@ export function formatOrderLine(o: StandingOrder): string {
     `mention:${o.mention ? 'yes' : 'no'}`,
     `at:${o.at}`,
     ...(o.active ? [] : ['active:no']),
+    // kinds are written only when they say something: a plain watch keeps the old, short tail
+    ...(o.kind === 'watch' ? [] : [`kind:${o.kind}`]),
+    ...(o.due === undefined ? [] : [`due:${o.due}`]),
+    ...(o.expires === undefined ? [] : [`expires:${o.expires}`]),
+    ...(o.done === undefined
+      ? []
+      : [`done:${o.done.at}`, `outcome:${encodeURIComponent(o.done.outcome)}`]),
+    ...(o.refs.length === 0 ? [] : [`refs:${o.refs.map(encodeURIComponent).join(',')}`]),
+    ...(o.needs.length === 0 ? [] : [`needs:${o.needs.map(encodeURIComponent).join(',')}`]),
+    ...(o.ledger === undefined ? [] : [`ledger:${encodeURIComponent(o.ledger)}`]),
   ]
   return `- ${cleanOrderText(o.text)} <!-- ${tail.join(' ')} -->`
 }
@@ -211,11 +288,179 @@ export function withoutOrder(text: string, id: string): string {
 
 /** A new order of the same words for the same place and asker already exists (do not stack copies). */
 export function sameOrder(
-  a: Pick<StandingOrder, 'text' | 'by' | 'report'>,
-  b: Pick<StandingOrder, 'text' | 'by' | 'report'>,
+  a: Pick<StandingOrder, 'text' | 'by' | 'report' | 'due'>,
+  b: Pick<StandingOrder, 'text' | 'by' | 'report' | 'due'>,
 ): boolean {
   const norm = (t: string): string => t.toLowerCase().replace(/\s+/g, ' ').trim()
-  return norm(a.text) === norm(b.text) && a.by === b.by && sameDestination(a.report, b.report)
+  return (
+    norm(a.text) === norm(b.text) &&
+    a.by === b.by &&
+    a.due === b.due &&
+    sameDestination(a.report, b.report)
+  )
+}
+
+/** The file with one order's line replaced by `change(order)` (the other lines stay as they are). */
+export function withOrderChanged(
+  text: string,
+  id: string,
+  change: (o: StandingOrder) => StandingOrder,
+): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const o = parseOrderLine(line)
+      return o?.id === id ? formatOrderLine(change(o)) : line
+    })
+    .join('\n')
+}
+
+// --- needs, ledgers, references ----------------------------------------------------------------
+
+export type Need =
+  | { kind: 'web' }
+  | { kind: 'browser' }
+  | { kind: 'phone'; slug: string }
+  | { kind: 'files'; glob: string }
+
+/** `web`, `browser`, `phone/<connection slug>` or `files:<library glob>`; undefined when it is none of them. */
+export function parseNeed(raw: string): Need | undefined {
+  const t = raw.trim()
+  if (t === 'web') return { kind: 'web' }
+  if (t === 'browser') return { kind: 'browser' }
+  const phone = /^phone\/([a-z0-9][a-z0-9-]{0,40})$/.exec(t)
+  if (phone !== null) return { kind: 'phone', slug: phone[1] as string }
+  if (t.startsWith('files:')) {
+    const glob = t.slice('files:'.length).trim()
+    return isLibraryPath(glob) ? { kind: 'files', glob } : undefined
+  }
+  return undefined
+}
+
+/** A path inside the library, with no way out of it (`..`) and no spaces. */
+export const isLibraryPath = (p: string): boolean =>
+  p.startsWith('/library/') && p.length <= 200 && !p.includes('..') && !/\s/.test(p)
+
+export const NEEDS_HELP =
+  'needs: any of "web" (web_search/web_fetch), "browser" (the browser tools), "phone/<connection slug>" (that phone connection), "files:<library path glob>" (files to read).'
+
+/** The needs of a list, normalised and de-duplicated; `invalid` lists the ones that are no need. */
+export function normalizeNeeds(raw: readonly string[]): { needs: string[]; invalid: string[] } {
+  const needs: string[] = []
+  const invalid: string[] = []
+  for (const r of raw) {
+    const n = parseNeed(r)
+    if (n === undefined) {
+      invalid.push(r)
+      continue
+    }
+    const text =
+      n.kind === 'phone' ? `phone/${n.slug}` : n.kind === 'files' ? `files:${n.glob}` : n.kind
+    if (!needs.includes(text)) needs.push(text)
+  }
+  return { needs, invalid }
+}
+
+export const MAX_REFS = 8
+export const MAX_REF_CHARS = 200
+
+export function cleanRefs(raw: readonly string[]): string[] {
+  const out: string[] = []
+  for (const r of raw) {
+    const t = r
+      .replace(/<!--|-->/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, MAX_REF_CHARS)
+    if (t !== '' && !out.includes(t)) out.push(t)
+  }
+  return out.slice(0, MAX_REFS)
+}
+
+const slugWords = (text: string, max: number): string =>
+  text
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, max)
+    .replace(/-+$/, '')
+
+/** `/library/trackers/<slug>.md`, the slug from the order's words (`taken`: paths other orders already use). */
+export function defaultLedgerPath(text: string, id: string, taken: readonly string[] = []): string {
+  const base = `/library/trackers/${slugWords(text, 40) || slugWords(id, 12) || 'order'}`
+  if (!taken.includes(`${base}.md`)) return `${base}.md`
+  return `${base}-${slugWords(id, 8) || 'x'}.md`
+}
+
+/** A ledger path a person or the model may name: a plain file in the library (no glob, no `..`). */
+export const isLedgerPath = (p: string): boolean =>
+  isLibraryPath(p) && !p.endsWith('/') && !/[*?[\]{}]/.test(p) && !p.startsWith('/library/notes/')
+
+/** Owners and admins may give an order its tools and its ledger; a member's order only looks. */
+export const isStaffRole = (role: string | undefined): boolean =>
+  role === 'owner' || role === 'admin'
+
+/**
+ * What a beat may use because of the live orders: the needs and the ledger paths of the orders whose
+ * giver is an owner or an admin now (`currentRole` says what the giver is today; undefined = unknown
+ * or gone, which grants nothing). Pure.
+ */
+export function grantsOf(
+  orders: readonly StandingOrder[],
+  currentRole: (o: StandingOrder) => string | undefined,
+  now: number,
+): { needs: string[]; writes: string[] } {
+  const needs = new Set<string>()
+  const writes = new Set<string>()
+  for (const o of orders) {
+    if (!isLive(o, now)) continue
+    if (!isStaffRole(o.role) || !isStaffRole(currentRole(o))) continue
+    for (const n of o.needs) needs.add(n)
+    if (o.ledger !== undefined && isLedgerPath(o.ledger)) writes.add(o.ledger)
+  }
+  return { needs: [...needs], writes: [...writes] }
+}
+
+/** A tool the agent has, as the gate sees it. */
+export interface ToolFact {
+  name: string
+  connectorId: string
+  /** Slugs of the connections that expose it. */
+  connectionSlugs: string[]
+  /** `read`, `write`, ... (the capability kind); undefined when unknown. */
+  kind: string | undefined
+}
+
+/**
+ * The tools a set of needs opens, among the tools the agent actually has: `web` the web connector,
+ * `browser` the browser connector, `phone/<slug>` the tools of that connection. Reads always (unless
+ * the connector has them off); a tool that acts needs its mode to be "allowed", never "ask first"
+ * (nobody can answer in a beat). `files:` opens no tool: the beat reads the library anyway.
+ */
+export function needTools(
+  needs: readonly string[],
+  tools: readonly ToolFact[],
+  rules: { deny: readonly string[]; ask: readonly string[] },
+): string[] {
+  const out = new Set<string>()
+  const wanted = needs.flatMap((n) => {
+    const p = parseNeed(n)
+    return p === undefined ? [] : [p]
+  })
+  for (const t of tools) {
+    if (rules.deny.includes(t.name)) continue
+    const acts = t.kind !== 'read'
+    if (acts && rules.ask.includes(t.name)) continue
+    const hit = wanted.some(
+      (n) =>
+        (n.kind === 'web' && t.connectorId === 'web') ||
+        (n.kind === 'browser' && t.connectorId === 'browser') ||
+        (n.kind === 'phone' && t.connectionSlugs.includes(n.slug)),
+    )
+    if (hit) out.add(t.name)
+  }
+  return [...out]
 }
 
 // --- who may -----------------------------------------------------------------------------------
@@ -246,7 +491,18 @@ export const STANDING_ORDER_DESCRIPTION =
   'in their direct chat with you. `list` shows the orders you can see; `remove` stops one (the person ' +
   'who asked, an owner or an admin): use it when someone says "stop", "berhenti memantau", ' +
   '"cukup", pass the order `id` (or words of it in `match`). Echo back, in one plain sentence, what ' +
-  'you will watch and where you will report.'
+  'you will watch and where you will report. ' +
+  'KINDS (`kind`): `watch` (default, ongoing); `rule` ("if someone posts X, report it": the beat looks ' +
+  'for exactly that); `deadline` (a one-shot check at an exact time: pass `due`, resolved in the team ' +
+  'timezone; "today around 12:00" means due today 12:00; the beat wakes at that minute, does it and ends ' +
+  'the order with an outcome; optional `expires`); `ledger` (keep a tracker: "when I say I took videos, ' +
+  'record the date and count; warn if not uploaded in 2 days": the order keeps a file, default ' +
+  '/library/trackers/<name>.md). Pass `refs` for context the beat must open ("General #12345", a session id) ' +
+  'and `needs` for what it must be able to do (web, browser, phone/<connection slug>); the tools follow ' +
+  'the order, for owners and admins only. If the order names a penalty or a warning to a member, keep it in ' +
+  'the words of the order: the beat records and reports to the giver, may post only what the order says in ' +
+  "the order's own report chat, and never removes or bans anyone. `done` ends a deadline order " +
+  'with its `outcome`.'
 
 /** Said (once, static) in the chats of agents that have the tool. */
 export const STANDING_ORDERS_NOTE = [
@@ -259,4 +515,7 @@ export const STANDING_ORDERS_NOTE = [
   'memory file `HEARTBEAT.md`, which the owner can read and edit. Words like "setiap saat", "terus",',
   '"pantau", "proaktif", "kalau ada ... kabari" mean an ongoing job. "Stop watching" means `remove`.',
   'The heartbeat reads and keeps notes; it posts only where an order says to report.',
+  'Give the order its kind: `deadline` with an exact `due` for a one-time check at a time, `rule` for',
+  '"if X happens, report", `ledger` for a tracker it keeps; add `refs` and `needs` when it must open',
+  'earlier messages or use the web, the browser or a phone.',
 ].join('\n')

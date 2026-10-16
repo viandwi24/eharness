@@ -11446,6 +11446,13 @@
             },
             "description": "The standing orders: lines of `HEARTBEAT.md` the agent keeps when a person gives it an ongoing instruction in chat. Oldest first."
           },
+          "hygiene": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderHygiene"
+            },
+            "description": "What the server found about the orders on its own (no model call): gone destination or giver, expired, overdue, overlapping."
+          },
           "checklist": {
             "type": "object",
             "properties": {
@@ -11551,6 +11558,7 @@
           "effectiveTimezone",
           "stored",
           "orders",
+          "hygiene",
           "checklist",
           "watched",
           "notes",
@@ -11640,6 +11648,67 @@
           },
           "active": {
             "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "watch",
+              "rule",
+              "deadline",
+              "ledger"
+            ],
+            "description": "watch (ongoing), rule (react when X happens), deadline (one-shot at `due`, then done) or ledger (keeps a tracker)."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "done",
+              "expired"
+            ]
+          },
+          "due": {
+            "type": "integer",
+            "description": "Deadline: the exact wake."
+          },
+          "expires": {
+            "type": "integer",
+            "description": "After this the order is inactive."
+          },
+          "done": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "integer"
+              },
+              "outcome": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "at",
+              "outcome"
+            ],
+            "description": "A finished deadline order and its outcome."
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Context references: session ids, platform message ids, URLs, library paths."
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tool groups the order needs: web, browser, phone/<slug>, files:<glob>."
+          },
+          "ledger": {
+            "type": "string",
+            "description": "Library path of its tracker."
           }
         },
         "required": [
@@ -11652,7 +11721,11 @@
           "reportLabel",
           "mention",
           "at",
-          "active"
+          "active",
+          "kind",
+          "state",
+          "refs",
+          "needs"
         ]
       },
       "OrderDestination": {
@@ -11701,6 +11774,54 @@
           }
         ]
       },
+      "OrderHygiene": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "destination-gone",
+              "giver-gone",
+              "giver-not-staff",
+              "expired",
+              "overdue",
+              "conflict"
+            ]
+          },
+          "orderIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "One sentence: what is wrong."
+          },
+          "fix": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "orderIds",
+          "severity",
+          "text",
+          "fix",
+          "fingerprint"
+        ]
+      },
       "BeatRecord": {
         "type": "object",
         "properties": {
@@ -11731,7 +11852,8 @@
             "type": "string",
             "enum": [
               "schedule",
-              "activity"
+              "activity",
+              "deadline"
             ],
             "description": "What started it: the interval (default) or new messages in a watched chat."
           },
@@ -11806,6 +11928,10 @@
           "reason": {
             "type": "string",
             "description": "One line: why (for the owner to audit)."
+          },
+          "order": {
+            "type": "string",
+            "description": "The standing order it is about."
           }
         },
         "required": [
@@ -15667,7 +15793,8 @@
               "big-output",
               "program-run",
               "provider-error",
-              "tools-changed"
+              "tools-changed",
+              "order-hygiene"
             ]
           },
           "severity": {
@@ -33648,7 +33775,8 @@
                 "big-output",
                 "program-run",
                 "provider-error",
-                "tools-changed"
+                "tools-changed",
+                "order-hygiene"
               ]
             },
             "required": false,
