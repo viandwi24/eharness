@@ -13,7 +13,7 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { decide } from '#lib/decisions/actions.js';
-	import { answerToast, cleanBody, type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, standDownOptions, statusBadge, triggerLine, willNotTouchLines } from '#lib/decisions/model.js';
+	import { answerToast, changeRows, cleanBody, type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, standDownOptions, statusBadge, triggerLine, willNotTouchLines } from '#lib/decisions/model.js';
 	import EffectiveGrant from './EffectiveGrant.svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
@@ -85,7 +85,9 @@
 						{chatHref(decision.sessionId) ? 'Open the chat' : 'Open the run'}
 					</button>
 				{/if}
-				{#if decision.programId}
+				{#if decision.kind === 'change'}
+					<a class="underline underline-offset-4 hover:text-foreground" href={`/programs/${decision.payload.programId}`} data-testid="change-program-link">Program: {decision.payload.programName}</a>
+				{:else if decision.programId}
 					<a class="underline underline-offset-4 hover:text-foreground" href="/programs">Program</a>
 				{/if}
 			</div>
@@ -126,10 +128,27 @@
 		</dl>
 	{/if}
 
-	{#if decision.kind !== 'escalation'}
+	{#if decision.kind === 'change'}
+		<div class="flex flex-col gap-2" data-testid="change-diff">
+			<div class="text-xs font-medium text-muted-foreground">What changes</div>
+			{#each changeRows(decision.payload) as row (row.label)}
+				<div class="rounded-md border border-border px-3 py-2 text-[13px]" data-testid="change-row">
+					<div class="mb-1 font-medium">{row.label}</div>
+					<div class="grid gap-x-3 gap-y-0.5 sm:grid-cols-[3.5rem_1fr]">
+						<span class="text-muted-foreground">Before</span>
+						<span class="break-words">{row.before}</span>
+						<span class="text-muted-foreground">After</span>
+						<span class="break-words">{row.after}</span>
+					</div>
+				</div>
+			{/each}
+		</div>
+	{/if}
+
+	{#if decision.kind !== 'escalation' && !(decision.kind === 'change' && grants.length === 0)}
 		<div data-testid="decision-grants">
 			<div class="mb-1 text-xs font-medium text-muted-foreground">
-				{decision.kind === 'amendment' ? 'Approving lets the program also' : 'If you approve, it may touch'}
+				{decision.kind === 'amendment' || decision.kind === 'change' ? 'Approving lets the program also' : 'If you approve, it may touch'}
 			</div>
 			{#if grants.length}
 				<ul class="flex flex-col gap-0.5 text-[13px]">

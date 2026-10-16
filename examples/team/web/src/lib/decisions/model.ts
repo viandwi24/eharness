@@ -8,14 +8,16 @@ export type DecisionKind = Decision['kind'];
 export type DecisionStatus = Decision['status'];
 export type ApproveBody = components['schemas']['DecisionApprove'];
 type Proposal = Extract<Decision, { kind: 'proposal' }>;
+type Change = Extract<Decision, { kind: 'change' }>;
 type Authority = components['schemas']['ProgramAuthority'];
 
 /** Runs waiting come first: a parked run costs nothing but finishes nothing. */
-export const KIND_ORDER: DecisionKind[] = ['escalation', 'amendment', 'proposal'];
+export const KIND_ORDER: DecisionKind[] = ['escalation', 'amendment', 'change', 'proposal'];
 
 export const KIND_INFO: Record<DecisionKind, { group: string; badge: string; hint: string }> = {
 	escalation: { group: 'Questions from running work', badge: 'Question', hint: 'A run stopped and waits for your answer. It continues in the same conversation.' },
 	amendment: { group: 'Requests for more authority', badge: 'More authority', hint: 'A run needs something it was not granted, or runs were refused the same tool again and again. Approving widens the program and resumes a waiting run.' },
+	change: { group: 'Changes to programs', badge: 'Change', hint: 'An agent proposes to change a program that already exists. Nothing changes until you approve; the program keeps its id, schedule, notes and runs.' },
 	proposal: { group: 'Proposed plans', badge: 'Proposal', hint: 'Nothing starts until you approve. You can edit the authority first.' }
 };
 
@@ -38,8 +40,29 @@ export function authorityLines(a: Authority): string[] {
 export function grantLines(d: Decision): string[] {
 	if (d.kind === 'proposal') return mayTouchLines(d.payload.program.authority);
 	if (d.kind === 'amendment') return mayTouchLines(d.payload.authority);
+	if (d.kind === 'change') return addedAuthorityLines(d.payload);
 	return [];
 }
+
+/** What a change adds to the program's authority (what approving newly lets it touch); removals are in the diff. */
+export function addedAuthorityLines(p: Change['payload']): string[] {
+	const after = p.patch.authority;
+	if (!after) return [];
+	const was = p.before.authority;
+	const added = (now: string[], before: string[] | undefined): string[] => now.filter((x) => !(before ?? []).includes(x));
+	return mayTouchLines({
+		tools: added(after.tools, was?.tools),
+		connectors: added(after.connectors, was?.connectors),
+		read: added(after.read, was?.read),
+		write: added(after.write, was?.write)
+	});
+}
+
+/** The rows of a change card: one per field, before and after in words. */
+export const changeRows = (p: Change['payload']): { label: string; before: string; after: string }[] => p.diff.map(({ label, before, after }) => ({ label, before, after }));
+
+/** The title of a change card: the program it changes by name. */
+export const changeHeading = (p: Change['payload']): string => `Change to program ${p.programName}`;
 
 const lowerFirst = (t: string): string => (t.startsWith('On a custom') ? t : `${t[0]!.toLowerCase()}${t.slice(1)}`);
 
@@ -134,6 +157,7 @@ export const proposalBudget = (p: Proposal['payload']): string => budgetSummary(
 export function decisionText(d: Decision, agentName: string): string {
 	if (d.kind === 'proposal') return `${agentName} proposes: ${d.title}`;
 	if (d.kind === 'amendment') return `${agentName} asks for more authority: ${d.title}`;
+	if (d.kind === 'change') return `${agentName} proposes a change to ${d.payload.programName}`;
 	return `${agentName} needs a decision: ${d.title}`;
 }
 
@@ -165,11 +189,13 @@ export function outcomeLine(d: Decision): string {
 		return 'Closed automatically: it no longer applies. Nothing was changed.';
 	if (d.status === 'expired') return 'The run no longer waited for this.';
 	const o = d.outcome;
+	if (d.status === 'rejected' && d.kind === 'change') return 'Rejected: the program was not changed.';
 	if (d.status === 'rejected') return d.kind === 'proposal' ? 'Rejected: nothing was created.' : 'Rejected: the run continued without it.';
 	if (d.kind === 'proposal') {
 		if (o?.runSessionId) return 'Approved: the program was created and a run started.';
 		return o?.programId ? 'Approved: the program was created.' : 'Approved.';
 	}
+	if (d.kind === 'change') return 'Approved: the change was applied to the program.';
 	if (d.kind === 'amendment') return 'Approved: the authority was added and the run continued.';
 	return o?.decision && o.decision !== 'approved' ? `Answered "${o.decision}": the run continued.` : 'Approved: the run continued.';
 }

@@ -10977,6 +10977,223 @@
               "kind",
               "payload"
             ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/DecisionStatus"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string",
+                "description": "Markdown: goal, plan steps, why, evidence links."
+              },
+              "agentId": {
+                "type": "string",
+                "description": "The agent that asks."
+              },
+              "sessionId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The session it came from."
+              },
+              "programId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "waitId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The external wait the session is parked on."
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedAt": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "decisionNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/DecisionOutcome"
+              },
+              "createdAt": {
+                "type": "integer"
+              },
+              "grant": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "connectors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "tools": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "read",
+                                  "write",
+                                  "destructive",
+                                  "external",
+                                  "unknown"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "granted",
+                                  "gate",
+                                  "off",
+                                  "unavailable"
+                                ],
+                                "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "kind",
+                              "status"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "requested",
+                        "id",
+                        "label",
+                        "tools"
+                      ]
+                    }
+                  },
+                  "tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "read",
+                            "write",
+                            "destructive",
+                            "external",
+                            "unknown"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "granted",
+                            "gate",
+                            "off",
+                            "unavailable"
+                          ],
+                          "description": "`granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool."
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "kind",
+                        "status"
+                      ]
+                    }
+                  },
+                  "read": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "write": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "connectors",
+                  "tools",
+                  "read",
+                  "write"
+                ],
+                "description": "Proposals and amendments: what the authority really resolves to for the agent."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "change"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ChangePayload"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "title",
+              "body",
+              "agentId",
+              "sessionId",
+              "programId",
+              "waitId",
+              "decidedBy",
+              "decidedAt",
+              "decisionNote",
+              "outcome",
+              "createdAt",
+              "kind",
+              "payload"
+            ]
           }
         ]
       },
@@ -11199,12 +11416,119 @@
           "why"
         ]
       },
+      "ChangePayload": {
+        "type": "object",
+        "properties": {
+          "programId": {
+            "type": "string"
+          },
+          "programName": {
+            "type": "string",
+            "description": "The name when it was proposed."
+          },
+          "patch": {
+            "$ref": "#/components/schemas/ProgramChange"
+          },
+          "before": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProgramChange"
+              },
+              {
+                "description": "The same fields when proposed; approving fails when the program differs now."
+              }
+            ]
+          },
+          "diff": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "before": {
+                  "type": "string"
+                },
+                "after": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "field",
+                "label",
+                "before",
+                "after"
+              ]
+            },
+            "description": "Readable before and after per field."
+          }
+        },
+        "required": [
+          "programId",
+          "programName",
+          "patch",
+          "before",
+          "diff"
+        ]
+      },
+      "ProgramChange": {
+        "type": "object",
+        "properties": {
+          "brief": {
+            "type": "string"
+          },
+          "authority": {
+            "$ref": "#/components/schemas/ProgramAuthority"
+          },
+          "forbidden": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "escalation": {
+            "type": "string"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/ProgramTrigger"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/ProgramBudget"
+          },
+          "deliverables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Deliverable"
+            }
+          },
+          "report": {
+            "type": "string",
+            "enum": [
+              "digest",
+              "task",
+              "silent"
+            ]
+          }
+        },
+        "description": "What approving applies: only the fields that differ (authority and budget are the full result)."
+      },
       "DecisionKind": {
         "type": "string",
         "enum": [
           "proposal",
           "escalation",
-          "amendment"
+          "amendment",
+          "change"
         ]
       },
       "DecisionApprove": {

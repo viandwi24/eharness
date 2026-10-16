@@ -130,12 +130,34 @@ const proposeSchema = z.object({
     .string()
     .optional()
     .describe('Required: slug of the agent that will run the plan (see your team).'),
-  name: z.string().min(1).max(120).describe('Name of the program.'),
+  program: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      'CHANGE an existing program of the agent: its id or exact name. Then every other field is a patch: give only what changes, never `name`. Absent: a new program (`name` and `brief` required).',
+    ),
+  name: z
+    .string()
+    .min(1)
+    .max(120)
+    .optional()
+    .describe('Name of the NEW program (required unless `program` is set).'),
   brief: z
     .string()
     .min(1)
     .max(MAX_BRIEF_CHARS)
-    .describe('What the agent does, step by step, and where it saves results.'),
+    .optional()
+    .describe(
+      'What the agent does, step by step, and where it saves results (required for a new program; with `program`, the new brief).',
+    ),
+  addAuthority: authoritySchema
+    .optional()
+    .describe('Change only: authority to ADD to the program (kept as is otherwise).'),
+  removeAuthority: authoritySchema
+    .optional()
+    .describe('Change only: exact authority entries to REMOVE from the program.'),
   authority: authoritySchema
     .optional()
     .describe('Exactly what the run may use. Least authority that works.'),
@@ -158,9 +180,12 @@ const proposeSchema = z.object({
           .describe('IANA zone of the cron. Leave it out to use the team timezone.'),
       }),
       z.object({ everyMinutes: z.number().int().min(1) }),
+      z.literal('manual').describe('Change only: stop the schedule; run only by hand.'),
     ])
     .optional()
-    .describe('Standing programs only: when it runs. Absent: runs only when the client says.'),
+    .describe(
+      'Standing programs only: when it runs. Absent: runs only when the client says (a new program) or stays as is (a change).',
+    ),
   report: z.enum(['digest', 'task', 'silent']).optional(),
   deliverables: z
     .array(
@@ -299,6 +324,9 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
                 body: input.body,
                 runner: input.agent,
                 runOnce: input.runOnce ?? false,
+                target: input.program,
+                addAuthority: input.addAuthority,
+                removeAuthority: input.removeAuthority,
                 program: {
                   name: input.name,
                   brief: input.brief,
@@ -311,26 +339,31 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
                   deliverables: input.deliverables,
                   ...(input.schedule === undefined
                     ? {}
-                    : {
-                        trigger: {
-                          kind: 'schedule' as const,
-                          spec:
-                            'cron' in input.schedule
-                              ? {
-                                  kind: 'cron' as const,
-                                  expr: input.schedule.cron,
-                                  tz: input.schedule.timezone ?? options.timezone?.() ?? 'UTC',
-                                }
-                              : {
-                                  kind: 'every' as const,
-                                  everyMs: input.schedule.everyMinutes * 60_000,
-                                },
-                        },
-                      }),
+                    : input.schedule === 'manual'
+                      ? { trigger: { kind: 'manual' as const } }
+                      : {
+                          trigger: {
+                            kind: 'schedule' as const,
+                            spec:
+                              'cron' in input.schedule
+                                ? {
+                                    kind: 'cron' as const,
+                                    expr: input.schedule.cron,
+                                    tz: input.schedule.timezone ?? options.timezone?.() ?? 'UTC',
+                                  }
+                                : {
+                                    kind: 'every' as const,
+                                    everyMs: input.schedule.everyMinutes * 60_000,
+                                  },
+                          },
+                        }),
                 },
               })
               if (duplicate === true) {
                 return `A proposal like this is already open: ${id}. It was not created again; it waits for the client in the Decision Center. Do not propose it again: tell the client it is there, and carry on with other work.`
+              }
+              if (input.program !== undefined) {
+                return `Change proposal ${id} is waiting for the client in the Decision Center. The program is unchanged until the client approves; do not act as if it were changed. Tell the client what you proposed and carry on with other work.`
               }
               return `Proposal ${id} is waiting for the client in the Decision Center. Nothing started and nothing is granted yet; do not act as if it were approved. Tell the client what you proposed and carry on with other work.`
             } catch (error) {

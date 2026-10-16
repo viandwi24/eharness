@@ -242,26 +242,24 @@ export interface ProgramNoteInput {
 }
 
 /**
- * `program_note`: the standing agreements of a program, from a chat. Only `notes` change: never
- * the authority, gates, schedule or budget (those need a proposal or an amendment). Errors are
- * readable text for the model.
+ * One program by id, exact name or partial name (case-insensitive), or by the id of a proposal that
+ * became a program. `agentId` limits the search to the programs of that agent (a program of
+ * another agent is named in the refusal). Errors are readable text for the model.
  */
-export function programNoteAction(deps: Deps, input: ProgramNoteInput): string {
-  const all = deps.programs.list({})
-  const render = (p: Program): string =>
-    p.notes.length === 0
-      ? `Program "${p.name}" (${p.id}) has no standing agreements.`
-      : `Standing agreements of "${p.name}" (${p.id}):\n${p.notes.map((n, i) => `${i + 1}. ${n}`).join('\n')}`
-  const ref = input.program?.trim() ?? ''
-  if (ref === '') {
-    if (input.action !== 'list') {
-      throw invalid('`program` (name or id) is required to add or remove a note', 'INVALID_NOTE')
-    }
-    return all.length === 0 ? 'There are no programs.' : all.map(render).join('\n\n')
-  }
+export function findProgram(
+  deps: Deps,
+  ref: string,
+  opts: { agentId?: string | undefined; ambiguousCode?: string; exact?: boolean } = {},
+): Program {
+  const everything = deps.programs.list({})
+  const all =
+    opts.agentId === undefined ? everything : everything.filter((p) => p.agentId === opts.agentId)
   const lower = ref.toLowerCase()
   const exact = all.filter((p) => p.id === ref || p.name.toLowerCase() === lower)
-  let found = exact.length > 0 ? exact : all.filter((p) => p.name.toLowerCase().includes(lower))
+  let found =
+    exact.length > 0 || opts.exact === true
+      ? exact
+      : all.filter((p) => p.name.toLowerCase().includes(lower))
   if (found.length === 0) {
     // the id of a proposal that became a program (the agent saw the proposal id, not the program id)
     const proposal = deps.decisions.get(ref)
@@ -284,16 +282,46 @@ export function programNoteAction(deps: Deps, input: ProgramNoteInput): string {
       }
     }
   }
+  if (found.length === 0 && opts.agentId !== undefined) {
+    const other = everything.find((p) => p.id === ref || p.name.toLowerCase() === lower)
+    if (other !== undefined) {
+      throw invalid(
+        `"${ref}" is a program of another agent (${other.agentId}); pass that agent as \`agent\`.`,
+        'INVALID_PROGRAM',
+      )
+    }
+  }
   if (found.length === 0) {
     throw notFound('program', `${ref} (programs: ${all.map((p) => p.name).join(', ') || 'none'})`)
   }
   if (found.length > 1) {
     throw invalid(
       `"${ref}" matches several programs: ${found.map((p) => `${p.name} (${p.id})`).join(', ')}. Use the id.`,
-      'INVALID_NOTE',
+      opts.ambiguousCode ?? 'INVALID_PROGRAM',
     )
   }
-  const program = found[0] as Program
+  return found[0] as Program
+}
+
+/**
+ * `program_note`: the standing agreements of a program, from a chat. Only `notes` change: never
+ * the authority, gates, schedule or budget (those need a proposal or an amendment). Errors are
+ * readable text for the model.
+ */
+export function programNoteAction(deps: Deps, input: ProgramNoteInput): string {
+  const all = deps.programs.list({})
+  const render = (p: Program): string =>
+    p.notes.length === 0
+      ? `Program "${p.name}" (${p.id}) has no standing agreements.`
+      : `Standing agreements of "${p.name}" (${p.id}):\n${p.notes.map((n, i) => `${i + 1}. ${n}`).join('\n')}`
+  const ref = input.program?.trim() ?? ''
+  if (ref === '') {
+    if (input.action !== 'list') {
+      throw invalid('`program` (name or id) is required to add or remove a note', 'INVALID_NOTE')
+    }
+    return all.length === 0 ? 'There are no programs.' : all.map(render).join('\n\n')
+  }
+  const program = findProgram(deps, ref, { ambiguousCode: 'INVALID_NOTE' })
   if (input.action === 'list') return render(program)
   const text = input.text?.trim() ?? ''
   if (text === '') throw invalid('`text` is required', 'INVALID_NOTE')

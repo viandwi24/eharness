@@ -18744,6 +18744,57 @@ export interface components {
             /** @enum {string} */
             kind: "amendment";
             payload: components["schemas"]["AmendmentPayload"];
+        } | {
+            id: string;
+            status: components["schemas"]["DecisionStatus"];
+            title: string;
+            /** @description Markdown: goal, plan steps, why, evidence links. */
+            body: string;
+            /** @description The agent that asks. */
+            agentId: string;
+            /** @description The session it came from. */
+            sessionId: string | null;
+            programId: string | null;
+            /** @description The external wait the session is parked on. */
+            waitId: string | null;
+            decidedBy: string | null;
+            decidedAt: number | null;
+            decisionNote: string | null;
+            outcome: components["schemas"]["DecisionOutcome"];
+            createdAt: number;
+            /** @description Proposals and amendments: what the authority really resolves to for the agent. */
+            grant?: {
+                connectors: {
+                    requested: string;
+                    id: string | null;
+                    label: string;
+                    tools: {
+                        name: string;
+                        /** @enum {string} */
+                        kind: "read" | "write" | "destructive" | "external" | "unknown";
+                        /**
+                         * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                         * @enum {string}
+                         */
+                        status: "granted" | "gate" | "off" | "unavailable";
+                    }[];
+                }[];
+                tools: {
+                    name: string;
+                    /** @enum {string} */
+                    kind: "read" | "write" | "destructive" | "external" | "unknown";
+                    /**
+                     * @description `granted`: usable; `gate`: a write of a third-party connector, refused until the client decides; `off`: connector mode Off; `unavailable`: the agent has no such tool.
+                     * @enum {string}
+                     */
+                    status: "granted" | "gate" | "off" | "unavailable";
+                }[];
+                read: string[];
+                write: string[];
+            } | null;
+            /** @enum {string} */
+            kind: "change";
+            payload: components["schemas"]["ChangePayload"];
         };
         /** @enum {string} */
         DecisionStatus: "open" | "approved" | "rejected" | "expired";
@@ -18806,8 +18857,35 @@ export interface components {
                 denials: number;
             };
         };
+        ChangePayload: {
+            programId: string;
+            /** @description The name when it was proposed. */
+            programName: string;
+            patch: components["schemas"]["ProgramChange"];
+            before: components["schemas"]["ProgramChange"] & unknown;
+            /** @description Readable before and after per field. */
+            diff: {
+                field: string;
+                label: string;
+                before: string;
+                after: string;
+            }[];
+        };
+        /** @description What approving applies: only the fields that differ (authority and budget are the full result). */
+        ProgramChange: {
+            brief?: string;
+            authority?: components["schemas"]["ProgramAuthority"];
+            forbidden?: string[];
+            gates?: string[];
+            escalation?: string;
+            trigger?: components["schemas"]["ProgramTrigger"];
+            budget?: components["schemas"]["ProgramBudget"];
+            deliverables?: components["schemas"]["Deliverable"][];
+            /** @enum {string} */
+            report?: "digest" | "task" | "silent";
+        };
         /** @enum {string} */
-        DecisionKind: "proposal" | "escalation" | "amendment";
+        DecisionKind: "proposal" | "escalation" | "amendment" | "change";
         DecisionApprove: {
             /** @description Shown to the agent as the note of the answer. */
             note?: string;

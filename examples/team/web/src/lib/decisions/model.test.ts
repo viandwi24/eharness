@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { emptyProgramForm } from '../programs/form';
-import { answerToast, authorityLines, decisionText, type Decision, editBody, grantLines, groupDecisions, optionsOf, outcomeLine, statusBadge, triggerLine } from './model';
+import { answerToast, authorityLines, decisionText, type Decision, editBody, grantLines, groupDecisions, changeRows, addedAuthorityLines, optionsOf, outcomeLine, statusBadge, triggerLine } from './model';
 
 const authority = { tools: ['web_fetch'], connectors: ['github'], read: ['/library/in/**'], write: ['/library/out/**'] };
 const program = {
@@ -19,6 +19,43 @@ const base = { id: 'd', status: 'open' as const, title: 'T', body: '', agentId: 
 const proposal = (runOnce: boolean): Decision => ({ ...base, kind: 'proposal', payload: { program, runOnce } });
 const escalation = (options: string[] = []): Decision => ({ ...base, kind: 'escalation', payload: { question: 'q', options, source: 'agent' } });
 const amendment: Decision = { ...base, kind: 'amendment', payload: { authority, why: 'w' } };
+
+const change: Decision = {
+	...base,
+	kind: 'change',
+	programId: 'p1',
+	payload: {
+		programId: 'p1',
+		programName: 'Weekly review',
+		before: { authority: { tools: ['read_file'], connectors: [], read: ['/library/**'], write: [] }, gates: [] },
+		patch: { authority: { tools: ['read_file', 'web_fetch'], connectors: [], read: ['/library/**'], write: [] }, gates: ['sending email'] },
+		diff: [
+			{ field: 'authority', label: 'Authority', before: 'use read_file; read /library/**', after: 'use read_file; use web_fetch; read /library/**' },
+			{ field: 'gates', label: 'Still asks the client', before: '(none)', after: 'sending email' }
+		]
+	}
+};
+
+describe('change decisions', () => {
+	test('the diff is one row per field, before and after', () => {
+		expect(changeRows((change as Extract<Decision, { kind: 'change' }>).payload)).toEqual([
+			{ label: 'Authority', before: 'use read_file; read /library/**', after: 'use read_file; use web_fetch; read /library/**' },
+			{ label: 'Still asks the client', before: '(none)', after: 'sending email' }
+		]);
+	});
+
+	test('only what is added is listed as newly allowed', () => {
+		expect(addedAuthorityLines((change as Extract<Decision, { kind: 'change' }>).payload)).toEqual(['Can open web pages']);
+		expect(grantLines(change)).toEqual(['Can open web pages']);
+	});
+
+	test('text, grouping and outcome of a change', () => {
+		expect(decisionText(change, 'Lead')).toBe('Lead proposes a change to Weekly review');
+		expect(groupDecisions([proposal(false), change]).map((g) => g.kind)).toEqual(['change', 'proposal']);
+		expect(outcomeLine({ ...change, status: 'approved' })).toContain('applied to the program');
+		expect(outcomeLine({ ...change, status: 'rejected' })).toContain('not changed');
+	});
+});
 
 describe('decision model', () => {
 	test('the toast names the chosen option', () => {

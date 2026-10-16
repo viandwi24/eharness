@@ -7,7 +7,7 @@ import {
 } from './programs.ts'
 import { DeliverableSchema } from './tasks.ts'
 
-const KINDS = ['proposal', 'escalation', 'amendment'] as const
+const KINDS = ['proposal', 'escalation', 'amendment', 'change'] as const
 const STATUSES = ['open', 'approved', 'rejected', 'expired'] as const
 
 export const DecisionKindSchema = z.enum(KINDS).openapi('DecisionKind')
@@ -90,6 +90,44 @@ export const AmendmentPayloadSchema = z
   })
   .openapi('AmendmentPayload')
 
+const ChangeSnapshotSchema = z
+  .object({
+    brief: z.string().optional(),
+    authority: ProgramAuthoritySchema.optional(),
+    forbidden: z.array(z.string()).optional(),
+    gates: z.array(z.string()).optional(),
+    escalation: z.string().optional(),
+    trigger: ProgramTriggerSchema.optional(),
+    budget: ProgramBudgetSchema.optional(),
+    deliverables: z.array(DeliverableSchema).optional(),
+    report: ReportSchema.optional(),
+  })
+  .openapi('ProgramChange')
+
+export const ChangePayloadSchema = z
+  .object({
+    programId: z.string(),
+    programName: z.string().openapi({ description: 'The name when it was proposed.' }),
+    patch: ChangeSnapshotSchema.openapi({
+      description:
+        'What approving applies: only the fields that differ (authority and budget are the full result).',
+    }),
+    before: ChangeSnapshotSchema.openapi({
+      description: 'The same fields when proposed; approving fails when the program differs now.',
+    }),
+    diff: z
+      .array(
+        z.object({
+          field: z.string(),
+          label: z.string(),
+          before: z.string(),
+          after: z.string(),
+        }),
+      )
+      .openapi({ description: 'Readable before and after per field.' }),
+  })
+  .openapi('ChangePayload')
+
 export const DecisionOutcomeSchema = z
   .object({
     decision: z.string().openapi({ description: '`approved`, `rejected` or the option picked.' }),
@@ -128,6 +166,7 @@ export const DecisionSchema = z
     z.object({ ...base, kind: z.literal('proposal'), payload: ProposalPayloadSchema }),
     z.object({ ...base, kind: z.literal('escalation'), payload: EscalationPayloadSchema }),
     z.object({ ...base, kind: z.literal('amendment'), payload: AmendmentPayloadSchema }),
+    z.object({ ...base, kind: z.literal('change'), payload: ChangePayloadSchema }),
   ])
   .openapi('Decision')
 

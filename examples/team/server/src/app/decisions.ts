@@ -22,6 +22,12 @@ import {
   answeredByText,
   attributionLine,
   authorityLines,
+  type ChangeField,
+  type ChangePayload,
+  changeBody,
+  changedAuthority,
+  changedFields,
+  changeSnapshot,
   checkBody,
   checkNote,
   checkTitle,
@@ -31,21 +37,30 @@ import {
   type DecisionKind,
   type DecisionOutcome,
   type DecisionStatus,
+  diffLines,
+  duplicateProgramText,
   type EscalationPayload,
   isEmptyAuthority,
   mergeAuthority,
   normalizeAmendmentAuthority,
   normalizeProposedProgram,
+  type ProgramChange,
   type ProposalPayload,
   type ProposedProgramInput,
   programOfProposal,
   reportBody,
   withoutCenterHints,
 } from '../domain/decisions.ts'
-import { type DeliverableCheck, deliverableLine } from '../domain/deliverables.ts'
+import {
+  type DeliverableCheck,
+  deliverableLine,
+  normalizeDeliverables,
+} from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import { jaccard, requestTokens } from '../domain/heartbeat.ts'
 import {
+  checkProgramFields,
+  cleanList,
   type EffectiveGrant,
   normalizeAuthority,
   type Program,
@@ -59,6 +74,7 @@ import {
   authorityGrant,
   createProgram,
   enforceAuthority,
+  findProgram,
   getProgram,
   runProgramNow,
   updateProgram,
@@ -117,8 +133,19 @@ export interface ProposeInput {
   body?: string | undefined
   /** The agent that will run the program (id or slug); default: the asker. */
   runner?: string | undefined
-  program: Omit<ProposedProgramInput, 'agentId'>
+  program: Omit<ProposedProgramInput, 'agentId' | 'name' | 'brief'> & {
+    name?: string | undefined
+    brief?: string | undefined
+  }
   runOnce: boolean
+  /**
+   * Set: a CHANGE to this existing program (id or exact name); `program` is then a partial patch.
+   * Absent: a new program (`name` and `brief` are required).
+   */
+  target?: string | undefined
+  /** Change only: authority to add to / remove from the program (exact entries). */
+  addAuthority?: Partial<ProgramAuthority> | undefined
+  removeAuthority?: Partial<ProgramAuthority> | undefined
 }
 
 /** Markdown of a proposal whose agent gave no body: the brief and what it asks for. */
@@ -149,7 +176,14 @@ export function createProposal(deps: Deps, input: ProposeInput): Decision {
   const asker = getAgent(deps, input.agentId)
   const runner = getAgent(deps, input.runner ?? asker.id)
   if (runner.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
-  const parsed = normalizeProposedProgram({ ...input.program, agentId: runner.id })
+  const { name, brief } = input.program
+  if (name === undefined || name.trim() === '' || brief === undefined || brief.trim() === '') {
+    throw invalid(
+      '`name` and `brief` are required for a new program. To change an existing one, pass `program`.',
+      'INVALID_PROPOSAL',
+    )
+  }
+  const parsed = normalizeProposedProgram({ ...input.program, name, brief, agentId: runner.id })
   // unambiguous connector names are repaired, phantom ones are refused with the valid options
   const program = { ...parsed, authority: enforceAuthority(deps, runner.id, parsed.authority) }
   if (program.trigger.kind === 'schedule') deps.schedule.validate(program.trigger.spec)
@@ -196,6 +230,129 @@ export function similarOpenProposal(
     )
 }
 
+const CHANGE_TITLE = /^\s*(amendment|change|perubahan|ubah)\b/i
+const sameName = (a: string, b: string): boolean =>
+  a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/**
+ * A new proposal must not create a second program for something that exists: a program of the same
+ * agent with the same name, or a title like "Amendment: <program>" that names one. The model is
+ * told to propose a change to that program instead.
+ */
+function refuseDuplicateProgram(deps: Deps, agentId: string, title: string, name: string): void {
+  const mine = deps.programs.list({}).filter((p) => p.agentId === agentId)
+  const same = mine.find((p) => name.trim() !== '' && sameName(p.name, name))
+  const named = CHANGE_TITLE.test(title)
+    ? mine.find(
+        (p) =>
+          p.name.trim().length >= 3 && title.toLowerCase().includes(p.name.trim().toLowerCase()),
+      )
+    : undefined
+  const found = same ?? named
+  if (found !== undefined)
+    throw invalid(duplicateProgramText(found.name, found.id), 'PROGRAM_EXISTS')
+}
+
+/** What a change proposal refuses to carry (it is a patch, never a new program or a move). */
+function checkChangeInput(input: ProposeInput, program: Program): void {
+  if (input.program.name !== undefined && !sameName(input.program.name, program.name)) {
+    throw invalid(
+      `A change cannot rename a program (it is "${program.name}"): leave \`name\` out.`,
+      'INVALID_PROPOSAL',
+    )
+  }
+  if (input.program.authority !== undefined) {
+    throw invalid(
+      'For a change use `addAuthority` and `removeAuthority` (what to add, what to remove), not `authority`.',
+      'INVALID_PROPOSAL',
+    )
+  }
+}
+
+/**
+ * `propose_plan` with `program`: a partial patch to an existing program of the runner. The patch
+ * is checked like program creation, the owner never changes, and the readable before and after is
+ * stored with the proposal. Approving applies it to that program (`approveChange`).
+ */
+function proposeChange(
+  deps: Deps,
+  input: ProposeInput,
+  runner: { id: string },
+): { decision: Decision; duplicate: boolean } {
+  const target = (input.target ?? '').trim()
+  const program = findProgram(deps, target, { agentId: runner.id, exact: true })
+  checkChangeInput(input, program)
+  const before = changeSnapshot(program)
+  const p = input.program
+  const after: ProgramChange = {}
+  if (p.brief !== undefined) after.brief = p.brief.trim()
+  if (input.addAuthority !== undefined || input.removeAuthority !== undefined) {
+    after.authority = changedAuthority(program.authority, {
+      add: input.addAuthority,
+      remove: input.removeAuthority,
+    })
+  }
+  if (p.gates !== undefined) after.gates = cleanList(p.gates)
+  if (p.forbidden !== undefined) after.forbidden = cleanList(p.forbidden)
+  if (p.escalation !== undefined) after.escalation = p.escalation.trim()
+  if (p.trigger !== undefined) after.trigger = p.trigger
+  if (p.budget !== undefined) {
+    after.budget = {
+      ...program.budget,
+      ...(p.budget.perRunUsd === undefined ? {} : { perRunUsd: p.budget.perRunUsd }),
+      ...(p.budget.perDayUsd === undefined ? {} : { perDayUsd: p.budget.perDayUsd }),
+    }
+  }
+  if (p.deliverables !== undefined) after.deliverables = normalizeDeliverables(p.deliverables)
+  if (p.report !== undefined) after.report = p.report
+  // the same checks as creating a program; the owner agent is not part of a patch
+  checkProgramFields(after)
+  if (after.authority !== undefined) {
+    after.authority = enforceAuthority(deps, program.agentId, normalizeAuthority(after.authority))
+  }
+  if (after.trigger?.kind === 'schedule') deps.schedule.validate(after.trigger.spec)
+  const fields = changedFields(before, after)
+  if (fields.length === 0) {
+    throw invalid(
+      `Nothing to change: "${program.name}" already is as proposed (or no field to change was given).`,
+      'INVALID_PROPOSAL',
+    )
+  }
+  const patch = changeSnapshot(after as Parameters<typeof changeSnapshot>[0], fields)
+  const kept = changeSnapshot(program, fields)
+  const diff = diffLines(kept, patch)
+  const twin = deps.decisions
+    .list({ status: 'open', kind: 'change', limit: 200 })
+    .find(
+      (d) =>
+        d.kind === 'change' &&
+        d.payload.programId === program.id &&
+        JSON.stringify(d.payload.patch) === JSON.stringify(patch),
+    )
+  if (twin !== undefined) return { decision: twin, duplicate: true }
+  const payload: ChangePayload = {
+    programId: program.id,
+    programName: program.name,
+    patch,
+    before: kept,
+    diff,
+  }
+  const d = deps.decisions.insert({
+    id: deps.ids.next(),
+    kind: 'change',
+    title: checkTitle(`Change to program ${program.name}`),
+    body: withoutCenterHints(checkBody(input.body)) || changeBody(program.name, diff),
+    agentId: getAgent(deps, input.agentId).id,
+    sessionId: input.sessionId,
+    programId: program.id,
+    payload,
+    waitId: null,
+    createdAt: deps.clock.now(),
+  })
+  changed(deps, d, 'created')
+  return { decision: d, duplicate: false }
+}
+
 /**
  * `propose_plan` as the model calls it. The agent that runs the plan must be named (a missing
  * one used to default to the proposer, the lead, and put work on the wrong desk), and a proposal
@@ -210,6 +367,10 @@ export function proposeFromAgent(
     .list()
     .map((a) => `${a.slug} (${a.name})`)
     .join(', ')
+  const changing = input.target !== undefined && input.target.trim() !== ''
+  if (changing && (input.runner === undefined || input.runner.trim() === '')) {
+    return proposeChange(deps, input, getAgent(deps, input.agentId))
+  }
   if (input.runner === undefined || input.runner.trim() === '') {
     throw invalid(
       `\`agent\` is required: the slug of the agent that will run the plan. Agents: ${roster}.`,
@@ -223,10 +384,12 @@ export function proposeFromAgent(
       'INVALID_PROPOSAL',
     )
   }
+  if (changing) return proposeChange(deps, input, runner)
+  refuseDuplicateProgram(deps, runner.id, input.title, input.program.name ?? '')
   const existing = similarOpenProposal(deps, runner.id, {
     title: input.title,
-    name: input.program.name,
-    brief: input.program.brief,
+    name: input.program.name ?? '',
+    brief: input.program.brief ?? '',
   })
   if (existing !== undefined) return { decision: existing, duplicate: true }
   return { decision: createProposal(deps, { ...input, runner: runner.id }), duplicate: false }
@@ -569,6 +732,7 @@ export async function approveDecision(
   const note = checkNote(input.note)
 
   if (d.kind === 'proposal') return approveProposal(deps, d, note, input.edit)
+  if (d.kind === 'change') return approveChange(deps, d, note)
 
   if (d.kind === 'escalation') {
     const options = d.payload.options
@@ -652,7 +816,7 @@ export async function approveDecision(
  */
 async function tellProposer(
   deps: Deps,
-  d: Extract<Decision, { kind: 'proposal' }>,
+  d: Extract<Decision, { kind: 'proposal' | 'change' }>,
   outcome: 'approved' | 'rejected',
   note: string,
   programId?: string,
@@ -664,9 +828,13 @@ async function tellProposer(
     `The client ${outcome} your proposal "${d.title}".`,
     note === '' ? '' : `The client's note (their own words): ${note}`,
     outcome === 'approved' && programId !== undefined
-      ? 'It is now a program; follow it on the Programs page.'
+      ? d.kind === 'change'
+        ? 'The change was applied to the program; it keeps its id, schedule and notes.'
+        : 'It is now a program; follow it on the Programs page.'
       : '',
-    outcome === 'rejected' ? 'Nothing was created. Do not propose it again unless asked.' : '',
+    outcome === 'rejected'
+      ? `${d.kind === 'change' ? 'Nothing was changed.' : 'Nothing was created.'} Do not propose it again unless asked.`
+      : '',
   ]
     .filter(Boolean)
     .join('\n')
@@ -698,6 +866,17 @@ async function approveProposal(
   const program = { ...parsed, authority: enforceAuthority(deps, runner.id, parsed.authority) }
   if (program.trigger.kind === 'schedule') deps.schedule.validate(program.trigger.spec)
   const payload: ProposalPayload = { program, runOnce }
+  // defense in depth: a second program with the name of an existing one of this agent is the
+  // "amendment as a new program" mistake; the owner reads why and can edit the name or reject
+  const twin = deps.programs
+    .list({})
+    .find((p) => p.agentId === runner.id && sameName(p.name, program.name))
+  if (twin !== undefined) {
+    throw conflict(
+      `A program named "${twin.name}" already exists (id ${twin.id}) for this agent, so approving would create a duplicate. Rename the program (Edit & approve) or reject this proposal and ask the agent to propose a change to the existing program.`,
+      'PROGRAM_EXISTS',
+    )
+  }
 
   let next = claim(deps, d, 'approved', note, { payload, outcome: { decision: 'approved' } })
   const draft = programOfProposal(payload)
@@ -733,6 +912,51 @@ async function approveProposal(
   return next
 }
 
+/**
+ * Approving a change applies its patch to the program it names: same id, schedule, notes and runs,
+ * through the ordinary update path (authority repair and validation included). It fails with a
+ * readable reason when the program was deleted, or changed in the fields the patch touches, since
+ * it was proposed (the decision stays open: reject it and ask for a new one).
+ */
+async function approveChange(
+  deps: Deps,
+  d: Extract<Decision, { kind: 'change' }>,
+  note: string,
+): Promise<Decision> {
+  const { programId, programName, patch, before } = d.payload
+  const program = deps.programs.get(programId)
+  if (program === undefined) {
+    throw conflict(
+      `The program "${programName}" was deleted after this change was proposed: reject it.`,
+      'PROGRAM_DELETED',
+    )
+  }
+  const fields = Object.keys(patch) as ChangeField[]
+  const now = changeSnapshot(program, fields)
+  const moved = fields.filter((f) => JSON.stringify(now[f]) !== JSON.stringify(before[f]))
+  if (moved.length > 0) {
+    throw conflict(
+      `The program "${program.name}" changed after this was proposed (${moved.join(', ')}): reject this change and ask the agent to propose it again.`,
+      'PROGRAM_CHANGED',
+    )
+  }
+  await deps.programRunner.prepare(program.agentId)
+  // validated before the claim so a bad patch leaves the decision open with a clear error
+  checkProgramFields(patch)
+  const next = claim(deps, d, 'approved', note, {
+    outcome: { decision: 'approved', programId: program.id },
+  })
+  try {
+    updateProgram(deps, program.id, patch)
+  } catch (error) {
+    deps.decisions.reopen(d.id)
+    throw error
+  }
+  changed(deps, next, 'decided')
+  await tellProposer(deps, d, 'approved', note, program.id)
+  return next
+}
+
 export async function rejectDecision(
   deps: Deps,
   id: string,
@@ -743,7 +967,8 @@ export async function rejectDecision(
   const note = checkNote(input.note)
   if (d.kind === 'escalation') expireIfStale(deps, d)
   let next: Decision
-  if (d.kind !== 'proposal' && isParked(d)) {
+  const isProposalLike = d.kind === 'proposal' || d.kind === 'change'
+  if (!isProposalLike && isParked(d)) {
     next = await answerParked(deps, d, {
       status: 'rejected',
       note,
@@ -752,8 +977,8 @@ export async function rejectDecision(
     })
   } else {
     next = claim(deps, d, 'rejected', note, { outcome: { decision: 'rejected' } })
-    if (d.kind !== 'proposal') await deliver(deps, next, answerOf('rejected', note, input.by))
-    else await tellProposer(deps, d, 'rejected', note)
+    if (d.kind === 'proposal' || d.kind === 'change') await tellProposer(deps, d, 'rejected', note)
+    else await deliver(deps, next, answerOf('rejected', note, input.by))
   }
   changed(deps, next, 'decided')
   return next
@@ -771,6 +996,12 @@ export async function decisionGrant(deps: Deps, d: Decision): Promise<EffectiveG
         (await authorityGrant(deps, d.payload.program.agentId, d.payload.program.authority))
           ?.grant ?? null
       )
+    }
+    if (d.kind === 'change') {
+      const program = deps.programs.get(d.payload.programId)
+      const authority = d.payload.patch.authority
+      if (program === undefined || authority === undefined) return null
+      return (await authorityGrant(deps, program.agentId, authority))?.grant ?? null
     }
     if (d.kind === 'amendment' && d.programId !== null) {
       const program = deps.programs.get(d.programId)

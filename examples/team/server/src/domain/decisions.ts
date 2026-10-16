@@ -13,10 +13,13 @@
  *  - `amendment`: a program run needs more authority (`request_authority`). Approving widens the
  *    program's authority, and resumes the run like an escalation; rejecting resumes it with the
  *    refusal.
+ *  - `change`: an agent in a chat proposes a partial patch to an EXISTING program (`propose_plan`
+ *    with `program`). Approving applies the patch to that program (same id, schedule, notes and
+ *    runs); rejecting changes nothing. The proposing session is not parked.
  *
  * Tool approvals are not decisions: they stay inline in the chat of the session (decision D2).
  */
-import { type Deliverable, normalizeDeliverables } from './deliverables.ts'
+import { type Deliverable, deliverableLine, normalizeDeliverables } from './deliverables.ts'
 import { invalid } from './errors.ts'
 import {
   checkProgramFields,
@@ -31,7 +34,7 @@ import {
 } from './programs.ts'
 import type { TaskReport } from './tasks.ts'
 
-export const DECISION_KINDS = ['proposal', 'escalation', 'amendment'] as const
+export const DECISION_KINDS = ['proposal', 'escalation', 'amendment', 'change'] as const
 export type DecisionKind = (typeof DECISION_KINDS)[number]
 
 export const DECISION_STATUSES = ['open', 'approved', 'rejected', 'expired'] as const
@@ -88,6 +91,54 @@ export interface AmendmentPayload {
   suggestion?: { tool: string; runs: number; denials: number }
 }
 
+/** The fields of an existing program a change proposal may touch (never the name or the owner). */
+export interface ProgramChange {
+  brief?: string
+  /** The full resulting authority (the proposal's add/remove lists already applied). */
+  authority?: ProgramAuthority
+  forbidden?: string[]
+  gates?: string[]
+  escalation?: string
+  trigger?: ProgramTrigger
+  /** The full resulting budget. */
+  budget?: ProgramBudget
+  deliverables?: Deliverable[]
+  report?: ProgramReportMode
+}
+
+export const CHANGE_FIELDS = [
+  'brief',
+  'authority',
+  'forbidden',
+  'gates',
+  'escalation',
+  'trigger',
+  'budget',
+  'deliverables',
+  'report',
+] as const satisfies readonly (keyof ProgramChange)[]
+export type ChangeField = (typeof CHANGE_FIELDS)[number]
+
+/** One field of a change as a person reads it: before and after, in words. */
+export interface ChangeLine {
+  field: ChangeField
+  label: string
+  before: string
+  after: string
+}
+
+export interface ChangePayload {
+  programId: string
+  /** The name of the program when proposed (the card still reads right if it is renamed). */
+  programName: string
+  /** What the approval applies: only the fields that differ from `before`. */
+  patch: ProgramChange
+  /** The same fields as they were when proposed; approving fails when the program differs now. */
+  before: ProgramChange
+  /** Readable before to after per field. */
+  diff: ChangeLine[]
+}
+
 type Base = {
   id: string
   status: DecisionStatus
@@ -114,6 +165,7 @@ export type Decision =
   | (Base & { kind: 'proposal'; payload: ProposalPayload })
   | (Base & { kind: 'escalation'; payload: EscalationPayload })
   | (Base & { kind: 'amendment'; payload: AmendmentPayload })
+  | (Base & { kind: 'change'; payload: ChangePayload })
 
 export interface DecisionOutcome {
   /** `approved`, `rejected`, or the option the client picked. */
@@ -294,6 +346,141 @@ export function normalizeAmendmentAuthority(
   return out
 }
 
+// --- change proposals --------------------------------------------------------------------------
+
+const FIELD_LABELS: Record<ChangeField, string> = {
+  brief: 'Brief',
+  authority: 'Authority',
+  forbidden: 'Forbidden',
+  gates: 'Still asks the client',
+  escalation: 'Escalation',
+  trigger: 'Schedule',
+  budget: 'Budget',
+  deliverables: 'Deliverables',
+  report: 'Report',
+}
+
+const NONE = '(none)'
+const joined = (items: readonly string[]): string => (items.length === 0 ? NONE : items.join('; '))
+const clip = (t: string, max = 300): string => {
+  const one = t.trim().replace(/\s+/g, ' ')
+  return one === '' ? NONE : one.length > max ? `${one.slice(0, max)}...` : one
+}
+
+/** `base` without what `drop` names (exact match per field). */
+export function withoutAuthority(base: ProgramAuthority, drop: ProgramAuthority): ProgramAuthority {
+  const keep = (a: string[], d: string[]): string[] => a.filter((x) => !d.includes(x))
+  return {
+    tools: keep(base.tools, drop.tools),
+    connectors: keep(base.connectors, drop.connectors),
+    read: keep(base.read, drop.read),
+    write: keep(base.write, drop.write),
+  }
+}
+
+/** The authority after a change: `remove` first, then `add` (union, order kept). */
+export function changedAuthority(
+  base: ProgramAuthority,
+  change: {
+    add?: Partial<ProgramAuthority> | undefined
+    remove?: Partial<ProgramAuthority> | undefined
+  },
+): ProgramAuthority {
+  const removed = withoutAuthority(base, normalizeAuthority(change.remove))
+  return mergeAuthority(removed, normalizeAuthority(change.add))
+}
+
+function triggerText(t: ProgramTrigger): string {
+  if (t.kind === 'manual') return 'only when run by hand'
+  if (t.spec.kind === 'cron') return `cron ${t.spec.expr} (${t.spec.tz})`
+  if (t.spec.kind === 'every') return `every ${Math.round(t.spec.everyMs / 60_000)} minutes`
+  return `once at ${new Date(t.spec.at).toISOString()}`
+}
+
+const budgetText = (b: ProgramBudget): string => {
+  const parts: string[] = []
+  if (b.perRunUsd !== null) parts.push(`$${b.perRunUsd} per run`)
+  if (b.perDayUsd !== null) parts.push(`$${b.perDayUsd} per day`)
+  if (b.maxOutputTokens !== null && b.maxOutputTokens !== undefined) {
+    parts.push(`${b.maxOutputTokens} output tokens per call`)
+  }
+  return parts.length === 0 ? 'no limit' : parts.join(', ')
+}
+
+function fieldText(field: ChangeField, c: ProgramChange): string {
+  switch (field) {
+    case 'brief':
+      return clip(c.brief ?? '')
+    case 'authority':
+      return joined(authorityLines(c.authority ?? normalizeAuthority(undefined)))
+    case 'forbidden':
+      return joined(c.forbidden ?? [])
+    case 'gates':
+      return joined(c.gates ?? [])
+    case 'escalation':
+      return clip(c.escalation ?? '')
+    case 'trigger':
+      return c.trigger === undefined ? NONE : triggerText(c.trigger)
+    case 'budget':
+      return c.budget === undefined ? NONE : budgetText(c.budget)
+    case 'deliverables':
+      return joined((c.deliverables ?? []).map((d) => deliverableLine(d)))
+    case 'report':
+      return c.report ?? NONE
+  }
+}
+
+/** Only the fields of `after` that really differ from `before`. */
+export function changedFields(before: ProgramChange, after: ProgramChange): ChangeField[] {
+  return CHANGE_FIELDS.filter(
+    (f) => after[f] !== undefined && JSON.stringify(after[f]) !== JSON.stringify(before[f]),
+  )
+}
+
+/** The readable diff of a change (the card and the markdown body use the same). */
+export function diffLines(before: ProgramChange, patch: ProgramChange): ChangeLine[] {
+  return changedFields(before, patch).map((field) => ({
+    field,
+    label: FIELD_LABELS[field],
+    before: fieldText(field, before),
+    after: fieldText(field, patch),
+  }))
+}
+
+/** The fields of a program that a change touches, as stored. */
+export function changeSnapshot(
+  p: {
+    brief: string
+    authority: ProgramAuthority
+    forbidden: string[]
+    gates: string[]
+    escalation: string
+    trigger: ProgramTrigger
+    budget: ProgramBudget
+    deliverables: Deliverable[]
+    report: ProgramReportMode
+  },
+  fields: readonly ChangeField[] = CHANGE_FIELDS,
+): ProgramChange {
+  const out: Record<string, unknown> = {}
+  for (const f of fields) out[f] = structuredClone(p[f])
+  return out as ProgramChange
+}
+
+/** Markdown body of a change without a pitch from the agent. */
+export function changeBody(programName: string, diff: readonly ChangeLine[]): string {
+  return [
+    `A change to the existing program **${programName}**. Its id, schedule, notes and runs stay.`,
+    '',
+    '## What changes',
+    ...diff.map((l) => `- **${l.label}:** ${l.before} -> ${l.after}`),
+  ].join('\n')
+}
+
+/** The refusal for a new proposal that would create a second program with an existing name. */
+export const duplicateProgramText = (name: string, id: string): string =>
+  `A program named ${name} already exists (id ${id}). To change it, call propose_plan with program: '${id}' and only the fields to change.`
+
 // --- text ---------------------------------------------------------------------------------------
 
 const bullets = (items: readonly string[]): string => items.map((i) => `- ${i}`).join('\n')
@@ -374,14 +561,22 @@ export const REQUEST_AUTHORITY_DESCRIPTION =
   '"rejected" (do not retry; finish what is inside your authority and report what you could not do).'
 
 export const PROPOSE_PLAN_DESCRIPTION =
-  'Propose a plan to the client for approval: a one-off piece of work (`runOnce: true`) or a ' +
-  'standing program (`runOnce: false`, optionally with a schedule). The plan is a program: name, ' +
-  'brief (what to do, step by step), the authority it needs (tools, connectors, library paths), ' +
-  'what still needs a decision (gates), forbidden actions and a budget. `body` is the pitch for ' +
+  'Propose a plan to the client for approval. Two uses. (1) A NEW program: a one-off piece of ' +
+  'work (`runOnce: true`) or a standing program (`runOnce: false`, optionally with a schedule), ' +
+  'with `name`, `brief` (what to do, step by step), the authority it needs (tools, connectors, ' +
+  'library paths), what still needs a decision (gates), forbidden actions and a budget. ' +
+  '(2) A CHANGE to an EXISTING program: pass `program` (its id or exact name) and only the ' +
+  'fields to change (brief, gates, forbidden, escalation, schedule, budget, deliverables, ' +
+  'report, and the authority as `addAuthority` / `removeAuthority` lists). The client sees a ' +
+  'before and after and approving applies it to that same program (id, schedule, notes and runs ' +
+  'stay). NEVER create a second program to amend one: a new proposal whose name is the name of ' +
+  'an existing program is refused. Use `program` for "add web access to the X program", ' +
+  '"change X to run at 9", "tighten the budget of X". For a change, `agent` is optional (the ' +
+  "program's owner) and the program is never moved to another agent. `body` is the pitch for " +
   'the client in markdown: the goal, the steps, why, and links to the evidence (library paths); do ' +
   'not tell the reader where to approve it (the card already is the Decision Center). This is not ' +
   'for reminders ("remind me at 9"): use the `reminder` tool for those. ' +
-  '`agent` (required) is the slug of the agent that will run it. An open proposal that says the ' +
-  'same thing is not created twice: you are told which one exists. This does not start anything and does ' +
-  'not pause you: the client approves, edits or rejects it in the Decision Center. Ask for the ' +
-  'least authority that does the job.'
+  '`agent` (required for a new program) is the slug of the agent that will run it. An open ' +
+  'proposal that says the same thing is not created twice: you are told which one exists. This ' +
+  'does not start anything and does not pause you: the client approves, edits or rejects it in ' +
+  'the Decision Center. Ask for the least authority that does the job.'
