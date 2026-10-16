@@ -15582,7 +15582,7 @@ export interface paths {
                     /** @description Agent id or slug. */
                     agent?: string;
                     severity?: "high" | "medium" | "low";
-                    kind?: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed" | "order-hygiene";
+                    kind?: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed" | "order-hygiene" | "consistency";
                     /** @description `true` also lists dismissed findings. */
                     dismissed?: "true" | "false";
                 };
@@ -19083,10 +19083,10 @@ export interface components {
             urgent: boolean;
             fingerprint: string;
             /**
-             * @description What the beat did about it: noted, reported to the destination of an order, or told the owner (`say` is the old word for report).
+             * @description What the beat did about it: noted, reported to the destination of an order, told the owner, or re-ran a failed run of its own (`retry`, the supervisor duty; `say` is the old word for report).
              * @enum {string}
              */
-            decision?: "note" | "report" | "say" | "escalate";
+            decision?: "note" | "report" | "say" | "escalate" | "retry";
             /** @description One line: why (for the owner to audit). */
             reason?: string;
             /** @description The standing order it is about. */
@@ -20131,7 +20131,7 @@ export interface components {
             /** @description Stable id of the problem: the same problem is the same finding on every scan. */
             fingerprint: string;
             /** @enum {string} */
-            kind: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed" | "order-hygiene";
+            kind: "repeated-denial" | "tool-loop" | "repeated-error" | "approval-waiting" | "token-spike" | "big-output" | "program-run" | "provider-error" | "tools-changed" | "order-hygiene" | "consistency";
             /** @enum {string} */
             severity: "high" | "medium" | "low";
             agentId: string | null;
@@ -20150,6 +20150,16 @@ export interface components {
             explanation: string;
             /** @description What to do about it. */
             fix: string;
+            /** @description Set for kind `consistency`. */
+            consistency?: {
+                /** @description The check: `program-duplicate`, `memory-dead-ref`, ... */
+                kind: string;
+                /** @description A memory finding: the file, relative to its memory root. */
+                memoryPath: string | null;
+                line: number | null;
+                /** @description Ids and paths involved. */
+                refs: string[];
+            } | null;
             dismissed: boolean;
             dismissedAt: number | null;
         };

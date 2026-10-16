@@ -12,6 +12,7 @@ export const FINDING_KINDS = [
   'provider-error',
   'tools-changed',
   'order-hygiene',
+  'consistency',
 ] as const
 export const FINDING_SEVERITIES = ['high', 'medium', 'low'] as const
 
@@ -35,6 +36,20 @@ export const FindingSchema = z
     count: z.number().int(),
     explanation: z.string().openapi({ description: 'One line: what is wrong.' }),
     fix: z.string().openapi({ description: 'What to do about it.' }),
+    consistency: z
+      .object({
+        kind: z
+          .string()
+          .openapi({ description: 'The check: `program-duplicate`, `memory-dead-ref`, ...' }),
+        memoryPath: z.string().nullable().openapi({
+          description: 'A memory finding: the file, relative to its memory root.',
+        }),
+        line: z.number().int().nullable(),
+        refs: z.array(z.string()).openapi({ description: 'Ids and paths involved.' }),
+      })
+      .nullable()
+      .optional()
+      .openapi({ description: 'Set for kind `consistency`.' }),
     dismissed: z.boolean(),
     dismissedAt: z.number().int().nullable(),
   })

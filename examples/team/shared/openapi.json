@@ -12245,9 +12245,10 @@
               "note",
               "report",
               "say",
-              "escalate"
+              "escalate",
+              "retry"
             ],
-            "description": "What the beat did about it: noted, reported to the destination of an order, or told the owner (`say` is the old word for report)."
+            "description": "What the beat did about it: noted, reported to the destination of an order, told the owner, or re-ran a failed run of its own (`retry`, the supervisor duty; `say` is the old word for report)."
           },
           "reason": {
             "type": "string",
@@ -16118,7 +16119,8 @@
               "program-run",
               "provider-error",
               "tools-changed",
-              "order-hygiene"
+              "order-hygiene",
+              "consistency"
             ]
           },
           "severity": {
@@ -16184,6 +16186,45 @@
           "fix": {
             "type": "string",
             "description": "What to do about it."
+          },
+          "consistency": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "The check: `program-duplicate`, `memory-dead-ref`, ..."
+              },
+              "memoryPath": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "A memory finding: the file, relative to its memory root."
+              },
+              "line": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Ids and paths involved."
+              }
+            },
+            "required": [
+              "kind",
+              "memoryPath",
+              "line",
+              "refs"
+            ],
+            "description": "Set for kind `consistency`."
           },
           "dismissed": {
             "type": "boolean"
@@ -34100,7 +34141,8 @@
                 "program-run",
                 "provider-error",
                 "tools-changed",
-                "order-hygiene"
+                "order-hygiene",
+                "consistency"
               ]
             },
             "required": false,

@@ -13,7 +13,7 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { decide } from '#lib/decisions/actions.js';
-	import { answerToast, changeRows, cleanBody, type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, standDownOptions, statusBadge, triggerLine, willNotTouchLines } from '#lib/decisions/model.js';
+	import { answerToast, changeRows, cleanBody, connectorNames, type Decision, grantLines, isOpen, KIND_INFO, optionsOf, outcomeLine, proposalBudget, standDownOptions, statusBadge, triggerLine, willNotTouchLines, withConnectorNames } from '#lib/decisions/model.js';
 	import EffectiveGrant from './EffectiveGrant.svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
@@ -26,7 +26,8 @@
 	const open = $derived(isOpen(decision));
 	const options = $derived(optionsOf(decision));
 	const grants = $derived(grantLines(decision));
-	const body = $derived(cleanBody(decision.body));
+	const names = $derived(connectorNames(decision));
+	const body = $derived(withConnectorNames(cleanBody(decision.body), names));
 	const wontTouch = $derived(decision.kind === 'proposal' ? willNotTouchLines(decision.payload) : []);
 	const badge = $derived(statusBadge(decision));
 	let note = $state('');
@@ -72,7 +73,7 @@
 	<div class="flex flex-wrap items-center gap-2">
 		<Badge variant="secondary" class="h-5 px-1.5 text-[11px]">{KIND_INFO[decision.kind].badge}</Badge>
 		<Badge variant={badge.variant} class="h-5 px-1.5 text-[11px]">{badge.label}</Badge>
-		<span class="ml-auto text-xs text-muted-foreground">{timeAgo(decision.createdAt)}</span>
+		<span class="ml-auto text-xs text-muted-foreground" title={new Date(decision.createdAt).toLocaleString()}>{new Date(decision.createdAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · {timeAgo(decision.createdAt)}</span>
 	</div>
 	<div class="flex items-start gap-2.5">
 		<AgentAvatar seed={decision.agentId} color={agent?.color} size={28} label={agent?.name ?? 'Agent'} class="mt-0.5 shrink-0" />
@@ -131,7 +132,7 @@
 	{#if decision.kind === 'change'}
 		<div class="flex flex-col gap-2" data-testid="change-diff">
 			<div class="text-xs font-medium text-muted-foreground">What changes</div>
-			{#each changeRows(decision.payload) as row (row.label)}
+			{#each changeRows(decision.payload, names) as row (row.label)}
 				<div class="rounded-md border border-border px-3 py-2 text-[13px]" data-testid="change-row">
 					<div class="mb-1 font-medium">{row.label}</div>
 					<div class="grid gap-x-3 gap-y-0.5 sm:grid-cols-[3.5rem_1fr]">

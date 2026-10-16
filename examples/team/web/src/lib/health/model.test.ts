@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type Finding, filterFindings, seenLine, severityCounts, sortFindings } from './model';
+import { type Finding, filterFindings, memoryWhere, seenLine, severityCounts, sortFindings, splitConsistency } from './model';
 
 const f = (over: Partial<Finding>): Finding => ({
 	fingerprint: 'x',
@@ -40,5 +40,13 @@ describe('health model', () => {
 		const ago = (ms: number) => `${ms}s`;
 		expect(seenLine(f({ count: 1, firstSeen: 5, lastSeen: 5 }), ago)).toBe('Seen once, 5s ago');
 		expect(seenLine(f({ count: 4 }), ago)).toBe('Seen 4 times, first 1000s ago, last 2000s ago');
+	});
+	test('consistency findings are their own group, with the memory file and line', () => {
+		const c = f({ fingerprint: 'c', kind: 'consistency', consistency: { kind: 'memory-dead-ref', memoryPath: 'status.md', line: 3, refs: ['status.md'] } });
+		const g = splitConsistency([f({ fingerprint: 'r' }), c]);
+		expect(g.runtime.map((x) => x.fingerprint)).toEqual(['r']);
+		expect(g.consistency.map((x) => x.fingerprint)).toEqual(['c']);
+		expect(memoryWhere(c)).toBe('status.md, line 3');
+		expect(memoryWhere(f({}))).toBeNull();
 	});
 });

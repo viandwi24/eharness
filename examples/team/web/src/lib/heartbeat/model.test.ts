@@ -89,6 +89,7 @@ describe('standing orders', () => {
 		expect(decisionLine({ decision: 'report', reason: 'due at 15:00' })).toBe('Reported: due at 15:00');
 		expect(decisionLine({ decision: 'say', reason: 'old word' })).toBe('Reported: old word');
 		expect(decisionLine({ decision: 'note' })).toBe('Noted');
+		expect(decisionLine({ decision: 'retry', reason: 'connection is back' })).toBe('Retried: connection is back');
 		expect(decisionLine({})).toBe('');
 		expect(filesLink('/library/notes/heartbeat/a/2026-10-15.md')).toBe('/files?path=%2Flibrary%2Fnotes%2Fheartbeat%2Fa%2F2026-10-15.md');
 	});

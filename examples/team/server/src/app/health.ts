@@ -23,6 +23,7 @@ import { parseProgramSession } from '../domain/programs.ts'
 import { parseChatSession } from '../domain/threads.ts'
 import { willRetryText } from '../domain/turn-retry.ts'
 import { postNotice } from './briefings.ts'
+import { type ConsistencyFinding, consistencyFindings } from './consistency.ts'
 import { hygieneFindings } from './order-care.ts'
 import type { Deps } from './ports.ts'
 
@@ -182,6 +183,67 @@ export function findingsOf(
   })
 }
 
+const PROGRAM_KINDS = new Set(['program-duplicate', 'program-needs-tool', 'program-dead-ref'])
+
+/** Consistency findings as findings of the Health page (kind `consistency`). */
+export function consistencyAsFindings(
+  deps: Deps,
+  list: readonly ConsistencyFinding[],
+  now: number,
+): Finding[] {
+  return list.map((c): Finding => {
+    const programId = PROGRAM_KINDS.has(c.kind) ? (c.refs[0] ?? null) : null
+    let link: string | null = null
+    if (programId !== null) link = `/programs/${programId}`
+    else if (c.kind.startsWith('decision-')) link = '/decisions'
+    else if (c.kind === 'order-duplicates-note') {
+      const slug = c.agentId === null ? undefined : deps.agents.get(c.agentId)?.slug
+      link = slug === undefined ? null : `/a/${slug}?tab=heartbeat`
+    } else if (c.kind === 'routine-duplicate') link = '/routines'
+    else if (c.kind === 'connection-used-but-broken') link = '/connectors'
+    return {
+      fingerprint: c.fingerprint,
+      kind: 'consistency',
+      severity: c.severity,
+      agentId: c.agentId,
+      sessionId: null,
+      programId,
+      link,
+      firstSeen: now,
+      lastSeen: now,
+      count: 1,
+      explanation: c.explanation,
+      fix: c.fix,
+      consistency: {
+        kind: c.kind,
+        memoryPath: c.memoryPath ?? null,
+        line: c.line ?? null,
+        refs: c.refs,
+      },
+    }
+  })
+}
+
+/**
+ * The consistency scan is a read of many stores: the Health page (polled every minute) reuses the
+ * last result for a few minutes; the 10-minute job always rescans and refreshes it.
+ */
+const CONSISTENCY_TTL_MS = 5 * 60_000
+const consistencyCache = new WeakMap<object, { at: number; findings: Finding[] }>()
+
+async function consistencyOf(deps: Deps, now: number, fresh: boolean): Promise<Finding[]> {
+  const hit = consistencyCache.get(deps)
+  if (!fresh && hit !== undefined && now - hit.at < CONSISTENCY_TTL_MS) return hit.findings
+  try {
+    const findings = consistencyAsFindings(deps, await consistencyFindings(deps, { now }), now)
+    consistencyCache.set(deps, { at: now, findings })
+    return findings
+  } catch (error) {
+    console.warn(`team: consistency scan failed: ${String(error)}`)
+    return hit?.findings ?? []
+  }
+}
+
 export interface HealthQuery {
   agentId?: string | undefined
   severity?: FindingSeverity | undefined
@@ -216,7 +278,10 @@ export async function listHealth(
   const now = deps.clock.now()
   const all = withRetries(
     deps,
-    findingsOf(deps, await gatherFacts(deps, now), now, await hygieneFindings(deps, now)),
+    findingsOf(deps, await gatherFacts(deps, now), now, [
+      ...(await hygieneFindings(deps, now)),
+      ...(await consistencyOf(deps, now, false)),
+    ]),
   )
   const agentId =
     query.agentId === undefined
@@ -287,7 +352,10 @@ export async function runHealthJob(
     const facts = await gatherFacts(deps, now)
     const findings = withRetries(
       deps,
-      findingsOf(deps, facts, now, await hygieneFindings(deps, now)),
+      findingsOf(deps, facts, now, [
+        ...(await hygieneFindings(deps, now)),
+        ...(await consistencyOf(deps, now, true)),
+      ]),
     )
     const notified = notifyFindings(deps, findings, now)
     if (hooks.suggest !== undefined) {

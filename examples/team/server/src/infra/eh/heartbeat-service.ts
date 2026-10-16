@@ -63,10 +63,10 @@ export const BEAT_SCHEMA = z.object({
           .optional()
           .describe('The fingerprint of the team_status finding this is about, unchanged.'),
         decision: z
-          .enum(['note', 'report', 'escalate'])
+          .enum(['note', 'report', 'escalate', 'retry'])
           .optional()
           .describe(
-            'What you did about it: note (only noted), report (you told the destination of a standing order), escalate (the owner must look).',
+            'What you did about it: note (only noted), report (you told the destination of a standing order), escalate (the owner must look), retry (you re-ran a failed run of your own).',
           ),
         reason: z
           .string()

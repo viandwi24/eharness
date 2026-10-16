@@ -119,3 +119,14 @@ describe('decision model', () => {
 		expect(edit.program).not.toHaveProperty('agentId');
 	});
 });
+
+describe('connection names on a decision', () => {
+	test('ids read as the connection name in the diff and the grant lines', async () => {
+		const { connectorNames, withConnectorNames, mayTouchLines } = await import('./model');
+		const d = { kind: 'note', grant: { connectors: [{ id: 'conn_ab12', label: 'phone' }, { id: null, label: 'x' }] } } as unknown as Decision;
+		const names = connectorNames(d);
+		expect([...names]).toEqual([['conn_ab12', 'phone']]);
+		expect(withConnectorNames('use web_fetch; every tool of connector conn_ab12', names)).toBe('use web_fetch; every tool of connector phone');
+		expect(mayTouchLines({ tools: [], connectors: ['conn_ab12'], read: [], write: [] }, names)).toEqual(['Can use the phone connection']);
+	});
+});

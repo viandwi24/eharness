@@ -117,6 +117,12 @@ import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../dom
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import { destKey, needTools } from '../../domain/standing-orders.ts'
+import {
+  isMemoryTool,
+  MEMORY_EDIT_TOOLS,
+  MEMORY_VIEW_TOOL,
+  memoryCallRefusal,
+} from '../../domain/supervisor.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { taskGrantRules } from '../../domain/work-queue.ts'
 import {
@@ -1145,6 +1151,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         const fileWrites = HEARTBEAT_FILE_WRITES.filter(
           (t) => t in out.toolNameMap && !out.rules.deny.includes(t),
         )
+        // the supervisor duty (P53): memory reads on the agent's own folder, and edits only in a beat
+        // whose observation has findings about its own memory (`memoryCallRefusal` decides, every call)
+        const memoryTools = [MEMORY_VIEW_TOOL, ...MEMORY_EDIT_TOOLS].filter(
+          (t) => !out.rules.deny.includes(t),
+        )
         return {
           rules: {
             allow: [
@@ -1153,10 +1164,19 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               ...lookups,
               ...candidates,
               ...fileWrites,
+              ...memoryTools,
             ],
             deny: [],
           },
           refuse: (call) => {
+            if (isMemoryTool(call.toolName)) {
+              return memoryTools.includes(call.toolName)
+                ? memoryCallRefusal(call, {
+                    agentId: def.id,
+                    fixing: deps.heartbeat?.()?.memoryFix(def.id) === true,
+                  })
+                : heartbeatRefusal(call.toolName)
+            }
             if (call.toolName === HEARTBEAT_POST_TOOL || call.toolName === 'channel_read') {
               return channelCall(call)
             }

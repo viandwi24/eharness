@@ -38,14 +38,27 @@ export function authorityLines(a: Authority): string[] {
 
 /** What approving this decision grants: a list that is empty when approving grants nothing. */
 export function grantLines(d: Decision): string[] {
-	if (d.kind === 'proposal') return mayTouchLines(d.payload.program.authority);
-	if (d.kind === 'amendment') return mayTouchLines(d.payload.authority);
-	if (d.kind === 'change') return addedAuthorityLines(d.payload);
+	const names = connectorNames(d);
+	if (d.kind === 'proposal') return mayTouchLines(d.payload.program.authority, names);
+	if (d.kind === 'amendment') return mayTouchLines(d.payload.authority, names);
+	if (d.kind === 'change') return addedAuthorityLines(d.payload, names);
 	return [];
 }
 
+/** Connection ids to the names the owner knows them by, from the decision's resolved grant. */
+export function connectorNames(d: Decision): Map<string, string> {
+	const grant = (d as { grant?: { connectors?: { id: string | null; label: string }[] } | null }).grant;
+	const out = new Map<string, string>();
+	for (const c of grant?.connectors ?? []) if (c.id !== null && c.label) out.set(c.id, c.label);
+	return out;
+}
+
+/** A server text with connection ids replaced by their names ("connector conn_ab12…" reads "connector phone"). */
+export const withConnectorNames = (text: string, names: ReadonlyMap<string, string>): string =>
+	[...names].reduce((t, [id, label]) => t.split(id).join(label), text);
+
 /** What a change adds to the program's authority (what approving newly lets it touch); removals are in the diff. */
-export function addedAuthorityLines(p: Change['payload']): string[] {
+export function addedAuthorityLines(p: Change['payload'], names: ReadonlyMap<string, string> = new Map()): string[] {
 	const after = p.patch.authority;
 	if (!after) return [];
 	const was = p.before.authority;
@@ -55,11 +68,12 @@ export function addedAuthorityLines(p: Change['payload']): string[] {
 		connectors: added(after.connectors, was?.connectors),
 		read: added(after.read, was?.read),
 		write: added(after.write, was?.write)
-	});
+	}, names);
 }
 
 /** The rows of a change card: one per field, before and after in words. */
-export const changeRows = (p: Change['payload']): { label: string; before: string; after: string }[] => p.diff.map(({ label, before, after }) => ({ label, before, after }));
+export const changeRows = (p: Change['payload'], names: ReadonlyMap<string, string> = new Map()): { label: string; before: string; after: string }[] =>
+	p.diff.map(({ label, before, after }) => ({ label, before: withConnectorNames(before, names), after: withConnectorNames(after, names) }));
 
 /** The title of a change card: the program it changes by name. */
 export const changeHeading = (p: Change['payload']): string => `Change to program ${p.programName}`;
@@ -90,11 +104,11 @@ export function toolWords(id: string): string {
 }
 
 /** What a proposal's program "may touch", in plain language (no tool ids, no raw globs where a sentence does). */
-export function mayTouchLines(a: Authority): string[] {
+export function mayTouchLines(a: Authority, names: ReadonlyMap<string, string> = new Map()): string[] {
 	const path = (g: string): string => (g.endsWith('/**') ? `everything under ${g.slice(0, -3) || '/'}` : g);
 	return [
 		...a.tools.map((t) => `Can ${toolWords(t)}`),
-		...a.connectors.map((c) => `Can use the ${words(c)} connection`),
+		...a.connectors.map((c) => `Can use the ${names.get(c) ?? words(c)} connection`),
 		...a.read.map((g) => `Can read ${path(g)}`),
 		...a.write.map((g) => `Can read and change ${path(g)}`)
 	];

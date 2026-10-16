@@ -67,7 +67,7 @@ export const filesLink = (path: string): string => `/files?path=${encodeURICompo
 
 /** The audit line of an item: what the beat did and why (`say` is the old word for a report). */
 export function decisionLine(item: { decision?: string | undefined; reason?: string | undefined }): string {
-	const what = item.decision === 'report' || item.decision === 'say' ? 'Reported' : item.decision === 'escalate' ? 'Told you' : item.decision === 'note' ? 'Noted' : '';
+	const what = item.decision === 'report' || item.decision === 'say' ? 'Reported' : item.decision === 'escalate' ? 'Told you' : item.decision === 'note' ? 'Noted' : item.decision === 'retry' ? 'Retried' : '';
 	return [what, item.reason].filter((x) => x !== undefined && x !== '').join(': ');
 }
 

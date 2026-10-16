@@ -62,6 +62,7 @@ Update this table in the same commit that changes a phase's status.
 | P50 | [Production feedback hardening](P50-production-feedback.md) — OS sandbox probe and fallback, Allowed run_python, approvals reach owners, tool_search explains what is missing, readable id errors, mention-only turns, program base tools and brief warnings | done | P49 | P49 |
 | P51 | [Proactive heartbeat and agent health](P51-proactive-and-health.md) — heartbeat reads channels, keeps notes and speaks only when it should (modes, reportTo, rubric, activity wake); Health page and authority suggestions; health in the digest | done | P50 | P50 |
 | P52 | [Context and standing orders v2](P52-context-and-orders.md) — sessions_search / session_read / runs_list / run_read with a privacy gate; order kinds (watch, rule, deadline, ledger), exact deadline wakes, order needs grant tools, evidence-backed notes, weekly patterns, order hygiene | done | P51 | P51 |
+| P53 | [Supervisor duty and consistency](P53-supervisor-and-consistency.md) — the heartbeat supervises its own work (retry, escalate, fix its own memory) and the deterministic consistency detectors feed it | in progress | P52 | P52 |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

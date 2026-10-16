@@ -253,6 +253,17 @@ function refuseDuplicateProgram(deps: Deps, agentId: string, title: string, name
     throw invalid(duplicateProgramText(found.name, found.id), 'PROGRAM_EXISTS')
 }
 
+/** The generated diff of a merged change, then the agent's latest words (cut to the body limit). */
+function mergedBody(generated: string, own: string): string {
+  if (own === '') return generated
+  const joined = `${generated}\n\n## From the agent\n\n${own}`
+  try {
+    return checkBody(joined)
+  } catch {
+    return generated
+  }
+}
+
 /** What a change proposal refuses to carry (it is a patch, never a new program or a move). */
 function checkChangeInput(input: ProposeInput, program: Program): void {
   if (input.program.name !== undefined && !sameName(input.program.name, program.name)) {
@@ -278,16 +289,34 @@ function proposeChange(
   deps: Deps,
   input: ProposeInput,
   runner: { id: string },
-): { decision: Decision; duplicate: boolean } {
+): { decision: Decision; duplicate: boolean; merged?: string[] } {
   const target = (input.target ?? '').trim()
   const program = findProgram(deps, target, { agentId: runner.id, exact: true })
   checkChangeInput(input, program)
+  // An open change to the same program is built on, not raced: the new proposal carries both and
+  // the older one closes as merged, so the owners see one card with the whole change. Open changes
+  // that went stale (the program moved under them) are left for approve to refuse.
+  const pending = deps.decisions
+    .list({ status: 'open', kind: 'change', limit: 200 })
+    .filter(
+      (d): d is Extract<Decision, { kind: 'change' }> =>
+        d.kind === 'change' &&
+        d.payload.programId === program.id &&
+        (Object.keys(d.payload.before) as ChangeField[]).every(
+          (f) =>
+            JSON.stringify(changeSnapshot(program, [f])[f]) === JSON.stringify(d.payload.before[f]),
+        ),
+    )
+    .sort((a, b) => a.createdAt - b.createdAt)
+  const base = { ...program }
+  for (const d of pending) Object.assign(base, structuredClone(d.payload.patch))
   const before = changeSnapshot(program)
   const p = input.program
   const after: ProgramChange = {}
+  for (const d of pending) Object.assign(after, structuredClone(d.payload.patch))
   if (p.brief !== undefined) after.brief = p.brief.trim()
   if (input.addAuthority !== undefined || input.removeAuthority !== undefined) {
-    after.authority = changedAuthority(program.authority, {
+    after.authority = changedAuthority(base.authority, {
       add: input.addAuthority,
       remove: input.removeAuthority,
     })
@@ -298,7 +327,7 @@ function proposeChange(
   if (p.trigger !== undefined) after.trigger = p.trigger
   if (p.budget !== undefined) {
     after.budget = {
-      ...program.budget,
+      ...base.budget,
       ...(p.budget.perRunUsd === undefined ? {} : { perRunUsd: p.budget.perRunUsd }),
       ...(p.budget.perDayUsd === undefined ? {} : { perDayUsd: p.budget.perDayUsd }),
     }
@@ -321,14 +350,7 @@ function proposeChange(
   const patch = changeSnapshot(after as Parameters<typeof changeSnapshot>[0], fields)
   const kept = changeSnapshot(program, fields)
   const diff = diffLines(kept, patch)
-  const twin = deps.decisions
-    .list({ status: 'open', kind: 'change', limit: 200 })
-    .find(
-      (d) =>
-        d.kind === 'change' &&
-        d.payload.programId === program.id &&
-        JSON.stringify(d.payload.patch) === JSON.stringify(patch),
-    )
+  const twin = pending.find((d) => JSON.stringify(d.payload.patch) === JSON.stringify(patch))
   if (twin !== undefined) return { decision: twin, duplicate: true }
   const payload: ChangePayload = {
     programId: program.id,
@@ -337,11 +359,17 @@ function proposeChange(
     before: kept,
     diff,
   }
+  const own = withoutCenterHints(checkBody(input.body))
+  // a merged card always shows the whole diff; the agent's own words follow it
+  const body =
+    pending.length === 0
+      ? own || changeBody(program.name, diff)
+      : mergedBody(changeBody(program.name, diff), own)
   const d = deps.decisions.insert({
     id: deps.ids.next(),
     kind: 'change',
     title: checkTitle(`Change to program ${program.name}`),
-    body: withoutCenterHints(checkBody(input.body)) || changeBody(program.name, diff),
+    body,
     agentId: getAgent(deps, input.agentId).id,
     sessionId: input.sessionId,
     programId: program.id,
@@ -349,8 +377,21 @@ function proposeChange(
     waitId: null,
     createdAt: deps.clock.now(),
   })
+  for (const old of pending) {
+    const closed = deps.decisions.decide(old.id, {
+      status: 'expired',
+      decidedBy: 'system',
+      decidedAt: deps.clock.now(),
+      note: `Merged into a newer change to this program (${d.id}): nothing was changed.`,
+    })
+    if (closed !== undefined) changed(deps, closed, 'decided')
+  }
   changed(deps, d, 'created')
-  return { decision: d, duplicate: false }
+  return {
+    decision: d,
+    duplicate: false,
+    ...(pending.length > 0 ? { merged: pending.map((o) => o.id) } : {}),
+  }
 }
 
 /**
@@ -362,7 +403,7 @@ function proposeChange(
 export function proposeFromAgent(
   deps: Deps,
   input: ProposeInput,
-): { decision: Decision; duplicate: boolean } {
+): { decision: Decision; duplicate: boolean; merged?: string[] } {
   const roster = deps.agents
     .list()
     .map((a) => `${a.slug} (${a.name})`)

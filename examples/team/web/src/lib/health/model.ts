@@ -15,8 +15,39 @@ export const KIND_LABEL: Record<FindingKind, string> = {
 	'program-run': 'Program run',
 	'provider-error': 'Provider error',
 	'tools-changed': 'Tools changed on the server',
-	'order-hygiene': 'Standing order needs a look'
+	'order-hygiene': 'Standing order needs a look',
+	consistency: 'Consistency'
 };
+
+/** What each consistency check says, as a short label (the `consistency.kind` of a finding). */
+export const CONSISTENCY_LABEL: Record<string, string> = {
+	'program-duplicate': 'Duplicate program',
+	'program-needs-tool': 'Program needs a tool',
+	'program-dead-ref': 'Program names something gone',
+	'order-duplicates-note': 'Order repeats a program note',
+	'routine-duplicate': 'Duplicate routine',
+	'decision-stale': 'Decision waiting',
+	'decision-dead-ref': 'Decision about something gone',
+	'connection-used-but-broken': 'Connection in use is broken',
+	'memory-dead-ref': 'Memory names something gone',
+	'memory-duplicate-topic': 'Two memory files, one topic',
+	'memory-placeholder': 'Memory placeholder',
+	'memory-system-state': 'Memory states live system state'
+};
+
+export const isConsistency = (f: Pick<Finding, 'kind'>): boolean => f.kind === 'consistency';
+
+/** Split the list: runtime problems first, the consistency checks as their own group. */
+export function splitConsistency(list: readonly Finding[]): { runtime: Finding[]; consistency: Finding[] } {
+	return { runtime: list.filter((f) => !isConsistency(f)), consistency: list.filter(isConsistency) };
+}
+
+/** "line 3 of status.md" for a memory finding, else null. */
+export function memoryWhere(f: Pick<Finding, 'consistency'>): string | null {
+	const c = f.consistency;
+	if (!c?.memoryPath) return null;
+	return c.line ? `${c.memoryPath}, line ${c.line}` : c.memoryPath;
+}
 
 export const SEVERITY_LABEL: Record<Severity, string> = { high: 'High', medium: 'Medium', low: 'Low' };
 

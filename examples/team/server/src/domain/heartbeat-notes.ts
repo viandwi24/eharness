@@ -16,23 +16,24 @@ export const MIN_PATTERN_DAYS = 2
 export interface NoteEvidenceInput {
   chat: string
   messageIds?: readonly string[] | undefined
-  /** Other references: `https://...`, `/library/...`, `session:<id>#<message id>`. */
+  /** Other references: `https://...`, `/library/...`, `/memories/...`, `session:<id>#<message id>`. */
   evidence?: readonly string[] | undefined
   confidence?: string | undefined
 }
 
 const URL_REF = /^https?:\/\/\S+$/i
 const LIBRARY_REF = /^\/library\/\S+$/
+const MEMORY_REF = /^\/memories\/\S+$/
 const SESSION_REF = /^session:([^\s#]+)#(\S+)$/
 
 /** One evidence reference is well formed (a chat's message ids are checked with the chat). */
 export const isEvidenceRef = (ref: string): boolean => {
   const r = ref.trim()
-  return URL_REF.test(r) || LIBRARY_REF.test(r) || SESSION_REF.test(r)
+  return URL_REF.test(r) || LIBRARY_REF.test(r) || MEMORY_REF.test(r) || SESSION_REF.test(r)
 }
 
 export const EVIDENCE_HELP =
-  'Give evidence: messageIds (platform message ids of the chat you name), or evidence with a URL, a /library/... path or session:<session id>#<message id>; and confidence "seen" (you read it yourself) or "inferred".'
+  'Give evidence: messageIds (platform message ids of the chat you name), or evidence with a URL, a /library/... or /memories/... path or session:<session id>#<message id>; and confidence "seen" (you read it yourself) or "inferred".'
 
 /** undefined when the note may be written; else why not (a sentence for the model). */
 export function checkNoteEvidence(input: NoteEvidenceInput): string | undefined {

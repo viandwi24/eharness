@@ -70,6 +70,7 @@ import {
   parseChecklist,
   type StandingOrder,
 } from '../domain/standing-orders.ts'
+import { supervisorSteps } from '../domain/supervisor.ts'
 import { boardColumn, type Task } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
 import { postAlerts, postBriefing } from './briefings.ts'
@@ -84,6 +85,14 @@ import {
   weeklyReview,
 } from './order-care.ts'
 import type { Deps } from './ports.ts'
+import {
+  beginSupervision,
+  clearSupervision,
+  markDeepDone,
+  promptOf,
+  supervise,
+  takeMemoryChanges,
+} from './supervisor.ts'
 import { threadSessionsOf } from './threads.ts'
 import { sessionsWithOpenDecision } from './work-queue.ts'
 
@@ -709,8 +718,16 @@ export async function beginBeat(
     return skip('outside active hours')
   }
   const file = await deps.library.read(checklistPath(agent.id))
-  if (checklistIsEmpty(file?.text, at))
+  // the supervisor duty (P53) looks at the agent's own work on every interval beat, with no
+  // checklist line needed; a model call happens only when it found something
+  const supervision = trigger === 'schedule' ? await supervise(deps, agent.id, at) : undefined
+  const empty = checklistIsEmpty(file?.text, at)
+  if (empty && (supervision === undefined || supervision.items.length === 0)) {
+    // nothing for a model to do: a deep review with no findings is still done for the week
+    if (supervision?.deep === true) markDeepDone(deps, agent.id, at)
+    clearSupervision(deps, agent.id, at)
     return skip('nothing to watch: no standing order and an empty checklist')
+  }
   if (input.session.waiting) return skip('the previous beat waits for a decision')
   const last = state.beats.find((b) => b.status === 'running')
   if (input.session.busy || (last !== undefined && at - last.at < STALE_BEAT_MS)) {
@@ -773,6 +790,8 @@ export async function beginBeat(
     }),
     at,
   )
+  if (supervision === undefined) clearSupervision(deps, agent.id, at)
+  else beginSupervision(deps, agent.id, supervision, at)
   pushRecord(deps, agent.id, at, {
     id: input.id,
     at,
@@ -830,6 +849,10 @@ export async function beginBeat(
       notes: [notesPath(agent.slug, day), notesPath(agent.slug, yesterday)],
       ...(trigger === 'deadline' && input.orderId !== undefined ? { focus: input.orderId } : {}),
       ...(weekly === undefined ? {} : { weekly }),
+      ...(supervision === undefined
+        ? {}
+        : { supervisor: supervisorSteps(promptOf(agent.id, supervision)) }),
+      ...(empty ? { supervisorOnly: true } : {}),
     }),
   }
 }
@@ -856,12 +879,19 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
   let duplicates = 0
   let status: BeatRecord['status']
   let reason: string | null = null
+  // the memory files the beat edited (supervisor duty): the server lists each one, with the
+  // reason the beat gave when it did, so the beat log and the daily digest tell the owners
+  const edits = memoryEditItems(deps, takeMemoryChanges(deps, agentId, at), parsed?.items ?? [], at)
   if (parsed === undefined) {
     status = 'failed'
     reason = end.stop === 'complete' ? 'no valid final answer' : `stopped: ${end.stop}`
+    if (edits.length > 0) {
+      const state = deps.heartbeat.store.state(agentId)
+      fresh = splitNew(edits, state.fingerprints, at).fresh
+    }
   } else {
     const state = deps.heartbeat.store.state(agentId)
-    const split = splitNew(parsed.items, state.fingerprints, at)
+    const split = splitNew([...parsed.items, ...edits], state.fingerprints, at)
     fresh = split.fresh
     duplicates = split.duplicates
     // what led to a report or an escalation counts for the order (the weekly review reads it)
@@ -911,7 +941,10 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
   if (fresh.length > 0) {
     // an item that was only noted stays in the beat log and the notes: the digest is for what
     // the owner should see (a note per chat message would bury it)
-    const forDigest = fresh.filter((i) => i.decision !== 'note')
+    // (a memory edit of the supervisor duty always reaches the owners: one summary in the digest)
+    const forDigest = fresh.filter(
+      (i) => i.decision !== 'note' || i.kind === 'supervisor.memory-fix',
+    )
     if (forDigest.length > 0) {
       deps.heartbeat.store.updateDigest(
         (d) => ({
@@ -932,6 +965,33 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
   }
   changed(deps, agentId, 'beat')
   return record
+}
+
+/** One item per memory file the beat changed; the beat's own item for a file carries the reason. */
+function memoryEditItems(
+  deps: Deps,
+  changes: ReadonlyArray<{ tool: string; path: string; to?: string | undefined }>,
+  given: readonly BeatItem[],
+  at: number,
+): BeatItem[] {
+  const day = localDay(at, deps.settings.get().timezone)
+  const seen = new Set<string>()
+  const out: BeatItem[] = []
+  for (const c of changes) {
+    if (seen.has(c.path)) continue
+    seen.add(c.path)
+    // the beat reported this file itself, with its reason: that item is the log entry
+    if (given.some((i) => i.kind === 'supervisor.memory-fix' && i.links.includes(c.path))) continue
+    out.push({
+      kind: 'supervisor.memory-fix',
+      title: `Memory edited: ${c.path}`.slice(0, 200),
+      detail: `${c.tool}${c.to === undefined ? '' : ` to ${c.to}`}; the beat gave no reason.`,
+      links: [c.path],
+      urgent: false,
+      fingerprint: `supervisor.memory-fix:${c.path}:${day}`,
+    })
+  }
+  return out
 }
 
 // --- the daily digest --------------------------------------------------------------------------

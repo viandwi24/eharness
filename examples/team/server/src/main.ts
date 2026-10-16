@@ -115,6 +115,7 @@ import {
   listOrders,
   removeOrder,
 } from './app/standing-orders.ts'
+import { askOwner, memoryFixOpen, recordMemoryChange, retryRun } from './app/supervisor.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
   CLIENT,
@@ -1078,8 +1079,8 @@ export function compose(config: ServerConfig): Server {
   }
   decisionIntake = {
     propose: (input) => {
-      const { decision, duplicate } = proposeFromAgent(deps, input)
-      return { id: decision.id, duplicate }
+      const { decision, duplicate, merged } = proposeFromAgent(deps, input)
+      return { id: decision.id, duplicate, ...(merged === undefined ? {} : { merged }) }
     },
     escalate: (input) => {
       const d = createEscalation(deps, input)
@@ -1221,6 +1222,10 @@ export function compose(config: ServerConfig): Server {
       return { needs: g?.needs ?? [], writes: g?.writes ?? [] }
     },
     reservePost: (agentId, to, text) => reservePost(deps, agentId, to, text),
+    retryRun: (agentId, taskId, reason) => retryRun(deps, agentId, taskId, reason, Date.now()),
+    askOwner: (agentId, input) => askOwner(deps, agentId, input, Date.now()),
+    memoryFix: (agentId) => memoryFixOpen(deps, agentId),
+    memoryChanged: (agentId, call) => recordMemoryChange(deps, agentId, call, Date.now()),
     reportWeb: (agentId, orderId, text) => reportToWeb(deps, agentId, orderId, text),
     orders: {
       list: (agentId) => listOrders(deps, agentId),

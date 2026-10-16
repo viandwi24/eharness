@@ -31,6 +31,10 @@ const TRANSIENT_TEXT =
 const PERMANENT_TEXT =
   /credit|quota|insufficient|billing|payment required|content[ -]?(?:policy|filter)|safety|invalid api key|context (?:length|window)|too long/i
 
+/** The text of a failure names a temporary cause (the supervisor classifies stored summaries with it). */
+export const looksTransient = (message: string): boolean =>
+  !PERMANENT_TEXT.test(message) && TRANSIENT_TEXT.test(message)
+
 /**
  * Whether a failed turn is worth trying again, and of which kind; undefined = never retried.
  * `describeError` of the library gives `EH_PROVIDER` the prefixes `Provider unavailable:` (5xx),

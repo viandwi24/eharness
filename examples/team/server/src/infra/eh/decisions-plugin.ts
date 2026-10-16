@@ -64,7 +64,7 @@ export const DECISION_TOOLS = [
 
 /** What the plugin needs from the app (`app/decisions.ts` over the deps, built in `main.ts`). */
 export interface DecisionIntake {
-  propose(input: ProposeInput): { id: string; duplicate?: boolean }
+  propose(input: ProposeInput): { id: string; duplicate?: boolean; merged?: string[] }
   escalate(input: EscalateInput): { id: string }
   /** `program_note`: text for the model, errors thrown as DomainError. */
   programNote(input: ProgramNoteInput): string | Promise<string>
@@ -317,7 +317,7 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
           metadata: { risk: 'write', idempotent: false },
           execute: (input): string => {
             try {
-              const { id, duplicate } = intake().propose({
+              const { id, duplicate, merged } = intake().propose({
                 agentId: self().id,
                 sessionId,
                 title: input.title,
@@ -361,6 +361,9 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
               })
               if (duplicate === true) {
                 return `A proposal like this is already open: ${id}. It was not created again; it waits for the client in the Decision Center. Do not propose it again: tell the client it is there, and carry on with other work.`
+              }
+              if (input.program !== undefined && merged !== undefined) {
+                return `Change proposal ${id} is waiting for the client in the Decision Center. It carries the earlier open change to this program too (${merged.join(', ')}, now closed as merged), so the client sees one card with the whole change. The program is unchanged until the client approves. Tell the client there is one change to approve, and carry on with other work.`
               }
               if (input.program !== undefined) {
                 return `Change proposal ${id} is waiting for the client in the Decision Center. The program is unchanged until the client approves; do not act as if it were changed. Tell the client what you proposed and carry on with other work.`

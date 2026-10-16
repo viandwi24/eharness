@@ -36,6 +36,7 @@ import {
   PER_DESTINATION_DAILY_CAP,
   type StandingOrder,
 } from './standing-orders.ts'
+import { SUPERVISOR_ASK_TOOL, SUPERVISOR_RETRY_TOOL, type SupervisorState } from './supervisor.ts'
 import type { Task } from './tasks.ts'
 import { willRetryText } from './turn-retry.ts'
 
@@ -297,7 +298,7 @@ export interface BeatItem {
   order?: string
 }
 
-export const BEAT_DECISIONS = ['note', 'report', 'escalate'] as const
+export const BEAT_DECISIONS = ['note', 'report', 'escalate', 'retry'] as const
 export type BeatDecision = (typeof BEAT_DECISIONS)[number]
 
 export interface BeatRecord {
@@ -352,6 +353,8 @@ export interface HeartbeatState {
   fired?: Record<string, { count: number; lastAt: number }>
   /** The Monday (local date) of the week the weekly review last ran. */
   review?: { week: string; at: number }
+  /** The supervisor duty (`domain/supervisor.ts`): retries made, items shown, memory edits of the beat. */
+  supervisor?: SupervisorState
 }
 
 export const EMPTY_HEARTBEAT_STATE: HeartbeatState = { fingerprints: {}, beats: [] }
@@ -953,7 +956,12 @@ export function beatPrompt(input: {
   focus?: string
   /** The weekly review: last week's days that have notes, and where the patterns go. */
   weekly?: { days: readonly string[]; patterns: string }
+  /** The supervisor duty (`supervisorSteps`): blocks of lines for this beat. */
+  supervisor?: readonly (readonly string[])[]
+  /** Nothing else to look at (no order, empty checklist): the beat is only the supervisor duty. */
+  supervisorOnly?: boolean
 }): string {
+  if (input.supervisorOnly === true) return supervisorOnlyPrompt(input)
   const chatOrders = input.orders.filter((o) => o.order.report.kind === 'chat')
   const webOrders = input.orders.filter((o) => o.order.report.kind === 'web')
   const focused =
@@ -1059,6 +1067,7 @@ export function beatPrompt(input: {
       'anything for a finding of another kind.',
     ])
   }
+  for (const block of input.supervisor ?? []) steps.push([...block])
   if (input.weekly !== undefined) {
     steps.push([
       'WEEKLY REVIEW (first beat of the week): read the notes of last week',
@@ -1073,7 +1082,8 @@ export function beatPrompt(input: {
     'End with the final_answer tool: status `ok` (nothing needs attention, items empty) or',
     '`attention` with items { kind, title, detail, links, urgent, fingerprint, decision, reason, order }.',
     '`decision` is what you did about it: note (only noted), report (you told the destination of an',
-    'order) or escalate (the owner must look; it reaches the bell); `reason` is one line of why;',
+    'order), escalate (the owner must look; it reaches the bell) or retry (you re-ran a failed run of',
+    'your own); `reason` is one line of why;',
     '`order` is the id of the standing order it is about. List',
     'what you reported. Keep the fingerprint of a team_status finding unchanged. Be brief: one line of',
     'detail each.',
@@ -1087,6 +1097,9 @@ export function beatPrompt(input: {
     '(channel_describe, channel_read, chat_history, list_topics, member_lookup, people_find, channel_status)',
     'and the other chats and runs of your own agent (sessions_search, session_read, runs_list, run_read),',
     `keep your notes (${NOTE_TOOL}),`,
+    ...((input.supervisor?.length ?? 0) === 0
+      ? []
+      : [`supervise your own work (${SUPERVISOR_RETRY_TOOL}, ${SUPERVISOR_ASK_TOOL}),`]),
     ...(input.orders.length === 0
       ? []
       : [`report where an order says (channel_send, ${HEARTBEAT_REPORT_TOOL}),`]),
@@ -1160,6 +1173,28 @@ export function beatPrompt(input: {
       : input.plain.length === 0
         ? '(no other items)'
         : input.plain.join('\n'),
+  ].join('\n')
+}
+
+/** The beat that exists only for the supervisor duty: no order, an empty checklist. */
+function supervisorOnlyPrompt(input: Parameters<typeof beatPrompt>[0]): string {
+  const steps: string[][] = [...(input.supervisor ?? []).map((b) => [...b])]
+  steps.push([
+    'End with the final_answer tool: status `ok` (nothing needs attention, items empty) or',
+    '`attention` with items { kind, title, detail, links, urgent, fingerprint, decision, reason }.',
+    '`decision` is retry, escalate (the owner must look) or note; `reason` is one line. Be brief.',
+  ])
+  return [
+    `Heartbeat of ${input.agentName}: ${new Date(input.now).toISOString()} (${input.timezone}).`,
+    'This beat has no standing order to look at: it exists because the server found something about your own work.',
+    '',
+    'You are the quiet monitor of this team. Nobody is watching this turn and you are read-only, except for',
+    `the supervisor tools (${SUPERVISOR_RETRY_TOOL}, ${SUPERVISOR_ASK_TOOL}) and the notes (${NOTE_TOOL}). You may read the library,`,
+    'the chats and runs of your own agent (sessions_search, session_read, runs_list, run_read), list_tasks and',
+    'propose_plan. The client does not want noise: act only on what is listed.',
+    '',
+    '## How to run',
+    ...steps.flatMap((lines, i) => lines.map((l, j) => (j === 0 ? `${i + 1}. ${l}` : `   ${l}`))),
   ].join('\n')
 }
 
@@ -1329,6 +1364,10 @@ export const HEARTBEAT_ALLOWED = [
   NOTES_TOOL,
   PATTERN_TOOL,
   ORDER_DONE_TOOL,
+  // the supervisor duty: re-run an own failed run (three a day, policed by the server) and ask the
+  // owners one Decision Center question (tools with fixed targets)
+  SUPERVISOR_RETRY_TOOL,
+  SUPERVISOR_ASK_TOOL,
   // the report to the web chat of a standing order (a tool with fixed targets: the orders' own)
   HEARTBEAT_REPORT_TOOL,
   // the other chats and runs of the same agent (P52): read only; a web chat only when an order names it
@@ -1586,7 +1625,22 @@ export function buildDigest(input: DigestInput): Digest {
 
   if (input.items.length > 0) {
     out.push('', '### Noticed by the heartbeat')
-    for (const e of input.items) {
+    // the memory edits of the supervisor duty are one summary line, not one per file
+    const edits = input.items.filter((e) => e.item.kind === 'supervisor.memory-fix')
+    if (edits.length > 0) {
+      const what = edits.map(
+        (e) => `${e.item.links[0] ?? e.item.title} (${oneLine(e.item.detail, 140)})`,
+      )
+      const title = `Memory cleaned up by the supervisor: ${edits.length} file${edits.length === 1 ? '' : 's'}`
+      out.push(`- **${title}**: ${what.join('; ')}`)
+      items.push({
+        kind: 'noticed',
+        title,
+        detail: oneLine(what.join('; ')),
+        link: edits[0]?.item.links[0] ?? null,
+      })
+    }
+    for (const e of input.items.filter((x) => x.item.kind !== 'supervisor.memory-fix')) {
       const links = e.item.links.length === 0 ? '' : ` (${e.item.links.join(', ')})`
       out.push(`- **${oneLine(e.item.title, 120)}**: ${oneLine(e.item.detail)}${links}`)
       items.push({

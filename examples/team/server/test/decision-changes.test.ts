@@ -102,6 +102,67 @@ describe('change proposals', () => {
     expect(deps.programs.list({})).toHaveLength(1)
   })
 
+  test('a second change to the same program merges into one card and closes the first', async () => {
+    const { deps, agentId } = setup()
+    const program = existing(deps, agentId)
+    const first = propose(deps, agentId, {
+      title: 'Add web',
+      target: program.id,
+      addAuthority: { tools: ['web_fetch', 'web_search'] },
+    })
+    const second = propose(deps, agentId, {
+      title: 'Also send',
+      target: program.id,
+      addAuthority: { tools: ['channel_send'] },
+      body: 'The summary must reach the group.',
+    })
+    expect(second.duplicate).toBe(false)
+    expect(second.merged).toEqual([first.decision.id])
+    expect(getDecision(deps, first.decision.id)).toMatchObject({
+      status: 'expired',
+      decidedBy: 'system',
+    })
+    const open = deps.decisions
+      .list({ status: 'open', kind: 'change', limit: 50 })
+      .filter((d) => d.programId === program.id)
+    expect(open.map((d) => d.id)).toEqual([second.decision.id])
+    expect(second.decision.body).toContain('use web_fetch')
+    expect(second.decision.body).toContain('The summary must reach the group.')
+    // proposing the merged content again is a duplicate, not a third card
+    const again = propose(deps, agentId, {
+      title: 'Again',
+      target: program.id,
+      addAuthority: { tools: ['channel_send'] },
+    })
+    expect(again.duplicate).toBe(true)
+    expect(again.decision.id).toBe(second.decision.id)
+    await approveDecision(deps, second.decision.id, { note: 'ok' })
+    expect([...(deps.programs.get(program.id)?.authority.tools ?? [])].sort()).toEqual([
+      'channel_send',
+      'web_fetch',
+      'web_search',
+    ])
+  })
+
+  test('a stale open change is not merged; approving it is refused', async () => {
+    const { deps, agentId } = setup()
+    const program = existing(deps, agentId)
+    const stale = propose(deps, agentId, {
+      title: 'Add web',
+      target: program.id,
+      addAuthority: { tools: ['web_fetch'] },
+    })
+    updateProgram(deps, program.id, { authority: { read: ['/library/**'], tools: ['datetime'] } })
+    const fresh = propose(deps, agentId, {
+      title: 'Add search',
+      target: program.id,
+      addAuthority: { tools: ['web_search'] },
+    })
+    expect(fresh.merged).toBeUndefined()
+    expect(getDecision(deps, stale.decision.id)?.status).toBe('open')
+    await expect(approveDecision(deps, stale.decision.id, {})).rejects.toThrow(/changed after/)
+  })
+
   test('removing authority and rejecting leaves the program unchanged', async () => {
     const { deps, agentId } = setup()
     const program = existing(deps, agentId)

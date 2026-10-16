@@ -105,9 +105,9 @@ export const BeatItemSchema = z
     links: z.array(z.string()),
     urgent: z.boolean(),
     fingerprint: z.string(),
-    decision: z.enum(['note', 'report', 'say', 'escalate']).optional().openapi({
+    decision: z.enum(['note', 'report', 'say', 'escalate', 'retry']).optional().openapi({
       description:
-        'What the beat did about it: noted, reported to the destination of an order, or told the owner (`say` is the old word for report).',
+        'What the beat did about it: noted, reported to the destination of an order, told the owner, or re-ran a failed run of its own (`retry`, the supervisor duty; `say` is the old word for report).',
     }),
     reason: z
       .string()

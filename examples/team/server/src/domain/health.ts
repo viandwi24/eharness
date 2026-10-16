@@ -18,6 +18,7 @@ export const FINDING_KINDS = [
   'provider-error',
   'tools-changed',
   'order-hygiene',
+  'consistency',
 ] as const
 export type FindingKind = (typeof FINDING_KINDS)[number]
 
@@ -40,6 +41,13 @@ export interface Finding {
   explanation: string
   /** What to do about it. */
   fix: string
+  /** Kind `consistency`: which check found it and where (a memory file and line, the ids involved). */
+  consistency?: {
+    kind: string
+    memoryPath: string | null
+    line: number | null
+    refs: string[]
+  }
 }
 
 /** Thresholds in one place (the tests and the page read the same numbers). */

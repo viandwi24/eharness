@@ -23,6 +23,11 @@ import {
 import { NOTES_TOOL, ORDER_DONE_TOOL, PATTERN_TOOL } from '../../domain/heartbeat-notes.ts'
 import { originOfSession } from '../../domain/run-profiles.ts'
 import { HEARTBEAT_REPORT_TOOL, STANDING_ORDERS_NOTE } from '../../domain/standing-orders.ts'
+import {
+  MEMORY_EDIT_TOOLS,
+  SUPERVISOR_ASK_TOOL,
+  SUPERVISOR_RETRY_TOOL,
+} from '../../domain/supervisor.ts'
 import type { StandingOrderApi } from './standing-order-plugin.ts'
 
 /** What the plugin needs from the app (`app/heartbeat.ts` over the deps, built in `main.ts`). */
@@ -64,6 +69,23 @@ export interface HeartbeatIntake {
   reportWeb(agentId: string, orderId: string, text: string): Promise<string>
   /** The standing orders (`standing_order` tool of the chats). */
   orders: StandingOrderApi
+  /** Supervisor duty: re-run a failed run of the agent's own (the server polices it). A readable string. */
+  retryRun(agentId: string, taskId: string, reason: string): Promise<string>
+  /** Supervisor duty: one Decision Center question with the diagnosis and the fix. A readable string. */
+  askOwner(
+    agentId: string,
+    input: {
+      title: string
+      diagnosis: string
+      fix: string
+      options?: string[] | undefined
+      fingerprint?: string | undefined
+    },
+  ): string
+  /** The running beat may edit its own memory (its supervisor list has memory findings); read by the gate. */
+  memoryFix(agentId: string): boolean
+  /** A memory edit of the running beat happened (kept for the beat log and the digest). */
+  memoryChanged(agentId: string, call: { toolName: string; input: unknown }): void
 }
 
 export interface HeartbeatPluginOptions {
@@ -237,6 +259,45 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
               }
             },
           }),
+          [SUPERVISOR_RETRY_TOOL]: tool({
+            description:
+              'Supervisor duty: continue a failed run of your own agent from where it stopped (nothing already done is done twice). Pass the task id from the supervisor list and why a retry should help. The server refuses: runs of another agent, runs that did not fail, a failure a retry cannot change (denied, out of budget, content), a run already retried once, and more than three retries a day.',
+            inputSchema: z.object({
+              task: z.string().min(1).max(80).describe('The task id of the failed run.'),
+              reason: z.string().min(1).max(300).describe('Why a retry should help now.'),
+            }),
+            metadata: { risk: 'write', idempotent: false },
+            execute: async (input): Promise<string> => {
+              try {
+                return await intake().retryRun(agentId, input.task, input.reason)
+              } catch (error) {
+                return `ERROR: could not retry: ${errorText(error)}`
+              }
+            },
+          }),
+          [SUPERVISOR_ASK_TOOL]: tool({
+            description:
+              'Supervisor duty: ask the owners one question in the Decision Center, with the diagnosis (what failed or is inconsistent, and why you think so) and the concrete fix they can make (for a program: "propose a change to program X adding tool Y"). It changes nothing by itself. One open question per title, five a day.',
+            inputSchema: z.object({
+              title: z.string().min(1).max(120).describe('The question, one line.'),
+              diagnosis: z.string().min(1).max(1500),
+              fix: z.string().min(1).max(600).describe('The concrete action.'),
+              options: z.array(z.string().max(80)).max(5).optional(),
+              fingerprint: z
+                .string()
+                .max(200)
+                .optional()
+                .describe('The fingerprint of the supervisor item.'),
+            }),
+            metadata: { risk: 'write', idempotent: false },
+            execute: async (input): Promise<string> => {
+              try {
+                return intake().askOwner(agentId, input)
+              } catch (error) {
+                return `ERROR: could not ask: ${errorText(error)}`
+              }
+            },
+          }),
           [ORDER_DONE_TOOL]: tool({
             description:
               'End a `deadline` standing order with its outcome (what you found, what you did, what you reported). The order stays listed as done. Do not call it when you could not find out.',
@@ -255,6 +316,19 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
           }),
         } as never,
         hooks: {
+          // an edit of the agent's own memory (supervisor duty): kept for the beat log and the digest
+          'tool.after': (
+            hookCtx: HarnessContext,
+            e: { toolName: string; input: unknown },
+          ): undefined => {
+            if (!MEMORY_EDIT_TOOLS.includes(e.toolName)) return undefined
+            try {
+              intake().memoryChanged(agentId, { toolName: e.toolName, input: e.input })
+            } catch (error) {
+              hookCtx.log.warn(`heartbeat: could not record a memory edit: ${errorText(error)}`)
+            }
+            return undefined
+          },
           'turn.end': async (
             hookCtx: HarnessContext,
             e: { stop: string; output?: unknown },

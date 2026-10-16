@@ -11,7 +11,8 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
-	import { type Finding, filterFindings, KIND_LABEL, SEVERITY_LABEL, SEVERITY_VARIANT, type Severity, seenLine, severityCounts, sortFindings } from '#lib/health/model.js';
+	import { CONSISTENCY_LABEL, type Finding, filterFindings, KIND_LABEL, memoryWhere, SEVERITY_LABEL, SEVERITY_VARIANT, type Severity, seenLine, severityCounts, sortFindings, splitConsistency } from '#lib/health/model.js';
+	import { openEditAgent } from '#lib/stores/dialogs.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { timeAgo } from '#lib/time.js';
 
@@ -62,9 +63,38 @@
 	}
 
 	const shown = $derived(sortFindings(filterFindings(findings ?? [], { agentId: agentFilter, severity: severityFilter })));
+	const groups = $derived(splitConsistency(shown));
 	const counts = $derived(severityCounts(findings ?? []));
 	const agentsWithFindings = $derived(agentsStore.state.agents.filter((a) => (findings ?? []).some((f) => f.agentId === a.id)));
 </script>
+
+{#snippet card(f: Finding)}
+				<Card size="sm" class="gap-2.5 px-4 py-3.5 {f.dismissed ? 'opacity-60' : ''}" data-testid="health-finding" data-severity={f.severity} data-kind={f.kind}>
+					<div class="flex flex-wrap items-center gap-2">
+						<Badge variant={SEVERITY_VARIANT[f.severity]} class="h-5 px-1.5 text-[11px]">{SEVERITY_LABEL[f.severity]}</Badge>
+						<Badge variant="secondary" class="h-5 px-1.5 text-[11px]">{f.consistency ? (CONSISTENCY_LABEL[f.consistency.kind] ?? KIND_LABEL[f.kind]) : KIND_LABEL[f.kind]}</Badge>
+						{#if f.agentName}<span class="text-xs text-muted-foreground">{f.agentName}</span>{/if}
+						{#if f.programName}<span class="text-xs text-muted-foreground">· {f.programName}</span>{/if}
+						{#if !f.consistency}<span class="ml-auto text-xs text-muted-foreground">{seenLine(f, (ms) => timeAgo(ms))}</span>{/if}
+					</div>
+					<p class="text-[14px] leading-snug font-medium">{f.explanation}</p>
+					<p class="text-[13px] text-muted-foreground"><span class="font-medium text-foreground">Suggested fix.</span> {f.fix}</p>
+					<div class="flex flex-wrap items-center gap-2">
+						{#if f.link}
+							<Button size="sm" variant="outline" href={f.link}>{f.consistency ? (f.programId ? 'Open the program' : 'Open it') : f.programId ? 'Open the run' : 'Open the session'}</Button>
+						{/if}
+						{#if memoryWhere(f)}
+							<span class="font-mono text-xs text-muted-foreground" data-testid="health-memory-path">{memoryWhere(f)}</span>
+							{#if f.agentId}
+								<Button size="sm" variant="outline" onclick={() => openEditAgent(f.agentId as string, 'memory')}>Open the memory file</Button>
+							{/if}
+						{/if}
+						<Button size="sm" variant="ghost" disabled={busy === f.fingerprint} onclick={() => void setDismissed(f, !f.dismissed)}>
+							{f.dismissed ? 'Show again' : 'Dismiss'}
+						</Button>
+					</div>
+				</Card>
+{/snippet}
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 	<PageHeader title="Health" description="Problems the server noticed in the last 24 hours, from its own data.">
@@ -99,27 +129,18 @@
 				</Empty.Header>
 			</Empty.Root>
 		{:else}
-			{#each shown as f (f.fingerprint)}
-				<Card size="sm" class="gap-2.5 px-4 py-3.5 {f.dismissed ? 'opacity-60' : ''}" data-testid="health-finding" data-severity={f.severity} data-kind={f.kind}>
-					<div class="flex flex-wrap items-center gap-2">
-						<Badge variant={SEVERITY_VARIANT[f.severity]} class="h-5 px-1.5 text-[11px]">{SEVERITY_LABEL[f.severity]}</Badge>
-						<Badge variant="secondary" class="h-5 px-1.5 text-[11px]">{KIND_LABEL[f.kind]}</Badge>
-						{#if f.agentName}<span class="text-xs text-muted-foreground">{f.agentName}</span>{/if}
-						{#if f.programName}<span class="text-xs text-muted-foreground">· {f.programName}</span>{/if}
-						<span class="ml-auto text-xs text-muted-foreground">{seenLine(f, (ms) => timeAgo(ms))}</span>
-					</div>
-					<p class="text-[14px] leading-snug font-medium">{f.explanation}</p>
-					<p class="text-[13px] text-muted-foreground"><span class="font-medium text-foreground">Suggested fix.</span> {f.fix}</p>
-					<div class="flex flex-wrap items-center gap-2">
-						{#if f.link}
-							<Button size="sm" variant="outline" href={f.link}>{f.programId ? 'Open the run' : 'Open the session'}</Button>
-						{/if}
-						<Button size="sm" variant="ghost" disabled={busy === f.fingerprint} onclick={() => void setDismissed(f, !f.dismissed)}>
-							{f.dismissed ? 'Show again' : 'Dismiss'}
-						</Button>
-					</div>
-				</Card>
+			{#each groups.runtime as f (f.fingerprint)}
+				{@render card(f)}
 			{/each}
+			{#if groups.consistency.length}
+				<div class="mt-2 flex flex-col gap-1" data-testid="health-consistency">
+					<h2 class="text-sm font-semibold">Consistency</h2>
+					<p class="text-[13px] text-muted-foreground">Places that contradict each other or hold stale state: duplicate programs, memory files that name tools or ids that are gone, decisions nobody answered, connections that are down but still used.</p>
+				</div>
+				{#each groups.consistency as f (f.fingerprint)}
+					{@render card(f)}
+				{/each}
+			{/if}
 		{/if}
 	</PageBody>
 </div>
