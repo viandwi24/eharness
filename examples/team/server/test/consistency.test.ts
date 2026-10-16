@@ -178,6 +178,27 @@ describe('programs', () => {
     expect(out.map((f) => f.severity).sort()).toEqual(['high', 'low'])
   })
 
+  test('a tool granted and forbidden at once is flagged (forbidden wins)', () => {
+    const out = detectConsistency(
+      base({
+        programs: [
+          program({
+            authority: {
+              tools: ['channel_send', 'chat_history'],
+              connectors: [],
+              read: [],
+              write: [],
+            },
+            forbidden: ['channel_send'],
+          }),
+        ],
+      }),
+    ).filter((f) => f.kind === 'program-needs-tool')
+    expect(out).toHaveLength(1)
+    expect(out[0]?.explanation).toContain('channel_send')
+    expect(out[0]?.explanation).not.toContain('chat_history')
+  })
+
   test('dead program id in notes and brief; a living one is not flagged', () => {
     const out = detectConsistency(
       base({

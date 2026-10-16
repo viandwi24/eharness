@@ -486,3 +486,19 @@ neutralizeTags(text: string, tags: readonly string[]): string   // `<` → `&lt;
   themselves with `untrustedContent()`.
 - Framing is one layer of defence in depth, not a guarantee. See the guide "Permissions" →
   "Prompt injection".
+
+## 11. Leaked tool-call markup
+
+Some models (DeepSeek DSML `<｜DSML｜invoke>`/`<｜DSML｜parameter name=".." string="true">`, Qwen/Hermes
+`<tool_call>`, `<|tool▁calls▁begin|>`, Kimi `<|tool_calls_section_begin|>`, Anthropic-style
+`<function_calls>`) print their native tool-call syntax as text; a provider parses most of it into a real
+tool call and can leak a fragment (e.g. a text part that is only `url" string="true">https://…`).
+
+- `stripLeakedToolMarkup(text)` (core export) removes closed markup blocks, unclosed exotic-token
+  blocks (`<｜DSML｜…`), stray DSML tags, and a whole text that is just a parameter-tail fragment.
+  Fenced code and ordinary prose (including prose that mentions `<tool_call>`) are untouched.
+- The step loop applies it **before persistence and projection**: a text part is held only while its
+  first ~14 characters are undecided or look like markup (normal text streams unchanged), cleaned at
+  `text-end`, and dropped when nothing remains; all other chunks keep their order. The step's
+  response messages (the model wire) are cleaned the same way.
+- UIs showing messages stored before this fix may call the function as a display filter.

@@ -642,6 +642,28 @@ describe('reminders', () => {
     expect(mock.sent.filter((s) => s.message.text.includes('Reminder:'))).toHaveLength(1)
   })
 
+  test('one request is one reminder: a second one about the same thing needs series', async () => {
+    const msg = (day: string) =>
+      `Reminder: prepare the company dashboard before the Tuesday meeting, ${day}: content reach, sales ratio and support volume`
+    const { i, mock } = await setup([
+      call('reminder', { action: 'create', message: msg('saturday'), inMinutes: 60 }, 's1'),
+      call('reminder', { action: 'create', message: msg('monday'), inMinutes: 120 }, 's2'),
+      call(
+        'reminder',
+        { action: 'create', message: msg('tuesday'), inMinutes: 180, series: true },
+        's3',
+      ),
+      call('reminder', { action: 'create', message: 'Lunch time', inMinutes: 30 }, 's4'),
+      text('Set.'),
+    ])
+    await askIn(mock, ceo, 'q1')
+    await until('confirmed', () => mock.sent.some((s) => s.message.text === 'Set.'))
+    expect(wire(i.lead)).toContain('Not created: a reminder about the same thing is already set')
+    const bodies = i.gw.reminders.list('c1').map((r) => r.body)
+    expect(bodies).toHaveLength(3)
+    expect(bodies.some((b) => b.includes('monday'))).toBe(false)
+  })
+
   test('a member can remind only themselves and cancel only their own; guests are refused', async () => {
     const { i, mock } = await setup([
       call(

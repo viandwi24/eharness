@@ -145,9 +145,11 @@ export interface SessionsApi {
   get(sessionId: string, options?: CallOptions): Promise<SessionSnapshot>
   messages(
     sessionId: string,
-    query?: { before?: string; limit?: number },
+    query?: { before?: string; limit?: number; clip?: number },
     options?: CallOptions,
   ): Promise<MessagesPage>
+  /** One stored message, never clipped (`GET /sessions/:id/messages/:messageId`). */
+  message(sessionId: string, messageId: string, options?: CallOptions): Promise<UIMessage>
   interrupt(sessionId: string, reason?: string, options?: CallOptions): Promise<InterruptResult>
   /**
    * `POST /sessions/:id/chat` without a chat framework: a `200` answer is the UI message stream
@@ -269,6 +271,8 @@ export function createHarnessClient(options: HarnessClientOptions): HarnessClien
       get: (id, o) => call('GET', url(`/sessions/${seg(id)}`), undefined, o),
       messages: (id, query, o) =>
         call('GET', url(`/sessions/${seg(id)}/messages`, { ...query }), undefined, o),
+      message: (id, messageId, o) =>
+        call('GET', url(`/sessions/${seg(id)}/messages/${seg(messageId)}`), undefined, o),
       interrupt: (id, reason, o) =>
         call(
           'POST',

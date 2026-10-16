@@ -153,11 +153,12 @@ The SSE parser, the record parser, the liveness state machine and the backoff ar
 ## 5. Chat session
 
 ```ts
-createChatSession<UI>({ client, sessionId, messages?, pageSize?, transportOptions?, transport?, notify?, sleep? }): ChatSession<UI>
+createChatSession<UI>({ client, sessionId, messages?, pageSize?, clip?, transportOptions?, transport?, notify?, sleep? }): ChatSession<UI>
 interface ChatSession<UI> extends Store<ChatSessionState> {
   chatInit: { id, messages?, transport, onError, onData, onFinish }   // spread into new Chat({...}) / useChat({...})
   bind(chat: ChatBridge<UI> | undefined)
   init(); follow(); followServerTurn(); storedElsewhere(); checkStalled(); loadOlder(); refetch()
+  loadFull(messageId): Promise<UI | undefined>   // fetch one message unclipped, replace it in chat.messages in place
   send(text, files?); stop(); continueTurn(); retryTurn(); retry(); dismissProblem(); interrupted(); refreshBusy()
 }
 interface ChatSessionState { loaded; hasOlder; loadingOlder; following; notice; problem; activity; busy; stopping }
@@ -168,6 +169,10 @@ interface ChatBridge<UI> { messages: UI[]; readonly status: ChatStatus; sendMess
 `@ai-sdk/react` `useChat` goes through `chatBridgeOf` (§7). The session never owns the messages: it
 reads and writes `chat.messages`.
 
+- **`clip`** is sent as `?clip=` on every page read (spec 26 §2.2); `isClippedPart(part)` tells a
+  part whose `input`/`output`/`data` is the `{ eharnessClipped: true, chars, preview }` marker, and
+  `loadFull(id)` (`client.sessions.message(sessionId, id)`) swaps the whole message in. A later
+  `refetch()` shows it clipped again. `client.sessions.messages(id, { limit, before, clip })`.
 - **`init()`** (idempotent): load the newest page unless `messages` were given, then, when the
   session snapshot says a turn runs (`running` or `activeTurn`), `follow()`.
 - **`follow()`**: `chat.resumeStream()` (replay then follow, also for a turn of another instance),

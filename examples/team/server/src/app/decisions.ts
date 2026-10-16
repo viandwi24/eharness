@@ -62,6 +62,7 @@ import {
   checkProgramFields,
   cleanList,
   type EffectiveGrant,
+  grantedAndForbidden,
   normalizeAuthority,
   type Program,
   type ProgramAuthority,
@@ -338,6 +339,11 @@ function proposeChange(
   checkProgramFields(after)
   if (after.authority !== undefined) {
     after.authority = enforceAuthority(deps, program.agentId, normalizeAuthority(after.authority))
+    // granting a tool that is still forbidden means un-forbidding it (forbidden would win and the
+    // run would never see it); the owner sees both lines in the diff
+    const forbidden = after.forbidden ?? base.forbidden
+    const both = grantedAndForbidden(after.authority, forbidden)
+    if (both.length > 0) after.forbidden = forbidden.filter((f) => !both.includes(f.trim()))
   }
   if (after.trigger?.kind === 'schedule') deps.schedule.validate(after.trigger.spec)
   const fields = changedFields(before, after)
@@ -427,6 +433,16 @@ export function proposeFromAgent(
   }
   if (changing) return proposeChange(deps, input, runner)
   refuseDuplicateProgram(deps, runner.id, input.title, input.program.name ?? '')
+  const both = grantedAndForbidden(
+    { tools: input.program.authority?.tools ?? [] },
+    input.program.forbidden ?? [],
+  )
+  if (both.length > 0) {
+    throw invalid(
+      `${both.join(', ')} is both in authority.tools and in forbidden: forbidden wins, so the run would never get it. Keep it in one of the two.`,
+      'INVALID_PROPOSAL',
+    )
+  }
   const existing = similarOpenProposal(deps, runner.id, {
     title: input.title,
     name: input.program.name ?? '',

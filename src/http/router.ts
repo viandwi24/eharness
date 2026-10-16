@@ -14,6 +14,7 @@ import { httpError, mapError } from './errors.ts'
 import {
   handleHealth,
   handleSessionList,
+  handleSessionMessage,
   handleSessionMessages,
   handleSessionRead,
 } from './sessions.ts'
@@ -58,6 +59,13 @@ function table<P>(): RouteDef<P>[] {
       action: 'session.messages',
       when: (e) => e.peek !== undefined,
       run: handleSessionMessages,
+    },
+    {
+      method: 'GET',
+      path: '/sessions/:id/messages/:messageId',
+      action: 'session.message',
+      when: (e) => e.peek !== undefined,
+      run: handleSessionMessage,
     },
     {
       method: 'POST',
@@ -272,6 +280,7 @@ export function createHarnessHttp<P extends object = object>(
     'session.list',
     'session.read',
     'session.messages',
+    'session.message',
     'chat',
     'chat.resume',
     'chat.interrupt',

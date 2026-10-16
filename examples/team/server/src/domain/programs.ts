@@ -183,6 +183,19 @@ const usdProblem = (field: string, value: number | null | undefined): void => {
 }
 
 /** Shape checks that need neither the clock nor the cron library. */
+/**
+ * Tools a program grants in its authority and forbids at the same time. Forbidden wins, so the run
+ * never even sees such a tool (production: `channel_send` granted by a change, still forbidden from
+ * creation, and the daily summary never went out).
+ */
+export function grantedAndForbidden(
+  authority: Pick<ProgramAuthority, 'tools'>,
+  forbidden: readonly string[],
+): string[] {
+  const no = new Set(forbidden.map((f) => f.trim()))
+  return authority.tools.filter((t) => no.has(t))
+}
+
 export function checkProgramFields(f: {
   name?: string | undefined
   brief?: string | undefined

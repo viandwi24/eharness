@@ -5,6 +5,7 @@
 	import { cn } from '#lib/utils.js';
 	import { isRunning, type ToolView, toolNote } from './activity.js';
 	import { approvalChip, type ApprovalStanding } from '#lib/approval/chip.js';
+	import { getChatEnv } from '#lib/artifacts/context.js';
 	import MediaRefImage from './MediaRefImage.svelte';
 	import { toolImages } from './media.js';
 
@@ -17,6 +18,16 @@
 	}: { view: ToolView; nested?: boolean; standing?: (approvalId: string) => ApprovalStanding; onFocusDock?: (approvalId: string) => void } = $props();
 
 	let open = $state(false);
+	const env = getChatEnv();
+	let loadingFull = $state(false);
+	async function loadFull(): Promise<void> {
+		loadingFull = true;
+		try {
+			if (view.messageId) await env?.loadFull?.(view.messageId);
+		} finally {
+			loadingFull = false;
+		}
+	}
 	const hasInput = $derived(view.input !== undefined && view.input !== null);
 	const hasOutput = $derived(view.output !== undefined && view.output !== null && view.output !== '');
 	const running = $derived(isRunning(view));
@@ -69,6 +80,11 @@
 			{#if hasInput}<ToolInput input={view.input} />{/if}
 			{#if hasOutput || view.errorText}
 				<ToolOutput output={view.output} errorText={view.errorText} />
+				{#if view.clipped && env?.loadFull}
+					<button type="button" class="self-start text-[12.5px] text-muted-foreground underline underline-offset-4 hover:text-foreground" disabled={loadingFull} onclick={() => void loadFull()}>
+						{loadingFull ? 'Loading…' : 'Load full output'}
+					</button>
+				{/if}
 			{:else if !hasInput}
 				<p class="text-[13px] text-muted-foreground">No details yet.</p>
 			{/if}

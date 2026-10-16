@@ -1,9 +1,11 @@
 /**
- * Session reads: `GET /health`, `/sessions`, `/sessions/:id`, `/sessions/:id/messages`.
+ * Session reads: `GET /health`, `/sessions`, `/sessions/:id`, `/sessions/:id/messages`,
+ * `/sessions/:id/messages/:messageId`.
  *
  * @see docs/specs/26-http.md#2-routes
  */
 import type { PendingState } from '../index.ts'
+import { clipMessages, parseClip } from './clip.ts'
 import { httpError, jsonResponse } from './errors.ts'
 import type { HttpCall, HttpEnv } from './types.ts'
 import type {
@@ -113,6 +115,10 @@ export async function handleSessionMessages<P>(
   if (before !== undefined && (before === '' || before.length > 256)) {
     return httpError('EH_INVALID_INPUT', 'before is not a message id.', { reason: 'before' })
   }
+  const clip = parseClip(url.searchParams.get('clip'))
+  if (clip === undefined) {
+    return httpError('EH_INVALID_INPUT', 'clip must be 200 to 100000.', { reason: 'clip' })
+  }
   const found = await peek.messages({
     limit: limit + 1,
     ...(before === undefined ? {} : { beforeId: before }),
@@ -121,8 +127,28 @@ export async function handleSessionMessages<P>(
   const messages = more ? found.slice(found.length - limit) : found
   const first = messages[0]
   const body: MessagesPage = {
-    messages,
+    messages: clip === null ? messages : clipMessages(messages, clip),
     ...(more && first !== undefined ? { nextBefore: first.id } : {}),
   }
   return jsonResponse(body)
+}
+
+/** `GET /sessions/:id/messages/:messageId`: one stored message, never clipped. */
+export async function handleSessionMessage<P>(
+  env: HttpEnv<P>,
+  call: HttpCall<P>,
+): Promise<Response> {
+  const id = call.params.id as string
+  const messageId = call.params.messageId as string
+  const peek = await env.peek?.(id, call)
+  if (peek === undefined || messageId === '' || messageId.length > 256) {
+    return httpError('EH_HTTP_NOT_FOUND', 'Not found.')
+  }
+  // `before` is exclusive and ids sort as strings: `id + '~'` is the first key after `id`.
+  const found = await peek.messages({ limit: 1, beforeId: `${messageId}~` })
+  const message = found.at(-1)
+  if (message === undefined || message.id !== messageId) {
+    return httpError('EH_HTTP_NOT_FOUND', 'Not found.')
+  }
+  return jsonResponse(message)
 }

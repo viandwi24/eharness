@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { AbstractChat, ChatStatus, UIMessage } from 'ai'
+import { isClippedPart } from './chat-helpers.ts'
 import { type ChatBridge, createChatSession } from './chat-session.ts'
 import { createHarnessClient } from './http-client.ts'
 
@@ -37,6 +38,11 @@ function world() {
       const url = new URL(String(input))
       const method = init?.method ?? 'GET'
       w.log.push(`${method} ${url.pathname}${url.search}`)
+      const single = /\/messages\/([^/]+)$/.exec(url.pathname)
+      if (single !== null) {
+        const found = w.stored.find((m) => m.id === decodeURIComponent(single[1] as string))
+        return found === undefined ? err(404, 'EH_HTTP_NOT_FOUND') : json(found)
+      }
       if (url.pathname.endsWith('/messages')) {
         const limit = Number(url.searchParams.get('limit'))
         const before = url.searchParams.get('before')
@@ -142,6 +148,7 @@ function setup(
   options: {
     messages?: UIMessage[]
     pageSize?: number
+    clip?: number
     notify?: (l: string, t: string) => void
   } = {},
 ) {
@@ -474,6 +481,46 @@ describe('chat session: stop, stalled, paging, interrupted', () => {
     t.w.stored = [...t.w.stored, assistant('m6')]
     await t.session.refetch()
     expect(t.chat.messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 'm6'])
+  })
+
+  test('clip is passed to every page read; loadFull replaces the message in place', async () => {
+    const t = setup({ pageSize: 2, clip: 500 })
+    const clipped = assistant('m4', {
+      parts: [
+        {
+          type: 'tool-read',
+          toolCallId: 'c1',
+          state: 'output-available',
+          input: {},
+          output: { eharnessClipped: true, chars: 9000, preview: 'abc' },
+        } as never,
+      ],
+    })
+    const full = assistant('m4', {
+      parts: [
+        {
+          type: 'tool-read',
+          toolCallId: 'c1',
+          state: 'output-available',
+          input: {},
+          output: 'x'.repeat(9000),
+        } as never,
+      ],
+    })
+    t.w.stored = [user('m1'), user('m3'), clipped, user('m5')]
+    await t.session.init()
+    await t.session.loadOlder()
+    expect(
+      t.w.log.filter((l) => l.includes('/messages?')).every((l) => l.includes('clip=500')),
+    ).toBe(true)
+    const part = t.chat.messages.find((m) => m.id === 'm4')?.parts[0]
+    expect(isClippedPart(part)).toBe(true)
+    t.w.stored = [user('m1'), user('m3'), full, user('m5')]
+    expect(await t.session.loadFull('m4')).toEqual(full)
+    expect(t.chat.messages.map((m) => m.id)).toEqual(['m1', 'm3', 'm4', 'm5'])
+    expect(isClippedPart(t.chat.messages[2]?.parts[0])).toBe(false)
+    expect(await t.session.loadFull('nope')).toBeUndefined()
+    expect(t.notes.at(-1)?.[0]).toBe('error')
   })
 
   test('refetch after more than a page was stored drops the stale messages and pages from the new page', async () => {

@@ -5,6 +5,7 @@
 import { Chat } from '@ai-sdk/svelte';
 import type { FileUIPart, UIMessage } from 'ai';
 import { type ChatSession, type ChatSessionState, createChatSession, interruptedTurn } from 'eharness/client';
+import { loadFullOf } from './clip.js';
 import { harness } from '../api/index';
 import { UPLOAD_MAX_BYTES } from './constants.js';
 import { uploadErrorText } from './http.js';
@@ -25,6 +26,8 @@ export type CreateAgentChatOptions = {
 	dismiss?: (id: string) => void;
 	/** Page size of `GET /sessions/{id}/messages`. */
 	pageSize?: number;
+	/** The server clips tool outputs longer than this many characters in history pages. */
+	clip?: number;
 };
 
 const INITIAL: ChatSessionState = { loaded: false, hasOlder: false, loadingOlder: false, following: false, notice: null, problem: null, activity: null, busy: false, stopping: false };
@@ -51,6 +54,7 @@ export class AgentChat {
 			sessionId: options.sessionId, // the session of one chat thread
 			...(options.messages ? { messages: options.messages } : {}),
 			...(options.pageSize ? { pageSize: options.pageSize } : {}),
+			...(options.clip ? { clip: options.clip } : {}), // clipped history pages (see ./clip.ts)
 			transportOptions: { ifBusy: 'steer' }, // a message sent while a turn runs joins it
 			notify: (level, text) => {
 				if (level === 'error') {
@@ -142,6 +146,10 @@ export class AgentChat {
 	followServerTurn = (): Promise<void> => this.session.followServerTurn();
 	storedElsewhere = (): Promise<void> => this.session.storedElsewhere();
 	checkStalled = (): Promise<void> => this.session.checkStalled();
+	/** Fetch one message in full and replace it in place (a clipped tool output); undefined when the client cannot. */
+	get loadFull(): ((messageId: string) => Promise<unknown>) | undefined {
+		return loadFullOf(this.session);
+	}
 	loadOlder = (): Promise<number> => this.session.loadOlder();
 	refetch = (): Promise<void> => this.session.refetch();
 	stop = (): Promise<void> => this.session.stop();

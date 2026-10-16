@@ -21,6 +21,7 @@
 import { tool } from 'ai'
 import { errorText } from 'eharness'
 import { z } from 'zod'
+import { sameInstruction } from '../../domain/order-hygiene.ts'
 import { checkPersonNote, MAX_PERSON_NOTE } from '../../domain/persona.ts'
 import type { RunOrigin } from '../../domain/run-profiles.ts'
 import { connectionList, resolveConnectionRef } from './connection-ref.ts'
@@ -287,6 +288,12 @@ export const reminderSchema = z.object({
       'Who to mention (ping): platform user ids (from the header or member_lookup) or team member ids. Mentions are made only by this field. Omit to remind the whole chat.',
     ),
   all: z.boolean().optional().describe('list: include finished and cancelled reminders.'),
+  series: z
+    .boolean()
+    .optional()
+    .describe(
+      'create: set only when the person asked for several reminders about the same thing (for example "ingatkan H-3 dan H-1", "every morning until Friday"). One request is one reminder: never add extra ones on your own.',
+    ),
 })
 
 const clip = (text: string, max: number): string =>
@@ -1142,6 +1149,15 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       if (message === undefined || message === '')
         return 'ERROR: create needs message (what will be posted when it fires, written as the reminder itself). Call again with message, for example {"action":"create","message":"Time to leave","inMinutes":10}.'
       if (!hasWhen) return 'ERROR: create needs when: at, inMinutes, or repeat with time.'
+      // one request is one reminder: a second active reminder about the same thing in this chat is
+      // refused unless the person asked for a series (production: three reminders for one "ingatkan")
+      if (input.series !== true) {
+        const twin = gw.reminders
+          .list(connectionId, { status: 'active' as const })
+          .find((r) => r.nodeId === node.id && sameInstruction(r.body, message))
+        if (twin !== undefined)
+          return `Not created: a reminder about the same thing is already set here (id ${twin.id}, ${twin.whenText}). Update that one (action "update") instead, or tell the person it is already set. Only if the person asked for several reminders about this (for example the day before and the same morning), create again with series: true.`
+      }
       const created = gw.reminders.create({
         connectionId,
         nodeId: node.id,

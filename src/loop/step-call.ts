@@ -13,6 +13,7 @@ import {
 } from 'ai'
 import { experimentalStreamOptions } from '../internal/ai-compat.ts'
 import { inputWireMessage } from '../messages/input-wire.ts'
+import { createLeakFilter, stripLeakedToolMarkup } from '../messages/leaked-markup.ts'
 import { observeForSession } from '../models/model-calls.ts'
 import { noCallModel } from '../models/no-call.ts'
 import { noSuchToolText } from '../registry/tool-search.ts'
@@ -131,6 +132,7 @@ export async function streamStep(st: StepsCtx, req: StepRequest): Promise<StepRu
   })
   /** Start time of every open reasoning part (spec 04 §2: `providerMetadata.eharness.durationMs`). */
   const reasoningStarted = new Map<string, number>()
+  const leaks = createLeakFilter()
   for await (const rawChunk of ui) {
     let chunk = rawChunk
     if (chunk.type === 'reasoning-start') reasoningStarted.set(chunk.id, Date.now())
@@ -151,9 +153,10 @@ export async function streamStep(st: StepsCtx, req: StepRequest): Promise<StepRu
       sawError = true
       errorText ??= chunk.errorText
     }
-    st.input.write(chunk as UIMessageChunk)
+    for (const c of leaks.push(chunk as UIMessageChunk)) st.input.write(c)
   }
-  const response = await guarded(result.responseMessages)
+  for (const c of leaks.flush()) st.input.write(c)
+  const response = cleanResponse(await guarded(result.responseMessages))
   if (held === undefined && !stepAborted) writeNotes()
   return {
     result,
@@ -240,4 +243,24 @@ export async function recoverHeld(
     run.errorText ??= heldText
   }
   return undefined
+}
+
+/** The wire copy of a step: leaked tool-call markup removed from text parts (spec 03 §11). */
+function cleanResponse(response: ModelMessage[] | undefined): ModelMessage[] | undefined {
+  if (response === undefined) return undefined
+  return response.map((m) => {
+    if (m.role !== 'assistant' || typeof m.content === 'string') return m
+    let changed = false
+    const content: typeof m.content = []
+    for (const p of m.content) {
+      if (p.type !== 'text') {
+        content.push(p)
+        continue
+      }
+      const t = stripLeakedToolMarkup(p.text)
+      if (t !== p.text) changed = true
+      if (t !== '') content.push(t === p.text ? p : { ...p, text: t })
+    }
+    return changed ? ({ ...m, content } as ModelMessage) : m
+  })
 }

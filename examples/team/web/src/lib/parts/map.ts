@@ -1,6 +1,7 @@
 // Pure mapping UIMessage -> PartView[] (P32 §7.3). No Svelte, no DOM: unit-tested with bun test.
 // Renderers (*.svelte) switch on `PartView.kind`; transient parts never reach a stored message.
 import type { UIMessage } from 'ai';
+import { isClipped } from '../chat/clip.js';
 
 export type ToolViewState =
 	| 'input-streaming'
@@ -47,6 +48,10 @@ export type PartView =
 			kind: 'tool';
 			key: string;
 			toolCallId: string;
+			/** The message this call is in (for loading its clipped output in full). */
+			messageId?: string;
+			/** The server cut the output (a page of history clips big outputs); "Load full output" fetches it. */
+			clipped?: boolean;
 			toolName: string;
 			title: string;
 			state: ToolViewState;
@@ -221,6 +226,8 @@ export function viewModel(message: UIMessage, live = true): PartView[] {
 				kind: 'tool',
 				key,
 				toolCallId,
+				messageId: message.id,
+				clipped: isClipped(part) ? true : undefined,
 				toolName: name,
 				title,
 				state,

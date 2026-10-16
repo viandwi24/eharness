@@ -64,6 +64,7 @@
     "openRouterCatalog",
     "parseSkillMarkdown",
     "statelessPattern",
+    "stripLeakedToolMarkup",
     "toolTraits",
     "unsafePatternReason",
     "untrustedContent",
@@ -150,6 +151,7 @@
     "describeChatError",
     "followSessionStream",
     "interruptedTurn",
+    "isClippedPart",
     "isHarnessHttpError",
     "isNetworkError"
   ],

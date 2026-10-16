@@ -76,6 +76,11 @@ export interface ChatSessionOptions<UI extends UIMessage = UIMessage> {
   messages?: UI[]
   /** Page size of the history reads. Default 50. */
   pageSize?: number
+  /**
+   * Ask the server to clip tool and data payloads over this many characters in every page read
+   * (`?clip=`, 200..100000). `loadFull` fetches one message unclipped; see `isClippedPart`.
+   */
+  clip?: number
   /** Extra options of the default transport (`ifBusy`, `body`). Ignored when `transport` is given. */
   transportOptions?: Pick<HarnessTransportOptions, 'ifBusy' | 'body'>
   /** Your own transport (then a `202` is not noticed; prefer `transportOptions`). */
@@ -114,6 +119,11 @@ export interface ChatSession<UI extends UIMessage = UIMessage> extends Store<Cha
   checkStalled(): Promise<void>
   /** Load the next older page; returns the number of messages added. */
   loadOlder(): Promise<number>
+  /**
+   * Fetch one message unclipped and replace it in `chat.messages` (same position). Returns the
+   * message, or `undefined` when it could not be loaded. A later `refetch()` shows it clipped again.
+   */
+  loadFull(messageId: string): Promise<UI | undefined>
   /** Reload the newest page; older pages stay. */
   refetch(): Promise<void>
   /** Send a user message; while a turn runs it is steered into it. */
@@ -203,6 +213,7 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
     try {
       return await client.sessions.messages(sessionId, {
         limit: pageSize,
+        ...(options.clip === undefined ? {} : { clip: options.clip }),
         ...(before === undefined ? {} : { before }),
       })
     } catch {
@@ -507,6 +518,26 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
       await refetch()
       clearChatError()
       refreshBusy()
+    },
+
+    async loadFull(messageId) {
+      try {
+        const full = (await client.sessions.message(sessionId, messageId)) as UI
+        if (chat !== undefined) {
+          const index = chat.messages.findIndex((m) => m.id === messageId)
+          if (index !== -1) {
+            chat.messages = [
+              ...chat.messages.slice(0, index),
+              full,
+              ...chat.messages.slice(index + 1),
+            ]
+          }
+        }
+        return full
+      } catch {
+        notify('error', 'Could not load the full message')
+        return undefined
+      }
     },
 
     async loadOlder() {

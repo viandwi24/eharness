@@ -176,6 +176,7 @@ export type HttpAction =
   | 'session.list'
   | 'session.read'
   | 'session.messages'
+  | 'session.message'
   | 'chat'
   | 'chat.resume'
   | 'chat.interrupt'

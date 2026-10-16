@@ -162,6 +162,7 @@ export {
   isKindMessage,
   type MessageKindDef,
 } from './messages/kinds.ts'
+export { stripLeakedToolMarkup } from './messages/leaked-markup.ts'
 export { messageToChunks } from './messages/replay.ts'
 export {
   CLIENT_TOOL_TIMED_OUT,

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { cn } from "#lib/utils.js";
 	import MediaRefImage from "#lib/parts/MediaRefImage.svelte";
+	import { BIG_OUTPUT, previewText, sizeLabel } from "#lib/parts/big.js";
 	import { toolContent } from "#lib/parts/media.js";
 	import type { HTMLAttributes } from "svelte/elements";
 
@@ -27,6 +28,10 @@
 	const text = $derived(
 		media ? (media.text ?? "") : typeof output === "string" ? output : JSON.stringify(output, null, 2)
 	);
+	// a huge result is a plain preview until the reader asks for all of it (never markdown, never a giant DOM)
+	let showAll = $state(false);
+	const preview = $derived(previewText(text, BIG_OUTPUT));
+	const shownText = $derived(showAll ? text : preview.shown);
 	const pre =
 		"m-0 overflow-x-auto rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-[1.6] whitespace-pre text-foreground";
 </script>
@@ -54,7 +59,12 @@
 				{#if text}<pre class={pre}>{text}</pre>{/if}
 			</div>
 		{:else}
-			<pre class={pre}>{text}</pre>
+			<pre class={pre}>{shownText}</pre>
+			{#if preview.big && !showAll}
+				<button type="button" class="mt-1.5 text-[12.5px] text-muted-foreground underline underline-offset-4 hover:text-foreground" onclick={() => (showAll = true)}>
+					Show all ({sizeLabel(text.length)})
+				</button>
+			{/if}
 		{/if}
 	</div>
 {/if}

@@ -163,6 +163,34 @@ describe('change proposals', () => {
     await expect(approveDecision(deps, stale.decision.id, {})).rejects.toThrow(/changed after/)
   })
 
+  test('granting a forbidden tool takes it out of forbidden; a new proposal with both is refused', async () => {
+    const { deps, agentId } = setup()
+    const program = existing(deps, agentId)
+    updateProgram(deps, program.id, { forbidden: ['channel_send', 'delete_file'] })
+    const { decision } = propose(deps, agentId, {
+      title: 'Let it post the summary',
+      target: program.id,
+      addAuthority: { tools: ['channel_send'] },
+    })
+    const d = decision as Extract<Decision, { kind: 'change' }>
+    expect(d.payload.diff.map((l) => l.field).sort()).toEqual(['authority', 'forbidden'])
+    await approveDecision(deps, d.id, {})
+    const after = deps.programs.get(program.id)
+    expect(after?.authority.tools).toContain('channel_send')
+    expect(after?.forbidden).toEqual(['delete_file'])
+    expect(() =>
+      propose(deps, agentId, {
+        title: 'New one',
+        program: {
+          name: 'Poster',
+          brief: 'Post.',
+          authority: { tools: ['channel_send'] },
+          forbidden: ['channel_send'],
+        },
+      }),
+    ).toThrow(/forbidden wins/)
+  })
+
   test('removing authority and rejecting leaves the program unchanged', async () => {
     const { deps, agentId } = setup()
     const program = existing(deps, agentId)

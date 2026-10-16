@@ -52,7 +52,8 @@ Paths are relative to `basePath`. `:id` is URL-decoded (`dm%3Aabc` is `dm:abc`).
 | `GET /health` | `health` | `{ ok: true, boot }` (`boot` = `activity.bootId`, else a random id per `createHarnessHttp`) |
 | `GET /sessions?limit&cursor` | `session.list` | `{ sessions: SessionSummary[], next? }`; `limit` 1..200 (default 50) |
 | `GET /sessions/:id` | `session.read` | `SessionSnapshot` |
-| `GET /sessions/:id/messages?before&limit` | `session.messages` | `MessagesPage`; `limit` 1..200 (default 50), oldest first, `nextBefore` = id to pass as `before` |
+| `GET /sessions/:id/messages?before&limit&clip` | `session.messages` | `MessagesPage`; `limit` 1..200 (default 50), oldest first, `nextBefore` = id to pass as `before`; `clip` 200..100000 clips big tool/data payloads (§2.2) |
+| `GET /sessions/:id/messages/:messageId` | `session.message` | one stored `UIMessage`, never clipped; `404` when absent or hidden |
 | `POST /sessions/:id/chat?ifBusy=` | `chat` | `200` UI message stream, or `202 ChatQueued` |
 | `GET /sessions/:id/chat/stream?from=` | `chat.resume` | `200` stream of the active turn, `204` when none; `Last-Event-ID` is accepted; malformed cursor `400` |
 | `POST /sessions/:id/interrupt` | `chat.interrupt` | `InterruptResult` (`session.abort`) |
@@ -63,6 +64,22 @@ Paths are relative to `basePath`. `:id` is URL-decoded (`dm%3Aabc` is `dm:abc`).
 
 A known path with another method is `405` with `Allow`; an unknown path `404`. There is no `OPTIONS`
 handling and no CORS (guide).
+
+### 2.2 Clipped reads
+
+`?clip=<chars>` is a read view for long chats: in the returned page every tool part's `input` and
+`output`, and every `data-*` part's `data`, whose JSON is longer than `clip` is replaced by
+
+```json
+{ "eharnessClipped": true, "chars": 412000, "preview": "<first clip chars of the JSON, or of the text for a string>" }
+```
+
+The rest of the part (`type`, `state`, `toolCallId`, ...) is unchanged, and the marker is plain
+JSON, so `validateUIMessages` and a `Chat` accept it. `text` and `reasoning` parts are never
+clipped; parts under the limit are byte-identical; `nextBefore` is unchanged. Storage, writes and
+the model wire never see clipped data. The full message comes from `GET /sessions/:id/messages/:messageId`
+(same `session.messages`-style authorization read; action `session.message`). An out-of-range `clip`
+is `400 EH_INVALID_INPUT` (`details.reason: 'clip'`).
 
 ### 2.1 `SessionSnapshot`
 

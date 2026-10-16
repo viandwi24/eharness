@@ -146,3 +146,18 @@ export function interruptedTurn<UI extends UIMessage>(messages: readonly UI[]): 
 
 /** What Continue sends. */
 export const CONTINUE_TEXT = 'Continue where you left off.'
+
+/**
+ * A tool or data part whose `input`, `output` or `data` the server replaced with a preview
+ * (`?clip=`, spec 26 §2.2). Fetch the whole message with `session.loadFull(message.id)`.
+ */
+export function isClippedPart(part: unknown): boolean {
+  if (typeof part !== 'object' || part === null) return false
+  const p = part as Record<string, unknown>
+  return [p.input, p.output, p.data].some(
+    (v) =>
+      typeof v === 'object' &&
+      v !== null &&
+      (v as Record<string, unknown>).eharnessClipped === true,
+  )
+}

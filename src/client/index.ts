@@ -21,6 +21,7 @@ export type {
   AttentionItemWire,
   AttentionListResponse,
   ChatQueued,
+  ClippedValue,
   HealthResponse,
   HttpErrorBody,
   HttpErrorCode,
@@ -52,6 +53,7 @@ export {
   CONTINUE_TEXT,
   describeChatError,
   interruptedTurn,
+  isClippedPart,
 } from './chat-helpers.ts'
 export {
   type ChatActivity,

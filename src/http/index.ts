@@ -17,6 +17,7 @@ export {
   type HttpDeny,
   openAccess,
 } from './authorize.ts'
+export type { ClippedValue } from './clip.ts'
 export { createHarnessHttp } from './router.ts'
 export type {
   AttentionTarget,

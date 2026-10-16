@@ -34,6 +34,7 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { goto } from '$app/navigation';
 	import ThreadBar from './ThreadBar.svelte';
+	import { revealEarlier, windowStart } from '#lib/chat/window.js';
 	import { threadsStore } from '#lib/stores/threads.svelte.js';
 	import { pickThread, threadHref } from '#lib/threads/model.js';
 	import { tick } from 'svelte';
@@ -101,7 +102,7 @@
 	let rowWidth = $state(1200);
 	const chatMin = $derived(Math.min(60, (360 / Math.max(rowWidth, 1)) * 100));
 	const panelMin = $derived(Math.min(60, (420 / Math.max(rowWidth, 1)) * 100));
-	setChatEnv({ sessionId: () => sessionId, ask: (text) => void ac?.send(text) });
+	setChatEnv({ sessionId: () => sessionId, ask: (text) => void ac?.send(text), loadFull: (id) => ac?.loadFull?.(id) ?? Promise.resolve() });
 	// One entry per id at the render boundary: a duplicate key would crash the whole page. An empty
 	// assistant message (a provider failure stores one on purpose, next to the notice) is not shown.
 	const messages = $derived(
@@ -111,6 +112,17 @@
 			})
 		)
 	);
+
+	// Windowed mounting: only the newest messages are mounted; older loaded ones are revealed by the top
+	// sentinel (or the button) before the server is asked for another page.
+	let startId = $state<string | null>(null);
+	const ids = $derived(messages.map((m) => m.id));
+	const start = $derived(windowStart(ids, startId));
+	const mounted = $derived(messages.slice(start));
+	$effect(() => {
+		void sessionId;
+		startId = null; // another chat starts at its newest window
+	});
 
 	// An artifact the agent creates in the turn the person is watching opens in the panel (like Claude);
 	// the ones already in the history do not. The first pass over a chat only records what is there.
@@ -238,38 +250,55 @@
 		}
 	}
 
-	// Scroll-up pagination: load the next older page near the top and keep the viewport anchored.
+	// Scroll-up pagination: the sentinel at the top reveals the next 20 loaded messages, then loads the
+	// next older page; the viewport stays anchored on what the reader was looking at.
 	let root = $state<HTMLElement | null>(null);
+	let sentinel = $state<HTMLElement | null>(null);
 	// Height of the floating dock (pending card + composer), used to pad the conversation.
 	let dockHeight = $state(0);
 	let busyOlder = false;
-	async function maybeLoadOlder(): Promise<void> {
+	let sentinelNear = false;
+	const canExpand = $derived(start > 0 || (ac?.hasOlder ?? false));
+	async function expandEarlier(): Promise<void> {
 		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
-		if (!ac || !vp || busyOlder || !ac.hasOlder || ac.loadingOlder) return;
-		if (vp.scrollHeight > vp.clientHeight && vp.scrollTop > 160) return;
+		if (!ac || !vp || busyOlder || ac.loadingOlder) return;
+		if (start === 0 && !ac.hasOlder) return;
 		busyOlder = true;
 		try {
 			const height = vp.scrollHeight;
 			const top = vp.scrollTop;
-			const added = await ac.loadOlder();
+			if (start > 0) {
+				startId = revealEarlier(ids, start);
+			} else {
+				const added = await ac.loadOlder();
+				if (added > 0) startId = ids[0] ?? null; // show the whole page that arrived
+			}
 			await tick();
-			if (added > 0) vp.scrollTop = top + (vp.scrollHeight - height);
+			vp.scrollTop = top + (vp.scrollHeight - height);
 		} catch {
 			// a failed page leaves the chat as it is; the next scroll retries
 		} finally {
 			busyOlder = false;
 		}
+		// still near the top (a short chat, or a tall reveal that did not push the sentinel away): keep going
+		if (sentinelNear) void tick().then(() => requestAnimationFrame(() => void expandEarlier()));
 	}
 	$effect(() => {
 		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
-		if (!vp) return;
-		const onScroll = (): void => void maybeLoadOlder();
-		vp.addEventListener('scroll', onScroll, { passive: true });
-		return () => vp.removeEventListener('scroll', onScroll);
-	});
-	// Short history that does not fill the viewport: keep loading until it does (or there is no more).
-	$effect(() => {
-		if (ac?.loaded && ac.hasOlder && chat?.messages.length) void tick().then(maybeLoadOlder);
+		const el = sentinel;
+		if (!vp || !el || typeof IntersectionObserver === 'undefined') return;
+		const io = new IntersectionObserver(
+			(entries) => {
+				sentinelNear = entries.some((e) => e.isIntersecting);
+				if (sentinelNear) void expandEarlier();
+			},
+			{ root: vp, rootMargin: '600px 0px 0px 0px' }
+		);
+		io.observe(el);
+		return () => {
+			io.disconnect();
+			sentinelNear = false;
+		};
 	});
 	// Opening the chat marks it read; the live store keeps it read while it stays visible.
 	$effect(() => {
@@ -437,12 +466,19 @@
 			{#key sessionId}
 				<Conversation class="min-h-0 flex-1">
 					<ConversationContent class="mx-auto w-full max-w-3xl gap-5 px-4 pt-6" style={`padding-bottom: ${dockHeight + 24}px`}>
-						{#if ac.loadingOlder}
-							<div class="text-center text-xs text-muted-foreground" role="status">Loading earlier messages…</div>
+						{#if canExpand}
+							<div bind:this={sentinel} class="flex justify-center" data-testid="earlier-sentinel">
+								{#if ac.loadingOlder}
+									<div class="text-center text-xs text-muted-foreground" role="status">Loading earlier messages…</div>
+								{:else}
+									<button type="button" class="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" onclick={() => void expandEarlier()}>Load earlier messages</button>
+								{/if}
+							</div>
 						{/if}
-						{#each messages as m, i (m.id)}
+						{#each mounted as m, j (m.id)}
+							{@const i = start + j}
 							{@const head = startsAuthorRun(messages, i)}
-							<ConversationItem messageId={m.id} class={m.role !== 'user' && !head && i > 0 ? '-mt-2' : ''}>
+							<ConversationItem messageId={m.id} class={`[contain-intrinsic-size:auto_600px] ${m.role !== 'user' && !head && i > 0 ? '-mt-2' : ''}`}>
 								{#if editingId === m.id}
 									<div class="ml-auto flex w-full max-w-[85%] flex-col gap-2" data-testid="message-edit">
 										<Textarea bind:value={editText} rows={3} aria-label="Edit message" />

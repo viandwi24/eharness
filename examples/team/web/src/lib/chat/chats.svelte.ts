@@ -1,5 +1,6 @@
 // One chat instance per thread session, kept for the page so switching threads or agents keeps streams and scroll state.
 import { toast } from 'svelte-sonner';
+import { CLIP_CHARS, PAGE_SIZE } from './window.js';
 import { live } from '../stores/live.svelte.js';
 import { chatSessionAgent } from '../threads/model.js';
 import { AgentChat } from './create-agent-chat.svelte.js';
@@ -35,6 +36,8 @@ export function agentChat(agentId: string, sessionId: string): AgentChat {
 		c = new AgentChat({
 			agentId,
 			sessionId,
+			pageSize: PAGE_SIZE,
+			clip: CLIP_CHARS,
 			dismiss: (id) => toast.dismiss(id),
 			// the same message again replaces the toast instead of stacking another one
 			notify: (level, text) => (level === 'error' ? toast.error(text, { id: text.slice(0, 80) }) : toast(text, { id: text.slice(0, 80) }))

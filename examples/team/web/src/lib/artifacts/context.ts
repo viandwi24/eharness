@@ -7,6 +7,8 @@ export type ChatEnv = {
 	sessionId: () => string;
 	/** Send a message to the agent of this chat (the "fix it" and "adopt this file" requests). */
 	ask: (text: string) => void;
+	/** Replace a clipped message with the full one; absent when the client cannot. */
+	loadFull?: (messageId: string) => Promise<unknown>;
 };
 
 const MESSAGE = Symbol('artifacts.message');

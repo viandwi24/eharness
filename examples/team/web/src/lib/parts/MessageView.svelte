@@ -16,6 +16,7 @@
 	import UserText from './UserText.svelte';
 	import ToolGroup from './ToolGroup.svelte';
 	import ToolPart from './ToolPart.svelte';
+	import { STEP_CHUNK, stepWindow } from './steps.js';
 	import { isActivityTool, type ToolView, writtenFiles } from './activity.js';
 	import FileCard from './FileCard.svelte';
 	import ArtifactChatCard from '#lib/components/artifacts/ArtifactChatCard.svelte';
@@ -91,6 +92,10 @@
 		return out;
 	});
 
+	// A reply of hundreds of steps renders its newest ones; "Show N earlier steps" opens the rest in chunks.
+	let revealed = $state(0);
+	const steps = $derived(stepWindow(blocks.length, revealed));
+
 	const visible = $derived(hasVisibleParts(views));
 	const stopped = $derived(!live && wasStopped(message));
 
@@ -110,7 +115,7 @@
 
 {#snippet part(v: PartView)}
 	{#if v.kind === 'text'}
-		{#if message.role === 'user' && isInstruction}<InstructionCard text={v.text} />{:else if message.role === 'user'}<UserText text={v.text} />{:else}<TextPart text={v.text} />{/if}
+		{#if message.role === 'user' && isInstruction}<InstructionCard text={v.text} />{:else if message.role === 'user'}<UserText text={v.text} />{:else}<TextPart text={v.text} streaming={v.streaming} />{/if}
 	{:else if v.kind === 'reasoning'}
 		<ReasoningPart text={v.text} streaming={v.streaming} durationMs={v.durationMs} />
 	{:else if v.kind === 'tool'}
@@ -146,8 +151,15 @@
 			</MessageHeader>
 		{/if}
 		<MessageContent class="flex flex-col gap-2.5">
+			{#if steps.hidden > 0}
+				<button type="button" class="self-start text-[13px] text-muted-foreground underline underline-offset-4 hover:text-foreground" onclick={() => (revealed += STEP_CHUNK)}>
+					Show {steps.hidden} earlier {steps.hidden === 1 ? 'step' : 'steps'}
+				</button>
+			{/if}
 			{#each blocks as b, i (b.type === 'view' ? b.view.key : `${b.type}:${i}`)}
-				{#if b.type === 'files'}
+				{#if i < steps.start}
+					<!-- earlier steps are not mounted -->
+				{:else if b.type === 'files'}
 					<FilePart views={b.views} />
 				{:else if b.type === 'sources'}
 					<SourcePart views={b.views} />

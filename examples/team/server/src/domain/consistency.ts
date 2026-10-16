@@ -12,7 +12,7 @@
  */
 import { fingerprintOf, stableJson } from './health.ts'
 import { sameInstruction, topicWords } from './order-hygiene.ts'
-import { briefWarnings, type Program } from './programs.ts'
+import { briefWarnings, grantedAndForbidden, type Program } from './programs.ts'
 import type { Routine } from './routines.ts'
 import type { StandingOrder } from './standing-orders.ts'
 
@@ -276,6 +276,21 @@ function programNeeds(input: ConsistencyInput): ConsistencyFinding[] {
           fix: 'Edit the program: add the missing tool to the authority, or take the step out of the brief.',
           refs: [p.id],
           key: `${p.id}:brief:${fingerprintOf(w.message)}`,
+        }),
+      )
+    }
+    const both = grantedAndForbidden(p.authority, p.forbidden)
+    if (both.length > 0) {
+      out.push(
+        finding({
+          kind: 'program-needs-tool',
+          severity: p.status === 'active' ? 'high' : 'medium',
+          agentId: p.agentId,
+          subject: p.name,
+          explanation: `The program "${clip(p.name)}" grants and forbids the same tools: ${both.join(', ')}. Forbidden wins, so its runs never get them.`,
+          fix: `Edit the program: take ${both.join(', ')} out of Forbidden (or out of the authority if it must not be used).`,
+          refs: [p.id],
+          key: `${p.id}:forbidden:${both.join(',')}`,
         }),
       )
     }
