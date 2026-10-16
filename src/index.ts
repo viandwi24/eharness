@@ -302,4 +302,4 @@ export {
 } from './stream/chat-request.ts'
 
 /** Package version of this build. */
-export const version: string = '0.8.0'
+export const version: string = '0.9.0'
