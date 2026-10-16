@@ -69,6 +69,9 @@ describe('decision model', () => {
 		expect(outcomeLine({ ...escalation(['A']), status: 'approved', outcome: { decision: 'A' } })).toBe('Answered "A": the run continued.');
 		expect(outcomeLine({ ...amendment, status: 'rejected' })).toContain('without it');
 		expect(outcomeLine({ ...proposal(false), status: 'rejected' })).toContain('nothing was created');
+		// closed by the server (it no longer applies) vs a run that stopped waiting
+		expect(outcomeLine({ ...escalation(['A']), status: 'expired', decidedBy: 'system' })).toContain('Closed automatically');
+		expect(outcomeLine({ ...escalation(['A']), status: 'expired', decidedBy: 'client' })).toBe('The run no longer waited for this.');
 	});
 
 	test('edit and approve sends the program fields of the form and the run-once switch', () => {

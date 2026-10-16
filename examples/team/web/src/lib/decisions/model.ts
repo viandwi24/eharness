@@ -159,6 +159,10 @@ export function answerToast(kind: 'approve' | 'reject', choice?: string): string
 /** What a decided card says happened. */
 export function outcomeLine(d: Decision): string {
 	if (d.status === 'open') return '';
+	// closed by the server because it no longer applies (two orders that turned out not to overlap):
+	// nothing was decided, nothing changed
+	if (d.status === 'expired' && d.decidedBy === 'system')
+		return 'Closed automatically: it no longer applies. Nothing was changed.';
 	if (d.status === 'expired') return 'The run no longer waited for this.';
 	const o = d.outcome;
 	if (d.status === 'rejected') return d.kind === 'proposal' ? 'Rejected: nothing was created.' : 'Rejected: the run continued without it.';
