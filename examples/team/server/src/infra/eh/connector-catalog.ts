@@ -167,6 +167,8 @@ interface RemoteSettings {
   /** The user's own OAuth client of this server (otherwise registered dynamically). */
   oauthClientId?: string
   oauthClientSecret?: string
+  /** Keep the tools a chat first saw until the owner accepts a server update (default off). */
+  reviewToolChanges?: boolean
 }
 
 /** Request headers apply in every mode (OAuth adds its token on top). */
@@ -282,6 +284,8 @@ function customMcp(
           defer: defer(),
           wrapUntrusted: true,
           timeoutMs: 15_000,
+          // a server the owner added: updated tools are used at once unless they asked to review
+          pinDefinitions: s.reviewToolChanges === true,
         })
       }
       return {
@@ -293,6 +297,7 @@ function customMcp(
         ...(s.allow === undefined ? {} : { allow: s.allow }),
         ...(s.deny === undefined ? {} : { deny: s.deny }),
         defer: defer(),
+        pinDefinitions: s.reviewToolChanges === true,
       }
     },
   })

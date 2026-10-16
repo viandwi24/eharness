@@ -65,6 +65,9 @@ export interface McpServerSourceOptions {
   connect?: 'lazy' | 'eager'
   /** Pin tool definitions on first connect and block changed definitions (drift). Default: true for remote (`type: 'http' | 'sse'`) transports, false otherwise. */
   pinDefinitions?: boolean
+  // The remote MCP connector (`remoteMcpConnector`) passes `pinDefinitions` from its
+  // `reviewToolChanges` setting (default false): a server the owner added is trusted to update its
+  // tools; a connection that asks to review pins them per chat until accepted.
   /** Frame text and structured (JSON) results as untrusted content (spec 03 §10). Default true. */
   wrapUntrusted?: boolean
   /** createMCPClient `maxRetries`: retries of tools/call requests only (not connect). Default 0. */

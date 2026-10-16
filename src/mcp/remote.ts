@@ -42,6 +42,8 @@ export interface RemoteMcpSpec {
    * before every turn, so a long-lived session sees tools the server added or changed.
    */
   refresh?: 'session' | 'turn'
+  /** As `McpServerSourceOptions.pinDefinitions` (remote servers pin by default). */
+  pinDefinitions?: boolean
 }
 
 /**
@@ -117,6 +119,7 @@ export function createRemoteMcpSource(
       ...(spec.defer === undefined ? {} : { defer: spec.defer }),
       ...(spec.risk === undefined ? {} : { risk: spec.risk }),
       ...(spec.refresh === undefined ? {} : { refresh: spec.refresh }),
+      ...(spec.pinDefinitions === undefined ? {} : { pinDefinitions: spec.pinDefinitions }),
       ...(spec.timeoutMs === undefined ? {} : { timeoutMs: spec.timeoutMs }),
     },
     load as never,

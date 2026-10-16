@@ -99,12 +99,22 @@ const settingsSchema: z.ZodObject = z.object({
         showWhen: { field: 'authMode', equals: 'headers' },
       }),
     }),
+  reviewToolChanges: z
+    .boolean()
+    .default(false)
+    .meta({
+      title: 'Review tool changes',
+      description:
+        'Off: when the server updates its tools, chats use the new versions at once. On: a chat keeps the tools it first saw and a changed tool stays off until you accept it (safer for a server you do not control).',
+      ...ehMeta({ group: 'advanced' }),
+    }),
 })
 
 interface Settings {
   url: string
   authMode: 'none' | 'headers' | 'oauth'
   headers?: Record<string, string>
+  reviewToolChanges?: boolean
 }
 
 /**
@@ -227,6 +237,8 @@ export function remoteMcpConnector(options: RemoteMcpConnectorOptions = {}): Con
         url: s.url,
         ...(s.authMode === 'headers' && s.headers !== undefined ? { headers: s.headers } : {}),
         ...(s.authMode === 'oauth' ? { getAccessToken: ctx.connection.getAccessToken } : {}),
+        // a server you added yourself: its updated tools are used at once unless you ask to review
+        pinDefinitions: s.reviewToolChanges === true,
       }
     },
   })

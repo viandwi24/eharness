@@ -244,6 +244,11 @@ describe('domain', () => {
     })
     expect(HEARTBEAT_ALLOWED).toContain('team_status')
     expect(HEARTBEAT_ALLOWED).not.toContain('write_file')
+    // a beat may look a message up on Telegram (read-only actions), never post or moderate there
+    expect(HEARTBEAT_ALLOWED).toContain('telegram_user_search_messages')
+    expect(HEARTBEAT_ALLOWED).toContain('telegram_user_admin_log')
+    expect(HEARTBEAT_ALLOWED).not.toContain('telegram_user_ban_member')
+    expect(HEARTBEAT_ALLOWED).not.toContain('telegram_user_send_poll')
     expect(parseSystemKey(heartbeatKey('x'))).toEqual({ kind: 'heartbeat', agentId: 'x' })
     expect(parseSystemKey('sys:digest')).toEqual({ kind: 'digest' })
     expect(parseSystemKey('program-1')).toBeUndefined()

@@ -173,6 +173,11 @@ export interface McpSourceSpec {
   defer?: boolean | 'auto'
   /** Trusted risk of the server's tools. */
   risk?: 'read' | 'write' | 'destructive' | 'external'
+  /**
+   * Pin the server's tool definitions per session (spec 09): a tool the server changes later stays
+   * off until the pins are cleared. Omitted: the MCP source's default (remote servers pin).
+   */
+  pinDefinitions?: boolean
 }
 
 /** What `activate` may contribute. */

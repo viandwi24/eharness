@@ -1294,6 +1294,17 @@ export const HEARTBEAT_CHANNEL_READS = [
   'member_lookup',
   'chat_history',
   'people_find',
+  // the Telegram user account's read-only actions (`infra/telegram-user/actions.ts`, risk read):
+  // a beat looks a message up on Telegram's servers, a deleted one in the admin log
+  'telegram_user_search_messages',
+  'telegram_user_get_message',
+  'telegram_user_get_chat',
+  'telegram_user_get_user',
+  'telegram_user_list_chats',
+  'telegram_user_list_dialogs',
+  'telegram_user_list_members',
+  'telegram_user_list_forum_topics',
+  'telegram_user_admin_log',
 ] as const
 
 /**

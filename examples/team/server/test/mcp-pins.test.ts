@@ -75,7 +75,7 @@ function upgradable() {
 const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64')
 const enc = encodeURIComponent
 
-async function setup() {
+async function setup(opts: { review?: boolean } = { review: true }) {
   const dir = mkdtempSync(join(tmpdir(), 'team-mcp-pins-'))
   dirs.push(dir)
   const model = scriptedModel(Array.from({ length: 30 }, () => ({ text: 'ok' })))
@@ -109,7 +109,7 @@ async function setup() {
   const done = await call('POST', `/connections/flows/${started.json.flow.id}/act`, {
     viewId: view.viewId,
     action: 'submit',
-    data: { url, authMode: 'none' },
+    data: { url, authMode: 'none', reviewToolChanges: opts.review === true },
   })
   const connectionId = done.json.connection.id as string
   const def = server.deps.agents.getBySlug('researcher')
@@ -213,6 +213,17 @@ describe('pure rules', () => {
 })
 
 describe('a server that changed its tools after a chat pinned them', () => {
+  test('by default a server update is used at once: no pins, no accept', async () => {
+    const t = await setup({ review: false })
+    const sid = `dm:${t.def.id}`
+    expect((await t.say(sid)).sort()).toEqual(['phone_create_note', 'phone_lookup'])
+    expect(await t.pinsOf(sid)).toEqual([])
+    t.state.description = 'Create a note (new version).'
+    expect((await t.say(sid)).sort()).toEqual(['phone_create_note', 'phone_lookup'])
+    expect((await t.toolsOf(sid)).blocked).toEqual([])
+  })
+
+  // the connections below ask to review tool changes (`reviewToolChanges`)
   test('changed tools are off, the panel and Health say why, a session reload accepts them', async () => {
     const t = await setup()
     const sid = `dm:${t.def.id}`
