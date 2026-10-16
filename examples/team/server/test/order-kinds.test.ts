@@ -346,25 +346,37 @@ describe('order hygiene', () => {
     ])
   })
 
-  test('orders on the same subject for different places or from different givers overlap', () => {
-    const a = order({
-      id: 'a',
-      text: 'Report anomalies of the YouTube channel AcmeAcademy to Owen',
-    })
+  test('nearly the same order for different places or from different givers overlaps', () => {
+    const text =
+      'Report upload anomalies, early views and live sessions of YouTube channel AcmeAcademy'
+    const a = order({ id: 'a', text })
     const b = order({
       id: 'b',
-      text: 'Watch YouTube channel AcmeAcademy uploads',
+      text: 'Report upload anomalies, views and live sessions of YouTube channel AcmeAcademy',
       report: { kind: 'chat', connectionId: 'c1', nodeId: 'n2' },
     })
-    const c = order({
-      id: 'c',
-      by: 'ident-9',
-      text: 'Monitor the youtube channel academyacme views',
-    })
+    const c = order({ id: 'c', by: 'ident-9', text })
     const d = order({ id: 'd', text: 'Kick spammers from the community group' })
     const found = orderHygiene({ ...base, orders: [a, b, c, d] })
     const pairs = found.filter((f) => f.kind === 'conflict').map((f) => f.orderIds.join('+'))
     expect(pairs).toEqual(['a+b', 'a+c', 'b+c'])
+    // a few shared words are not a conflict (production: a YouTube watch and a leave ledger of the
+    // same giver were flagged on "awal, tito, info, catat")
+    const yt = order({
+      id: 'yt',
+      name: 'Tito',
+      text: 'Pantau akun YouTube Academy: video baru, irama upload, views awal, live; kalau janggal laporkan ke Sir Tito',
+    })
+    const leave = order({
+      id: 'leave',
+      name: 'Tito',
+      kind: 'ledger',
+      text: 'Anggota tim info izin, sakit, atau pulang lebih awal: catat tanggal dan alasannya, info ke Sir Tito',
+      report: { kind: 'chat', connectionId: 'c1', nodeId: 'n2' },
+    })
+    expect(
+      orderHygiene({ ...base, orders: [yt, leave] }).filter((f) => f.kind === 'conflict'),
+    ).toEqual([])
     // same place and same giver: just two ways of saying the same thing, no conflict
     expect(orderHygiene({ ...base, orders: [a, { ...a, id: 'a2' }] })).toEqual([])
   })
@@ -758,12 +770,12 @@ describe('notes, patterns and the weekly review', () => {
     const dest = { kind: 'chat' as const, connectionId: 'c1', nodeId: rooms.internal }
     const a = order({
       id: 'ca',
-      text: 'Report anomalies of the YouTube channel AcmeAcademy',
+      text: 'Report upload anomalies, early views and live sessions of YouTube channel AcmeAcademy',
       report: dest,
     })
     const b = order({
       id: 'cb',
-      text: 'Watch YouTube channel AcmeAcademy uploads',
+      text: 'Report upload anomalies, views and live sessions of YouTube channel AcmeAcademy',
       by: 'ident-7',
       report: dest,
     })
@@ -800,5 +812,10 @@ describe('notes, patterns and the weekly review', () => {
     expect(q[0]?.title).toContain('overlap')
     // nothing was removed
     expect((await listOrders(deps, i.agentId)).map((o) => o.id)).toEqual(['ca', 'cb', 'cl'])
+    // once the orders no longer overlap, the open question closes itself
+    expect(raiseConflicts(deps, agent, [], [a, b], Date.now())).toBe(0)
+    expect(deps.decisions.list({ status: 'open', agentId: agent.id, limit: 10 })).toHaveLength(0)
+    const closed = deps.decisions.list({ status: 'expired', agentId: agent.id, limit: 10 })
+    expect(closed[0]?.title).toContain('overlap')
   })
 })

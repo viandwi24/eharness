@@ -182,6 +182,25 @@ export function raiseConflicts(
 ): number {
   let raised = 0
   const open = deps.decisions.list({ status: 'open', agentId: agent.id, limit: 100 })
+  // a question about two orders that no longer overlap (an order changed or went, or the check got
+  // stricter) is closed, so the owners are not asked about a conflict that is not there
+  const prefix = `${agent.name}: two standing orders overlap [`
+  const current = new Set(
+    findings.filter((f) => f.kind === 'conflict').map((f) => f.orderIds.join(' + ')),
+  )
+  for (const d of [...open]) {
+    if (!d.title.startsWith(prefix) || d.kind !== 'escalation') continue
+    const pair = d.title.slice(prefix.length).replace(/\]$/, '')
+    if (current.has(pair)) continue
+    const closed = deps.decisions.decide(d.id, {
+      status: 'expired',
+      decidedBy: 'system',
+      decidedAt: now,
+      note: 'These orders no longer overlap: nothing to decide.',
+    })
+    if (closed !== undefined) changed(deps, closed, 'decided')
+    open.splice(open.indexOf(d), 1)
+  }
   for (const f of findings) {
     if (f.kind !== 'conflict') continue
     const title = checkTitle(

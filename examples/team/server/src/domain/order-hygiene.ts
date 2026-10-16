@@ -44,15 +44,23 @@ export interface HygieneFinding {
 
 /** A deadline that passed this long ago without an outcome is overdue. */
 export const OVERDUE_MS = 2 * 3_600_000
-/** Two orders overlap when their words share at least this many topic words. */
-export const CONFLICT_SHARED_WORDS = 2
+/**
+ * Two orders overlap only when they are nearly the same order: at least this many shared topic
+ * words AND a large share of each one's words (Jaccard). Sharing a few common words ("info",
+ * "catat", a person's name) is not a conflict: an earlier rule of 2 shared words flagged unrelated
+ * orders of the same giver.
+ */
+export const CONFLICT_SHARED_WORDS = 4
+export const CONFLICT_MIN_SIMILARITY = 0.6
 
 const STOP = new Set(
   (
     'this that with from have will when what which their there about into than then them they were been being ' +
     'your yours dari yang untuk dengan atau juga pada kalau jika apabila agar akan sudah belum telah saat ' +
     'report laporkan kabari tell tulis give kasih kepada ke di ' +
-    'order standing watch pantau awasi monitor check cek'
+    'order standing watch pantau awasi monitor check cek ' +
+    'info infokan catat catatan tanggal awal akhir jam hari waktu semua setiap tiap ' +
+    'sir pak bapak ibu bos tolong segera langsung harus perlu bisa'
   ).split(/\s+/),
 )
 
@@ -161,13 +169,23 @@ export function orderHygiene(input: HygieneInput): HygieneFinding[] {
   }
   // overlap between live orders
   const live = input.orders.filter((o) => isLive(o, now))
-  const words = new Map(live.map((o) => [o.id, topicWords(o.text)]))
+  // the giver's own name is in many of their orders ("kalau Sir Tito ..."): not a topic
+  const words = new Map(
+    live.map((o) => {
+      const own = topicWords(o.name)
+      return [o.id, new Set([...topicWords(o.text)].filter((w) => !own.has(w)))] as const
+    }),
+  )
   for (let i = 0; i < live.length; i++) {
     for (let j = i + 1; j < live.length; j++) {
       const a = live[i] as StandingOrder
       const b = live[j] as StandingOrder
-      const common = shared(words.get(a.id) as Set<string>, words.get(b.id) as Set<string>)
+      const wa = words.get(a.id) as Set<string>
+      const wb = words.get(b.id) as Set<string>
+      const common = shared(wa, wb)
       if (common.length < CONFLICT_SHARED_WORDS) continue
+      const union = new Set([...wa, ...wb]).size
+      if (union === 0 || common.length / union < CONFLICT_MIN_SIMILARITY) continue
       const otherPlace = destKey(a.report) !== destKey(b.report)
       const otherGiver = a.by !== b.by
       if (!otherPlace && !otherGiver) continue
