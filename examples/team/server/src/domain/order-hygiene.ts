@@ -271,3 +271,15 @@ export function retireCandidates(input: {
   }
   return out
 }
+
+/**
+ * The same instruction written twice (a standing order and a program's standing agreement made
+ * from one message): enough shared topic words and a large share of the shorter one's words.
+ */
+export function sameInstruction(a: string, b: string): boolean {
+  const wa = topicWords(a)
+  const wb = topicWords(b)
+  const common = [...wa].filter((w) => wb.has(w)).length
+  const smaller = Math.min(wa.size, wb.size)
+  return common >= 3 && smaller > 0 && common / smaller >= 0.6
+}

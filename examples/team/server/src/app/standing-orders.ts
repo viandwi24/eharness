@@ -5,8 +5,10 @@
  * functions read the file, change one line and write it back (compare-and-set, serialised per
  * agent in this process).
  */
+
 import { invalid } from '../domain/errors.ts'
 import { checklistPath } from '../domain/heartbeat.ts'
+import { sameInstruction } from '../domain/order-hygiene.ts'
 import {
   cleanOrderText,
   cleanRefs,
@@ -120,6 +122,17 @@ export async function addOrder(
   }
   if (input.due !== undefined && input.expires !== undefined && input.expires < input.due) {
     throw invalid('expires is before due', 'INVALID_ORDER')
+  }
+  // one message saved as a program's standing agreement and again as an order would be done twice
+  for (const program of deps.programs.list({})) {
+    if (program.agentId !== agentId) continue
+    const note = program.notes.find((n) => sameInstruction(n, text))
+    if (note !== undefined) {
+      throw invalid(
+        `already a standing agreement of the program "${program.name}" ("${note.slice(0, 120)}"): its runs do it. Do not save it again as a standing order: one place is enough. If it must also be watched between runs, ask the person which one they want.`,
+        'DUPLICATE_OF_PROGRAM',
+      )
+    }
   }
   const { needs, invalid: badNeeds } = normalizeNeeds(input.needs ?? [])
   if (badNeeds.length > 0) {

@@ -8,6 +8,7 @@
 import { activeMemory, type RememberedDecision } from '../domain/decision-memory.ts'
 import { normalizeDeliverables } from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
+import { sameInstruction } from '../domain/order-hygiene.ts'
 import {
   type AuthorityInspection,
   briefWarnings,
@@ -37,6 +38,7 @@ import {
   resumeRoutine,
   updateRoutine,
 } from './routines.ts'
+import { listOrders } from './standing-orders.ts'
 
 /** What the schedule trigger of a program is doing (its routine), for the UI. */
 export interface ProgramTriggerState {
@@ -301,6 +303,7 @@ export function programNoteAction(deps: Deps, input: ProgramNoteInput): string {
       throw invalid(`a note has at most ${MAX_NOTE_CHARS} characters`, 'INVALID_NOTE')
     }
     if (notes.includes(text)) return `Already noted.\n${render(program)}`
+
     if (notes.length >= MAX_NOTES) {
       throw invalid(`a program has at most ${MAX_NOTES} notes: remove one first`, 'INVALID_NOTE')
     }
@@ -482,4 +485,27 @@ export function forgetProgramMemory(deps: Deps, id: string, memoryId: string): v
   if (!deps.programMemory.forget(id, memoryId, deps.clock.now())) {
     throw notFound('remembered decision', memoryId)
   }
+}
+
+/**
+ * `program_note` with the check a chat needs: one message saved as a standing order and again as
+ * a program note would be done twice (production: "Next info ke @agent" became both).
+ */
+export async function programNoteChecked(deps: Deps, input: ProgramNoteInput): Promise<string> {
+  const text = input.text?.trim() ?? ''
+  if (input.action === 'add' && text !== '') {
+    const owners = new Set(deps.programs.list({}).map((p) => p.agentId))
+    for (const agentId of owners) {
+      const order = (await listOrders(deps, agentId)).find(
+        (o) => o.active && sameInstruction(o.text, text),
+      )
+      if (order !== undefined) {
+        throw invalid(
+          `already a standing order ("${order.text.slice(0, 120)}", ${order.id}): the heartbeat does it. Do not save it again as a program note: one place is enough. If the program's runs must also do it, ask the person which one they want.`,
+          'DUPLICATE_OF_ORDER',
+        )
+      }
+    }
+  }
+  return programNoteAction(deps, input)
 }

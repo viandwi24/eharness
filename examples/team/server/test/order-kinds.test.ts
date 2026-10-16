@@ -17,6 +17,7 @@ import {
   raiseConflicts,
   weeklyReview,
 } from '../src/app/order-care.ts'
+import { programNoteAction, programNoteChecked } from '../src/app/programs.ts'
 import { addOrder, completeOrder, listOrders, removeOrder } from '../src/app/standing-orders.ts'
 import {
   beatPrompt,
@@ -28,7 +29,7 @@ import {
   parseSystemKey,
 } from '../src/domain/heartbeat.ts'
 import { checkNoteEvidence, checkPattern, markUnresolved } from '../src/domain/heartbeat-notes.ts'
-import { orderHygiene, retireCandidates } from '../src/domain/order-hygiene.ts'
+import { orderHygiene, retireCandidates, sameInstruction } from '../src/domain/order-hygiene.ts'
 import {
   formatOrderLine,
   grantsOf,
@@ -361,17 +362,17 @@ describe('order hygiene', () => {
     const pairs = found.filter((f) => f.kind === 'conflict').map((f) => f.orderIds.join('+'))
     expect(pairs).toEqual(['a+b', 'a+c', 'b+c'])
     // a few shared words are not a conflict (production: a YouTube watch and a leave ledger of the
-    // same giver were flagged on "awal, tito, info, catat")
+    // same giver were flagged on "awal, owen, info, catat")
     const yt = order({
       id: 'yt',
-      name: 'Tito',
-      text: 'Pantau akun YouTube Academy: video baru, irama upload, views awal, live; kalau janggal laporkan ke Sir Tito',
+      name: 'Owen',
+      text: 'Pantau akun YouTube Academy: video baru, irama upload, views awal, live; kalau janggal laporkan ke Sir Owen',
     })
     const leave = order({
       id: 'leave',
-      name: 'Tito',
+      name: 'Owen',
       kind: 'ledger',
-      text: 'Anggota tim info izin, sakit, atau pulang lebih awal: catat tanggal dan alasannya, info ke Sir Tito',
+      text: 'Anggota tim info izin, sakit, atau pulang lebih awal: catat tanggal dan alasannya, info ke Sir Owen',
       report: { kind: 'chat', connectionId: 'c1', nodeId: 'n2' },
     })
     expect(
@@ -817,5 +818,61 @@ describe('notes, patterns and the weekly review', () => {
     expect(deps.decisions.list({ status: 'open', agentId: agent.id, limit: 10 })).toHaveLength(0)
     const closed = deps.decisions.list({ status: 'expired', agentId: agent.id, limit: 10 })
     expect(closed[0]?.title).toContain('overlap')
+  })
+})
+
+describe('one instruction lives in one place', () => {
+  // production: one message ("Next info ke @agent") became a program note AND a ledger order
+  const note =
+    'Setiap info izin, sakit, atau pulang lebih awal/setengah hari dari anggota tim dicatat siapa, kapan dan alasannya'
+  const orderText =
+    'Anggota tim info izin, sakit, atau pulang lebih awal/setengah hari: catat siapa, tanggal, jam dan alasannya'
+
+  test('sameInstruction: the same instruction in other words, not a related one', () => {
+    expect(sameInstruction(note, orderText)).toBe(true)
+    expect(
+      sameInstruction(
+        orderText,
+        'Pantau akun YouTube Academy: video baru, irama upload, views awal',
+      ),
+    ).toBe(false)
+  })
+
+  test('a standing order that repeats a program note is refused, and the other way round', async () => {
+    const i = instance([final('ok')])
+    const rooms = await connect(i)
+    const deps = i.server.deps
+    const dest = { kind: 'chat' as const, connectionId: 'c1', nodeId: rooms.internal }
+    const res = await i.server.app.request('/programs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        agentId: i.slug,
+        name: 'Daily team check',
+        brief: 'Read the group of the day and write the daily report.',
+        authority: { read: ['/library/**'], write: ['/library/reports/**'] },
+        gates: [],
+        escalation: '',
+        forbidden: [],
+        budget: { perRunUsd: null, perDayUsd: null },
+      }),
+    })
+    expect(res.status).toBe(201)
+    expect(
+      programNoteAction(deps, { action: 'add', program: 'Daily team check', text: note }),
+    ).toContain('Standing agreements')
+    await expect(
+      addOrder(deps, i.agentId, input(i, dest, { kind: 'ledger', text: orderText })),
+    ).rejects.toThrow(/already a standing agreement of the program "Daily team check"/)
+    // an unrelated order is fine; a note repeating it is refused
+    const watch = 'Watch the community chat for spam waves and report them to me right away'
+    await addOrder(deps, i.agentId, input(i, dest, { text: watch }))
+    await expect(
+      programNoteChecked(deps, {
+        action: 'add',
+        program: 'Daily team check',
+        text: 'Report spam waves in the community chat to the owner right away',
+      }),
+    ).rejects.toThrow(/already a standing order/)
   })
 })

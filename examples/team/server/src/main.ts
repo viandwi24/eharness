@@ -106,7 +106,7 @@ import {
   revertPersona,
 } from './app/persona.ts'
 import type { ChannelInboxPort, ChannelsPort, Deps, PeoplePort } from './app/ports.ts'
-import { programNoteAction, repairProgramAuthorities } from './app/programs.ts'
+import { programNoteChecked, repairProgramAuthorities } from './app/programs.ts'
 import { seedAgents } from './app/seed.ts'
 import {
   addOrder,
@@ -1087,7 +1087,7 @@ export function compose(config: ServerConfig): Server {
       return d
     },
     amend: (input) => createAmendment(deps, input),
-    programNote: (input) => programNoteAction(deps, input),
+    programNote: (input) => programNoteChecked(deps, input),
     reportNeedsDecision: (input) => {
       const d = createReportEscalation(deps, input)
       if (d !== undefined) announceInChat(d)

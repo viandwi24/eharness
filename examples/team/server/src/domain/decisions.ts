@@ -361,7 +361,9 @@ export const PROGRAM_NOTE_DESCRIPTION =
   'after its brief. Notes change nothing else: never authority, gates, schedule or budget (those ' +
   'need a proposal or an amendment), and a note never grants anything: where it conflicts with ' +
   'the gates or the authority, those win. Write each as one short, clear sentence. Only the ' +
-  'client, owners and admins may use it.'
+  'client, owners and admins may use it. One instruction lives in ONE place: if it is about what a ' +
+  "program's runs do, a note here; if it is something to watch between runs, a standing order " +
+  '(standing_order) — never both for the same message.'
 
 export const REQUEST_AUTHORITY_DESCRIPTION =
   'Ask the client to widen the authority of this program when your work needs a tool, connector ' +

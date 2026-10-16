@@ -484,6 +484,8 @@ export const STANDING_ORDER_DESCRIPTION =
   "Pass `instruction` as the person's own words, lightly cleaned (what to watch and what counts as " +
   'worth a report). Do NOT use it for a one-off task now (just do it), for something at a fixed time ' +
   '(a reminder, a routine or a program) or for a rule about how to talk (memory/persona). ' +
+  'If the instruction is about what an existing program\'s runs do ("put it in the daily report"), ' +
+  "save it as that program's note (program_note) instead: one instruction lives in ONE place, never both. " +
   'By default it reports exactly where the person asked ("chat saya disini"): this chat. Set ' +
   '`connection`/`chat`/`topic` only when the person explicitly names another chat of yours. ' +
   '`mention` defaults to true in a group (the asker is tagged); pass false when they did not want it. ' +

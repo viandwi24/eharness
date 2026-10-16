@@ -67,7 +67,7 @@ export interface DecisionIntake {
   propose(input: ProposeInput): { id: string; duplicate?: boolean }
   escalate(input: EscalateInput): { id: string }
   /** `program_note`: text for the model, errors thrown as DomainError. */
-  programNote(input: ProgramNoteInput): string
+  programNote(input: ProgramNoteInput): string | Promise<string>
   amend(input: AmendInput): { id: string }
   /** A run ended with `needs_decision` and did not escalate. */
   reportNeedsDecision(input: { agentId: string; sessionId: string; report: TaskReport }): void
@@ -346,9 +346,9 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
           description: PROGRAM_NOTE_DESCRIPTION,
           inputSchema: noteSchema,
           metadata: { risk: 'write', idempotent: false },
-          execute: (input): string => {
+          execute: async (input): Promise<string> => {
             try {
-              return intake().programNote(input)
+              return await intake().programNote(input)
             } catch (error) {
               return `ERROR: ${text(error)}`
             }
