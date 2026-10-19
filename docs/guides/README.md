@@ -9,6 +9,7 @@ New here? Read [getting started](getting-started.md); unfamiliar terms are in th
 
 | Guide | You will learn |
 |---|---|
+| [Which module do I need?](start-here.md) | the 33 entry points in three groups, when you need each, its stability label (stable, experimental, deprecated) and a 20-line example |
 | [Getting started](getting-started.md) | install, a first agent, run it on Node or Bun, offline testing, tools that use the running chat, serving `useChat`, a tour of cost, approvals, waits, memory and several instances, defaults |
 | [Upgrading to 0.7 and 0.8](upgrading.md) | 0.7 to 0.8 (renames, removed exports, breaking changes by area, behaviour changes) and 0.6 to 0.7, with migration snippets and known gaps |
 | [Reference](reference.md) | every option, method, stop reason, error and warning at a glance |

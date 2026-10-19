@@ -1991,6 +1991,136 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/alarms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Alarms: failures of scheduled and background work
+         * @description One alarm per incident, raised by the server with no model call: a program or routine run that ended failed, interrupted or timed out for good, a run stopped for showing no activity, a routine that paused itself, an approval nobody answered, a connection in error or needing sign-in, a failed startup or health step. Open ones (not acknowledged) are the "Needs attention" list of the Health page; they are also pushed to the owner. Acknowledged ones stay as history with `all=true`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Include acknowledged ones (history). */
+                    all?: "true" | "false";
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Alarms, newest first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AlarmList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/alarms/{id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Acknowledge an alarm
+         * @description Takes it off "Needs attention"; the record stays. Alarms also clear on their own when the cause is gone.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The alarm */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Alarm"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown alarm */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/tools": {
         parameters: {
             query?: never;
@@ -16250,6 +16380,31 @@ export interface components {
         Dismissed: {
             dismissed: number;
         };
+        AlarmList: {
+            alarms: components["schemas"]["Alarm"][];
+            open: number;
+        };
+        Alarm: {
+            id: string;
+            /** @enum {string} */
+            kind: "run-failed" | "run-stuck" | "routine-paused" | "approval-expired" | "connection-broken" | "system";
+            /** @description What it is about: `program:<id>`, `routine:<id>`, `connection:<id>`, `system:<step>`. */
+            subject: string;
+            agentId: string | null;
+            /** @description Plain short text: what failed, why, and the one next step. */
+            text: string;
+            /** @description App paths that open the evidence or the fix (the first is the primary one). */
+            refs: string[];
+            createdAt: number;
+            ackedAt: number | null;
+            /**
+             * @description `owner` pressed Ack; `auto` the cause cleared (the next run succeeded, the connection works again).
+             * @enum {string|null}
+             */
+            ackedBy: "owner" | "auto" | null;
+            /** @description When it reached the owner (chat message or bell); null while it waits for the rate limit. */
+            deliveredAt: number | null;
+        };
         SessionTools: {
             sessionId: string;
             agentId: string;
@@ -17065,6 +17220,8 @@ export interface components {
             defaultProfile: string | null;
             /** @description IANA timezone of the team (default: the `TZ` variable or the host timezone). The default of the heartbeat active hours and of the daily digest time; an agent heartbeat or the digest can override it. */
             timezone: string;
+            /** @description A program, routine or queued run with no activity for this many minutes is stopped through the Stop path and raises an alarm (Health, Needs attention). It is never run again by itself. Default 45. */
+            stuckRunMinutes: number;
             /** @description 0 until a person changed something. */
             updatedAt: number;
         };
@@ -17154,6 +17311,7 @@ export interface components {
             defaultProfile?: string | null;
             /** @description IANA timezone. */
             timezone?: string;
+            stuckRunMinutes?: number;
         };
         WorkspaceUsage: {
             /** @description Spend and limit of the workspace budget this month (UTC), from the budget ledger: not limited by log retention, the same numbers as the briefing cost line. */
@@ -18814,6 +18972,8 @@ export interface components {
             programId?: string;
             /** @description Session of the one-off run an approved proposal started. */
             runSessionId?: string;
+            /** @description What the server did because of the answer ("Removed order ..."), for a question about standing orders. */
+            effect?: string;
         } | null;
         ProposalPayload: {
             program: components["schemas"]["ProposedProgram"];
@@ -18841,6 +19001,10 @@ export interface components {
             options: string[];
             /** @description The options that mean "leave it for now" (a subset of `options`): the ones the agent flagged plus the server's fallback word list. A pick of one is remembered by a standing program, so a client shows the hint from this list and keeps no word list of its own. */
             standDown?: string[];
+            /** @description Questions about standing orders: what the server does for each option (`remove:<order>`, `pause:<order>`, `keep-both:<pair>`, `keep:<order>`, `none`). The card needs nothing from it: the options are the buttons. */
+            orderActions?: {
+                [key: string]: string;
+            };
             /**
              * @description `agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`.
              * @enum {string}
@@ -19018,6 +19182,8 @@ export interface components {
             /** @description When it was given. */
             at: number;
             active: boolean;
+            /** @description Why the order is paused when the server or an answer paused it (its chat is gone, "pause it" in the Decision Center). */
+            pausedReason?: string;
             /**
              * @description watch (ongoing), rule (react when X happens), deadline (one-shot at `due`, then done) or ledger (keeps a tracker).
              * @enum {string}

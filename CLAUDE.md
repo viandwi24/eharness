@@ -41,12 +41,12 @@ bunx changeset              # add a changeset (required for every user-facing ch
    `LanguageModel`, `createUIMessageStream`, `convertToModelMessages` directly. Do not invent our
    own message, tool or stream shapes (ADR-0001).
 3. **Runtime-neutral source.** `src/` must run on Node ≥ 22 and Bun. No `Bun.*`, no `node:fs` in core.
-   Node built-ins are allowed only in the Node-only modules `src/filesystem/node*`, `src/shell/**` and `src/browser/node/**`
+   Node built-ins are allowed only in the Node-only modules `src/filesystem/node*` (incl. `node/`), `src/shell/**`, `src/browser/node*` (incl. `node/`) and `src/web/node.ts`
    (ADR-0036; listed in `scripts/check-imports.ts`). Use Web APIs
    (`crypto.subtle`, `TextEncoder`, `ReadableStream`).
 4. **Shipped plugins use only the public API.** `src/filesystem/**`, `src/mcp/**`, `src/storage/**`,
    `src/todos/**`, `src/memory/**`, `src/guard/**`, `src/openapi/**`, `src/group/**`, `src/ask/**`,
-   `src/permissions/**`, `src/providers/**`, `src/connectors/**` (also `src/providers/index.ts`, ADR-0049), `src/code/**`, `src/scheduler/**`, `src/identity/**`, `src/channels/**`, `src/handoff/**`, `src/limits/**`, `src/clock/**`, `src/browser/**`, `src/shell/**`, `src/subagent/**`, `src/web/**`, `src/http/**` (also `src/activity/index.ts`, ADR-0059), `src/client/**` (core, `http` and `activity` only as `import type`; runtime imports only `ai`, ADR-0059) and `src/testing/**` may import core only through `src/index.ts`
+   `src/permissions/**`, `src/providers/**`, `src/connectors/**` (also `src/providers/index.ts`, ADR-0049), `src/code/**`, `src/scheduler/**`, `src/identity/**`, `src/channels/**`, `src/handoff/**`, `src/limits/**`, `src/clock/**`, `src/browser/**`, `src/shell/**`, `src/subagent/**`, `src/web/**` (incl. `src/web/node.ts`), `src/activity/**`, `src/http/**` (ADR-0059), `src/client/**` (core, `http` and `activity` only as `import type`; runtime imports only `ai`, ADR-0059) and `src/testing/**` may import core only through `src/index.ts`
    (dogfooding, ADR-0008).
 5. **The library ships memory adapters only.** Database/S3/JSON-file adapters are examples in
    `examples/`, never dependencies (ADR-0008).
@@ -79,15 +79,18 @@ bunx changeset              # add a changeset (required for every user-facing ch
 ```
 src/
   index.ts          public core API (the only entry other subpaths may import)
-  agent/ plugin/ registry/ messages/ stream/ session/ loop/ compaction/ skills/ errors.ts
+  agent/ plugin/ registry/ messages/ stream/ session/ loop/ compaction/ skills/ errors.ts codes.ts
+  judge/            createJudge engine shared by permissions auto mode and guard (core, ADR-0060)
+  output/           structured final answers (core)
+  internal/         leaf helpers, not public API (glob, private-host, hook-run, observe, …)
   filesystem/       eharness/filesystem + eharness/filesystem/memory + eharness/filesystem/node (Node-only)
   storage/          eharness/storage/memory
   mcp/              eharness/mcp
   todos/            eharness/todos
   memory/           eharness/memory
-  guard/            eharness/guard
-  openapi/          eharness/openapi
-  group/            eharness/group
+  guard/            eharness/guard (deprecated, ADR-0062)
+  openapi/          eharness/openapi (deprecated, ADR-0062)
+  group/            eharness/group (deprecated, ADR-0062)
   ask/              eharness/ask
   permissions/      eharness/permissions
   providers/        eharness/providers (provider definitions, profiles, manager, catalog loader, SecretVault; fetches only via injected fetch)
@@ -102,7 +105,8 @@ src/
   limits/           eharness/limits (step budgets, readable budget stops)
   clock/            eharness/clock (datetime tool and time-zone arithmetic)
   browser/          eharness/browser (CDP client, adapters, profiles, manager, live view) + eharness/browser/node (runtimes, Node-only)
-  web/              eharness/web
+  web/              eharness/web + eharness/web/node (resolver, Node-only)
+  activity/         eharness/activity (activity feed plugin, ActivityStore port, SSE helpers, attention queue)
   http/             eharness/http (fetch-style HTTP module: chat, sessions, attention, activity; Web APIs only)
   client/           eharness/client + eharness/client/react (browser counterpart of http; runtime imports only `ai`)
   models/           model catalog, cost (core)

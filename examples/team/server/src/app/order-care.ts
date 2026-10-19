@@ -23,20 +23,27 @@ import {
   isMonday,
   mondayOf,
   orderHygiene,
+  pairKey,
   retireCandidates,
 } from '../domain/order-hygiene.ts'
 import { sessionRefsIn } from '../domain/session-context.ts'
 import {
   grantsOf,
   isLive,
+  isStaffRole,
   type OrderDestination,
   orderState,
   parseChecklist,
+  privatePostRefusal,
+  type ReadScope,
+  readRefusal,
+  readScopeOf,
   type StandingOrder,
   WEB_OWNER,
 } from '../domain/standing-orders.ts'
 import { changed } from './decisions.ts'
 import type { Deps } from './ports.ts'
+import { pauseOrder, removeOrder } from './standing-orders.ts'
 
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
@@ -169,6 +176,20 @@ export function hygieneOf(
 
 const questionOf = (f: HygieneFinding): string => f.text
 
+export const CONFLICT_KEEP_A = 'Keep A, remove B'
+export const CONFLICT_KEEP_B = 'Keep B, remove A'
+export const CONFLICT_KEEP_BOTH = 'Keep both'
+export const CONFLICT_EDIT = 'I will edit them myself'
+export const RETIRE_REMOVE = 'Retire it (remove the order)'
+export const RETIRE_PAUSE = 'Pause it'
+export const RETIRE_KEEP = 'Keep it'
+export const GONE_REMOVE = 'Remove the order'
+export const GONE_KEEP = 'Keep it paused'
+/** "Keep it" to a retire question silences it for this long. */
+const RETIRE_KEPT_MS = 28 * DAY
+/** "I will edit them myself" holds the same conflict question back for this long. */
+const CONFLICT_EDIT_MS = 7 * DAY
+
 /**
  * Overlapping orders become one question to the owners in the Decision Center (the other findings
  * stay on the Heartbeat tab and the Health page). One open question per pair.
@@ -201,18 +222,36 @@ export function raiseConflicts(
     if (closed !== undefined) changed(deps, closed, 'decided')
     open.splice(open.indexOf(d), 1)
   }
+  const kept = deps.heartbeat.store.state(agent.id).keptPairs ?? {}
   for (const f of findings) {
     if (f.kind !== 'conflict') continue
+    const pair = f.orderIds.map((id) => orders.find((x) => x.id === id))
+    const [oa, ob] = pair
+    // the owners answered this very pair (and neither order changed since): not asked again
+    if (oa !== undefined && ob !== undefined && (kept[pairKey(oa, ob)] ?? 0) > now) continue
     const title = checkTitle(
       `${agent.name}: two standing orders overlap [${f.orderIds.join(' + ')}]`,
     )
     if (open.some((d) => d.title === title)) continue
-    const lines = f.orderIds.flatMap((id) => {
+    const lines = f.orderIds.flatMap((id, i) => {
       const o = orders.find((x) => x.id === id)
       return o === undefined
         ? []
-        : [`- **${o.id}** (${o.kind}, from ${o.name === '' ? o.by : o.name}): ${o.text}`]
+        : [
+            `- **${i === 0 ? 'A' : 'B'}** (order ${o.id}, ${o.kind}, from ${o.name === '' ? o.by : o.name}): ${o.text}`,
+          ]
     })
+    // a pair is answered with one click: the server removes the loser or remembers the pair
+    const [ida, idb] = f.orderIds
+    const actions: Record<string, string> | undefined =
+      oa === undefined || ob === undefined || ida === undefined || idb === undefined
+        ? undefined
+        : {
+            [CONFLICT_KEEP_A]: `remove:${idb}`,
+            [CONFLICT_KEEP_B]: `remove:${ida}`,
+            [CONFLICT_KEEP_BOTH]: `keep-both:${pairKey(oa, ob)}`,
+            [CONFLICT_EDIT]: `edit:${pairKey(oa, ob)}`,
+          }
     const d = deps.decisions.insert({
       id: deps.ids.next(),
       kind: 'escalation',
@@ -223,7 +262,11 @@ export function raiseConflicts(
       programId: null,
       payload: {
         question: 'These standing orders may disagree. Which should the agent follow?',
-        options: ['Keep both', 'I will remove one'],
+        options:
+          actions === undefined
+            ? ['Keep both', 'I will remove one']
+            : [CONFLICT_KEEP_A, CONFLICT_KEEP_B, CONFLICT_KEEP_BOTH, CONFLICT_EDIT],
+        ...(actions === undefined ? {} : { orderActions: actions }),
         source: 'report',
       },
       waitId: null,
@@ -241,7 +284,7 @@ export function raiseConflicts(
 /**
  * The first beat of a week (Monday, team timezone): ask the owners about orders that never
  * triggered or whose deadline passed, and tell the beat which days of last week have notes so it
- * condenses them. The question is never an action: nothing is removed here. Returns the part of
+ * condenses them. Nothing is removed here: the answer to the question does it (`applyOrderAnswer`). Returns the part of
  * the prompt, or undefined when this is not the first beat of the week.
  */
 export async function weeklyReview(
@@ -259,6 +302,7 @@ export async function weeklyReview(
 
   const open = deps.decisions.list({ status: 'open', agentId: agent.id, limit: 100 })
   for (const c of retireCandidates({ now, orders, fired: state.fired ?? {} })) {
+    if ((state.keptOrders?.[c.order.id] ?? 0) > now) continue
     const title = checkTitle(`${agent.name}: retire a standing order? [${c.order.id}]`)
     if (open.some((d) => d.title === title)) continue
     const d = deps.decisions.insert({
@@ -271,7 +315,7 @@ export async function weeklyReview(
           '',
           `- **${c.order.id}** (${c.order.kind}, from ${c.order.name === '' ? c.order.by : c.order.name}): ${c.order.text}`,
           '',
-          'Nothing was removed. Remove it on the Heartbeat tab (or tell the agent to stop) if it is no longer needed.',
+          'Nothing was changed yet: your answer does it. "Retire it" removes the line from HEARTBEAT.md, "Pause it" keeps it but stops it, "Keep it" leaves it and this is not asked again for four weeks.',
         ].join('\n'),
       ),
       agentId: agent.id,
@@ -279,7 +323,12 @@ export async function weeklyReview(
       programId: null,
       payload: {
         question: `Retire the standing order "${c.order.text.slice(0, 80)}"?`,
-        options: ['Retire it (I will remove it)', 'Keep it'],
+        options: [RETIRE_REMOVE, RETIRE_PAUSE, RETIRE_KEEP],
+        orderActions: {
+          [RETIRE_REMOVE]: `remove:${c.order.id}`,
+          [RETIRE_PAUSE]: `pause:${c.order.id}`,
+          [RETIRE_KEEP]: `keep:${c.order.id}`,
+        },
         source: 'report',
       },
       waitId: null,
@@ -407,4 +456,189 @@ export async function hygieneFindings(deps: Deps, now: number): Promise<HealthFi
     }
   }
   return out
+}
+
+// --- answers that are carried out --------------------------------------------------------------
+
+const clip = (t: string, n = 60): string => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
+
+/**
+ * A question about standing orders was answered: do what the chosen option says
+ * (`payload.orderActions`) through the standing-orders layer, and return what was done in words (the
+ * outcome of the decision). undefined = this decision carries no such action. Never throws: a
+ * failure is the effect text.
+ */
+export async function applyOrderAnswer(
+  deps: Deps,
+  d: { kind: string; agentId: string; payload: unknown },
+  choice: string,
+): Promise<string | undefined> {
+  if (d.kind !== 'escalation') return undefined
+  const actions = (d.payload as { orderActions?: Record<string, string> }).orderActions
+  const command = actions?.[choice]
+  if (command === undefined) return undefined
+  const i = command.indexOf(':')
+  const verb = i < 0 ? command : command.slice(0, i)
+  const arg = i < 0 ? '' : command.slice(i + 1)
+  const now = deps.clock.now()
+  const kept = (field: 'keptOrders' | 'keptPairs', key: string, until: number): void => {
+    deps.heartbeat.store.updateState(
+      d.agentId,
+      (s) => ({ ...s, [field]: { ...(s[field] ?? {}), [key]: until } }),
+      now,
+    )
+  }
+  try {
+    switch (verb) {
+      case 'remove': {
+        const gone = await removeOrder(deps, d.agentId, arg)
+        return gone === undefined
+          ? `Nothing to remove: order ${arg} was already gone.`
+          : `Removed order ${arg} ("${clip(gone.text)}") from HEARTBEAT.md.`
+      }
+      case 'pause': {
+        const done = await pauseOrder(
+          deps,
+          d.agentId,
+          arg,
+          'paused by an answer in the Decision Center',
+        )
+        return done === undefined
+          ? `Nothing to pause: order ${arg} is gone or not active.`
+          : `Paused order ${arg} ("${clip(done.text)}"): it stays in HEARTBEAT.md and does nothing until it is switched on again.`
+      }
+      case 'keep':
+        kept('keptOrders', arg, now + RETIRE_KEPT_MS)
+        return `Kept order ${arg}; the weekly review will not ask about it again for four weeks.`
+      case 'keep-both':
+        kept('keptPairs', arg, Number.MAX_SAFE_INTEGER)
+        return `Kept both orders (${arg.split(':')[0]}); they are not asked about again unless one of them is edited.`
+      case 'edit':
+        kept('keptPairs', arg, now + CONFLICT_EDIT_MS)
+        return `Both orders (${arg.split(':')[0]}) were left as they are: edit them on the Heartbeat tab. Not asked again for a week unless one is edited.`
+      default:
+        return 'Nothing was changed.'
+    }
+  } catch (error) {
+    return `The answer could not be carried out: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
+// --- a chat that is gone -----------------------------------------------------------------------
+
+/**
+ * Orders whose report chat is gone or closed are paused (with the reason, in the file) and the
+ * owners get one question; a paused order is not retried on every beat. Returns the ids paused.
+ * Called on a beat, never on a read.
+ */
+export async function pauseGoneDestinations(
+  deps: Deps,
+  agent: { id: string; name: string },
+  findings: readonly HygieneFinding[],
+  orders: readonly StandingOrder[],
+  now: number,
+): Promise<string[]> {
+  const out: string[] = []
+  for (const f of findings) {
+    if (f.kind !== 'destination-gone') continue
+    for (const id of f.orderIds) {
+      const o = orders.find((x) => x.id === id)
+      const paused = await pauseOrder(deps, agent.id, id, 'its report chat is gone or closed')
+      if (paused === undefined || o === undefined) continue
+      out.push(id)
+      const title = checkTitle(`${agent.name}: the chat of a standing order is gone [${id}]`)
+      const open = deps.decisions.list({ status: 'open', agentId: agent.id, limit: 100 })
+      if (open.some((d) => d.title === title)) continue
+      const d = deps.decisions.insert({
+        id: deps.ids.next(),
+        kind: 'escalation',
+        title,
+        body: checkBody(
+          [
+            `The chat this order reports to no longer exists or is closed, so the order was **paused** (it is not retried on every beat).`,
+            '',
+            `- **${o.id}** (${o.kind}, from ${o.name === '' ? o.by : o.name}): ${o.text}`,
+            '',
+            'To have it report to another chat, remove it and ask the agent again in that chat.',
+          ].join('\n'),
+        ),
+        agentId: agent.id,
+        sessionId: null,
+        programId: null,
+        payload: {
+          question: `The chat of the standing order "${clip(o.text, 80)}" is gone. Remove the order?`,
+          options: [GONE_REMOVE, GONE_KEEP],
+          orderActions: { [GONE_REMOVE]: `remove:${id}`, [GONE_KEEP]: 'none' },
+          source: 'report',
+        },
+        waitId: null,
+        createdAt: now,
+      })
+      changed(deps, d, 'created')
+    }
+  }
+  return out
+}
+
+// --- what a beat may read, and where it may carry it ------------------------------------------
+
+/**
+ * The read scope of the beat that starts now (`readScopeOf`): the chats the givers of its live
+ * orders can read, plus all allowed chats for the owner's own plain checklist items.
+ */
+export function beatReadScope(
+  deps: Deps,
+  agentId: string,
+  orders: readonly StandingOrder[],
+  plainItems: boolean,
+): ReadScope {
+  const channels = deps.heartbeat.channels
+  return readScopeOf({
+    orders,
+    plainItems,
+    nodes: channels?.nodes(agentId) ?? [],
+    giverRole: (o) => giverRole(deps, o),
+    giverCanRead: (o, nodeId) => {
+      if (o.by === WEB_OWNER) return true
+      const role = giverRole(deps, o)
+      if (role === undefined) return false
+      if (isStaffRole(role)) return true
+      if (channels?.canRead !== undefined) return channels.canRead(o.by, nodeId)
+      // no directory to ask: a member reads the place they report to (their own direct chat)
+      return o.report.kind === 'chat' && o.report.nodeId === nodeId
+    },
+  })
+}
+
+/**
+ * The gate asks, on every content read of a beat: may it read this chat (the node and its
+ * ancestors)? A refusal is a readable reason. An allowed read of a direct chat is remembered, so a
+ * later post is checked against it (`postPrivacy`).
+ */
+export function checkChatRead(
+  deps: Deps,
+  agentId: string,
+  target: { nodeId: string; title: string; ids: readonly string[]; direct: boolean },
+): string | undefined {
+  const scope = deps.heartbeat.store.state(agentId).reads
+  const refusal = readRefusal(scope, target)
+  if (refusal !== undefined) return refusal
+  if (target.direct && scope !== undefined && !scope.seen.includes(target.nodeId)) {
+    deps.heartbeat.store.updateState(
+      agentId,
+      (s) =>
+        s.reads === undefined || s.reads.seen.includes(target.nodeId)
+          ? s
+          : { ...s, reads: { ...s.reads, seen: [...s.reads.seen, target.nodeId] } },
+      deps.clock.now(),
+    )
+  }
+  return undefined
+}
+
+/** A post of the beat to `to` (`destKey`): refused when it would carry what a DM said into a group. */
+export function postPrivacy(deps: Deps, agentId: string, to: string): string | undefined {
+  const scope = deps.heartbeat.store.state(agentId).reads
+  const nodes = deps.heartbeat.channels?.nodes(agentId) ?? []
+  return privatePostRefusal(scope, to, (id) => nodes.find((n) => n.nodeId === id)?.title ?? id)
 }

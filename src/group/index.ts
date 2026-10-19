@@ -9,6 +9,8 @@
  * **Draft:** every symbol of this subpath is experimental and may change in a minor release
  * (docs/engineering/api-stability.md).
  *
+ * @experimental
+ * @deprecated No replacement in the library (docs/guides/group-chat.md). Removed in 1.0 (ADR-0062).
  * @see docs/specs/16-group-plugin.md
  */
 export {

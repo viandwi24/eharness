@@ -63,6 +63,13 @@ export interface HeartbeatIntake {
   allowed(agentId: string): HeartbeatDestination[]
   /** What the live orders of owners and admins open for the running beat (needs, ledger paths). */
   grants(agentId: string): { needs: string[]; writes: string[] }
+  /** May the running beat read this chat (the node and its ancestors)? A readable refusal; an allowed read of a DM is remembered. */
+  readCheck(
+    agentId: string,
+    target: { nodeId: string; title: string; ids: readonly string[]; direct: boolean },
+  ): string | undefined
+  /** A post of the running beat to a destination (`destKey`): refused when it would carry what a DM said into a group. */
+  postPrivacy(agentId: string, to: string): string | undefined
   /** Count a post the beat is about to make to a destination; a readable refusal over the cap or for a repeat. */
   reservePost(agentId: string, to: string, text: string): string | undefined
   /** Report to the web chat of a standing order. A readable string either way. */

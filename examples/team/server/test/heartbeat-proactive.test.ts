@@ -431,7 +431,7 @@ describe('a beat in the chats', () => {
     const i = instance([
       call('team_status', {}),
       call('channel_read', { action: 'history', ...community }),
-      call('chat_history', { ...community }),
+      call('chat_history', { connection: 'c1', chat: 'community' }),
       call('channel_read', { action: 'download', ...community, attachment: '1' }),
       call('channel_send', { action: 'send', ...community, text: 'wrong place' }),
       call('channel_send', { action: 'reply', ...internal, replyTo: '1', text: 'a reply' }),
@@ -442,7 +442,13 @@ describe('a beat in the chats', () => {
     ])
     const rooms = await connect(i)
     await configure(i, ALWAYS)
-    await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
+    // given from the web app: the giver can read every chat the agent is allowed in (a phantom
+    // chat identity would be a giver who is gone, and a beat reads nothing for them)
+    await order(
+      i,
+      { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal },
+      { by: 'web:owner' },
+    )
     // the asker is a known person of the connection (a mention needs one)
     await rooms.mock.say({
       chat: 'community',
@@ -454,7 +460,9 @@ describe('a beat in the chats', () => {
       from: { id: '9', name: 'Eve' },
       text: 'buy my coin now!!!',
     })
-    expect((await fire(i)).started).toBe(true)
+    const fired = await fire(i)
+    // the new messages may have started an early beat first: it is the same beat for this test
+    if (!fired.started) expect(fired.reason).toContain('is running')
     await beatsEnd(i, 1)
     const text = await beatSession(i)
     // reads: the chat history came back, a download was refused

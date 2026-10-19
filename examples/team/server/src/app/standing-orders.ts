@@ -18,6 +18,7 @@ import {
   normalizeNeeds,
   type OrderDestination,
   type OrderKind,
+  orderState,
   parseChecklist,
   type StandingOrder,
   sameOrder,
@@ -204,6 +205,37 @@ export async function removeOrder(
     changed(deps, agent.id, 'orders')
   }
   return removed
+}
+
+/**
+ * Pause an order with a reason (`active:no` and a `why` in its tail; the line stays, the beat stops
+ * acting on it and its wake goes). undefined: no such order, or it was not live (nothing changed).
+ */
+export async function pauseOrder(
+  deps: Deps,
+  agentId: string,
+  id: string,
+  reason: string,
+): Promise<StandingOrder | undefined> {
+  const agent = getAgent(deps, agentId)
+  const now = deps.clock.now()
+  const paused = await editFile(deps, agent.id, (current) => {
+    const found = parseChecklist(current).orders.find((o) => o.id === id)
+    if (found === undefined || current === undefined || orderState(found, now) !== 'active') {
+      return { result: undefined }
+    }
+    const next: StandingOrder = {
+      ...found,
+      active: false,
+      pausedReason: reason.replace(/\s+/g, ' ').trim().slice(0, 200),
+    }
+    return { text: withOrderChanged(current, id, () => next), result: next }
+  })
+  if (paused !== undefined) {
+    dropOrderWake(deps, agent.id, id)
+    changed(deps, agent.id, 'orders')
+  }
+  return paused
 }
 
 /**

@@ -34,6 +34,7 @@ import {
   HEARTBEAT_REPORT_TOOL,
   type OrderDestination,
   PER_DESTINATION_DAILY_CAP,
+  type ReadScope,
   type StandingOrder,
 } from './standing-orders.ts'
 import { SUPERVISOR_ASK_TOOL, SUPERVISOR_RETRY_TOOL, type SupervisorState } from './supervisor.ts'
@@ -349,6 +350,16 @@ export interface HeartbeatState {
    * tool groups (`needs`), the ledger paths it may write, and the sessions the orders name.
    */
   grants?: { needs: string[]; writes: string[]; sessions: string[] }
+  /** What the running beat may read of the chats and where it may carry it (`readScopeOf`). */
+  reads?: ReadScope
+  /** Orders the owners answered "keep" to (retire question): not asked again for a while. orderId to instant. */
+  keptOrders?: Record<string, number>
+  /**
+   * Pairs of orders the owners answered a conflict question for ("keep both": forever; "I will edit
+   * them": a week): the key (`pairKey`) to the instant it is asked again. The key holds the words
+   * of both orders, so an edited order is asked about afresh.
+   */
+  keptPairs?: Record<string, number>
   /** How often each order led to a report or an escalation (the weekly review reads it). */
   fired?: Record<string, { count: number; lastAt: number }>
   /** The Monday (local date) of the week the weekly review last ran. */
@@ -1341,6 +1352,19 @@ export const HEARTBEAT_CHANNEL_READS = [
   'telegram_user_list_forum_topics',
   'telegram_user_admin_log',
 ] as const
+
+/**
+ * The reads of `HEARTBEAT_CHANNEL_READS` that return what people said (the others list chats, topics
+ * and people). The gate lets a beat call them only for a chat inside its read scope
+ * (`readScopeOf`), and a call that names no resolvable chat is refused.
+ */
+export const HEARTBEAT_CONTENT_READS: readonly string[] = [
+  'channel_read',
+  'chat_history',
+  'telegram_user_search_messages',
+  'telegram_user_get_message',
+  'telegram_user_admin_log',
+]
 
 /**
  * What a heartbeat session may call (closed world, nobody to ask): the base tools, the findings,

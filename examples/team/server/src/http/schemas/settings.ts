@@ -29,6 +29,10 @@ export const SettingsSchema = z
       description:
         'IANA timezone of the team (default: the `TZ` variable or the host timezone). The default of the heartbeat active hours and of the daily digest time; an agent heartbeat or the digest can override it.',
     }),
+    stuckRunMinutes: z.number().int().min(5).max(1440).openapi({
+      description:
+        'A program, routine or queued run with no activity for this many minutes is stopped through the Stop path and raises an alarm (Health, Needs attention). It is never run again by itself. Default 45.',
+    }),
     updatedAt: z.number().int().openapi({ description: '0 until a person changed something.' }),
   })
   .openapi('Settings')
@@ -48,6 +52,7 @@ export const SettingsPatchSchema = z
     }),
     defaultProfile: z.string().min(1).max(64).nullable().optional(),
     timezone: z.string().min(1).max(64).optional().openapi({ description: 'IANA timezone.' }),
+    stuckRunMinutes: z.number().int().min(5).max(1440).optional(),
   })
   .openapi('SettingsPatch')
 

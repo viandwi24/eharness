@@ -4,6 +4,9 @@
  * Every public symbol is re-exported here explicitly (no `export *`). Subpath modules
  * (`eharness/filesystem`, `eharness/testing`, …) import core only through this file.
  *
+ * **Stable:** accepted API; changes follow docs/engineering/api-stability.md. Parts marked
+ * `@experimental` (model catalog and cost, `createJudge`, `observe`, stream resume) are Draft.
+ *
  * @see docs/architecture.md#2-package--exports
  */
 

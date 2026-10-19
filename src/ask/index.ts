@@ -6,6 +6,7 @@
  * **Draft:** every symbol of this subpath is experimental and may change in a minor release
  * (docs/engineering/api-stability.md).
  *
+ * @experimental
  * @see docs/specs/21-ask-plugin.md
  */
 export {

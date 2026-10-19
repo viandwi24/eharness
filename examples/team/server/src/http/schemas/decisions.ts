@@ -52,6 +52,10 @@ export const EscalationPayloadSchema = z
       description:
         'The options that mean "leave it for now" (a subset of `options`): the ones the agent flagged plus the server\'s fallback word list. A pick of one is remembered by a standing program, so a client shows the hint from this list and keeps no word list of its own.',
     }),
+    orderActions: z.record(z.string(), z.string()).optional().openapi({
+      description:
+        'Questions about standing orders: what the server does for each option (`remove:<order>`, `pause:<order>`, `keep-both:<pair>`, `keep:<order>`, `none`). The card needs nothing from it: the options are the buttons.',
+    }),
     source: z.enum(['agent', 'report']).openapi({
       description:
         '`agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`.',
@@ -136,6 +140,10 @@ export const DecisionOutcomeSchema = z
       .string()
       .optional()
       .openapi({ description: 'Session of the one-off run an approved proposal started.' }),
+    effect: z.string().optional().openapi({
+      description:
+        'What the server did because of the answer ("Removed order ..."), for a question about standing orders.',
+    }),
   })
   .openapi('DecisionOutcome')
 

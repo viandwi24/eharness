@@ -52,6 +52,10 @@ export interface TelegramChannelsOptions {
   }
   agents: { get(id: string): AgentDef | undefined }
   notify?(n: { key: string; title: string; body: string; agentId: string | null }): void
+  /** The bot token was rejected: an alarm for the owner (P54). */
+  onNeedsAuth?(connectionId: string, label: string, message: string): void
+  /** A background step failed (logged here too): a `system` alarm (P54). */
+  problem?(step: string, error: unknown): void
   apiRoot?: string
   fetch?: typeof fetch
   /** Long-poll timeout (seconds, default 30). */
@@ -88,6 +92,14 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
   const { gateway } = options
   const now = options.now ?? (() => Date.now())
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
+  const report = (step: string, error: unknown): void => {
+    warn(`telegram: ${step} failed: ${String(error)}`)
+    try {
+      options.problem?.(`telegram:${step}`, error)
+    } catch {
+      // the alarm is the last resort: if it cannot be raised the warning above is all there is
+    }
+  }
   const entries = new Map<string, RuntimeEntry>()
   let stopped = false
   let lastRev = -1
@@ -130,6 +142,7 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
     if (e !== undefined) delete e.retry
     if (e?.adapter !== undefined) {
       delete e.adapter
+      // teardown: the transport is being dropped anyway; nothing to alarm about
       await gateway.unregister(id).catch(() => undefined)
     }
   }
@@ -140,7 +153,10 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
       'Telegram rejected the bot token (it may have been revoked). Enter a new token to reconnect.'
     await halt(id)
     setState(e, 'needs-auth', message)
-    await options.connectors.markNeedsAuth(id, message).catch(() => undefined)
+    await options.connectors
+      .markNeedsAuth(id, message)
+      .catch((error) => report('mark-needs-auth', error))
+    options.onNeedsAuth?.(id, record?.label ?? id, message)
     gateway.activity.record({ connectionId: id, type: 'needs-auth', reason: 'token-rejected' })
     options.notify?.({
       key: `channel-auth:${id}`,
@@ -157,7 +173,7 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
     if (e.retry !== undefined) clearTimeout(e.retry)
     e.retry = setTimeout(() => {
       delete e.retry
-      void sync().catch(() => undefined)
+      void sync().catch((error) => report('sync', error))
     }, ms)
     ;(e.retry as { unref?: () => void }).unref?.()
   }
@@ -193,7 +209,8 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
       ...(options.pollTimeoutSec === undefined ? {} : { pollTimeoutSec: options.pollTimeoutSec }),
       onWebhook,
       hooks: {
-        onFailure: (failure) => void failed(id, failure).catch(() => undefined),
+        onFailure: (failure) =>
+          void failed(id, failure).catch((error) => report('failure-handler', error)),
         warn,
       },
     })

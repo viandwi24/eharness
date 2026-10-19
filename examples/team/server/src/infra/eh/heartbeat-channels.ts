@@ -88,5 +88,19 @@ export function heartbeatChannels(gateway: () => ChannelGateway | undefined): He
     roleOf(identityId) {
       return gateway()?.roleOfIdentity(identityId)
     },
+
+    canRead(identityId, nodeId) {
+      const gw = gateway()
+      const id = gw?.identities.get(identityId)
+      const node = gw?.nodes.get(nodeId)
+      if (gw === undefined || id === undefined || node === undefined) return false
+      const role = gw.roleOfIdentity(identityId)
+      if (role === 'owner' || role === 'admin') return true
+      if (role !== 'member') return false
+      const chain = new Set([node.id, ...gw.nodes.chain(node).map((n) => n.id)])
+      if (gw.identities.memberships(id.id).some((m) => chain.has(m.nodeId))) return true
+      const view = gw.people.get(id.connectionId, id.nativeId)
+      return view?.divisions.some((d) => chain.has(d.nodeId)) === true
+    },
   }
 }

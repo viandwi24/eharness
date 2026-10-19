@@ -7,6 +7,8 @@
  * **Draft:** every symbol of this subpath is experimental and may change in a minor release
  * (docs/engineering/api-stability.md).
  *
+ * @experimental
+ * @deprecated Write tools over your HTTP client or use MCP (docs/guides/openapi-tools.md). Removed in 1.0 (ADR-0062).
  * @see docs/specs/17-openapi-plugin.md
  */
 export {

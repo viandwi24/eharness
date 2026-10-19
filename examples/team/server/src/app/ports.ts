@@ -1,5 +1,6 @@
 /** Ports the use cases depend on; `infra/` implements them. */
 import type { AgentDef } from '../domain/agents.ts'
+import type { Alarm, NewAlarm } from '../domain/alarms.ts'
 import type { ApprovalView } from '../domain/approvals.ts'
 import type {
   Artifact,
@@ -582,6 +583,38 @@ export interface ThreadStore {
   touch(sessionId: string, info: { at: number; preview: string | null; title: string | null }): void
 }
 
+/** Alarms (`domain/alarms.ts`): stored incidents of failed background work. */
+export interface AlarmStore {
+  get(id: string): Alarm | undefined
+  byKey(key: string): Alarm | undefined
+  /** Newest first. `open`: not acknowledged. */
+  list(query: { open: boolean; limit: number }): Alarm[]
+  countOpen(): number
+  /** Unacknowledged alarms of a subject (and kind when given). */
+  openOf(subject: string, kind?: Alarm['kind']): Alarm[]
+  /** How many alarms (open or not) a subject has had: the suffix of a recurring incident's key. */
+  countOf(subject: string, kind: Alarm['kind']): number
+  /** undefined when an alarm with this `key` exists already (one alarm per incident). */
+  insert(a: NewAlarm & { id: string; createdAt: number }): Alarm | undefined
+  ack(id: string, by: 'owner' | 'auto', now: number): Alarm | undefined
+  /** Open and not delivered yet, oldest first. */
+  pending(): Alarm[]
+  /** Subjects delivered since `since` (the rate limit). */
+  deliveredSince(since: number): Array<{ subject: string; deliveredAt: number }>
+  markDelivered(ids: readonly string[], now: number): void
+}
+
+/**
+ * Where an alarm goes besides the Health page: a chat message to the owner (the channels'
+ * proactive path). `unavailable` = no chat destination now; the bell is the fallback.
+ */
+export interface AlarmPush {
+  push(text: string): Promise<'sent' | 'unavailable'>
+}
+
+/** Stop a running task's turn like the Stop button does (`idle`: nothing was running). */
+export type RunInterrupter = (task: Task, reason: string) => Promise<'aborted' | 'idle'>
+
 export interface NotificationStore {
   get(id: string): Notification | undefined
   byKey(key: string): Notification | undefined
@@ -654,6 +687,12 @@ export interface HeartbeatChannels {
   agentOf(connectionId: string): string | undefined
   /** What a person (identity id) is today: undefined when the identity is gone. */
   roleOf?(identityId: string): string | undefined
+  /**
+   * Can this person (identity id) read the conversation themselves today: an owner or an admin any
+   * chat, a member the chats they belong to and their divisions, a guest none. The privacy rule of
+   * the heartbeat's chat reads asks it per standing order giver. Absent = unknown.
+   */
+  canRead?(identityId: string, nodeId: string): boolean
 }
 
 /** A decision to store (always `open`). */
@@ -1302,6 +1341,11 @@ export interface Deps {
   sessionTools: SessionToolsPort
   threads: ThreadStore
   notifications: NotificationStore
+  alarms: AlarmStore
+  /** Owner delivery of alarms; absent: only the bell. */
+  alarmPush?: AlarmPush
+  /** Interrupts a stuck run (the same abort as the Stop button). */
+  interruptRun?: RunInterrupter
   briefings: BriefingStore
   uploads: UploadStore
   tasks: TaskStore

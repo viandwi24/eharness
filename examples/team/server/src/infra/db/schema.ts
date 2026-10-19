@@ -169,6 +169,36 @@ export const notifications = sqliteTable(
   ],
 )
 
+/**
+ * Alarms (`app/alarms.ts`, plan P54): one row per incident of scheduled or background work that
+ * failed, whatever the model said. `key` makes an incident idempotent (run id, routine id,
+ * approval id); `subject` is what it is about (`program:<id>`, `routine:<id>`, ...) and drives the
+ * rate limit and the auto-clear. The record stays after it is acknowledged.
+ */
+export const alarms = sqliteTable(
+  'alarms',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    key: text('key').notNull(),
+    subject: text('subject').notNull(),
+    agentId: text('agent_id'),
+    text: text('text').notNull(),
+    /** JSON array of app paths that open the evidence or fix (`/tasks/<id>`, `/connections`). */
+    refs: text('refs').notNull().default('[]'),
+    createdAt: integer('created_at').notNull(),
+    ackedAt: integer('acked_at'),
+    /** `auto` when the cause cleared on its own, `owner` when somebody pressed Ack. */
+    ackedBy: text('acked_by'),
+    deliveredAt: integer('delivered_at'),
+  },
+  (t) => [
+    uniqueIndex('alarms_key').on(t.key),
+    index('alarms_open').on(t.ackedAt, t.createdAt),
+    index('alarms_subject').on(t.subject, t.deliveredAt),
+  ],
+)
+
 /** The daily digest as a page: one row per local day (`app/briefings.ts`). */
 export const briefings = sqliteTable(
   'briefings',

@@ -28,7 +28,7 @@
 import type { Database } from 'bun:sqlite'
 import { errorText, uuidv7 } from 'eharness'
 import { createScheduler, type FireContext } from 'eharness/scheduler'
-import { postNotice } from '../../app/briefings.ts'
+import { raiseRoutinePaused } from '../../app/alarms.ts'
 import type {
   AgentRepo,
   Deps,
@@ -203,19 +203,21 @@ export function createRoutineService(
     })
   }
 
-  /** A routine paused itself after too many failures: one bell notice with the reason. */
+  /** A routine paused itself after too many failures: one alarm (chat, else the bell) with the reason. */
   const noticePaused = (routine: Routine, run: RoutineRun | undefined, now: number): void => {
     const app = deps.app?.()
     if (app === undefined) return
     const reason = run?.reason ?? routine.lastStatus ?? 'it failed repeatedly'
     try {
-      postNotice(app, {
-        key: `routine-paused:${routine.id}:${run?.id ?? now}`,
-        title: `Routine "${routine.name}" paused itself`.slice(0, 160),
-        body: `It failed ${routine.maxFailures} times in a row (last: ${reason}). Fix the cause, then resume it from the Routines page.`,
-        link: routine.programId === null ? '/routines' : `/programs/${routine.programId}`,
+      // the alarm reaches the owner (chat or bell) and stays on the Health page until acknowledged
+      raiseRoutinePaused(app, {
+        routineId: routine.id,
+        name: routine.name,
         agentId: routine.agentId,
-        at: now,
+        failures: routine.maxFailures,
+        reason,
+        incident: run?.id ?? String(now),
+        link: routine.programId === null ? '/routines' : `/programs/${routine.programId}`,
       })
     } catch (error) {
       deps.log?.warn(`pause notice of ${routine.id} not posted: ${errorText(error)}`)
@@ -378,6 +380,22 @@ export function createRoutineService(
         now,
       )
       emit('routine-changed', routine, null, { change: 'paused', reason: 'unrunnable' }, now)
+      const app = deps.app?.()
+      if (app !== undefined) {
+        try {
+          raiseRoutinePaused(app, {
+            routineId: routine.id,
+            name: routine.name,
+            agentId: routine.agentId,
+            failures: 0,
+            reason,
+            incident: `unrunnable:${now}`,
+            link: routine.programId === null ? '/routines' : `/programs/${routine.programId}`,
+          })
+        } catch (error) {
+          deps.log?.warn(`pause alarm of ${routine.id} not raised: ${errorText(error)}`)
+        }
+      }
       const after = store.getRun(run.id) as RoutineRun
       emitRun(routine, after, now)
       return after

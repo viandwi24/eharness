@@ -70,6 +70,7 @@ import {
 } from '../domain/programs.ts'
 import type { Task, TaskReport } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
+import { applyOrderAnswer } from './order-care.ts'
 import type { Deps } from './ports.ts'
 import {
   authorityGrant,
@@ -819,6 +820,11 @@ export async function approveDecision(
       await deliver(deps, next, answerOf(decision, note, input.by))
     }
     rememberStandDown(deps, next, decision, note)
+    // a question about standing orders is carried out by the answer: what was done is the outcome
+    const effect = await applyOrderAnswer(deps, next, decision)
+    if (effect !== undefined) {
+      next = deps.decisions.setOutcome(next.id, { decision, effect }) ?? next
+    }
     changed(deps, next, 'decided')
     return next
   }

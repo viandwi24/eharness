@@ -28,6 +28,30 @@ const model = scriptedModel([
 calls (eharness steps) and `generateText` calls (the compaction summarizer) take entries from the
 same script in call order, so one scripted model can drive a conversation that compacts.
 
+## Which command to run
+
+| Command | Runs | Time (2026-10) |
+|---|---|---|
+| `bun test` | everything: `src`, `scripts`, `examples/*` (team and coder included). What CI and the release workflow run. | about 6 min |
+| `bun run test:fast` | unit tests of `src` only: no `*.int.test.ts`, no `src/shell/**` (real child processes and sandboxes) | about 35 s |
+| `bun run test:int` | the 62 `*.int.test.ts` files (full turns with `scriptedModel`, including the session fuzz suite) | about 50 s |
+| `bun test src/<module>` | one module while you work on it | seconds |
+
+`test:fast` and `test:int` do not replace `bun test` before a commit that touches `src/session`,
+`src/loop` or `src/stream`; CI semantics are unchanged (CI still runs `bun test`). Where the time
+goes (junit timing, 2026-10-19): the `src` suite is about 93 s of the roughly 375 s of summed file
+time, `examples/team` about 204 s and `examples/coder` about 73 s. The slowest library files are
+`src/session/fuzz.int.test.ts` (23 s), `src/shell/plugin.test.ts`, `src/subagent/background-park.test.ts`,
+`src/subagent/subagent.test.ts`, `src/session/input-files.int.test.ts` and
+`src/session/inbox-delivery.int.test.ts` (3 to 6 s each); nothing else in `src` takes over 4 s.
+To measure again: `bun test --reporter=junit --reporter-outfile=junit.xml`, then sort the
+`<testsuite file=... time=...>` entries.
+
+Flakiness check: `bun test --rerun-each 5 <files>`. The resume replay, inbox, http and client
+integration tests, and every `src` `*.int.test.ts` file at `--rerun-each 3`, passed without a
+failure (2026-10-19). Tests must not assume wall-clock timing: wait for an event or use fake timers
+and injected clocks, never a fixed `setTimeout` delay as a synchronisation point.
+
 ## Test layers
 
 | Layer | What | Where |

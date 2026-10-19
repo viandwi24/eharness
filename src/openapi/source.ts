@@ -38,7 +38,11 @@ import {
 /** Selected tools above this count are deferred with `defer: 'auto'`. */
 export const OPENAPI_AUTO_DEFER_THRESHOLD = 20
 
-/** What the filters, `names` and `risk` functions see of one operation. */
+/**
+ * What the filters, `names` and `risk` functions see of one operation.
+ *
+ * @deprecated Write the tools with `tool()` (or a `ToolSource`) over your own HTTP client, or expose the API through MCP (`eharness/mcp`); migration: docs/guides/openapi-tools.md#deprecated-removed-in-10. Removed in 1.0 (ADR-0062).
+ */
 export interface OperationInfo {
   /** Lowercase HTTP method. */
   method: string
@@ -51,7 +55,11 @@ export interface OperationInfo {
   deprecated: boolean
 }
 
-/** Selects operations. Specified fields must all match; list fields match any entry. */
+/**
+ * Selects operations. Specified fields must all match; list fields match any entry.
+ *
+ * @deprecated Write the tools with `tool()` (or a `ToolSource`) over your own HTTP client, or expose the API through MCP (`eharness/mcp`); migration: docs/guides/openapi-tools.md#deprecated-removed-in-10. Removed in 1.0 (ADR-0062).
+ */
 export type OperationFilter =
   | {
       /** HTTP methods, case-insensitive. */
@@ -64,7 +72,11 @@ export type OperationFilter =
     }
   | ((op: OperationInfo) => boolean)
 
-/** Options of {@link openApiSource}. */
+/**
+ * Options of {@link openApiSource}.
+ *
+ * @deprecated Write the tools with `tool()` (or a `ToolSource`) over your own HTTP client, or expose the API through MCP (`eharness/mcp`); migration: docs/guides/openapi-tools.md#deprecated-removed-in-10. Removed in 1.0 (ADR-0062).
+ */
 export interface OpenApiSourceOptions {
   /** The OpenAPI 3.x document: an object or a JSON string. */
   spec: object | string
@@ -207,7 +219,7 @@ function specServer(doc: Json, at: string): string {
  * })
  * ```
  * @see docs/specs/17-openapi-plugin.md
- * @deprecated No product built on eharness uses this module (ADR-0062); it is removed at 1.0 unless one adopts it.
+ * @deprecated Write the tools with `tool()` (or a `ToolSource`) over your own HTTP client, or expose the API through MCP (`eharness/mcp`); migration: docs/guides/openapi-tools.md#deprecated-removed-in-10. Removed in 1.0 (ADR-0062).
  */
 export function openApiSource(options: OpenApiSourceOptions): ToolSource {
   if (typeof options !== 'object' || options === null) {

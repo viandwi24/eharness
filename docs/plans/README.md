@@ -2,7 +2,7 @@
 
 Goal of this board: ship **eharness 0.1.0** — the skeleton described in `docs/specs/*` — and the
 releases after it (P9–P12: 0.3.0; P13–P20: 0.4.0; P21–P29: 0.5.0; P30–P31: 0.6.0 and 0.7.0;
-P33–P39: 0.8.0).
+P33–P39: 0.8.0, published 2026-10-11; P40–P48 and later fixes: pending, 0.9.0 next, see [roadmap.md](roadmap.md#090-next)).
 
 Status legend: `todo` · `in progress` · `blocked` · `review` · `done`.
 Update this table in the same commit that changes a phase's status.
@@ -63,6 +63,7 @@ Update this table in the same commit that changes a phase's status.
 | P51 | [Proactive heartbeat and agent health](P51-proactive-and-health.md) — heartbeat reads channels, keeps notes and speaks only when it should (modes, reportTo, rubric, activity wake); Health page and authority suggestions; health in the digest | done | P50 | P50 |
 | P52 | [Context and standing orders v2](P52-context-and-orders.md) — sessions_search / session_read / runs_list / run_read with a privacy gate; order kinds (watch, rule, deadline, ledger), exact deadline wakes, order needs grant tools, evidence-backed notes, weekly patterns, order hygiene | done | P51 | P51 |
 | P53 | [Supervisor duty and consistency](P53-supervisor-and-consistency.md) — the heartbeat supervises its own work (retry, escalate, fix its own memory) and the deterministic consistency detectors feed it | in progress | P52 | P52 |
+| P54 | [Alarms](P54-alarms.md) — no failure of scheduled or background work stays silent: deterministic alarms (failed, stuck, paused, expired, broken, system), Health "Needs attention", owner push with rate limit | in progress | P53 | P53 |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next
@@ -87,10 +88,10 @@ the 0.5.0 results notes (P29, internal).
 perspectives (API design, security, correctness under concurrency and restarts, operations and
 documentation) and produced a list of findings; all accepted ones landed as direct commits on
 `main` with one changeset per concern (`.changeset/`). Breaking changes are allowed in 0.x
-(minor bump) and are listed in the changesets and in `docs/guides/upgrading.md`. **Next step:** run
-`bun run release:version` (version PR for 0.8.0), review the generated `CHANGELOG.md`, merge, and
-publish through the release workflow (`docs/engineering/release.md`). After that the open items in
-[roadmap.md](roadmap.md) are unscheduled.
+(minor bump) and are listed in the changesets and in `docs/guides/upgrading.md`. 0.8.0 is
+published (npm and tag `eharness@0.8.0`). **Next step:** run `bun run release:version` when 0.9.0 is
+cut (39 changesets pending, see [roadmap.md](roadmap.md#090-next)), review the generated
+`CHANGELOG.md`, merge, and publish through the release workflow (`docs/engineering/release.md`).
 
 After 0.1.0: [roadmap.md](roadmap.md).
 

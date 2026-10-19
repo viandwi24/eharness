@@ -7,6 +7,7 @@
  * **Draft:** every symbol of this subpath is experimental and may change in a minor release
  * (docs/engineering/api-stability.md).
  *
+ * @experimental
  * @see docs/specs/27-client.md#7-react-eharnessclientreact
  */
 import type { ChatStatus, FileUIPart, UIMessage } from 'ai'

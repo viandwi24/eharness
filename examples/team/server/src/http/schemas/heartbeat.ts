@@ -33,6 +33,10 @@ export const StandingOrderSchema = z
     mention: z.boolean().openapi({ description: 'Mention the asker when reporting.' }),
     at: z.number().int().openapi({ description: 'When it was given.' }),
     active: z.boolean(),
+    pausedReason: z.string().optional().openapi({
+      description:
+        'Why the order is paused when the server or an answer paused it (its chat is gone, "pause it" in the Decision Center).',
+    }),
     kind: z.enum(['watch', 'rule', 'deadline', 'ledger']).openapi({
       description:
         'watch (ongoing), rule (react when X happens), deadline (one-shot at `due`, then done) or ledger (keeps a tracker).',

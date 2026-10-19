@@ -4,6 +4,8 @@
  *
  * The reference plugin: built only with the public core API (`src/index.ts`, ADR-0008).
  *
+ * **Stable:** accepted API; changes follow docs/engineering/api-stability.md.
+ *
  * @see docs/specs/08-filesystem-plugin.md
  */
 import type { ProjectInstructionsInfo } from './project-instructions.ts'

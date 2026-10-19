@@ -279,6 +279,17 @@ run returned by `inject(…, { wake })`):
 - They throw synchronously only `EH_SESSION_BUSY` (in-process running flag, `ifBusy: 'reject'`)
   and `EH_SESSION_CLOSED`. `handleChatRequest` never throws `EH_SESSION_BUSY`: it returns a failed
   run answering 409 (spec 11 §7).
+- `EH_SESSION_BUSY` has more than one source; only the first two are turn operations. (1) The
+  in-process running flag (`ifBusy: 'reject'`, `regenerate`, `edit`, `compact`): thrown. (2) A
+  `SessionLock` that rejects with it, or a live foreign `activeTurn`: a run error. (3) **Storage
+  conflict retry exhaustion** on a foreign write to another session's state through
+  `StateAdapter.setIf` (§13, §9.1), after the bounded retries (12 for registering a child in the
+  parent's `core.children`, `registerChild` in `src/session/family.ts`; 3 for the abort request,
+  `requestRemoteAbort` in `src/session/remote-abort.ts`) all lost the race. The abort request
+  reaches the caller as a **rejection of `session.abort()`** (documented there). The child
+  registration happens while a child session opens and never reaches the caller: it is caught, logged
+  as a warning and retried by the next open. Code `EH_SESSION_BUSY` here means "the state kept
+  changing, try again", not "a turn is running".
 - A queued run that is dropped (`abort()`, `close()`) never starts: its stream is `start` (throwaway
   id) → `abort`, and `run.result` resolves with `stop: 'aborted'`; nothing is persisted.
 - Every other failure — lock not acquired (`EH_SESSION_BUSY`) or the lock service failing

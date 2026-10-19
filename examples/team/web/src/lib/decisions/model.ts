@@ -203,6 +203,8 @@ export function outcomeLine(d: Decision): string {
 		return 'Closed automatically: it no longer applies. Nothing was changed.';
 	if (d.status === 'expired') return 'The run no longer waited for this.';
 	const o = d.outcome;
+	// a question about standing orders was carried out: say what was done
+	if (o?.effect) return o.effect;
 	if (d.status === 'rejected' && d.kind === 'change') return 'Rejected: the program was not changed.';
 	if (d.status === 'rejected') return d.kind === 'proposal' ? 'Rejected: nothing was created.' : 'Rejected: the run continued without it.';
 	if (d.kind === 'proposal') {

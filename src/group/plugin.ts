@@ -28,14 +28,22 @@ import {
 } from '../index.ts'
 import { GROUP_HISTORY_PREAMBLE, GROUP_SPEAKER_PREFIX } from './texts.ts'
 
-/** Who wrote a group message. */
+/**
+ * Who wrote a group message.
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export interface GroupAuthor {
   id: string
   name?: string
   isBot?: boolean
 }
 
-/** One incoming message of the chat, as the channel adapter reports it. */
+/**
+ * One incoming message of the chat, as the channel adapter reports it.
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export interface GroupMessage {
   text: string
   files?: FileUIPart[]
@@ -50,13 +58,25 @@ export interface GroupMessage {
   at?: number
 }
 
-/** Verdict of a `shouldRespond` hook. */
+/**
+ * Verdict of a `shouldRespond` hook.
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export type GroupDecision = 'respond' | 'ignore' | 'default'
 
-/** Why a message did not get an answer. */
+/**
+ * Why a message did not get an answer.
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export type GroupIgnoreReason = 'not-mentioned' | 'bot' | 'loop-limit' | 'ignored'
 
-/** Options of {@link group}. */
+/**
+ * Options of {@link group}.
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export interface GroupOptions {
   /** The bot's own author id in this chat; its own messages are never stored or answered. */
   botId: string
@@ -83,12 +103,20 @@ export interface GroupOptions {
   formatSpeaker?: (author: GroupAuthor) => string
 }
 
-/** Result of {@link routeGroupMessage}. */
+/**
+ * Result of {@link routeGroupMessage}.
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export type GroupRouteResult =
   | { responded: false; reason: GroupIgnoreReason; messageId: string | undefined }
   | { responded: true; run: HarnessRun }
 
-/** Data of the `group.message` kind (a gated-out message; file contents are never stored). */
+/**
+ * Data of the `group.message` kind (a gated-out message; file contents are never stored).
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export interface GroupMessageData {
   author: GroupAuthor
   text: string
@@ -98,14 +126,22 @@ export interface GroupMessageData {
   at?: number
 }
 
-/** The part of a session the plugin uses (any `HarnessSession` fits). */
+/**
+ * The part of a session the plugin uses (any `HarnessSession` fits).
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export interface GroupSession {
   send(input: UIMessage, options?: SendOptions): HarnessRun
   messages(q?: { limit?: number }): Promise<HarnessUIMessage[]>
   inject(kind: string, data: unknown, options?: InjectOptions): Promise<{ message: { id: string } }>
 }
 
-/** The plugin value, with its `route` method. */
+/**
+ * The plugin value, with its `route` method.
+ *
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export type GroupPlugin = HarnessPlugin<'group'> & {
   /** Route one incoming message: store it as context or answer it. */
   route(
@@ -208,7 +244,7 @@ function checkNumber(
 /**
  * Create the group-chat plugin (spec 16).
  *
- * @deprecated No product built on eharness uses this module (ADR-0062); it is removed at 1.0 unless one adopts it.
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
  */
 export function group(options: GroupOptions): GroupPlugin {
   checkNumber('historyLimit', options.historyLimit, 0, true)
@@ -406,7 +442,7 @@ export function group(options: GroupOptions): GroupPlugin {
 /**
  * Route one incoming message through a {@link group} plugin (spec 16 §2).
  *
- * @deprecated No product built on eharness uses this module (ADR-0062); it is removed at 1.0 unless one adopts it.
+ * @deprecated No replacement in the library: gate and route group messages in your channel layer (`eharness/channels`, `eharness/identity`; migration: docs/guides/group-chat.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
  */
 export function routeGroupMessage(
   group: GroupPlugin,

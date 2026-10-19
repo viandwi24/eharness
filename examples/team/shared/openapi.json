@@ -1831,6 +1831,104 @@
           "dismissed"
         ]
       },
+      "AlarmList": {
+        "type": "object",
+        "properties": {
+          "alarms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Alarm"
+            }
+          },
+          "open": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "alarms",
+          "open"
+        ]
+      },
+      "Alarm": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "run-failed",
+              "run-stuck",
+              "routine-paused",
+              "approval-expired",
+              "connection-broken",
+              "system"
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "description": "What it is about: `program:<id>`, `routine:<id>`, `connection:<id>`, `system:<step>`."
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "Plain short text: what failed, why, and the one next step."
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "App paths that open the evidence or the fix (the first is the primary one)."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "ackedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ackedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "owner",
+              "auto",
+              null
+            ],
+            "description": "`owner` pressed Ack; `auto` the cause cleared (the next run succeeded, the connection works again)."
+          },
+          "deliveredAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "When it reached the owner (chat message or bell); null while it waits for the rate limit."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "subject",
+          "agentId",
+          "text",
+          "refs",
+          "createdAt",
+          "ackedAt",
+          "ackedBy",
+          "deliveredAt"
+        ]
+      },
       "SessionTools": {
         "type": "object",
         "properties": {
@@ -4893,6 +4991,12 @@
             "type": "string",
             "description": "IANA timezone of the team (default: the `TZ` variable or the host timezone). The default of the heartbeat active hours and of the daily digest time; an agent heartbeat or the digest can override it."
           },
+          "stuckRunMinutes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1440,
+            "description": "A program, routine or queued run with no activity for this many minutes is stopped through the Stop path and raises an alarm (Health, Needs attention). It is never run again by itself. Default 45."
+          },
           "updatedAt": {
             "type": "integer",
             "description": "0 until a person changed something."
@@ -4906,6 +5010,7 @@
           "defaultModel",
           "defaultProfile",
           "timezone",
+          "stuckRunMinutes",
           "updatedAt"
         ]
       },
@@ -5189,6 +5294,11 @@
             "minLength": 1,
             "maxLength": 64,
             "description": "IANA timezone."
+          },
+          "stuckRunMinutes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1440
           }
         }
       },
@@ -11230,6 +11340,10 @@
           "runSessionId": {
             "type": "string",
             "description": "Session of the one-off run an approved proposal started."
+          },
+          "effect": {
+            "type": "string",
+            "description": "What the server did because of the answer (\"Removed order ...\"), for a question about standing orders."
           }
         },
         "required": [
@@ -11336,6 +11450,13 @@
               "type": "string"
             },
             "description": "The options that mean \"leave it for now\" (a subset of `options`): the ones the agent flagged plus the server's fallback word list. A pick of one is remembered by a standing program, so a client shows the hint from this list and keeps no word list of its own."
+          },
+          "orderActions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Questions about standing orders: what the server does for each option (`remove:<order>`, `pause:<order>`, `keep-both:<pair>`, `keep:<order>`, `none`). The card needs nothing from it: the options are the buttons."
           },
           "source": {
             "type": "string",
@@ -11980,6 +12101,10 @@
           },
           "active": {
             "type": "boolean"
+          },
+          "pausedReason": {
+            "type": "string",
+            "description": "Why the order is paused when the server or an answer paused it (its chat is gone, \"pause it\" in the Decision Center)."
           },
           "kind": {
             "type": "string",
@@ -18519,6 +18644,148 @@
           },
           "404": {
             "description": "Unknown notification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alarms": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Alarms: failures of scheduled and background work",
+        "description": "One alarm per incident, raised by the server with no model call: a program or routine run that ended failed, interrupted or timed out for good, a run stopped for showing no activity, a routine that paused itself, an approval nobody answered, a connection in error or needing sign-in, a failed startup or health step. Open ones (not acknowledged) are the \"Needs attention\" list of the Health page; they are also pushed to the owner. Acknowledged ones stay as history with `all=true`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Include acknowledged ones (history)."
+            },
+            "required": false,
+            "description": "Include acknowledged ones (history).",
+            "name": "all",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Alarms, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlarmList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alarms/{id}/ack": {
+      "post": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Acknowledge an alarm",
+        "description": "Takes it off \"Needs attention\"; the record stays. Alarms also clear on their own when the cause is gone.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The alarm",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Alarm"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown alarm",
             "content": {
               "application/json": {
                 "schema": {

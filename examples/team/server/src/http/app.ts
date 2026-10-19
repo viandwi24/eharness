@@ -15,6 +15,7 @@ import type { Deps } from '../app/ports.ts'
 import { liveProfileOf, takeLiveTicket } from './live-tickets.ts'
 import { agentHealthRoutes } from './routes/agent-health.ts'
 import { agentRoutes } from './routes/agents.ts'
+import { alarmRoutes } from './routes/alarms.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
 import { authRoutes } from './routes/auth.ts'
 import { briefingRoutes } from './routes/briefings.ts'
@@ -381,6 +382,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', chatRoutes(options.deps))
   app.route('/', threadRoutes(options.deps))
   app.route('/', briefingRoutes(options.deps))
+  app.route('/', alarmRoutes(options.deps))
   app.route('/', sessionToolsRoutes(options.deps))
   app.route('/', harnessRoutes(options.harness))
   app.route('/', uploadRoutes(options.deps))

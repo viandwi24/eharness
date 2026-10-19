@@ -6,6 +6,9 @@ it never approves anything on its own. Contract: [spec 15](../specs/15-guard-plu
 [ADR-0030](../decisions/0030-llm-approval-guard-plugin.md). The guard and permissions auto mode share one judge engine: see [LLM judge: two modes](llm-judge.md). Runnable:
 [`examples/approval-guard.ts`](../../examples/approval-guard.ts).
 
+> **Deprecated (ADR-0062).** `eharness/guard` is deprecated and removed in 1.0 unless a product adopts
+> it; nothing is removed or warned about before 1.0. See [Deprecated, removed in 1.0](#deprecated-removed-in-10).
+
 ## Setup
 
 The guard can only tighten, so pair it with a **permissive base policy** and let the judge decide
@@ -107,3 +110,15 @@ const judge = scriptedModel([{ text: '{"decision":"deny","reason":"unknown recip
 guard({ model: judge })
 // judge.prompts[0] is exactly what the judge saw — assert that tool outputs are absent
 ```
+
+## Deprecated, removed in 1.0
+
+`eharness/guard` (ADR-0062) has no product consumer. Every export carries `@deprecated`; there is no
+runtime warning and it keeps working until 1.0.
+
+Migration: use the `auto` permission mode of `eharness/permissions`: build the engine with
+`classifier: modelClassifier({ model })` and call `engine.setMode('auto')` (see
+[Permissions, auto mode](permissions.md#auto-mode)). It runs on the same judge engine
+(`createJudge`, see [LLM judge](llm-judge.md)). Differences: a classifier `allow` replaces asking a
+person (the guard only tightened), and block texts come from the permissions plugin, so move any
+matching on `GUARD_*` texts to the new reasons (spec 18 §12).

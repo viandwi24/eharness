@@ -3,6 +3,8 @@
  *
  * Imports core only through `src/index.ts` (ADR-0008).
  *
+ * **Stable:** accepted API; changes follow docs/engineering/api-stability.md.
+ *
  * @see docs/engineering/testing.md
  */
 

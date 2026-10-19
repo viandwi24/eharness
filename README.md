@@ -363,7 +363,8 @@ need `DATABASE_URL` and skip otherwise) and the two apps, `team/` and `coder/`.
 
 ## Guides
 
-Start with [getting started](docs/guides/getting-started.md), then the
+Start with [which module do I need?](docs/guides/start-here.md) (the 33 entry points in three groups,
+with stability labels), then [getting started](docs/guides/getting-started.md) and the
 [guide index](docs/guides/README.md) (every guide, one line each). Often needed:
 
 - Build: [instructions, tools and MCP](docs/guides/tools-and-mcp.md) ·

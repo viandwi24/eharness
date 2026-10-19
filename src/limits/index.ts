@@ -1,4 +1,11 @@
-/** `eharness/limits`: step and budget limits (spec 33). */
+/**
+ * `eharness/limits`: step and budget limits (spec 33).
+ *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
+ * @experimental
+ */
 export {
   type BudgetNoticeOptions,
   type BudgetRefusal,

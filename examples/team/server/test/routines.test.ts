@@ -515,13 +515,14 @@ describe('ticker', () => {
     expect(
       feed.events.some((e) => e.type === 'routine-changed' && e.payload.reason === 'max-failures'),
     ).toBe(true)
-    // one bell notice with the reason (D10 of the e2e pass)
+    // one alarm with the reason (no chat destination in this test: it falls back to the bell)
     const bell = (await (await a.app.request('/notifications')).json()) as {
       notifications: Array<{ title: string; body: string; link: string | null }>
     }
     const notices = bell.notifications.filter((n) => n.title.includes('paused itself'))
     expect(notices).toHaveLength(1)
-    expect(notices[0]?.body).toContain('failed 2 times in a row (last: error')
+    expect(notices[0]?.title).toContain('paused itself after 2 failed runs in a row')
+    expect(notices[0]?.body).toContain('Why: error')
     expect(notices[0]?.link).toBe('/routines')
   })
 })

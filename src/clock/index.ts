@@ -1,4 +1,11 @@
-/** `eharness/clock`: the `datetime` tool and zone arithmetic (spec 34). */
+/**
+ * `eharness/clock`: the `datetime` tool and zone arithmetic (spec 34).
+ *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
+ * @experimental
+ */
 export {
   type ClockOptions,
   clock,

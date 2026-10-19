@@ -47,6 +47,8 @@ export interface StandingOrder {
   mention: boolean
   at: number
   active: boolean
+  /** Why an order is paused (the server paused it, or a person answered "pause it"); absent: by hand. */
+  pausedReason?: string
   kind: OrderKind
   /** `deadline`: the instant (epoch ms) the exact wake fires. */
   due?: number
@@ -153,6 +155,7 @@ export function parseOrderLine(line: string): StandingOrder | undefined {
   const expires = instant(fields.get('expires'))
   const doneAt = instant(fields.get('done'))
   const ledger = fields.get('ledger')
+  const why = fields.get('why')
   return {
     id: m[3] as string,
     text,
@@ -164,6 +167,7 @@ export function parseOrderLine(line: string): StandingOrder | undefined {
     mention: fields.get('mention') === 'yes',
     at: Number.isFinite(at) ? at : 0,
     active: fields.get('active') !== 'no',
+    ...(why === undefined || why === '' ? {} : { pausedReason: dec(why) }),
     // a line from before kinds existed is an ongoing watch
     kind: isOrderKind(kind) ? kind : 'watch',
     ...(due === undefined ? {} : { due }),
@@ -258,6 +262,9 @@ export function formatOrderLine(o: StandingOrder): string {
     `mention:${o.mention ? 'yes' : 'no'}`,
     `at:${o.at}`,
     ...(o.active ? [] : ['active:no']),
+    ...(o.pausedReason === undefined || o.active
+      ? []
+      : [`why:${encodeURIComponent(o.pausedReason.slice(0, 200))}`]),
     // kinds are written only when they say something: a plain watch keeps the old, short tail
     ...(o.kind === 'watch' ? [] : [`kind:${o.kind}`]),
     ...(o.due === undefined ? [] : [`due:${o.due}`]),
@@ -521,3 +528,108 @@ export const STANDING_ORDERS_NOTE = [
   '"if X happens, report", `ledger` for a tracker it keeps; add `refs` and `needs` when it must open',
   'earlier messages or use the web, the browser or a phone.',
 ].join('\n')
+
+// --- what a beat may read, and where it may carry what it read ---------------------------------
+
+/**
+ * A conversation of the agent as the privacy rule sees it (`WatchNode` of `domain/heartbeat.ts` has
+ * these fields too).
+ */
+export interface ReadNode {
+  connectionId: string
+  nodeId: string
+  /** `direct` is a private chat with one person. */
+  kind: string
+  /** The chat is allowed for the agent (its settings let it in). */
+  allowed: boolean
+}
+
+/**
+ * What a beat may read of the chats and where it may carry it (P51 open question: the beat can read
+ * every chat the agent can, so a member's private order or a DM could end up in a group report).
+ * Written at the start of a beat; the gate reads it on every call.
+ *  - `nodes`: the chats it may read
+ *  - `carriers`: for each private chat (a DM) among them, the destinations (`destKey`) that may
+ *    receive what was read there
+ *  - `seen`: the private chats this beat has actually read so far
+ */
+export interface ReadScope {
+  nodes: string[]
+  carriers: Record<string, string[]>
+  seen: string[]
+}
+
+/**
+ * The reach of a beat: the chats of the live orders. A chat is readable when the person who gave a
+ * live order can read it themselves today (an owner or an admin: every chat the agent is allowed
+ * in, the web owner too; a member: the chats they belong to, their divisions and their own direct
+ * chat), or when the owner's own plain checklist items are on the list (they are the owner's: all
+ * allowed chats). A chat an order merely names (its report chat, its refs) adds nothing for a
+ * member: naming a chat is not the right to read it. A giver who is gone reads nothing.
+ *
+ * What was read in a DM may go only back to that DM, or to the DM or the web chat of a person who
+ * can read that DM (an owner or an admin: any; a member: only their own). Never into a group.
+ * Pure.
+ */
+export function readScopeOf(input: {
+  orders: readonly StandingOrder[]
+  /** The owner's plain checklist items exist (not an order: no giver to bound them). */
+  plainItems: boolean
+  nodes: readonly ReadNode[]
+  /** Can the giver of the order read this chat today? */
+  giverCanRead: (o: StandingOrder, nodeId: string) => boolean
+  /** The role of the giver today; undefined = gone. */
+  giverRole: (o: StandingOrder) => string | undefined
+}): ReadScope {
+  const allowed = input.nodes.filter((n) => n.allowed)
+  const readable = new Set<string>(input.plainItems ? allowed.map((n) => n.nodeId) : [])
+  const givers: StandingOrder[] = []
+  for (const o of input.orders) {
+    if (input.giverRole(o) === undefined) continue
+    givers.push(o)
+    for (const n of allowed) if (input.giverCanRead(o, n.nodeId)) readable.add(n.nodeId)
+  }
+  const carriers: Record<string, string[]> = {}
+  for (const p of input.nodes) {
+    if (p.kind !== 'direct' || !readable.has(p.nodeId)) continue
+    const keys = new Set<string>([
+      destKey({ kind: 'chat', connectionId: p.connectionId, nodeId: p.nodeId }),
+    ])
+    for (const o of givers) {
+      if (!input.giverCanRead(o, p.nodeId)) continue
+      if (o.report.kind === 'web') keys.add(destKey(o.report))
+      else {
+        const dest = input.nodes.find((n) => n.nodeId === (o.report as { nodeId: string }).nodeId)
+        if (dest?.kind === 'direct') keys.add(destKey(o.report))
+      }
+    }
+    carriers[p.nodeId] = [...keys]
+  }
+  return { nodes: [...readable], carriers, seen: [] }
+}
+
+/** A readable reason when a beat may not read this chat (the node and its ancestors), else undefined. */
+export function readRefusal(
+  scope: ReadScope | undefined,
+  target: { title: string; ids: readonly string[] },
+): string | undefined {
+  if (scope !== undefined && target.ids.some((id) => scope.nodes.includes(id))) return undefined
+  return `Not read: "${target.title}" is outside what this heartbeat may read. A beat reads only chats that the person who gave a live standing order can read themselves (an owner or an admin: any allowed chat; a member: their own chats). Put what you need in the result as an item, or ask the owner to cover it with an order.`
+}
+
+/**
+ * A readable reason when a post to `to` (`destKey`) would carry what a private chat said into a
+ * place that is not for it, else undefined. `title` names a private chat that was read.
+ */
+export function privatePostRefusal(
+  scope: ReadScope | undefined,
+  to: string,
+  titleOf: (nodeId: string) => string,
+): string | undefined {
+  if (scope === undefined) return undefined
+  for (const p of scope.seen) {
+    if ((scope.carriers[p] ?? []).includes(to)) continue
+    return `Not posted: this beat read a private chat ("${titleOf(p)}"), and what a direct chat said may go only back to that chat or to the direct chat or web chat of a person who can read it, never to a group. Leave this report out, or put it in the result as an item (it reaches the owners' digest).`
+  }
+  return undefined
+}

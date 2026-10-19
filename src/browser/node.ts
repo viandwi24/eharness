@@ -1,4 +1,11 @@
-/** `eharness/browser/node`: managed browser runtimes (Node-only, ADR-0036). */
+/**
+ * `eharness/browser/node`: managed browser runtimes (Node-only, ADR-0036).
+ *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
+ * @experimental
+ */
 export {
   CHROME_VERSIONS_URL,
   type ChromePlatform,

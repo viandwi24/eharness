@@ -5,6 +5,10 @@
 [ADR-0032](../decisions/0032-openapi-tools-outbound-http.md)). Runnable offline:
 [`examples/openapi-tools.ts`](../../examples/openapi-tools.ts).
 
+> **Deprecated (ADR-0062).** `eharness/openapi` is deprecated and removed in 1.0 unless a product
+> adopts it; nothing is removed or warned about before 1.0. See
+> [Deprecated, removed in 1.0](#deprecated-removed-in-10).
+
 ```ts
 import { defineHarnessAgent } from 'eharness'
 import { openApiSource } from 'eharness/openapi'
@@ -55,3 +59,14 @@ error (`maxTools`, default 64); above 20 the tools are deferred behind `tool_sea
 
 JSON documents only (convert YAML first), local `$ref`s only, JSON request bodies only, no binary
 or streamed responses, no OAuth flows (your `headers()` owns tokens).
+
+## Deprecated, removed in 1.0
+
+`eharness/openapi` (ADR-0062) has no product consumer. Every export carries `@deprecated`; there is
+no runtime warning and it keeps working until 1.0.
+
+Migration: write the few operations the agent needs as tools (`tool()` or a `ToolSource` that calls
+your own HTTP client, with your auth and an allow-listed base URL), or put the API behind an MCP
+server and connect it with `eharness/mcp` (`mcpServerSource`). Keep the habits this module
+enforced: risk from the HTTP method (`read` for GET, `write` otherwise, `destructive` for DELETE),
+a fixed base URL, and error strings instead of throws.

@@ -12,8 +12,9 @@ Reading order for a new contributor (human or agent):
 7. [`reference/prior-art.md`](reference/prior-art.md): lessons from the predecessor harness and
    from other frameworks.
 
-Using eharness (not contributing)? Start with the [README](../README.md), then the
-[guides](guides/README.md) (index of every guide), beginning with
+Using eharness (not contributing)? Start with the [README](../README.md), then
+[which module do I need?](guides/start-here.md) (the 33 entry points in three groups with stability
+labels), then the [guides](guides/README.md) (index of every guide), beginning with
 [getting started](guides/getting-started.md); for production read
 [production patterns](guides/production-patterns.md) and the
 [production checklist](guides/production-checklist.md). Runnable code is in

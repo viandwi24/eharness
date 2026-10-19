@@ -69,7 +69,7 @@ import core only through `src/index.ts` (the exceptions are listed in `scripts/c
 | `judge/` | `createJudge` and its restricted transcript renderer (ADR-0060) |
 | `output/` | structured final answers (tool mode and native mode) |
 | `internal/` | leaf helpers with no upward imports: `glob`, `path-segments`, `regex-safety`, `private-host`, `hook-run`, `observe`, `model`, `provider-errors`, `ai-types`, `util` (`errorText`, `isRecord`) |
-| `filesystem/`, `storage/`, `mcp/`, `todos/`, `memory/`, `guard/`, `group/`, `openapi/`, `ask/`, `permissions/`, `shell/`, `subagent/`, `web/`, `providers/`, `connectors/`, `activity/`, `http/`, `client/`, `scheduler/`, `identity/`, `channels/`, `handoff/`, `limits/`, `clock/`, `browser/`, `testing/` | one folder per subpath module, see the table in section 2 |
+| `filesystem/`, `storage/`, `mcp/`, `todos/`, `memory/`, `guard/`, `group/`, `openapi/`, `ask/`, `permissions/`, `shell/`, `subagent/`, `web/`, `code/`, `providers/`, `connectors/`, `activity/`, `http/`, `client/`, `scheduler/`, `identity/`, `channels/`, `handoff/`, `limits/`, `clock/`, `browser/`, `testing/` | one folder per subpath module, see the table in section 2 |
 
 ### 1.2 Import rules and the core DAG
 

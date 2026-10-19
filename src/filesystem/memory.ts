@@ -3,6 +3,8 @@
  *
  * Imports core only through `src/index.ts` (ADR-0008); pure (no Node built-ins).
  *
+ * **Stable:** accepted API; changes follow docs/engineering/api-stability.md.
+ *
  * @see docs/specs/08-filesystem-plugin.md#6-inmemoryfs
  */
 

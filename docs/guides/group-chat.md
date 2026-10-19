@@ -4,6 +4,9 @@
 what it missed, and does not get stuck in a bot-to-bot loop. Contract:
 [spec 16](../specs/16-group-plugin.md). Runnable: [`examples/group-chat.ts`](../../examples/group-chat.ts).
 
+> **Deprecated (ADR-0062).** `eharness/group` is deprecated and removed in 1.0 unless a product adopts
+> it; nothing is removed or warned about before 1.0. See [Deprecated, removed in 1.0](#deprecated-removed-in-10).
+
 ## Setup
 
 ```ts
@@ -71,3 +74,15 @@ enter the queue.
 
 A long chat is compacted like any session (see [Context and compaction](compaction.md)); for a
 rolling summary of who said what, use [`eharness/memory`](memory.md).
+
+## Deprecated, removed in 1.0
+
+`eharness/group` (ADR-0062) has no product consumer. Every export carries `@deprecated`; there is no
+runtime warning (the ADR does not call for one) and it keeps working until 1.0.
+
+Migration: the library does not replace it. Do the gating in the code that receives channel
+messages: decide mention/reply/pattern in your adapter (the `eharness/channels` mention helpers and
+`eharness/identity` roles help), call `session.send()` only for messages that should be answered, and
+store the others yourself with `session.inject('eh.event', ...)` so the model sees the history on
+its next turn. If your product uses `group`, say so in an issue: a second consumer keeps it
+(rule of two, ADR-0062).

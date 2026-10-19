@@ -5,6 +5,10 @@
  * It closes the "public name that points at a private address" hole, not DNS rebinding between
  * the check and the connection (see docs/guides/web.md for the pinned-IP fetch recipe).
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
+ * @experimental
  * @see docs/specs/22-web-plugin.md
  */
 import { lookup } from 'node:dns/promises'

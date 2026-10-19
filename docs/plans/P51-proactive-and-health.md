@@ -90,7 +90,13 @@ compare-and-set (`app/standing-orders.ts`).
 
 - Routes have no owner/admin role check (the app has one trust level).
 - The activity-wake debounce is per process.
-- A member's order is private only by instruction to the beat (the beat reads every chat the agent
-  can); there is no per-person read filter on what it notices.
-- An order whose destination chat is later removed or closed is refused at send time and stays in
-  the file until someone removes it.
+- [x] Privacy of chat reads, enforced in the gate (`readScopeOf`, `test/order-answers.test.ts`): a
+  beat reads (`chat_history`, `channel_read`, the Telegram message readers) only chats that the
+  giver of a live order can read themselves (owner/admin and the web owner: every allowed chat; a
+  member: their own chats; a giver who is gone: none), the owner's plain checklist items count as
+  the owner's. Once a beat has read a DM, a post may go only back to that DM or to the DM or web
+  chat of a person who can read it, never into a group. Open: the text of an order sits in the
+  beat prompt and in `HEARTBEAT.md`, which the beat reads as library; a member's private order
+  could still be paraphrased by the model into a post to a destination that is not a DM.
+- [x] An order whose destination chat is removed or closed is paused on the next beat (reason in
+  its tail) and one Decision Center question asks to remove it; it is not retried on every beat.

@@ -64,6 +64,12 @@ import { type SecretVault, sealedProfileStore } from 'eharness/providers'
 import { websocket } from 'hono/bun'
 import { updateAgent } from './app/agents.ts'
 import {
+  raiseApprovalExpired,
+  raiseConnectionBroken,
+  raiseSystemAlarm,
+  sweepAlarms,
+} from './app/alarms.ts'
+import {
   hostAllowed,
   isLoopbackHost,
   type ListenConfig,
@@ -96,7 +102,13 @@ import {
   reservePost,
   teamStatus,
 } from './app/heartbeat.ts'
-import { appendPattern, noteFired, readNotes } from './app/order-care.ts'
+import {
+  appendPattern,
+  checkChatRead,
+  noteFired,
+  postPrivacy,
+  readNotes,
+} from './app/order-care.ts'
 import {
   applyProposal,
   ensureAllPersonas,
@@ -134,7 +146,7 @@ import { areaOf } from './domain/library.ts'
 import { nameOf } from './domain/persona.ts'
 import { parseProgramSession } from './domain/programs.ts'
 import { parseRehearsalSession } from './domain/rehearsal.ts'
-import { hostTimezone } from './domain/settings.ts'
+import { hostTimezone, STUCK_RUN_MINUTES_DEFAULT } from './domain/settings.ts'
 import { legacyThreadSessionId, sortThreads } from './domain/threads.ts'
 import { parseAssignedSession } from './domain/work-queue.ts'
 import { createApp } from './http/app.ts'
@@ -169,6 +181,7 @@ import { webReminderPost } from './infra/channels/web-reminders.ts'
 import { type CodeConfig, codeConfigFromEnv, createCodeRuntime } from './infra/code/index.ts'
 import { sqliteActivityStore } from './infra/db/activity-store.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
+import { sqliteAlarmStore } from './infra/db/alarms-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
 import { drizzleDecisionStore } from './infra/db/decisions-repo.ts'
@@ -333,6 +346,8 @@ export interface ServerConfig {
   retention?: TableRetention
   /** Agent health scan (anomaly findings, bell notice for new high ones): every `everyMs` (default 10 min; 0 = never; off when `reconcile.everyMs` is 0). */
   health?: { everyMs?: number }
+  /** Alarm sweep (failed and stuck runs, broken connections, delivery): every `everyMs` (default 1 min; 0 = never; off when `reconcile.everyMs` is 0). Tests call `sweepAlarms`. */
+  alarms?: { everyMs?: number }
   /** Automatic retry of transient turn failures: timer interval (0 = none) and the delay per attempt (tests shorten it). */
   turnRetry?: { tickMs?: number; delayMs?: (attempt: number) => number; retryUnknown?: boolean }
   /** Routine ticker (interval, lookahead, grace, recovery). `tickMs: 0` = no timer. */
@@ -497,6 +512,16 @@ export function compose(config: ServerConfig): Server {
     ...(config.changePollMs === undefined ? {} : { pollMs: config.changePollMs }),
   })
   // model providers: env profiles + encrypted profiles from the web; TEAM_SCRIPTED_MODEL wins
+  // late-bound: the app deps exist only after the services below are built. Before that (or when
+  // the alarm cannot be stored) the warning in the log is all there is.
+  let alarmDeps: Deps | undefined
+  const systemAlarm = (step: string, error: unknown): void => {
+    if (alarmDeps === undefined) {
+      console.warn(`team: ${step} failed: ${errorText(error)}`)
+      return
+    }
+    raiseSystemAlarm(alarmDeps, step, error)
+  }
   const providers = createProviderService({
     sqlite: conn.sqlite,
     store: profileStore,
@@ -509,7 +534,8 @@ export function compose(config: ServerConfig): Server {
     config.models ?? scriptedModelConfigFromEnv(config.env) ?? providerModelConfig(providers)
   // profiles and catalogs load in the background; `resolve` needs them (main awaits this)
   const providersReady = providers.ready()
-  providersReady.catch(() => undefined)
+  // a provider catalog that fails to load is an alarm, not a silent default
+  providersReady.catch((error) => systemAlarm('providers-load', error))
 
   // artifacts (docs/plans/P45-team-artifacts.md): built once the URLs are known (below)
   let artifactService: ArtifactService | undefined
@@ -592,6 +618,7 @@ export function compose(config: ServerConfig): Server {
       defaultModel: null,
       defaultProfile: null,
       timezone: hostTimezone(process.env),
+      stuckRunMinutes: STUCK_RUN_MINUTES_DEFAULT,
     },
     // the limit is a row of the shared ledger: apply it now; other instances read the row
     onChange: (s) => setBudgetLimit(conn.sqlite, `workspace:${WORKSPACE_ID}`, s.budgetUsd),
@@ -964,6 +991,19 @@ export function compose(config: ServerConfig): Server {
     chat: createChatService(factory, { workspaceId: WORKSPACE_ID }),
     threads: threadStore,
     notifications: sqliteNotificationStore(conn.sqlite),
+    alarms: sqliteAlarmStore(conn.sqlite),
+    // alarms reach the owner in their direct chat (the channels' outbox); no chat: the bell
+    alarmPush: {
+      push: async (text) => (await channelGateway?.notifyOwners(text)) ?? 'unavailable',
+    },
+    // a stuck run is stopped the way the Stop button stops it
+    interruptRun: async (task, reason) => {
+      const def = agents.get(task.agentId)
+      if (def === undefined) return 'idle'
+      await factory.prepare(def)
+      const out = await factory.openSession(def, task.sessionId).abort(reason)
+      return out.target === 'idle' ? 'idle' : 'aborted'
+    },
     briefings: sqliteBriefingStore(conn.sqlite),
     chatTools: chatToolsService,
     sessionTools: createSessionToolsService({
@@ -1057,6 +1097,7 @@ export function compose(config: ServerConfig): Server {
     ids: { next: () => uuidv7() },
     workspaceId: WORKSPACE_ID,
   }
+  alarmDeps = deps
   /**
    * A question of a program run is asked where the program was proposed when that was a chat (the
    * owner lives there), next to the Decision Center. Never throws.
@@ -1075,7 +1116,9 @@ export function compose(config: ServerConfig): Server {
         question: d.payload.question,
         options: d.payload.options,
       })
-      .catch(() => undefined)
+      // the question stays in the Decision Center either way; the owner must still learn that
+      // the chat announcement failed
+      .catch((error) => systemAlarm('decision-announce', error))
   }
   decisionIntake = {
     propose: (input) => {
@@ -1222,6 +1265,8 @@ export function compose(config: ServerConfig): Server {
       return { needs: g?.needs ?? [], writes: g?.writes ?? [] }
     },
     reservePost: (agentId, to, text) => reservePost(deps, agentId, to, text),
+    readCheck: (agentId, target) => checkChatRead(deps, agentId, target),
+    postPrivacy: (agentId, to) => postPrivacy(deps, agentId, to),
     retryRun: (agentId, taskId, reason) => retryRun(deps, agentId, taskId, reason, Date.now()),
     askOwner: (agentId, input) => askOwner(deps, agentId, input, Date.now()),
     memoryFix: (agentId) => memoryFixOpen(deps, agentId),
@@ -1270,6 +1315,15 @@ export function compose(config: ServerConfig): Server {
     // new messages in watched chats may start an early heartbeat (debounced in the service)
     onObserved: (event) => void heartbeats.activity(event),
     // a Decision Center question answered in a chat, by a named owner or admin
+    // an approval nobody answered was declined: the owner hears about it (alarm)
+    onApprovalExpired: (info) =>
+      raiseApprovalExpired(deps, {
+        approvalId: info.approvalId,
+        sessionId: info.sessionId,
+        agentId: info.agentId,
+        tool: info.toolName,
+        where: info.where,
+      }),
     answerDecision: async ({ decisionId, choice, by }) => {
       const answerer = { via: 'chat' as const, name: by.name }
       if (choice === 'rejected') await rejectDecision(deps, decisionId, { by: answerer })
@@ -1424,6 +1478,9 @@ export function compose(config: ServerConfig): Server {
     connectors,
     agents,
     notify: (n) => channelNotify(n),
+    onNeedsAuth: (id, label, message) =>
+      raiseConnectionBroken(deps, { id, label, status: 'needs-auth', message }),
+    problem: systemAlarm,
     ...(telegramEnv.TEAM_TELEGRAM_API_ROOT === undefined
       ? {}
       : { apiRoot: telegramEnv.TEAM_TELEGRAM_API_ROOT }),
@@ -1456,6 +1513,9 @@ export function compose(config: ServerConfig): Server {
       },
     },
     notify: (n) => channelNotify(n),
+    onNeedsAuth: (id, label, message) =>
+      raiseConnectionBroken(deps, { id, label, status: 'needs-auth', message }),
+    problem: systemAlarm,
     ...(config.telegramUser?.syncPollMs === undefined
       ? {}
       : { syncPollMs: config.telegramUser.syncPollMs }),
@@ -1539,13 +1599,13 @@ export function compose(config: ServerConfig): Server {
     try {
       dispatchQueue(deps)
     } catch (error) {
-      console.warn(`team: starting queued tasks failed: ${String(error)}`)
+      systemAlarm('dispatch-queued-tasks', error)
     }
   }
   const quiet = (): Promise<void> =>
     reconcile().then(
       () => dispatch(),
-      (error) => console.warn(`team: reconcile failed: ${String(error)}`),
+      (error) => systemAlarm('reconcile', error),
     )
   // agents from before connectors get their enablement, then every agent's connectors activate
   const connectorsReady = providersReady.then(async () => {
@@ -1565,7 +1625,8 @@ export function compose(config: ServerConfig): Server {
     if (config.seed !== false) await seedBuiltinSkills(conn.sqlite)
     await factory.prepare()
   })
-  connectorsReady.catch(() => undefined)
+  // a failed startup step (secrets, legacy migration, connector preparation) is an alarm
+  connectorsReady.catch((error) => systemAlarm('connectors-startup', error))
   // the repair pass opens sessions, which needs the provider profiles and connectors
   const ready =
     config.reconcile?.onBoot === false ? Promise.resolve() : connectorsReady.then(quiet, quiet)
@@ -1580,8 +1641,27 @@ export function compose(config: ServerConfig): Server {
     runHealthJob(deps, { suggest: suggestAuthority })
   const healthEveryMs = config.reconcile?.everyMs === 0 ? 0 : (config.health?.everyMs ?? 600_000)
   const healthTimer =
-    healthEveryMs > 0 ? setInterval(() => void healthScan(), healthEveryMs) : undefined
+    healthEveryMs > 0
+      ? setInterval(
+          () => void healthScan().catch((error) => systemAlarm('health-scan', error)),
+          healthEveryMs,
+        )
+      : undefined
   healthTimer?.unref()
+  // alarms (P54): failed and stuck runs, broken connections, the ones to clear, delivery of the
+  // ones waiting (a batch that was held back by the per-subject rate limit)
+  const alarmEveryMs = config.reconcile?.everyMs === 0 ? 0 : (config.alarms?.everyMs ?? 60_000)
+  const alarmTimer =
+    alarmEveryMs > 0
+      ? setInterval(
+          () =>
+            void sweepAlarms(deps).catch((error) =>
+              console.warn(`team: alarm sweep failed: ${errorText(error)}`),
+            ),
+          alarmEveryMs,
+        )
+      : undefined
+  alarmTimer?.unref()
 
   // chat, sessions, attention answers and the activity feed: the library's HTTP module
   const harness = createTeamHttp({
@@ -1638,7 +1718,9 @@ export function compose(config: ServerConfig): Server {
   turnRetries.start()
   // phantom connector names of stored programs (a tool prefix instead of the id) are repaired once
   // (after the connectors are prepared: the repair itself never opens a connection)
-  void connectorsReady.then(() => repairProgramAuthorities(deps)).catch(() => undefined)
+  void connectorsReady
+    .then(() => repairProgramAuthorities(deps))
+    .catch((error) => systemAlarm('repair-program-authorities', error))
   return {
     app,
     artifactContent,
@@ -1668,6 +1750,7 @@ export function compose(config: ServerConfig): Server {
     async close() {
       if (timer !== undefined) clearInterval(timer)
       if (healthTimer !== undefined) clearInterval(healthTimer)
+      if (alarmTimer !== undefined) clearInterval(alarmTimer)
       if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
@@ -1681,6 +1764,7 @@ export function compose(config: ServerConfig): Server {
       await routines?.stop()
       await turnRetries?.stop()
       await ready
+      // shutdown: failures of these were alarmed when they happened; closing must not throw
       await repairing?.catch(() => undefined)
       await factory.close()
       changes.close()

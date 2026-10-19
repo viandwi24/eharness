@@ -104,6 +104,7 @@ describe('decision model', () => {
 		expect(outcomeLine(approved)).toContain('a run started');
 		expect(outcomeLine({ ...approved, outcome: { decision: 'approved', programId: 'p' } })).toBe('Approved: the program was created.');
 		expect(outcomeLine({ ...escalation(['A']), status: 'approved', outcome: { decision: 'A' } })).toBe('Answered "A": the run continued.');
+		expect(outcomeLine({ ...escalation(['A']), status: 'approved', outcome: { decision: 'A', effect: 'Removed order o1 from HEARTBEAT.md.' } })).toBe('Removed order o1 from HEARTBEAT.md.');
 		expect(outcomeLine({ ...amendment, status: 'rejected' })).toContain('without it');
 		expect(outcomeLine({ ...proposal(false), status: 'rejected' })).toContain('nothing was created');
 		// closed by the server (it no longer applies) vs a run that stopped waiting

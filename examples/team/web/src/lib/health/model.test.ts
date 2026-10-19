@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type Finding, filterFindings, memoryWhere, seenLine, severityCounts, sortFindings, splitConsistency } from './model';
+import { alarmAction, type Finding, filterFindings, memoryWhere, seenLine, severityCounts, sortFindings, splitConsistency } from './model';
 
 const f = (over: Partial<Finding>): Finding => ({
 	fingerprint: 'x',
@@ -48,5 +48,14 @@ describe('health model', () => {
 		expect(g.consistency.map((x) => x.fingerprint)).toEqual(['c']);
 		expect(memoryWhere(c)).toBe('status.md, line 3');
 		expect(memoryWhere(f({}))).toBeNull();
+	});
+});
+
+describe('alarms', () => {
+	test('the action follows the first ref', () => {
+		expect(alarmAction({ refs: ['/tasks/t1', '/programs/p1'] })).toEqual({ href: '/tasks/t1', label: 'Open the run' });
+		expect(alarmAction({ refs: ['/connectors'] })?.label).toBe('Reconnect');
+		expect(alarmAction({ refs: ['/programs/p1'] })?.label).toBe('Open the program');
+		expect(alarmAction({ refs: [] })).toBeUndefined();
 	});
 });

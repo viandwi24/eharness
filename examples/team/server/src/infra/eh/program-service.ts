@@ -285,27 +285,9 @@ export function createProgramService(
    * A run that cannot start is refused before it exists: no task, no session, nothing on the board
    * (a refused run is not a failed run, so it never counts in the digest or the heartbeat). A
    * manual start gets the 409 with the reason, and the editor warned at save. A scheduled start
-   * has nobody waiting for the answer, so it tells the bell once per program and reason (the
-   * notification key), not at every tick.
+   * pauses its routine, and the owner is told once by the routine-paused alarm (P54), not here.
    */
-  function refuse(program: Program, def: AgentDef, reason: string, scheduled: boolean): never {
-    if (scheduled) {
-      const d = deps.app?.()
-      if (d !== undefined) {
-        try {
-          postNotice(d, {
-            key: `program-refused:${program.id}:${reason}`,
-            title: `Program "${program.name}" cannot run`.slice(0, 160),
-            body: `${reason} The schedule is paused; resume the program once this is fixed.`,
-            link: `/programs/${program.id}`,
-            agentId: def.id,
-            at: clock(),
-          })
-        } catch (error) {
-          log.warn(`refusal notice of ${program.id} not posted: ${errorText(error)}`)
-        }
-      }
-    }
+  function refuse(_program: Program, _def: AgentDef, reason: string, _scheduled: boolean): never {
     throw conflict(reason, 'PROGRAM_UNRUNNABLE')
   }
 

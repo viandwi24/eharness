@@ -941,7 +941,7 @@ describe('P40 follow-ups: honest board counts, refused runs, one calendar for sp
     expect(resumed.triggerState).toMatchObject({ status: 'active', pausedReason: null })
   })
 
-  test('a scheduled refusal leaves no task and tells the bell once, not every tick', async () => {
+  test('a scheduled refusal leaves no task and posts no notice of its own', async () => {
     const { app, server } = instance({})
     const p = await createProgram(app, {
       authority: { tools: ['channel_send'], read: [], write: [] },
@@ -956,13 +956,14 @@ describe('P40 follow-ups: honest board counts, refused runs, one calendar for sp
     const bell = (await (await app.request('/notifications')).json()) as {
       notifications: Array<{ title: string; link: string | null }>
     }
-    expect(bell.notifications).toHaveLength(1)
-    expect(bell.notifications[0]?.title).toContain('cannot run')
-    // a manual start does not notify (the caller got the 409)
+    // the refusal itself tells nobody: the routine that started it pauses and raises one alarm
+    // (the previous test), so the owner is not told twice
+    expect(bell.notifications).toHaveLength(0)
+    // a manual start does not notify either (the caller got the 409)
     await runNow(app, p.id)
     const after = (await (await app.request('/notifications')).json()) as {
       notifications: unknown[]
     }
-    expect(after.notifications).toHaveLength(1)
+    expect(after.notifications).toHaveLength(0)
   })
 })

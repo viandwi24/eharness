@@ -29,6 +29,7 @@ import {
   superviseObservation,
 } from '../domain/supervisor.ts'
 import { getAgent } from './agents.ts'
+import { openAlarms } from './alarms.ts'
 import { consistencyFindings } from './consistency.ts'
 import { changed } from './decisions.ts'
 import type { Deps } from './ports.ts'
@@ -79,6 +80,20 @@ async function agentConnections(
   }
 }
 
+/** What unacknowledged alarms already tell the owner (P54): the supervisor does not repeat it. */
+function alarmedBy(deps: Deps): { tasks: Set<string>; connections: Set<string> } {
+  const tasks = new Set<string>()
+  const connections = new Set<string>()
+  for (const a of openAlarms(deps)) {
+    if (a.kind === 'run-failed' || a.kind === 'run-stuck') {
+      for (const r of a.refs) if (r.startsWith('/tasks/')) tasks.add(r.slice('/tasks/'.length))
+    } else if (a.kind === 'connection-broken') {
+      connections.add(a.subject.slice('connection:'.length))
+    }
+  }
+  return { tasks, connections }
+}
+
 export interface Supervision {
   /** What the beat is told (new or changed since it was last shown; all of it in a deep review). */
   items: SupervisorItem[]
@@ -116,6 +131,7 @@ export async function supervise(deps: Deps, agentId: string, now: number): Promi
     connections,
     state,
     retriesToday: retriesToday(deps, state, now),
+    alarmed: alarmedBy(deps),
   })
 
   let findings: ConsistencyLike[] = []

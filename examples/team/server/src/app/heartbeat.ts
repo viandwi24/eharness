@@ -76,10 +76,13 @@ import { getAgent } from './agents.ts'
 import { postAlerts, postBriefing } from './briefings.ts'
 import { healthSummary } from './health.ts'
 import {
+  beatReadScope,
   giverRole,
   grantsFor,
   hygieneOf,
   noteFired,
+  pauseGoneDestinations,
+  postPrivacy,
   raiseConflicts,
   syncOrderWakes,
   weeklyReview,
@@ -623,6 +626,8 @@ export async function reportToWeb(
   if (order.report.kind !== 'web') {
     return `Not posted: order ${orderId} reports to a chat, not to the web: use channel_send with its connection and conversation.`
   }
+  const privacy = postPrivacy(deps, agentId, destKey(order.report))
+  if (privacy !== undefined) return privacy
   const refusal = reservePost(deps, agentId, destKey(order.report), body)
   if (refusal !== undefined) return refusal
   const out = await deps.heartbeat.web?.deliver({
@@ -717,7 +722,20 @@ export async function beginBeat(
   if (trigger !== 'deadline' && !inActiveHours(at, { ...config, timezone })) {
     return skip('outside active hours')
   }
-  const file = await deps.library.read(checklistPath(agent.id))
+  let file = await deps.library.read(checklistPath(agent.id))
+  // an order whose report chat is gone is paused (and the owners asked) before anything else, so
+  // it is not retried on every beat
+  {
+    const before = parseChecklist(file?.text, at).orders
+    const gone = await pauseGoneDestinations(
+      deps,
+      agent,
+      hygieneOf(deps, agent.id, before, at),
+      before,
+      at,
+    )
+    if (gone.length > 0) file = await deps.library.read(checklistPath(agent.id))
+  }
   // the supervisor duty (P53) looks at the agent's own work on every interval beat, with no
   // checklist line needed; a model call happens only when it found something
   const supervision = trigger === 'schedule' ? await supervise(deps, agent.id, at) : undefined
@@ -787,6 +805,7 @@ export async function beginBeat(
       window: { since, trigger },
       allowed: [...chats.values()],
       grants,
+      reads: beatReadScope(deps, agent.id, parsed.active, parsed.plain.length > 0),
     }),
     at,
   )

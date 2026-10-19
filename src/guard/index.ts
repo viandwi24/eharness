@@ -10,6 +10,8 @@
  * **Draft:** every symbol of this subpath is experimental and may change in a minor release
  * (docs/engineering/api-stability.md).
  *
+ * @experimental
+ * @deprecated Use the `auto` mode of `eharness/permissions` (docs/guides/guard.md). Removed in 1.0 (ADR-0062).
  * @see docs/specs/15-guard-plugin.md
  */
 export { type GuardOptions, type GuardVerdict, guard } from './plugin.ts'

@@ -292,6 +292,18 @@ export interface GatewayDeps {
   }): Promise<void>
   /** The web app page of a session, relative (`/a/<agent>?t=<thread>`), for bell notifications. */
   sessionPath?(input: { agentId: string; sessionId: string }): string | undefined
+  /**
+   * An approval nobody answered was declined, so the work behind it did not finish (P54: an
+   * alarm for the owner). Called once per approval, never throws into the gateway.
+   */
+  onApprovalExpired?(info: {
+    approvalId: string
+    sessionId: string
+    agentId: string
+    toolName: string
+    connectionId: string
+    where: string
+  }): void
   /** A bell notification (breaker opened). */
   notify?(n: {
     key: string
@@ -885,6 +897,12 @@ export interface ChannelGateway {
   ): { ids: string[] } | { error: string }
   /** Approvals nobody answered within `approvalTtlMs` are declined ("not answered"). Returns how many. */
   expireApprovals(at?: number): Promise<number>
+  /**
+   * Message the owners of the people directory in their direct chat (alarms, P54): through the
+   * normal outbox, on the first connection where the owner has an account. `unavailable` when no
+   * owner could be reached (no owner, no linked account, no connected transport).
+   */
+  notifyOwners(text: string): Promise<'sent' | 'unavailable'>
   /** Sessions bound to nodes. */
   sessions: SessionStore
   /** The event log (platform events and gateway activity). */
@@ -2765,8 +2783,56 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       const adapter = adapters.get(rec.connectionId)
       const done = approvals.get(rec.id)
       if (adapter !== undefined && done !== undefined) await resolveMessage(done, adapter, config)
+      try {
+        const node = nodes.get(rec.conversationId)
+        deps.onApprovalExpired?.({
+          approvalId: rec.id,
+          sessionId: rec.sessionId,
+          agentId: rec.agentId,
+          toolName: rec.toolName,
+          connectionId: rec.connectionId,
+          where: node === undefined ? 'a chat' : clip(labelOf(roomOf(node), undefined), 60),
+        })
+      } catch (error) {
+        warn(`channels: expiry alarm of ${rec.id} failed: ${errorText(error)}`)
+      }
     }
     return n
+  }
+
+  async function notifyOwners(text: string): Promise<'sent' | 'unavailable'> {
+    const owners = persons
+      .list({ limit: 1000 })
+      .items.filter((p) => p.role === 'owner' && p.status === 'active')
+    let sent = 0
+    for (const person of owners) {
+      for (const [connectionId, config] of cache) {
+        const adapter = adapters.get(connectionId)
+        const platform = platformOf(connectionId)
+        if (adapter === undefined || platform === undefined) continue
+        const account = persons.accounts(person.id).find((a) => a.platform === platform)
+        const who =
+          (account === undefined
+            ? undefined
+            : identities.byNative(connectionId, account.nativeId)) ??
+          identities.ofPerson(connectionId, person.id)
+        if (who === undefined) continue
+        try {
+          const node = directNodeOf(connectionId, adapter, who, person.displayName)
+          const scope = scopeOf(node)
+          if (scope === undefined) continue
+          await post({ config, adapter, node, view: viewOf(node), scope }, { text })
+          sent++
+          // one message per owner: the first connection that reaches them
+          break
+        } catch (error) {
+          warn(
+            `channels: alarm to ${person.displayName} on ${connectionId} failed: ${errorText(error)}`,
+          )
+        }
+      }
+    }
+    return sent > 0 ? 'sent' : 'unavailable'
   }
 
   // --- reminders (L6) --------------------------------------------------------------------------
@@ -5404,6 +5470,34 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return titled.length === 1 ? titled[0] : undefined
   }
 
+  /** The direct chat with an identity (opened by the platform when they never wrote). */
+  function directNodeOf(
+    connectionId: string,
+    adapter: ChannelAdapter,
+    who: IdentityRow,
+    label: string,
+  ): NodeRow {
+    for (const n of nodes.list(connectionId, { kind: 'direct' })) {
+      if (identities.members(n.id).some((m) => m.identityId === who.id)) return n
+    }
+    // never talked: the platform opens the direct chat (a node by its native id)
+    const info = adapter.openDirect?.(who.nativeId)
+    if (info === undefined) {
+      throw new ChannelUserError(
+        `${adapter.platform} cannot start a direct chat with "${label}"; ask them to write first.`,
+      )
+    }
+    const node = nodes.apply(connectionId, { ...info, kind: 'direct' }, undefined, {
+      now: now(),
+      metaSchema: adapter.nodeMeta,
+    })?.node
+    if (node === undefined) {
+      throw new ChannelUserError(`The direct chat with "${label}" could not be opened.`)
+    }
+    identities.setMembership(node.id, who.id, { joinedAt: now() })
+    return node
+  }
+
   function resolveTarget(
     agentId: string,
     sessionId: string | undefined,
@@ -5439,27 +5533,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           `"${input.member}" has not linked an account on ${connectionId}; link their account on the Channels page first.`,
         )
       }
-      node = undefined
-      for (const n of nodes.list(connectionId, { kind: 'direct' })) {
-        if (identities.members(n.id).some((m) => m.identityId === who.id)) {
-          node = n
-          break
-        }
-      }
-      if (node === undefined) {
-        // never talked: the platform opens the direct chat (a node by its native id)
-        const info = adapter.openDirect?.(who.nativeId)
-        if (info === undefined) {
-          throw new ChannelUserError(
-            `${adapter.platform} cannot start a direct chat with "${input.member}"; ask them to write first.`,
-          )
-        }
-        node = nodes.apply(connectionId, { ...info, kind: 'direct' }, undefined, {
-          now: now(),
-          metaSchema: adapter.nodeMeta,
-        })?.node
-        if (node !== undefined) identities.setMembership(node.id, who.id, { joinedAt: now() })
-      }
+      node = directNodeOf(connectionId, adapter, who, input.member)
     } else if (input.conversation !== undefined) {
       node = nodeOf(connectionId, input.conversation)
       if (node === undefined) {
@@ -6643,6 +6717,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     canRead,
     resolveMentions,
     expireApprovals,
+    notifyOwners,
     settings: {
       get: (nodeId) => policyOf(nodes.settings(nodeId)),
       set(nodeId, patch) {

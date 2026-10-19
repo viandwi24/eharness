@@ -71,6 +71,12 @@ export interface EscalationPayload {
   options: string[]
   /** The options the agent flagged as "leave it for now" (a subset of `options`); remembered by the program. */
   standDown?: string[]
+  /**
+   * A question about standing orders (retire, conflict, chat gone): what the server does for each
+   * option when it is answered, as a command (`remove:<order id>`, `pause:<order id>`,
+   * `keep-both:<ids>`, `keep:<order id>`, `none`). See `app/order-care.ts`.
+   */
+  orderActions?: Record<string, string>
   /** `agent`: the agent called `escalate`; `report`: its final report said `needs_decision`. */
   source: 'agent' | 'report'
   /**
@@ -173,6 +179,8 @@ export interface DecisionOutcome {
   programId?: string | undefined
   /** Session of the one-off run an approved proposal started. */
   runSessionId?: string | undefined
+  /** What the server did because of the answer (a question about standing orders: "Removed order ..."). */
+  effect?: string | undefined
 }
 
 export const MAX_TITLE_CHARS = 200

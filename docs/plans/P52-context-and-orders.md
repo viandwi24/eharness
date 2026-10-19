@@ -155,8 +155,12 @@ question (once per pair). Overlap is a hint from words, not a proof of contradic
 
 ### Open questions (part 2)
 
-- The retire and conflict questions are answered in the Decision Center but the answer does not
-  remove an order by itself (the owner removes it on the Heartbeat tab).
+- [x] The retire and conflict questions are carried out by the answer: explicit options (retire:
+  remove / pause / keep; conflict: keep A / keep B / keep both / edit myself), the server runs the
+  option through the standing-orders layer (`payload.orderActions`, `applyOrderAnswer`) and the
+  decision outcome records it (`outcome.effect`, "Removed order ..."). "Keep both" and "Keep it"
+  are remembered (`keptPairs` by ids and words, `keptOrders` for four weeks). Open: a pick of
+  "report to another chat" is not an option (remove it and ask again in the new chat).
 - `files:<glob>` is a hint only: the beat reads the whole library already; only a ledger is writable.
 - A hand edit of `HEARTBEAT.md` that adds a `due` gets its wake at the next beat (up to one interval).
 - Role of a chat giver is the directory role today; a platform admin without a directory entry

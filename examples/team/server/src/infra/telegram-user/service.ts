@@ -109,6 +109,10 @@ export interface TelegramUserOptions {
   /** Registers the big-data source of an account's observe-only chats. */
   collectors?: { add(c: Collector): void; remove(id: string): void }
   notify?(n: { key: string; title: string; body: string; agentId: string | null }): void
+  /** The account lost its sign-in: an alarm for the owner (P54). */
+  onNeedsAuth?(connectionId: string, label: string, message: string): void
+  /** A background step failed (logged here too): a `system` alarm (P54). */
+  problem?(step: string, error: unknown): void
   /** Lease lifetime (ms, default 60 000); renewed every third of it. */
   leaseTtlMs?: number
   syncPollMs?: number
@@ -173,6 +177,15 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
   const { gateway, sqlite } = options
   const now = options.now ?? (() => Date.now())
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
+  /** A background step failed: a warning in the log and an alarm (the owner must not learn it by chance). */
+  const report = (step: string, error: unknown): void => {
+    warn(`telegram-user: ${step} failed: ${String(error)}`)
+    try {
+      options.problem?.(`telegram-user:${step}`, error)
+    } catch {
+      // the alarm is the last resort: if it cannot be raised the warning above is all there is
+    }
+  }
   const chats = nodeChatStore({
     sqlite,
     nodes: gateway.nodes,
@@ -309,6 +322,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     delete e.retry
     if (e.leaseTimer !== undefined) clearInterval(e.leaseTimer)
     delete e.leaseTimer
+    // teardown: a job that fails to stop is being dropped anyway; nothing to alarm about
     await e.backfill?.stop().catch(() => undefined)
     await e.adminLog?.stop().catch(() => undefined)
     delete e.backfill
@@ -343,7 +357,10 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     const record = await options.connectors.stores.connections.get(id)
     await halt(id)
     setState(e, 'needs-auth', message)
-    await options.connectors.markNeedsAuth(id, message).catch(() => undefined)
+    await options.connectors
+      .markNeedsAuth(id, message)
+      .catch((error) => report('mark-needs-auth', error))
+    options.onNeedsAuth?.(id, record?.label ?? id, message)
     gateway.activity.record({ connectionId: id, type: 'needs-auth', reason: fatal.kind })
     notify(
       id,
@@ -358,7 +375,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     switch (fatal.kind) {
       case 'auth-lost':
       case 'duplicated':
-        void authFailed(id, fatal).catch(() => undefined)
+        void authFailed(id, fatal).catch((error) => report('auth-failed', error))
         return
       case 'peer-flood':
       case 'flood-storm': {
@@ -387,7 +404,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     if (e.retry !== undefined) clearTimeout(e.retry)
     e.retry = setTimeout(() => {
       delete e.retry
-      void sync().catch(() => undefined)
+      void sync().catch((error) => report('sync', error))
     }, ms)
     ;(e.retry as { unref?: () => void }).unref?.()
   }
@@ -471,6 +488,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
               .then((list) => {
                 for (const d of list) if (d.kind !== 'dm') chats.upsertDialog(id, d, now())
               })
+              // best effort: the chat list is refreshed again at the next change or sync
               .catch(() => undefined)
           },
           chooseChat: async (chatId, days) => {
@@ -485,7 +503,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
             const was = chats.isSelected(id, chatId)
             if (!was) chats.setSelected(id, chatId, true, now())
             if (days > 0) chats.setBackfillDays(id, chatId, days, now())
-            void e.backfill?.runUntilIdle().catch(() => undefined)
+            void e.backfill?.runUntilIdle().catch((error) => report('backfill', error))
             return `${was ? 'Already chosen' : 'Chosen'}: "${d.title}" (${chatId}), observe-only (stored and readable; no wake, no posting on its own).${days > 0 ? ` Reading its history back ${days} day(s) in the background through the rate-limit queue: it fills in over minutes, check with channel_read or chat_history.` : ' No history is read: only messages from now on.'}`
           },
           backfill: async (chatId, days) => {
@@ -493,7 +511,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
               return `ERROR: ${chatId} is not chosen for ingest. Choose it first with choose_chat (with backfill_days).`
             }
             chats.setBackfillDays(id, chatId, days, now())
-            void e.backfill?.runUntilIdle().catch(() => undefined)
+            void e.backfill?.runUntilIdle().catch((error) => report('backfill', error))
             return `Reading the history of ${chats.get(id, chatId)?.title ?? chatId} back ${days} day(s) in the background through the rate-limit queue. It fills in over minutes; check with channel_read or chat_history.`
           },
           warn,
@@ -638,6 +656,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
   }
 
   function sync(): Promise<void> {
+    // the failure of the previous pass went to its own caller; the next pass starts clean
     chain = chain.catch(() => undefined).then(doSync)
     return chain
   }
@@ -1060,7 +1079,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       void entries
         .get(id)
         ?.backfill?.runUntilIdle()
-        .catch(() => undefined)
+        .catch((error) => report('backfill', error))
       return chatView(chatOf(id, nodeId))
     },
     async setAdminLog(id, nodeId, enabled) {

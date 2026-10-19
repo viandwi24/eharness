@@ -30,6 +30,8 @@ export interface WorkspaceSettings {
   defaultProfile: string | null
   /** IANA timezone of the team: default of the heartbeat's active hours and the digest time. */
   timezone: string
+  /** A background run with no activity this many minutes is interrupted and alarmed (P54). */
+  stuckRunMinutes: number
 }
 
 /** The host's timezone (the `TZ` variable, else what the runtime reports), `UTC` as the last resort. */
@@ -46,6 +48,9 @@ export function hostTimezone(env: { TZ?: string | undefined } = {}): string {
 }
 
 export const SPAWN_CAP_MAX = 32
+export const STUCK_RUN_MINUTES_DEFAULT = 45
+export const STUCK_RUN_MINUTES_MIN = 5
+export const STUCK_RUN_MINUTES_MAX = 1440
 
 /** A patch accepts any stored mode (legacy spellings too); the store keeps the normalized one. */
 export type SettingsPatch = Partial<Omit<WorkspaceSettings, 'defaultPermissionMode'>> & {
@@ -80,6 +85,19 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
     !(Number.isInteger(patch.spawnCap) && patch.spawnCap >= 1 && patch.spawnCap <= SPAWN_CAP_MAX)
   ) {
     throw invalid(`spawnCap must be an integer from 1 to ${SPAWN_CAP_MAX}`, 'INVALID_SETTINGS')
+  }
+  if (
+    patch.stuckRunMinutes !== undefined &&
+    !(
+      Number.isInteger(patch.stuckRunMinutes) &&
+      patch.stuckRunMinutes >= STUCK_RUN_MINUTES_MIN &&
+      patch.stuckRunMinutes <= STUCK_RUN_MINUTES_MAX
+    )
+  ) {
+    throw invalid(
+      `stuckRunMinutes must be an integer from ${STUCK_RUN_MINUTES_MIN} to ${STUCK_RUN_MINUTES_MAX}`,
+      'INVALID_SETTINGS',
+    )
   }
   if (
     patch.defaultModel != null &&

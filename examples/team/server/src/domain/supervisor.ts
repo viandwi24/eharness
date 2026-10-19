@@ -170,6 +170,8 @@ export interface SupervisorItem {
   failure?: FailureClass
   retry?: RetryVerdict
   finding?: ConsistencyLike
+  /** An unacknowledged alarm (P54) already told the owner: the beat must not tell them again. */
+  alarmed?: boolean
 }
 
 /** The findings about the agent's own memory (the beat may fix these itself). */
@@ -211,6 +213,12 @@ export interface SupervisorInput {
   connections: ReadonlyArray<{ id: string; label: string; status: string; statusMessage?: string }>
   state: SupervisorState
   retriesToday: number
+  /**
+   * What unacknowledged alarms already cover (`app/alarms.ts`): task ids of failed or stuck runs and
+   * ids of broken connections. The owner was told; the supervisor keeps its retry logic but does not
+   * list a stuck run or a broken connection again.
+   */
+  alarmed?: { tasks: ReadonlySet<string>; connections: ReadonlySet<string> }
 }
 
 /**
@@ -246,9 +254,11 @@ export function superviseObservation(input: SupervisorInput): SupervisorItem[] {
         taskId: t.id,
         failure,
         retry,
+        ...(input.alarmed?.tasks.has(t.id) === true ? { alarmed: true } : {}),
       })
     } else if (
       t.status === 'running' &&
+      !input.alarmed?.tasks.has(t.id) &&
       !input.parked.has(t.sessionId) &&
       now - t.lastActivityAt >= SUPERVISOR_STUCK_MS
     ) {
@@ -284,6 +294,8 @@ export function superviseObservation(input: SupervisorInput): SupervisorItem[] {
   }
   for (const c of input.connections) {
     if (c.status !== 'error' && c.status !== 'needs-auth') continue
+    // the owner has an alarm for it (reconnect is theirs to do): nothing for the beat to decide
+    if (input.alarmed?.connections.has(c.id) === true) continue
     out.push({
       kind: 'connection-broken',
       fingerprint: `supervisor:connection:${c.id}:${c.status}`,
@@ -309,6 +321,11 @@ function itemLine(item: SupervisorItem, index: number, memoryDir: string): strin
           ? `ALLOWED (${item.retry.left} left today)`
           : `NOT ALLOWED: ${item.retry.reason}`
       }`,
+    )
+  }
+  if (item.alarmed === true) {
+    lines.push(
+      '   the owner already has an alarm for this (Health, Needs attention): do not ask them the same thing; retry when allowed, otherwise only note it, or escalate ONLY with a concrete change the alarm does not name.',
     )
   }
   if (item.kind === 'consistency' && item.finding !== undefined) {

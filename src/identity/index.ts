@@ -1,6 +1,10 @@
 /**
  * `eharness/identity`: one person, many platform accounts, roles and safe linking.
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
+ * @experimental
  * @see docs/specs/30-identity.md
  */
 

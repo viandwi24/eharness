@@ -11,12 +11,13 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
-	import { CONSISTENCY_LABEL, type Finding, filterFindings, KIND_LABEL, memoryWhere, SEVERITY_LABEL, SEVERITY_VARIANT, type Severity, seenLine, severityCounts, sortFindings, splitConsistency } from '#lib/health/model.js';
+	import { ALARM_LABEL, type Alarm, alarmAction, CONSISTENCY_LABEL, type Finding, filterFindings, KIND_LABEL, memoryWhere, SEVERITY_LABEL, SEVERITY_VARIANT, type Severity, seenLine, severityCounts, sortFindings, splitConsistency } from '#lib/health/model.js';
 	import { openEditAgent } from '#lib/stores/dialogs.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { timeAgo } from '#lib/time.js';
 
 	let findings = $state<Finding[] | null>(null);
+	let alarms = $state<Alarm[]>([]);
 	let error = $state('');
 	let agentFilter = $state('');
 	let severityFilter = $state<Severity | ''>('');
@@ -36,11 +37,37 @@
 		}
 	}
 
+	/** The alarms: failures of scheduled and background work, until somebody acknowledges them. */
+	async function loadAlarms(): Promise<void> {
+		try {
+			alarms = (await api.get('/alarms', {})).alarms;
+		} catch {
+			// the findings below still work; the next refresh tries again
+		}
+	}
+
+	async function ack(a: Alarm): Promise<void> {
+		busy = a.id;
+		try {
+			await api.post('/alarms/{id}/ack', { params: { id: a.id } });
+			await loadAlarms();
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not acknowledge it');
+		} finally {
+			busy = null;
+		}
+	}
+
 	onMount(() => {
 		void agentsStore.load();
+		void loadAlarms();
+		const alarmTimer = setInterval(() => void loadAlarms(), 30_000);
 		// the server scans every 10 minutes: a minute is fresh enough
 		const timer = setInterval(() => void load(), 60_000);
-		return () => clearInterval(timer);
+		return () => {
+			clearInterval(timer);
+			clearInterval(alarmTimer);
+		};
 	});
 	$effect(() => {
 		void showDismissed;
@@ -114,6 +141,25 @@
 	</PageHeader>
 
 	<PageBody size="narrow" class="gap-3">
+		{#if alarms.length}
+			<section class="flex flex-col gap-2" data-testid="health-alarms" aria-label="Needs attention">
+				<h2 class="text-sm font-semibold">Needs attention</h2>
+				{#each alarms as a (a.id)}
+					{@const action = alarmAction(a)}
+					<Card size="sm" class="gap-2 border-destructive/40 px-4 py-3.5" data-testid="health-alarm" data-kind={a.kind}>
+						<div class="flex flex-wrap items-center gap-2">
+							<Badge variant="destructive" class="h-5 px-1.5 text-[11px]">{ALARM_LABEL[a.kind]}</Badge>
+							<span class="ml-auto text-xs text-muted-foreground">{timeAgo(a.createdAt)}</span>
+						</div>
+						<p class="text-[14px] leading-snug">{a.text}</p>
+						<div class="flex flex-wrap items-center gap-2">
+							{#if action}<Button size="sm" variant="outline" href={action.href}>{action.label}</Button>{/if}
+							<Button size="sm" variant="ghost" disabled={busy === a.id} onclick={() => void ack(a)}>Acknowledge</Button>
+						</div>
+					</Card>
+				{/each}
+			</section>
+		{/if}
 		{#if error}
 			<p class="text-sm text-destructive-text" role="alert">{error} <button class="underline underline-offset-4" onclick={() => void load()}>Retry</button></p>
 		{:else if !findings}

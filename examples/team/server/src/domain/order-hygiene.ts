@@ -88,6 +88,19 @@ export interface HygieneInput {
   giverRole: (o: StandingOrder) => string | undefined
 }
 
+/** A short stable hash (not secret): the key of a question changes when an order's words do. */
+const hash = (text: string): string => {
+  let h = 5381
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
+}
+
+/** The key of a conflict question: the two ids and their words (`keptPairs` of the heartbeat state). */
+export const pairKey = (a: StandingOrder, b: StandingOrder): string => {
+  const [x, y] = a.id < b.id ? [a, b] : [b, a]
+  return `${x.id}+${y.id}:${hash(`${x.text}\n${y.text}`)}`
+}
+
 const short = (o: StandingOrder): string => {
   const t = o.text.length > 60 ? `${o.text.slice(0, 59)}…` : o.text
   return `"${t}"`

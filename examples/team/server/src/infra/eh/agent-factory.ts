@@ -78,6 +78,7 @@ import {
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
 import {
   HEARTBEAT_ALLOWED,
+  HEARTBEAT_CONTENT_READS,
   HEARTBEAT_FILE_WRITES,
   HEARTBEAT_POST_TOOL,
   type HeartbeatDestination,
@@ -1131,7 +1132,48 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             connectionId: (target as HeartbeatDestination).connectionId,
             nodeId: (target as HeartbeatDestination).nodeId,
           })
-          return deps.heartbeat?.()?.reservePost(def.id, to, text)
+          // what a DM said never goes into a group (checked before the post is counted)
+          return (
+            deps.heartbeat?.()?.postPrivacy(def.id, to) ??
+            deps.heartbeat?.()?.reservePost(def.id, to, text)
+          )
+        }
+        /**
+         * A read of what people said (history, search, a message by id): only chats inside the read
+         * scope of the beat (the chats the givers of its live orders can read). The call must name
+         * a chat that resolves; a DM that was read is remembered for the post check.
+         */
+        const contentRead = (call: { toolName: string; input: unknown }): string | undefined => {
+          const hb = deps.heartbeat?.()
+          const gw = deps.channels?.()
+          if (hb === undefined || gw === undefined) return undefined
+          const input = (call.input ?? {}) as Record<string, unknown>
+          const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
+          const chat = str(input.chat) ?? str(input.conversation)
+          if (chat === undefined || chat.trim() === '') {
+            return `Not read: ${call.toolName} must name the chat (its id from channel_describe, its native id or its exact title). A heartbeat reads only the chats of its standing orders.`
+          }
+          const bound = gw.connectionsOf(def.id)
+          let ids = bound.map((c) => c.connectionId)
+          if (str(input.connection) !== undefined) {
+            const ref = resolveConnectionRef(bound, input.connection as string)
+            if (!ref.ok) return ref.text
+            ids = [ref.id]
+          }
+          let node: ReturnType<typeof gw.nodeOf>
+          for (const id of ids) {
+            node = gw.nodeOf(id, chat)
+            if (node !== undefined) break
+          }
+          if (node === undefined) {
+            return `Not read: "${chat}" is not a chat I ingest. Use channel_describe to list them.`
+          }
+          return hb.readCheck(def.id, {
+            nodeId: node.id,
+            title: node.title ?? node.nativeId,
+            ids: [node.id, ...gw.nodes.chain(node).map((n) => n.id)],
+            direct: node.kind === 'direct',
+          })
         }
         // what the live orders of owners and admins open for the running beat (P52): the tools of
         // their `needs` that the agent actually has, and writing their ledger paths. The snapshot is
@@ -1176,6 +1218,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
                     fixing: deps.heartbeat?.()?.memoryFix(def.id) === true,
                   })
                 : heartbeatRefusal(call.toolName)
+            }
+            if (HEARTBEAT_CONTENT_READS.includes(call.toolName)) {
+              const refused = contentRead(call)
+              if (refused !== undefined) return refused
+              if (call.toolName !== 'channel_read') return undefined
             }
             if (call.toolName === HEARTBEAT_POST_TOOL || call.toolName === 'channel_read') {
               return channelCall(call)

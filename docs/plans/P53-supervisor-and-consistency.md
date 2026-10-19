@@ -112,3 +112,6 @@ paths.
   beat.
 - The beat edits memory through the model; a bad edit is visible in the beat log but is not rolled
   back automatically.
+- The supervisor's own questions (`heartbeat_ask_owner`) carry free-text options chosen by the
+  model; they are answers for the agent to read, not commands. Program consistency findings are
+  Health findings, not decisions, so nothing there is executed by an answer.

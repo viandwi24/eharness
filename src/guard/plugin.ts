@@ -35,10 +35,18 @@ import {
   GUARD_UNAVAILABLE,
 } from './texts.ts'
 
-/** A judge verdict. */
+/**
+ * A judge verdict.
+ *
+ * @deprecated Use the `auto` mode and classifier of `eharness/permissions` (same judge engine, `createJudge`; migration: docs/guides/guard.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export type GuardVerdict = 'allow' | 'ask' | 'deny'
 
-/** Options of {@link guard}. */
+/**
+ * Options of {@link guard}.
+ *
+ * @deprecated Use the `auto` mode and classifier of `eharness/permissions` (same judge engine, `createJudge`; migration: docs/guides/guard.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
+ */
 export interface GuardOptions {
   /** The judge: a cheap, fast model. Its usage is charged to the turn (`addUsage`). */
   model: LanguageModel
@@ -120,7 +128,7 @@ function invalid(message: string): HarnessError {
  * })
  * ```
  * @see docs/specs/15-guard-plugin.md
- * @deprecated No product built on eharness uses this module (ADR-0062); it is removed at 1.0 unless one adopts it.
+ * @deprecated Use the `auto` mode and classifier of `eharness/permissions` (same judge engine, `createJudge`; migration: docs/guides/guard.md#deprecated-removed-in-10). Removed in 1.0 (ADR-0062).
  */
 export function guard(options: GuardOptions): HarnessPlugin<'guard'> {
   if (typeof options !== 'object' || options === null || options.model === undefined) {

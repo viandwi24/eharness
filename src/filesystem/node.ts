@@ -2,6 +2,8 @@
  * `eharness/filesystem/node`: a `FileSystem` over real directories, mounts, a workspace helper
  * and a durable checkpoint store. Node-only (ADR-0036): it imports `node:` built-ins.
  *
+ * **Stable:** accepted API; changes follow docs/engineering/api-stability.md.
+ *
  * @see docs/specs/08-filesystem-plugin.md#8-node-adapter
  */
 export { type NodeCheckpointStoreOptions, nodeCheckpointStore } from './node/checkpoint-store.ts'

@@ -10,8 +10,9 @@ budget ledger, `eharness/guard`, `eharness/group`, `eharness/openapi`), 0.6.0 (`
 approvals combined with tools without `execute`), 0.7.0 (`eharness/permissions`, `eharness/shell`,
 `eharness/subagent`, `eharness/ask`, `eharness/web`, `eharness/filesystem/node`, fork, binary
 files, glob and multi-edit, `session.stats()` of the whole request, security defaults for MCP
-results and kind messages). **0.8.0 is next** (see [0.8.0](#080)): the changesets are written and
-the version PR releases them.
+results and kind messages), 0.8.0 (published 2026-10-11, git tag `eharness@0.8.0`; see
+[0.8.0](#080)). **0.9.0 is next** (see [0.9.0](#090-next)): 39 changesets are pending on `main`
+(18 minor, 21 patch) and the version PR has not been cut yet. Nothing after 0.8.0 is published.
 Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
 
 ## Open items
@@ -47,6 +48,40 @@ before implementation.
 | **Goal plugin** | Outer loop: re-prompt after a turn until a goal is met (judge model or `update_goal` tool), paused after empty turns and by budgets. |
 | ~~Compaction thrash detection~~ | Done in 0.4.0 (`compaction.thrash`, stop `'context-thrash'`). |
 | **Shared task lists** | Todos shared across subagents/sessions (`listId`, owners, dependencies). |
+
+## 0.9.0 (next)
+
+State on 2026-10-19: `package.json` and `CHANGELOG.md` say 0.8.0, which is on npm (published
+2026-10-11; `npm view eharness versions` ends at 0.8.0). Everything below is in pending changesets
+(`.changeset/`) and ships with the next `bun run release:version`; versions are not touched until
+then. Source of truth for the final text is the generated `CHANGELOG.md`.
+
+| Area | Contents | Changesets |
+|---|---|---|
+| New Draft modules | `eharness/scheduler`, `channels`, `identity`, `handoff`, `limits` (`stepBudget`, `budgetNotice`, `longRun`), `clock`, `code` (Python over the virtual file system), `browser` + `browser/node` (P44, P46-P48; specs 28-35, ADR-0061-0064) | scheduler-module, channels-module, identity-module, handoff-module, limits-module, long-run, clock-module, code-sandbox-python, browser-module |
+| Follow-ups of those modules | scheduler `fired: false`, outbox `expiredLeases`, handoff `resolveHandoff` options and `redeliverHandoff`, `browser_scroll`, neutralised mentions | scheduler-outbox-followups, outbox-governor-followups, handoff-followups, browser-scroll-tool, inline-allowed-mentions |
+| Deprecations | `eharness/group`, `eharness/guard`, `eharness/openapi` (ADR-0062), removed at 1.0 | deprecate-unused-modules |
+| Subagents and attachments | `subagent({ files })`, `onPark: 'notice'`, stop keeps the result, `childSessionId` receives the agent key | attachments-delegation-modalities, subagent-on-park-notice, subagent-stop-keeps-result, subagent-child-id-agent |
+| Http, client, connectors | clipped message reads (`?clip=`), `ConnectionCredentials.session`, client clears the error after status | clipped-message-reads, connectors-session-qr-resend, client-clear-error-after-status |
+| Tool output and media | `toolOutput.keepImages`, media of MCP results offloaded to the `toolMedia` service (`media-ref` parts), offloaded path note, stale sources | tool-output-media, tool-media-offload, tool-media-path-and-stale-sources |
+| Tool loop safety | `toolCalls.maxPerStep`, `toolCalls.maxIdenticalResults`, `tool_search` `select:`, deferred auto-load, leaked tool-markup stripping | tool-calls-per-step, tool-identical-results, tool-search-select-and-grep-flags, deferred-tool-autoload, leaked-tool-markup |
+| Models and compaction | unsupported-file notes (projection and instruction text), compaction threshold with large output reserve | unsupported-files-history-note, unsupported-file-note-instructs, compaction-threshold-reasoning |
+| Other | `probeOsSandbox()`, remote MCP `refresh: 'turn'` and `reviewToolChanges`, `W_MCP_DRIFT` session id, `NoticePayload.code` accepts app strings, AI SDK experimental options isolated | os-sandbox-probe, remote-mcp-refresh, mcp-review-tool-changes, mcp-drift-session-id, typed-agent-generics, ai-sdk-alignment |
+
+### Breaking-risk review (api-stability.md checklist)
+
+The bump is a minor (0.x), so breaking changes are allowed, but they must be named in the
+changeset. The four items that looked like patches:
+
+| Changeset | Verdict | Why |
+|---|---|---|
+| `typed-agent-generics` | additive | `NoticePayload.code` is widened with `(string & Record<never, never>)`; literal autocomplete stays. The only break is a user `switch` that relied on the union being closed for exhaustiveness; unlikely, patch is fine. |
+| `tool-output-media` | behaviour change, no break | Media of MCP results is no longer counted or cut by the output limits, and `keepImages` is new and optional. The model-visible text of a truncated screenshot changes (it was truncated base64), which api-stability.md treats as a minor-level wording change in 0.x. |
+| `tool-media-offload` | **highest risk** | On by default for the `filesystem` plugin (`toolMedia !== false`): it writes files under `/.eharness/tool-media` and changes the **persisted format** of MCP media tool outputs (`media-ref` parts instead of base64) and adds `W_TOOL_MEDIA_OFFLOAD`. A store written by 0.9 and read by 0.8 loses the images. Upgrade direction (0.8 data into 0.9) is safe: inline base64 still projects. Needs a "persisted format / new default" line and the downgrade caveat in the generated changelog; consider changing the bump of this changeset to `minor`. |
+| `subagent-child-id-agent` | additive | A third argument is passed to the `childSessionId` callback; callbacks with fewer parameters keep working. |
+
+Also checked: the deprecations only add `@deprecated` and (per ADR-0062) no removal before 1.0; the
+module exports snapshot (`scripts/exports-snapshot.ts`) is the authoritative list of additions.
 
 ## 0.8.0
 

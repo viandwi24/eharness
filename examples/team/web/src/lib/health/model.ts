@@ -80,3 +80,25 @@ export function severityCounts(list: readonly Finding[]): Record<Severity, numbe
 	for (const f of list) if (!f.dismissed) out[f.severity]++;
 	return out;
 }
+
+export type Alarm = components['schemas']['Alarm'];
+
+export const ALARM_LABEL: Record<Alarm['kind'], string> = {
+	'run-failed': 'Run failed',
+	'run-stuck': 'Run stopped (no activity)',
+	'routine-paused': 'Routine paused',
+	'approval-expired': 'Approval not answered',
+	'connection-broken': 'Connection broken',
+	system: 'Server step failed'
+};
+
+/** The button of an alarm: where its first ref leads (a run, the routines, the connectors). */
+export function alarmAction(a: Pick<Alarm, 'refs'>): { href: string; label: string } | undefined {
+	const href = a.refs[0];
+	if (href === undefined) return undefined;
+	if (href.startsWith('/tasks/')) return { href, label: 'Open the run' };
+	if (href === '/connectors') return { href, label: 'Reconnect' };
+	if (href.startsWith('/routines')) return { href, label: 'Open routines' };
+	if (href.startsWith('/programs/')) return { href, label: 'Open the program' };
+	return { href, label: 'Open' };
+}
