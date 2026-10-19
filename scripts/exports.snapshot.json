@@ -430,6 +430,7 @@
     "assertValidUIMessage",
     "browserProfileStoreConformance",
     "budgetLedgerConformance",
+    "chaosStorage",
     "connectionStoreConformance",
     "credentialStoreConformance",
     "enablementStoreConformance",

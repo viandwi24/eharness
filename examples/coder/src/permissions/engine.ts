@@ -34,6 +34,8 @@ export const PROTECTED_PATHS: readonly string[] = ['.git', '.coder/settings*.jso
 export const TOOL_KINDS: ToolKinds = {
   // language servers only read
   [TOOL.lsp]: { kind: 'safe' },
+  // pure date arithmetic, no I/O
+  [TOOL.datetime]: { kind: 'safe' },
   // asks in every mode (an allow rule or bypassPermissions never approves it), no rule suggested
   [TOOL.dirAccess]: { kind: 'other', alwaysAsk: true },
 }

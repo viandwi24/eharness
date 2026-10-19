@@ -1,0 +1,137 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "grep",
+        "input": {
+          "pattern": "getUser"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/users.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/greet.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/report.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/test/users.test.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/users.ts",
+          "old_string": "export function getUser",
+          "new_string": "export function fetchUser"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/greet.ts",
+          "edits": [
+            {
+              "old_string": "import { getUser }",
+              "new_string": "import { fetchUser }"
+            },
+            {
+              "old_string": "const user = getUser(id)",
+              "new_string": "const user = fetchUser(id)"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/report.ts",
+          "edits": [
+            {
+              "old_string": "import { getUser }",
+              "new_string": "import { fetchUser }"
+            },
+            {
+              "old_string": "return getUser(id)",
+              "new_string": "return fetchUser(id)"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/test/users.test.ts",
+          "edits": [
+            {
+              "old_string": "import { getUser }",
+              "new_string": "import { fetchUser }"
+            },
+            {
+              "old_string": "test('getUser finds a user', () => {\n  expect(getUser(1)",
+              "new_string": "test('fetchUser finds a user', () => {\n  expect(fetchUser(1)"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "grep -rn getUser src test; bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Renamed getUser to fetchUser in all files."
+  }
+]

@@ -18,6 +18,8 @@ const GROUPS: Array<{ title: string; names: string[] }> = [
       'recap',
       'plan',
       'init',
+      'commit',
+      'pr',
       'exit',
     ],
   },

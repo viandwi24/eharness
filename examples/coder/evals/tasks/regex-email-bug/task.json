@@ -1,0 +1,8 @@
+{
+  "id": "regex-email-bug",
+  "title": "Fix an email validator regex",
+  "prompt": "isEmail in src/email.ts accepts \"a@b\" and \"a b@c.com\". Make it require a dot in the domain and no whitespace anywhere. The existing tests must still pass.",
+  "check": "bun test",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

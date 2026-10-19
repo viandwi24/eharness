@@ -1,0 +1,35 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/config.json"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/config.json",
+          "edits": [
+            {
+              "old_string": "\"port\": 3000",
+              "new_string": "\"port\": 8080"
+            },
+            {
+              "old_string": "\"debug\": true",
+              "new_string": "\"debug\": false"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "text": "Port is 8080, debug is off."
+  }
+]

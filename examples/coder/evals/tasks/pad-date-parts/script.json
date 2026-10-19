@@ -1,0 +1,36 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/date.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "write_file",
+        "input": {
+          "path": "/src/date.ts",
+          "content": "const pad = (n: number): string => String(n).padStart(2, '0')\n\nexport function formatDate(d: Date): string {\n  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`\n}\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Padded month and day."
+  }
+]

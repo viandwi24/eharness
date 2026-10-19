@@ -1,3 +1,5 @@
 # Tests run with the library's session invariants on (`debug.invariants` is explicit-only in 0.8).
 [test]
 preload = ["./test/preload.ts"]
+# Eval fixtures are repos with intentionally failing tests: the eval runner runs them, bun test never does.
+pathIgnorePatterns = ["**/evals/tasks/**"]

@@ -40,11 +40,19 @@ export interface CliFlags {
   continue?: boolean
   resume?: string | true
   maxSteps?: number
+  /** `--max-cost <usd>`: cost cap of one turn (0 = none). */
+  maxCost?: number
+  /** `--max-time <minutes>`: wall-time cap of one turn (0 = none). */
+  maxTime?: number
   print?: string
   outputFormat?: string
   /** Trust this project's `.coder/` content before loading (`--trust-project`). */
   trustProject?: boolean
 }
+
+/** Default safety ceiling of one turn: estimated cost (USD) and wall time (minutes). */
+export const DEFAULT_MAX_TURN_COST_USD = 5
+export const DEFAULT_MAX_TURN_MINUTES = 30
 
 const modeSchema = z.enum(PERMISSION_MODES as [PermissionMode, ...PermissionMode[]])
 
@@ -91,6 +99,12 @@ const settingsSchema = z.object({
   editorMode: z.enum(['normal', 'vim']).optional(),
   deferTools: z.boolean().optional(),
   stepChunk: z.number().int().min(1).optional(),
+  limits: z
+    .object({
+      maxTurnCostUsd: z.number().min(0).optional(),
+      maxTurnMinutes: z.number().min(0).optional(),
+    })
+    .optional(),
   hooks: z
     .partialRecord(z.enum(HOOK_EVENTS as [HookEvent, ...HookEvent[]]), z.array(hookEntrySchema))
     .optional(),
@@ -279,6 +293,8 @@ function riskyKeys(settings: CoderSettings): string[] {
     keys.push('hooks')
   }
   if (settings.statusLine !== undefined) keys.push('statusLine')
+  // a cloned repo must not lift the safety ceiling of the user's turns
+  if (settings.limits !== undefined) keys.push('limits')
   if (settings.lsp !== undefined && Object.keys(settings.lsp).length > 0) keys.push('lsp')
   const sb = settings.sandbox
   if (
@@ -296,6 +312,7 @@ function withoutRisky(settings: CoderSettings): CoderSettings {
     mcpServers: _mcp,
     hooks: _hooks,
     statusLine: _status,
+    limits: _limits,
     lsp: _lsp,
     sandbox,
     permissions,
@@ -398,7 +415,7 @@ export async function readSettingsLayers(
 export function mergeSettings(list: readonly CoderSettings[]): CoderSettings {
   const out: CoderSettings = {}
   for (const s of list) {
-    const { hooks, sandbox, lsp, permissions, mcpServers, ...scalars } = s
+    const { hooks, sandbox, lsp, permissions, mcpServers, limits, ...scalars } = s
     Object.assign(out, scalars)
     if (hooks !== undefined) {
       const merged: NonNullable<CoderSettings['hooks']> = { ...out.hooks }
@@ -422,6 +439,7 @@ export function mergeSettings(list: readonly CoderSettings[]): CoderSettings {
       }
     }
     if (lsp !== undefined) out.lsp = { ...out.lsp, ...lsp }
+    if (limits !== undefined) out.limits = { ...out.limits, ...limits }
     if (permissions !== undefined) out.permissions = { ...out.permissions, ...permissions }
     if (mcpServers !== undefined) out.mcpServers = { ...out.mcpServers, ...mcpServers }
   }
@@ -565,6 +583,14 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     cliAgents,
     maxSteps: flags.maxSteps ?? 0,
     stepChunk: mergeSettings(layers.map((l) => l.settings)).stepChunk ?? 50,
+    maxTurnCostUsd:
+      flags.maxCost ??
+      mergeSettings(layers.map((l) => l.settings)).limits?.maxTurnCostUsd ??
+      DEFAULT_MAX_TURN_COST_USD,
+    maxTurnMinutes:
+      flags.maxTime ??
+      mergeSettings(layers.map((l) => l.settings)).limits?.maxTurnMinutes ??
+      DEFAULT_MAX_TURN_MINUTES,
     maxAgentDepth: 2,
     deferTools: mergeSettings(layers.map((l) => l.settings)).deferTools ?? true,
     mcpServers,

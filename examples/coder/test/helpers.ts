@@ -153,8 +153,11 @@ export async function makeAgentsEnv(opts: {
   broker?: ApprovalBroker
   definitions?: AgentDefinition[]
   maxConcurrentAgents?: number
+  /** Replaces `config.mcpServers` (settings would need user files here). */
+  mcpServers?: Record<string, unknown>
 }) {
   const { root, home, config } = await setup(opts.files, opts.flags)
+  if (opts.mcpServers) config.mcpServers = opts.mcpServers
   const workspace = await createWorkspace(config)
   const permissions = createPermissionEngine({ config, mounts: () => workspace.mounts() })
   const broker = opts.broker ?? createBroker()

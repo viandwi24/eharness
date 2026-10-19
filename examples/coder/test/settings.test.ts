@@ -30,6 +30,8 @@ describe('settings manager', () => {
       'editorMode',
       'sandbox.enabled',
       'sandbox.network',
+      'limits.maxTurnCostUsd',
+      'limits.maxTurnMinutes',
       'statusLine.command',
     ])
     const by = (k: string) => views.find((v) => v.key === k)

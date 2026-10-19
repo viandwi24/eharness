@@ -1,0 +1,8 @@
+{
+  "id": "sort-numbers",
+  "title": "Fix a lexicographic sort",
+  "prompt": "sortNumbers in src/sort.ts sorts [10, 9, 1] wrongly and mutates its input. Fix both problems.",
+  "check": "bun test",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

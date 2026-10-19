@@ -36,6 +36,14 @@ function parseSteps(value: string): number {
   return n
 }
 
+function parseLimit(value: string): number {
+  const n = Number(value)
+  if (value.trim() === '' || !Number.isFinite(n) || n < 0) {
+    throw new InvalidArgumentError('must be a number of at least 0 (0 = no cap)')
+  }
+  return n
+}
+
 function parseThinking(value: string): ThinkingLevel {
   if (!(THINKING_LEVELS as readonly string[]).includes(value)) {
     throw new InvalidArgumentError(`must be one of: ${THINKING_LEVELS.join(', ')}`)
@@ -156,6 +164,16 @@ const program = new Command()
     '--max-steps <n>',
     'hard cap of steps per turn (0 = unlimited while on track, default)',
     parseSteps,
+  )
+  .option(
+    '--max-cost <usd>',
+    'stop a turn when its estimated cost reaches this many USD (default 5, 0 = no cap)',
+    parseLimit,
+  )
+  .option(
+    '--max-time <minutes>',
+    'stop a turn after this many minutes of wall time (default 30, 0 = no cap)',
+    parseLimit,
   )
   .option('--cwd <path>', 'project root (default: the current directory)')
   .option(

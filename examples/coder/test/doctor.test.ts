@@ -20,6 +20,7 @@ describe('doctor', () => {
     const { config } = await setup()
     const checks = await runDoctor({
       config: { ...config, provider: 'openrouter' },
+      settings: { sandbox: { enabled: true } },
       models: async () => [model(config.model)],
       env: {
         OPENROUTER_API_KEY: 'k',
@@ -51,6 +52,35 @@ describe('doctor', () => {
       'Terminal',
     ])
     expect(find(checks, 'Terminal')?.detail).toBe('120x40, truecolor')
+  })
+
+  test('an available OS sandbox that is off is recommended, not enabled', async () => {
+    const { config } = await setup()
+    const base = {
+      config,
+      env: { OPENROUTER_API_KEY: 'k' },
+      which: async (c: string) => `/usr/bin/${c}`,
+      terminal: { columns: 120, rows: 40, isTTY: true },
+    }
+    const off = find(
+      await runDoctor({ ...base, osSandbox: () => ({ kind: 'seatbelt' }) }),
+      'Sandbox',
+    )
+    expect(off?.status).toBe('warn')
+    expect(off?.detail).toContain('Recommended')
+    expect(off?.detail).toContain('/sandbox')
+    const on = find(
+      await runDoctor({
+        ...base,
+        settings: { sandbox: { enabled: true } },
+        osSandbox: () => ({ kind: 'bubblewrap' }),
+      }),
+      'Sandbox',
+    )
+    expect(on).toMatchObject({ status: 'ok', detail: 'bubblewrap available, enabled' })
+    // no tool, nothing to recommend
+    const none = find(await runDoctor({ ...base, osSandbox: () => ({ kind: 'none' }) }), 'Sandbox')
+    expect(none?.status).toBe('ok')
   })
 
   test('problems are reported with a status each', async () => {

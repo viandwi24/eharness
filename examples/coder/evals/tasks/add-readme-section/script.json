@@ -1,0 +1,37 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/README.md"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/cli.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/README.md",
+          "old_string": "A tiny greeting CLI.\n",
+          "new_string": "A tiny greeting CLI.\n\n## Usage\n\n```sh\nbun cli.ts Ada   # prints: Hello, Ada!\n```\n"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Documented usage."
+  }
+]

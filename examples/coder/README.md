@@ -8,6 +8,10 @@ shipped modules (`eharness/filesystem`, `filesystem/node`, `shell`, `permissions
 [ADR-0034](../../docs/decisions/0034-deployment-profiles.md): one interactive process, approvals
 answered in process.
 
+**How it is built, module by module:** the guide
+[A coding agent on eharness](../../docs/guides/coding-agent.md) (modules used, permissions, sandbox,
+resume and compaction, how to extend it).
+
 **Read the walkthrough:** [Building a single-process CLI agent](../../docs/guides/walkthrough-cli.md)
 maps every piece (workspace, shell, permissions and the approval loop, compaction, todos, subagents,
 skills, MCP, resume and crash recovery, Ink rendering) to the code that wires it, with why it exists
@@ -135,6 +139,8 @@ cost is shown. `contextWindow` in a settings file always wins over the catalog.
 | `-c, --continue` | continue the most recent session of this project |
 | `-r, --resume [id]` | resume a session; without an id a picker opens |
 | `--max-steps <n>` | optional hard cap of steps per turn; default `0` = unlimited: the turn keeps extending in `stepChunk` chunks while it makes progress and stops when the model is done, the progress guard sees it is stuck, or you interrupt (Esc / Ctrl+C) |
+| `--max-cost <usd>` | cost cap of one turn in USD (default `5`, `0` = no cap); see Turn limits |
+| `--max-time <minutes>` | wall-time cap of one turn in minutes (default `30`, `0` = no cap) |
 | `--cwd <path>` | project root (default: the current directory) |
 | `--trust-project` | trust this project's `.coder/` settings, agents and skills (see Project trust) |
 
@@ -236,6 +242,8 @@ returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctr
 | `/plan [description]` | switch to plan mode; with a description, start planning that task |
 | `/<name> [args]` | a custom command or a skill (see Custom commands) |
 | `/init` | ask the agent to write the project instructions (`AGENTS.md`, or update an existing `CLAUDE.md`) |
+| `/commit [hint]` | commit the **staged** changes: the model drafts a Conventional Commit message, you confirm, then `git commit` runs through the permission engine (see Git workflow) |
+| `/pr [hint]` | open a pull request with `gh pr create`: title and body drafted from the branch diff, you confirm first |
 | `/exit` | quit |
 | `/compact [instructions]` | as `/compact`; the optional text tells the summary what to keep |
 | `/retry` | run the last reply again; after a crash `coder --continue` recovers the interrupted turn at once and says so |
@@ -508,6 +516,43 @@ the main prompt, where it is labelled with the agent's name. Runs of earlier pro
 their stored conversation. The view reads the child session from storage (it is saved after every
 step, so the text of the step that is still streaming appears when the step ends).
 
+### Turn limits
+
+A turn (everything the agent does for one message of yours) has a safety ceiling by default, so a
+runaway loop cannot burn money or hours unseen:
+
+| Cap | Default | Flag / setting | Mechanism |
+|---|---|---|---|
+| Cost | $5 per turn | `--max-cost`, `limits.maxTurnCostUsd` | the library budget `budget.maxTurnUsd` (stop `cost-cap`); needs a priced model, an unpriced one is not capped (`W_MODEL_UNPRICED`) |
+| Wall time | 30 min per turn | `--max-time`, `limits.maxTurnMinutes` | `turnTimeLimit` (`app/limits.ts`), checked after every step |
+| Steps | unlimited while on track | `--max-steps`, `stepChunk` | `eharness/limits` `stepBudget` and the progress guard |
+
+Both caps stop at a step boundary, never in the middle of a tool call, and nothing is lost: the
+conversation stays and the next message starts a fresh turn with a fresh allowance. The UI (and
+print mode on stderr) says which cap was reached and how to raise it. `0` turns a cap off. `/cost`
+shows the caps. A project's `limits` need project trust (a cloned repo cannot lift your ceiling).
+The caps apply to the main agent's turn; a subagent has its own `maxTurns`.
+
+### Git workflow
+
+`/commit` and `/pr` add no new tool and no new permission path: they send a fixed prompt, and the
+model works through `bash` and `ask_user_question` like for any other task.
+
+- `/commit [hint]` commits only what is **already staged** (it never runs `git add`, `-a`,
+  `--amend`, `reset`, `stash` or `push`). It reads `git diff --cached`, drafts a Conventional Commit
+  message in the style of the repository, asks you to confirm (the question shows the files and the
+  message; "Other" is your edited message) and only then runs `git commit`. That call is an ordinary
+  `bash` call: it asks in `default` mode like any command, and a deny rule or a denial stops it.
+  With nothing staged it lists the unstaged files and stops.
+- `/pr [hint]` needs the GitHub CLI (`gh`, logged in); without it the agent says so and stops. It
+  reads the branch commits and diff against the base branch, drafts a title and body, asks you
+  (create, create as draft, cancel), pushes the branch if it has no upstream and runs
+  `gh pr create`. `git push` and `gh pr create` are permission-gated `bash` calls. Uncommitted
+  changes are mentioned, never committed for you.
+
+There is no headless form: in print mode (`-p`) ask for a commit in the prompt and pre-approve it with
+`--allowed-tools 'Bash(git commit *)'`.
+
 ### Settings reference
 
 Settings files merge in this order, later wins: `~/.coder/settings.json` (user),
@@ -535,6 +580,8 @@ scope; `Enter` or `Space` toggles or cycles, `Enter` edits text and numbers).
 | `editorMode` | `normal` | `normal` or `vim`; default scope: user | no |
 | `deferTools` | `true` | defer MCP tools and rarely used built-ins (see Deferred tools) | no |
 | `stepChunk` | `50` | steps per chunk of a turn; a turn is extended chunk by chunk (`eharness/limits` `stepBudget`) until the model is done or the progress guard stops it, or up to `--max-steps` when set | no |
+| `limits.maxTurnCostUsd` | `5` | cost cap of one turn, USD (`0` = none); `--max-cost` wins; applies at next start | yes |
+| `limits.maxTurnMinutes` | `30` | wall-time cap of one turn, minutes (`0` = none); `--max-time` wins; applies at next start | yes |
 | `hooks` | `{}` | shell hooks by event | yes |
 | `sandbox.enabled` | `false` | OS sandbox for `bash` | turning it off needs trust; turning it on does not |
 | `sandbox.network` | `false` | allow network in the sandbox | enabling needs trust |
@@ -659,6 +706,14 @@ Paths are virtual (`/src/a.ts`), line and character are 1-based.
 | `symbols` | `path` | outline of the file (up to 200) |
 | `workspace_symbols` | `query`, optional `path` to pick the language | matching symbols (up to 200) |
 
+### Single binary
+
+`bun run compile` (in this directory) writes a self-contained executable to `dist/coder` (another
+path as the first argument: `bun scripts/compile.ts /tmp/coder`). The script stubs `ink`'s optional
+dev tool `react-devtools-core`, which a plain `bun build --compile` cannot resolve. Smoke-tested:
+`coder --version` and `coder --help` run from any directory. It still needs the same environment
+(API key, `git`, optional `rg`).
+
 ### OS sandbox
 
 `sandbox.enabled: true` (or `/sandbox`, or `/config`) runs every `bash` command (also background and
@@ -675,7 +730,11 @@ sockets stay usable on macOS for git, ssh-agent and DNS).
 What it does not restrict: **reads**. Everything on disk, secrets in your home directory included,
 stays readable by a sandboxed command. It does not limit CPU or memory either, and it does not cover
 the file tools (those use the virtual path tree) or MCP servers and hooks. When the platform tool is
-missing, coder says so and commands run unsandboxed; `/doctor` and `/status` show the state. The
+missing, coder says so and commands run unsandboxed; `/doctor` and `/status` show the state. When
+the tool is available and the sandbox is off, `/doctor` shows a **warning that recommends turning it
+on** (`/sandbox`, or `"sandbox": { "enabled": true }` in settings). It is never switched on for you:
+the default stays off because a sandbox that blocks a build or a network call surprises people who
+did not ask for it. The
 permission engine still asks as described in the Safety model; the sandbox is a second layer. A
 write blocked by the sandbox is reported to the model with a hint (the library's `SANDBOX_HINT`);
 whether the sandbox is on is part of the `bash` tool description (library); a live toggle reopens
@@ -782,6 +841,11 @@ Known limits:
   still running when the conversation was saved is shown as failed.
 - The OS sandbox does not restrict reads, CPU or memory, and needs `sandbox-exec` (macOS, deprecated
   by Apple) or `bwrap` (Linux); Windows has none. Without the tool commands run unsandboxed.
+- **Windows is not supported.** The `bash` tool needs a POSIX shell, the OS sandbox does not exist
+  there and image paste has no Windows path; none of it is tested on Windows. Use WSL2 (Linux
+  paths, bubblewrap and `wl-paste` / `xclip` then work as on Linux). What is Windows-aware in the
+  code (`.exe` / `.cmd` lookups, the `clip` clipboard command in `/doctor`) is best effort, not a
+  promise.
 - Rewind restores only files changed through the file tools. Shell changes, other tools and outside
   edits are not checkpointed. Only the last 50 turns per session have checkpoints.
 - Hooks are arbitrary commands: a `PreToolUse` hook runs once per tool call and its answer is
@@ -975,12 +1039,15 @@ Notes:
   files in subfolders are listed as virtual paths so the model can read them when working there.
   `/init` asks the agent to write an `AGENTS.md` (or update an existing `CLAUDE.md`).
 - **Skills.** If `<root>/.coder/skills/` exists and the project is trusted, it is loaded as a skill
-  folder (`SKILL.md` per skill) through the filesystem plugin.
+  folder (`SKILL.md` per skill) through the filesystem plugin (`load_skill`, `read_skill_file`,
+  `search_skills`). Covered by `test/mcp-skills.test.ts` (trusted, untrusted and absent).
 - **MCP.** `mcpServers` in a settings file maps a server name to an `mcpServerSource()` transport config.
   A project's `mcpServers` need project trust. Servers are attached to the main agent only; a
   server that fails to configure is skipped with a warning. Requires the optional peer
   `@ai-sdk/mcp`. MCP tools ask in every mode except `bypassPermissions`, unless an allow rule names
-  them (`mcp__server__tool`). This path has no automated test yet.
+  them (`mcp__server__tool`). `test/mcp-skills.test.ts` covers this path with an in-process HTTP MCP server: prefixed tools after
+  the built-ins, approval before a call, a denial never reaching the server, deferred discovery, a
+  bad or unreachable server skipped with a warning.
 - **Sessions.** JSON files in `~/.coder/projects/<sha256(root)[0:16]>/sessions/`, written with the
   example JSON-file adapters. `-c` picks the newest, `-r` / `/resume` a given one. The project data
   directory also holds `tool-outputs/`, `checkpoints/` and `audit.jsonl`. User data (`~/.coder`, or `CODER_HOME`):
@@ -1001,7 +1068,7 @@ Notes:
 
 Tool order is stable (prompt-cache prefix), identical for every turn of an agent: the app tools
 (`lsp`, `request_directory_access`), `bash` (+ `bash_output`, `kill_shell`), `agent`, the filesystem
-tools (`glob` included), `todo_write`, `web_fetch`, `web_search`, `ask_user_question`, MCP tools (deferred tools keep their place; `tool_search` is last),
+tools (`glob` included), `todo_write`, `datetime` (the library `eharness/clock` tool: dates, weekdays, zone conversion and time differences, read-only), `web_fetch`, `web_search`, `ask_user_question`, MCP tools (deferred tools keep their place; `tool_search` is last),
 `exit_plan_mode` last.
 
 Layering: `workspace/`, `permissions/`, `agents/` and `app/` never import Ink or React.

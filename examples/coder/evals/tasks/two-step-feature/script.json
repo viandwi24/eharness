@@ -1,0 +1,67 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/user.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/user.ts",
+          "edits": [
+            {
+              "old_string": "  name: string\n}",
+              "new_string": "  name: string\n  email?: string\n}"
+            },
+            {
+              "old_string": "  return user.name",
+              "new_string": "  return user.email ? `${user.name} <${user.email}>` : user.name"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/test/user.test.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/test/user.test.ts",
+          "old_string": "  expect(describeUser({ name: 'Ada' })).toBe('Ada')\n})\n",
+          "new_string": "  expect(describeUser({ name: 'Ada' })).toBe('Ada')\n})\n\ntest('with email', () => {\n  expect(describeUser({ name: 'Ada', email: 'a@x.io' })).toBe('Ada <a@x.io>')\n})\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Added the email field."
+  }
+]

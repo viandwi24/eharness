@@ -1,0 +1,37 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/main.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/main.ts",
+          "old_string": "price: '2'",
+          "new_string": "price: 2"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "$EVAL_TSC --noEmit -p ."
+        }
+      }
+    ]
+  },
+  {
+    "text": "The price was a string; it is a number now."
+  }
+]

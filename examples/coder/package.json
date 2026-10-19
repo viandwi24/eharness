@@ -11,7 +11,9 @@
     "start": "bun src/main.tsx",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p .",
-    "compile": "bun build src/main.tsx --compile --outfile dist/coder"
+    "compile": "bun scripts/compile.ts",
+    "eval": "bun evals/run.ts",
+    "soak": "bun scripts/soak-session.ts"
   },
   "dependencies": {
     "@openrouter/ai-sdk-provider": "3.1.0",

@@ -170,10 +170,13 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
           : `no OS sandbox tool (${platform === 'darwin' ? 'sandbox-exec' : 'bwrap'}); sandboxing is unavailable`,
       )
     } else {
+      // recommended, never switched on silently: the OS sandbox limits what bash can write and reach
       add(
         'Sandbox',
-        'ok',
-        `${kind} available${wanted ? ', enabled' : ', disabled (sandbox.enabled)'}`,
+        wanted ? 'ok' : 'warn',
+        wanted
+          ? `${kind} available, enabled`
+          : `${kind} is available but the sandbox is off. Recommended: turn it on with /sandbox (or "sandbox": { "enabled": true } in settings) so bash can only write inside the project`,
       )
     }
   })

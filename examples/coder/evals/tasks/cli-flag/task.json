@@ -1,0 +1,8 @@
+{
+  "id": "cli-flag",
+  "title": "Add a --upper flag to a CLI",
+  "prompt": "cli.ts prints a greeting for the name given as the first argument. Add a `--upper` flag that prints the greeting in upper case. Keep the default output.",
+  "check": "[ \"$(bun cli.ts Ada)\" = \"Hello, Ada!\" ] && [ \"$(bun cli.ts Ada --upper)\" = \"HELLO, ADA!\" ] && [ \"$(bun cli.ts --upper Ada)\" = \"HELLO, ADA!\" ]",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

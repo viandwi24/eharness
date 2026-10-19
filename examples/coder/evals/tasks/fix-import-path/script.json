@@ -1,0 +1,47 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "glob",
+        "input": {
+          "pattern": "**/double.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/app.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/app.ts",
+          "old_string": "./math/double.ts",
+          "new_string": "./lib/double.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun src/app.ts"
+        }
+      }
+    ]
+  },
+  {
+    "text": "The module lives in lib/, not math/."
+  }
+]

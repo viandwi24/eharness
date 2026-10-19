@@ -1,0 +1,59 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/stats.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/stats.ts",
+          "old_string": "  return values.reduce",
+          "new_string": "  if (values.length === 0) return 0\n  return values.reduce"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/test/stats.test.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/test/stats.test.ts",
+          "old_string": "  expect(average([2, 4])).toBe(3)\n})\n",
+          "new_string": "  expect(average([2, 4])).toBe(3)\n})\n\ntest('average of nothing is 0', () => {\n  expect(average([])).toBe(0)\n})\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Empty list now gives 0."
+  }
+]

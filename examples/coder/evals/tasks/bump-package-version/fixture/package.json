@@ -1,0 +1,7 @@
+{
+  "name": "widget",
+  "version": "1.2.9",
+  "scripts": {
+    "test": "bun test"
+  }
+}

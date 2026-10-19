@@ -1,0 +1,47 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "grep",
+        "input": {
+          "pattern": "legacyFormat"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/format.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/format.ts",
+          "old_string": "function oldPad(s: string): string {\n  return ` ${s} `\n}\n\nexport function legacyFormat(s: string): string {\n  return oldPad(s).toUpperCase()\n}\n\n",
+          "new_string": ""
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Removed the dead code."
+  }
+]

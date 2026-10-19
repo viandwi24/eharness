@@ -1,0 +1,8 @@
+{
+  "id": "pad-date-parts",
+  "title": "Zero-pad date parts",
+  "prompt": "formatDate in src/date.ts prints 2024-3-7 instead of 2024-03-07. Fix it.",
+  "check": "bun test",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

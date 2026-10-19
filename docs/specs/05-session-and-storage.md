@@ -1197,7 +1197,10 @@ Normative rules:
    While an instance holds claimed items (a started unit, the items after it, steers handed to
    the running turn) every claim it makes renews them, and it drains at least every
    `claimTtlMs / 3`, so a long step never lets a held claim expire; a running turn takes a steer
-   once per inbox id (`steer()` is idempotent), so a redelivery is never delivered twice.
+   once per inbox id (`steer()` is idempotent), so a redelivery is never delivered twice. Because
+   an owner's own claim is renewed by its next claim, a failed `ack` / `release` is not left to
+   expire: the drain retries it at the start of its next run (`W_INBOX_FAILED` is reported for each
+   failure), so the adapter's `ack` and `release` must be idempotent.
 6. **Collect.** `collect` inputs are merged into **one** user message once `quietMs` passed
    without a new one, `maxWaitMs` passed since the first, or `maxItems` are waiting (the first
    `maxItems` are taken; the rest is the next burst): the text parts of each input joined with a

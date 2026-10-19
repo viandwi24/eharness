@@ -8,3 +8,5 @@ linker = "hoisted"
 # A session invariant violation (`W_INVARIANT_VIOLATION`) fails the test that caused it.
 [test]
 preload = ["./scripts/test-preload.ts"]
+# Eval fixtures (examples/coder/evals/tasks) are repos with intentionally failing tests: never run them here.
+pathIgnorePatterns = ["**/evals/tasks/**"]

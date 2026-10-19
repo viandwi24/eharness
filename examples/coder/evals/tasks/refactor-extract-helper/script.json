@@ -1,0 +1,36 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/report.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "write_file",
+        "input": {
+          "path": "/src/report.ts",
+          "content": "function formatMoney(cents: number): string {\n  return `$${(cents / 100).toFixed(2)}`\n}\n\nexport function lineItem(name: string, cents: number): string {\n  return `${name}: ${formatMoney(cents)}`\n}\n\nexport function totalLine(cents: number): string {\n  return `TOTAL: ${formatMoney(cents)}`\n}\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Extracted formatMoney."
+  }
+]

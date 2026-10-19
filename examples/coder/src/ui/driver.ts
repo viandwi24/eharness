@@ -7,6 +7,7 @@
 import { type FileUIPart, readUIMessageStream } from 'ai'
 import type { HarnessRun, TurnResult } from 'eharness'
 import { errorText } from 'eharness'
+import { limitStopNotice, type TurnLimits } from '../app/limits.ts'
 import { turnErrorText } from '../app/turn-error.ts'
 import type { BashOutputData, CoderController, CoderMessage, RunHooks } from './../contracts.ts'
 import { type ViewAction, wakeEvents } from './state.ts'
@@ -68,6 +69,8 @@ function isToolResultChunk(chunk: unknown): boolean {
 
 /** Optional callbacks of a driven turn. */
 export interface DriveOptions {
+  /** Per-turn caps, to explain a turn that was stopped by one (`controller.config`). */
+  limits?: TurnLimits
   /** A tool call finished on the live stream (the queue delivers its messages here). */
   onToolResult?(): void
 }
@@ -172,6 +175,10 @@ async function drive(
       if (result?.stop === 'error') {
         note = { text: turnErrorText(result.error), tone: 'error' }
       } else if (result?.stop === 'aborted') note = { text: 'Interrupted.', tone: 'info' }
+      else if (result !== undefined && options.limits) {
+        const limit = limitStopNotice(result.stop, options.limits)
+        if (limit) note = { text: limit, tone: 'error' }
+      }
       dispatch({ type: 'turn-finished', note })
     })()
   }
@@ -192,7 +199,10 @@ async function drive(
       } else if (result.stop === 'aborted') {
         note = { text: 'Interrupted.', tone: 'info' }
       } else if (result.stop !== 'complete' && result.stop !== 'tool-pending') {
-        note = { text: `Turn stopped: ${result.stop}.`, tone: 'info' }
+        const limit = options.limits && limitStopNotice(result.stop, options.limits)
+        note = limit
+          ? { text: limit, tone: 'error' }
+          : { text: `Turn stopped: ${result.stop}.`, tone: 'info' }
       }
     }
   } catch (error) {
@@ -205,6 +215,14 @@ async function drive(
   batcher.flush()
   dispatch({ type: 'turn-finished', note })
   return true
+}
+
+/** The caps of the controller's config, for the notice of a turn a cap stopped. */
+function withLimits(controller: CoderController, options: DriveOptions): DriveOptions {
+  const config = controller.config as Partial<TurnLimits> | undefined
+  if (options.limits || config?.maxTurnCostUsd === undefined || config.maxTurnMinutes === undefined)
+    return options
+  return { ...options, limits: config as TurnLimits }
 }
 
 /**
@@ -222,7 +240,7 @@ export async function runTurn(
     (hooks) =>
       files?.length ? controller.run(text, hooks, { files }) : controller.run(text, hooks),
     dispatch,
-    options,
+    withLimits(controller, options),
     undefined,
     () => controller.messages(),
   )
@@ -237,7 +255,7 @@ export async function runRetry(
   await drive(
     (hooks) => controller.retry(hooks),
     dispatch,
-    options,
+    withLimits(controller, options),
     undefined,
     () => controller.messages(),
   )
@@ -262,7 +280,7 @@ export async function steerTurn(
         return result.delivered === 'turn' ? result.result : undefined
       },
       dispatch,
-      options,
+      withLimits(controller, options),
       {
         before() {
           options.onOwnTurn?.()

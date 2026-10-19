@@ -6,7 +6,7 @@
   "compilerOptions": {
     "jsx": "react-jsx"
   },
-  "include": ["src", "test"],
+  "include": ["src", "test", "evals/*.ts", "scripts"],
   // do not inherit examples/tsconfig.json's `exclude: ["coder"]`
   "exclude": []
 }

@@ -7,7 +7,7 @@
  * with what policy. Tool placement fixes the prompt-cache prefix: the order is
  * `[root config tools] → [plugins in order]` (spec 02 §6) and identical for every session and
  * turn of an agent: the app tools (`lsp`, `request_directory_access`), `bash` (+ `bash_output`,
- * `kill_shell` on the main agent), `agent`, the `filesystem()` tools, `todo_write`, `web_fetch`,
+ * `kill_shell` on the main agent), `agent`, the `filesystem()` tools, `todo_write`, `datetime`, `web_fetch`,
  * `web_search`, `ask_user_question` (main only), MCP tools (source tools, after the static ones)
  * and the permissions plugin's `exit_plan_mode` among the session tools.
  *
@@ -31,6 +31,7 @@ import {
   type StateAdapter,
 } from 'eharness'
 import { ask } from 'eharness/ask'
+import { clock } from 'eharness/clock'
 import {
   type CheckpointStore,
   filesystem,
@@ -59,6 +60,7 @@ import type { LspManager } from '../lsp/index.ts'
 import { createLspTools } from '../lsp/index.ts'
 import { auditLog, type CoderPermissionEngine } from '../permissions/index.ts'
 import { createDirAccessTool } from '../workspace/index.ts'
+import { turnTimeLimit } from './limits.ts'
 import { PROJECT_INSTRUCTIONS_OPTIONS } from './memory-files.ts'
 import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
 import { STATIC_INSTRUCTIONS, subagentInstructions, turnReminder } from './prompt.ts'
@@ -357,6 +359,8 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         ? []
         : [projectInstructions(PROJECT_INSTRUCTIONS_OPTIONS)]),
       todos(),
+      // the model gets dates, weekdays and time differences wrong by hand
+      clock({ timezone: () => Intl.DateTimeFormat().resolvedOptions().timeZone }),
       webFetch({
         allow: (host) => hostAllowedBy(engine, host),
         toMarkdown: htmlToMarkdown,
@@ -378,6 +382,10 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       ...(isMain ? (deps.mainPlugins ?? []) : []),
       // the main turn starts with one chunk and is extended while it makes progress, up to the cap
       ...(isMain ? [stepBudget({ chunk: config.stepChunk, cap: stepCap })] : []),
+      // wall-time cap of a turn (the cost cap is `budget.maxTurnUsd` below)
+      ...(isMain && config.maxTurnMinutes > 0
+        ? [turnTimeLimit({ maxMinutes: config.maxTurnMinutes })]
+        : []),
     ]
 
     const agent = defineHarnessAgent({
@@ -404,6 +412,10 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         maxSteps: isMain ? Math.min(config.stepChunk, stepCap) : (def.maxTurns ?? 50),
       },
       compaction: { summarizeAt: 0.8, prune: {} },
+      // per-turn cost cap of the main agent (stop `cost-cap`; the UI explains how to raise it)
+      ...(isMain && config.maxTurnCostUsd > 0
+        ? { budget: { maxTurnUsd: config.maxTurnCostUsd } }
+        : {}),
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
       ...(deps.observe ? { observe: deps.observe } : {}),

@@ -29,7 +29,6 @@ import type { Database } from 'bun:sqlite'
 import type { LanguageModel } from 'ai'
 import {
   defineHarnessAgent,
-  errorText,
   type HarnessAgent,
   type HarnessSession,
   type HarnessWarning,
@@ -59,7 +58,6 @@ import {
   type AutoEvent,
   type AutoState,
   createPermissionEngine,
-  matchRule,
   modelClassifier,
   type PermissionEngine,
 } from 'eharness/permissions'
@@ -76,17 +74,6 @@ import {
   uploadPathOfUrl,
 } from '../../domain/chat.ts'
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
-import {
-  HEARTBEAT_ALLOWED,
-  HEARTBEAT_CONTENT_READS,
-  HEARTBEAT_FILE_WRITES,
-  HEARTBEAT_POST_TOOL,
-  type HeartbeatDestination,
-  heartbeatChannelRefusal,
-  heartbeatRefusal,
-  isFileWrite,
-  ledgerWriteRefusal,
-} from '../../domain/heartbeat.ts'
 import { type DriftNote, pinnedServers, stripMcpPins } from '../../domain/mcp-pins.ts'
 import {
   agentModeChoice,
@@ -98,15 +85,12 @@ import {
 import { nameOf, personaInstructions } from '../../domain/persona.ts'
 import {
   type AuthoritySources,
-  forbiddenReason,
-  outsideAuthorityReason,
   PROGRAM_BASE_TOOLS,
   PROGRAM_FILE_TOOLS,
   type ProgramAuthority,
   parseProgramSession,
   programDayScope,
   programMaxOutputTokens,
-  programRules,
   programRunScope,
   runFileTools,
   type ToolAvailability,
@@ -117,13 +101,6 @@ import { HAND_OVER_REMINDER, LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain
 import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
-import { destKey, needTools } from '../../domain/standing-orders.ts'
-import {
-  isMemoryTool,
-  MEMORY_EDIT_TOOLS,
-  MEMORY_VIEW_TOOL,
-  memoryCallRefusal,
-} from '../../domain/supervisor.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { taskGrantRules } from '../../domain/work-queue.ts'
 import {
@@ -132,7 +109,6 @@ import {
   createArtifactsHook,
 } from '../artifacts/index.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
-import { resolveConnectionRef } from '../channels/connection-ref.ts'
 import {
   CHANNEL_TOOLS,
   type ChannelGateway,
@@ -152,10 +128,11 @@ import { DATETIME_TOOL, MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
 import { DECISION_TOOLS, type DecisionIntake, decisions } from './decisions-plugin.ts'
 import { fileGrant } from './file-grant-plugin.ts'
+import { createHeartbeatGate } from './gates/heartbeat-gate.ts'
+import { createProgramGate } from './gates/program-gate.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { memoryDiscipline } from './memory-discipline-plugin.ts'
-import { toolFactsOf } from './order-tools.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import { type PersonaIntake, persona } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
@@ -1073,225 +1050,20 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     const gateOf = (sessionId: string): ProgramGate | undefined => {
       if (profileOfSession(sessionId).permissions !== 'program-authority') return undefined
       if (originOfSession(sessionId) === 'heartbeat') {
-        // the heartbeat is read-only and has one fixed authority (`HEARTBEAT_ALLOWED`)
-        const match = {
-          roots: [{ virtual: '/', real: '/' }],
-          toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
-        }
-        // the read-only tools of connected third-party services (a tracker, a CRM) are what the
-        // person's checklist usually asks a beat to look at; writes stay out (D18 of the e2e pass)
-        const kinds = deps.connectors.toolKinds(def.id) ?? {}
-        const lookups = Object.entries(out.toolNameMap)
-          .filter(
-            ([name, origin]) =>
-              kinds[name] === 'read' &&
-              !out.rules.deny.includes(name) &&
-              deps.connectors.definitions.find((d) => d.id === origin.connectorId)?.source !==
-                'builtin',
-          )
-          .map(([name]) => name)
-        /**
-         * Chat tools of a beat: reads go through (a download writes a file: refused); the one
-         * post is allowed only as a new message to the chat of an active standing order, inside the
-         * daily cap of that chat and not as a repeat. Read on every call, like a program's authority.
-         */
-        const channelCall = (call: { toolName: string; input: unknown }): string | undefined => {
-          const allowed = deps.heartbeat?.()?.allowed(def.id) ?? []
-          let target: HeartbeatDestination | { error: string } | undefined
-          const input = (call.input ?? {}) as Record<string, unknown>
-          const gw = deps.channels?.()
-          if (call.toolName === HEARTBEAT_POST_TOOL && allowed.length > 0 && gw !== undefined) {
-            try {
-              const str = (v: unknown): string | undefined =>
-                typeof v === 'string' ? v : undefined
-              const ref =
-                str(input.connection) === undefined
-                  ? undefined
-                  : resolveConnectionRef(gw.connectionsOf(def.id), input.connection as string)
-              if (ref !== undefined && !ref.ok) target = { error: ref.text }
-              else {
-                const conversation = str(input.conversation)
-                const topic = str(input.topic)
-                const t = gw.resolveTarget(def.id, sessionId, {
-                  ...(ref === undefined ? {} : { connection: ref.id }),
-                  ...(conversation === undefined ? {} : { conversation }),
-                  ...(topic === undefined ? {} : { topic }),
-                })
-                target = { connectionId: t.config.connectionId, nodeId: t.node.id }
-              }
-            } catch (error) {
-              target = { error: errorText(error) }
-            }
-          }
-          const refusal = heartbeatChannelRefusal(call, { allowed, target })
-          if (refusal !== undefined || call.toolName !== HEARTBEAT_POST_TOOL) return refusal
-          const text = typeof input.text === 'string' ? input.text : ''
-          if (text.trim() === '') return 'Not posted: send needs text.'
-          const to = destKey({
-            kind: 'chat',
-            connectionId: (target as HeartbeatDestination).connectionId,
-            nodeId: (target as HeartbeatDestination).nodeId,
-          })
-          // what a DM said never goes into a group (checked before the post is counted)
-          return (
-            deps.heartbeat?.()?.postPrivacy(def.id, to) ??
-            deps.heartbeat?.()?.reservePost(def.id, to, text)
-          )
-        }
-        /**
-         * A read of what people said (history, search, a message by id): only chats inside the read
-         * scope of the beat (the chats the givers of its live orders can read). The call must name
-         * a chat that resolves; a DM that was read is remembered for the post check.
-         */
-        const contentRead = (call: { toolName: string; input: unknown }): string | undefined => {
-          const hb = deps.heartbeat?.()
-          const gw = deps.channels?.()
-          if (hb === undefined || gw === undefined) return undefined
-          const input = (call.input ?? {}) as Record<string, unknown>
-          const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
-          const chat = str(input.chat) ?? str(input.conversation)
-          if (chat === undefined || chat.trim() === '') {
-            return `Not read: ${call.toolName} must name the chat (its id from channel_describe, its native id or its exact title). A heartbeat reads only the chats of its standing orders.`
-          }
-          const bound = gw.connectionsOf(def.id)
-          let ids = bound.map((c) => c.connectionId)
-          if (str(input.connection) !== undefined) {
-            const ref = resolveConnectionRef(bound, input.connection as string)
-            if (!ref.ok) return ref.text
-            ids = [ref.id]
-          }
-          let node: ReturnType<typeof gw.nodeOf>
-          for (const id of ids) {
-            node = gw.nodeOf(id, chat)
-            if (node !== undefined) break
-          }
-          if (node === undefined) {
-            return `Not read: "${chat}" is not a chat I ingest. Use channel_describe to list them.`
-          }
-          return hb.readCheck(def.id, {
-            nodeId: node.id,
-            title: node.title ?? node.nativeId,
-            ids: [node.id, ...gw.nodes.chain(node).map((n) => n.id)],
-            direct: node.kind === 'direct',
-          })
-        }
-        // what the live orders of owners and admins open for the running beat (P52): the tools of
-        // their `needs` that the agent actually has, and writing their ledger paths. The snapshot is
-        // read on every call; the engine rules below only make the candidates callable, `refuse`
-        // is what decides.
-        const facts = toolFactsOf(out, deps.connectors.toolKinds(def.id) ?? {})
-        const candidates = facts
-          .filter(
-            (f) =>
-              f.connectorId === 'web' ||
-              f.connectorId === 'browser' ||
-              deps.connectors.definitions.find((d) => d.id === f.connectorId)?.source !== 'builtin',
-          )
-          .map((f) => f.name)
-        const grants = (): { needs: string[]; writes: string[] } =>
-          deps.heartbeat?.()?.grants(def.id) ?? { needs: [], writes: [] }
-        const fileWrites = HEARTBEAT_FILE_WRITES.filter(
-          (t) => t in out.toolNameMap && !out.rules.deny.includes(t),
-        )
-        // the supervisor duty (P53): memory reads on the agent's own folder, and edits only in a beat
-        // whose observation has findings about its own memory (`memoryCallRefusal` decides, every call)
-        const memoryTools = [MEMORY_VIEW_TOOL, ...MEMORY_EDIT_TOOLS].filter(
-          (t) => !out.rules.deny.includes(t),
-        )
-        return {
-          rules: {
-            allow: [
-              ...HEARTBEAT_ALLOWED,
-              HEARTBEAT_POST_TOOL,
-              ...lookups,
-              ...candidates,
-              ...fileWrites,
-              ...memoryTools,
-            ],
-            deny: [],
-          },
-          refuse: (call) => {
-            if (isMemoryTool(call.toolName)) {
-              return memoryTools.includes(call.toolName)
-                ? memoryCallRefusal(call, {
-                    agentId: def.id,
-                    fixing: deps.heartbeat?.()?.memoryFix(def.id) === true,
-                  })
-                : heartbeatRefusal(call.toolName)
-            }
-            if (HEARTBEAT_CONTENT_READS.includes(call.toolName)) {
-              const refused = contentRead(call)
-              if (refused !== undefined) return refused
-              if (call.toolName !== 'channel_read') return undefined
-            }
-            if (call.toolName === HEARTBEAT_POST_TOOL || call.toolName === 'channel_read') {
-              return channelCall(call)
-            }
-            if (isFileWrite(call.toolName)) {
-              return fileWrites.includes(call.toolName) || call.toolName === 'delete_file'
-                ? ledgerWriteRefusal(call, grants().writes)
-                : heartbeatRefusal(call.toolName)
-            }
-            if (lookups.includes(call.toolName)) return undefined
-            if (candidates.includes(call.toolName)) {
-              return needTools(grants().needs, facts, out.rules).includes(call.toolName)
-                ? undefined
-                : `Not available in a heartbeat: ${call.toolName}. No live standing order of an owner or an admin needs it (an order lists its needs: web, browser, phone/<slug>).`
-            }
-            return HEARTBEAT_ALLOWED.some((rule) =>
-              matchRule(rule, call, { ...match, polarity: 'allow' }),
-            )
-              ? undefined
-              : heartbeatRefusal(call.toolName)
-          },
-          askedReason: heartbeatRefusal,
-        }
+        return createHeartbeatGate({
+          agentId: def.id,
+          sessionId,
+          out,
+          connectors: deps.connectors,
+          heartbeat: deps.heartbeat,
+          channels: deps.channels,
+        })
       }
       const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
       if (parsed === undefined) return undefined
-      const tools = Object.entries(out.toolNameMap).map(([name, origin]) => ({
-        name,
-        connectorId: origin.connectorId,
-        connectionIds: origin.connectionIds,
-      }))
-      const match = {
-        roots: [{ virtual: '/', real: '/' }],
-        toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
-      }
-      // a deleted program leaves nothing granted: its session can still be read, never act
-      const current = (): {
-        name: string
-        rules: { allow: string[]; deny: string[] }
-        readable: string[]
-      } => {
-        const program = deps.programs?.get(parsed.programId)
-        return {
-          name: program?.name ?? parsed.programId,
-          readable:
-            program === undefined ? [] : [...program.authority.read, ...program.authority.write],
-          rules: program === undefined ? { allow: [], deny: [] } : programRules(program, tools),
-        }
-      }
+      const gate = createProgramGate({ programId: parsed.programId, out, programs: deps.programs })
       return {
-        rules: current().rules,
-        refuse(call) {
-          const { name, rules, readable } = current()
-          for (const rule of rules.deny) {
-            if (matchRule(rule, call, { ...match, polarity: 'restrict' })) {
-              return forbiddenReason(name, call.toolName, rule)
-            }
-          }
-          const granted = rules.allow.some((rule) =>
-            matchRule(rule, call, { ...match, polarity: 'allow' }),
-          )
-          if (granted) return undefined
-          // a search or listing without a path scans the whole tree: say where it may look
-          const listing =
-            (match.toolKinds as Record<string, { listing?: unknown } | undefined>)[call.toolName]
-              ?.listing !== undefined
-          return outsideAuthorityReason(name, call.toolName, listing ? readable : [])
-        },
-        askedReason: (toolName) => outsideAuthorityReason(current().name, toolName),
+        ...gate,
         // a rehearsal does not call external systems that would change something: the call is
         // recorded and the model reads what it would have done (`domain/rehearsal.ts`)
         ...(originOfSession(sessionId) !== 'rehearsal'
@@ -1314,12 +1086,6 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
                 return simulatedText(call.toolName, call.input)
               },
             }),
-        // the engine learns rules the program gained since the session opened (session scope)
-        async sync(engine) {
-          const { rules } = current()
-          for (const rule of rules.allow) await engine.addRule('allow', rule, 'session')
-          for (const rule of rules.deny) await engine.addRule('deny', rule, 'session')
-        },
       }
     }
 

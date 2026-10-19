@@ -172,6 +172,13 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   /** The items this drain claimed and did not settle yet (attempts, kind, lastError). */
   const claimed = new Map<string, InboxItem>()
   const retry = host.retry
+  /**
+   * Ids whose `ack` / `release` failed. This owner still holds their claim, and every `claim` of
+   * the same owner renews it (it is never returned again), so waiting for the claim to expire
+   * would leave them stuck for as long as this instance lives: the next drain retries the call.
+   */
+  const unsettledAcks = new Map<string, string | undefined>()
+  const unsettledReleases = new Map<string, InboxReleaseOptions | undefined>()
 
   function hold(ids: readonly string[]): void {
     for (const id of ids) held.add(id)
@@ -231,7 +238,8 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
           await adapter.ack(ids)
         } catch (error) {
           ok = false
-          warn('ack', error) // redelivered after the claim expires; dedupe skips it then
+          warn('ack', error) // retried by the next drain (see `unsettledAcks`)
+          for (const id of ids) unsettledAcks.set(id, turnId)
         }
         unhold(ids)
         await releaseNow(after)
@@ -285,9 +293,42 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
       if (retry === undefined) await adapter.release(ids, { owner: rt.claimOwner })
       else await adapter.release(ids, { ...(opts ?? { uncount: true }), owner: rt.claimOwner })
     } catch (error) {
-      warn('release', error) // claimable again once the claim expires
+      warn('release', error) // retried by the next drain (see `unsettledReleases`)
+      const options = retry === undefined ? undefined : (opts ?? { uncount: true })
+      for (const id of ids) unsettledReleases.set(id, options)
     }
     unhold(ids)
+  }
+
+  /** Retry the `ack` / `release` calls that failed earlier (never rejects). */
+  async function retryUnsettled(): Promise<void> {
+    if (unsettledAcks.size > 0) {
+      const entries = [...unsettledAcks]
+      const ids = entries.map(([id]) => id)
+      try {
+        await adapter.ack(ids)
+        for (const id of ids) unsettledAcks.delete(id)
+        const byTurn = new Map<string | undefined, string[]>()
+        for (const [id, turnId] of entries) byTurn.set(turnId, [...(byTurn.get(turnId) ?? []), id])
+        for (const [turnId, group] of byTurn) {
+          rt.events.emit(
+            turnId === undefined
+              ? { type: 'inbox-drained', inboxIds: group }
+              : { type: 'inbox-drained', inboxIds: group, turnId },
+          )
+        }
+      } catch (error) {
+        warn('ack', error)
+      }
+    }
+    for (const [id, opts] of [...unsettledReleases]) {
+      try {
+        await adapter.release([id], { ...(opts ?? {}), owner: rt.claimOwner })
+        unsettledReleases.delete(id)
+      } catch (error) {
+        warn('release', error)
+      }
+    }
   }
 
   /** Release items after a failed attempt: backoff from their attempts, `lastError`. */
@@ -376,7 +417,8 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
       try {
         await adapter.ack([item.id])
       } catch (error) {
-        warn('ack', error) // redelivered after the claim expires, reported again then
+        warn('ack', error) // retried by the next drain (see `unsettledAcks`)
+        unsettledAcks.set(item.id, undefined)
       }
       unhold([item.id])
       announce(item)
@@ -701,6 +743,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   async function drainOnce(): Promise<void> {
     while (inflight.size > 0) await Promise.all([...inflight])
     if (closed) return
+    await retryUnsettled()
     if (Date.now() < holdoffUntil) {
       wakeAt(holdoffUntil)
       return

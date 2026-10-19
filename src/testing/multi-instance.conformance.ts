@@ -365,7 +365,8 @@ export function multiInstanceConformance(
         const hold = holdGate()
         const model = scriptedModel([slowCall, { text: 'first' }, { text: 'second' }])
         const a = ctx.open({ model, tools: tools(log, hold) })
-        const b = ctx.open({ model: scriptedModel([]), tools: tools(log) })
+        // the same script: either instance may run the queued turn once A's turn ended
+        const b = ctx.open({ model, tools: tools(log) })
         const run = a.session(ctx.sessionId).send('go')
         await until('the tool runs', () => log.slow > 0, ctx.timeout)
         await b.session(ctx.sessionId).enqueue('then this', { mode: 'queue' })
@@ -387,8 +388,9 @@ export function multiInstanceConformance(
       name: 'multi-instance: a wake held behind pending approvals runs once after B answers (inbox)',
       run: withStorage({ inbox: true }, async (ctx) => {
         const log = { paid: 0, slow: 0 }
-        const a = ctx.open({ model: scriptedModel([payCall]), tools: tools(log) })
-        const model = scriptedModel([{ text: 'paid' }, { text: 'saw the event' }])
+        // one script for both instances: whichever claims the wake runs it (a slow store can let A win)
+        const model = scriptedModel([payCall, { text: 'paid' }, { text: 'saw the event' }])
+        const a = ctx.open({ model, tools: tools(log) })
         const b = ctx.open({ model, tools: tools(log) })
         const first = await a.session(ctx.sessionId).send('pay').result
         assertTrue(first.stop === 'tool-pending', `A stopped ${first.stop}`)
@@ -404,9 +406,9 @@ export function multiInstanceConformance(
           .session(ctx.sessionId)
           .respond({ approvals: [{ id: approvalId, approved: true }] }).result
         assertTrue(answered.stop === 'complete', `B stopped ${answered.stop}`)
-        await until('the wake ran', () => model.calls.length >= 2, ctx.timeout)
+        await until('the wake ran', () => model.calls.length >= 3, ctx.timeout)
         await sleep(40 + (options.latencyMs ?? 0) * 4)
-        assertTrue(model.calls.length === 2, `the model was called ${model.calls.length} times`)
+        assertTrue(model.calls.length === 3, `the model was called ${model.calls.length} times`)
         assertTrue(log.paid === 1, `the tool ran ${log.paid} times`)
         await ctx.invariants(true)
       }),

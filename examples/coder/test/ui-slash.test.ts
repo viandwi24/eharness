@@ -101,6 +101,7 @@ describe('slash parsing', () => {
       'cost',
       'copy',
       'config',
+      'commit',
     ])
     expect(matchSlash('/').length).toBe(slashCommands.length)
     expect(matchSlash('/model x')).toEqual([])
@@ -159,6 +160,8 @@ describe('slash parsing', () => {
       'vim',
       'focus',
       'init',
+      'commit',
+      'pr',
       'exit',
     ])
   })

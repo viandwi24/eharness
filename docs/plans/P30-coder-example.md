@@ -651,24 +651,48 @@ at the end.
       chars) but not tuned or tested in the example)
 - [x] `@path` completion; `Ctrl+O` expand; diff view in prompts and cards (`ui-mentions.test.ts`,
       `ui-tool-summary.test.ts`, `ui-render.test.tsx`; `Ctrl+O` has no test)
-- [ ] Skills from `.coder/skills/` (`fsSkillSource` on the workspace fs): wired in `app/agent.ts`
-      and gated by project trust (trust tested in `config.test.ts`); loading skills is not tested
-- [ ] Acceptance: a two-hour session survives compaction and a process kill (`--continue`):
-      not run; resume is tested, compaction is not
+- [x] Skills from `.coder/skills/` (`fsSkillSource` on the workspace fs): wired in `app/agent.ts`
+      and gated by project trust (trust in `config.test.ts`; loading, untrusted and absent in
+      `test/mcp-skills.test.ts`)
+- [x] Acceptance (scripted): a long session survives repeated compaction and process kills
+      (`--continue`): `scripts/soak-session.ts` (36 turns, 3 kills, `/retry`, `/rewind`, invariants
+      asserted; shortened in `test/soak.test.ts`; guide section 7). The real-model, real two-hour
+      run stays open
+- [x] Eval suite `examples/coder/evals/`: 22 tasks, runner, `--scripted` offline replay tested in
+      `test/evals-runner.test.ts`, `--model` mode for real-model evidence (not run: no model run
+      in this environment)
 
 ### M5 — Stretch
 
-- [ ] MCP servers from settings (`mcpServer`, risk per server): implemented in `app/agent.ts`
-      (main agent only, project servers need trust); no automated test, and the security of this
-      path (MCP tools run with the user's privileges, they only ask by default) is untested
+- [x] MCP servers from settings (`mcpServer`, risk per server): implemented in `app/agent.ts`
+      (main agent only, project servers need trust); `test/mcp-skills.test.ts` runs an in-process
+      HTTP MCP server: prefixed tools, approval before a call, a denial never reaches the server,
+      deferred discovery, a bad or unreachable server skipped with a warning. MCP tools run with
+      the user's privileges and only ask by default (documented in the README safety model)
 - [x] OS sandbox driver for `bash` (macOS `sandbox-exec`, Linux `bubblewrap`), opt-in via `sandbox.enabled` (see the remaining-features notes)
-- [ ] `bun run compile` single binary; smoke-run it outside the repo: script exists, smoke not done
-- [ ] Docs: guide page `docs/guides/coding-agent.md` walking through the example: not done
+- [x] `bun run compile` single binary: a plain `bun build --compile` failed (`ink` imports the
+      uninstalled `react-devtools-core`); `scripts/compile.ts` stubs it. Smoke-run: `--version` and
+      `--help` work from the compiled binary
+- [x] Docs: guide page `docs/guides/coding-agent.md` (linked from `docs/guides/README.md` and the
+      coder README); Windows stated as unsupported (use WSL2) in the README safety model
+
+### Audit follow-ups (quick wins)
+
+- [x] Default safety ceiling: $5 and 30 minutes per turn (`--max-cost`, `--max-time`,
+      `limits.maxTurnCostUsd` / `limits.maxTurnMinutes`, `/config`, `/cost`); cost is the core
+      `budget.maxTurnUsd`, time is `turnTimeLimit` (`app/limits.ts`); a capped turn stops with a
+      readable notice (UI and print mode). Steps stay unlimited while on track. `test/limits.test.tsx`
+- [x] `eharness/clock`: the `datetime` tool on every agent (read-only, `safe` kind)
+- [x] React duplicate-key warning in the `?` shortcuts panel (`ui/Footer.tsx`, empty cells)
+- [x] `/commit` and `/pr` (prompt-driven, permission-gated `bash`, confirmation through
+      `ask_user_question`, nothing staged or pushed implicitly); no headless form.
+      `test/git-workflow.test.ts` (temp git repo, scripted model, fake `gh`)
+- [x] `/doctor` recommends the OS sandbox when it is available and off (never flipped silently)
 
 ## Acceptance criteria
 
-- [ ] All milestone acceptance items above (M1 to M3 hold with scripted models; M4 and the real-model
-      checks are open)
+- [ ] All milestone acceptance items above (M1 to M3 and the scripted soak hold with scripted models;
+      the real-model checks, `bun run eval -- --model <id>` and a real long session, are open)
 - [x] `examples/coder` lint and typecheck clean; its tests run offline with `scriptedModel`
 - [x] Root `bun run lint && bun run typecheck && bun test` stay green (1795 tests pass)
 - [x] No import from `src/**` internals: only `eharness`, `eharness/*` subpaths (same rule as

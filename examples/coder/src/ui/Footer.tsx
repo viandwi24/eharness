@@ -137,8 +137,10 @@ export function ShortcutsPanel(): ReactElement {
     <Box flexDirection="column" paddingX={2}>
       {SHORTCUT_ROWS.map((row) => (
         <Box key={row[0]}>
-          {row.map((cell) => (
-            <Box key={cell} width={width} flexShrink={0}>
+          {row.map((cell, column) => (
+            // rows have empty cells: the column is the only unique key
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed table, never reordered
+            <Box key={column} width={width} flexShrink={0}>
               <Text dimColor wrap="truncate-end">
                 {cell}
               </Text>

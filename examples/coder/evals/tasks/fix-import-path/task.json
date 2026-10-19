@@ -1,0 +1,8 @@
+{
+  "id": "fix-import-path",
+  "title": "Fix a broken import path",
+  "prompt": "src/app.ts fails to run because an import path is wrong. Fix it so `bun src/app.ts` prints \"4\".",
+  "check": "[ \"$(bun src/app.ts)\" = \"4\" ]",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

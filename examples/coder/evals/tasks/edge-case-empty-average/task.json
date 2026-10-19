@@ -1,0 +1,8 @@
+{
+  "id": "edge-case-empty-average",
+  "title": "Handle the empty list in average()",
+  "prompt": "average([]) returns NaN. Make it return 0 for an empty list and add a test for it.",
+  "check": "bun test",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

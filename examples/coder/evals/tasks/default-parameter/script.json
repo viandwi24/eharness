@@ -1,0 +1,36 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/repeat.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "write_file",
+        "input": {
+          "path": "/src/repeat.ts",
+          "content": "export function repeat(text: string, times: number, separator = ''): string {\n  return Array.from({ length: Math.max(0, times) }, () => text).join(separator)\n}\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Added separator."
+  }
+]

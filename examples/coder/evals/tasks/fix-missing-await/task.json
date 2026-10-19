@@ -1,0 +1,8 @@
+{
+  "id": "fix-missing-await",
+  "title": "Fix a missing await",
+  "prompt": "The test in test/cache.test.ts fails: after `await load(key)`, `peek(key)` returns a Promise instead of the number. Fix the bug in src/cache.ts.",
+  "check": "bun test",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

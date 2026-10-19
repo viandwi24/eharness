@@ -28,6 +28,8 @@ export const BUILTIN_SLASH_COMMANDS: readonly string[] = [
   'status',
   'todos',
   'init',
+  'commit',
+  'pr',
   'exit',
   'diff',
 ]

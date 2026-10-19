@@ -1,0 +1,8 @@
+{
+  "id": "refactor-extract-helper",
+  "title": "Extract a duplicated block into a helper",
+  "prompt": "src/report.ts formats money in two places with the same code. Extract a helper `formatMoney(cents: number): string` in the same file and use it in both places. Behaviour must not change.",
+  "check": "bun test && grep -c \"function formatMoney\" src/report.ts | grep -qx 1 && [ \"$(grep -c \"toFixed(2)\" src/report.ts)\" = 1 ]",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

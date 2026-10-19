@@ -1,0 +1,8 @@
+{
+  "id": "add-function-with-tests",
+  "title": "Add slugify() with tests",
+  "prompt": "Add an exported function `slugify(text: string): string` to src/strings.ts: lowercase, trim, replace runs of non-alphanumeric characters with one \"-\", no leading or trailing \"-\". Add tests in test/strings.test.ts.",
+  "check": "bun test",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

@@ -30,6 +30,11 @@ export {
   outboxStoreConformance,
 } from './channels.conformance.ts'
 export {
+  type ChaosStorage,
+  type ChaosStorageOptions,
+  chaosStorage,
+} from './chaos-storage.ts'
+export {
   type ConnectionStoreUnderTest,
   type CredentialStoreUnderTest,
   connectionStoreConformance,

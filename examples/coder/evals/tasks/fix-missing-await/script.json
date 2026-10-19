@@ -1,0 +1,37 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/cache.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "edit_file",
+        "input": {
+          "path": "/src/cache.ts",
+          "old_string": "const value = slowCompute(key)\n  store.set(key, value as unknown as number)",
+          "new_string": "const value = await slowCompute(key)\n  store.set(key, value)"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Awaited the computation before caching."
+  }
+]

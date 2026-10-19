@@ -1,0 +1,8 @@
+{
+  "id": "bump-package-version",
+  "title": "Bump the package version and add a script",
+  "prompt": "In package.json set the version to 1.3.0 and add an npm script \"lint\" that runs \"echo lint ok\". Keep other fields.",
+  "check": "bun check/check.ts",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

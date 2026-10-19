@@ -3,6 +3,7 @@
  * one-line notes on stderr), `json` prints one summary object, `stream-json` prints one JSON line
  * per UI message chunk. Approvals are never asked: the controller is built with the denying broker.
  */
+import { limitStopNotice } from './app/limits.ts'
 import { turnErrorText } from './app/turn-error.ts'
 import type { CoderController, PrintOptions } from './contracts.ts'
 
@@ -84,7 +85,8 @@ export async function runPrint(controller: CoderController, opts: PrintOptions):
   if (result.error !== undefined) {
     process.stderr.write(`coder: ${result.stop}: ${turnErrorText(result.error)}\n`)
   } else if (result.stop !== 'complete') {
-    process.stderr.write(`coder: turn ended with "${result.stop}"\n`)
+    const limit = limitStopNotice(result.stop, controller.config, true)
+    process.stderr.write(`coder: ${limit ?? `turn ended with "${result.stop}"`}\n`)
   }
 
   if (opts.format === 'text') {

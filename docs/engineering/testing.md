@@ -345,3 +345,24 @@ not worth a second harness until a Node-specific bug escapes.
 
 Target ≥ 90% lines for `src/messages`, `src/session`, `src/compaction`, `src/skills`,
 `src/filesystem`. Coverage is informative in CI (not a gate) until 0.1.0.
+
+## Chaos storage
+
+`chaosStorage(inner, { seed, conflictRate, conflictPorts, delayMs, failRate })` (`eharness/testing`)
+wraps the message, state, inbox and lock ports of one backend with seeded faults a real database
+produces: `StateAdapter.setIf` answers `false` (a rev conflict), `SessionLock.acquire` rejects with
+`EH_SESSION_BUSY`, `InboxAdapter.claim` answers `[]` (a lost race), every call is delayed by up to
+`delayMs`, and `failRate` makes inbox `ack` / `release` / `notify` fail before taking effect.
+`expireLease(sessionId)` loses the lease of the lock holder (its late release is a no-op), and
+`set({ conflictRate, … })` changes the rates while a test runs (for example calm until the turn is
+running). The fault sequence is deterministic per operation order; with concurrent instances the
+order still depends on timing, so assert invariants, not exact fault counts.
+
+Rules the faults respect: a conflict at the commit point or lock contention ends a send with
+`EH_SESSION_BUSY` (spec 05 §3, §8) and stores nothing, so tests that need a running turn first keep
+the rates at 0 until it runs. Adapter suites (`messageAdapterConformance`, `stateAdapterConformance`,
+`inboxAdapterConformance`) only tolerate delays (they assert that a `setIf` with the right rev
+succeeds); `multiInstanceConformance` also runs with lost inbox claims
+(`conflictPorts: ['inbox']`). Use one scripted model for instances that may run the same queued
+turn. The library's own run is `src/session/chaos.int.test.ts` (three instances, concurrent sends,
+steers and queued inputs with failing acks, remote abort, lost lease, persistEachStep upserts).

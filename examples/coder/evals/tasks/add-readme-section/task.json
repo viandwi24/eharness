@@ -1,0 +1,8 @@
+{
+  "id": "add-readme-section",
+  "title": "Document usage in the README",
+  "prompt": "README.md has no usage section. Add a \"## Usage\" section showing how to run `bun cli.ts <name>` and what it prints.",
+  "check": "grep -q \"^## Usage\" README.md && grep -q \"bun cli.ts\" README.md",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

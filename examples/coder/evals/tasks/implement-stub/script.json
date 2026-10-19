@@ -1,0 +1,36 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/fizz.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "write_file",
+        "input": {
+          "path": "/src/fizz.ts",
+          "content": "export function fizzbuzz(count: number): string[] {\n  const out: string[] = []\n  for (let n = 1; n <= count; n++) {\n    if (n % 15 === 0) out.push('FizzBuzz')\n    else if (n % 3 === 0) out.push('Fizz')\n    else if (n % 5 === 0) out.push('Buzz')\n    else out.push(String(n))\n  }\n  return out\n}\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Implemented fizzbuzz."
+  }
+]

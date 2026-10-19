@@ -90,6 +90,7 @@ New here? Read [getting started](getting-started.md); unfamiliar terms are in th
 |---|---|
 | [Walkthrough: multi-user server](walkthrough-server.md) | `examples/team` read in the order you would build it: storage, lock, stream log, inbox, recovery, background children, approvals, activity feed, `eharness/http`, `eharness/client`; why each exists and what breaks without it |
 | [Walkthrough: single-process CLI](walkthrough-cli.md) | `examples/coder` the same way: workspace, shell, interactive permissions, compaction, todos, subagents, skills, MCP, resume and crash recovery, Ink |
+| [A coding agent on eharness](coding-agent.md) | the map of `examples/coder`: modules used, permissions, sandbox, limits, resume and compaction, the git workflow, how to extend it |
 | [Coding agent example](../../examples/coder/README.md) | a terminal coding agent built only on the public API: virtual workspace, permission rules, subagents, Ink UI |
 | [Team app example](../../examples/team/README.md) | a web + server team of agents: agents as data, lead and role agents, board and approvals, routines, several instances, SQLite adapters |
 

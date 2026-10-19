@@ -1,7 +1,59 @@
 # Upgrading
 
+- [0.8 → 0.9](#upgrading-to-09)
 - [0.7 → 0.8](#upgrading-to-08)
 - [0.6 → 0.7](#upgrading-to-07)
+
+## Upgrading to 0.9
+
+0.9 is additive: no export of 0.8 is removed or renamed, and the peer dependencies are unchanged.
+It adds Draft subpaths (`eharness/browser` and `eharness/browser/node`, `eharness/channels`,
+`eharness/identity`, `eharness/scheduler`, `eharness/handoff`, `eharness/limits`, `eharness/clock`,
+`eharness/code`), new options with safe defaults, and a few defaults that change what the model sees
+or what is stored. Read the table, then run your tests.
+
+### 0.9 behaviour changes
+
+| Area | What changes | What to do |
+|---|---|---|
+| Tool media offload | `filesystem()` writes media of MCP tool results (screenshots, audio) to the new `toolMedia` service and stores small `media-ref` parts instead of base64. Projection and the live step read the bytes back (newest `toolOutput.keepImages` only); an expired file becomes a note; an offloaded image is followed by a text part with its path. Warning `W_TOOL_MEDIA_OFFLOAD`. | **One-way:** 0.8 cannot read `media-ref` parts, so do not roll back to 0.8 once an app stored new tool media. Set `filesystem({ toolMedia: false })` to keep the inline format. Make sure the file system behind `filesystem()` is durable (not a per-process memory one) if sessions must survive a restart. |
+| `toolOutput` | Limits no longer count or cut base64 media of a tool result; only text parts are shortened. New `toolOutput.keepImages`: the model sees the newest N media items, older ones become a note, and a model that cannot take images gets a refusal note. It also applies inside a running turn. | Re-check goldens that contained truncated base64. |
+| Typed agent generics | `NoticePayload.code` accepts app-defined strings (library codes still autocomplete), so `session.inject('eh.notice', { code: 'MY_CODE', ... })` type-checks without a cast; `HarnessAgent` / `HarnessSession` generics flow without casts. | Remove your casts. Exhaustive `switch`es over `NoticePayload['code']` need a default. |
+| Clipped reads | `GET /sessions/:id/messages?clip=<chars>` replaces big tool `input` / `output` and data-part `data` (and a long `reasoning` part, keeping a preview) with a `{ eharnessClipped, chars, preview }` marker; `GET /sessions/:id/messages/:messageId` returns one full message. The client gains `sessions.message`, `clip` on `sessions.messages` and `createChatSession`, `session.loadFull(messageId)` and `isClippedPart`. Read view only: storage is untouched. | Long chats: pass `clip` and load a full message on demand. A UI that renders `input` / `output` of a clipped part must handle the marker (`isClippedPart`). |
+| `browser_scroll` | `eharness/browser` has a read-risk `browser_scroll` tool (direction, amount or pages, scroll to a ref, optional wait), appended after the other tools; `browser_act` with `kind: 'scroll'` still works. | Scrolling no longer asks for approval. Override with the `risk` option; a permission rule that names the tool list by position needs a check. |
+| Leaked tool markup | Leaked tool-call markup (DeepSeek DSML and similar) is removed from model text before it is streamed, persisted and projected. `stripLeakedToolMarkup` is exported for UIs. | Nothing; text that quotes such markup on purpose is stripped too. |
+| Tool-call limits | `toolCalls.maxPerStep` (default 24): a step runs at most that many calls and an exact repeat in the same step does not run again. `toolCalls.maxIdenticalResults` (default 3, 0 disables): the same tool with the same input returning the same result that many times in a turn is refused. | Raise or disable them for tools that legitimately fan out or poll with identical results. |
+| Tool search | `tool_search` understands `select:<name>` and explains why a name cannot be loaded (`ToolSourceDef.explain`). A call to a deferred tool that was not loaded loads it for the next step. Unknown tools get a short readable error, not the full tool list. `grep` accepts a leading `(?i)` / `(?s)` / `(?m)`. | Update goldens of the error texts. |
+| Subagent stop | A background subagent that ends after a stop request still reports its final answer to the parent (a stopped report carries the text so far), and `agent_stop` on an agent that already ended returns its final answer. New `onPark: 'notice'` and `childSessionId` also receives the catalog key `agent`. | Parents that parsed "stopped" reports: they now carry text. |
+| Files the model cannot take | Projection replaces a stored file part whose modality the current model lacks (`ModelInfo.inputModalities` known) with a text note; text-like attachments with known bytes become text parts. `send()` / `edit()` refuse a new unsupported file with `EH_INVALID_INPUT` (`details.reason: 'unsupported-modality'`); `enqueue` and steers accept it whole. `inputFiles.describe` and `subagent({ files: { resolve } })` are new. | A session recovers after a model switch without storage changes. Catch the new refusal in upload UIs. |
+| Compaction | `summarizeAt` is capped at 95% of the guard's hard limit, and the summarizer call uses `settings.maxOutputTokens` (else `maxSummaryTokens + 12000`). | Reasoning models and large output reserves now compact; expect compactions that never happened before. |
+| State writes of `turn.end` hooks | State changed by `turn.end` hooks is written right after the hooks. | Nothing unless you counted state writes in tests. |
+| Inbox drain | A failed `InboxAdapter.ack` or `release` is retried by the next drain of the same instance (before, an item whose ack failed stayed claimed for as long as that instance lived). | Nothing; make sure `ack` / `release` are idempotent (the conformance suite checks it). |
+| MCP | `W_MCP_DRIFT` has `details.sessionId`; `remoteMcpSource({ refresh: 'turn' })`, `pinDefinitions` and the connector setting `reviewToolChanges` (default off) are new. | Nothing. |
+
+### Deprecations
+
+`eharness/group`, `eharness/guard` and `eharness/openapi` are deprecated (ADR-0062): every export has
+`@deprecated` with its replacement and they are removed at 1.0 unless a product adopts them. Nothing
+changes at runtime. Migration notes are in [start here](start-here.md); stop importing them in new
+code.
+
+### New things worth adopting from 0.9
+
+- [Start here](start-here.md): which module do I need. Every entry point states its stability label
+  (`**Stable:**`, `**Draft:**`, `@deprecated`) in its JSDoc.
+- Long jobs: `longRun()`, `stepBudget()` and `budgetNotice()` from `eharness/limits`; people in the loop:
+  `eharness/handoff` and `eharness/identity`; timed work: `eharness/scheduler`; chat delivery:
+  `eharness/channels`; `eharness/clock`; `eharness/code` (Python over the virtual file system);
+  `eharness/browser`.
+- `chaosStorage()` in `eharness/testing`: run your storage adapters and the multi-instance suite under
+  seeded conflicts, lost leases and slow calls ([testing](../engineering/testing.md#chaos-storage)).
+- Connectors: `ConnectionCredentials.session`, the `qr` flow view and the `resend` action.
+
+### Draft surfaces of 0.9
+
+All new subpaths above are Draft and may change in a minor release
+([API stability](../engineering/api-stability.md#draft-modules-and-sections)).
 
 ## Upgrading to 0.8
 

@@ -1,0 +1,36 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/cli.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "write_file",
+        "input": {
+          "path": "/cli.ts",
+          "content": "const args = process.argv.slice(2)\nconst upper = args.includes('--upper')\nconst name = args.find((a) => !a.startsWith('--')) ?? 'world'\nconst line = `Hello, ${name}!`\nconsole.log(upper ? line.toUpperCase() : line)\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun cli.ts Ada --upper"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Added --upper."
+  }
+]

@@ -38,6 +38,7 @@ export const TOOL = {
   webFetch: 'web_fetch',
   webSearch: 'web_search',
   lsp: 'lsp',
+  datetime: 'datetime',
 } as const
 export type CoderToolName = (typeof TOOL)[keyof typeof TOOL]
 
@@ -55,6 +56,8 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   'search_skills',
   'tool_search',
   TOOL.lsp,
+  // pure date arithmetic (`eharness/clock`)
+  TOOL.datetime,
 ]
 
 // ─── Configuration ───────────────────────────────────────────────────────────────────────────
@@ -108,6 +111,12 @@ export interface CoderSettings {
   deferTools?: boolean
   /** Steps per chunk of a turn: the first `loop.maxSteps` and each `stepBudget` extension (default 50). */
   stepChunk?: number
+  /**
+   * Safety ceiling of ONE turn (every new message starts a new turn): estimated cost in USD
+   * (default 5) and wall time in minutes (default 30). `0` turns a cap off. Changes apply at the
+   * next start. A project file may only set them when the project is trusted.
+   */
+  limits?: { maxTurnCostUsd?: number; maxTurnMinutes?: number }
   /** Shell hooks on agent events (project hooks need trust). */
   hooks?: Partial<
     Record<HookEvent, Array<{ matcher?: string; command: string; timeoutMs?: number }>>
@@ -167,6 +176,10 @@ export interface CoderConfig {
   maxSteps: number
   /** `stepChunk` setting (default 50). */
   stepChunk: number
+  /** Per-turn cost cap in USD (`--max-cost`, `limits.maxTurnCostUsd`); default 5, `0` = none. */
+  maxTurnCostUsd: number
+  /** Per-turn wall-time cap in minutes (`--max-time`, `limits.maxTurnMinutes`); default 30, `0` = none. */
+  maxTurnMinutes: number
   /** Default 2: subagent nesting depth below the main agent. */
   maxAgentDepth: number
   /** `deferTools` setting (default true). */

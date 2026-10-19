@@ -87,6 +87,42 @@ export interface SlashCommand {
 export const INIT_PROMPT =
   'Analyse this project: its layout, languages, build, test and lint commands, conventions and anything a new contributor should know. Then write an AGENTS.md at the project root that captures it concisely (commands first). If a CLAUDE.md already exists at the project root, update that file instead (it takes precedence over AGENTS.md); if an AGENTS.md already exists, improve it instead of replacing it.'
 
+/**
+ * Prompt of `/commit`. Everything runs through the normal tools: every git command is a `bash`
+ * call that the permission engine decides on, and the confirmation is an `ask_user_question`.
+ * Nothing is staged implicitly and nothing is pushed.
+ */
+export function commitPrompt(hint: string): string {
+  return [
+    'Commit the changes that are already staged, step by step. Follow these rules exactly:',
+    '1. Run `git diff --cached --stat` and `git diff --cached` (and `git log -5 --format=%s` for the style of this repository). If nothing is staged, say so, list what is unstaged with `git status --short`, tell the user to stage what they want (for example `git add <files>`), and STOP. Never run `git add`, `git commit -a`, `git stash`, `git reset`, `git push` or `--amend` yourself.',
+    '2. Draft one Conventional Commit message from the staged diff: `type(scope): summary` (feat, fix, docs, refactor, test, chore, build, ci, perf; imperative, under 72 characters), then an optional short body explaining why. Do not mention that an AI wrote it and add no co-author or attribution lines unless the repository history does.',
+    '3. Call `ask_user_question` once: show the diff summary (the files and line counts) and the full proposed message in the question text, with the options "Commit" and "Cancel". An "Other" answer is the user\'s edited message: use it as is.',
+    '4. Only on "Commit" or an edited message, run `git commit` with that message (`-m` for the subject and a second `-m` for the body). Pass the message safely (single quotes or a heredoc). Report the new commit hash and subject. On "Cancel", stop and change nothing.',
+    hint ? `The user adds: ${hint}` : '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n')
+}
+
+/**
+ * Prompt of `/pr`: draft title and body from the branch diff and open the pull request with
+ * `gh pr create`, after the user confirmed. `gh` and `git` run as permission-gated `bash` calls.
+ */
+export function prPrompt(hint: string): string {
+  return [
+    'Open a pull request for the current branch, step by step. Follow these rules exactly:',
+    '1. Check the tools: run `gh --version`. If `gh` is not installed, say so and tell the user to install the GitHub CLI (https://cli.github.com) and run `gh auth login`, then STOP. Also run `git status --short` and `git branch --show-current`; if the branch is `main`/`master` or detached, STOP and ask the user to switch to a feature branch.',
+    '2. Find the base branch (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`, else `main`). Read the branch changes with `git log <base>..HEAD --format=%s%n%b`, `git diff <base>...HEAD --stat` and `git diff <base>...HEAD`. If there is nothing ahead of the base, say so and STOP. Tell the user if there are uncommitted changes (they will not be in the pull request); never commit for them.',
+    '3. Draft a title (Conventional Commit style, under 70 characters) and a Markdown body: a short summary, the notable changes as bullets, and a test plan. Base it on the diff, not on guesses.',
+    '4. Call `ask_user_question` once: show the base and head branches, the diff summary, the title and the body, and whether the branch is pushed (`git rev-parse --abbrev-ref @{u}`; if it has no upstream, say that `git push -u origin HEAD` will run first). Options: "Create pull request", "Create as draft", "Cancel".',
+    '5. Only on a create option: push the branch if needed (`git push -u origin HEAD`), then run `gh pr create --base <base> --title <title> --body <body>` (add `--draft` for a draft; pass the text safely with single quotes or `--body-file -` and a heredoc). Print the pull request URL. On "Cancel", stop and change nothing.',
+    hint ? `The user adds: ${hint}` : '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n')
+}
+
 const RULE_KINDS: readonly (keyof PermissionRules)[] = ['allow', 'ask', 'deny']
 
 function isRuleKind(value: string | undefined): value is keyof PermissionRules {
@@ -512,6 +548,19 @@ export const slashCommands: SlashCommand[] = [
     description:
       'Ask the agent to write or update the project instructions (AGENTS.md / CLAUDE.md)',
     run: (ctx) => ctx.submit(INIT_PROMPT),
+  },
+  {
+    name: 'commit',
+    usage: '[hint]',
+    description:
+      'Commit the staged changes with a drafted Conventional Commit message (asks first)',
+    run: (ctx) => ctx.submit(commitPrompt(ctx.args)),
+  },
+  {
+    name: 'pr',
+    usage: '[hint]',
+    description: 'Open a pull request for this branch with gh (drafts title and body, asks first)',
+    run: (ctx) => ctx.submit(prPrompt(ctx.args)),
   },
   {
     name: 'exit',

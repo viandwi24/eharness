@@ -1,0 +1,8 @@
+{
+  "id": "remove-dead-code",
+  "title": "Remove an unused function",
+  "prompt": "The function `legacyFormat` in src/format.ts is not used anywhere. Remove it (and its now-unused helper) without changing the rest.",
+  "check": "bun test && ! grep -rn \"legacyFormat\\|oldPad\" src",
+  "timeoutSec": 120,
+  "maxCostUsd": 0.5
+}

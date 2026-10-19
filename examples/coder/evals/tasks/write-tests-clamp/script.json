@@ -1,0 +1,36 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": {
+          "path": "/src/clamp.ts"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "write_file",
+        "input": {
+          "path": "/test/clamp.test.ts",
+          "content": "import { expect, test } from 'bun:test'\nimport { clamp } from '../src/clamp.ts'\n\ntest('below range', () => {\n  expect(clamp(-5, 0, 10)).toBe(0)\n})\n\ntest('above range', () => {\n  expect(clamp(50, 0, 10)).toBe(10)\n})\n\ntest('inside range', () => {\n  expect(clamp(5, 0, 10)).toBe(5)\n})\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "bash",
+        "input": {
+          "command": "bun test"
+        }
+      }
+    ]
+  },
+  {
+    "text": "Added three tests."
+  }
+]

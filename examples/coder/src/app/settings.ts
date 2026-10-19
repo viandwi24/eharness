@@ -17,7 +17,13 @@ import {
   THINKING_LEVELS,
   type ThinkingLevel,
 } from '../contracts.ts'
-import { mergeSettings, readSettingsLayers, type SettingsLayer } from './config.ts'
+import {
+  DEFAULT_MAX_TURN_COST_USD,
+  DEFAULT_MAX_TURN_MINUTES,
+  mergeSettings,
+  readSettingsLayers,
+  type SettingsLayer,
+} from './config.ts'
 import { loadPreferences, savePreferences } from './preferences.ts'
 import { MODEL_PROVIDERS } from './provider.ts'
 
@@ -208,6 +214,25 @@ const DESCRIPTORS: Descriptor[] = [
     default: false,
     store: 'settings',
     parse: bool,
+  },
+  {
+    key: 'limits.maxTurnCostUsd',
+    label: 'Turn cost cap (USD)',
+    description:
+      'Stop a turn when its estimated cost reaches this (0 = no cap). Applies at next start.',
+    type: 'number',
+    default: DEFAULT_MAX_TURN_COST_USD,
+    store: 'settings',
+    parse: nonNegative,
+  },
+  {
+    key: 'limits.maxTurnMinutes',
+    label: 'Turn time cap (min)',
+    description: 'Stop a turn after this many minutes (0 = no cap). Applies at next start.',
+    type: 'number',
+    default: DEFAULT_MAX_TURN_MINUTES,
+    store: 'settings',
+    parse: nonNegative,
   },
   {
     key: 'statusLine.command',
