@@ -112,6 +112,13 @@ paths.
   beat.
 - The beat edits memory through the model; a bad edit is visible in the beat log but is not rolled
   back automatically.
-- The supervisor's own questions (`heartbeat_ask_owner`) carry free-text options chosen by the
-  model; they are answers for the agent to read, not commands. Program consistency findings are
-  Health findings, not decisions, so nothing there is executed by an answer.
+- [x] `heartbeat_ask_owner` takes a structured `action` (`retry-run`, `pause-routine`,
+  `remove-order`, `propose-program-tool`, `fix-finding`) instead of free options: the server checks
+  it is possible now, offers it and "Leave it", carries it out when the owner picks it
+  (`app/answer-actions.ts`, through `orderActions`), and records the outcome on the decision. Free
+  options stay answers for the agent to read.
+- [x] Health one-click fixes (`app/consistency-fix.ts`, `POST /agent-health/findings/{fingerprint}/fix`,
+  `fixAction` on the finding, confirmation on the page): un-forbid a granted tool, delete the
+  duplicate program or routine that has no runs (both none: the identical newer copy), remove the
+  order that repeats a program note. The server re-scans and re-plans on every click; other findings
+  keep their text fix.

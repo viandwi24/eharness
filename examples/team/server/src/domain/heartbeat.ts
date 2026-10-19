@@ -34,6 +34,7 @@ import {
   HEARTBEAT_REPORT_TOOL,
   type OrderDestination,
   PER_DESTINATION_DAILY_CAP,
+  type PostOrder,
   type ReadScope,
   type StandingOrder,
 } from './standing-orders.ts'
@@ -352,6 +353,8 @@ export interface HeartbeatState {
   grants?: { needs: string[]; writes: string[]; sessions: string[] }
   /** What the running beat may read of the chats and where it may carry it (`readScopeOf`). */
   reads?: ReadScope
+  /** The live orders of the running beat as the post check sees them (`privateOrderRefusal`). */
+  postOrders?: PostOrder[]
   /** Orders the owners answered "keep" to (retire question): not asked again for a while. orderId to instant. */
   keptOrders?: Record<string, number>
   /**
@@ -1035,7 +1038,8 @@ export function beatPrompt(input: {
   if (chatOrders.length > 0) {
     steps.push([
       'To report to a chat order call channel_send with action "send", the order\'s connection and',
-      'conversation exactly as listed, one or two short lines, and nothing else. Where the order says',
+      'conversation exactly as listed and `order` set to the order id, one or two short lines, and nothing else.',
+      "A member's order is private to that member: never put its words in a post for another order. Where the order says",
       'to mention the person, pass their platform user id in `mention`. That is the only place you may',
       'post for that order; a repeat of something already posted and anything over the daily cap is',
       'refused. Reporting is never required.',

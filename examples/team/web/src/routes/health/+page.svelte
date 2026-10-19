@@ -2,6 +2,7 @@
 	import HeartbeatIcon from 'phosphor-svelte/lib/Heartbeat';
 	import { onMount } from 'svelte';
 	import { api } from '#lib/api/index.js';
+	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -89,6 +90,26 @@
 		}
 	}
 
+	/** The one-click fix waiting for a confirmation (the sentence says exactly what will change). */
+	let fixing = $state<Finding | null>(null);
+	let fixOpen = $state(false);
+
+	async function runFix(): Promise<void> {
+		const f = fixing;
+		if (!f) return;
+		busy = f.fingerprint;
+		try {
+			const r = await api.post('/agent-health/findings/{fingerprint}/fix', { params: { fingerprint: f.fingerprint }, body: { confirm: true } });
+			toast.success(r.outcome);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not fix it');
+		} finally {
+			busy = null;
+			fixing = null;
+			await load();
+		}
+	}
+
 	const shown = $derived(sortFindings(filterFindings(findings ?? [], { agentId: agentFilter, severity: severityFilter })));
 	const groups = $derived(splitConsistency(shown));
 	const counts = $derived(severityCounts(findings ?? []));
@@ -116,12 +137,17 @@
 								<Button size="sm" variant="outline" onclick={() => openEditAgent(f.agentId as string, 'memory')}>Open the memory file</Button>
 							{/if}
 						{/if}
+						{#if f.fixAction}
+							<Button size="sm" disabled={busy === f.fingerprint} data-testid="health-fix" onclick={() => { fixing = f; fixOpen = true; }}>{f.fixAction.label}</Button>
+						{/if}
 						<Button size="sm" variant="ghost" disabled={busy === f.fingerprint} onclick={() => void setDismissed(f, !f.dismissed)}>
 							{f.dismissed ? 'Show again' : 'Dismiss'}
 						</Button>
 					</div>
 				</Card>
 {/snippet}
+
+<ConfirmDialog bind:open={fixOpen} title={fixing?.fixAction?.label ?? 'Fix it'} description={fixing?.fixAction?.confirm ?? ''} confirmLabel="Do it" confirmVariant="default" onConfirm={runFix} />
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 	<PageHeader title="Health" description="Problems the server noticed in the last 24 hours, from its own data.">

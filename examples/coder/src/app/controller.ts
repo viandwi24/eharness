@@ -23,6 +23,7 @@ import {
   type AgentDefinition,
   type ApprovalBroker,
   type BackgroundTask,
+  type BrowserStatusInfo,
   type CoderConfig,
   type CoderController,
   type CoderMessage,
@@ -51,7 +52,13 @@ import { createLspManager } from '../lsp/index.ts'
 import { createBroker, createPermissionEngine, describeApproval } from '../permissions/index.ts'
 import { createWorkspace } from '../workspace/index.ts'
 import { type Agents, type CreateAgentsDeps, createAgents } from './agent.ts'
+import {
+  browserToolKinds,
+  type CreateBrowserSupportOptions,
+  createBrowserSupport,
+} from './browser.ts'
 import { createCheckpoints } from './checkpoints.ts'
+import { type CreateCodeSupportOptions, createCodeSupport } from './code-sandbox.ts'
 import { expandBody, expandSkill, type LoadedCommand, loadCommands } from './commands.ts'
 import { mergeSettings, readSettingsLayers } from './config.ts'
 import { computeDiff } from './diff.ts'
@@ -105,6 +112,10 @@ export interface CreateControllerOptions {
   webFetch?: CreateAgentsDeps['webFetch']
   /** Start on this session id (wins over `config.resume` and `config.continueLast`). */
   sessionId?: string
+  /** Replace the real browser adapters of the `browser` setting (tests; no real browser). */
+  browserAdapters?: CreateBrowserSupportOptions['adapters']
+  /** Replace the scratch sandbox of the `code` setting (tests). */
+  codeSandbox?: CreateCodeSupportOptions['sandbox']
 }
 
 /** A user `!command` is stopped after this long (ms) ... */
@@ -155,8 +166,33 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     os: osOptions(startSettings.sandbox, osProblem === undefined),
     env: devToolEnv(process.env),
   })
+  // opt-in tools (`browser`, `code` settings); off unless the user's settings turn them on
+  const browserSupport = await createBrowserSupport({
+    settings: startSettings.browser,
+    userDir: config.userDir,
+    ...(opts.browserAdapters ? { adapters: opts.browserAdapters } : {}),
+  })
+  // the code sandbox has its own OS isolation, independent of the bash `sandbox` setting
+  const codeProblem =
+    startSettings.code?.enabled === true && opts.codeSandbox === undefined
+      ? probeOsSandbox(true)
+      : undefined
+  if (codeProblem !== undefined) {
+    warn(
+      startSettings.code?.allowUnsandboxed === true
+        ? 'code.enabled: no OS sandbox is available here: run_python runs unsandboxed (code.allowUnsandboxed)'
+        : 'code.enabled: no OS sandbox is available here (sandbox-exec or bwrap): run_python will refuse to run',
+    )
+  }
+  const codeSupport = createCodeSupport({
+    settings: startSettings.code,
+    osUsable: codeProblem === undefined,
+    env: devToolEnv(process.env),
+    ...(opts.codeSandbox ? { sandbox: opts.codeSandbox } : {}),
+  })
   const permissions = createPermissionEngine({
     config,
+    ...(browserSupport ? { toolKinds: browserToolKinds(browserSupport.localOnly) } : {}),
     mounts: () => workspace.mounts(),
     // the classifier follows the session's model unless `autoMode.model` / CODER_AUTO_MODEL names one
     classifierModel: () =>
@@ -378,6 +414,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     outputStyle: () => outputStyles.instruction(settingsMgr.setting('outputStyle')),
     taskHub,
     lsp,
+    ...(browserSupport ? { browser: browserSupport } : {}),
+    ...(codeSupport ? { code: codeSupport } : {}),
     ...(search ? { search } : {}),
     ...(opts.webFetch ? { webFetch: opts.webFetch } : {}),
   })
@@ -1085,11 +1123,31 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     statusLineText: () => statusLine.text(),
 
+    async browserStatus(): Promise<BrowserStatusInfo> {
+      const lines = browserSupport ? (await browserSupport.status()).lines : []
+      if (!browserSupport) {
+        lines.push(
+          'Browser tools are off. Turn them on with {"browser": {"enabled": true}} in settings.',
+        )
+      }
+      if (codeSupport) {
+        lines.push(
+          `run_python is on: synced folders ${codeSupport.mounts.join(', ')}; ${
+            codeSupport.requireIsolation ? 'needs the OS sandbox' : 'may run without the OS sandbox'
+          }.`,
+        )
+      } else {
+        lines.push('run_python is off. Turn it on with {"code": {"enabled": true}} in settings.')
+      }
+      return { enabled: browserSupport !== undefined, lines }
+    },
+
     async close(): Promise<void> {
       controller?.abort()
       for (const a of adoptAborts) a.abort()
       taskHub.close()
       await lsp.close().catch(() => {})
+      await browserSupport?.close().catch(() => {})
       await (await agentsReady).closeAll()
       await saving
       await instance.release()

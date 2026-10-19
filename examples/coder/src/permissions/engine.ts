@@ -97,6 +97,8 @@ export function createPermissionEngine(opts: {
    * `autoMode.model` says otherwise). Without it auto mode is unavailable.
    */
   classifierModel?: () => LanguageModel
+  /** Kinds of opt-in tools (the browser tools), merged over {@link TOOL_KINDS}. */
+  toolKinds?: ToolKinds
 }): CoderPermissionEngine {
   const { config } = opts
   const classifierModel = opts.classifierModel
@@ -136,7 +138,7 @@ export function createPermissionEngine(opts: {
       deny: config.rules.deny.filter((r) => parseRule(r) !== undefined),
     },
     protectedPaths: PROTECTED_PATHS,
-    toolKinds: TOOL_KINDS,
+    toolKinds: { ...TOOL_KINDS, ...opts.toolKinds },
     // only `project` rules reach `persist` (the library keeps `session` rules in memory)
     persist: async (_rules, change) => {
       await editLocalSettings(config.settingsFiles.local, change)

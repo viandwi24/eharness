@@ -13,6 +13,7 @@
 import { tool } from 'ai'
 import { definePlugin, errorText, type HarnessContext, type HarnessPlugin } from 'eharness'
 import { z } from 'zod'
+import { ACTION_KINDS, type ActionKind } from '../../app/answer-actions.ts'
 import { READ_BRIEFINGS_DESCRIPTION, READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import {
   BEAT_DECISIONS,
@@ -66,10 +67,25 @@ export interface HeartbeatIntake {
   /** May the running beat read this chat (the node and its ancestors)? A readable refusal; an allowed read of a DM is remembered. */
   readCheck(
     agentId: string,
-    target: { nodeId: string; title: string; ids: readonly string[]; direct: boolean },
+    target: {
+      nodeId: string
+      title: string
+      names?: readonly string[] | undefined
+      ids: readonly string[]
+      direct: boolean
+    },
   ): string | undefined
   /** A post of the running beat to a destination (`destKey`): refused when it would carry what a DM said into a group. */
   postPrivacy(agentId: string, to: string): string | undefined
+  /**
+   * Where a post may go and what it may carry: a member's private order stays in its own chat
+   * (the post names `order`), and what a group said goes into another group only through an order
+   * of an owner or an admin. `destIds`: the chat and its ancestors.
+   */
+  postScope?(
+    agentId: string,
+    post: { to: string; destIds: readonly string[]; text: string; order?: string | undefined },
+  ): string | undefined
   /** Count a post the beat is about to make to a destination; a readable refusal over the cap or for a repeat. */
   reservePost(agentId: string, to: string, text: string): string | undefined
   /** Report to the web chat of a standing order. A readable string either way. */
@@ -86,9 +102,10 @@ export interface HeartbeatIntake {
       diagnosis: string
       fix: string
       options?: string[] | undefined
+      action?: { kind: ActionKind; target: string; tool?: string | undefined } | undefined
       fingerprint?: string | undefined
     },
-  ): string
+  ): Promise<string>
   /** The running beat may edit its own memory (its supervisor list has memory findings); read by the gate. */
   memoryFix(agentId: string): boolean
   /** A memory edit of the running beat happened (kept for the beat log and the digest). */
@@ -290,6 +307,16 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
               diagnosis: z.string().min(1).max(1500),
               fix: z.string().min(1).max(600).describe('The concrete action.'),
               options: z.array(z.string().max(80)).max(5).optional(),
+              action: z
+                .object({
+                  kind: z.enum(ACTION_KINDS),
+                  target: z.string().min(1).max(300),
+                  tool: z.string().max(100).optional(),
+                })
+                .optional()
+                .describe(
+                  'When the fix is one of these, give it instead of options: the server checks it is possible, offers it as the answer ("do it" or "leave it") and carries it out when the owner picks it. retry-run: target a failed task id. pause-routine: a routine id. remove-order: a standing order id. propose-program-tool: target a program id and `tool` the tool name (creates the change card). fix-finding: target the fingerprint of a consistency item that has a one-click fix.',
+                ),
               fingerprint: z
                 .string()
                 .max(200)
@@ -299,7 +326,7 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
             metadata: { risk: 'write', idempotent: false },
             execute: async (input): Promise<string> => {
               try {
-                return intake().askOwner(agentId, input)
+                return await intake().askOwner(agentId, input)
               } catch (error) {
                 return `ERROR: could not ask: ${errorText(error)}`
               }

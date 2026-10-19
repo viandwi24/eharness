@@ -95,8 +95,12 @@ compare-and-set (`app/standing-orders.ts`).
   giver of a live order can read themselves (owner/admin and the web owner: every allowed chat; a
   member: their own chats; a giver who is gone: none), the owner's plain checklist items count as
   the owner's. Once a beat has read a DM, a post may go only back to that DM or to the DM or web
-  chat of a person who can read it, never into a group. Open: the text of an order sits in the
-  beat prompt and in `HEARTBEAT.md`, which the beat reads as library; a member's private order
-  could still be paraphrased by the model into a post to a destination that is not a DM.
+  chat of a person who can read it, never into a group. Two more gate rules (`postScope`,
+  `privateOrderRefusal`, `crossGroupRefusal`, `test/critical-flows.test.ts` rows 13 and 14): while a
+  member's order is live every `channel_send` names the order it is for (`order`) and goes only to
+  that order's own report chat, and a post for another order must not repeat a five-word run of a
+  member's order; what a beat read in group A goes into another group B only when a live order of
+  an owner or an admin reports to B and names A (title, native id or ref). Open: the gate cannot
+  judge a paraphrase of a member's order that shares no five-word run with it.
 - [x] An order whose destination chat is removed or closed is paused on the next beat (reason in
   its tail) and one Decision Center question asks to remove it; it is not retried on every beat.

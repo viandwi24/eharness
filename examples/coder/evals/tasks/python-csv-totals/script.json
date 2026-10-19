@@ -1,0 +1,32 @@
+[
+  {
+    "toolCalls": [
+      {
+        "toolName": "read_file",
+        "input": { "path": "/work/sales.csv" }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "write_file",
+        "input": {
+          "path": "/work/totals.py",
+          "content": "import csv\nimport json\nfrom collections import defaultdict\n\ntotals = defaultdict(float)\nwith open('work/sales.csv', newline='') as f:\n    for row in csv.DictReader(f):\n        totals[row['region']] += float(row['amount'])\n\nwith open('work/report.json', 'w') as out:\n    json.dump(dict(totals), out, indent=2)\nprint(dict(totals))\n"
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "toolName": "run_python",
+        "input": { "file": "/work/totals.py" }
+      }
+    ]
+  },
+  {
+    "text": "Wrote work/report.json: north 160, south 100, east 15.5."
+  }
+]

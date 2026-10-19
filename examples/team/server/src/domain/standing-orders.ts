@@ -557,6 +557,18 @@ export interface ReadScope {
   nodes: string[]
   carriers: Record<string, string[]>
   seen: string[]
+  /** The groups (not direct chats) this beat has read so far, with the ids of their ancestors. */
+  groups?: ReadGroup[]
+}
+
+/** A group, channel or topic a beat read: what the group-to-group rule compares a post against. */
+export interface ReadGroup {
+  nodeId: string
+  title: string
+  /** What people call it: its title and its native id. */
+  names: string[]
+  /** The node and its ancestors. */
+  ids: string[]
 }
 
 /**
@@ -630,6 +642,111 @@ export function privatePostRefusal(
   for (const p of scope.seen) {
     if ((scope.carriers[p] ?? []).includes(to)) continue
     return `Not posted: this beat read a private chat ("${titleOf(p)}"), and what a direct chat said may go only back to that chat or to the direct chat or web chat of a person who can read it, never to a group. Leave this report out, or put it in the result as an item (it reaches the owners' digest).`
+  }
+  return undefined
+}
+
+// --- where a post may go, and what it may carry (P51 privacy follow-ups) ----------------------
+
+/** A live order of the running beat as the post check sees it (stored at the start of the beat). */
+export interface PostOrder {
+  id: string
+  text: string
+  refs: string[]
+  /** Its report destination (`destKey`). */
+  report: string
+  /** The giver is an owner or an admin today (a member's order is private to the member). */
+  staff: boolean
+}
+
+export const postOrderOf = (o: StandingOrder, staff: boolean): PostOrder => ({
+  id: o.id,
+  text: o.text,
+  refs: o.refs,
+  report: destKey(o.report),
+  staff,
+})
+
+const words = (t: string): string[] =>
+  t
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .split(' ')
+    .filter((w) => w !== '')
+
+/**
+ * Does `text` repeat a run of `source` word for word? The run is five words (the whole source when
+ * it has three or four). The gate cannot judge a paraphrase; this catches the copy and the near copy.
+ */
+export function repeatsRun(text: string, source: string): boolean {
+  const s = words(source)
+  if (s.length < 3) return false
+  const n = Math.min(5, s.length)
+  const hay = ` ${words(text).join(' ')} `
+  for (let i = 0; i + n <= s.length; i++) {
+    if (hay.includes(` ${s.slice(i, i + n).join(' ')} `)) return true
+  }
+  return false
+}
+
+/**
+ * A member's standing order is private to the member, yet its text is in the beat's prompt. While
+ * one is live every post must name the order it is for (`order`), and goes only to that order's own
+ * report destination. A post for an order of an owner or an admin must not repeat what a member's
+ * order says (a copied run of words). Pure.
+ */
+export function privateOrderRefusal(
+  orders: readonly PostOrder[],
+  post: { to: string; text: string; order?: string | undefined },
+  labelOf: (destKey: string) => string,
+): string | undefined {
+  const privates = orders.filter((o) => !o.staff)
+  if (privates.length === 0) return undefined
+  const id = post.order?.trim() ?? ''
+  if (id === '') {
+    return `Not posted: a member's standing order is live in this beat, so every post must name the order it is for (pass \`order\` with its id: ${orders
+      .map((o) => `${o.id} reports to ${labelOf(o.report)}`)
+      .join('; ')}). A post for an order goes only to that order's own destination.`
+  }
+  const named = orders.find((o) => o.id === id)
+  if (named === undefined)
+    return `Not posted: there is no live standing order "${id}" in this beat.`
+  if (named.report !== post.to) {
+    return `Not posted: order ${named.id} reports to ${labelOf(named.report)}, and a post for it goes only there${named.staff ? '' : " (a member's order never goes to another chat)"}. Leave this out or put it in the result as an item.`
+  }
+  for (const p of privates) {
+    if (p.id === named.id || p.report === post.to) continue
+    if (repeatsRun(post.text, p.text)) {
+      return `Not posted: this text repeats what a member's private standing order says (${p.id}); that order is for its own chat only. Leave it out.`
+    }
+  }
+  return undefined
+}
+
+const namesChat = (o: PostOrder, g: ReadGroup): boolean => {
+  const text = `${o.text} ${o.refs.join(' ')}`.toLowerCase()
+  return (
+    [g.title, ...g.names].some((n) => {
+      const name = n.trim().toLowerCase()
+      return name.length >= 3 && text.includes(name)
+    }) || g.ids.some((id) => id.length >= 8 && text.includes(id.toLowerCase()))
+  )
+}
+
+/**
+ * What was read in group A may be posted into another group B only when a live order of an owner or
+ * an admin reports to B and names A as a place to watch (its text or refs: the title or the id).
+ * The same chat (a topic and its forum) is not "another group". Pure.
+ */
+export function crossGroupRefusal(
+  scope: ReadScope | undefined,
+  orders: readonly PostOrder[],
+  dest: { to: string; ids: readonly string[] },
+): string | undefined {
+  for (const g of scope?.groups ?? []) {
+    if (g.ids.some((id) => dest.ids.includes(id))) continue
+    if (orders.some((o) => o.staff && o.report === dest.to && namesChat(o, g))) continue
+    return `Not posted: this beat read "${g.title}", and what a group said may go into another group only when a standing order of an owner or an admin reports to that group and names "${g.title}" as a place to watch. Leave this report out, or put it in the result as an item.`
   }
   return undefined
 }

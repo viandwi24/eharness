@@ -182,6 +182,25 @@ export async function describeApproval(
         lines.length > 0 ? lines.join('\n') : undefined,
       )
     }
+    case 'browser_open':
+      return out(`Open ${oneLine(str(input, 'url') ?? '', 300)} in the browser`)
+    case 'browser_act': {
+      const kind = str(input, 'kind') ?? 'act'
+      const ref = str(input, 'ref')
+      const text = str(input, 'text') ?? str(input, 'key')
+      return out(
+        `Browser ${kind}${ref === undefined ? '' : ` ${ref}`}${text === undefined ? '' : `: ${oneLine(text, 100)}`}`,
+        'The browser page is untrusted content: check what this click or text does.',
+      )
+    }
+    case 'run_python': {
+      const file = str(input, 'file')
+      const source = str(input, 'code')
+      return out(
+        file !== undefined ? `Run Python ${file}` : 'Run Python code',
+        source === undefined ? undefined : truncate(source, MAX_DETAIL),
+      )
+    }
     case TOOL.exitPlan:
       return out('Plan ready: start implementing?', str(input, 'plan'))
     case TOOL.dirAccess: {

@@ -23,11 +23,34 @@ Windows is not supported; use WSL2.
 | MCP, skills | `eharness/mcp`, `filesystem({ skills })` | `app/agent.ts` |
 | Step, cost and time ceilings | `eharness/limits` (`stepBudget`), core `budget` | `app/agent.ts`, `app/limits.ts` |
 | Dates and time zones | `eharness/clock` (`datetime` tool) | `app/agent.ts` |
+| Open the app being built (opt-in) | `eharness/browser` + `browser/node` (Chrome or Lightpanda, `browser_*` tools) | `app/browser.ts`, `app/agent.ts` |
+| Data and scripting (opt-in) | `eharness/code` (`run_python` over the project files, scratch sandbox) | `app/code-sandbox.ts`, `app/agent.ts` |
 
 `app/agent.ts` is the one file that decides **which agent gets which plugin**. Tool order is the
 prompt-cache prefix, so it is fixed and identical for every turn of an agent. The main agent has
 `ask_user_question`, background shells and the step/time ceilings; subagents get the same tools
 minus those, and never `request_directory_access` or `exit_plan_mode`.
+
+### Opt-in: browser and Python
+
+Two more modules are wired in behind settings and are **off by default**; both belong to the main
+agent only, and a project settings file needs trust to turn them on.
+
+- `browser: { enabled, runtime: 'chrome' | 'lightpanda', headless, allowDomains }` creates one
+  `createBrowserManager` with a managed profile (`app/browser.ts`) and adds the `browser()` plugin
+  after `webSearch`. The agent opens a localhost dev server, snapshots, clicks, scrolls
+  (`browser_scroll` is read-only) and sees screenshots in its next step; screenshots are files in the
+  tool-output folder, not in the project. The profile's `allowDomains` defaults to the local hosts,
+  which is also what lets the library open a private address; anything else answers `BLOCKED:`.
+- `code: { enabled, mounts, allowUnsandboxed }` adds `code()` with a `scratchSandbox` per session
+  (OS sandbox on, network off, `requireIsolation`) and syncs the `mounts` (default `/work/`) in and
+  out through the workspace file system, so checkpoints see the changes. The tool is the library's
+  `run_python`.
+
+The permission engine maps the tools by kind (`browserToolKinds`): reads are `safe`, `browser_open`
+is `safe` while only local hosts are allowed and a `fetch` (so `WebFetch(domain:…)` rules apply)
+once `allowDomains` widens it, `browser_act` and `run_python` are `other` (ask; denied in plan and
+dontAsk). `/browser` prints the state. Details: the example README, section "Browser and Python".
 
 ## 2. Permissions
 

@@ -115,6 +115,22 @@ const settingsSchema = z.object({
       allowWrite: z.array(z.string()).optional(),
     })
     .optional(),
+  browser: z
+    .object({
+      enabled: z.boolean().optional(),
+      runtime: z.enum(['chrome', 'lightpanda']).optional(),
+      headless: z.boolean().optional(),
+      allowDomains: z.array(z.string().min(1)).optional(),
+      executablePath: z.string().min(1).optional(),
+    })
+    .optional(),
+  code: z
+    .object({
+      enabled: z.boolean().optional(),
+      mounts: z.array(z.string().min(1)).optional(),
+      allowUnsandboxed: z.boolean().optional(),
+    })
+    .optional(),
   lsp: z
     .record(
       z.string(),
@@ -296,6 +312,16 @@ function riskyKeys(settings: CoderSettings): string[] {
   // a cloned repo must not lift the safety ceiling of the user's turns
   if (settings.limits !== undefined) keys.push('limits')
   if (settings.lsp !== undefined && Object.keys(settings.lsp).length > 0) keys.push('lsp')
+  // starting a browser (and downloading one) or running code is the user's choice, not the repo's
+  const b = settings.browser
+  if (
+    b?.enabled === true ||
+    b?.executablePath !== undefined ||
+    (b?.allowDomains?.length ?? 0) > 0
+  ) {
+    keys.push('browser')
+  }
+  if (settings.code?.enabled === true || settings.code?.allowUnsandboxed === true) keys.push('code')
   const sb = settings.sandbox
   if (
     sb !== undefined &&
@@ -314,6 +340,8 @@ function withoutRisky(settings: CoderSettings): CoderSettings {
     statusLine: _status,
     limits: _limits,
     lsp: _lsp,
+    browser: _browser,
+    code: _code,
     sandbox,
     permissions,
     ...rest
@@ -415,7 +443,7 @@ export async function readSettingsLayers(
 export function mergeSettings(list: readonly CoderSettings[]): CoderSettings {
   const out: CoderSettings = {}
   for (const s of list) {
-    const { hooks, sandbox, lsp, permissions, mcpServers, limits, ...scalars } = s
+    const { hooks, sandbox, lsp, permissions, mcpServers, limits, browser, code, ...scalars } = s
     Object.assign(out, scalars)
     if (hooks !== undefined) {
       const merged: NonNullable<CoderSettings['hooks']> = { ...out.hooks }
@@ -439,6 +467,8 @@ export function mergeSettings(list: readonly CoderSettings[]): CoderSettings {
       }
     }
     if (lsp !== undefined) out.lsp = { ...out.lsp, ...lsp }
+    if (browser !== undefined) out.browser = { ...out.browser, ...browser }
+    if (code !== undefined) out.code = { ...out.code, ...code }
     if (limits !== undefined) out.limits = { ...out.limits, ...limits }
     if (permissions !== undefined) out.permissions = { ...out.permissions, ...permissions }
     if (mcpServers !== undefined) out.mcpServers = { ...out.mcpServers, ...mcpServers }

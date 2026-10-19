@@ -8,7 +8,8 @@
  * `[root config tools] → [plugins in order]` (spec 02 §6) and identical for every session and
  * turn of an agent: the app tools (`lsp`, `request_directory_access`), `bash` (+ `bash_output`,
  * `kill_shell` on the main agent), `agent`, the `filesystem()` tools, `todo_write`, `datetime`, `web_fetch`,
- * `web_search`, `ask_user_question` (main only), MCP tools (source tools, after the static ones)
+ * `web_search`, the opt-in `browser_*` tools and `run_python` (main only, settings `browser` and
+ * `code`), `ask_user_question` (main only), MCP tools (source tools, after the static ones)
  * and the permissions plugin's `exit_plan_mode` among the session tools.
  *
  * Walkthrough: docs/guides/walkthrough-cli.md explains each plugin below, why only the main agent
@@ -31,7 +32,9 @@ import {
   type StateAdapter,
 } from 'eharness'
 import { ask } from 'eharness/ask'
+import { browser } from 'eharness/browser'
 import { clock } from 'eharness/clock'
+import { code } from 'eharness/code'
 import {
   type CheckpointStore,
   filesystem,
@@ -60,6 +63,8 @@ import type { LspManager } from '../lsp/index.ts'
 import { createLspTools } from '../lsp/index.ts'
 import { auditLog, type CoderPermissionEngine } from '../permissions/index.ts'
 import { createDirAccessTool } from '../workspace/index.ts'
+import { BROWSER_TOOLS, type BrowserSupport } from './browser.ts'
+import { type CodeSupport, RUN_PYTHON_TOOL } from './code-sandbox.ts'
 import { turnTimeLimit } from './limits.ts'
 import { PROJECT_INSTRUCTIONS_OPTIONS } from './memory-files.ts'
 import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
@@ -128,6 +133,10 @@ export interface CreateAgentsDeps {
   taskHub?: TaskHub
   /** `lsp` tool for every agent when the manager has a server. */
   lsp?: LspManager
+  /** Browser tools of the MAIN agent (`browser` setting, `app/browser.ts`). */
+  browser?: BrowserSupport
+  /** `run_python` of the MAIN agent (`code` setting, `app/code-sandbox.ts`). */
+  code?: CodeSupport
   onWarning?: (warning: HarnessWarning) => void
   /** Phase durations and failure counters (`app/observe.ts`). */
   observe?: (event: ObserveEvent) => void
@@ -182,6 +191,9 @@ export const DEFERRED_BUILTIN_TOOLS: readonly string[] = [
   'bash_output',
   'kill_shell',
   TOOL.dirAccess,
+  // opt-in tools (names an agent does not have are ignored)
+  ...BROWSER_TOOLS,
+  RUN_PYTHON_TOOL,
 ]
 
 /** Does an allow rule name this host (`WebFetch(domain:host)`)? Only then private hosts are fetched. */
@@ -369,6 +381,10 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         ...deps.webFetch,
       }),
       webSearch({ search }),
+      // after `filesystem()` (screenshots and the code bridge use its `fs` service); a lease and a
+      // sandbox have one holder, so only the main agent gets them
+      ...(isMain && deps.browser ? [browser(deps.browser.plugin)] : []),
+      ...(isMain && deps.code ? [code(deps.code.options)] : []),
       ...(isMain ? [ask()] : []),
       permissions({
         engine,

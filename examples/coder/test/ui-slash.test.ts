@@ -154,6 +154,7 @@ describe('slash parsing', () => {
       'tasks',
       'tell',
       'doctor',
+      'browser',
       'output-style',
       'theme',
       'sandbox',

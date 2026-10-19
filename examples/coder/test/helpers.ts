@@ -120,6 +120,8 @@ export async function makeController(opts: {
   thinking?: ThinkingLevel
   search?: CreateControllerOptions['search']
   webFetch?: CreateControllerOptions['webFetch']
+  browserAdapters?: CreateControllerOptions['browserAdapters']
+  codeSandbox?: CreateControllerOptions['codeSandbox']
 }): Promise<{ controller: CoderController; root: string; home: string }> {
   const { root, home, config } = await setup(opts.files, opts.flags, opts.homeFiles)
   const controller = await createController({
@@ -129,6 +131,8 @@ export async function makeController(opts: {
     ...(opts.thinking ? { thinking: opts.thinking } : {}),
     ...(opts.search ? { search: opts.search } : {}),
     ...(opts.webFetch ? { webFetch: opts.webFetch } : {}),
+    ...(opts.browserAdapters ? { browserAdapters: opts.browserAdapters } : {}),
+    ...(opts.codeSandbox ? { codeSandbox: opts.codeSandbox } : {}),
   })
   onCleanup(() => controller.close())
   return { controller, root, home }

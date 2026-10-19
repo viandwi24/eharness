@@ -260,6 +260,7 @@ returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctr
 | `/tasks` | background shells and agents (page) |
 | `/tell <name\|id> <message>` | message a subagent as yourself: a running one gets it at its next step, a finished one is resumed |
 | `/doctor` | check the environment (page) |
+| `/browser` | state of the browser tools and `run_python` (engine, allowed sites, open page) |
 | `/output-style [name]` | pick the response style, or set it by name |
 | `/theme [dark\|light\|auto]` | show or set the colour theme |
 | `/sandbox` | toggle the OS sandbox of the bash tool |
@@ -587,6 +588,13 @@ scope; `Enter` or `Space` toggles or cycles, `Enter` edits text and numbers).
 | `sandbox.network` | `false` | allow network in the sandbox | enabling needs trust |
 | `sandbox.allowWrite` | `[]` | extra writable directories | yes |
 | `lsp` | auto | language servers by name | yes |
+| `browser.enabled` | `false` | browser tools (`browser_open`, `browser_snapshot`, `browser_act`, `browser_scroll`, `browser_screenshot`, `browser_read`, `browser_tabs`); see Browser and Python | turning it on needs trust |
+| `browser.runtime` / `browser.headless` | `chrome` / `true` | engine (`chrome` or `lightpanda`); Chrome without a window | with `enabled` |
+| `browser.allowDomains` | local hosts only | extra sites the agent may open (`*.example.com`, `*`) | yes |
+| `browser.executablePath` | download | use this Chrome / Lightpanda binary | yes |
+| `code.enabled` | `false` | `run_python` over the project files (see Browser and Python) | turning it on needs trust |
+| `code.mounts` | `["/work/"]` | project folders Python sees and may change | with `enabled` |
+| `code.allowUnsandboxed` | `false` | run even when no OS sandbox is available | yes |
 
 Trust is explained under Project trust. `/config` also shows `model`, `provider` and `thinking`; those
 live in the per-project preferences file, not in a settings file. `/status` shows which keys were
@@ -676,7 +684,8 @@ Like Claude Code, coder keeps tool definitions out of the request until they are
 description) in the turn reminder under `Deferred tools`; the model loads the schema with
 `tool_search` (for example `select:web_fetch`, or keywords) and calls the tool in its next step. The
 card reads `Loaded tools · web_fetch`. Deferred: every MCP tool, `web_fetch`, `web_search`, `lsp`,
-`agent_output`, `agent_stop`, `bash_output`, `kill_shell` and `request_directory_access`. Always
+`agent_output`, `agent_stop`, `bash_output`, `kill_shell`, `request_directory_access` and, when
+they are turned on, the browser tools and `run_python`. Always
 loaded: the file tools, `bash`, `agent`, `send_message`, `todo_write`, `ask_user_question`,
 `exit_plan_mode` and the skill tools. `tool_search` needs no approval; the deferred tool itself asks
 as usual. `/context` marks deferred tools and shows the tokens they do not cost. Set
@@ -705,6 +714,70 @@ Paths are virtual (`/src/a.ts`), line and character are 1-based.
 | `diagnostics` | `path` | errors and warnings of the file (up to 100) |
 | `symbols` | `path` | outline of the file (up to 200) |
 | `workspace_symbols` | `query`, optional `path` to pick the language | matching symbols (up to 200) |
+
+### Browser and Python
+
+Two library modules are wired in but **off by default**: `eharness/browser` and `eharness/code`.
+Both exist on the main agent only (a browser lease and a sandbox have one holder) and a project
+settings file can only turn them on when the project is trusted. `/browser` shows their state.
+
+**Browser (`eharness/browser`).** For a web-dev task the agent opens the app it is building, reads it
+as an accessibility snapshot, clicks, scrolls and looks at screenshots, then fixes the code and looks
+again.
+
+```json
+{ "browser": { "enabled": true, "runtime": "chrome", "headless": true } }
+```
+
+Start the dev server first (ask the agent to run it with `bash` in the background, for example `bun run dev`), then ask: "open the app on localhost:5173, check the form works and fix what is broken".
+
+- **Engine.** `chrome` downloads Chrome for Testing on first use, `lightpanda` the small headless
+  Lightpanda (lower fidelity, no window); both go to `~/.coder/browser`. `executablePath` uses a
+  binary you already have. `headless: false` opens a Chrome window you can watch.
+- **Tools.** `browser_open`, `browser_snapshot` (refs like `e5`), `browser_act` (click, fill, type,
+  press, select, check, scroll, wait), `browser_scroll` (read-only), `browser_screenshot`,
+  `browser_read`, `browser_tabs`. The next model step sees the newest screenshots as images; they
+  are written under the tool-output folder, not into your project. There is no `browser_eval` and no
+  hand-over to a person. Page text is framed as untrusted content: instructions on a page never
+  change permissions.
+- **Which sites.** Only `localhost`, `127.0.0.1` and `[::1]` (private hosts are blocked in the
+  library unless a host is named explicitly). `browser.allowDomains` adds more (`*.example.com`,
+  `docs.example.com:8080`, `*` for every public host); a host that is not listed answers `BLOCKED:`
+  before the browser is touched.
+- **Permissions.** Reading tools (`browser_snapshot`, `browser_read`, `browser_screenshot`,
+  `browser_scroll`) never ask. `browser_open` never asks while only local hosts are allowed; once
+  `allowDomains` adds others it is a fetch, so `WebFetch(domain:host)` rules decide it. `browser_act`
+  (clicks and typing change the page) asks in `default`, `acceptEdits` and `auto` (the classifier
+  judges it), is denied in `plan` and `dontAsk`, and is approved by an allow rule
+  (`"permissions": { "allow": ["browser_act"] }`) or `bypassPermissions`.
+- **Limits.** Chrome is a download of about 150 MB the first time. One browser is shared by the
+  session and stops after 5 idle minutes; `/exit` stops it.
+
+**Python (`eharness/code`).** `run_python` runs a script over files of the project for data and
+scripting tasks (summarise a CSV, convert a format, generate a report).
+
+```json
+{ "code": { "enabled": true, "mounts": ["/work/", "/data/"] } }
+```
+
+The agent writes a script with `write_file`, then calls `run_python({ file: "/work/analyze.py" })`
+(or `code` for a short snippet). The tool is named `run_python`, the library's name. Paths inside the
+script are relative to the project root (`work/sales.csv`).
+
+- **How it runs.** In a disposable scratch directory with the OS sandbox on and the network off (no
+  package installs). The folders in `code.mounts` are copied in before each run and what the script
+  created or changed is written back through the file system, so `/rewind` and `/diff` see it. The
+  default `["/work/"]` keeps the sync small; `["/"]` syncs the whole project and fails with `too many
+  files` above 2000 files (a `node_modules` project).
+- **Isolation.** Without `sandbox-exec` (macOS) or `bwrap` (Linux) the tool refuses to run
+  (`code.allowUnsandboxed` lifts that), and coder warns at start.
+- **Permissions.** `run_python` asks like any custom tool in `default` and `acceptEdits`, is denied
+  in `plan` and `dontAsk`, and is approved by an allow rule (`"allow": ["run_python"]`) or
+  `bypassPermissions`. The approval shows the code or the script path.
+- **Needs** `python3` on the machine. 60 s per run by default, at most 300 s.
+
+The eval task `python-csv-totals` replays a `run_python` session offline
+(`bun run eval -- --scripted --task python-csv-totals`).
 
 ### Single binary
 

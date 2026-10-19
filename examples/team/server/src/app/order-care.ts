@@ -28,12 +28,14 @@ import {
 } from '../domain/order-hygiene.ts'
 import { sessionRefsIn } from '../domain/session-context.ts'
 import {
+  crossGroupRefusal,
   grantsOf,
   isLive,
   isStaffRole,
   type OrderDestination,
   orderState,
   parseChecklist,
+  privateOrderRefusal,
   privatePostRefusal,
   type ReadScope,
   readRefusal,
@@ -41,6 +43,7 @@ import {
   type StandingOrder,
   WEB_OWNER,
 } from '../domain/standing-orders.ts'
+import { runAnswerAction } from './answer-actions.ts'
 import { changed } from './decisions.ts'
 import type { Deps } from './ports.ts'
 import { pauseOrder, removeOrder } from './standing-orders.ts'
@@ -517,7 +520,8 @@ export async function applyOrderAnswer(
         kept('keptPairs', arg, now + CONFLICT_EDIT_MS)
         return `Both orders (${arg.split(':')[0]}) were left as they are: edit them on the Heartbeat tab. Not asked again for a week unless one is edited.`
       default:
-        return 'Nothing was changed.'
+        // the supervisor's executable options (retry a run, pause a routine, ...)
+        return (await runAnswerAction(deps, d, verb, arg)) ?? 'Nothing was changed.'
     }
   } catch (error) {
     return `The answer could not be carried out: ${error instanceof Error ? error.message : String(error)}`
@@ -618,11 +622,45 @@ export function beatReadScope(
 export function checkChatRead(
   deps: Deps,
   agentId: string,
-  target: { nodeId: string; title: string; ids: readonly string[]; direct: boolean },
+  target: {
+    nodeId: string
+    title: string
+    names?: readonly string[] | undefined
+    ids: readonly string[]
+    direct: boolean
+  },
 ): string | undefined {
   const scope = deps.heartbeat.store.state(agentId).reads
   const refusal = readRefusal(scope, target)
   if (refusal !== undefined) return refusal
+  // a group that was read is remembered for the group-to-group rule of a later post
+  if (!target.direct && scope !== undefined && target.ids[0] !== undefined) {
+    const nodeId = target.ids[0]
+    if (!(scope.groups ?? []).some((g) => g.nodeId === nodeId)) {
+      deps.heartbeat.store.updateState(
+        agentId,
+        (s) =>
+          s.reads === undefined || (s.reads.groups ?? []).some((g) => g.nodeId === nodeId)
+            ? s
+            : {
+                ...s,
+                reads: {
+                  ...s.reads,
+                  groups: [
+                    ...(s.reads.groups ?? []),
+                    {
+                      nodeId,
+                      title: target.title,
+                      names: [...(target.names ?? [])],
+                      ids: [...target.ids],
+                    },
+                  ],
+                },
+              },
+        deps.clock.now(),
+      )
+    }
+  }
   if (target.direct && scope !== undefined && !scope.seen.includes(target.nodeId)) {
     deps.heartbeat.store.updateState(
       agentId,
@@ -641,4 +679,37 @@ export function postPrivacy(deps: Deps, agentId: string, to: string): string | u
   const scope = deps.heartbeat.store.state(agentId).reads
   const nodes = deps.heartbeat.channels?.nodes(agentId) ?? []
   return privatePostRefusal(scope, to, (id) => nodes.find((n) => n.nodeId === id)?.title ?? id)
+}
+
+/**
+ * A post of the beat (`to` is a `destKey`, `destIds` the chat and its ancestors): refused when it
+ * would carry a member's private order out of its chat, or what a group said into another group
+ * that no order of an owner or an admin connects (`privateOrderRefusal`, `crossGroupRefusal`).
+ */
+export function postScope(
+  deps: Deps,
+  agentId: string,
+  post: {
+    to: string
+    destIds: readonly string[]
+    text: string
+    order?: string | undefined
+    /** A web chat: only the private-order rule applies (a person's own chat, not a group). */
+    web?: boolean | undefined
+  },
+): string | undefined {
+  const state = deps.heartbeat.store.state(agentId)
+  const nodes = deps.heartbeat.channels?.nodes(agentId) ?? []
+  const label = (key: string): string => {
+    if (key.startsWith('web:')) return 'its web chat'
+    const nodeId = key.slice(key.lastIndexOf('/') + 1)
+    return nodes.find((n) => n.nodeId === nodeId)?.title ?? nodeId
+  }
+  const orders = state.postOrders ?? []
+  return (
+    privateOrderRefusal(orders, post, label) ??
+    (post.web === true
+      ? undefined
+      : crossGroupRefusal(state.reads, orders, { to: post.to, ids: post.destIds }))
+  )
 }

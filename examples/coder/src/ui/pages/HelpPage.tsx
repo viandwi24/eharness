@@ -36,6 +36,7 @@ const GROUPS: Array<{ title: string; names: string[] }> = [
       'diff',
       'tasks',
       'doctor',
+      'browser',
     ],
   },
   { title: 'Output', names: ['export', 'copy', 'btw'] },

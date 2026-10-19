@@ -14,12 +14,15 @@ import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharn
 import { updateAgent } from '../src/app/agents.ts'
 import { deliverAlarms, openAlarms, sweepAlarms } from '../src/app/alarms.ts'
 import { consistencyFindings } from '../src/app/consistency.ts'
+import { forgetConsistency } from '../src/app/consistency-cache.ts'
 import { approveDecision, getDecision, proposeFromAgent } from '../src/app/decisions.ts'
 import { setHeartbeat } from '../src/app/heartbeat.ts'
 import { GONE_REMOVE } from '../src/app/order-care.ts'
 import type { Deps } from '../src/app/ports.ts'
 import { createProgram } from '../src/app/programs.ts'
+import { createRoutine } from '../src/app/routines.ts'
 import { addOrder, listOrders } from '../src/app/standing-orders.ts'
+import { askOwner } from '../src/app/supervisor.ts'
 import type { Decision } from '../src/domain/decisions.ts'
 import { createMockAdapter, type MockAdapter } from '../src/infra/channels/index.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
@@ -193,6 +196,13 @@ const json = (method: string, body?: unknown): RequestInit => ({
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 })
 const NEVER_SENT = 150
+
+/** The authority of a program with one more tool granted. */
+function withTool(deps: Deps, programId: string, tool: string) {
+  const program = deps.programs.get(programId)
+  if (program === undefined) throw new Error(`no program ${programId}`)
+  return { ...program.authority, tools: [...program.authority.tools, tool] }
+}
 
 const PROGRAM = {
   agentId: 'researcher',
@@ -807,6 +817,400 @@ const rows: Row[] = [
       ).json()) as { messages: unknown[] }
       expect(page.messages.length).toBeLessThanOrEqual(20)
       expect(JSON.stringify(page)).toContain('eharnessClipped')
+    },
+  },
+
+  {
+    n: 13,
+    name: "a member's private order is never carried into another chat: a post names its order and goes only there",
+    async run() {
+      const ref = { owner: '', member: '' }
+      const sentTo = (i: Rig, chat: string) =>
+        i.mock.sent.filter((s) => s.conversationId === chat).map((s) => s.message.text)
+      // the order ids exist only after the orders are added: the steps read them late
+      const send = (
+        id: string,
+        conversation: string,
+        order: () => string | undefined,
+        body: string,
+      ): ScriptedStepInput =>
+        (() =>
+          call(
+            'channel_send',
+            {
+              action: 'send',
+              connection: 'c1',
+              conversation,
+              ...(order() === undefined ? {} : { order: order() }),
+              text: body,
+            },
+            id,
+          )) as never
+      const i = await rig(
+        {
+          lead: [
+            // no order named while a member's order is live: refused
+            send('p1', 'Team Room', () => undefined, 'Weekly status is fine'),
+            // names the owner's order but repeats the member's words: refused
+            send(
+              'p2',
+              'Team Room',
+              () => ref.owner,
+              'FYI every morning about my private dentist appointment schedule',
+            ),
+            // the member's order may not go to the group
+            send('p3', 'Team Room', () => ref.member, 'Dentist at nine'),
+            // clean post for the owner's order: goes
+            send('p4', 'Team Room', () => ref.owner, 'Weekly status is fine'),
+            // the member's order goes to its own chat
+            send('p5', 'Sam DM', () => ref.member, 'Your dentist reminder: nine tomorrow'),
+            call('final_answer', { status: 'ok', items: [] }, 'f1'),
+          ],
+        },
+        {
+          groups: {
+            'group-1': {
+              title: 'Team Room',
+              ack: false,
+              proactive: { allowed: true, digest: false },
+            },
+            'dm-1': {
+              kind: 'direct',
+              title: 'Sam DM',
+              ack: false,
+              proactive: { allowed: true, digest: false },
+            },
+          },
+        },
+      )
+      const { deps } = i
+      const agentId = i.ids.lead
+      await setHeartbeat(deps, agentId, { activeFrom: '00:00', activeTo: '00:00' })
+      const group = i.server.channels.nodes.byNative('c1', 'group-1')?.id as string
+      const dm = i.server.channels.nodes.byNative('c1', 'dm-1')?.id as string
+      ref.owner = (
+        await addOrder(deps, agentId, {
+          text: 'Report weekly status of the team',
+          by: 'web:owner',
+          name: 'Owner',
+          role: 'owner',
+          report: { kind: 'chat', connectionId: 'c1', nodeId: group },
+          mention: false,
+        })
+      ).order.id
+      ref.member = (
+        await addOrder(deps, agentId, {
+          text: 'Remind me every morning about my private dentist appointment schedule',
+          by: 'person-sam',
+          name: 'Sam',
+          role: 'member',
+          report: { kind: 'chat', connectionId: 'c1', nodeId: dm },
+          mention: false,
+        })
+      ).order.id
+      await i.server.heartbeats.heartbeat(agentId, { slot: Date.now() })
+      await i.server.heartbeats.idle()
+      await until('the beat ran its steps', () => (i.models.lead?.calls.length ?? 0) >= 6)
+      await until('both allowed posts sent', () => i.mock.sent.length >= 2)
+      await sleep(NEVER_SENT)
+      const w = wire(i.models.lead)
+      expect(w).toContain('must name the order it is for')
+      expect(w).toContain('repeats what a member')
+      expect(w).toContain('reports to Sam DM')
+      expect(sentTo(i, 'group-1')).toEqual(['Weekly status is fine'])
+      expect(sentTo(i, 'dm-1')).toEqual(['Your dentist reminder: nine tomorrow'])
+      expect(i.mock.sent).toHaveLength(2)
+    },
+  },
+  {
+    n: 14,
+    name: 'what a beat read in one group goes into another group only through an order that names both',
+    async run() {
+      const groups = {
+        'group-1': { title: 'Team Room', ack: false, proactive: { allowed: true, digest: false } },
+        'group-2': { title: 'Community Hub', ack: false },
+      }
+      const script = (): ScriptedStepInput[] => [
+        call('chat_history', { connection: 'c1', chat: 'Community Hub', window: 'today' }, 'h1'),
+        call(
+          'channel_send',
+          { action: 'send', connection: 'c1', conversation: 'Team Room', text: 'Spam wave seen' },
+          'h2',
+        ),
+        call('final_answer', { status: 'ok', items: [] }, 'f1'),
+      ]
+      const run = async (orderText: string): Promise<{ sent: string[]; wire: string }> => {
+        const i = await rig({ lead: script() }, { groups })
+        const agentId = i.ids.lead
+        await setHeartbeat(i.deps, agentId, { activeFrom: '00:00', activeTo: '00:00' })
+        const group = i.server.channels.nodes.byNative('c1', 'group-1')?.id as string
+        await addOrder(i.deps, agentId, {
+          text: orderText,
+          by: 'web:owner',
+          name: 'Owner',
+          role: 'owner',
+          report: { kind: 'chat', connectionId: 'c1', nodeId: group },
+          mention: false,
+        })
+        await i.server.heartbeats.heartbeat(agentId, { slot: Date.now() })
+        await i.server.heartbeats.idle()
+        await until('the beat ran its steps', () => (i.models.lead?.calls.length ?? 0) >= 3)
+        await sleep(NEVER_SENT)
+        return {
+          sent: i.mock.sent
+            .filter((s) => s.conversationId === 'group-1')
+            .map((s) => s.message.text),
+          wire: wire(i.models.lead),
+        }
+      }
+      // the order reports to Team Room but never names the group it reads: refused, readable
+      const open = await run('Report anything strange you notice to the team')
+      expect(open.sent).toEqual([])
+      expect(open.wire).toContain('names \\"Community Hub\\" as a place to watch')
+      // the order names Community Hub as a place to watch and Team Room as its report chat: sent
+      const named = await run('Watch Community Hub and report spam to the team')
+      expect(named.sent).toEqual(['Spam wave seen'])
+    },
+  },
+  {
+    n: 15,
+    name: "the supervisor's question carries an executable option: the answer does it and the outcome is recorded",
+    async run() {
+      const i = await rig({
+        researcher: [
+          report({ status: 'failed', summary: 'could not reach the source', outputs: [] }),
+          report({ status: 'done', summary: 'all good', outputs: [] }),
+        ],
+      })
+      const { deps } = i
+      const agentId = i.ids.researcher
+      const now = Date.now()
+      const ask = async (title: string, action: Record<string, unknown>) =>
+        askOwner(deps, agentId, { title, diagnosis: 'd', fix: 'f', action: action as never }, now)
+      const openCard = (needle: string) =>
+        deps.decisions
+          .list({ status: 'open', agentId, limit: 50 })
+          .find((d) => d.title.includes(needle)) as Decision
+      const answer = async (needle: string, label: RegExp) => {
+        const d = openCard(needle)
+        const options = (d.payload as { options: string[] }).options
+        expect(options).toHaveLength(2)
+        const picked = options.find((o) => label.test(o)) as string
+        return (await approveDecision(deps, d.id, { choice: picked })).outcome?.effect as string
+      }
+
+      // an action the server cannot do now is refused with a reason, nothing is raised
+      expect(await ask('Nothing there', { kind: 'retry-run', target: 'no-such-run' })).toContain(
+        'Not asked',
+      )
+      expect(deps.decisions.list({ status: 'open', agentId, limit: 50 })).toHaveLength(0)
+
+      // retry a failed run
+      const p = await createProgramHttp(i.app)
+      expect((await i.app.request(`/programs/${p.id}/run`, json('POST'))).status).toBe(202)
+      await until('the run failed', async () => runEnded((await runsOf(i.app, p.id))[0]))
+      const failed = (await runsOf(i.app, p.id))[0] as RunView
+      expect(await ask('Retry the digest', { kind: 'retry-run', target: failed.id })).toContain(
+        'Asked',
+      )
+      expect(await answer('Retry the digest', /^Retry/)).toContain('Retried')
+      await until('the retry ran', () => (i.models.researcher?.calls.length ?? 0) >= 2)
+
+      // pause a routine
+      const routine = createRoutine(deps, {
+        agentId,
+        name: 'Noisy check',
+        prompt: 'Check the thing',
+        schedule: { kind: 'every', everyMs: 3_600_000 },
+      })
+      await ask('Pause the noisy check', { kind: 'pause-routine', target: routine.id })
+      expect(await answer('Pause the noisy', /^Pause/)).toContain('Paused routine')
+      expect(deps.routines.get(routine.id)?.status).toBe('paused')
+
+      // remove a standing order
+      const added = await addOrder(deps, agentId, {
+        text: 'Watch the old channel',
+        by: 'web:owner',
+        name: 'Owner',
+        role: 'owner',
+        report: { kind: 'web', sessionId: `dm:${agentId}` },
+        mention: false,
+      })
+      await ask('Remove the old order', { kind: 'remove-order', target: added.order.id })
+      expect(await answer('Remove the old order', /^Remove/)).toContain('Removed order')
+      expect((await listOrders(deps, agentId)).map((o) => o.id)).not.toContain(added.order.id)
+
+      // propose a program change: the answer creates the change card
+      await ask('Add a tool', { kind: 'propose-program-tool', target: p.id, tool: 'list_tasks' })
+      expect(await answer('Add a tool', /^Propose/)).toContain('Created the change card')
+      const card = deps.decisions.list({ status: 'open', kind: 'change', limit: 20 })[0]
+      expect(card?.payload).toMatchObject({ programId: p.id })
+
+      // the one-click fix of a consistency finding, asked by its fingerprint
+      deps.programs.update(
+        p.id,
+        {
+          authority: withTool(deps, p.id, 'list_tasks'),
+          forbidden: ['list_tasks'],
+        },
+        Date.now(),
+      )
+      const found = (await consistencyFindings(deps, { agentId })).find((f) =>
+        f.fingerprint.includes(':forbidden:'),
+      )
+      await ask('Allow the tool', {
+        kind: 'fix-finding',
+        target: `supervisor:consistency:${found?.fingerprint}`,
+      })
+      expect(await answer('Allow the tool', /Allow/)).toContain('Forbidden')
+      expect(deps.programs.get(p.id)?.forbidden).toEqual([])
+
+      // "Leave it" changes nothing (another agent: the cap is five questions a day per agent)
+      const another = createRoutine(deps, {
+        agentId: i.ids.writer,
+        name: 'Second check',
+        prompt: 'Check another thing',
+        schedule: { kind: 'every', everyMs: 3_600_000 },
+      })
+      await askOwner(
+        deps,
+        i.ids.writer,
+        {
+          title: 'Pause again',
+          diagnosis: 'd',
+          fix: 'f',
+          action: { kind: 'pause-routine', target: another.id },
+        },
+        now,
+      )
+      const leave = deps.decisions.list({
+        status: 'open',
+        agentId: i.ids.writer,
+        limit: 5,
+      })[0] as Decision
+      const left = await approveDecision(deps, leave.id, { choice: 'Leave it' })
+      expect(left.outcome?.effect).toBe('Nothing was changed.')
+      expect(deps.routines.get(another.id)?.status).toBe('active')
+    },
+  },
+  {
+    n: 16,
+    name: 'the Health page offers a one-click fix only where it is unambiguous, and the fix needs a confirmation',
+    async run() {
+      const i = await rig({ researcher: [] })
+      const { deps, app } = i
+      const agentId = i.ids.researcher
+      const list = async () => {
+        // the page reuses a scan for minutes: this test changes the workspace between reads
+        forgetConsistency(deps)
+        return (
+          (await (await app.request('/agent-health/findings?kind=consistency')).json()) as {
+            findings: Array<{
+              fingerprint: string
+              consistency: { kind: string }
+              fixAction?: { kind: string; label: string; confirm: string } | null
+            }>
+          }
+        ).findings
+      }
+      const fixOf = async (kind: string) => (await list()).find((f) => f.consistency.kind === kind)
+      const fix = (fp: string, body: unknown) =>
+        app.request(`/agent-health/findings/${encodeURIComponent(fp)}/fix`, json('POST', body))
+
+      // granted and forbidden: take it out of Forbidden
+      const both = await createProgramHttp(app, { name: 'Report builder' })
+      deps.programs.update(
+        both.id,
+        {
+          authority: withTool(deps, both.id, 'list_tasks'),
+          forbidden: ['list_tasks'],
+        },
+        Date.now(),
+      )
+      const f1 = (await fixOf('program-needs-tool')) ?? (await list())[0]
+      expect(f1?.fixAction).toMatchObject({ kind: 'unforbid' })
+      expect(f1?.fixAction?.confirm).toContain('list_tasks')
+      // no confirmation, no change
+      expect((await fix(f1?.fingerprint ?? '', {})).status).toBe(400)
+      expect(deps.programs.get(both.id)?.forbidden).toEqual(['list_tasks'])
+      const done = await fix(f1?.fingerprint ?? '', { confirm: true })
+      expect(done.status).toBe(200)
+      expect(((await done.json()) as { outcome: string }).outcome).toContain('Forbidden')
+      expect(deps.programs.get(both.id)?.forbidden).toEqual([])
+      expect((await list()).some((f) => f.fingerprint === f1?.fingerprint)).toBe(false)
+      deps.programs.delete(both.id)
+
+      // two copies of a program: the one without runs goes, the other stays
+      const brief = 'Summarise the library every morning and report what changed to the team'
+      const keep = await createProgramHttp(app, { name: 'Morning summary', brief })
+      const copy = await createProgramHttp(app, { name: 'Morning summary', brief })
+      expect(deps.tasks.ofProgram(keep.id, 1)).toHaveLength(0)
+      // both without runs and identical: the newer one is the copy
+      const dup = await fixOf('program-duplicate')
+      expect(dup?.fixAction).toMatchObject({ kind: 'delete-program' })
+      expect((await fix(dup?.fingerprint ?? '', { confirm: true })).status).toBe(200)
+      const left = deps.programs.list({}).filter((p) => p.name === 'Morning summary')
+      expect(left).toHaveLength(1)
+      expect([keep.id, copy.id]).toContain(left[0]?.id as string)
+
+      // an order that says what a program note says
+      const note = 'Send the weekly invoice reminders every Monday morning'
+      const survivor = deps.programs.list({}).find((p) => p.name === 'Morning summary')
+      if (survivor === undefined) throw new Error('no program left')
+      const order = await addOrder(deps, agentId, {
+        text: note,
+        by: 'web:owner',
+        name: 'Owner',
+        role: 'owner',
+        report: { kind: 'web', sessionId: `dm:${agentId}` },
+        mention: false,
+      })
+      // the note arrives after the order (saving it first would be refused as a duplicate)
+      deps.programs.update(survivor.id, { notes: [note] }, Date.now())
+      const dupe = await fixOf('order-duplicates-note')
+      expect(dupe?.fixAction).toMatchObject({ kind: 'remove-order' })
+      expect((await fix(dupe?.fingerprint ?? '', { confirm: true })).status).toBe(200)
+      expect((await listOrders(deps, agentId)).map((o) => o.id)).not.toContain(order.order.id)
+
+      // two routines on one schedule with one prompt: the newer copy goes
+      const spec = { kind: 'every', everyMs: 3_600_000 } as const
+      createRoutine(deps, {
+        agentId,
+        name: 'Daily check',
+        prompt: 'Check the video queue and report stuck items',
+        schedule: spec,
+      })
+      createRoutine(deps, {
+        agentId,
+        name: 'Daily check again',
+        prompt: 'Check the video queue and report stuck items',
+        schedule: spec,
+      })
+      const rd = await fixOf('routine-duplicate')
+      expect(rd?.fixAction).toMatchObject({ kind: 'delete-routine' })
+      expect((await fix(rd?.fingerprint ?? '', { confirm: true })).status).toBe(200)
+      expect(
+        deps.routines.list({ agentId }).filter((r) => r.name.startsWith('Daily check')),
+      ).toHaveLength(1)
+
+      // both copies already fired: no safe choice, so no button and the click is refused
+      const slow = { kind: 'every', everyMs: 7_200_000 } as const
+      for (const name of ['Hourly sweep', 'Hourly sweep again']) {
+        const r = createRoutine(deps, {
+          agentId,
+          name,
+          prompt: 'Sweep the inbox and list new requests',
+          schedule: slow,
+        })
+        i.server.conn.sqlite.query('UPDATE routines SET fire_count = 3 WHERE id = ?').run(r.id)
+      }
+      const both2 = await fixOf('routine-duplicate')
+      expect(both2).toBeDefined()
+      expect(both2?.fixAction ?? null).toBeNull()
+      expect((await fix(both2?.fingerprint ?? '', { confirm: true })).status).toBe(409)
+      expect((await fix('consistency:program-needs-tool:-:nope', { confirm: true })).status).toBe(
+        404,
+      )
     },
   },
 ]

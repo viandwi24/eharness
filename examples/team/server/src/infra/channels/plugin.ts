@@ -189,6 +189,12 @@ const sendSchema = z.object({
     .describe('upload: a library path, for example /library/reports/q3.pdf.'),
   messageId: z.string().optional().describe('react: the platform message id.'),
   emoji: z.string().optional().describe('react: the emoji.'),
+  order: z
+    .string()
+    .optional()
+    .describe(
+      'Heartbeat only: the id of the standing order this post is for (required while a member’s order is live).',
+    ),
 })
 
 const manageSchema = z.object({

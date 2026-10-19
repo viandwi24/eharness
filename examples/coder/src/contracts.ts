@@ -125,6 +125,44 @@ export interface CoderSettings {
   sandbox?: { enabled?: boolean; network?: boolean; allowWrite?: string[] }
   /** Language servers by name: command and file extensions. */
   lsp?: Record<string, { command: string[]; extensions: string[] }>
+  /**
+   * Browser tools (`eharness/browser`) so the agent can open the app it is building. Opt-in
+   * (default off): the first use downloads Chrome for Testing or Lightpanda into `~/.coder/browser`.
+   * A project file may only set it when the project is trusted.
+   */
+  browser?: BrowserSettings
+  /** `run_python` over the project files (`eharness/code`). Opt-in (default off); needs trust in a project file. */
+  code?: CodeSettings
+}
+
+/** The `browser` setting. */
+export interface BrowserSettings {
+  /** Default false. */
+  enabled?: boolean
+  /** Engine: a full Chrome (default) or the small Lightpanda (lower fidelity, no window). */
+  runtime?: 'chrome' | 'lightpanda'
+  /** Chrome without a window (default true); `false` opens a window you can watch. */
+  headless?: boolean
+  /**
+   * Hosts the agent may open (`localhost`, `*.example.com`, `example.com:8080`, `*` for every
+   * public host). Default: `localhost`, `127.0.0.1` and `[::1]` only.
+   */
+  allowDomains?: string[]
+  /** Use this Chrome or Lightpanda binary instead of downloading one. */
+  executablePath?: string
+}
+
+/** The `code` setting. */
+export interface CodeSettings {
+  /** Default false. */
+  enabled?: boolean
+  /**
+   * Folders of the project that Python sees (virtual prefixes ending in `/`). Default `["/work/"]`;
+   * `["/"]` syncs the whole project and fails on projects with more than 2000 files.
+   */
+  mounts?: string[]
+  /** Run even when the OS sandbox is unavailable (default false: `run_python` then refuses). */
+  allowUnsandboxed?: boolean
 }
 
 /** Events a settings hook can run on. */
@@ -482,6 +520,13 @@ export interface StatusInfo {
   sandbox: { enabled: boolean; kind: string; network: boolean }
 }
 
+/** What `/browser` shows. */
+export interface BrowserStatusInfo {
+  enabled: boolean
+  /** Human-readable lines (engine, profile, allowed hosts, runtime state, open leases). */
+  lines: string[]
+}
+
 // ─── Controller (app/) → consumed by ui/ and print.ts ────────────────────────────────────────
 
 export type CoderMessage = HarnessUIMessage
@@ -722,6 +767,8 @@ export interface CoderController {
   setting<K extends keyof CoderSettings>(key: K): CoderSettings[K]
   outputStyles(): Promise<Array<{ name: string; description: string }>>
   doctor(): Promise<DoctorCheck[]>
+  /** State of the browser and code tools (`/browser`). */
+  browserStatus(): Promise<BrowserStatusInfo>
   /** Output of the `statusLine` command (first line), or undefined. */
   statusLineText(): Promise<string | undefined>
   /** Prompt history, newest last, persisted across sessions (`~/.coder/history.jsonl`). */

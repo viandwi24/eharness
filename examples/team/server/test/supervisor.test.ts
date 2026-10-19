@@ -326,7 +326,7 @@ describe('the beat as supervisor', () => {
     expect(asked[0]?.body).toContain('adding the tool web_fetch')
     // the same question is not raised twice
     expect(
-      askOwner(
+      await askOwner(
         i.server.deps,
         i.agentId,
         { title: 'Nightly crawl was denied web_fetch', diagnosis: 'x', fix: 'y' },

@@ -78,8 +78,9 @@ spec. Where codes appear in types:
   goes on); `EH_CONTEXT_THRASH` is the notice code of the stopped turn (`stop: 'context-thrash'`),
   `W_CONTEXT_THRASH` the warning emitted when the thrash was detected (it carries the `details`).
 - The wire codes of `eharness/http` (§1.0) extend this set; `HttpErrorCode` of `src/http/wire.ts`
-  is `HttpLayerErrorCode | HarnessErrorCode | HarnessNoticeCode | 'EH_INTERNAL'`, without an open
-  string.
+  is `HttpLayerErrorCode | HarnessErrorCode | HarnessNoticeCode | 'EH_INTERNAL' | (string & {})`: the
+  open string carries codes an app returns from `authorize`. See
+  [errors.md](../engineering/errors.md) for the full map and stability.
 
 Named factories in `src/errors.ts` build the errors raised in more than one place (internal, not
 exported from the package): `sessionClosedError`, `sessionBusyError`, `lockFailure` /

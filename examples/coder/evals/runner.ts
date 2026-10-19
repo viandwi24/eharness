@@ -3,7 +3,7 @@
  *
  * A task is a directory under `evals/tasks/<id>/`:
  *
- *   task.json    { id, title, prompt, check, timeoutSec, maxCostUsd, setup? }
+ *   task.json    { id, title, prompt, check, timeoutSec, maxCostUsd, setup?, settings? }
  *   fixture/     the project the agent starts from (copied to a temp dir; never edited in place)
  *   check/       optional hidden files, copied into the project as `check/` AFTER the agent ran
  *   script.json  optional recorded transcript: `scriptedModel` steps for `--scripted` runs
@@ -34,6 +34,8 @@ export interface EvalTask {
   /** The run fails when the reported cost exceeds this (also passed as `--max-cost`). */
   maxCostUsd: number
   setup?: string
+  /** User settings of the run (`<CODER_HOME>/settings.json`), e.g. `{ "code": { "enabled": true } }`. */
+  settings?: Record<string, unknown>
   /** Absolute task directory (filled by {@link loadTasks}). */
   dir: string
 }
@@ -113,6 +115,7 @@ export async function loadTasks(tasksDir: string = TASKS_DIR): Promise<EvalTask[
       timeoutSec: raw.timeoutSec ?? 120,
       maxCostUsd: raw.maxCostUsd ?? 0.5,
       ...(raw.setup !== undefined ? { setup: raw.setup } : {}),
+      ...(raw.settings !== undefined ? { settings: raw.settings } : {}),
       dir,
     })
   }
@@ -194,8 +197,12 @@ export async function runTask(
     }
     delete env.CODER_SCRIPTED_MODEL
     delete env.CODER_MODEL
-    if (opts.sandbox === true) {
-      await writeFile(join(home, 'settings.json'), JSON.stringify({ sandbox: { enabled: true } }))
+    const settings: Record<string, unknown> = {
+      ...task.settings,
+      ...(opts.sandbox === true ? { sandbox: { enabled: true } } : {}),
+    }
+    if (Object.keys(settings).length > 0) {
+      await writeFile(join(home, 'settings.json'), JSON.stringify(settings))
     }
     if (task.setup !== undefined) {
       const setup = await spawnCapture(['sh', '-c', task.setup], {

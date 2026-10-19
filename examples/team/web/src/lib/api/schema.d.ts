@@ -15875,6 +15875,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent-health/findings/{fingerprint}/fix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fix a finding with one click
+         * @description Only for findings that carry `fixAction` (an unambiguous fix: un-forbid a granted tool, delete a duplicate that has no runs, remove an order that duplicates a program note). The server scans again and does what is true now; the body must confirm. 404 when the finding is gone, 409 `NO_FIX` when it has no one-click fix.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    fingerprint: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HealthFindingFixInput"];
+                };
+            };
+            responses: {
+                /** @description Done */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HealthFindingFixResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NO_FIX` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -20336,12 +20408,34 @@ export interface components {
                 /** @description Ids and paths involved. */
                 refs: string[];
             } | null;
+            /** @description Set when the fix is unambiguous: `POST .../fix` does it. Absent: follow the text `fix`. */
+            fixAction?: {
+                /** @example unforbid */
+                kind: string;
+                /** @description The button. */
+                label: string;
+                /** @description The sentence to confirm before it runs. */
+                confirm: string;
+            } | null;
             dismissed: boolean;
             dismissedAt: number | null;
         };
         HealthFindingAck: {
             /** @enum {boolean} */
             ok: true;
+        };
+        HealthFindingFixResult: {
+            /** @enum {boolean} */
+            ok: true;
+            /** @description What was done, in words. */
+            outcome: string;
+        };
+        HealthFindingFixInput: {
+            /**
+             * @description The person confirmed the change.
+             * @enum {boolean}
+             */
+            confirm: true;
         };
     };
     responses: never;

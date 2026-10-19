@@ -1,0 +1,10 @@
+{
+  "id": "python-csv-totals",
+  "title": "Total a CSV with run_python",
+  "prompt": "work/sales.csv lists sales as region,amount. Use the run_python tool to total the amount per region and write the result to work/report.json as a JSON object like {\"north\": 160}. Do not change sales.csv.",
+  "check": "bun check/check.ts",
+  "timeoutSec": 180,
+  "maxCostUsd": 0.5,
+  "setup": "python3 --version",
+  "settings": { "code": { "enabled": true, "allowUnsandboxed": true }, "deferTools": false }
+}

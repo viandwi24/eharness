@@ -68,6 +68,7 @@ import {
   orderState,
   PER_DESTINATION_DAILY_CAP,
   parseChecklist,
+  postOrderOf,
   type StandingOrder,
 } from '../domain/standing-orders.ts'
 import { supervisorSteps } from '../domain/supervisor.ts'
@@ -83,6 +84,7 @@ import {
   noteFired,
   pauseGoneDestinations,
   postPrivacy,
+  postScope,
   raiseConflicts,
   syncOrderWakes,
   weeklyReview,
@@ -626,7 +628,15 @@ export async function reportToWeb(
   if (order.report.kind !== 'web') {
     return `Not posted: order ${orderId} reports to a chat, not to the web: use channel_send with its connection and conversation.`
   }
-  const privacy = postPrivacy(deps, agentId, destKey(order.report))
+  const privacy =
+    postPrivacy(deps, agentId, destKey(order.report)) ??
+    postScope(deps, agentId, {
+      to: destKey(order.report),
+      destIds: [],
+      text: body,
+      order: orderId,
+      web: true,
+    })
   if (privacy !== undefined) return privacy
   const refusal = reservePost(deps, agentId, destKey(order.report), body)
   if (refusal !== undefined) return refusal
@@ -806,6 +816,12 @@ export async function beginBeat(
       allowed: [...chats.values()],
       grants,
       reads: beatReadScope(deps, agent.id, parsed.active, parsed.plain.length > 0),
+      // an order is a member's (private to them) when they are a member, or are one now; an order
+      // whose giver is gone keeps the role it was given with
+      postOrders: parsed.active.map((o) => {
+        const now = giverRole(deps, o)
+        return postOrderOf(o, isStaffRole(o.role) && (now === undefined || isStaffRole(now)))
+      }),
     }),
     at,
   )

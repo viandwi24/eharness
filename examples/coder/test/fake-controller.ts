@@ -601,6 +601,7 @@ export function fakeController(opts: FakeOptions = {}) {
         { name: 'API key', status: 'error', detail: 'OPENROUTER_API_KEY missing' },
       ],
     statusLineText: async () => undefined,
+    browserStatus: async () => ({ enabled: false, lines: ['Browser tools are off.'] }),
   }
   const setTasks = (next: BackgroundTask[]): void => {
     tasks = next

@@ -50,6 +50,18 @@ export const FindingSchema = z
       .nullable()
       .optional()
       .openapi({ description: 'Set for kind `consistency`.' }),
+    fixAction: z
+      .object({
+        kind: z.string().openapi({ example: 'unforbid' }),
+        label: z.string().openapi({ description: 'The button.' }),
+        confirm: z.string().openapi({ description: 'The sentence to confirm before it runs.' }),
+      })
+      .nullable()
+      .optional()
+      .openapi({
+        description:
+          'Set when the fix is unambiguous: `POST .../fix` does it. Absent: follow the text `fix`.',
+      }),
     dismissed: z.boolean(),
     dismissedAt: z.number().int().nullable(),
   })
@@ -85,3 +97,14 @@ export const FingerprintParam = z.object({
 })
 
 export const FindingAckSchema = z.object({ ok: z.literal(true) }).openapi('HealthFindingAck')
+
+export const FindingFixBodySchema = z
+  .object({ confirm: z.literal(true).openapi({ description: 'The person confirmed the change.' }) })
+  .openapi('HealthFindingFixInput')
+
+export const FindingFixResultSchema = z
+  .object({
+    ok: z.literal(true),
+    outcome: z.string().openapi({ description: 'What was done, in words.' }),
+  })
+  .openapi('HealthFindingFixResult')

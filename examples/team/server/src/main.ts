@@ -107,6 +107,7 @@ import {
   checkChatRead,
   noteFired,
   postPrivacy,
+  postScope,
   readNotes,
 } from './app/order-care.ts'
 import {
@@ -1267,6 +1268,7 @@ export function compose(config: ServerConfig): Server {
     reservePost: (agentId, to, text) => reservePost(deps, agentId, to, text),
     readCheck: (agentId, target) => checkChatRead(deps, agentId, target),
     postPrivacy: (agentId, to) => postPrivacy(deps, agentId, to),
+    postScope: (agentId, post) => postScope(deps, agentId, post),
     retryRun: (agentId, taskId, reason) => retryRun(deps, agentId, taskId, reason, Date.now()),
     askOwner: (agentId, input) => askOwner(deps, agentId, input, Date.now()),
     memoryFix: (agentId) => memoryFixOpen(deps, agentId),

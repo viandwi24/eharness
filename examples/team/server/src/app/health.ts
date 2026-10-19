@@ -24,6 +24,8 @@ import { parseChatSession } from '../domain/threads.ts'
 import { willRetryText } from '../domain/turn-retry.ts'
 import { postNotice } from './briefings.ts'
 import { type ConsistencyFinding, consistencyFindings } from './consistency.ts'
+import { consistencyCache } from './consistency-cache.ts'
+import { offerOf, planFix } from './consistency-fix.ts'
 import { hygieneFindings } from './order-care.ts'
 import type { Deps } from './ports.ts'
 
@@ -201,6 +203,7 @@ export function consistencyAsFindings(
       link = slug === undefined ? null : `/a/${slug}?tab=heartbeat`
     } else if (c.kind === 'routine-duplicate') link = '/routines'
     else if (c.kind === 'connection-used-but-broken') link = '/connectors'
+    const offer = offerOf(planFix(deps, c))
     return {
       fingerprint: c.fingerprint,
       kind: 'consistency',
@@ -220,6 +223,7 @@ export function consistencyAsFindings(
         line: c.line ?? null,
         refs: c.refs,
       },
+      ...(offer === undefined ? {} : { fixAction: offer }),
     }
   })
 }
@@ -229,7 +233,6 @@ export function consistencyAsFindings(
  * last result for a few minutes; the 10-minute job always rescans and refreshes it.
  */
 const CONSISTENCY_TTL_MS = 5 * 60_000
-const consistencyCache = new WeakMap<object, { at: number; findings: Finding[] }>()
 
 async function consistencyOf(deps: Deps, now: number, fresh: boolean): Promise<Finding[]> {
   const hit = consistencyCache.get(deps)

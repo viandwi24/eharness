@@ -381,7 +381,10 @@ export function supervisorSteps(s: SupervisorPrompt): string[][] {
     'concrete fix, so the owners can act: what failed, why you think so, what to change. Never re-run a',
     'run that failed because it was denied something or lacked authority: ask for the concrete change',
     '(for a program: propose_plan with program set to it, adding the tool it needs; or the question',
-    'tool). note: write it down with the notes tool and move on.',
+    `tool). When the fix is known give \`action\` to ${SUPERVISOR_ASK_TOOL} instead of free options: retry-run (a failed`,
+    'task id), pause-routine, remove-order, propose-program-tool (program id and tool: creates the change',
+    'card) or fix-finding (the fingerprint of an item); the server checks it and carries it out when the',
+    'owner picks it. note: write it down with the notes tool and move on.',
     `In the final answer list each decision as an item (kind "supervisor.<kind>", decision retry, escalate or`,
     'note, a reason, and the fingerprint above unchanged).',
   ])
@@ -405,7 +408,9 @@ export function supervisorSteps(s: SupervisorPrompt): string[][] {
     steps.push([
       'Findings about programs, standing orders, routines, decisions or connections are NOT yours to',
       `edit. For each one ask the owner with ${SUPERVISOR_ASK_TOOL}, naming the concrete action (the fix on its line),`,
-      'or for a program use propose_plan with program set to it. Never ask twice about the same finding.',
+      'or for a program use propose_plan with program set to it. A finding with a one-click fix (a granted and',
+      'forbidden tool, a duplicate program or routine with no runs, an order that repeats a program note) is',
+      `asked with action fix-finding and the fingerprint of its item. Never ask twice about the same finding.`,
     ])
   }
   if (s.deep) {

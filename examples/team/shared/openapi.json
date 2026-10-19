@@ -16359,6 +16359,32 @@
             ],
             "description": "Set for kind `consistency`."
           },
+          "fixAction": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "example": "unforbid"
+              },
+              "label": {
+                "type": "string",
+                "description": "The button."
+              },
+              "confirm": {
+                "type": "string",
+                "description": "The sentence to confirm before it runs."
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "confirm"
+            ],
+            "description": "Set when the fix is unambiguous: `POST .../fix` does it. Absent: follow the text `fix`."
+          },
           "dismissed": {
             "type": "boolean"
           },
@@ -16400,6 +16426,40 @@
         },
         "required": [
           "ok"
+        ]
+      },
+      "HealthFindingFixResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "description": "What was done, in words."
+          }
+        },
+        "required": [
+          "ok",
+          "outcome"
+        ]
+      },
+      "HealthFindingFixInput": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "The person confirmed the change."
+          }
+        },
+        "required": [
+          "confirm"
         ]
       }
     },
@@ -34615,6 +34675,85 @@
           },
           "409": {
             "description": "`NOT_DISMISSED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent-health/findings/{fingerprint}/fix": {
+      "post": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Fix a finding with one click",
+        "description": "Only for findings that carry `fixAction` (an unambiguous fix: un-forbid a granted tool, delete a duplicate that has no runs, remove an order that duplicates a program note). The server scans again and does what is true now; the body must confirm. 404 when the finding is gone, 409 `NO_FIX` when it has no one-click fix.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "example": "denial:program:abc:list_topics"
+            },
+            "required": true,
+            "name": "fingerprint",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealthFindingFixInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthFindingFixResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`NO_FIX`",
             "content": {
               "application/json": {
                 "schema": {

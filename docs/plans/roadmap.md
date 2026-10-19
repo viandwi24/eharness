@@ -17,6 +17,9 @@ Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
 
 ## Open items
 
+The proposed 1.0 stability list (stable / experimental / internal-candidate per export) is in
+[stability-1.0.md](../engineering/stability-1.0.md).
+
 Not scheduled. Each item needs a spec (or spec change) and, where it changes a decision, an ADR
 before implementation.
 

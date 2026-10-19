@@ -485,6 +485,14 @@ export const slashCommands: SlashCommand[] = [
     run: (ctx) => ctx.openPage({ kind: 'doctor' }),
   },
   {
+    name: 'browser',
+    description: 'Show the state of the browser and run_python tools',
+    run: async (ctx) => {
+      const info = await ctx.controller.browserStatus()
+      ctx.print(info.lines.join('\n'))
+    },
+  },
+  {
     name: 'output-style',
     usage: '[name]',
     description: 'Pick the response style',

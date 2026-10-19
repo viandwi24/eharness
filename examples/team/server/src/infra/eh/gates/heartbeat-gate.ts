@@ -77,6 +77,7 @@ export function createHeartbeatGate(
   const channelCall = (call: { toolName: string; input: unknown }): string | undefined => {
     const allowed = deps.heartbeat?.()?.allowed(def.id) ?? []
     let target: HeartbeatDestination | { error: string } | undefined
+    let targetIds: string[] = []
     const input = (call.input ?? {}) as Record<string, unknown>
     const gw = deps.channels?.()
     if (call.toolName === HEARTBEAT_POST_TOOL && allowed.length > 0 && gw !== undefined) {
@@ -96,6 +97,7 @@ export function createHeartbeatGate(
             ...(topic === undefined ? {} : { topic }),
           })
           target = { connectionId: t.config.connectionId, nodeId: t.node.id }
+          targetIds = [t.node.id, ...gw.nodes.chain(t.node).map((n) => n.id)]
         }
       } catch (error) {
         target = { error: errorText(error) }
@@ -110,9 +112,12 @@ export function createHeartbeatGate(
       connectionId: (target as HeartbeatDestination).connectionId,
       nodeId: (target as HeartbeatDestination).nodeId,
     })
-    // what a DM said never goes into a group (checked before the post is counted)
+    // what a DM said never goes into a group, a member's private order stays in its chat, and a
+    // group's content crosses into another group only through an order (all before the post is counted)
+    const order = typeof input.order === 'string' ? input.order : undefined
     return (
       deps.heartbeat?.()?.postPrivacy(def.id, to) ??
+      deps.heartbeat?.()?.postScope?.(def.id, { to, destIds: targetIds, text, order }) ??
       deps.heartbeat?.()?.reservePost(def.id, to, text)
     )
   }
@@ -149,6 +154,7 @@ export function createHeartbeatGate(
     return hb.readCheck(def.id, {
       nodeId: node.id,
       title: node.title ?? node.nativeId,
+      names: [node.title ?? '', node.nativeId],
       ids: [node.id, ...gw.nodes.chain(node).map((n) => n.id)],
       direct: node.kind === 'direct',
     })

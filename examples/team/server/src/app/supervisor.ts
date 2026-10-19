@@ -30,6 +30,7 @@ import {
 } from '../domain/supervisor.ts'
 import { getAgent } from './agents.ts'
 import { openAlarms } from './alarms.ts'
+import { ACTION_LEAVE, type OwnerAction, offerAction } from './answer-actions.ts'
 import { consistencyFindings } from './consistency.ts'
 import { changed } from './decisions.ts'
 import type { Deps } from './ports.ts'
@@ -262,6 +263,11 @@ export interface OwnerQuestion {
   /** The concrete action the owner can take. */
   fix: string
   options?: string[] | undefined
+  /**
+   * The action the server carries out when the owner picks it (checked possible now): the options
+   * become "<the action>" and "Leave it". Without it the options are words for the agent to read.
+   */
+  action?: OwnerAction | undefined
   /** The fingerprint of the supervisor item (for the body only). */
   fingerprint?: string | undefined
 }
@@ -270,7 +276,12 @@ export interface OwnerQuestion {
  * `heartbeat_ask_owner`: one Decision Center question with the diagnosis and the concrete fix. One
  * open question per title, five a day per agent; it never changes anything by itself.
  */
-export function askOwner(deps: Deps, agentId: string, q: OwnerQuestion, now: number): string {
+export async function askOwner(
+  deps: Deps,
+  agentId: string,
+  q: OwnerQuestion,
+  now: number,
+): Promise<string> {
   const agent = getAgent(deps, agentId)
   if (q.title.trim() === '' || q.diagnosis.trim() === '' || q.fix.trim() === '') {
     return 'Not asked: a question needs a title, a diagnosis and the concrete fix.'
@@ -287,7 +298,15 @@ export function askOwner(deps: Deps, agentId: string, q: OwnerQuestion, now: num
   if (today.length >= MAX_SUPERVISOR_QUESTIONS_PER_DAY) {
     return `Not asked: ${MAX_SUPERVISOR_QUESTIONS_PER_DAY} supervisor questions were already raised today; put it in your result instead.`
   }
-  const options = (q.options ?? []).map((o) => o.trim()).filter((o) => o !== '')
+  let options = (q.options ?? []).map((o) => o.trim()).filter((o) => o !== '')
+  let orderActions: Record<string, string> | undefined
+  if (q.action !== undefined) {
+    const offer = await offerAction(deps, agent.id, q.action)
+    if ('error' in offer) return `Not asked: ${offer.error}.`
+    const label = offer.label.slice(0, 80)
+    options = [label, ACTION_LEAVE]
+    orderActions = { [label]: offer.command, [ACTION_LEAVE]: 'none' }
+  }
   const d = deps.decisions.insert({
     id: deps.ids.next(),
     kind: 'escalation',
@@ -306,13 +325,16 @@ export function askOwner(deps: Deps, agentId: string, q: OwnerQuestion, now: num
     payload: {
       question: q.title.trim().slice(0, 300),
       options: options.length >= 2 ? options.slice(0, 5) : ['I will do it', 'Ignore this'],
+      ...(orderActions === undefined ? {} : { orderActions }),
       source: 'report',
     },
     waitId: null,
     createdAt: now,
   })
   changed(deps, d, 'created')
-  return 'Asked the owners in the Decision Center.'
+  return orderActions === undefined
+    ? 'Asked the owners in the Decision Center.'
+    : 'Asked the owners in the Decision Center; if they pick the action, the server carries it out and records the result.'
 }
 
 // --- memory edits of a beat --------------------------------------------------------------------

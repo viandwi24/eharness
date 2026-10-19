@@ -48,6 +48,8 @@ export interface Finding {
     line: number | null
     refs: string[]
   }
+  /** Kind `consistency`: the fix is unambiguous, so one click does it (after a confirmation). */
+  fixAction?: { kind: string; label: string; confirm: string }
 }
 
 /** Thresholds in one place (the tests and the page read the same numbers). */

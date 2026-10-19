@@ -48,6 +48,9 @@ that a UI may need to recognise (`INTERRUPTED_*`, `DENIED_NEW_INPUT`, `WAIT_TIME
 `TOOL_OUTPUT_TRUNCATED`, the `GUARD_*` denial reasons, …) are exported constants and public:
 changing one is a minor change.
 
+The proposed 1.0 classification of every export (stable / experimental / internal-candidate) is in
+[stability-1.0.md](stability-1.0.md); error and warning codes are mapped in [errors.md](errors.md).
+
 ### The export snapshot
 
 The runtime export list of every entry point is a committed snapshot

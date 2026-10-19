@@ -1,8 +1,11 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
+import { fixFinding } from '../../app/consistency-fix.ts'
 import { dismissFinding, listHealth, restoreFinding } from '../../app/health.ts'
 import type { Deps } from '../../app/ports.ts'
 import {
   FindingAckSchema,
+  FindingFixBodySchema,
+  FindingFixResultSchema,
   FindingListSchema,
   FindingQuerySchema,
   FingerprintParam,
@@ -55,6 +58,25 @@ const restoreRoute = createRoute({
   },
 })
 
+const fixRoute = createRoute({
+  method: 'post',
+  path: '/agent-health/findings/{fingerprint}/fix',
+  tags: ['health'],
+  summary: 'Fix a finding with one click',
+  description:
+    'Only for findings that carry `fixAction` (an unambiguous fix: un-forbid a granted tool, delete a duplicate that has no runs, remove an order that duplicates a program note). The server scans again and does what is true now; the body must confirm. 404 when the finding is gone, 409 `NO_FIX` when it has no one-click fix.',
+  security,
+  request: {
+    params: FingerprintParam,
+    body: { required: true, content: json(FindingFixBodySchema) },
+  },
+  responses: {
+    200: { description: 'Done', content: json(FindingFixResultSchema) },
+    409: jsonError('`NO_FIX`'),
+    ...errorResponses,
+  },
+})
+
 export function agentHealthRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(listRoute, async (c) => {
@@ -72,6 +94,10 @@ export function agentHealthRoutes(deps: Deps): OpenAPIHono {
     .openapi(dismissRoute, (c) => {
       dismissFinding(deps, c.req.valid('param').fingerprint)
       return c.json({ ok: true as const }, 200)
+    })
+    .openapi(fixRoute, async (c) => {
+      const { outcome } = await fixFinding(deps, c.req.valid('param').fingerprint)
+      return c.json({ ok: true as const, outcome }, 200)
     })
     .openapi(restoreRoute, (c) => {
       restoreFinding(deps, c.req.valid('param').fingerprint)
