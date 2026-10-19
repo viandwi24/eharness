@@ -20,23 +20,63 @@ export function listTasks(
   })
 }
 
+const WRITE_TOOLS: ReadonlySet<string> = new Set(['write_file', 'edit_file'])
+const PATH_KEYS = ['path', 'file_path', 'filePath', 'file']
+
+/**
+ * The files a session wrote (`write_file` / `edit_file` calls that succeeded), once each, newest
+ * first. Internal folders are left out. Read from the stored messages, so a view that wants only
+ * the list never has to download them.
+ */
+export function writtenPaths(messages: readonly ChatMessage[]): string[] {
+  const seen = new Set<string>()
+  for (const m of messages) {
+    for (const p of m.parts) {
+      const type = typeof p.type === 'string' ? p.type : ''
+      const name = type === 'dynamic-tool' ? String(p.toolName ?? '') : type.replace(/^tool-/, '')
+      if (!type.startsWith('tool-') && type !== 'dynamic-tool') continue
+      if (!WRITE_TOOLS.has(name) || p.state !== 'output-available') continue
+      if (typeof p.output === 'string' && /^\s*error\b/i.test(p.output)) continue
+      const input = (p.input ?? {}) as Record<string, unknown>
+      const path = PATH_KEYS.map((k) => input[k]).find(
+        (v): v is string => typeof v === 'string' && v.startsWith('/'),
+      )
+      if (path === undefined || path.startsWith('/memories/') || path.startsWith('/.eharness/'))
+        continue
+      seen.add(path)
+    }
+  }
+  return [...seen].reverse()
+}
+
 export async function getTask(
   deps: Deps,
   id: string,
+  options: { messages?: boolean; outputs?: boolean } = {},
 ): Promise<{
   task: Task
   messages: ChatMessage[]
+  outputs: string[]
   approvals: Awaited<ReturnType<typeof taskApprovals>>
   job: Awaited<ReturnType<Deps['team']['workerJob']>> | null
 }> {
   const task = deps.tasks.get(id)
   if (task === undefined) throw notFound('task', id)
-  const [messages, approvals, job] = await Promise.all([
-    isQueuedSession(task.sessionId) ? Promise.resolve([]) : deps.team.taskMessages(task, 200),
+  const wantsMessages = options.messages !== false
+  const [stored, approvals, job] = await Promise.all([
+    isQueuedSession(task.sessionId) || (!wantsMessages && options.outputs !== true)
+      ? Promise.resolve([])
+      : deps.team.taskMessages(task, 200),
     taskApprovals(deps, task),
     isQueuedSession(task.sessionId) ? Promise.resolve(undefined) : deps.team.workerJob(task),
   ])
-  return { task, messages, approvals, job: job ?? null }
+  return {
+    task,
+    messages: wantsMessages ? stored : [],
+    outputs: options.outputs === true ? writtenPaths(stored) : [],
+    approvals,
+    job: job ?? null,
+  }
 }
 
 /**

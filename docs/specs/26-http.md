@@ -75,8 +75,10 @@ handling and no CORS (guide).
 ```
 
 The rest of the part (`type`, `state`, `toolCallId`, ...) is unchanged, and the marker is plain
-JSON, so `validateUIMessages` and a `Chat` accept it. `text` and `reasoning` parts are never
-clipped; parts under the limit are byte-identical; `nextBefore` is unchanged. Storage, writes and
+JSON, so `validateUIMessages` and a `Chat` accept it. A `reasoning` part whose JSON is longer
+than `clip` keeps `type`, `state` and the first `clip` characters of `text`; its `providerMetadata`
+(signatures, encrypted reasoning) is replaced by `{ eharness: { clipped: true, chars } }`. `text`
+parts are never clipped; parts under the limit are byte-identical; `nextBefore` is unchanged. Storage, writes and
 the model wire never see clipped data. The full message comes from `GET /sessions/:id/messages/:messageId`
 (same `session.messages`-style authorization read; action `session.message`). An out-of-range `clip`
 is `400 EH_INVALID_INPUT` (`details.reason: 'clip'`).

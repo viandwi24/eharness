@@ -176,6 +176,8 @@ export interface ApprovalAnswerInput {
   /** `question` = an `ask_user_question` item: answered with an error text instead of a decision. */
   kind?: 'approval' | 'question'
   approved: boolean
+  /** `session` = the same tool is not asked again in this session (the library's session grant). */
+  remember?: 'session'
   /** The reason the model reads for a decline (the user-note wording, `userDeclinedText`). */
   reason?: string
   /**
@@ -1127,6 +1129,27 @@ export function approvalWord(text: string): 'yes' | 'no' | undefined {
   if (words.every((w) => YES_WORDS.has(w))) return 'yes'
   if (words.every((w) => NO_WORDS.has(w))) return 'no'
   return undefined
+}
+
+/** Added to every approval request: the one-line way to stop being asked about the same tool. */
+const ASK_ALL_LINE =
+  '\nReply "ya semua" / "yes all" to approve this tool for the rest of this session too.'
+
+const ALL_WORDS = new Set(['semua', 'all', 'selalu', 'always', 'aja', 'saja', 'terus'])
+
+/**
+ * "ya semua" / "yes all" / "selalu" / "always": a yes that also covers the next calls of the same
+ * tool in this session. Undefined for anything else (a plain "ya" is a single answer).
+ */
+export function approvalRemembers(text: string): boolean {
+  const words = text
+    .toLowerCase()
+    .replace(/[.,!?;:"'()[\]]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w !== '')
+  if (words.length === 0 || words.length > 4) return false
+  if (!words.some((w) => ALL_WORDS.has(w))) return false
+  return words.every((w) => ALL_WORDS.has(w) || YES_WORDS.has(w))
 }
 
 /** A bare mention looks back this far, and at most this many messages, for the request before it. */
@@ -2634,16 +2657,24 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (open.length === 0) return 'none'
     // "ya" / "tidak" from somebody who may answer is the answer (platforms without buttons, and
     // people who type instead of pressing): who may is decided by their id and directory role
-    const verdict = approvalWord(input.typed)
+    const remember = approvalRemembers(input.typed)
+    const verdict = remember ? 'yes' : approvalWord(input.typed)
     if (verdict !== undefined) {
       // a "ya" typed long after the request is about something else: only fresh requests
-      const answerable = open.filter(
+      let answerable = open.filter(
         (a) =>
           now() - a.createdAt <= TEXT_ANSWER_MAX_AGE_MS &&
           mayAnswer(input.config, a, input.node, input.sender),
       )
+      // "ya semua" covers the tool of the newest request (and what is waiting of the same tool)
+      if (remember && answerable.length > 0) {
+        const tool = (answerable.at(-1) as ApprovalRow).toolName
+        answerable = answerable.filter((a) => a.toolName === tool)
+      }
       if (answerable.length > 0) {
         for (const rec of answerable) {
+          // answered together with a sibling already (one message, several calls)
+          if (approvals.get(rec.id)?.status !== 'open') continue
           await answerInChat(
             rec,
             verdict === 'yes',
@@ -2652,6 +2683,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
             input.node,
             input.sender,
             'chat-text',
+            remember,
           )
         }
         return 'answered'
@@ -4334,14 +4366,44 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         now(),
       )
       if (rec === undefined) continue // announced already (a partial answer re-ends the turn)
+      // the same tool asks again while its request still waits: one message, not a pile of them
+      if (item.kind === 'approval') {
+        const earlier = approvals
+          .open(row.sessionId)
+          .find(
+            (a) =>
+              a.id !== rec.id &&
+              a.itemKind === 'approval' &&
+              a.toolName === item.toolName &&
+              a.conversationId === node.id &&
+              a.messageId !== null,
+          )
+        if (earlier?.messageId != null) {
+          approvals.setMessage(rec.id, earlier.messageId)
+          const folded = approvals
+            .open(row.sessionId)
+            .filter((a) => a.toolName === item.toolName && a.messageId === earlier.messageId)
+          const adapterEdit = adapter.edit?.bind(adapter)
+          const messageId = earlier.messageId
+          if (caps.edit && adapterEdit !== undefined) {
+            const edited = `${item.text}\n(${folded.length} calls of ${item.toolName} wait: one answer covers all of them.)\nReply to this message with "ya" or "tidak".${ASK_ALL_LINE}`
+            await limitedOutbound
+              .run(laneOf(node), () =>
+                adapterEdit(viewOf(node), messageId, clip(edited, caps.maxTextLength)),
+              )
+              .catch((error) => warn(`channels: could not fold an approval: ${errorText(error)}`))
+          }
+          continue
+        }
+      }
       const buttons =
         item.kind === 'approval' && caps.buttons === true && deps.approvals !== undefined
       const text =
         item.kind === 'question'
           ? item.text
           : buttons
-            ? `${item.text}\nI am waiting for an owner or admin to approve. Approve?`
-            : `${item.text}\nI am waiting for an owner or admin to approve. Reply to this message with "ya" (yes) to approve or "tidak" (no) to decline; only an owner or admin of the team can answer. Or answer in ${where}.`
+            ? `${item.text}\nI am waiting for an owner or admin to approve. Approve?${ASK_ALL_LINE}`
+            : `${item.text}\nI am waiting for an owner or admin to approve. Reply to this message with "ya" (yes) to approve or "tidak" (no) to decline; only an owner or admin of the team can answer. Or answer in ${where}.${ASK_ALL_LINE}`
       await outbox.enqueue(
         [
           {
@@ -4414,6 +4476,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     node: NodeRow,
     sender: IdentityRow,
     via: 'chat' | 'chat-text',
+    remember = false,
   ): Promise<HandleResult> {
     const reply = (text: string): Promise<void> =>
       sendDirect(config, adapter, node, text, rec.messageId ?? undefined).catch((error) =>
@@ -4435,6 +4498,37 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       await reply('That was already answered elsewhere.')
       return { action: 'approval', reason: 'already answered' }
     }
+    // calls of the same tool that share this request message (a repeat was folded into it) answer
+    // with it, first, so the answer sent last is the one that resumes the session
+    const folded = approvals
+      .open(rec.sessionId)
+      .filter(
+        (s) =>
+          s.id !== rec.id &&
+          s.itemKind === 'approval' &&
+          s.toolName === rec.toolName &&
+          (remember || (rec.messageId !== null && s.messageId === rec.messageId)),
+      )
+    for (const sibling of folded) {
+      if (!approvals.answer(sibling.id, who, approved ? 'approved' : 'denied', now())) continue
+      try {
+        await deps.approvals.answer({
+          agentId: sibling.agentId,
+          sessionId: sibling.sessionId,
+          itemId: sibling.itemId,
+          approved,
+          ...(remember && approved ? { remember: 'session' as const } : {}),
+          actor: { id: memberId ?? sender.nativeId, name: who },
+        })
+      } catch (error) {
+        approvals.reopen(sibling.id)
+        warn(`channels: could not answer ${sibling.itemId}: ${errorText(error)}`)
+        continue
+      }
+      const done = approvals.get(sibling.id)
+      if (done !== undefined && sibling.messageId !== rec.messageId)
+        await resolveMessage(done, adapter, config)
+    }
     let status: string
     try {
       const result = await deps.approvals.answer({
@@ -4442,6 +4536,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         sessionId: rec.sessionId,
         itemId: rec.itemId,
         approved,
+        ...(remember && approved ? { remember: 'session' as const } : {}),
         actor: { id: memberId ?? sender.nativeId, name: who },
       })
       status = result.status
@@ -4466,9 +4561,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       conversationId: rec.conversationId,
       peerId: sender.nativeId,
       peerName: who,
-      detail: { tool: rec.toolName, via },
+      detail: { tool: rec.toolName, via, ...(remember && approved ? { remember: 'session' } : {}) },
     })
-    await resolveMessage(done, adapter, config)
+    await resolveMessage(
+      remember && approved ? { ...done, outcome: 'approved' } : done,
+      adapter,
+      config,
+    )
     return { action: 'approval', reason: approved ? 'approved' : 'denied' }
   }
 

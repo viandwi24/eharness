@@ -154,6 +154,8 @@ export const CONTINUE_TEXT = 'Continue where you left off.'
 export function isClippedPart(part: unknown): boolean {
   if (typeof part !== 'object' || part === null) return false
   const p = part as Record<string, unknown>
+  const meta = p.providerMetadata as { eharness?: { clipped?: unknown } } | undefined
+  if (p.type === 'reasoning' && meta?.eharness?.clipped === true) return true
   return [p.input, p.output, p.data].some(
     (v) =>
       typeof v === 'object' &&

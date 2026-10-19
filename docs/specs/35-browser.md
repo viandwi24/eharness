@@ -308,7 +308,8 @@ agent by default; sharing a profile between agents is allowed and serial (`BUSY:
 ### 5.1 Tools (model-visible; text changes are a minor change)
 
 Fixed order: `browser_open`, `browser_snapshot`, `browser_act`, `browser_screenshot`,
-`browser_read`, `browser_tabs`, `browser_request_human`, `browser_eval`. A tool is registered only
+`browser_read`, `browser_tabs`, `browser_request_human`, `browser_eval`, then the optional
+`browser_profiles` / `browser_use` and, appended last (the earlier order never changes), `browser_scroll`. A tool is registered only
 when the **adapter's** capabilities allow it (decided at session open from the profile, so the
 tool list is stable for the session, spec 02 §5): no `screenshot` → no `browser_screenshot`; no
 `tabs` → no `browser_tabs`; no `requestHuman` or no `takeover` → no `browser_request_human`.
@@ -323,6 +324,7 @@ tool list is stable for the session, spec 02 §5): no `screenshot` → no `brows
 | `browser_tabs` | `{ action, tab?, url? }` | `read` (`open` checks domains) |
 | `browser_request_human` | `{ reason }` | `read` |
 | `browser_eval` | `{ expression }` | `external`; `write` for a trusted profile |
+| `browser_scroll` | `{ direction?, amount?, pages?, ref?, waitMs? }` | `read` |
 
 All results are strings or a media reference (§5.2); expected failures are `ERROR:`, `STALE:`,
 `BLOCKED:` or `BUSY:` strings, never throws (hard rule 6). Page text (snapshot, read, titles, eval
@@ -335,6 +337,13 @@ always taken, for `act` only when the page changed (or `'always'`); under `'chan
 attached only when its hash differs from the last screenshot sent. Every risk can be replaced with
 the `risk` option; a profile marked `trusted` lowers `browser_act` and `browser_eval` from
 `external` to `write` so a permissions plugin (spec 18) does not ask for them.
+
+`browser_scroll` scrolls the page (or inside an element with `ref` and a direction; a `ref` alone
+scrolls to it; `pages` is about 800 px each) and optionally waits `waitMs` (max 10 s) for content
+to load. It changes nothing on the site, so it is `read` risk (override with `risk.browser_scroll`)
+and needs no approval, unlike `browser_act`. It returns what `browser_act` returns (status line,
+page block, snapshot / screenshot by `autoSnapshot` and `screenshots.auto`). `browser_act` with
+`kind: 'scroll'` still works; `ACT_DESCRIPTION` points the model to `browser_scroll`.
 
 `browser_request_human` is an `externalTool()` (spec 11 §4.2): `start` takes the lease, switches
 the controller to `human` (§7) and calls `requestHuman` (the team app creates a `takeover`

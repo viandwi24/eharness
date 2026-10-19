@@ -4,8 +4,20 @@
 	import { Shimmer } from '#lib/components/ai/shimmer/index.js';
 	import { cn } from '#lib/utils.js';
 	import { reasoningLabel } from './activity.js';
+	import { getChatEnv } from '#lib/artifacts/context.js';
 
-	let { text, streaming, durationMs }: { text: string; streaming: boolean; durationMs?: number } = $props();
+	let { text, streaming, durationMs, messageId, clipped = false }: { text: string; streaming: boolean; durationMs?: number; messageId?: string; clipped?: boolean } = $props();
+
+	const env = getChatEnv();
+	let loadingFull = $state(false);
+	async function loadFull(): Promise<void> {
+		loadingFull = true;
+		try {
+			if (messageId) await env?.loadFull?.(messageId);
+		} finally {
+			loadingFull = false;
+		}
+	}
 
 	// Always collapsed until the reader opens it: never auto-expand, even while streaming.
 	let toggled = $state(false);
@@ -30,5 +42,10 @@
 		>
 			<SafeStreamdown content={text} baseTheme="shadcn" {theme} />
 		</div>
+		{#if clipped && messageId && env?.loadFull}
+			<button type="button" class="mt-1 text-[12.5px] text-muted-foreground underline underline-offset-4 hover:text-foreground" disabled={loadingFull} onclick={() => void loadFull()}>
+				{loadingFull ? 'Loading…' : 'Load full'}
+			</button>
+		{/if}
 	{/if}
 </div>

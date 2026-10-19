@@ -43,7 +43,7 @@ export type InputSource = 'user' | 'event' | `plugin:${string}`;
 
 export type PartView =
 	| { kind: 'text'; key: string; text: string; streaming: boolean }
-	| { kind: 'reasoning'; key: string; text: string; streaming: boolean; durationMs?: number }
+	| { kind: 'reasoning'; key: string; text: string; streaming: boolean; durationMs?: number; messageId: string; clipped?: boolean }
 	| {
 			kind: 'tool';
 			key: string;
@@ -206,7 +206,7 @@ export function viewModel(message: UIMessage, live = true): PartView[] {
 			const meta = isRecord(part.providerMetadata) ? part.providerMetadata : undefined;
 			const eh = meta && isRecord(meta.eharness) ? meta.eharness : undefined;
 			const durationMs = eh && typeof eh.durationMs === 'number' ? eh.durationMs : undefined;
-			out.push({ kind: 'reasoning', key, text: String(part.text ?? ''), streaming: live && part.state === 'streaming', durationMs });
+			out.push({ kind: 'reasoning', key, text: String(part.text ?? ''), streaming: live && part.state === 'streaming', durationMs, messageId: message.id, clipped: isClipped(part) ? true : undefined });
 		} else if (type === 'dynamic-tool' || type.startsWith('tool-')) {
 			const name = toolName(part);
 			const state = part.state as ToolViewState;

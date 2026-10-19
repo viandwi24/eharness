@@ -222,6 +222,80 @@ export function messageTool(scope: Scope, name: string): ToolInput {
   }) as ToolInput
 }
 
+/**
+ * The latest non-empty final text of a child (a side-effect-free read: the child is not opened, so
+ * no start hooks or recovery run). Closes it afterwards only when it is idle and untracked.
+ */
+async function readFinalText(
+  scope: Scope,
+  def: NonNullable<ReturnType<Scope['defs']>[string]>,
+  agent: string,
+  childId: string,
+  entry: AgentEntry | undefined,
+): Promise<string> {
+  const { ctx, dir, registry } = scope
+  let text = ''
+  const child = scope.env.peekOf(def.agent, childId, {
+    parentSessionId: ctx.session.id,
+    agent,
+    depth: scope.depth + 1,
+  })
+  try {
+    const stored = (await child.messages({ limit: 200 })) as unknown as MessageLike[]
+    for (const m of stored.toReversed()) {
+      if (m.role !== 'assistant') continue
+      text = textOf(m, true)
+      if (text !== '') break
+    }
+  } finally {
+    // Closing would abort a resume that started meanwhile: close only a child that is
+    // idle now (re-checked after the open) and not tracked as running.
+    const running =
+      dir?.entries.get(childId)?.status === 'running' ||
+      registry.list().some((t) => t.childSessionId === childId && t.status === 'running')
+    let busy = running
+    if (!busy) {
+      try {
+        const stats = await child.stats()
+        busy = stats.activeTurn !== null || stats.pending !== null
+      } catch {
+        busy = true
+      }
+    }
+    if (!busy && entry?.durable !== true) await closeChild(def, childId)
+  }
+  return text
+}
+
+/** What `agent_stop` says about an agent that already ended: its answer, when it left one. */
+export async function endedAnswer(
+  scope: Scope,
+  label: string,
+  status: string,
+  agent: string | undefined,
+  childId: string | undefined,
+  entry: AgentEntry | undefined,
+  outputToolName: string | undefined,
+): Promise<string> {
+  const base = `${label} is not running (${status}).`
+  if (agent === undefined || childId === undefined) return base
+  const def = scope.defs()[agent]
+  if (def === undefined) return base
+  let text = ''
+  try {
+    text = await readFinalText(scope, def, agent, childId, entry)
+  } catch {
+    return base
+  }
+  if (text === '') return base
+  const max = Math.min(scope.env.reportMax, 4000)
+  const body =
+    text.length > max
+      ? `${text.slice(0, max)}\n… [cut at ${max} of ${text.length} characters${outputToolName === undefined ? '' : `; read the rest with ${outputToolName}({ id: "${label}" })`}]`
+      : text
+  return `${base} It had already ended; its final answer:\n\n${body}`
+}
+
 /** The `agent_stop` tool of one session: stop a running agent; it stays resumable. */
 export function stopTool(scope: Scope): ToolInput {
   const schema = z.object({
@@ -242,16 +316,46 @@ export function stopTool(scope: Scope): ToolInput {
           entry = findEntry(dir, key)
         }
       }
-      if (entry?.durable === true) return stopPark(scope, entry)
+      if (entry?.durable === true) {
+        return stopPark(scope, entry, (label, status) =>
+          endedAnswer(
+            scope,
+            label,
+            status,
+            entry.agent,
+            entry.childSessionId,
+            entry,
+            scope.env.outputEnabled ? scope.env.outputToolName : undefined,
+          ),
+        )
+      }
       const task = registry.get(key)
       if (task === undefined) {
         const label = entry?.name ?? entry?.taskId ?? key
         return entry === undefined
           ? `ERROR: no running agent "${key}". Agents that finished need no stopping.`
-          : `${label} is not running (${entry.status}).`
+          : endedAnswer(
+              scope,
+              label,
+              entry.status,
+              entry.agent,
+              entry.childSessionId,
+              entry,
+              scope.env.outputEnabled ? scope.env.outputToolName : undefined,
+            )
       }
       const label = task.name ?? task.id
-      if (task.status !== 'running') return `${label} is not running (${task.status}).`
+      if (task.status !== 'running') {
+        return endedAnswer(
+          scope,
+          label,
+          task.status,
+          task.agent,
+          task.childSessionId,
+          entry,
+          scope.env.outputEnabled ? scope.env.outputToolName : undefined,
+        )
+      }
       if (entry !== undefined) entry.modelStopped = true
       await registry.stop(task.id)
       return `Stopped ${label}.${entry?.resumable === false ? '' : ' It can be resumed by sending it a message.'}`
@@ -319,36 +423,7 @@ export function outputTool(scope: Scope, name: string): ToolInput {
       if (def === undefined) return `ERROR: the agent type "${agent}" is not available.`
       let text = ''
       try {
-        // a side-effect-free read: the child is not opened (no start hooks, no recovery)
-        const child = scope.env.peekOf(def.agent, childId, {
-          parentSessionId: ctx.session.id,
-          agent,
-          depth: scope.depth + 1,
-        })
-        try {
-          const stored = (await child.messages({ limit: 200 })) as unknown as MessageLike[]
-          for (const m of stored.toReversed()) {
-            if (m.role !== 'assistant') continue
-            text = textOf(m, true)
-            if (text !== '') break
-          }
-        } finally {
-          // Closing would abort a resume that started meanwhile: close only a child that is
-          // idle now (re-checked after the open) and not tracked as running.
-          const running =
-            dir?.entries.get(childId)?.status === 'running' ||
-            registry.list().some((t) => t.childSessionId === childId && t.status === 'running')
-          let busy = running
-          if (!busy) {
-            try {
-              const stats = await child.stats()
-              busy = stats.activeTurn !== null || stats.pending !== null
-            } catch {
-              busy = true
-            }
-          }
-          if (!busy && entry?.durable !== true) await closeChild(def, childId)
-        }
+        text = await readFinalText(scope, def, agent, childId, entry)
       } catch (error) {
         ctx.log.warn('subagent: could not read an agent report', { error: errorText(error) })
         return `ERROR: could not read the report of ${label}: ${errorText(error)}`

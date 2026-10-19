@@ -122,3 +122,29 @@ describe('clipped reads', () => {
     expect((await validateUIMessages({ messages: res.messages })).length).toBe(3)
   })
 })
+
+describe('clipped reasoning', () => {
+  test('a long reasoning part keeps a preview and is marked; a short one is identical', async () => {
+    const { clipMessages } = await import('./clip.ts')
+    const long = {
+      type: 'reasoning' as const,
+      text: 'x'.repeat(5000),
+      state: 'done' as const,
+      providerMetadata: { openrouter: { reasoning_details: [{ data: 'y'.repeat(9000) }] } },
+    }
+    const short = { type: 'reasoning' as const, text: 'short', state: 'done' as const }
+    const [m] = clipMessages(
+      [{ id: 'm1', role: 'assistant', parts: [long, short] } as UIMessage],
+      1000,
+    )
+    const [a, b] = m?.parts ?? []
+    expect(a).toMatchObject({ type: 'reasoning', state: 'done', text: 'x'.repeat(1000) })
+    expect((a as { providerMetadata: unknown }).providerMetadata).toEqual({
+      eharness: { clipped: true, chars: JSON.stringify(long).length },
+    })
+    expect(isClippedPart(a)).toBe(true)
+    expect(b).toBe(short)
+    expect(isClippedPart(b)).toBe(false)
+    await validateUIMessages({ messages: [m as UIMessage] })
+  })
+})

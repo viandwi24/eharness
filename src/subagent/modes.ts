@@ -75,14 +75,27 @@ function backgroundFinisher(
   const { ctx, registry, env } = scope
   const report = a.report ?? reporterOf(ctx)
   return async (status, text) => {
-    const stopped = registry.stopped(a.taskId)
-    registry.complete(a.taskId, status)
+    // A stop that raced the last step: the child still produced its answer, so it counts as done
+    // and the report says the stop came too late; a real abort reports as stopped.
+    const stopRequested = registry.stopped(a.taskId)
+    const stopped = stopRequested && status !== 'completed'
+    registry.complete(a.taskId, status, stopRequested)
     finishEntry(a.entry, stopped ? 'stopped' : status)
+    if (stopRequested && !stopped && a.entry !== undefined) a.entry.status = 'completed'
     a.marker(stopped ? 'stopped' : status)
     const outcome = stopped ? 'stopped' : status
+    if (text.replace(/^\[subagent stopped: [^\]]*\]\s*/, '') === '') {
+      text = registry.get(a.taskId)?.tail || text
+    }
     const who = `${a.taskId}${a.name === undefined ? '' : ` "${a.name}"`}`
     const head = `${a.resumed === true ? 'Resumed subagent' : 'Background subagent'} ${who} (${a.agentName}: ${a.label}) ${
-      stopped ? 'was stopped' : status === 'completed' ? 'finished' : 'failed'
+      stopped
+        ? 'was stopped'
+        : status === 'completed'
+          ? stopRequested
+            ? 'finished (it had already completed its answer when the stop arrived)'
+            : 'finished'
+          : 'failed'
     }.`
     const hint = env.outputEnabled
       ? `read the full report with ${env.outputToolName}({ id: "${a.taskId}" })`

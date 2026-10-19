@@ -3174,6 +3174,13 @@
             },
             "description": "The stored messages of the task session (newest 200)."
           },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Library paths of the files the task session wrote, newest first. Filled only with `?outputs=files` (else `[]`); works with `?messages=none`."
+          },
           "approvals": {
             "type": "array",
             "items": {
@@ -3186,6 +3193,7 @@
           "task",
           "job",
           "messages",
+          "outputs",
           "approvals"
         ]
       },
@@ -19724,6 +19732,7 @@
           "tasks"
         ],
         "summary": "A task with the messages of its session and what it waits for",
+        "description": "By default up to 200 full messages of the session come with the task. `?messages=none` returns the task, its approvals and job with `messages: []`: a view that polls the task reads the transcript from `GET /sessions/{sessionId}/messages` (paged and clipped) instead.",
         "security": [
           {
             "Bearer": []
@@ -19741,6 +19750,33 @@
             "description": "Task id.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "none"
+              ],
+              "description": "`none` leaves the messages out (`messages: []`). Default `all`."
+            },
+            "required": false,
+            "description": "`none` leaves the messages out (`messages: []`). Default `all`.",
+            "name": "messages",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "files"
+              ],
+              "description": "`files` fills `outputs` with the files the session wrote (a light way to list them: combine with `messages=none`)."
+            },
+            "required": false,
+            "description": "`files` fills `outputs` with the files the session wrote (a light way to list them: combine with `messages=none`).",
+            "name": "outputs",
+            "in": "query"
           }
         ],
         "responses": {

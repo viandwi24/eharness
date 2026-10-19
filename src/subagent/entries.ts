@@ -310,7 +310,13 @@ export async function parkStatus(
 }
 
 /** `'park'`: `agent_stop` asks the child's session to abort, wherever it runs (spec 05 §9.1). */
-export async function stopPark(scope: Scope, entry: AgentEntry): Promise<string> {
+export async function stopPark(
+  scope: Scope,
+  entry: AgentEntry,
+  /** Text for an agent that already ended (default: a plain "not running"); may carry its answer. */
+  ended: (label: string, status: string) => Promise<string> = async (l, st) =>
+    `${l} is not running (${st}).`,
+): Promise<string> {
   const label = entry.name ?? entry.childSessionId
   const def = scope.defs()[entry.agent]
   if (def === undefined) return `ERROR: the agent type "${entry.agent}" is not available.`
@@ -320,7 +326,7 @@ export async function stopPark(scope: Scope, entry: AgentEntry): Promise<string>
   } catch (error) {
     return `ERROR: could not read the state of ${label}: ${errorText(error)}`
   }
-  if (state.status !== 'running') return `${label} is not running (${entry.status}).`
+  if (state.status !== 'running') return ended(label, entry.status)
   if (state.waiting) {
     return `${label} is waiting for an answer to a permission request; it cannot be stopped from here. It continues when the request is answered.`
   }
@@ -328,7 +334,7 @@ export async function stopPark(scope: Scope, entry: AgentEntry): Promise<string>
     const out = await (
       def.agent.session(entry.childSessionId, scope.env.entryOptions(entry)) as AnySession
     ).abort('stopped')
-    if (out.target === 'idle') return `${label} is not running (${entry.status}).`
+    if (out.target === 'idle') return await ended(label, entry.status)
   } catch (error) {
     return `ERROR: could not stop ${label}: ${errorText(error)}`
   }

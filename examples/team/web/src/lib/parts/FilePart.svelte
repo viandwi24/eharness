@@ -3,6 +3,7 @@
 	import { Attachment, AttachmentInfo, AttachmentPreview, Attachments } from '#lib/components/ai/attachments/index.js';
 	import { libraryPathOf } from '#lib/chat/library-url.js';
 	import type { PartView } from './map.js';
+	import { inView } from './in-view.js';
 
 	let { views }: { views: Extract<PartView, { kind: 'file' }>[] } = $props();
 
@@ -12,8 +13,11 @@
 
 	const requested = new Set<string>();
 	let destroyed = false;
+	/** Images are fetched only once the attachments are scrolled near. */
+	let seen = $state(false);
 
 	$effect(() => {
+		if (!seen) return;
 		for (const f of views) {
 			const path = libraryPathOf(f.url);
 			if (path === undefined || !f.mediaType.startsWith('image/') || requested.has(f.url)) continue;
@@ -36,6 +40,7 @@
 	const shownUrl = (url: string): string | undefined => (libraryPathOf(url) === undefined ? url : blobs[url]);
 </script>
 
+<div use:inView={() => (seen = true)}>
 <Attachments variant="inline">
 	{#each views as f (f.key)}
 		<Attachment data={{ type: 'file', id: f.key, url: shownUrl(f.url) ?? '', mediaType: f.mediaType, filename: f.filename }}>
@@ -44,3 +49,4 @@
 		</Attachment>
 	{/each}
 </Attachments>
+</div>

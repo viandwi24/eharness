@@ -259,6 +259,10 @@ export const TaskDetailSchema = z
     messages: z
       .array(UiMessageSchema)
       .openapi({ description: 'The stored messages of the task session (newest 200).' }),
+    outputs: z.array(z.string()).openapi({
+      description:
+        'Library paths of the files the task session wrote, newest first. Filled only with `?outputs=files` (else `[]`); works with `?messages=none`.',
+    }),
     approvals: z.array(ApprovalSchema).openapi({ description: 'What the task waits for.' }),
   })
   .openapi('TaskDetail')

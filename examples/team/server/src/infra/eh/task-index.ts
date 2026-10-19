@@ -64,6 +64,27 @@ const textOf = (message: Message | undefined): string =>
     .join('\n')
     .trim()
 
+const isToolPart = (p: Part): boolean =>
+  typeof p.type === 'string' && (p.type.startsWith('tool-') || p.type === 'dynamic-tool')
+
+/**
+ * The final answer of a turn: the text after its last tool call (one assistant message holds every
+ * step, so the early narration "let me check my memory first" must not lead the summary). A turn
+ * that ended on a tool call falls back to its last text part.
+ */
+export const finalTextOf = (message: Message | undefined): string => {
+  const parts = message?.parts ?? []
+  const lastTool = parts.findLastIndex(isToolPart)
+  const texts = (from: number): Part[] =>
+    parts.slice(from).filter((p) => p.type === 'text' && typeof p.text === 'string')
+  const tail = texts(lastTool + 1)
+    .map((p) => p.text as string)
+    .join('\n')
+    .trim()
+  if (tail !== '') return tail
+  return ((texts(0).at(-1)?.text as string | undefined) ?? '').trim()
+}
+
 /** Text of an `<agent-message …>…</agent-message>` frame body, else the text itself. */
 const unframe = (text: string): string => {
   const m = /^<agent-message\b[^>]*>([\s\S]*?)<\/agent-message>\s*$/.exec(text)
@@ -265,7 +286,11 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                                 options.describeStop?.(ctx.session.id, e.stop) ?? '',
                                 500,
                               ) || null
-                            : previewOf(assistantText, 500),
+                            : previewOf(
+                                finalTextOf(e.messages.findLast((m) => m.role === 'assistant')) ||
+                                  assistantText,
+                                500,
+                              ),
                 addCostUsd: e.usage.costUsd ?? 0,
                 addTokens: e.usage.totalTokens,
               })

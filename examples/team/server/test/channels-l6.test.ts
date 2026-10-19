@@ -1003,6 +1003,38 @@ describe('approvals: new input and expiry', () => {
     ).toEqual([])
   })
 
+  test('"ya semua" approves for the session: the same tool is not asked again, and the request says so', async () => {
+    const second = call(
+      'channel_send',
+      { action: 'send', conversation: 'news', text: 'Second note.' },
+      'a2',
+    )
+    const { i, mock } = await setup([
+      approvalStep,
+      // the grant applies from the step after the continuation's first one
+      call('read_file', { path: '/library/none.md' }, 'r1'),
+      second,
+      text('Both posted.'),
+    ])
+    await mock.say({ from: ceo, text: '@team_bot publish', id: 'w1', mentionSelf: true })
+    await until('the request', () => request(mock) !== undefined)
+    expect(request(mock)?.message.text).toContain('yes all')
+    await mock.say({
+      from: ceo,
+      text: 'ya semua',
+      id: 'w2',
+      mentionSelf: true,
+      replyTo: { messageId: (request(mock) as { messageId: string }).messageId },
+    })
+    await until('both posts went out', () =>
+      mock.sent.some((s) => s.message.text === 'Both posted.'),
+    )
+    // one request only: the second call of the same tool did not ask again
+    expect(mock.sent.filter((s) => s.message.buttons !== undefined)).toHaveLength(1)
+    expect(mock.sent.filter((s) => s.conversationId === 'news')).toHaveLength(2)
+    void i
+  })
+
   test('a message from somebody else stays context while the approval waits', async () => {
     const { i, mock } = await setup([approvalStep, text('unused')])
     i.gw.people.setRole('c1', budi.id, { role: 'member' }, 'owner')

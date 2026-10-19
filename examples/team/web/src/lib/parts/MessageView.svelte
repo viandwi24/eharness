@@ -117,7 +117,7 @@
 	{#if v.kind === 'text'}
 		{#if message.role === 'user' && isInstruction}<InstructionCard text={v.text} />{:else if message.role === 'user'}<UserText text={v.text} />{:else}<TextPart text={v.text} streaming={v.streaming} />{/if}
 	{:else if v.kind === 'reasoning'}
-		<ReasoningPart text={v.text} streaming={v.streaming} durationMs={v.durationMs} />
+		<ReasoningPart text={v.text} streaming={v.streaming} durationMs={v.durationMs} messageId={v.messageId} clipped={v.clipped} />
 	{:else if v.kind === 'tool'}
 		{#if v.isSubagent}
 			<SubagentPart view={v} {onOpenSession} />

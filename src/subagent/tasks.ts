@@ -93,7 +93,7 @@ export interface SubagentTaskRegistry extends SubagentTasks {
   /** Move the id counter past `n` (`agent-<n>` ids that exist in stored history). */
   reserve(n: number): void
   setTail(id: string, tail: string): void
-  complete(id: string, status: 'completed' | 'failed'): void
+  complete(id: string, status: 'completed' | 'failed', override?: boolean): void
   /** Whether the task was stopped through `stop()`. */
   stopped(id: string): boolean
 }
@@ -180,9 +180,11 @@ export function createSubagentTaskRegistry(options: {
       timer = setTimeout(fire, NOTIFY_THROTTLE_MS)
       ;(timer as { unref?: () => void }).unref?.()
     },
-    complete(id, status) {
+    complete(id, status, override) {
       const e = entries.get(id)
-      if (e === undefined || e.task.status !== 'running') return
+      // `override`: a `stopped` task whose child completed anyway (the stop came too late)
+      if (e === undefined) return
+      if (e.task.status !== 'running' && !(override === true && status === 'completed')) return
       e.task.status = status
       e.task.endedAt = Date.now()
       fire()

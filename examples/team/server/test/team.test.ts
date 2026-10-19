@@ -226,6 +226,16 @@ describe('delegation with park', () => {
     expect(detail.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
     expect(detail.approvals.map((x) => x.id)).toEqual([item.id])
 
+    // `?messages=none` keeps the task and approvals but leaves the transcript out
+    const slim = (await (await b.app.request(`/tasks/${task.id}?messages=none`)).json()) as {
+      task: Task
+      messages: unknown[]
+      approvals: ApprovalItem[]
+    }
+    expect(slim.task.id).toBe(task.id)
+    expect(slim.messages).toEqual([])
+    expect(slim.approvals.map((x) => x.id)).toEqual([item.id])
+
     const answered = await attn(b.app, item, { approved: true, note: 'go ahead, but be quick' })
     expect(answered.status).toBe(200)
 

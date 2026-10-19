@@ -88,6 +88,7 @@ export function channelApprovalAnswerer(deps: {
           : {
               kind: 'approval',
               approved: input.approved,
+              ...(input.remember === undefined ? {} : { remember: input.remember }),
               ...(input.reason === undefined ? {} : { reason: input.reason }),
             },
       open: () => deps.factory.openSession(def, input.sessionId),

@@ -31,6 +31,7 @@ import {
   SCREENSHOT_DESCRIPTION,
   SCREENSHOT_FOR_PERSON_DESCRIPTION,
   SCREENSHOT_FOR_PERSON_TEXT,
+  SCROLL_DESCRIPTION,
   SNAPSHOT_DESCRIPTION,
   TABS_DESCRIPTION,
 } from './texts.ts'
@@ -48,6 +49,7 @@ export type BrowserToolName =
   | 'browser_eval'
   | 'browser_profiles'
   | 'browser_use'
+  | 'browser_scroll'
 
 /** The `browser` service (spec 35 §5.3). */
 export interface BrowserService {
@@ -131,7 +133,7 @@ export interface BrowserOptions {
    * screenshot tool and no auto screenshots. Default `true`.
    */
   images?: boolean | ((ctx: HarnessContext) => boolean | Promise<boolean>)
-  /** `metadata.risk` per tool. Defaults: `browser_act` and `browser_eval` `external` (`write` for a trusted profile), the rest `read`. */
+  /** `metadata.risk` per tool. Defaults: `browser_act` and `browser_eval` `external` (`write` for a trusted profile), the rest (including `browser_scroll`) `read`. */
   risk?: Partial<Record<BrowserToolName, ToolRisk>>
   limits?: BrowserPluginLimits
   /** Rename tools. */
@@ -232,6 +234,22 @@ const actInput = z.object({
 })
 
 type ActToolInput = z.infer<typeof actInput>
+
+const scrollInput = z.object({
+  direction: z
+    .enum(['up', 'down', 'left', 'right'])
+    .optional()
+    .describe('Direction (default down)'),
+  amount: z.number().optional().describe('Distance in pixels (default 600)'),
+  pages: z.number().optional().describe('Distance in screens of about 800 px (instead of amount)'),
+  ref: z
+    .string()
+    .optional()
+    .describe('Ref of an element: alone it scrolls to it; with a direction it scrolls inside it'),
+  waitMs: z.number().optional().describe('Then wait this long for content to load (at most 10000)'),
+})
+
+type ScrollToolInput = z.infer<typeof scrollInput>
 
 function formatTabs(tabs: TabInfo[]): string {
   if (tabs.length === 0) return 'No tabs are open.'
@@ -621,6 +639,37 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
           }),
       } as never)
 
+      const runAct = (
+        input: ActToolInput,
+        abortSignal: AbortSignal | undefined,
+        after?: ActToolInput,
+      ): Promise<string | BrowserShotRef> =>
+        guarded<string | BrowserShotRef>(true, async (l) => {
+          const res = await l.connection.act(input, abortSignal)
+          if (res.error !== undefined) return res.error
+          let page = res.page
+          let changed = res.changed || res.navigated
+          let note = res.note
+          if (after !== undefined) {
+            const waited = await l.connection.act(after, abortSignal)
+            if (waited.error === undefined) {
+              page = waited.page
+              changed = changed || waited.changed || waited.navigated
+              note = note ?? waited.note
+            }
+          }
+          l.setPage(page)
+          const stopped = await enforce(l, page, abortSignal)
+          if (stopped !== undefined) return stopped
+          let text = res.summary
+          if (note !== undefined && note !== '') text += `\n${note}`
+          text +=
+            autoSnapshot !== 'off' && changed
+              ? `\n${await snapshotText(l, abortSignal)}`
+              : `\n${block(page)}`
+          return withShot(l, text, page, changed || autoShots === 'always', abortSignal)
+        })
+
       tools[names('browser_act')] = tool({
         description: ACT_DESCRIPTION,
         inputSchema: actInput,
@@ -629,22 +678,7 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
         execute: async (
           input: ActToolInput,
           { abortSignal }: { abortSignal?: AbortSignal },
-        ): Promise<string | BrowserShotRef> =>
-          guarded<string | BrowserShotRef>(true, async (l) => {
-            const res = await l.connection.act(input, abortSignal)
-            if (res.error !== undefined) return res.error
-            l.setPage(res.page)
-            const stopped = await enforce(l, res.page, abortSignal)
-            if (stopped !== undefined) return stopped
-            const changed = res.changed || res.navigated
-            let text = res.summary
-            if (res.note !== undefined && res.note !== '') text += `\n${res.note}`
-            text +=
-              autoSnapshot !== 'off' && changed
-                ? `\n${await snapshotText(l, abortSignal)}`
-                : `\n${block(res.page)}`
-            return withShot(l, text, res.page, changed || autoShots === 'always', abortSignal)
-          }),
+        ): Promise<string | BrowserShotRef> => runAct(input, abortSignal),
       } as never)
 
       if (personShots) {
@@ -865,6 +899,7 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
       const shotTools = new Set([
         names('browser_open'),
         names('browser_act'),
+        names('browser_scroll'),
         names('browser_screenshot'),
       ])
       const windowImages = (messages: ModelMessage[]): ModelMessage[] | undefined => {
@@ -910,6 +945,37 @@ export function browser(options: BrowserOptions): HarnessPlugin<'browser'> {
         }
         return next
       }
+
+      // appended last: the order of the tools before it never changes (prompt-cache prefix)
+      tools[names('browser_scroll')] = tool({
+        description: SCROLL_DESCRIPTION,
+        inputSchema: scrollInput,
+        metadata: { risk: risk('browser_scroll', 'read') },
+        toModelOutput: modelOutput,
+        execute: async (
+          input: ScrollToolInput,
+          { abortSignal }: { abortSignal?: AbortSignal },
+        ): Promise<string | BrowserShotRef> => {
+          const amount =
+            input.pages !== undefined && input.amount === undefined
+              ? Math.round(Math.max(0.1, Math.min(25, input.pages)) * 800)
+              : input.amount
+          const ms = Math.max(0, Math.min(10_000, Math.floor(input.waitMs ?? 0)))
+          return runAct(
+            {
+              kind: 'scroll',
+              ...(input.ref === undefined ? {} : { ref: input.ref }),
+              // a ref without a direction means "scroll to it"
+              ...(input.direction === undefined && input.ref !== undefined
+                ? {}
+                : { direction: input.direction ?? 'down' }),
+              ...(amount === undefined ? {} : { amount }),
+            },
+            abortSignal,
+            ms > 0 ? { kind: 'wait', ms } : undefined,
+          )
+        },
+      } as never)
 
       return {
         tools: tools as never,

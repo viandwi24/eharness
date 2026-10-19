@@ -49,6 +49,19 @@ function clipPart(part: UIMessage['parts'][number], clip: number): UIMessage['pa
     const data = clipValue(p.data, clip)
     return data === undefined ? part : ({ ...p, data } as unknown as typeof part)
   }
+  if (type === 'reasoning') {
+    // reasoning is shown collapsed; long thoughts and their provider payload (signatures,
+    // encrypted reasoning) are the bulk of a long run's history
+    const json = JSON.stringify(p)
+    if (json.length <= clip) return part
+    const text = typeof p.text === 'string' ? p.text : ''
+    return {
+      type: 'reasoning',
+      text: text.length > clip ? text.slice(0, clip) : text,
+      ...(p.state === undefined ? {} : { state: p.state }),
+      providerMetadata: { eharness: { clipped: true, chars: json.length } },
+    } as unknown as typeof part
+  }
   if (type.startsWith('tool-') || type === 'dynamic-tool') {
     const output = clipValue(p.output, clip)
     const input = clipValue(p.input, clip)
@@ -62,7 +75,10 @@ function clipPart(part: UIMessage['parts'][number], clip: number): UIMessage['pa
   return part
 }
 
-/** The read view of `messages`: tool `input`/`output` and data `data` over `clip` are previews. */
+/**
+ * The read view of `messages`: tool `input`/`output` and data `data` over `clip` are previews; a
+ * reasoning part over `clip` keeps a text preview and is marked in `providerMetadata.eharness`.
+ */
 export function clipMessages<M extends UIMessage>(messages: M[], clip: number): M[] {
   return messages.map((m) => {
     let changed = false

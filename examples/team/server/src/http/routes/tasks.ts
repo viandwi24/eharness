@@ -74,8 +74,21 @@ const taskRoute = createRoute({
   path: '/tasks/{id}',
   tags: ['tasks'],
   summary: 'A task with the messages of its session and what it waits for',
+  description:
+    'By default up to 200 full messages of the session come with the task. `?messages=none` returns the task, its approvals and job with `messages: []`: a view that polls the task reads the transcript from `GET /sessions/{sessionId}/messages` (paged and clipped) instead.',
   security,
-  request: { params: TaskIdParam },
+  request: {
+    params: TaskIdParam,
+    query: z.object({
+      messages: z.enum(['all', 'none']).optional().openapi({
+        description: '`none` leaves the messages out (`messages: []`). Default `all`.',
+      }),
+      outputs: z.enum(['files']).optional().openapi({
+        description:
+          '`files` fills `outputs` with the files the session wrote (a light way to list them: combine with `messages=none`).',
+      }),
+    }),
+  },
   responses: {
     200: { description: 'The task', content: json(TaskDetailSchema) },
     404: jsonError('Unknown task'),
@@ -327,7 +340,10 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
       return c.json({ tasks: withColumns(deps, tasks) }, 200)
     })
     .openapi(taskRoute, async (c) => {
-      const detail = await getTask(deps, c.req.valid('param').id)
+      const detail = await getTask(deps, c.req.valid('param').id, {
+        messages: c.req.valid('query').messages !== 'none',
+        outputs: c.req.valid('query').outputs === 'files',
+      })
       const [task] = withColumns(deps, [detail.task])
       return c.json({ ...detail, task } as never, 200)
     })

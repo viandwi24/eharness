@@ -19,9 +19,16 @@ export const ACT_DESCRIPTION: string =
   'Act on the current page like a person: click, double_click, hover, fill (replace the text ' +
   'of a field), type (key by key), press (a key such as Enter or Control+a), select (option ' +
   'values of a dropdown), check, uncheck, scroll (direction and amount), or wait (`ms`, or ' +
-  '`untilText`). Use the ref of an element from the latest snapshot. Answers starting with ' +
+  '`untilText`). To scroll use browser_scroll instead (it needs no approval). Use the ref of an element from the latest snapshot. Answers starting with ' +
   'STALE mean take a new snapshot; BLOCKED means another element covers the target (close the ' +
   'dialog or banner first); BUSY means a person is controlling the browser.'
+
+export const SCROLL_DESCRIPTION: string =
+  'Scroll the page (or an element) to see more: `direction` (up, down, left, right) with ' +
+  '`amount` in pixels or `pages` in screens; `ref` alone scrolls to that element, with a ' +
+  'direction it scrolls inside it. `waitMs` then waits for new content to load. It changes ' +
+  'nothing on the site; use it to load long pages and feeds. Returns the page like browser_act.\n' +
+  'Answers starting with STALE mean take a new snapshot.'
 
 export const SCREENSHOT_DESCRIPTION: string =
   'Take a screenshot of the page (or of one element with `ref`, or the whole page with ' +

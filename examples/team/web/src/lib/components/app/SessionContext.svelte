@@ -126,8 +126,9 @@
 		}
 		Promise.all(
 			tasks.map((t) =>
-				api.get('/tasks/{id}', { params: { id: t.id } }).then(
-					(d) => chatOutputs(toolViews(d.messages as never)).map((path) => ({ path, at: t.lastActivityAt })),
+				// only the file list: the server derives it, the transcript stays where it is
+				api.get('/tasks/{id}', { params: { id: t.id }, query: { messages: 'none', outputs: 'files' } }).then(
+					(d) => d.outputs.map((path) => ({ path, at: t.lastActivityAt })),
 					() => []
 				)
 			)

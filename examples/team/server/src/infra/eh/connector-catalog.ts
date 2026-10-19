@@ -169,6 +169,8 @@ interface RemoteSettings {
   oauthClientSecret?: string
   /** Keep the tools a chat first saw until the owner accepts a server update (default off). */
   reviewToolChanges?: boolean
+  /** Tool names the owner marked read-only (see `withReadOnlyTools`). */
+  readOnlyTools?: string
 }
 
 /** Request headers apply in every mode (OAuth adds its token on top). */
@@ -182,6 +184,32 @@ const hasHeaders = (s: RemoteSettings): boolean =>
  */
 const readsAllowed = <T extends { kind: string; defaultMode: string }>(caps: T[]): T[] =>
   caps.map((c) => (c.kind === 'read' ? { ...c, defaultMode: 'allow' } : c))
+
+/**
+ * Tools the owner marked read-only on a connection (`readOnlyTools`, one name per line or comma
+ * separated, the server's own names). Servers that send no `readOnlyHint` list every tool as a
+ * write; this is the explicit, per-connection way to say which ones only look (a phone's
+ * screenshot, its UI tree). Never guessed from names. Applied when the connection is tested: the
+ * listed tools get `readOnlyHint` (and lose a `destructiveHint`), so the library groups them as
+ * the read capability.
+ */
+export function withReadOnlyTools(
+  tools: readonly RemoteToolInfo[],
+  listed: string | undefined,
+): RemoteToolInfo[] {
+  const names = new Set(
+    (listed ?? '')
+      .split(/[\n,]/)
+      .map((n) => n.trim())
+      .filter((n) => n !== ''),
+  )
+  if (names.size === 0) return [...tools]
+  return tools.map((t) =>
+    names.has(t.name)
+      ? { ...t, annotations: { ...t.annotations, readOnlyHint: true, destructiveHint: false } }
+      : t,
+  )
+}
 
 /** A field only the migration sets (never shown: the condition can not hold). */
 const NEVER = { field: 'authMode', in: [] as unknown[] }
@@ -220,6 +248,15 @@ function customMcp(
         title: 'OAuth client secret',
         ...ehMeta({ group: 'auth', secret: true, widget: 'password', showWhen: NEVER }),
       }),
+    readOnlyTools: z
+      .string()
+      .optional()
+      .meta({
+        title: 'Read-only tools',
+        description:
+          'Tools of this server that only read or look (no changes), one name per line, as the server names them (for example screenshot). They become the "Read-only tools" capability, allowed without asking. Use it when the server does not mark them read-only itself; press Test to apply.',
+        ...ehMeta({ group: 'advanced', widget: 'textarea' }),
+      }),
     // tool lists of servers set up before connectors (hidden; capabilities replace them on a test)
     allow: z
       .array(z.string())
@@ -254,7 +291,9 @@ function customMcp(
           message: `Found ${tools.length} tools.`,
           // reads of a custom server default to Allowed (a tracker's lookups asked on every call);
           // writes and destructive tools keep Ask first (P40 value pass)
-          capabilities: readsAllowed(capabilitiesFromTools(tools as RemoteToolInfo[])),
+          capabilities: readsAllowed(
+            capabilitiesFromTools(withReadOnlyTools(tools as RemoteToolInfo[], s.readOnlyTools)),
+          ),
         }
       } catch (error) {
         return {

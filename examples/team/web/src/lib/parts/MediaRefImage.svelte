@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fetchLibraryBlob } from '#lib/api/index.js';
+	import { inView } from './in-view.js';
 
 	/**
 	 * An image a tool stored in the file system and returned as a media reference (a browser
@@ -8,9 +9,12 @@
 	let { path, alt = 'Screenshot' }: { path: string; alt?: string } = $props();
 	let url = $state<string | undefined>();
 	let failed = $state(false);
+	/** The image is fetched only once it is scrolled near. */
+	let seen = $state(false);
 
 	$effect(() => {
 		const p = path;
+		if (!seen) return;
 		let gone = false;
 		let made: string | undefined;
 		failed = false;
@@ -39,5 +43,5 @@
 {:else if failed}
 	<p class="text-xs text-muted-foreground" data-testid="screenshot-expired">This screenshot expired and is no longer available.</p>
 {:else}
-	<div class="h-40 w-64 max-w-full animate-pulse rounded-lg bg-muted" aria-label="Loading the screenshot"></div>
+	<div use:inView={() => (seen = true)} class="h-40 w-64 max-w-full animate-pulse rounded-lg bg-muted" aria-label="Loading the screenshot"></div>
 {/if}

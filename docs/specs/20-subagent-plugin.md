@@ -557,7 +557,16 @@ id, like `subagentTasks.stop`. Unlike a user stop, a model stop leaves the agent
 its type is one-shot): the entry keeps `modelStopped`, so `send_message` resumes it. User stops
 still refuse. Results: `Stopped <label>. It can be resumed by sending it a message.`,
 `<label> is not running (<status>).`, `ERROR: no running agent "x". …`. The `kill_shell` unknown id
-error points to it.
+error points to it. An agent that already ended answers with its final answer (capped at 4 000
+characters, `agent_output` for the rest): `<label> is not running (<status>). It had already ended;
+its final answer: …`, so a stop never discards a finished result.
+
+**A stop never loses the completion notice.** A background agent that ends after a stop request
+still sends exactly one report to the launcher (idempotent key per turn). When the child had
+already produced its answer (its turn completed, the stop raced the last step) the task and entry
+are `completed` and the report says `finished (it had already completed its answer when the stop
+arrived)` with the full text; when the stop really aborted it, the report says `was stopped` and
+carries the text so far (the latest progress when there was no text).
 
 ### 5.9 `'park'` mode (ADR-0041)
 

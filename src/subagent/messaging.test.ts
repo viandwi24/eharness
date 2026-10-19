@@ -831,6 +831,61 @@ describe('agent_stop', () => {
     )
     await m.close()
   })
+
+  test('a stop during the last step still delivers one report with the answer, and says it ended after a stop', async () => {
+    const storage = shared()
+    const g = gate()
+    const w = worker(
+      storage,
+      [
+        { toolCalls: [{ toolName: 'wait', toolCallId: 'w1', input: {} }] },
+        { text: 'FINAL FINDINGS' },
+      ],
+      { tools: { wait: waitTool(g) } },
+    )
+    const m = main(storage, w.agent, [
+      { toolCalls: [spawnCall('cb', { name: 'rev' })] },
+      { toolCalls: [stopCall('rev', 's1')] },
+      { text: 'ok' },
+      { text: 'read it' },
+    ])
+    const session = m.session('p6')
+    await session.send('go').result
+    g.open()
+    await until('one report', async () =>
+      JSON.stringify(await session.messages()).includes('"name":"subagent"'),
+    )
+    const events = (await session.messages()).flatMap((x) =>
+      x.parts.filter((p) => (p.type as string) === 'data-eh.event'),
+    )
+    expect(events).toHaveLength(1)
+    const text = JSON.stringify(events[0])
+    expect(text).toMatch(/was stopped|finished \(it had already completed/)
+    expect(text).toContain('rev')
+    await m.close()
+  })
+
+  test('agent_stop on an agent that already finished returns its final answer', async () => {
+    const storage = shared()
+    const w = worker(storage, [{ text: 'THE ANSWER' }])
+    const m = main(storage, w.agent, [
+      { toolCalls: [spawnCall('cb', { name: 'rev' })] },
+      { text: 'started' },
+      { text: 'noted' },
+      { toolCalls: [stopCall('rev', 's1')] },
+      { text: 'ok' },
+    ])
+    const session = m.session('p7')
+    await session.send('go').result
+    await until('child done', async () =>
+      JSON.stringify(await session.messages()).includes('noted'),
+    )
+    await session.send('stop it').result
+    const out = outputs(await session.messages(), 'agent_stop')
+    expect(out.s1).toContain('already ended')
+    expect(out.s1).toContain('THE ANSWER')
+    await m.close()
+  })
 })
 
 describe('tool options', () => {

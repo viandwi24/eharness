@@ -3106,10 +3106,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A task with the messages of its session and what it waits for */
+        /**
+         * A task with the messages of its session and what it waits for
+         * @description By default up to 200 full messages of the session come with the task. `?messages=none` returns the task, its approvals and job with `messages: []`: a view that polls the task reads the transcript from `GET /sessions/{sessionId}/messages` (paged and clipped) instead.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description `none` leaves the messages out (`messages: []`). Default `all`. */
+                    messages?: "all" | "none";
+                    /** @description `files` fills `outputs` with the files the session wrote (a light way to list them: combine with `messages=none`). */
+                    outputs?: "files";
+                };
                 header?: never;
                 path: {
                     /** @description Task id. */
@@ -16614,6 +16622,8 @@ export interface components {
             job: components["schemas"]["WorkerJob"];
             /** @description The stored messages of the task session (newest 200). */
             messages: (components["schemas"]["UiMessage"] & unknown)[];
+            /** @description Library paths of the files the task session wrote, newest first. Filled only with `?outputs=files` (else `[]`); works with `?messages=none`. */
+            outputs: string[];
             /** @description What the task waits for. */
             approvals: components["schemas"]["Approval"][];
         };

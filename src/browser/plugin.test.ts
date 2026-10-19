@@ -124,6 +124,7 @@ describe('browser plugin: the loop with a vision model', () => {
       'browser_screenshot',
       'browser_read',
       'browser_tabs',
+      'browser_scroll',
     ])
     // step 2 sees the open result: status, framed snapshot with refs, and the auto screenshot
     const [open] = toolResults(model.prompts[1] as ScriptedPrompt)
@@ -267,6 +268,7 @@ describe('browser plugin: tool list', () => {
       'browser_snapshot',
       'browser_act',
       'browser_read',
+      'browser_scroll',
     ])
     const full = await setup([{ text: 'x' }], {
       plugin: { allowEval: true, requestHuman: async () => ({ correlationId: 'c1' }) },
@@ -281,6 +283,7 @@ describe('browser plugin: tool list', () => {
       'browser_tabs',
       'browser_request_human',
       'browser_eval',
+      'browser_scroll',
     ])
     const noTakeover = await setup([{ text: 'x' }], {
       caps: { takeover: false },
@@ -689,6 +692,63 @@ describe('browser plugin: the agent picks a profile', () => {
     )
     expect(textOf(results[3]?.output as WireOutput)).toStartWith('Opened')
     expect((await manager.status()).some((s) => s.profileId === personal.id)).toBe(true)
+    await manager.close()
+  })
+})
+
+describe('browser_scroll', () => {
+  test('is a read-risk tool that scrolls and returns the page like browser_act', async () => {
+    const seen: Record<string, string | undefined> = {}
+    const probe = definePlugin({
+      name: 'risk-probe',
+      setup: () => ({
+        hooks: {
+          'tool.approve': (_ctx, e) => {
+            seen[e.toolName] = e.risk
+            return { type: 'approved' as const }
+          },
+        },
+      }),
+    })
+    const { agent, model, manager, peer } = await setup(
+      [
+        call('browser_open', { url: URL_A }),
+        call('browser_scroll', { direction: 'down', pages: 2, waitMs: 10 }),
+        call('browser_scroll', { ref: 'e3' }),
+        { text: 'done' },
+      ],
+      { extraPlugins: [probe] },
+    )
+    expect((await agent.session('s').send('scroll').result).stop).toBe('complete')
+    expect(seen.browser_scroll).toBe('read')
+    expect(toolNames(model).at(-1)).toBe('browser_scroll')
+    const wheel = peer.commands('Input.dispatchMouseEvent')
+    expect(wheel[0]?.params).toMatchObject({ type: 'mouseWheel', deltaY: 1600 })
+    const [, scrolled, toRef] = lastResults(model)
+    expect(textOf(scrolled?.output as WireOutput)).toContain('Scrolled down 1600px')
+    expect(textOf(toRef?.output as WireOutput)).toContain('into view')
+    await manager.close()
+  })
+
+  test('the risk can be overridden', async () => {
+    const seen: Record<string, string | undefined> = {}
+    const probe = definePlugin({
+      name: 'risk-probe',
+      setup: () => ({
+        hooks: {
+          'tool.approve': (_ctx, e) => {
+            seen[e.toolName] = e.risk
+            return { type: 'approved' as const }
+          },
+        },
+      }),
+    })
+    const { agent, manager } = await setup(
+      [call('browser_open', { url: URL_A }), call('browser_scroll', {}), { text: 'done' }],
+      { plugin: { risk: { browser_scroll: 'write' } }, extraPlugins: [probe] },
+    )
+    await agent.session('s').send('go').result
+    expect(seen.browser_scroll).toBe('write')
     await manager.close()
   })
 })

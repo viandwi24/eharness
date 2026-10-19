@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import type { UIMessage } from 'ai';
 	import XIcon from 'phosphor-svelte/lib/X';
 	import StopIcon from 'phosphor-svelte/lib/Stop';
@@ -26,6 +26,9 @@
 	import { live } from '#lib/stores/live.svelte.js';
 	import { followSessionStream } from 'eharness/client';
 	import { isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
+	import { emptyPages, mergeNewest, prependOlder, replaceMessage, type PageState } from '#lib/tasks/pages.js';
+	import { CLIP_CHARS, PAGE_SIZE, revealEarlier, windowStart } from '#lib/chat/window.js';
+	import { setChatEnv } from '#lib/artifacts/context.js';
 	import { retryLine, retryTask } from '#lib/tasks/actions.js';
 	import { formatDateTime } from '#lib/time.js';
 	import {
@@ -53,6 +56,13 @@
 	let { taskId, onClose }: { taskId: string; onClose?: () => void } = $props();
 
 	let detail = $state<TaskDetail | null>(null);
+	/** The stored transcript: the newest page plus the older pages the reader scrolled to (oldest first). */
+	let pages = $state<PageState>(emptyPages());
+	let pagesFor = '';
+	let loadingOlder = $state(false);
+	let messagesLoaded = $state(false);
+	/** Messages the reader loaded in full ("Load full output"): kept while the newest page refreshes. */
+	const fullIds = new Set<string>();
 	let error = $state<string | null>(null);
 	let loading = $state(false);
 	/** Messages being streamed right now, laid over the stored ones by id. */
@@ -63,7 +73,14 @@
 	const agent = $derived(task ? agentsStore.find(task.agentId) : undefined);
 	const running = $derived(task?.status === 'running');
 	const job = $derived(detail?.job ?? undefined);
-	const messages = $derived(mergeLive((detail?.messages ?? []) as unknown as UIMessage[], liveMessages));
+	const messages = $derived(mergeLive(pages.messages, liveMessages));
+	// Windowed mounting like the chat: only the newest messages are mounted; older loaded ones are
+	// revealed by the top sentinel (or the button) before the server is asked for another page.
+	let startId = $state<string | null>(null);
+	const ids = $derived(messages.map((m) => m.id));
+	const start = $derived(windowStart(ids, startId));
+	const mounted = $derived(messages.slice(start));
+	const canExpand = $derived(start > 0 || pages.hasOlder);
 	// Live approvals (events) win over the ones of the last read.
 	const approvals = $derived.by((): Approval[] => {
 		const fresh = live.state.approvals.filter((a) => a.taskId === taskId);
@@ -78,11 +95,12 @@
 	});
 
 	let seq = 0;
+	// The task row only (status, approvals, job): the transcript is read page by page below.
 	async function load(id: string): Promise<void> {
 		const mine = ++seq;
 		loading = detail?.task.id !== id;
 		try {
-			const d = await api.get('/tasks/{id}', { params: { id } });
+			const d = await api.get('/tasks/{id}', { params: { id }, query: { messages: 'none' } });
 			if (mine !== seq) return;
 			detail = d;
 			error = null;
@@ -93,6 +111,72 @@
 		}
 	}
 
+	let pageSeq = 0;
+	/** Refresh the newest page of the session (older loaded pages stay, merged by id). */
+	async function refreshNewest(): Promise<void> {
+		const d = detail;
+		if (!d || d.task.status === 'queued') {
+			messagesLoaded = true;
+			return;
+		}
+		const sessionId = d.task.sessionId;
+		const mine = ++pageSeq;
+		try {
+			const page = await harness.sessions.messages(sessionId, { limit: PAGE_SIZE, clip: CLIP_CHARS });
+			if (mine !== pageSeq || detail?.task.sessionId !== sessionId) return;
+			if (pagesFor !== sessionId) {
+				pagesFor = sessionId;
+				pages = emptyPages();
+			}
+			pages = mergeNewest(pages, page.messages as UIMessage[], page.nextBefore !== undefined, fullIds);
+			messagesLoaded = true;
+			error = null;
+		} catch (e) {
+			if (mine === pageSeq) error = e instanceof Error ? e.message : 'Could not load the messages';
+		}
+	}
+	/** The task row, then the newest page. */
+	async function reload(id: string): Promise<void> {
+		await load(id);
+		if (detail?.task.id === id) await refreshNewest();
+	}
+
+	async function loadOlder(): Promise<number> {
+		const sessionId = detail?.task.sessionId;
+		const before = pages.messages[0]?.id;
+		if (!sessionId || before === undefined || loadingOlder || !pages.hasOlder) return 0;
+		loadingOlder = true;
+		try {
+			const page = await harness.sessions.messages(sessionId, { limit: PAGE_SIZE, clip: CLIP_CHARS, before });
+			if (detail?.task.sessionId !== sessionId) return 0;
+			const had = pages.messages.length;
+			pages = prependOlder(pages, page.messages as UIMessage[], page.nextBefore !== undefined);
+			return pages.messages.length - had;
+		} finally {
+			loadingOlder = false;
+		}
+	}
+
+	/** "Load full output" of a clipped tool part: the whole message replaces its clipped copy in place. */
+	async function loadFull(messageId: string): Promise<UIMessage | undefined> {
+		const sessionId = detail?.task.sessionId;
+		if (!sessionId) return undefined;
+		try {
+			const full = (await harness.sessions.message(sessionId, messageId)) as UIMessage;
+			fullIds.add(messageId);
+			pages = replaceMessage(pages, full);
+			return full;
+		} catch {
+			toast.error('Could not load the full output');
+			return undefined;
+		}
+	}
+	setChatEnv({
+		sessionId: () => detail?.task.sessionId ?? '',
+		ask: (text) => void sendNote({ text, files: [] } as PromptInputMessage).catch(() => {}),
+		loadFull
+	});
+
 	// Read on open, and again when the board says the task changed (status, activity, approvals).
 	$effect(() => {
 		const id = taskId;
@@ -101,16 +185,21 @@
 			if (detail && detail.task.id !== id) {
 				detail = null;
 				liveMessages = new Map();
+				pages = emptyPages();
+				pagesFor = '';
+				messagesLoaded = false;
+				startId = null;
+				fullIds.clear();
 			}
+			void reload(id);
 		});
-		void load(id);
 	});
 
 	// Turns the server starts in this task's session (a subagent report, a routine, a message from
 	// another agent) arrive as live events: re-read at once so the stream loop below picks them up.
 	onMount(() =>
 		live.onChatEvent((e) => {
-			if (e.sessionId && e.sessionId === detail?.task.sessionId) void load(taskId);
+			if (e.sessionId && e.sessionId === detail?.task.sessionId) void reload(taskId);
 		})
 	);
 
@@ -142,7 +231,7 @@
 					});
 					if (ctl.signal.aborted || mine !== loopToken) return;
 					streaming = false;
-					await load(id);
+					await reload(id);
 					if (ctl.signal.aborted || mine !== loopToken) return;
 					if (error === null) liveMessages = new Map(); // the stored messages are the truth again (a failed read keeps the live ones)
 					if (!isLive(detail?.task.status)) return;
@@ -159,6 +248,52 @@
 	});
 
 	let dockHeight = $state(0);
+	let root = $state<HTMLElement | null>(null);
+	let sentinel = $state<HTMLElement | null>(null);
+	let busyOlder = false;
+	let sentinelNear = false;
+	// Scroll-up pagination (as in the chat): the sentinel reveals the next loaded messages, then loads the
+	// next older page; the viewport stays anchored on what the reader was looking at.
+	async function expandEarlier(): Promise<void> {
+		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
+		if (!vp || busyOlder || loadingOlder) return;
+		if (start === 0 && !pages.hasOlder) return;
+		busyOlder = true;
+		try {
+			const height = vp.scrollHeight;
+			const top = vp.scrollTop;
+			if (start > 0) {
+				startId = revealEarlier(ids, start);
+			} else {
+				const added = await loadOlder();
+				if (added > 0) startId = ids[0] ?? null; // show the whole page that arrived
+			}
+			await tick();
+			vp.scrollTop = top + (vp.scrollHeight - height);
+		} catch {
+			// a failed page leaves the transcript as it is; the next scroll retries
+		} finally {
+			busyOlder = false;
+		}
+		if (sentinelNear) void tick().then(() => requestAnimationFrame(() => void expandEarlier()));
+	}
+	$effect(() => {
+		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
+		const el = sentinel;
+		if (!vp || !el || typeof IntersectionObserver === 'undefined') return;
+		const io = new IntersectionObserver(
+			(entries) => {
+				sentinelNear = entries.some((e) => e.isIntersecting);
+				if (sentinelNear) void expandEarlier();
+			},
+			{ root: vp, rootMargin: '600px 0px 0px 0px' }
+		);
+		io.observe(el);
+		return () => {
+			io.disconnect();
+			sentinelNear = false;
+		};
+	});
 	let aborting = $state(false);
 
 	async function abort(): Promise<void> {
@@ -169,12 +304,12 @@
 			if (job?.status === 'running') {
 				await api.post('/tasks/{id}/stop', { params: { id: task.id } });
 				toast.success('Stopping the job');
-				void load(task.id);
+				void reload(task.id);
 				return;
 			}
 			const r = await harness.sessions.interrupt(task.sessionId);
 			toast.success(r.target === 'idle' ? 'Nothing was running' : 'Stopping the task');
-			void load(task.id);
+			void reload(task.id);
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not stop the task');
 		} finally {
@@ -188,14 +323,14 @@
 	const retrying = $derived(task?.status === 'retrying');
 	async function retryNow(): Promise<void> {
 		if (!task) return;
-		if (await retryTask(task.id)) void load(task.id);
+		if (await retryTask(task.id)) void reload(task.id);
 	}
 	async function continueTask(): Promise<void> {
 		if (!task) return;
 		try {
 			await api.post('/tasks/{id}/messages', { params: { id: task.id }, body: { text: CONTINUE_TEXT } });
 			toast.success('Continuing the task');
-			void load(task.id);
+			void reload(task.id);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Could not continue the task');
 		}
@@ -207,7 +342,7 @@
 		try {
 			await api.post('/tasks/{id}/messages', { params: { id: task.id }, body: { text } });
 			toast.success(running ? 'Sent to the running task' : 'Message queued');
-			void load(task.id);
+			void reload(task.id);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Could not send the message');
 			throw err; // keeps the text in the composer
@@ -287,30 +422,40 @@
 		</div>
 	</header>
 	{#if task && job}
-		<WorkerJobPanel taskId={task.id} {job} onChange={() => void load(task.id)} />
+		<WorkerJobPanel taskId={task.id} {job} onChange={() => void reload(task.id)} />
 	{/if}
 
 	{#if task}<TaskInfo {task} />{/if}
 
 	<!-- Same anatomy as ChatPane: scroller to the bottom, pending cards and composer float as a dock. -->
 	<div class="relative flex min-h-0 flex-1 flex-col">
-		<div class="flex min-h-0 flex-1 flex-col">
+		<div bind:this={root} class="flex min-h-0 flex-1 flex-col">
 			<Conversation class="min-h-0 flex-1">
 				<ConversationContent class="mx-auto w-full max-w-3xl gap-5 px-4 pt-6" style={`padding-bottom: ${dockHeight + 24}px`}>
 					{#if error}
 						<div class="flex items-center gap-2 rounded-lg bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert">
 							<WarningCircleIcon class="size-4 shrink-0" /><span class="min-w-0 flex-1">{error}</span>
-							<Button size="xs" variant="ghost" onclick={() => void load(taskId)}>Retry</Button>
+							<Button size="xs" variant="ghost" onclick={() => void reload(taskId)}>Retry</Button>
 						</div>
-					{:else if loading || !detail}
+					{:else if loading || !detail || !messagesLoaded}
 						<div class="flex flex-col gap-6 pt-2" aria-busy="true" aria-label="Loading task">
 							<Skeleton class="ml-auto h-9 w-2/5 rounded-xl" />
 							<div class="flex flex-col gap-2"><Skeleton class="h-3.5 w-1/3" /><Skeleton class="h-3.5 w-4/5" /><Skeleton class="h-3.5 w-3/5" /></div>
 						</div>
 					{:else}
-						{#each messages as m, i (m.id)}
+						{#if canExpand}
+							<div bind:this={sentinel} class="flex justify-center" data-testid="earlier-sentinel">
+								{#if loadingOlder}
+									<div class="text-center text-xs text-muted-foreground" role="status">Loading earlier messages…</div>
+								{:else}
+									<button type="button" class="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" onclick={() => void expandEarlier()}>Load earlier messages</button>
+								{/if}
+							</div>
+						{/if}
+						{#each mounted as m, j (m.id)}
+							{@const i = start + j}
 							{@const head = startsAuthorRun(messages, i)}
-							<ConversationItem messageId={m.id} class={m.role !== 'user' && !head && i > 0 ? '-mt-2' : ''}>
+							<ConversationItem messageId={m.id} class={`[contain-intrinsic-size:auto_600px] ${m.role !== 'user' && !head && i > 0 ? '-mt-2' : ''}`}>
 								<MessageView
 									message={m}
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
