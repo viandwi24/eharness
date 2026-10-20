@@ -220,7 +220,10 @@ export async function activateConnectors(options: ActivateOptions): Promise<Acti
       ...(options.user === undefined ? {} : { userId: options.user.id }),
     }
     if (!isConnectionEnabled(record, enablement[record.id], subject)) continue
-    if (record.status !== 'connected') {
+    // `error` is what the last test saw (one dropped socket, a slow listing): the tools stay and
+    // a call that cannot reach the server answers with a readable error; only a connection that
+    // needs a person (sign in) or was switched off is left out
+    if (record.status === 'needs-auth' || record.status === 'disabled') {
       warn({
         code: 'connection-unavailable',
         message: `Connection '${record.label}' is ${record.status}; skipped.`,

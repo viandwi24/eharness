@@ -267,6 +267,37 @@ describe('other sources', () => {
     expect(listAlarms(i.server.deps, { all: true }).alarms).toHaveLength(2)
   })
 
+  test('a connection that drops for a moment is not alarmed; one that flaps alarms once a day', async () => {
+    const i = instance()
+    const deps = i.server.deps as unknown as { connectors: Record<string, unknown> }
+    let status = 'error'
+    deps.connectors.connections = async () => [
+      { id: 'c2', label: 'Phone', status, statusMessage: 'socket closed' },
+    ]
+    const t0 = Date.now()
+    const min = 60_000
+    // a probe failed: within the grace period nobody is told, and it heals
+    expect((await sweepAlarms(i.server.deps, t0)).connections).toBe(0)
+    expect((await sweepAlarms(i.server.deps, t0 + 5 * min)).connections).toBe(0)
+    status = 'connected'
+    await sweepAlarms(i.server.deps, t0 + 6 * min)
+    status = 'error'
+    // broken again: the grace starts over
+    expect((await sweepAlarms(i.server.deps, t0 + 7 * min)).connections).toBe(0)
+    expect((await sweepAlarms(i.server.deps, t0 + 16 * min)).connections).toBe(0)
+    // broken for 10 minutes: one alarm
+    expect((await sweepAlarms(i.server.deps, t0 + 18 * min)).connections).toBe(1)
+    // heals (auto-cleared), breaks again for long: the same day it is not announced again
+    status = 'connected'
+    await sweepAlarms(i.server.deps, t0 + 20 * min)
+    status = 'error'
+    await sweepAlarms(i.server.deps, t0 + 21 * min)
+    expect((await sweepAlarms(i.server.deps, t0 + 40 * min)).connections).toBe(0)
+    // still broken a day later: it is announced again, once
+    expect((await sweepAlarms(i.server.deps, t0 + 25 * 60 * min)).connections).toBe(1)
+    expect((await sweepAlarms(i.server.deps, t0 + 25 * 60 * min + min)).connections).toBe(0)
+  })
+
   test('a failed server step is logged and alarmed once a day per step', () => {
     const i = instance()
     const warn = console.warn

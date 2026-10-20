@@ -250,10 +250,40 @@ async function interruptStuckRuns(deps: Deps, now: number): Promise<number> {
   return n
 }
 
-async function raiseBrokenConnections(deps: Deps): Promise<number> {
+/**
+ * A connection must stay broken this long before the owner is told: the background health probe
+ * tests custom MCP servers about every minute, and one dropped socket or slow listing flips the
+ * status to `error` until the next probe (production: an alarm every hour for a server that
+ * worked every time someone used it). `needs-auth` waits less: it does not heal by itself.
+ */
+export const CONNECTION_GRACE_MS = 10 * 60_000
+export const CONNECTION_AUTH_GRACE_MS = 2 * 60_000
+/** A connection that already alarmed within this window is not announced again (flapping). */
+export const CONNECTION_REALARM_MS = 24 * 3_600_000
+
+/** When each connection was first seen broken in this run of broken sweeps (per server). */
+const brokenSince = new WeakMap<object, Map<string, number>>()
+
+async function raiseBrokenConnections(deps: Deps, now: number): Promise<number> {
+  let since = brokenSince.get(deps)
+  if (since === undefined) {
+    since = new Map()
+    brokenSince.set(deps, since)
+  }
   let n = 0
+  const recent = deps.alarms
+    .list({ open: false, limit: 500 })
+    .filter((a) => a.kind === 'connection-broken' && now - a.createdAt < CONNECTION_REALARM_MS)
+  const seen = new Set<string>()
   for (const c of await deps.connectors.connections()) {
     if (c.status !== 'error' && c.status !== 'needs-auth') continue
+    seen.add(c.id)
+    const first = since.get(c.id) ?? now
+    since.set(c.id, first)
+    const grace = c.status === 'needs-auth' ? CONNECTION_AUTH_GRACE_MS : CONNECTION_GRACE_MS
+    if (now - first < grace) continue
+    // it broke, healed and broke again today: the earlier alarm said it; the Health page shows it
+    if (recent.some((a) => a.subject === `connection:${c.id}`)) continue
     const alarm = raiseConnectionBroken(deps, {
       id: c.id,
       label: c.label,
@@ -262,6 +292,7 @@ async function raiseBrokenConnections(deps: Deps): Promise<number> {
     })
     if (alarm !== undefined) n++
   }
+  for (const id of [...since.keys()]) if (!seen.has(id)) since.delete(id)
   return n
 }
 
@@ -337,7 +368,7 @@ export async function sweepAlarms(
   const stuck = await interruptStuckRuns(deps, now)
   let connections = 0
   try {
-    connections = await raiseBrokenConnections(deps)
+    connections = await raiseBrokenConnections(deps, now)
   } catch (error) {
     warn(`connections unreadable: ${String(error)}`)
   }

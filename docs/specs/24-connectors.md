@@ -242,6 +242,10 @@ activateConnectors({ definitions, connections, enablement?, agent, user?, orderi
   connections that keep them on. `appRules` are merged most-restrictive-wins (`mergeConnectorRules`).
 - Never throws for one bad connection: `warnings` (`unknown-definition`, `connection-unavailable`,
   `invalid-settings`, `duplicate-instance`, `activate-failed`, `mcp-factory-missing`).
+- A connection is left out (`connection-unavailable`) only when it is `needs-auth` or `disabled`.
+  An `error` status is what the last test saw (often a dropped socket or a slow listing): the
+  connection stays active, and a call that cannot reach the server answers with a readable error,
+  so one failed health probe never takes an agent's tools away.
 
 **Permissions wiring.** Merge the compiled data into the engine and bypass mode cannot skip the
 pinned asks:

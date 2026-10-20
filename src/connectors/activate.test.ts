@@ -184,6 +184,7 @@ describe('activation', () => {
       conn('theirs', 'github', { scope: 'agent', scopeId: 'a2' }),
       conn('disabled', 'github', { enabled: false }),
       conn('needs', 'github', { status: 'needs-auth' }),
+      conn('flaky', 'github', { status: 'error' }),
     ]
     const out = await activateConnectors({
       definitions: [github],
@@ -192,7 +193,9 @@ describe('activation', () => {
       mcp: mcpFactory([]),
       enablement: { 'w-forced-on': { enabled: 'on' }, 'w-forced-off': { enabled: 'off' } },
     })
+    // `error` is what the last test saw: the connection stays active (its tools do not vanish)
     expect(out.connections.map((c) => c.connectionId).sort()).toEqual([
+      'flaky',
       'mine',
       'w-default-on',
       'w-forced-on',

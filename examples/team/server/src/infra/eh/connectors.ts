@@ -706,6 +706,8 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
    */
   const ttlSetting = Number(env.TEAM_CONNECTOR_HEALTH_TTL_MS ?? 60_000)
   const HEALTH_TTL_MS = Number.isFinite(ttlSetting) ? ttlSetting : 60_000
+  const retrySetting = Number(env.TEAM_CONNECTOR_PROBE_RETRY_MS ?? 3_000)
+  const PROBE_RETRY_MS = Number.isFinite(retrySetting) && retrySetting >= 0 ? retrySetting : 3_000
   const checkedAt = new Map<string, number>()
   const probing = new Set<string>()
   let closing = false
@@ -723,7 +725,13 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
       void (async () => {
         try {
           const before = c.status
-          const result = await service.test(c.id)
+          let result = await service.test(c.id)
+          // one dropped socket or slow listing is not an outage: try once more before the
+          // status stays `error` (production: hourly false alarms for a server that worked)
+          if (!result.ok && before === 'connected' && !closing) {
+            await new Promise((r) => setTimeout(r, PROBE_RETRY_MS))
+            if (!closing) result = await service.test(c.id)
+          }
           if (closing) return
           const after = await service.get(c.id)
           if (after !== undefined && after.status !== before) changed()
