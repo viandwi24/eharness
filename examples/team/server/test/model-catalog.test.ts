@@ -51,3 +51,40 @@ describe('catalog in chats', () => {
     expect(stats.usage.costUsd).toBeCloseTo(3, 5)
   })
 })
+
+describe('working window', () => {
+  test('a large model capped at 128k summarizes near 80 % of the cap, not after an output reserve', async () => {
+    const dir = tmp()
+    const server = compose({
+      dbFile: join(dir, 'team.db'),
+      models: scriptedModelConfig(
+        scriptedModel([{ text: 'hi', usage: { inputTokens: 1000, outputTokens: 1000 } }]) as never,
+      ),
+      catalog: {
+        scripted: {
+          contextWindow: 1_048_576,
+          maxOutputTokens: 384_000,
+          pricing: { input: 1, output: 2 },
+        },
+      },
+    })
+    servers.push(server)
+    await (
+      await server.app.request('/sessions/dm:researcher/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          id: 'dm:researcher',
+          messages: [{ id: 'c', role: 'user', parts: [{ type: 'text', text: 'hi' }] }],
+        }),
+      })
+    ).text()
+    const stats = (await (await server.app.request('/agents/researcher/stats')).json()) as {
+      context: { window: number; summarizeAt: number; hardLimit: number }
+    }
+    expect(stats.context.window).toBe(128_000)
+    // before: 128k × 0.9 − 32k output reserve = 82k hard limit, summary at ~78k
+    expect(stats.context.hardLimit).toBe(115_200)
+    expect(stats.context.summarizeAt).toBe(102_400)
+  })
+})

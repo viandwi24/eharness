@@ -1424,10 +1424,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       // the working window: compaction summarizes at 80 % of it. A model that reads 1 M tokens would
       // otherwise carry ~800 k tokens of history into every call before anything is summarized
       // (production: 40 k tokens per call on average, 150 k at worst)
-      contextWindow: Math.min(
-        modelInfoOf(def, settings).contextWindow ?? 200_000,
-        deps.limits?.contextCap ?? 128_000,
-      ),
+      contextWindow: workingWindow(modelInfoOf(def, settings).contextWindow),
+      // the output reserve only matters against the model's real window: a 1 M model capped at
+      // 128 k has room for its whole output beyond the cap, so the cap is not cut by the output
+      // cap too (production: 128 k × 0.9 − 32 k reserve put compaction at ~78 k)
+      guard: { reserveTokens: outputReserve(modelInfoOf(def, settings)) },
       ...(catalog === undefined ? {} : { models: catalog }),
       // never leave the output cap to the provider: OpenRouter-style gateways then reserve (and
       // check credits for) the model maximum on every call
@@ -1542,6 +1543,21 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   }
 
   /** The catalog's output limit of the model, capped; a sane default for models it does not list. */
+  /** The working window: the model's window, capped (`TEAM_CONTEXT_CAP`, default 128 k). */
+  function workingWindow(modelWindow: number | undefined): number {
+    return Math.min(modelWindow ?? 200_000, deps.limits?.contextCap ?? 128_000)
+  }
+
+  /**
+   * Tokens kept free for the answer inside the working window: only the part of the output cap
+   * that does not fit between the working window and the model's real window.
+   */
+  function outputReserve(info: { contextWindow?: number; maxOutputTokens?: number }): number {
+    const out = outputCapOf(info.maxOutputTokens)
+    const real = info.contextWindow ?? 200_000
+    return Math.max(0, out - (real - workingWindow(info.contextWindow)))
+  }
+
   function outputCapOf(catalogMax: number | undefined): number {
     return Math.min(catalogMax ?? DEFAULT_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS_CAP)
   }
