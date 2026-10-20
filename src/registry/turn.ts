@@ -435,7 +435,7 @@ export async function resolveTurnRegistry(args: {
     externals,
     requestTools: requestBuilt?.meta ?? new Map(),
     requestToolsSignature: requestBuilt?.signature ?? '',
-    refine: buildRefinement(toolOrder, deps),
+    refine: buildRefinement(toolOrder, deps, tools),
     approval: buildApproval(args.approval, deps, args.grants),
     skills: skills.entries,
     toolsForStep(discovered) {

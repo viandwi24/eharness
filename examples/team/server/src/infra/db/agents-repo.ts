@@ -21,6 +21,8 @@ const toDef = (row: Row, connectors: AgentDef['connectors']): AgentDef => ({
   connectors,
   toolAccess: (row.toolAccess ?? null) as AgentDef['toolAccess'],
   taskConcurrency: row.taskConcurrency,
+  contextWindow: row.contextWindow,
+  compactAtPercent: row.compactAtPercent,
   skills: row.skills,
   permissionMode: row.permissionMode as PermissionMode,
   rules: row.rules,

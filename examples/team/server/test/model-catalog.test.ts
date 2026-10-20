@@ -53,7 +53,7 @@ describe('catalog in chats', () => {
 })
 
 describe('working window', () => {
-  test('a large model capped at 128k summarizes near 80 % of the cap, not after an output reserve', async () => {
+  test('a 1M model limited to 128k on the agent summarizes at 80 % of the limit, not after an output reserve', async () => {
     const dir = tmp()
     const server = compose({
       dbFile: join(dir, 'team.db'),
@@ -69,6 +69,13 @@ describe('working window', () => {
       },
     })
     servers.push(server)
+    // the owner limits this agent to 128k of the model's 1M
+    const patched = await server.app.request('/agents/researcher', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ contextWindow: 128_000 }),
+    })
+    expect(patched.status).toBe(200)
     await (
       await server.app.request('/sessions/dm:researcher/chat', {
         method: 'POST',

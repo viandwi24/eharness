@@ -73,6 +73,7 @@ import {
   MAX_UPLOAD_BYTES,
   uploadPathOfUrl,
 } from '../../domain/chat.ts'
+import { compactRatio, effectiveWindow, UNKNOWN_MODEL_WINDOW } from '../../domain/context-window.ts'
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
 import { type DriftNote, pinnedServers, stripMcpPins } from '../../domain/mcp-pins.ts'
 import {
@@ -176,8 +177,8 @@ export interface TeamLimits {
     maxDurationMs?: number
   }
   /**
-   * The working context window (tokens): the model's own window, at most this. Compaction
-   * summarizes at 80 % of it. Default 128 000.
+   * Deprecated global ceiling on every agent's context window (tokens; `TEAM_CONTEXT_CAP`). No
+   * default: the window comes from the model and the agent's own `contextWindow` setting.
    */
   contextCap?: number
   /** How long the lead stays parked on a task before the wait times out (ms). Default 24 h. */
@@ -1420,15 +1421,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     const agent = defineHarnessAgent({
       id: def.slug,
       model: deps.models.resolve(...selectionOf(def, settings)),
-      // the catalog knows the window of real models; 200k only for models it does not list
-      // the working window: compaction summarizes at 80 % of it. A model that reads 1 M tokens would
-      // otherwise carry ~800 k tokens of history into every call before anything is summarized
-      // (production: 40 k tokens per call on average, 150 k at worst)
-      contextWindow: workingWindow(modelInfoOf(def, settings).contextWindow),
-      // the output reserve only matters against the model's real window: a 1 M model capped at
-      // 128 k has room for its whole output beyond the cap, so the cap is not cut by the output
-      // cap too (production: 128 k × 0.9 − 32 k reserve put compaction at ~78 k)
-      guard: { reserveTokens: outputReserve(modelInfoOf(def, settings)) },
+      // the window comes from the model (the catalog knows real models; 200k only for models it does
+      // not list), or the agent's own smaller limit: compaction summarizes at the agent's percent of it
+      contextWindow: workingWindow(def, modelInfoOf(def, settings)),
+      // the output reserve only matters against the model's real window: a custom limit below it
+      // leaves room for the whole output beyond the limit, so the limit is not cut by the output
+      // cap too
+      guard: { reserveTokens: outputReserve(def, modelInfoOf(def, settings)) },
       ...(catalog === undefined ? {} : { models: catalog }),
       // never leave the output cap to the provider: OpenRouter-style gateways then reserve (and
       // check credits for) the model maximum on every call
@@ -1492,7 +1491,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             },
           }
         : {}),
-      compaction: { summarizeAt: 0.8, prune: {} },
+      compaction: { summarizeAt: compactRatio(def.compactAtPercent), prune: {} },
       // screenshots (browser, phone and other MCP tools) pile up: the model sees the newest three
       toolOutput: { maxChars: 30_000, strategy: 'evict', keepImages: 3 },
       onWarning: (w: HarnessWarning) => {
@@ -1543,19 +1542,26 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   }
 
   /** The catalog's output limit of the model, capped; a sane default for models it does not list. */
-  /** The working window: the model's window, capped (`TEAM_CONTEXT_CAP`, default 128 k). */
-  function workingWindow(modelWindow: number | undefined): number {
-    return Math.min(modelWindow ?? 200_000, deps.limits?.contextCap ?? 128_000)
+  /** The working window: the model's window, or the agent's own smaller limit (and the deprecated global ceiling). */
+  function workingWindow(def: AgentDef, info: { contextWindow?: number }): number {
+    return effectiveWindow({
+      modelWindow: info.contextWindow,
+      custom: def.contextWindow,
+      ceiling: deps.limits?.contextCap,
+    })
   }
 
   /**
    * Tokens kept free for the answer inside the working window: only the part of the output cap
    * that does not fit between the working window and the model's real window.
    */
-  function outputReserve(info: { contextWindow?: number; maxOutputTokens?: number }): number {
+  function outputReserve(
+    def: AgentDef,
+    info: { contextWindow?: number; maxOutputTokens?: number },
+  ): number {
     const out = outputCapOf(info.maxOutputTokens)
-    const real = info.contextWindow ?? 200_000
-    return Math.max(0, out - (real - workingWindow(info.contextWindow)))
+    const real = info.contextWindow ?? UNKNOWN_MODEL_WINDOW
+    return Math.max(0, out - (real - workingWindow(def, info)))
   }
 
   function outputCapOf(catalogMax: number | undefined): number {

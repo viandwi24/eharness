@@ -14,6 +14,12 @@ import {
   enablementFromTools,
   normalizeConnectors,
 } from '../domain/connectors.ts'
+import {
+  customWindowProblem,
+  DEFAULT_COMPACT_AT_PERCENT,
+  MAX_COMPACT_AT_PERCENT,
+  MIN_COMPACT_AT_PERCENT,
+} from '../domain/context-window.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import { normalizeSelection } from '../domain/providers.ts'
 import { DEFAULT_TASK_CONCURRENCY, MAX_TASK_CONCURRENCY } from '../domain/work-queue.ts'
@@ -71,6 +77,23 @@ function checkDraft(draft: AgentDraft): void {
   ) {
     throw invalid(`taskConcurrency must be an integer from 1 to ${MAX_TASK_CONCURRENCY}`)
   }
+  const pct = draft.compactAtPercent
+  if (
+    pct !== undefined &&
+    !(Number.isInteger(pct) && pct >= MIN_COMPACT_AT_PERCENT && pct <= MAX_COMPACT_AT_PERCENT)
+  ) {
+    throw invalid(
+      `compactAtPercent must be a whole number from ${MIN_COMPACT_AT_PERCENT} to ${MAX_COMPACT_AT_PERCENT}`,
+      'INVALID_COMPACT_AT',
+    )
+  }
+}
+
+/** A custom context limit must fit the window of the model the agent will use. */
+function checkWindow(deps: Deps, def: AgentDef, custom: number | null | undefined): void {
+  if (custom === null || custom === undefined) return
+  const problem = customWindowProblem(custom, deps.chat.modelOf?.(def).contextWindow)
+  if (problem !== undefined) throw invalid(problem, 'INVALID_CONTEXT_WINDOW')
 }
 
 /**
@@ -129,6 +152,8 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     ...pick(deps, draft.modelProfile, draft.model),
     toolAccess: draft.toolAccess ?? null,
     taskConcurrency: draft.taskConcurrency ?? DEFAULT_TASK_CONCURRENCY,
+    contextWindow: draft.contextWindow ?? null,
+    compactAtPercent: draft.compactAtPercent ?? DEFAULT_COMPACT_AT_PERCENT,
     skills: draft.skills ?? [],
     permissionMode: draft.permissionMode ?? 'default',
     connectors:
@@ -146,6 +171,7 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     updatedAt: now,
   }
   checkTeam(role, def.connectors)
+  checkWindow(deps, def, def.contextWindow)
   deps.agents.insert(def)
   // the instructions become the first persona version (identity, voice, operating rules)
   ensurePersona(deps, def)
@@ -166,6 +192,7 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
     instructions: patch.instructions ?? current.instructions,
     permissionMode: patch.permissionMode ?? current.permissionMode,
     ...(patch.taskConcurrency === undefined ? {} : { taskConcurrency: patch.taskConcurrency }),
+    ...(patch.compactAtPercent === undefined ? {} : { compactAtPercent: patch.compactAtPercent }),
   }
   checkDraft(merged)
   const next: AgentDef = {
@@ -184,6 +211,8 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
         )),
     toolAccess: patch.toolAccess === undefined ? current.toolAccess : patch.toolAccess,
     taskConcurrency: patch.taskConcurrency ?? current.taskConcurrency,
+    contextWindow: patch.contextWindow === undefined ? current.contextWindow : patch.contextWindow,
+    compactAtPercent: patch.compactAtPercent ?? current.compactAtPercent,
     skills: patch.skills ?? current.skills,
     connectors:
       patch.connectors === undefined ? current.connectors : normalizeConnectors(patch.connectors),
@@ -194,6 +223,9 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
     updatedAt: deps.clock.now(),
   }
   checkTeam(next.role, next.connectors)
+  // only a limit set now is checked: a stored one that a model switch left above the new window is
+  // clamped when the agent is built (`effectiveWindow`), not rejected
+  checkWindow(deps, next, patch.contextWindow)
   if (!deps.agents.update(next, current.version, { connectors: patch.connectors !== undefined })) {
     throw conflict('the agent was changed concurrently; reload and retry', 'VERSION_CONFLICT')
   }

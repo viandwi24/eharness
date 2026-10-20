@@ -45,7 +45,8 @@
  *   TEAM_LONG_RUN_MAX_HOURS     stop a background worker job this many hours after it started (default 24; 0 = no limit)
  *   TEAM_LONG_RUN_CHUNK_STEPS   steps per chunk of a worker job (default 80, at least 10)
  *   (TEAM_MAX_WORKER_STEPS was removed: workers have no fixed step cap, they run as long-run jobs)
- *   TEAM_CONTEXT_CAP  working context window in tokens (default 128000): history is summarized at 80 % of it
+ *   TEAM_CONTEXT_CAP  DEPRECATED optional global ceiling on every agent's context window, in tokens (no default:
+ *                     the window comes from the model; each agent can set a smaller one in its settings)
  *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
@@ -1817,6 +1818,14 @@ if (import.meta.main) {
         ...(chunkSteps === undefined || chunkSteps < 10 ? {} : { chunkSteps }),
       }
       const contextCap = Number(process.env.TEAM_CONTEXT_CAP)
+      if (
+        process.env.TEAM_CONTEXT_CAP !== undefined &&
+        process.env.TEAM_CONTEXT_CAP.trim() !== ''
+      ) {
+        console.warn(
+          "[team] TEAM_CONTEXT_CAP is deprecated: the context window now follows each agent's model; set a limit per agent in its settings instead",
+        )
+      }
       const limits = {
         ...(Number.isFinite(contextCap) && contextCap >= 16_000 ? { contextCap } : {}),
         ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { spawnCap } : {}),

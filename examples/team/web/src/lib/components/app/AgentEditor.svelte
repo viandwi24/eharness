@@ -16,6 +16,11 @@
 	import { agentChoiceOf, agentChoices, storedOfChoice, type AgentChoice } from '#lib/modes.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { CONFLICT_TEXT, isVersionConflict } from '#lib/conflict.js';
+	import { api } from '#lib/api/index.js';
+	import { formatTokens, formatUsd } from '#lib/context.js';
+	import { costAtThreshold, DEFAULT_COMPACT_AT, effectiveWindow, windowPresets, windowProblem } from '#lib/context-window.js';
+	import { effectiveModel, type ModelPick } from '#lib/providers/effective.js';
+	import { formatContext, type ProviderModel } from '#lib/providers/models.js';
 
 	/** Without `agent` the editor creates one; with it, it edits (the lead cannot be archived). */
 	let {
@@ -57,17 +62,25 @@
 	let modeChoice = $state<AgentChoice>(agentChoiceOf(agent?.permissionMode));
 	// svelte-ignore state_referenced_locally
 	let taskConcurrency = $state(String(agent?.taskConcurrency ?? 1));
+	// the context window: `model` = always the full window of the current model, a preset, or a custom number
+	const PRESET_VALUES = [800_000, 500_000, 256_000, 128_000, 64_000];
+	// svelte-ignore state_referenced_locally
+	let windowChoice = $state<string>(agent?.contextWindow == null ? 'model' : PRESET_VALUES.includes(agent.contextWindow) ? String(agent.contextWindow) : 'custom');
+	// svelte-ignore state_referenced_locally
+	let customWindow = $state(agent?.contextWindow == null ? '' : String(agent.contextWindow));
+	// svelte-ignore state_referenced_locally
+	let compactAt = $state(String(agent?.compactAtPercent ?? DEFAULT_COMPACT_AT));
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
 
 	$effect(() => {
 		// an existing agent's voice and rules are the Persona tab's; a new agent starts from its instructions
-		valid = !!name.trim() && (!!agent || !!instructions.trim());
+		valid = !!name.trim() && (!!agent || !!instructions.trim()) && !customError;
 	});
 
 	$effect(() => {
 		dirty = agent
-			? name !== agent.name || color !== agent.color || description !== agent.description || (model || null) !== (agent.model ?? null) || (modelProfile || null) !== (agent.modelProfile ?? null) || modeChoice !== agentChoiceOf(agent.permissionMode) || taskConcurrency !== String(agent.taskConcurrency ?? 1)
+			? name !== agent.name || color !== agent.color || description !== agent.description || (model || null) !== (agent.model ?? null) || (modelProfile || null) !== (agent.modelProfile ?? null) || modeChoice !== agentChoiceOf(agent.permissionMode) || taskConcurrency !== String(agent.taskConcurrency ?? 1) || windowValue() !== (agent.contextWindow ?? null) || compactAt !== String(agent.compactAtPercent ?? DEFAULT_COMPACT_AT)
 			: !!name.trim() || !!instructions.trim();
 	});
 
@@ -76,6 +89,45 @@
 	onMount(() => {
 		void providersStore.load();
 	});
+
+	/** The custom limit the form holds: null = the model's window. */
+	function windowValue(): number | null {
+		if (windowChoice === 'model') return null;
+		const n = Number.parseInt(windowChoice === 'custom' ? customWindow : windowChoice, 10);
+		return Number.isFinite(n) ? n : null;
+	}
+
+	// the model this agent ends up on (its own pick or the workspace default) and what the catalog knows of it
+	let workspacePick = $state<ModelPick>({ profileId: null, modelId: null });
+	onMount(() => {
+		void api.get('/settings').then((s) => (workspacePick = { profileId: s.defaultProfile, modelId: s.defaultModel }), () => {});
+	});
+	const effective = $derived(effectiveModel(providersStore.state.profiles, { profileId: modelProfile, modelId: model }, workspacePick));
+	let modelInfo = $state<ProviderModel | undefined>(undefined);
+	let infoSeq = 0;
+	$effect(() => {
+		const e = effective;
+		const mine = ++infoSeq;
+		if (!e) {
+			modelInfo = undefined;
+			return;
+		}
+		void providersStore.models(e.profileId).then(
+			(list) => {
+				if (mine === infoSeq) modelInfo = list.find((m) => m.id === e.modelId);
+			},
+			() => {
+				if (mine === infoSeq) modelInfo = undefined;
+			}
+		);
+	});
+	const modelWindow = $derived(modelInfo?.contextWindow);
+	const presets = $derived(windowPresets(modelWindow));
+	const customError = $derived(windowChoice === 'custom' ? windowProblem(Number.parseInt(customWindow, 10), modelWindow) : undefined);
+	const effWindow = $derived(effectiveWindow(modelWindow, windowValue()));
+	const clamped = $derived(modelWindow !== undefined && (windowValue() ?? 0) > modelWindow);
+	const pct = $derived(Math.min(95, Math.max(50, Number.parseInt(compactAt, 10) || DEFAULT_COMPACT_AT)));
+	const callCost = $derived(costAtThreshold(effWindow, pct, modelInfo?.pricing?.input));
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -89,7 +141,9 @@
 			model: model || null,
 			modelProfile: modelProfile || null,
 			permissionMode: storedOfChoice(modeChoice) as Agent['permissionMode'],
-			taskConcurrency: Number.parseInt(taskConcurrency, 10) || 1
+			taskConcurrency: Number.parseInt(taskConcurrency, 10) || 1,
+			contextWindow: windowValue(),
+			compactAtPercent: pct
 		};
 		try {
 			if (agent) {
@@ -194,6 +248,42 @@
 		{#if errors.taskConcurrency}<span class="text-xs text-destructive-text">{errors.taskConcurrency}</span>{/if}
 		<span class="text-xs text-muted-foreground">How many assigned tasks this agent works on at the same time. More wait as Queued and start when one finishes; the team-wide limit in Settings still applies.</span>
 	</label>
+
+	<div class="flex flex-col gap-1" data-testid="context-window-setting">
+		<span class="font-medium" id="agent-window-label">Context window</span>
+		<div class="flex flex-wrap items-center gap-2">
+			<NativeSelect bind:value={windowChoice} aria-label="Context window" data-testid="context-window">
+				<NativeSelectOption value="model">Model maximum{modelWindow ? ` (${formatContext(modelWindow)})` : ''}</NativeSelectOption>
+				{#each presets as p (p)}<NativeSelectOption value={String(p)}>{formatContext(p)}</NativeSelectOption>{/each}
+				{#if windowChoice !== 'model' && windowChoice !== 'custom' && !presets.includes(Number(windowChoice))}
+					<NativeSelectOption value={windowChoice}>{formatContext(Number(windowChoice))} (above this model)</NativeSelectOption>
+				{/if}
+				<NativeSelectOption value="custom">Custom…</NativeSelectOption>
+			</NativeSelect>
+			{#if windowChoice === 'custom'}
+				<Input type="number" bind:value={customWindow} min={16000} max={modelWindow} step={1000} placeholder="Tokens" class="w-40" aria-label="Custom context window in tokens" aria-invalid={!!customError || !!errors.contextWindow} />
+			{/if}
+		</div>
+		{#if customError}<span class="text-xs text-destructive-text">{customError}</span>{/if}
+		{#if errors.contextWindow}<span class="text-xs text-destructive-text">{errors.contextWindow}</span>{/if}
+		<span class="text-xs text-muted-foreground">
+			{#if modelWindow}The model's window is {formatTokens(modelWindow)} tokens.{:else}The model's window is not known to the catalog.{/if}
+			{#if windowChoice === 'model'}This agent always uses the full window of its current model, also after you switch models.{/if}
+			{#if clamped}This limit is above the model's window: the agent works in {formatTokens(effWindow ?? 0)} (the smaller of the two) until the model or the limit changes.{/if}
+		</span>
+		<label class="mt-2 flex flex-col gap-1">
+			<span class="font-medium">Summarize at (%)</span>
+			<Input type="number" bind:value={compactAt} min={50} max={95} step={5} class="w-28" aria-label="Summarize at percent of the window" data-testid="compact-at" />
+			{#if errors.compactAtPercent}<span class="text-xs text-destructive-text">{errors.compactAtPercent}</span>{/if}
+		</label>
+		<span class="text-xs text-muted-foreground" data-testid="context-cost">
+			{#if effWindow}
+				Older messages are summarized at {formatTokens(Math.floor((effWindow * pct) / 100))} tokens.
+				{#if callCost !== undefined}A full call at that size costs about {formatUsd(callCost)} of input at the model's price (before prompt caching).{:else}The model's price is not known, so the cost of a call cannot be estimated.{/if}
+			{/if}
+			Changes apply to every chat of this agent from its next message.
+		</span>
+	</div>
 
 	{#if formError && !Object.keys(errors).length}<p class="text-xs text-destructive-text" role="alert">{formError}</p>{/if}
 

@@ -44,6 +44,8 @@ export function createChatService(
   }
 
   return {
+    modelOf,
+
     async compact(def, sessionId) {
       const message = await (await sessionFor(def, sessionId)).compact()
       return { compacted: message !== null, message: message === null ? null : asMessage(message) }

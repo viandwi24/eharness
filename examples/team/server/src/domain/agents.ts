@@ -58,6 +58,10 @@ export interface AgentDef {
   toolAccess: ToolAccess | null
   /** Assigned tasks (the work queue) this agent works on at the same time; the rest wait as Queued. */
   taskConcurrency: number
+  /** Own context limit in tokens; null = the full window of the current model. Never above the model's window. */
+  contextWindow: number | null
+  /** History is summarized at this share (percent, 50-95) of the effective window. */
+  compactAtPercent: number
   skills: string[]
   permissionMode: PermissionMode
   rules: PermissionRules
@@ -83,6 +87,10 @@ export interface AgentDraft {
   toolAccess?: ToolAccess | null | undefined
   /** Assigned tasks worked on at once (1-8, default 1). */
   taskConcurrency?: number | undefined
+  /** Own context limit in tokens (at most the model's window); null/absent = the model's window. */
+  contextWindow?: number | null | undefined
+  /** Summarize at this percent (50-95) of the window; default 80. */
+  compactAtPercent?: number | undefined
   /** Default: the legacy default checklist as enablement (files read, memory, planning). */
   connectors?: AgentConnectors | undefined
   /** Seeds and tests: a legacy tool checklist (`library_read`, `memory`, ...) mapped onto connectors. */

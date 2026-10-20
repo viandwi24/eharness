@@ -16030,6 +16030,10 @@ export interface components {
             toolAccess: "auto" | "on-demand" | null;
             /** @description Assigned tasks (the work queue) this agent works on at the same time; further tasks wait as Queued and start when one ends. Default 1. The team-wide spawn cap (`GET /settings`) still applies. */
             taskConcurrency: number;
+            /** @description Own context limit in tokens; null = the full window of the agent's current model. Never above the model's window (a larger value is rejected); when the model changes to a smaller window the effective window is the smaller of the two. */
+            contextWindow: number | null;
+            /** @description History is summarized when the context reaches this percent of the effective window. Default 80. */
+            compactAtPercent: number;
             /** @description This agent's own choices per connection id (on / off / inherit, capability modes). Use `GET /agents/{id}/connectors` for the effective view. */
             connectors: {
                 [key: string]: components["schemas"]["ConnectionChoices"];
@@ -16084,6 +16088,10 @@ export interface components {
             toolAccess?: "auto" | "on-demand" | null;
             /** @description See `Agent.taskConcurrency`. Default 1. */
             taskConcurrency?: number;
+            /** @description See `Agent.contextWindow`; null = the model's window. Rejected when above the model's window. */
+            contextWindow?: number | null;
+            /** @description See `Agent.compactAtPercent`. Default 80. */
+            compactAtPercent?: number;
             skills?: string[];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
@@ -16118,6 +16126,10 @@ export interface components {
             toolAccess?: "auto" | "on-demand" | null;
             /** @description See `Agent.taskConcurrency`. Default 1. */
             taskConcurrency?: number;
+            /** @description See `Agent.contextWindow`; null = the model's window. Rejected when above the model's window. */
+            contextWindow?: number | null;
+            /** @description See `Agent.compactAtPercent`. Default 80. */
+            compactAtPercent?: number;
             skills?: string[];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";

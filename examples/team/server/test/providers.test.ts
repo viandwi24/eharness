@@ -633,9 +633,9 @@ describe('agents on store profiles', () => {
       profileId: 'or-work',
       contextWindow: 1_000_000,
     })
-    // the working window is capped (TEAM_CONTEXT_CAP, default 128 000): a 1 M-token model would
-    // otherwise summarize only at ~800 k tokens; the model itself still reports its own window
-    expect(stats.context.window).toBe(128_000)
+    // the window follows the model (no cap by default): a 1 M-token model works in 1 M tokens
+    // (an agent can set a smaller limit of its own)
+    expect(stats.context.window).toBe(1_000_000)
   })
 
   test('the model object of the manager is priced by the manager catalog', async () => {

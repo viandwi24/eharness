@@ -259,6 +259,21 @@ All of these are tool errors (`HarnessToolError`, same text in the UI, storage a
 continues in the next step. Unwrapped tools (`tool_search`, client and provider tools) are not
 counted.
 
+### 4.2 Input repair
+
+Models sometimes send an `object` or `array` argument as a JSON-encoded string
+(`"body": "{\"title\":\"x\"}"`). The AI SDK does not validate `jsonSchema()` tools (MCP, OpenAPI), so
+nothing fixes it and the server rejects the call. Before approval and `execute` (inside the input
+refinement, ahead of `tool.before`), the core reads the tool's JSON Schema and, for each property
+whose declared types (`type`, `type: [..]`, `anyOf`/`oneOf`) include `object` or `array` but **not**
+`string`, replaces a string that `JSON.parse`s to exactly that type with the parsed value. Nested
+object properties are visited two levels deep. Untyped properties, properties that allow `string`,
+and invalid JSON are never touched (the tool's own error stays readable). Zod tools are validated by
+the AI SDK first and are unaffected in practice.
+
+Each repair raises `W_TOOL_INPUT_REPAIRED` once per agent, tool and property (`details`: `tool`,
+`property`; nested properties use dotted paths). Nothing else is recorded.
+
 ## 5. Timeouts, retries, repair, preliminary results
 
 | Concern | Mechanism |

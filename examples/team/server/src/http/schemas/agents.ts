@@ -40,6 +40,14 @@ export const AgentSchema = z
       description:
         'Assigned tasks (the work queue) this agent works on at the same time; further tasks wait as Queued and start when one ends. Default 1. The team-wide spawn cap (`GET /settings`) still applies.',
     }),
+    contextWindow: z.number().int().min(16_000).nullable().openapi({
+      description:
+        "Own context limit in tokens; null = the full window of the agent's current model. Never above the model's window (a larger value is rejected); when the model changes to a smaller window the effective window is the smaller of the two.",
+    }),
+    compactAtPercent: z.number().int().min(50).max(95).openapi({
+      description:
+        'History is summarized when the context reaches this percent of the effective window. Default 80.',
+    }),
     connectors: z.record(z.string(), ConnectionChoicesSchema).openapi({
       description:
         "This agent's own choices per connection id (on / off / inherit, capability modes). Use `GET /agents/{id}/connectors` for the effective view.",
@@ -84,6 +92,13 @@ export const AgentCreateSchema = z
     }),
     taskConcurrency: z.number().int().min(1).max(8).optional().openapi({
       description: 'See `Agent.taskConcurrency`. Default 1.',
+    }),
+    contextWindow: z.number().int().min(16_000).nullable().optional().openapi({
+      description:
+        "See `Agent.contextWindow`; null = the model's window. Rejected when above the model's window.",
+    }),
+    compactAtPercent: z.number().int().min(50).max(95).optional().openapi({
+      description: 'See `Agent.compactAtPercent`. Default 80.',
     }),
     skills: z.array(z.string()).optional(),
     permissionMode: z.enum(PERMISSION_MODES).optional(),

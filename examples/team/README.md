@@ -100,7 +100,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `PORT` | `4000` | HTTP port of the server |
 | `TEAM_BUDGET_USD` | unset | monthly USD limit of the workspace ledger (also in Settings) |
 | `TEAM_SPAWN_CAP` | `4` | role agents the lead runs at once (also in Settings) |
-| `TEAM_CONTEXT_CAP` | `128000` | working context window: the model's own window, at most this; history is summarized at 80 % of it (a 1 M-token model would otherwise carry ~800 k tokens into every call) |
+| `TEAM_CONTEXT_CAP` | unset | deprecated optional global ceiling on every agent's context window (logged once when set). By default the window is the model's own; each agent can set a smaller limit and a summarize-at percent (50-95, default 80) in its settings |
 | `TEAM_LONG_RUN_MAX_COST_USD` | `10` | a background worker job stops at this estimated cost (0 = no limit); workers run as long jobs in chunks of 80 steps with no fixed step cap, and resume after a restart |
 | `TEAM_LONG_RUN_MAX_HOURS` | `24` | a worker job stops this long after it started (0 = no limit) |
 | `TEAM_ARTIFACT_URL` | - (root-relative `/art/*` on the host that shows the page) | public base URL of a separate artifact content origin, e.g. `https://artifacts.example.com` (sandboxed HTML runs there; recommended in production) |

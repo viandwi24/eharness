@@ -199,6 +199,8 @@ export interface ChatStats {
 
 /** The DM chat of an agent, on eharness sessions (implemented in `infra/eh/chat-service.ts`). */
 export interface ChatPort {
+  /** The model of an agent and what the catalog knows of it (window, output cap, prices). Optional: fakes omit it. */
+  modelOf?(agent: AgentDef): ChatStats['model']
   /** `message` is the summary kind message, or null when there was nothing to compact. */
   compact(
     agent: AgentDef,

@@ -51,6 +51,10 @@ export const agents = sqliteTable(
     toolAccess: text('tool_access'),
     /** Assigned tasks this agent works on at the same time (the rest wait as Queued). */
     taskConcurrency: integer('task_concurrency').notNull().default(1),
+    /** Own context limit in tokens; null = the model's full window. */
+    contextWindow: integer('context_window'),
+    /** Summarize history at this percent of the effective window. */
+    compactAtPercent: integer('compact_at_percent').notNull().default(80),
     /** Legacy tool checklist (before connectors): read by the boot migration only, never written. */
     tools: json<string[]>('tools').notNull(),
     skills: json<string[]>('skills').notNull(),

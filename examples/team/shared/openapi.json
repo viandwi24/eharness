@@ -328,6 +328,20 @@
             "maximum": 8,
             "description": "Assigned tasks (the work queue) this agent works on at the same time; further tasks wait as Queued and start when one ends. Default 1. The team-wide spawn cap (`GET /settings`) still applies."
           },
+          "contextWindow": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 16000,
+            "description": "Own context limit in tokens; null = the full window of the agent's current model. Never above the model's window (a larger value is rejected); when the model changes to a smaller window the effective window is the smaller of the two."
+          },
+          "compactAtPercent": {
+            "type": "integer",
+            "minimum": 50,
+            "maximum": 95,
+            "description": "History is summarized when the context reaches this percent of the effective window. Default 80."
+          },
           "connectors": {
             "type": "object",
             "additionalProperties": {
@@ -387,6 +401,8 @@
           "modelProfile",
           "toolAccess",
           "taskConcurrency",
+          "contextWindow",
+          "compactAtPercent",
           "connectors",
           "skills",
           "permissionMode",
@@ -499,6 +515,20 @@
             "minimum": 1,
             "maximum": 8,
             "description": "See `Agent.taskConcurrency`. Default 1."
+          },
+          "contextWindow": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 16000,
+            "description": "See `Agent.contextWindow`; null = the model's window. Rejected when above the model's window."
+          },
+          "compactAtPercent": {
+            "type": "integer",
+            "minimum": 50,
+            "maximum": 95,
+            "description": "See `Agent.compactAtPercent`. Default 80."
           },
           "skills": {
             "type": "array",
@@ -613,6 +643,20 @@
             "minimum": 1,
             "maximum": 8,
             "description": "See `Agent.taskConcurrency`. Default 1."
+          },
+          "contextWindow": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 16000,
+            "description": "See `Agent.contextWindow`; null = the model's window. Rejected when above the model's window."
+          },
+          "compactAtPercent": {
+            "type": "integer",
+            "minimum": 50,
+            "maximum": 95,
+            "description": "See `Agent.compactAtPercent`. Default 80."
           },
           "skills": {
             "type": "array",

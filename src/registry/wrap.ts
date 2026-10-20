@@ -24,6 +24,7 @@ import { errorText } from '../internal/util.ts'
 import { rehydrateOutputMedia } from '../messages/tool-media.ts'
 import type { ApprovalDecision, HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
+import { inputJsonSchema, repairToolInput } from './input-repair.ts'
 import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
 import { toolTraits } from './risk.ts'
 import { withToolExecute, withToolFields } from './tool-copy.ts'
@@ -429,16 +430,47 @@ function cloneableOutput(name: string, output: unknown): unknown {
   }
 }
 
-/** Tool input refinement map (AI SDK `experimental_refineToolInput`, named only in `internal/ai-compat.ts`) running the `tool.before` chain, or `undefined`. */
+/** Warn once per agent, tool and property about a repaired input. */
+const repairedWarned = new WeakMap<object, Set<string>>()
+
+/**
+ * Tool input refinement map (AI SDK `experimental_refineToolInput`, named only in `internal/ai-compat.ts`):
+ * the input repair of spec 09 §4.2 (JSON-encoded objects and arrays), then the `tool.before` chain.
+ */
 export function buildRefinement(
   toolNames: readonly string[],
   deps: ToolWrapDeps,
+  tools: ToolSet,
 ): ToolInputRefinement<ToolSet> | undefined {
-  if (!deps.hooks.has('tool.before')) return undefined
   const map: Record<string, (input: unknown) => Promise<unknown>> = {}
+  const hasBefore = deps.hooks.has('tool.before')
   for (const toolName of toolNames) {
+    const tool = tools[toolName] as Tool | undefined
     map[toolName] = async (input) => {
       let current = input
+      if (tool !== undefined && tool.type !== 'provider') {
+        const schema = await inputJsonSchema(tool)
+        if (schema !== undefined) {
+          const fixed = repairToolInput(current, schema)
+          current = fixed.input
+          const seen = repairedWarned.get(deps.warn) ?? new Set<string>()
+          repairedWarned.set(deps.warn, seen)
+          for (const property of fixed.repaired) {
+            const key = `${toolName}\u0000${property}`
+            if (seen.has(key)) continue
+            seen.add(key)
+            deps.warn(
+              {
+                code: 'W_TOOL_INPUT_REPAIRED',
+                message: `The model sent '${property}' of tool '${toolName}' as a JSON string; it was parsed before the call.`,
+                details: { tool: toolName, property },
+              },
+              key,
+            )
+          }
+        }
+      }
+      if (!hasBefore) return current
       for (const hook of deps.hooks.list('tool.before')) {
         try {
           const result = await callHook(deps, 'tool.before', hook.owner, () =>
