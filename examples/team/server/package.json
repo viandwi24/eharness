@@ -18,7 +18,7 @@
     "@grammyjs/auto-retry": "2.0.2",
     "@grammyjs/runner": "2.0.3",
     "@hono/zod-openapi": "1.6.3",
-    "@mtcute/bun": "0.32.4",
+    "@mtcute/bun": "0.32.5",
     "@openrouter/ai-sdk-provider": "3.1.0",
     "@scalar/hono-api-reference": "0.12.11",
     "ai": "^7.0.127",
