@@ -1,9 +1,15 @@
 import { createRoute, OpenAPIHono } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import { getSettings, patchSettings } from '../../app/settings.ts'
+import { getSettingsModels } from '../../app/settings-models.ts'
 import { BrowserInfoSchema } from '../schemas/browser.ts'
 import { errorResponses } from '../schemas/common.ts'
-import { CodeSandboxSchema, SettingsPatchSchema, SettingsSchema } from '../schemas/settings.ts'
+import {
+  CodeSandboxSchema,
+  SettingsModelsSchema,
+  SettingsPatchSchema,
+  SettingsSchema,
+} from '../schemas/settings.ts'
 
 const security = [{ Bearer: [] }]
 
@@ -40,6 +46,23 @@ const patchRoute = createRoute({
     200: {
       description: 'The new settings',
       content: { 'application/json': { schema: SettingsSchema } },
+    },
+    ...errorResponses,
+  },
+})
+
+const modelsRoute = createRoute({
+  method: 'get',
+  path: '/settings/models',
+  tags: ['settings'],
+  summary: 'Models in use',
+  description:
+    'The effective workspace default model and where it comes from, the model each kind of background call runs on (classifier, web search, summaries, heartbeat, programs), and warnings for agents or calls that would use a provider built-in fallback because no model was picked.',
+  security,
+  responses: {
+    200: {
+      description: 'Models in use',
+      content: { 'application/json': { schema: SettingsModelsSchema } },
     },
     ...errorResponses,
   },
@@ -82,6 +105,7 @@ const browserRoute = createRoute({
 export function settingsRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(getRoute, (c) => c.json(getSettings(deps), 200))
+    .openapi(modelsRoute, async (c) => c.json(await getSettingsModels(deps), 200))
     .openapi(codeRoute, async (c) =>
       c.json(
         (await deps.codeSandbox?.info()) ?? {

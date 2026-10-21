@@ -1062,6 +1062,13 @@ export interface ProvidersPort {
   remove(id: string): Promise<void>
   test(id: string): Promise<TestResultView>
   models(id: string, options: { refresh: boolean; all?: boolean }): Promise<ModelView[]>
+  /**
+   * Where the model a profile uses when nothing picks one comes from: `env` (`TEAM_MODEL` on the
+   * env default profile) or `built-in` (the provider's fallback, never chosen by a person).
+   */
+  defaultModelSource(profileId: string): 'env' | 'built-in'
+  /** The built-in model of `web_search` on this profile; undefined when the profile cannot search. */
+  searchModelOf(profileId: string): string | undefined
 }
 
 /**

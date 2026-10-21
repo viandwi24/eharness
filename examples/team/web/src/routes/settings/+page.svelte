@@ -31,6 +31,10 @@
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
 	import { monthText, percentOf, sinceText, sourceLabel } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
+	import { ALL_KNOBS, KNOB_GROUPS, knobPatch, knobText } from '#lib/settings/knobs.js';
+	import WarningIcon from 'phosphor-svelte/lib/Warning';
+	import TimerIcon from 'phosphor-svelte/lib/Timer';
+	import DatabaseIcon from 'phosphor-svelte/lib/Database';
 	import { isTimezone, timezoneOptions } from '#lib/heartbeat/model.js';
 	import { applyTeamZone } from '#lib/stores/team-zone.svelte.js';
 	import { formatDateTime } from '#lib/time.js';
@@ -44,6 +48,9 @@
 	const sections = [
 		{ id: 'general', label: 'General', icon: SlidersIcon },
 		{ id: 'providers', label: 'Providers', icon: CubeIcon },
+		{ id: 'models', label: 'Models', icon: BrainIcon },
+		{ id: 'limits', label: 'Limits', icon: TimerIcon },
+		{ id: 'data', label: 'Data retention', icon: DatabaseIcon },
 		{ id: 'usage', label: 'Usage', icon: ChartBarIcon },
 		{ id: 'rules', label: 'Saved rules', icon: ShieldCheckIcon },
 		{ id: 'memory', label: 'Memory', icon: BrainIcon },
@@ -63,13 +70,32 @@
 	let toolAccess = $state<Settings['toolAccess']>('auto');
 	let model = $state<string | null>(null);
 	let profile = $state<string | null>(null);
+	let teamName = $state('');
+	let classifierProfile = $state<string | null>(null);
+	let classifierModel = $state<string | null>(null);
+	let searchProfile = $state<string | null>(null);
+	let searchModel = $state<string | null>(null);
+	/** What is typed in each numeric knob (see lib/settings/knobs.ts). */
+	let knobTexts = $state<Record<string, string>>({});
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
 	let saving = $state(false);
 
+	const storedKnobs = (s: Settings): Record<string, number | null> => Object.fromEntries(ALL_KNOBS.map((k) => [k.key, (s as unknown as Record<string, number | null>)[k.key] ?? null]));
+	const knobsDirty = $derived.by(() => {
+		const s = settings;
+		return !!s && ALL_KNOBS.some((k) => String(knobTexts[k.key] ?? '').trim() !== knobText(k, storedKnobs(s)[k.key] ?? null));
+	});
+
 	const dirty = $derived(
 		!!settings &&
-			(mode !== settingsModeOf(settings.defaultPermissionMode) ||
+			(knobsDirty ||
+				teamName.trim() !== (settings.teamName ?? '') ||
+				classifierProfile !== settings.classifierProfile ||
+				classifierModel !== settings.classifierModel ||
+				searchProfile !== settings.searchProfile ||
+				searchModel !== settings.searchModel ||
+				mode !== settingsModeOf(settings.defaultPermissionMode) ||
 				toolAccess !== settings.toolAccess ||
 				String(budget ?? '').trim() !== (settings.budgetUsd === null ? '' : String(settings.budgetUsd)) ||
 				String(spawnCap ?? '').trim() !== String(settings.spawnCap) ||
@@ -87,7 +113,25 @@
 		toolAccess = s.toolAccess;
 		model = s.defaultModel;
 		profile = s.defaultProfile;
+		teamName = s.teamName ?? '';
+		classifierProfile = s.classifierProfile;
+		classifierModel = s.classifierModel;
+		searchProfile = s.searchProfile;
+		searchModel = s.searchModel;
+		const stored = storedKnobs(s);
+		knobTexts = Object.fromEntries(ALL_KNOBS.map((k) => [k.key, knobText(k, stored[k.key] ?? null)]));
 	}
+
+	// --- models in use (`GET /settings/models`) ------------------------------------------------
+	let modelsInfo = $state<components['schemas']['SettingsModels'] | null>(null);
+	async function loadModels(): Promise<void> {
+		try {
+			modelsInfo = await api.get('/settings/models');
+		} catch {
+			modelsInfo = null;
+		}
+	}
+	const sourceText = (s: string): string => (s === 'setting' ? 'picked' : s === 'env' ? 'from TEAM_MODEL' : s === 'built-in' ? 'built-in fallback' : 'follows the agent');
 
 	async function loadSettings(): Promise<void> {
 		try {
@@ -139,11 +183,28 @@
 			errors = v.errors;
 			return;
 		}
+		const kp = settings ? knobPatch(knobTexts, storedKnobs(settings)) : ({ ok: true, patch: {} } as const);
+		if (!kp.ok) {
+			errors = kp.errors;
+			return;
+		}
 		errors = {};
 		saving = true;
 		try {
-			const saved = await api.patch('/settings', { body: { defaultPermissionMode: mode, toolAccess, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, timezone: v.value.timezone, defaultModel: model || null, defaultProfile: profile || null } });
+			// only the new knobs that changed are sent: an untouched one keeps following its initial value
+			const extra: Record<string, unknown> = { ...kp.patch };
+			if (settings && teamName.trim() !== (settings.teamName ?? '')) extra.teamName = teamName.trim() || null;
+			if (settings && (classifierModel !== settings.classifierModel || classifierProfile !== settings.classifierProfile)) {
+				extra.classifierModel = classifierModel || null;
+				extra.classifierProfile = classifierProfile || null;
+			}
+			if (settings && (searchModel !== settings.searchModel || searchProfile !== settings.searchProfile)) {
+				extra.searchModel = searchModel || null;
+				extra.searchProfile = searchProfile || null;
+			}
+			const saved = await api.patch('/settings', { body: { defaultPermissionMode: mode, toolAccess, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, timezone: v.value.timezone, defaultModel: model || null, defaultProfile: profile || null, ...extra } });
 			fill(saved);
+			void loadModels();
 			toast.success('Settings saved');
 			// every time in the app follows the team timezone (re-renders the page when it changed)
 			applyTeamZone(saved.timezone);
@@ -214,6 +275,7 @@
 			void loadSettings();
 			void loadUsage();
 			void loadCodeSandbox();
+			void loadModels();
 		});
 	});
 
@@ -240,8 +302,9 @@
 		<PageBody size={section === 'providers' ? 'wide' : 'narrow'}>
 				{#if section === 'providers'}
 					<ProvidersSettings />
-				{:else if section === 'general'}
+				{:else if section === 'general' || section === 'models' || section === 'limits' || section === 'data'}
 					<form id="general" onsubmit={save} class="flex flex-col gap-4">
+						{#if section === 'general'}
 						<Card.Root>
 							<Card.Header>
 								<Card.Title>General</Card.Title>
@@ -258,6 +321,12 @@
 											<ModelPicker id="s-model" bind:profileId={profile} bind:modelId={model} defaultLabel="Server default" fallback={null} />
 										{/if}
 										<Field.Description>The provider profile and model of agents that do not pick their own. Profiles are managed under Providers.</Field.Description>
+										{#if modelsInfo?.workspaceDefault}
+											<p class="text-xs" data-testid="workspace-default-model">Agents without a model of their own run on <span class="font-mono">{modelsInfo.workspaceDefault.profileLabel} · {modelsInfo.workspaceDefault.modelId}</span> ({sourceText(modelsInfo.workspaceDefault.source)}).</p>
+										{/if}
+										{#each modelsInfo?.warnings ?? [] as w (w)}
+											<p class="flex items-start gap-1.5 text-xs text-warning-text" role="status" data-testid="model-fallback-warning"><WarningIcon class="mt-px size-3.5 shrink-0" />{w}</p>
+										{/each}
 										{#if errors.defaultModel}<Field.Error>{errors.defaultModel}</Field.Error>{/if}
 									</Field.Field>
 									<Field.Field data-invalid={!!errors.defaultPermissionMode}>
@@ -294,6 +363,11 @@
 										<Field.Description>How many delegated tasks the lead runs at once (1 to 32).</Field.Description>
 										{#if errors.spawnCap}<Field.Error>{errors.spawnCap}</Field.Error>{/if}
 									</Field.Field>
+									<Field.Field>
+										<Field.Label for="s-team-name">Team name</Field.Label>
+										<Input id="s-team-name" bind:value={teamName} placeholder="None" maxlength={100} disabled={!settings} class="max-w-sm" />
+										<Field.Description>Given to agents in chats ("You are the assistant of this team"). Empty means none.</Field.Description>
+									</Field.Field>
 									<Field.Field data-invalid={!!errors.timezone}>
 										<Field.Label for="s-tz">Team timezone</Field.Label>
 										<Input id="s-tz" bind:value={timezone} list="settings-zones" placeholder="UTC" disabled={!settings} aria-invalid={!!errors.timezone} class="max-w-sm" />
@@ -326,6 +400,100 @@
 								{/if}
 							</Card.Content>
 						</Card.Root>
+
+						{/if}
+
+						{#if section === 'models'}
+							<Card.Root>
+								<Card.Header>
+									<Card.Title>Models for background work</Card.Title>
+									<Card.Description>Calls the agent does not make itself. Each one runs on the model shown here: none silently uses a different one.</Card.Description>
+								</Card.Header>
+								<Card.Content>
+									<Field.Group>
+										{#each modelsInfo?.warnings ?? [] as w (w)}
+											<p class="flex items-start gap-1.5 text-sm text-warning-text" role="status"><WarningIcon class="mt-0.5 size-4 shrink-0" />{w}</p>
+										{/each}
+										<Field.Field>
+											<Field.Label for="s-classifier">Auto mode classifier</Field.Label>
+											{#if !settings}<Skeleton class="h-9 w-full max-w-sm" />{:else}
+												<ModelPicker id="s-classifier" bind:profileId={classifierProfile} bind:modelId={classifierModel} defaultLabel="Same as the agent" fallback={null} showEffective={false} />
+											{/if}
+											<Field.Description>Decides actions in Auto mode. "Same as the agent" judges with the model of the agent whose action it reviews, so it never costs more than the agent. A small, cheap model is usually enough.</Field.Description>
+										</Field.Field>
+										<Field.Field>
+											<Field.Label for="s-search">Web search</Field.Label>
+											{#if !settings}<Skeleton class="h-9 w-full max-w-sm" />{:else}
+												<ModelPicker id="s-search" bind:profileId={searchProfile} bind:modelId={searchModel} defaultLabel="Built-in search model" fallback={null} showEffective={false} />
+											{/if}
+											<Field.Description>Answers the web_search tool with the provider's own search (OpenRouter or AI Gateway profiles). The built-in model is a small fast one.</Field.Description>
+										</Field.Field>
+									</Field.Group>
+								</Card.Content>
+							</Card.Root>
+							<Card.Root>
+								<Card.Header>
+									<Card.Title>Models in use</Card.Title>
+									<Card.Description>What each kind of call runs on right now (saved settings).</Card.Description>
+								</Card.Header>
+								<Card.Content>
+									{#if !modelsInfo}
+										<Skeleton class="h-24 w-full" />
+									{:else}
+										<div class="overflow-hidden rounded-lg border border-border" data-testid="models-in-use">
+											<Table.Root>
+												<Table.Header>
+													<Table.Row class="hover:bg-transparent">
+														<Table.Head>Call</Table.Head>
+														<Table.Head>Model</Table.Head>
+														<Table.Head>Source</Table.Head>
+													</Table.Row>
+												</Table.Header>
+												<Table.Body>
+													<Table.Row>
+														<Table.Cell>Agents without their own model</Table.Cell>
+														<Table.Cell class="font-mono text-xs">{modelsInfo.workspaceDefault ? `${modelsInfo.workspaceDefault.profileLabel} · ${modelsInfo.workspaceDefault.modelId}` : 'No provider configured'}</Table.Cell>
+														<Table.Cell class="text-xs text-muted-foreground">{modelsInfo.workspaceDefault ? sourceText(modelsInfo.workspaceDefault.source) : ''}</Table.Cell>
+													</Table.Row>
+													{#each modelsInfo.background as r (r.key)}
+														<Table.Row>
+															<Table.Cell>{r.label}</Table.Cell>
+															<Table.Cell class="font-mono text-xs">{r.modelId ? `${r.profileLabel ?? r.profileId ?? ''} · ${r.modelId}` : r.source === 'agent' ? "The agent's own model" : r.source === 'built-in' ? 'None: no provider can run it' : '—'}</Table.Cell>
+															<Table.Cell class="text-xs text-muted-foreground">{sourceText(r.source)}<span class="block">{r.note}</span></Table.Cell>
+														</Table.Row>
+													{/each}
+												</Table.Body>
+											</Table.Root>
+										</div>
+										{#if modelsInfo.agentsOnFallback.length}
+											<p class="mt-3 text-xs text-muted-foreground">On the built-in fallback: {modelsInfo.agentsOnFallback.join(', ')}.</p>
+										{/if}
+									{/if}
+								</Card.Content>
+							</Card.Root>
+						{/if}
+
+						{#each KNOB_GROUPS.filter((g) => (section === 'limits' && g.id !== 'retention') || (section === 'data' && g.id === 'retention')) as g (g.id)}
+							<Card.Root>
+								<Card.Header>
+									<Card.Title>{g.title}</Card.Title>
+									<Card.Description>{g.description} Defaults come from the server's environment on first start; what you save here wins.</Card.Description>
+								</Card.Header>
+								<Card.Content>
+									<Field.Group>
+										{#each g.knobs as k (k.key)}
+											<Field.Field data-invalid={!!errors[k.key]}>
+												<Field.Label for="s-{k.key}">{k.label}{k.unit ? ` (${k.unit})` : ''}</Field.Label>
+												<Input id="s-{k.key}" type="number" min={k.min} max={k.max} step={k.integer ? 1 : 'any'} inputmode="decimal" bind:value={knobTexts[k.key]} placeholder={k.placeholder ?? ''} disabled={!settings} aria-invalid={!!errors[k.key]} class="max-w-40" />
+												<Field.Description>{k.description}</Field.Description>
+												{#if errors[k.key]}<Field.Error>{errors[k.key]}</Field.Error>{/if}
+											</Field.Field>
+										{/each}
+									</Field.Group>
+									{#if formError && !Object.keys(errors).length}<p class="mt-4 text-sm text-destructive-text" role="alert">{formError}</p>{/if}
+								</Card.Content>
+							</Card.Root>
+						{/each}
 
 						<div class="sticky bottom-0 -mx-1 flex items-center justify-end gap-2 rounded-xl border border-border bg-card/95 px-3 py-2 shadow-sm backdrop-blur {dirty ? '' : 'hidden'}" role="status">
 							<span class="mr-auto text-[13px] text-muted-foreground">Unsaved changes</span>

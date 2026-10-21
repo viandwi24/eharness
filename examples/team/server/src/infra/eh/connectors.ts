@@ -87,6 +87,11 @@ const CLIENT_KIND = 'connector-client'
 
 export interface ConnectorsOptions {
   /**
+   * Reachability check tuning (workspace settings), read per listing and probe. Absent = a check
+   * after 60 s, retried after 3 s.
+   */
+  health?: () => { ttlMs: number | null; retryMs: number }
+  /**
    * Choices for a settings field the app knows at request time (the Browser connector's profile:
    * a list of the Browser page's profiles instead of an id to type). The field becomes a select.
    */
@@ -699,22 +704,22 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
   /**
    * A custom server that went down used to show "Connected" until somebody pressed Test (D18 of
    * the e2e pass). Listing the connections starts a background check of each remote server whose
-   * last check is older than `TEAM_CONNECTOR_HEALTH_TTL_MS` (default 60 s, 0 = every listing, a negative value turns it off): one tool listing, never awaited, never twice at once.
+   * last check is older than the workspace setting `connectorHealthTtlMs` (default 60 s, 0 = every listing, null = off; initial value `TEAM_CONNECTOR_HEALTH_TTL_MS`): one tool listing, never awaited, never twice at once.
    * The result lands in the connection row (status and message), so the next listing and the
    * connectors-changed event carry it. Built-in and other flows with their own runtimes are left
    * alone.
    */
-  const ttlSetting = Number(env.TEAM_CONNECTOR_HEALTH_TTL_MS ?? 60_000)
-  const HEALTH_TTL_MS = Number.isFinite(ttlSetting) ? ttlSetting : 60_000
-  const retrySetting = Number(env.TEAM_CONNECTOR_PROBE_RETRY_MS ?? 3_000)
-  const PROBE_RETRY_MS = Number.isFinite(retrySetting) && retrySetting >= 0 ? retrySetting : 3_000
+  // read on every listing and probe: a change in Settings applies to the next one
+  const health = (): { ttlMs: number | null; retryMs: number } =>
+    options.health?.() ?? { ttlMs: 60_000, retryMs: 3_000 }
   const checkedAt = new Map<string, number>()
   const probing = new Set<string>()
   let closing = false
   function refreshHealth(
     list: ReadonlyArray<{ id: string; definitionId: string; status: string }>,
   ): void {
-    if (HEALTH_TTL_MS < 0) return
+    const { ttlMs: HEALTH_TTL_MS } = health()
+    if (HEALTH_TTL_MS === null) return
     const now = Date.now()
     for (const c of list) {
       if (defs.get(c.definitionId)?.source !== 'custom') continue
@@ -729,7 +734,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
           // one dropped socket or slow listing is not an outage: try once more before the
           // status stays `error` (production: hourly false alarms for a server that worked)
           if (!result.ok && before === 'connected' && !closing) {
-            await new Promise((r) => setTimeout(r, PROBE_RETRY_MS))
+            await new Promise((r) => setTimeout(r, health().retryMs))
             if (!closing) result = await service.test(c.id)
           }
           if (closing) return

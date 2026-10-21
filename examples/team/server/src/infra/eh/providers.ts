@@ -34,6 +34,7 @@ import type {
 import { sqliteCatalogCache } from './catalog-cache.ts'
 import type { ChangeFeed } from './change-feed.ts'
 import { mapConfigError } from './config-errors.ts'
+import { SEARCH_MODEL } from './web-search.ts'
 
 type Env = Record<string, string | undefined>
 
@@ -73,7 +74,7 @@ export interface ProviderService extends ProvidersPort {
   defaultProfileId(): string | undefined
   /** `TEAM_MODEL` when `profileId` is the env default profile, else the provider's default model. */
   defaultModelOf(profileId: string): string
-  /** Env override of the Auto classifier (`TEAM_CLASSIFIER_MODEL`) and of search (`TEAM_SEARCH_MODEL`). */
+  /** The environment the service was started with (profiles, `TEAM_PROVIDER`, `TEAM_MODEL`). */
   env: Env
   close(): void
 }
@@ -230,6 +231,13 @@ export function createProviderService(options: ProviderServiceOptions): Provider
         DEFAULT_MODEL[view?.definitionId ?? ''] ??
         (DEFAULT_MODEL.openrouter as string)
       )
+    },
+    defaultModelSource(profileId) {
+      return profileId === envDefaultId() && env.TEAM_MODEL ? 'env' : 'built-in'
+    },
+    searchModelOf(profileId) {
+      const kind = views.find((p) => p.id === profileId && p.enabled)?.definitionId
+      return kind === 'openrouter' || kind === 'gateway' ? SEARCH_MODEL[kind] : undefined
     },
     async describe() {
       await ready()

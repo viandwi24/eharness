@@ -5678,6 +5678,63 @@ export interface paths {
         };
         trace?: never;
     };
+    "/settings/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Models in use
+         * @description The effective workspace default model and where it comes from, the model each kind of background call runs on (classifier, web search, summaries, heartbeat, programs), and warnings for agents or calls that would use a provider built-in fallback because no model was picked.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Models in use */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SettingsModels"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/code": {
         parameters: {
             query?: never;
@@ -17306,8 +17363,76 @@ export interface components {
             timezone: string;
             /** @description A program, routine or queued run with no activity for this many minutes is stopped through the Stop path and raises an alarm (Health, Needs attention). It is never run again by itself. Default 45. */
             stuckRunMinutes: number;
+            /** @description Model of the Auto mode classifier. null = "Same as the agent": the model of the agent whose action is judged. The initial value is `TEAM_CLASSIFIER_MODEL` when set. */
+            classifierModel: string | null;
+            /** @description Provider profile of `classifierModel`; null = the workspace default profile. */
+            classifierProfile: string | null;
+            /** @description Model of `web_search`. null = the built-in small model of the provider. The initial value is `TEAM_SEARCH_MODEL` when set. */
+            searchModel: string | null;
+            /** @description Provider profile of `searchModel` (an OpenRouter or AI Gateway profile); null = the workspace default profile, else the first that can search. */
+            searchProfile: string | null;
+            /** @description Deprecated ceiling on every agent context window (tokens). null = none: the window follows each agent model. Initial value: `TEAM_CONTEXT_CAP`. */
+            contextCap: number | null;
+            /** @description A custom connector is re-checked in the background when its last check is older than this (ms); 0 = on every listing; null = never. Default 60000. */
+            connectorHealthTtlMs: number | null;
+            /** @description A failed check of a connected server is retried once after this long (ms) before the connection counts as down. Default 3000. */
+            connectorProbeRetryMs: number;
+            /** @description A background worker job stops at this estimated cost (USD); 0 = no limit. Default 10. */
+            longRunMaxCostUsd: number;
+            /** @description A background worker job stops this many hours after it started; 0 = no limit. Default 24. */
+            longRunMaxHours: number;
+            /** @description Steps per chunk of a background worker job. Default 80. */
+            longRunChunkSteps: number;
+            /** @description Most active repeating reminders one person may have; 0 = no limit. Default 10. */
+            maxRepeatingReminders: number;
+            /** @description The team name given to agents in chats; null = none. Initial value: `TEAM_NAME`. */
+            teamName: string | null;
+            /** @description Events feed: hours kept; 0 = by count only. Default 72. */
+            eventsRetentionHours: number;
+            /** @description Events feed: rows kept. Default 100000. */
+            eventsMaxRows: number;
+            /** @description Model call log (Logs page): rows kept. Default 5000. */
+            logMaxRows: number;
+            /** @description Model call log: days kept. Default 7. */
+            logRetentionDays: number;
+            /** @description Tool media and browser screenshots kept this many days; 0 = keep. Default 3. */
+            mediaRetentionDays: number;
+            /** @description Finished routine runs kept this many days; 0 = keep. Default 30. */
+            routineRunsRetentionDays: number;
+            /** @description Finished tasks kept this many days; 0 = keep. Default 90. */
+            tasksRetentionDays: number;
+            /** @description Library history kept this many days; 0 = keep. Default 180. */
+            libraryHistoryRetentionDays: number;
             /** @description 0 until a person changed something. */
             updatedAt: number;
+        };
+        SettingsModels: {
+            /** @description What an agent without a model of its own runs on; null when no provider is configured. */
+            workspaceDefault: {
+                profileId: string;
+                profileLabel: string;
+                modelId: string;
+                /** @enum {string} */
+                source: "setting" | "env" | "built-in";
+            } | null;
+            background: {
+                /** @enum {string} */
+                key: "classifier" | "search" | "compaction" | "heartbeat" | "programs";
+                label: string;
+                profileId: string | null;
+                profileLabel: string | null;
+                /** @description null: follows the model of each agent. */
+                modelId: string | null;
+                /**
+                 * @description `setting`: picked in Settings or on the agent; `env`: from `TEAM_MODEL`; `built-in`: the provider fallback nobody chose; `agent`: follows the model of each agent.
+                 * @enum {string}
+                 */
+                source: "setting" | "env" | "built-in" | "agent";
+                note: string;
+            }[];
+            /** @description Names of agents that run on a built-in fallback model because none was picked. */
+            agentsOnFallback: string[];
+            warnings: string[];
         };
         CodeSandbox: {
             /**
@@ -17396,6 +17521,26 @@ export interface components {
             /** @description IANA timezone. */
             timezone?: string;
             stuckRunMinutes?: number;
+            classifierModel?: string | null;
+            classifierProfile?: string | null;
+            searchModel?: string | null;
+            searchProfile?: string | null;
+            contextCap?: number | null;
+            connectorHealthTtlMs?: number | null;
+            connectorProbeRetryMs?: number;
+            longRunMaxCostUsd?: number;
+            longRunMaxHours?: number;
+            longRunChunkSteps?: number;
+            maxRepeatingReminders?: number;
+            teamName?: string | null;
+            eventsRetentionHours?: number;
+            eventsMaxRows?: number;
+            logMaxRows?: number;
+            logRetentionDays?: number;
+            mediaRetentionDays?: number;
+            routineRunsRetentionDays?: number;
+            tasksRetentionDays?: number;
+            libraryHistoryRetentionDays?: number;
         };
         WorkspaceUsage: {
             /** @description Spend and limit of the workspace budget this month (UTC), from the budget ledger: not limited by log retention, the same numbers as the briefing cost line. */

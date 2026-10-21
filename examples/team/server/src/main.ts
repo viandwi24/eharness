@@ -148,7 +148,7 @@ import { areaOf } from './domain/library.ts'
 import { nameOf } from './domain/persona.ts'
 import { parseProgramSession } from './domain/programs.ts'
 import { parseRehearsalSession } from './domain/rehearsal.ts'
-import { hostTimezone, STUCK_RUN_MINUTES_DEFAULT } from './domain/settings.ts'
+import { settingsDefaults } from './domain/settings.ts'
 import { legacyThreadSessionId, sortThreads } from './domain/threads.ts'
 import { parseAssignedSession } from './domain/work-queue.ts'
 import { createApp } from './http/app.ts'
@@ -441,6 +441,8 @@ export interface Server {
   connectorsReady: Promise<void>
   /** The provider manager behind `GET /providers` and the model port. */
   providers: ProviderService
+  /** The model port: agent models, the Auto classifier and web search (settings are read per call). */
+  models: ModelConfig
   /** Resolves when the provider profiles and catalogs are loaded (await before serving chats). */
   providersReady: Promise<void>
   /** Resolves when the boot repair pass finished. */
@@ -467,6 +469,50 @@ export function compose(config: ServerConfig): Server {
   installJsonSchemaValidator()
   const conn = openDatabase(config.dbFile)
   const agents = drizzleAgentRepo(conn.db)
+  // Workspace settings: every product knob lives here (Settings page), never in the environment.
+  // The environment (read once, here) only supplies the INITIAL value: saved setting > env > built-in.
+  const envOf = config.env ?? process.env
+  const settings = sqliteSettingsStore(conn.sqlite, {
+    defaults: settingsDefaults(envOf, {
+      ...(config.budgetUsd === undefined ? {} : { budgetUsd: config.budgetUsd }),
+      ...(config.limits?.spawnCap === undefined ? {} : { spawnCap: config.limits.spawnCap }),
+      ...(config.limits?.contextCap === undefined ? {} : { contextCap: config.limits.contextCap }),
+      ...(config.limits?.longRun?.chunkSteps === undefined
+        ? {}
+        : { longRunChunkSteps: config.limits.longRun.chunkSteps }),
+      ...(config.limits?.longRun?.maxCostUsd === undefined
+        ? {}
+        : { longRunMaxCostUsd: config.limits.longRun.maxCostUsd }),
+      ...(config.limits?.longRun?.maxDurationMs === undefined
+        ? {}
+        : { longRunMaxHours: config.limits.longRun.maxDurationMs / 3_600_000 }),
+      ...(config.logs?.maxRows === undefined ? {} : { logMaxRows: config.logs.maxRows }),
+      ...(config.logs?.retentionDays === undefined
+        ? {}
+        : { logRetentionDays: config.logs.retentionDays }),
+      ...(config.events?.retentionHours === undefined
+        ? {}
+        : { eventsRetentionHours: config.events.retentionHours }),
+      ...(config.events?.maxRows === undefined ? {} : { eventsMaxRows: config.events.maxRows }),
+      ...(config.retention?.mediaDays === undefined
+        ? {}
+        : { mediaRetentionDays: config.retention.mediaDays }),
+      ...(config.retention?.routineRunsDays === undefined
+        ? {}
+        : { routineRunsRetentionDays: config.retention.routineRunsDays }),
+      ...(config.retention?.tasksDays === undefined
+        ? {}
+        : { tasksRetentionDays: config.retention.tasksDays }),
+      ...(config.retention?.libraryHistoryDays === undefined
+        ? {}
+        : { libraryHistoryRetentionDays: config.retention.libraryHistoryDays }),
+      ...(config.channels?.maxRepeatingReminders === undefined
+        ? {}
+        : { maxRepeatingReminders: config.channels.maxRepeatingReminders }),
+    }),
+    // the limit is a row of the shared ledger: apply it now; other instances read the row
+    onChange: (s) => setBudgetLimit(conn.sqlite, `workspace:${WORKSPACE_ID}`, s.budgetUsd),
+  })
 
   const tasks = sqliteTaskStore(conn.sqlite)
   // the shared feed on eharness/activity: session events come from its `activity()` plugin, the
@@ -533,7 +579,9 @@ export function compose(config: ServerConfig): Server {
     changes,
   })
   const models: ModelConfig =
-    config.models ?? scriptedModelConfigFromEnv(config.env) ?? providerModelConfig(providers)
+    config.models ??
+    scriptedModelConfigFromEnv(config.env) ??
+    providerModelConfig(providers, () => settings.get())
   // profiles and catalogs load in the background; `resolve` needs them (main awaits this)
   const providersReady = providers.ready()
   // a provider catalog that fails to load is an alarm, not a silent default
@@ -564,16 +612,15 @@ export function compose(config: ServerConfig): Server {
     tasks,
     events,
     agentOf: (slug) => agents.getBySlug(slug),
-    ...(config.logs?.maxRows === undefined ? {} : { maxRows: config.logs.maxRows }),
-    ...(config.logs?.retentionDays === undefined
-      ? {}
-      : { retentionDays: config.logs.retentionDays }),
+    // read on every prune: a change in Settings applies at once
+    maxRows: () => settings.get().logMaxRows,
+    retentionDays: () => settings.get().logRetentionDays,
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   activityLog.prune()
-  const eventsRetentionMs = (config.events?.retentionHours ?? 72) * 3_600_000
-  const eventsMaxRows = config.events?.maxRows ?? 100_000
   const pruneEvents = (): void => {
+    const { eventsRetentionHours, eventsMaxRows } = settings.get()
+    const eventsRetentionMs = eventsRetentionHours * 3_600_000
     activityStore
       .prune({
         ...(eventsRetentionMs > 0 ? { olderThan: Date.now() - eventsRetentionMs } : {}),
@@ -585,7 +632,13 @@ export function compose(config: ServerConfig): Server {
   }
   const pruneOld = (): void => {
     try {
-      const pruned = pruneTables(conn.sqlite, config.retention)
+      const st = settings.get()
+      const pruned = pruneTables(conn.sqlite, {
+        mediaDays: st.mediaRetentionDays,
+        routineRunsDays: st.routineRunsRetentionDays,
+        tasksDays: st.tasksRetentionDays,
+        libraryHistoryDays: st.libraryHistoryRetentionDays,
+      })
       // deleted media (library files) are the bulk of the database: hand the pages back
       if (pruned.media > 0) reclaimSpace(conn.sqlite)
     } catch (error) {
@@ -611,20 +664,6 @@ export function compose(config: ServerConfig): Server {
         }, pruneEveryMs)
       : undefined
   pruneTimer?.unref()
-  const settings = sqliteSettingsStore(conn.sqlite, {
-    defaults: {
-      toolAccess: 'auto',
-      defaultPermissionMode: 'default',
-      budgetUsd: config.budgetUsd ?? null,
-      spawnCap: config.limits?.spawnCap ?? 4,
-      defaultModel: null,
-      defaultProfile: null,
-      timezone: hostTimezone(process.env),
-      stuckRunMinutes: STUCK_RUN_MINUTES_DEFAULT,
-    },
-    // the limit is a row of the shared ledger: apply it now; other instances read the row
-    onChange: (s) => setBudgetLimit(conn.sqlite, `workspace:${WORKSPACE_ID}`, s.budgetUsd),
-  })
   const publicUrl = (
     config.publicUrl ??
     process.env.TEAM_PUBLIC_URL ??
@@ -635,7 +674,6 @@ export function compose(config: ServerConfig): Server {
     env: config.env ?? process.env,
     publicUrl,
   })
-  const envOf = config.env ?? process.env
   // content is served by this server under /art/* unless TEAM_ARTIFACT_URL / TEAM_ARTIFACT_PORT say
   // otherwise. Default: root-relative URLs (`/art/...`), resolved against the page that shows them:
   // the one-port image serves /art next to the web, and the dev web proxies /art like /api.
@@ -689,6 +727,10 @@ export function compose(config: ServerConfig): Server {
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const connectors = createConnectors({
+    health: () => {
+      const s = settings.get()
+      return { ttlMs: s.connectorHealthTtlMs, retryMs: s.connectorProbeRetryMs }
+    },
     code: codeRuntime,
     sqlite: conn.sqlite,
     profiles: profileStore,
@@ -1395,7 +1437,7 @@ export function compose(config: ServerConfig): Server {
         def === undefined ? undefined : nameOf(personaStore.latest(agentId)?.identity, def.name))(
         agents.get(agentId),
       ),
-      teamName: (config.env ?? process.env).TEAM_NAME?.trim() || undefined,
+      teamName: settings.get().teamName ?? undefined,
     }),
     // reminders created from a chat are `sys:reminder:<id>` routines
     reminders: {
@@ -1435,12 +1477,7 @@ export function compose(config: ServerConfig): Server {
           return { posted: true }
         },
       },
-      maxRepeatingPerPerson:
-        config.channels?.maxRepeatingReminders ??
-        (Number.isInteger(Number((config.env ?? process.env).TEAM_MAX_REPEATING_REMINDERS)) &&
-        (config.env ?? process.env).TEAM_MAX_REPEATING_REMINDERS?.trim() !== ''
-          ? Number((config.env ?? process.env).TEAM_MAX_REPEATING_REMINDERS)
-          : 10),
+      maxRepeatingPerPerson: () => settings.get().maxRepeatingReminders,
     },
     library: {
       write: async (path, text) => {
@@ -1538,8 +1575,11 @@ export function compose(config: ServerConfig): Server {
     try {
       channels.purge()
       // the activity of the channels follows the same retention as the events feed
+      const { eventsRetentionHours, eventsMaxRows } = settings.get()
       channels.activity.prune({
-        ...(eventsRetentionMs > 0 ? { olderThan: Date.now() - eventsRetentionMs } : {}),
+        ...(eventsRetentionHours > 0
+          ? { olderThan: Date.now() - eventsRetentionHours * 3_600_000 }
+          : {}),
         keepLast: eventsMaxRows,
       })
     } catch (error) {
@@ -1743,6 +1783,7 @@ export function compose(config: ServerConfig): Server {
     activityLog,
     metrics: observer.snapshot,
     providers,
+    models,
     providersReady,
     connectors,
     connectorsReady,
@@ -1782,84 +1823,23 @@ export function compose(config: ServerConfig): Server {
 
 if (import.meta.main) {
   const token = process.env.TEAM_TOKEN
-  const budget = Number(process.env.TEAM_BUDGET_USD)
-  const spawnCap = Number(process.env.TEAM_SPAWN_CAP)
   const tickMs = Number(process.env.TEAM_ROUTINE_TICK_MS)
-  const logRows = Number(process.env.TEAM_LOG_MAX_ROWS)
-  const logDays = Number(process.env.TEAM_LOG_RETENTION_DAYS)
-  const eventHours = Number(process.env.TEAM_EVENTS_RETENTION_HOURS)
-  const eventRows = Number(process.env.TEAM_EVENTS_MAX_ROWS)
   const dbFile = process.env.TEAM_DB ?? './data/team.db'
-  const retentionDays = (name: string): number | undefined => {
-    const v = Number(process.env[name])
-    return process.env[name] !== undefined && Number.isFinite(v) && v >= 0 ? v : undefined
-  }
   const listenPort = Number(process.env.PORT ?? 4000)
+  if (process.env.TEAM_CONTEXT_CAP?.trim()) {
+    console.warn(
+      "[team] TEAM_CONTEXT_CAP is deprecated: the context window now follows each agent's model; set a limit per agent in its settings instead (Settings > Limits keeps the global ceiling)",
+    )
+  }
+  // Product knobs (budget, spawn cap, limits, retention, models of background work, ...) are
+  // workspace settings: `compose` reads their env variables once as the INITIAL value only.
   const server = compose({
     dbFile,
     seedAgents: process.env.TEAM_SEED_AGENTS === '1',
     instanceId: process.env.TEAM_INSTANCE_ID ?? `team-${listenPort}`,
     token,
     loginPassword: process.env.BASIC_AUTH_PASSWORD,
-    ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
-    ...(() => {
-      const num = (name: string): number | undefined => {
-        const raw = process.env[name]
-        if (raw === undefined || raw.trim() === '') return undefined
-        const n = Number(raw)
-        return Number.isFinite(n) && n >= 0 ? n : undefined
-      }
-      const maxCostUsd = num('TEAM_LONG_RUN_MAX_COST_USD')
-      const maxHours = num('TEAM_LONG_RUN_MAX_HOURS')
-      const chunkSteps = num('TEAM_LONG_RUN_CHUNK_STEPS')
-      const longRun = {
-        ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
-        ...(maxHours === undefined ? {} : { maxDurationMs: maxHours * 60 * 60 * 1000 }),
-        ...(chunkSteps === undefined || chunkSteps < 10 ? {} : { chunkSteps }),
-      }
-      const contextCap = Number(process.env.TEAM_CONTEXT_CAP)
-      if (
-        process.env.TEAM_CONTEXT_CAP !== undefined &&
-        process.env.TEAM_CONTEXT_CAP.trim() !== ''
-      ) {
-        console.warn(
-          "[team] TEAM_CONTEXT_CAP is deprecated: the context window now follows each agent's model; set a limit per agent in its settings instead",
-        )
-      }
-      const limits = {
-        ...(Number.isFinite(contextCap) && contextCap >= 16_000 ? { contextCap } : {}),
-        ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { spawnCap } : {}),
-        ...(Object.keys(longRun).length === 0 ? {} : { longRun }),
-      }
-      return Object.keys(limits).length === 0 ? {} : { limits }
-    })(),
-    logs: {
-      ...(Number.isFinite(logRows) && logRows > 0 ? { maxRows: logRows } : {}),
-      ...(Number.isFinite(logDays) && logDays > 0 ? { retentionDays: logDays } : {}),
-    },
-    events: {
-      ...(process.env.TEAM_EVENTS_RETENTION_HOURS !== undefined &&
-      Number.isFinite(eventHours) &&
-      eventHours >= 0
-        ? { retentionHours: eventHours }
-        : {}),
-      ...(Number.isFinite(eventRows) && eventRows > 0 ? { maxRows: eventRows } : {}),
-    },
     ...(process.env.TEAM_DB_COMPACT === '1' ? { dbCompact: true } : {}),
-    retention: {
-      ...(retentionDays('TEAM_MEDIA_RETENTION_DAYS') === undefined
-        ? {}
-        : { mediaDays: retentionDays('TEAM_MEDIA_RETENTION_DAYS') as number }),
-      ...(retentionDays('TEAM_ROUTINE_RUNS_RETENTION_DAYS') === undefined
-        ? {}
-        : { routineRunsDays: retentionDays('TEAM_ROUTINE_RUNS_RETENTION_DAYS') as number }),
-      ...(retentionDays('TEAM_TASKS_RETENTION_DAYS') === undefined
-        ? {}
-        : { tasksDays: retentionDays('TEAM_TASKS_RETENTION_DAYS') as number }),
-      ...(retentionDays('TEAM_LIBRARY_HISTORY_RETENTION_DAYS') === undefined
-        ? {}
-        : { libraryHistoryDays: retentionDays('TEAM_LIBRARY_HISTORY_RETENTION_DAYS') as number }),
-    },
     ...(process.env.TEAM_ROUTINE_TICK_MS !== undefined && Number.isFinite(tickMs) && tickMs >= 0
       ? { routines: { tickMs } }
       : {}),

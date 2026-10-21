@@ -32,6 +32,169 @@ export interface WorkspaceSettings {
   timezone: string
   /** A background run with no activity this many minutes is interrupted and alarmed (P54). */
   stuckRunMinutes: number
+  /**
+   * Model of the Auto mode classifier (model id, or the legacy `profile:model`); null = the model
+   * of the agent whose action is judged ("Same as the agent"). Never a hidden fallback.
+   */
+  classifierModel: string | null
+  /** Provider profile of `classifierModel`; null = the workspace default profile. */
+  classifierProfile: string | null
+  /** Model of `web_search` (model id); null = the built-in small model of the provider. */
+  searchModel: string | null
+  /** Provider profile of `searchModel`; null = the workspace default profile (else the first that can search). */
+  searchProfile: string | null
+  /** Deprecated ceiling on every agent's context window (tokens, at least 16 000); null = none. */
+  contextCap: number | null
+  /** A custom connector is re-checked in the background when its last check is this old (ms); 0 = on every listing; null = never. */
+  connectorHealthTtlMs: number | null
+  /** One failed check of a connected server is retried after this long (ms) before it counts as down. */
+  connectorProbeRetryMs: number
+  /** A background worker job stops when its estimated cost reaches this (USD); 0 = no limit. */
+  longRunMaxCostUsd: number
+  /** A background worker job stops this many hours after it started; 0 = no limit. */
+  longRunMaxHours: number
+  /** Steps per chunk of a background worker job. */
+  longRunChunkSteps: number
+  /** Most active repeating reminders one person may have (chat platforms); 0 = no limit. */
+  maxRepeatingReminders: number
+  /** The team's name, given to agents in chats ("You are <agent>, the assistant of <team>"); null = none. */
+  teamName: string | null
+  /** Events feed: hours kept (0 = by count only). */
+  eventsRetentionHours: number
+  /** Events feed: rows kept. */
+  eventsMaxRows: number
+  /** Model call log: rows kept. */
+  logMaxRows: number
+  /** Model call log: days kept. */
+  logRetentionDays: number
+  /** Tool media and browser screenshots kept this many days (0 = keep). */
+  mediaRetentionDays: number
+  /** Finished routine runs kept this many days (0 = keep). */
+  routineRunsRetentionDays: number
+  /** Finished tasks kept this many days (0 = keep). */
+  tasksRetentionDays: number
+  /** Library history kept this many days (0 = keep). */
+  libraryHistoryRetentionDays: number
+}
+
+/** Built-in values of the knobs that have a fixed default (current behaviour). */
+export const SETTINGS_BUILTIN = {
+  spawnCap: 4,
+  stuckRunMinutes: 45,
+  classifierModel: null,
+  classifierProfile: null,
+  searchModel: null,
+  searchProfile: null,
+  contextCap: null,
+  connectorHealthTtlMs: 60_000,
+  connectorProbeRetryMs: 3_000,
+  longRunMaxCostUsd: 10,
+  longRunMaxHours: 24,
+  longRunChunkSteps: 80,
+  maxRepeatingReminders: 10,
+  teamName: null,
+  eventsRetentionHours: 72,
+  eventsMaxRows: 100_000,
+  logMaxRows: 5000,
+  logRetentionDays: 7,
+  mediaRetentionDays: 3,
+  routineRunsRetentionDays: 30,
+  tasksRetentionDays: 90,
+  libraryHistoryRetentionDays: 180,
+} as const satisfies Partial<WorkspaceSettings>
+
+type Env = Record<string, string | undefined>
+
+/**
+ * Initial defaults from the server environment (precedence: a saved setting > these > the built-in
+ * value). The environment is read only here, once at boot: the Settings page owns the values after.
+ * Unset, empty or invalid values are ignored.
+ */
+export function settingsFromEnv(env: Env): Partial<WorkspaceSettings> {
+  const text = (name: string): string | undefined => {
+    const v = env[name]?.trim()
+    return v === undefined || v === '' ? undefined : v
+  }
+  const num = (name: string): number | undefined => {
+    const v = text(name)
+    if (v === undefined) return undefined
+    const n = Number(v)
+    return Number.isFinite(n) ? n : undefined
+  }
+  const out: Partial<WorkspaceSettings> = {}
+  const set = <K extends keyof WorkspaceSettings>(
+    key: K,
+    value: WorkspaceSettings[K] | undefined,
+  ) => {
+    if (value !== undefined) out[key] = value
+  }
+  const atLeast = (n: number | undefined, min: number): number | undefined =>
+    n !== undefined && n >= min ? n : undefined
+  const budget = num('TEAM_BUDGET_USD')
+  set('budgetUsd', budget !== undefined && budget > 0 ? budget : undefined)
+  const spawn = num('TEAM_SPAWN_CAP')
+  set(
+    'spawnCap',
+    spawn !== undefined && spawn >= 1 ? Math.min(Math.floor(spawn), SPAWN_CAP_MAX) : undefined,
+  )
+  set('classifierModel', text('TEAM_CLASSIFIER_MODEL'))
+  set('searchModel', text('TEAM_SEARCH_MODEL'))
+  set('contextCap', atLeast(num('TEAM_CONTEXT_CAP'), CONTEXT_CAP_MIN))
+  const ttl = num('TEAM_CONNECTOR_HEALTH_TTL_MS')
+  if (ttl !== undefined)
+    set('connectorHealthTtlMs', ttl < 0 ? null : Math.min(ttl, HEALTH_TTL_MAX_MS))
+  const retry = num('TEAM_CONNECTOR_PROBE_RETRY_MS')
+  set(
+    'connectorProbeRetryMs',
+    retry !== undefined && retry >= 0 ? Math.min(retry, PROBE_RETRY_MAX_MS) : undefined,
+  )
+  set('longRunMaxCostUsd', atLeast(num('TEAM_LONG_RUN_MAX_COST_USD'), 0))
+  set('longRunMaxHours', atLeast(num('TEAM_LONG_RUN_MAX_HOURS'), 0))
+  const chunk = num('TEAM_LONG_RUN_CHUNK_STEPS')
+  set(
+    'longRunChunkSteps',
+    chunk !== undefined && chunk >= LONG_RUN_CHUNK_MIN
+      ? Math.min(Math.floor(chunk), LONG_RUN_CHUNK_MAX)
+      : undefined,
+  )
+  const reminders = num('TEAM_MAX_REPEATING_REMINDERS')
+  set(
+    'maxRepeatingReminders',
+    reminders !== undefined && Number.isInteger(reminders) && reminders >= 0
+      ? reminders
+      : undefined,
+  )
+  set('teamName', text('TEAM_NAME'))
+  set('eventsRetentionHours', atLeast(num('TEAM_EVENTS_RETENTION_HOURS'), 0))
+  const rows = num('TEAM_EVENTS_MAX_ROWS')
+  set('eventsMaxRows', rows !== undefined && rows > 0 ? Math.floor(rows) : undefined)
+  const logRows = num('TEAM_LOG_MAX_ROWS')
+  set('logMaxRows', logRows !== undefined && logRows > 0 ? Math.floor(logRows) : undefined)
+  const logDays = num('TEAM_LOG_RETENTION_DAYS')
+  set('logRetentionDays', logDays !== undefined && logDays > 0 ? logDays : undefined)
+  set('mediaRetentionDays', atLeast(num('TEAM_MEDIA_RETENTION_DAYS'), 0))
+  set('routineRunsRetentionDays', atLeast(num('TEAM_ROUTINE_RUNS_RETENTION_DAYS'), 0))
+  set('tasksRetentionDays', atLeast(num('TEAM_TASKS_RETENTION_DAYS'), 0))
+  set('libraryHistoryRetentionDays', atLeast(num('TEAM_LIBRARY_HISTORY_RETENTION_DAYS'), 0))
+  return out
+}
+
+/** The effective initial settings: built-in, then the environment, then explicit `overrides`. */
+export function settingsDefaults(
+  env: Env,
+  overrides: Partial<WorkspaceSettings> = {},
+): WorkspaceSettings {
+  return {
+    toolAccess: 'auto',
+    defaultPermissionMode: 'default',
+    budgetUsd: null,
+    defaultModel: null,
+    defaultProfile: null,
+    timezone: hostTimezone(env),
+    ...SETTINGS_BUILTIN,
+    ...settingsFromEnv(env),
+    ...overrides,
+  }
 }
 
 /** The host's timezone (the `TZ` variable, else what the runtime reports), `UTC` as the last resort. */
@@ -49,6 +212,11 @@ export function hostTimezone(env: { TZ?: string | undefined } = {}): string {
 
 export const SPAWN_CAP_MAX = 32
 export const STUCK_RUN_MINUTES_DEFAULT = 45
+export const CONTEXT_CAP_MIN = 16_000
+export const HEALTH_TTL_MAX_MS = 86_400_000
+export const PROBE_RETRY_MAX_MS = 60_000
+export const LONG_RUN_CHUNK_MIN = 10
+export const LONG_RUN_CHUNK_MAX = 500
 export const STUCK_RUN_MINUTES_MIN = 5
 export const STUCK_RUN_MINUTES_MAX = 1440
 
@@ -110,5 +278,63 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
     (patch.defaultProfile.trim() === '' || patch.defaultProfile.length > 64)
   ) {
     throw invalid('defaultProfile must be 1-64 characters or null', 'INVALID_SETTINGS')
+  }
+  checkModelPick(patch.classifierModel, patch.classifierProfile, 'classifierModel')
+  checkModelPick(patch.searchModel, patch.searchProfile, 'searchModel')
+  const intIn = (
+    name: string,
+    v: number | null | undefined,
+    min: number,
+    max: number,
+    nullable = false,
+  ): void => {
+    if (v === undefined || (v === null && nullable)) return
+    if (!(typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max)) {
+      throw invalid(
+        `${name} must be an integer from ${min} to ${max}${nullable ? ' or null' : ''}`,
+        'INVALID_SETTINGS',
+      )
+    }
+  }
+  const numIn = (name: string, v: number | undefined, min: number, max: number): void => {
+    if (v === undefined) return
+    if (!(typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max)) {
+      throw invalid(`${name} must be a number from ${min} to ${max}`, 'INVALID_SETTINGS')
+    }
+  }
+  intIn('contextCap', patch.contextCap, CONTEXT_CAP_MIN, 10_000_000, true)
+  intIn('connectorHealthTtlMs', patch.connectorHealthTtlMs, 0, HEALTH_TTL_MAX_MS, true)
+  intIn('connectorProbeRetryMs', patch.connectorProbeRetryMs, 0, PROBE_RETRY_MAX_MS)
+  numIn('longRunMaxCostUsd', patch.longRunMaxCostUsd, 0, 100_000)
+  numIn('longRunMaxHours', patch.longRunMaxHours, 0, 24 * 365)
+  intIn('longRunChunkSteps', patch.longRunChunkSteps, LONG_RUN_CHUNK_MIN, LONG_RUN_CHUNK_MAX)
+  intIn('maxRepeatingReminders', patch.maxRepeatingReminders, 0, 1000)
+  intIn('eventsRetentionHours', patch.eventsRetentionHours, 0, 24 * 3650)
+  intIn('eventsMaxRows', patch.eventsMaxRows, 1000, 100_000_000)
+  intIn('logMaxRows', patch.logMaxRows, 100, 10_000_000)
+  numIn('logRetentionDays', patch.logRetentionDays, 1, 3650)
+  for (const key of [
+    'mediaRetentionDays',
+    'routineRunsRetentionDays',
+    'tasksRetentionDays',
+    'libraryHistoryRetentionDays',
+  ] as const) {
+    intIn(key, patch[key], 0, 36_500)
+  }
+  if (patch.teamName != null && (patch.teamName.trim() === '' || patch.teamName.length > 100)) {
+    throw invalid('teamName must be 1-100 characters or null', 'INVALID_SETTINGS')
+  }
+}
+
+function checkModelPick(
+  model: string | null | undefined,
+  profile: string | null | undefined,
+  name: string,
+): void {
+  if (model != null && (model.trim() === '' || model.length > 200)) {
+    throw invalid(`${name} must be 1-200 characters or null`, 'INVALID_SETTINGS')
+  }
+  if (profile != null && (profile.trim() === '' || profile.length > 64)) {
+    throw invalid(`${name} profile must be 1-64 characters or null`, 'INVALID_SETTINGS')
   }
 }

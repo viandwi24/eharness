@@ -32,9 +32,9 @@ export interface ActivityLogOptions {
   /** The agent of a hook context (`ctx.agent.id` is the slug of the definition). */
   agentOf(slug: string): { id: string } | undefined
   /** Keep at most this many rows. Default 5000. */
-  maxRows?: number
+  maxRows?: number | (() => number)
   /** Keep rows for this many days. Default 7. */
-  retentionDays?: number
+  retentionDays?: number | (() => number)
   /** Prune after this many writes (and at most once a `pruneMinMs`). Default 50. */
   pruneEvery?: number
   pruneMinMs?: number
@@ -62,8 +62,8 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 export function createActivityLog(options: ActivityLogOptions): ActivityLog {
   const now = options.now ?? (() => Date.now())
-  const maxRows = options.maxRows ?? DEFAULT_MAX_ROWS
-  const retentionMs = (options.retentionDays ?? DEFAULT_RETENTION_DAYS) * DAY_MS
+  const settingOf = (v: number | (() => number) | undefined, fallback: number): number =>
+    typeof v === 'function' ? v() : (v ?? fallback)
   const pruneEvery = options.pruneEvery ?? 50
   const pruneMinMs = options.pruneMinMs ?? 60_000
   const warn = (message: string): void => options.log?.warn(`activityLog ${message}`)
@@ -73,7 +73,10 @@ export function createActivityLog(options: ActivityLogOptions): ActivityLog {
   const prune = (): number => {
     lastPrune = now()
     try {
-      return options.store.prune({ maxRows, olderThan: lastPrune - retentionMs })
+      return options.store.prune({
+        maxRows: settingOf(options.maxRows, DEFAULT_MAX_ROWS),
+        olderThan: lastPrune - settingOf(options.retentionDays, DEFAULT_RETENTION_DAYS) * DAY_MS,
+      })
     } catch (error) {
       warn(`prune failed: ${String(error)}`)
       return 0

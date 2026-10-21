@@ -42,11 +42,14 @@ export interface ModelConfig {
   /** Prices and context windows of the models `resolve` makes. */
   catalog?: ModelCatalog
   /**
-   * Model of the Auto mode classifier when no agent model is known: `TEAM_CLASSIFIER_MODEL`, else
-   * the default model. Absent (scripted model) = Auto mode is not offered.
+   * Model of the Auto mode classifier when no agent model is known: the classifier model of the
+   * workspace settings, else the default model. Absent (scripted model) = Auto mode is not offered.
    */
   classifierModel?: () => LanguageModel
-  /** `TEAM_CLASSIFIER_MODEL` when set: it wins over the agent's own model for the classifier. */
+  /**
+   * The classifier model picked in Settings (initial value `TEAM_CLASSIFIER_MODEL`) when there is
+   * one: it wins over the agent's own model. Read on every call, so a change applies at once.
+   */
   classifierOverride?: () => LanguageModel | undefined
   /** Provider web search for `web_search`; absent (scripted model) = the tool is not offered. */
   search?: SearchFn
@@ -87,8 +90,24 @@ export function splitInlineReasoning(model: LanguageModel, modelId: string): Lan
   } as never) as LanguageModel
 }
 
-/** The model config over a provider service. */
-export function providerModelConfig(service: ProviderService): ModelConfig {
+/** The model picks of the workspace settings that background calls read (per call, never cached). */
+export interface BackgroundModelSettings {
+  classifierModel: string | null
+  classifierProfile: string | null
+  searchModel: string | null
+  searchProfile: string | null
+}
+
+/** The model config over a provider service; `settings` is read on every classifier and search call. */
+export function providerModelConfig(
+  service: ProviderService,
+  settings: () => BackgroundModelSettings = () => ({
+    classifierModel: null,
+    classifierProfile: null,
+    searchModel: null,
+    searchProfile: null,
+  }),
+): ModelConfig {
   const { manager } = service
 
   const effective = (
@@ -106,11 +125,18 @@ export function providerModelConfig(service: ProviderService): ModelConfig {
     return { profileId: profile, modelId: picked.modelId ?? service.defaultModelOf(profile) }
   }
 
-  /** `TEAM_*_MODEL`: `profile:model`, or a plain id on the default profile. */
-  const fromEnvModel = (value: string | undefined): ResolvedSelection | undefined => {
-    if (value === undefined || value === '') return undefined
-    const n = normalizeSelection(null, value, service.profileIds())
+  /** A pick of the settings: `profile` + model, a legacy `profile:model`, or a plain id on the default profile. */
+  const fromSetting = (
+    model: string | null,
+    profile: string | null,
+  ): ResolvedSelection | undefined => {
+    if (model === null && profile === null) return undefined
+    const n = normalizeSelection(profile, model, service.profileIds())
     return effective(n.modelId, n.profileId)
+  }
+  const classifierPick = (): ResolvedSelection | undefined => {
+    const s = settings()
+    return fromSetting(s.classifierModel, s.classifierProfile)
   }
 
   const defaultResolved = (): ResolvedSelection => effective(null)
@@ -122,7 +148,17 @@ export function providerModelConfig(service: ProviderService): ModelConfig {
         const d = profiles.find((p) => p.id === id && p.enabled)?.definitionId
         return d === 'openrouter' || d === 'gateway' ? d : undefined
       }
-      let pick = fromEnvModel(service.env.TEAM_SEARCH_MODEL)
+      const s = settings()
+      let pick =
+        s.searchModel === null && s.searchProfile !== null
+          ? // a profile with no model: its built-in search model, never the profile's chat default
+            kindOf(s.searchProfile) === undefined
+            ? undefined
+            : {
+                profileId: s.searchProfile,
+                modelId: SEARCH_MODEL[kindOf(s.searchProfile) as 'openrouter' | 'gateway'],
+              }
+          : fromSetting(s.searchModel, s.searchProfile)
       let provider = pick === undefined ? undefined : kindOf(pick.profileId)
       if (pick === undefined || provider === undefined) {
         // the default profile if it can search, else the first profile that can
@@ -165,11 +201,11 @@ export function providerModelConfig(service: ProviderService): ModelConfig {
     },
     catalog: manager.catalog(),
     classifierModel: () => {
-      const r = fromEnvModel(service.env.TEAM_CLASSIFIER_MODEL) ?? defaultResolved()
+      const r = classifierPick() ?? defaultResolved()
       return manager.resolve({ profile: r.profileId, model: r.modelId })
     },
     classifierOverride: () => {
-      const r = fromEnvModel(service.env.TEAM_CLASSIFIER_MODEL)
+      const r = classifierPick()
       return r === undefined
         ? undefined
         : manager.resolve({ profile: r.profileId, model: r.modelId })

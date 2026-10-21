@@ -5041,6 +5041,126 @@
             "maximum": 1440,
             "description": "A program, routine or queued run with no activity for this many minutes is stopped through the Stop path and raises an alarm (Health, Needs attention). It is never run again by itself. Default 45."
           },
+          "classifierModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model of the Auto mode classifier. null = \"Same as the agent\": the model of the agent whose action is judged. The initial value is `TEAM_CLASSIFIER_MODEL` when set."
+          },
+          "classifierProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider profile of `classifierModel`; null = the workspace default profile."
+          },
+          "searchModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model of `web_search`. null = the built-in small model of the provider. The initial value is `TEAM_SEARCH_MODEL` when set."
+          },
+          "searchProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider profile of `searchModel` (an OpenRouter or AI Gateway profile); null = the workspace default profile, else the first that can search."
+          },
+          "contextCap": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 16000,
+            "description": "Deprecated ceiling on every agent context window (tokens). null = none: the window follows each agent model. Initial value: `TEAM_CONTEXT_CAP`."
+          },
+          "connectorHealthTtlMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 86400000,
+            "description": "A custom connector is re-checked in the background when its last check is older than this (ms); 0 = on every listing; null = never. Default 60000."
+          },
+          "connectorProbeRetryMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60000,
+            "description": "A failed check of a connected server is retried once after this long (ms) before the connection counts as down. Default 3000."
+          },
+          "longRunMaxCostUsd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "A background worker job stops at this estimated cost (USD); 0 = no limit. Default 10."
+          },
+          "longRunMaxHours": {
+            "type": "number",
+            "minimum": 0,
+            "description": "A background worker job stops this many hours after it started; 0 = no limit. Default 24."
+          },
+          "longRunChunkSteps": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 500,
+            "description": "Steps per chunk of a background worker job. Default 80."
+          },
+          "maxRepeatingReminders": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "Most active repeating reminders one person may have; 0 = no limit. Default 10."
+          },
+          "teamName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The team name given to agents in chats; null = none. Initial value: `TEAM_NAME`."
+          },
+          "eventsRetentionHours": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Events feed: hours kept; 0 = by count only. Default 72."
+          },
+          "eventsMaxRows": {
+            "type": "integer",
+            "minimum": 1000,
+            "description": "Events feed: rows kept. Default 100000."
+          },
+          "logMaxRows": {
+            "type": "integer",
+            "minimum": 100,
+            "description": "Model call log (Logs page): rows kept. Default 5000."
+          },
+          "logRetentionDays": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Model call log: days kept. Default 7."
+          },
+          "mediaRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Tool media and browser screenshots kept this many days; 0 = keep. Default 3."
+          },
+          "routineRunsRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Finished routine runs kept this many days; 0 = keep. Default 30."
+          },
+          "tasksRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Finished tasks kept this many days; 0 = keep. Default 90."
+          },
+          "libraryHistoryRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Library history kept this many days; 0 = keep. Default 180."
+          },
           "updatedAt": {
             "type": "integer",
             "description": "0 until a person changed something."
@@ -5055,7 +5175,145 @@
           "defaultProfile",
           "timezone",
           "stuckRunMinutes",
+          "classifierModel",
+          "classifierProfile",
+          "searchModel",
+          "searchProfile",
+          "contextCap",
+          "connectorHealthTtlMs",
+          "connectorProbeRetryMs",
+          "longRunMaxCostUsd",
+          "longRunMaxHours",
+          "longRunChunkSteps",
+          "maxRepeatingReminders",
+          "teamName",
+          "eventsRetentionHours",
+          "eventsMaxRows",
+          "logMaxRows",
+          "logRetentionDays",
+          "mediaRetentionDays",
+          "routineRunsRetentionDays",
+          "tasksRetentionDays",
+          "libraryHistoryRetentionDays",
           "updatedAt"
+        ]
+      },
+      "SettingsModels": {
+        "type": "object",
+        "properties": {
+          "workspaceDefault": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "profileId": {
+                "type": "string"
+              },
+              "profileLabel": {
+                "type": "string"
+              },
+              "modelId": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "setting",
+                  "env",
+                  "built-in"
+                ]
+              }
+            },
+            "required": [
+              "profileId",
+              "profileLabel",
+              "modelId",
+              "source"
+            ],
+            "description": "What an agent without a model of its own runs on; null when no provider is configured."
+          },
+          "background": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "classifier",
+                    "search",
+                    "compaction",
+                    "heartbeat",
+                    "programs"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "profileId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "profileLabel": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "modelId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "null: follows the model of each agent."
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "setting",
+                    "env",
+                    "built-in",
+                    "agent"
+                  ],
+                  "description": "`setting`: picked in Settings or on the agent; `env`: from `TEAM_MODEL`; `built-in`: the provider fallback nobody chose; `agent`: follows the model of each agent."
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "profileId",
+                "profileLabel",
+                "modelId",
+                "source",
+                "note"
+              ]
+            }
+          },
+          "agentsOnFallback": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of agents that run on a built-in fallback model because none was picked."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "workspaceDefault",
+          "background",
+          "agentsOnFallback",
+          "warnings"
         ]
       },
       "CodeSandbox": {
@@ -5343,6 +5601,124 @@
             "type": "integer",
             "minimum": 5,
             "maximum": 1440
+          },
+          "classifierModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "classifierProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "searchModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "searchProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "contextCap": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 16000
+          },
+          "connectorHealthTtlMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 86400000
+          },
+          "connectorProbeRetryMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60000
+          },
+          "longRunMaxCostUsd": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "longRunMaxHours": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 8760
+          },
+          "longRunChunkSteps": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 500
+          },
+          "maxRepeatingReminders": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "teamName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "eventsRetentionHours": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 87600
+          },
+          "eventsMaxRows": {
+            "type": "integer",
+            "minimum": 1000
+          },
+          "logMaxRows": {
+            "type": "integer",
+            "minimum": 100
+          },
+          "logRetentionDays": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 3650
+          },
+          "mediaRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500
+          },
+          "routineRunsRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500
+          },
+          "tasksRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500
+          },
+          "libraryHistoryRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500
           }
         }
       },
@@ -22899,6 +23275,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings/models": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Models in use",
+        "description": "The effective workspace default model and where it comes from, the model each kind of background call runs on (classifier, web search, summaries, heartbeat, programs), and warnings for agents or calls that would use a provider built-in fallback because no model was picked.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Models in use",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsModels"
                 }
               }
             }

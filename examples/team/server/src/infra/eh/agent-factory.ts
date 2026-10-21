@@ -228,6 +228,10 @@ export interface AgentFactoryDeps {
     | 'defaultPermissionMode'
     | 'budgetUsd'
     | 'timezone'
+    | 'contextCap'
+    | 'longRunMaxCostUsd'
+    | 'longRunMaxHours'
+    | 'longRunChunkSteps'
   > & { rev: number }
   /** Modes people picked per session (`domain/modes.ts`); absent = nobody can pick one. */
   sessionModes?: Pick<SessionModeStore, 'get'>
@@ -623,10 +627,14 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     startGraceMs: deps.limits?.backgroundStartGraceMs ?? 90_000,
     waitingReminderMs: deps.limits?.backgroundWaitingReminderMs ?? 15 * 60_000,
   }
-  const longRunTuning = {
-    chunkSteps: deps.limits?.longRun?.chunkSteps ?? 80,
-    maxCostUsd: deps.limits?.longRun?.maxCostUsd ?? 10,
-    maxDurationMs: deps.limits?.longRun?.maxDurationMs ?? 24 * 60 * 60 * 1000,
+  /** Long-run limits from the workspace settings, read when a worker variant is built. */
+  const longRunTuning = () => {
+    const s = currentSettings()
+    return {
+      chunkSteps: s.longRunChunkSteps,
+      maxCostUsd: s.longRunMaxCostUsd,
+      maxDurationMs: s.longRunMaxHours * 60 * 60 * 1000,
+    }
   }
   /** The long-run plugin of the current worker variant of each agent (by definition id). */
   const longRuns = new Map<string, LongRunPlugin>()
@@ -644,6 +652,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       defaultPermissionMode: 'default' as const,
       budgetUsd: deps.budgetUsd ?? null,
       timezone: 'UTC',
+      contextCap: deps.limits?.contextCap ?? null,
+      longRunMaxCostUsd: deps.limits?.longRun?.maxCostUsd ?? 10,
+      longRunMaxHours: (deps.limits?.longRun?.maxDurationMs ?? 24 * 60 * 60 * 1000) / 3_600_000,
+      longRunChunkSteps: deps.limits?.longRun?.chunkSteps ?? 80,
       rev: 0,
     }
   setBudgetLimit(sqlite, workspaceScope(workspaceId), currentSettings().budgetUsd)
@@ -1123,6 +1135,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
     /** The long-run plugin of this worker variant; its controls are kept for stop/resume/state. */
     const workerLongRun = (): LongRunPlugin => {
+      const tuning = longRunTuning()
       const lr = longRun({
         // continuations go through the same lock and runtime as every session of this agent
         sessions: () => ({
@@ -1134,9 +1147,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         }),
         state: storage.state,
         match: (ctx) => isWorkerSession(ctx.session.id),
-        chunkSteps: longRunTuning.chunkSteps,
-        ...(longRunTuning.maxCostUsd > 0 ? { maxCostUsd: longRunTuning.maxCostUsd } : {}),
-        ...(longRunTuning.maxDurationMs > 0 ? { maxDurationMs: longRunTuning.maxDurationMs } : {}),
+        chunkSteps: tuning.chunkSteps,
+        ...(tuning.maxCostUsd > 0 ? { maxCostUsd: tuning.maxCostUsd } : {}),
+        ...(tuning.maxDurationMs > 0 ? { maxDurationMs: tuning.maxDurationMs } : {}),
       })
       longRuns.set(def.id, lr)
       return lr
@@ -1565,7 +1578,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return effectiveWindow({
       modelWindow: info.contextWindow,
       custom: def.contextWindow,
-      ceiling: deps.limits?.contextCap,
+      ceiling: currentSettings().contextCap ?? undefined,
     })
   }
 

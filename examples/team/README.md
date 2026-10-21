@@ -83,7 +83,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_INSTANCE_ID` | `team-<PORT>` | stable id of this server instance. After a crash or restart the instance owns the turns and locks of its previous run: they are recovered at boot (tool calls answered `Interrupted:`, chat shows Continue / Retry, delegated tasks become `interrupted`, the lead gets a report) instead of after the 120 s stale timeout. Must be unique among live instances on one database (set it explicitly when you run several on one port range or behind a proxy). |
 | `TEAM_SECRET_KEY` | dev key file | 32 bytes, base64 (`openssl rand -base64 32`): encrypts provider secrets saved from the web (AES-GCM). Unset in dev = a key is generated into `data/secret.key` (git-ignored) with a warning; set it for anything shared. `TEAM_SECRET_KEY_PREVIOUS` (comma separated) keeps old keys that can still open rows after a rotation |
 | `TEAM_OFFLINE` | - | `1` = never fetch the public model catalogs (cached in the database, refreshed every 24 h) |
-| `TEAM_CLASSIFIER_MODEL` / `TEAM_SEARCH_MODEL` | - | Auto-mode classifier / `web_search` model: `profile:model` or a plain id on the default profile |
+| `TEAM_CLASSIFIER_MODEL` / `TEAM_SEARCH_MODEL` | - | **Initial value only (then Settings):** Auto-mode classifier / `web_search` model: `profile:model` or a plain id on the default profile |
 | `TEAM_SCRIPTED_MODEL` | - | path to a JSON array of scripted steps: offline runs and tests (wins over the keys) |
 | `TEAM_TOKEN` | - | bearer token for every route except `/health`, `/docs`, `/openapi.json`, `/oauth/callback`. **Unset = the API is open**, so the server listens on loopback only and refuses to start with a non-loopback `TEAM_HOST` |
 | `BASIC_AUTH_PASSWORD` | - | password login for the web (see [Login](#login)). Set: every route except `/health` and `/auth/*` needs the session cookie or the bearer `TEAM_TOKEN`; `/docs`, `/openapi.json` and `/oauth/callback` are protected too. Unset = no login, nothing changes. On a non-loopback bind it may replace `TEAM_TOKEN` (12+ characters) |
@@ -98,11 +98,15 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `OPENROUTER_BASE_URL` | - | base URL of the OpenRouter env profile (proxies) |
 | `TEAM_DB` | `./data/team.db` | SQLite file (WAL). Several instances may share it |
 | `PORT` | `4000` | HTTP port of the server |
-| `TEAM_BUDGET_USD` | unset | monthly USD limit of the workspace ledger (also in Settings) |
-| `TEAM_SPAWN_CAP` | `4` | role agents the lead runs at once (also in Settings) |
-| `TEAM_CONTEXT_CAP` | unset | deprecated optional global ceiling on every agent's context window (logged once when set). By default the window is the model's own; each agent can set a smaller limit and a summarize-at percent (50-95, default 80) in its settings |
-| `TEAM_LONG_RUN_MAX_COST_USD` | `10` | a background worker job stops at this estimated cost (0 = no limit); workers run as long jobs in chunks of 80 steps with no fixed step cap, and resume after a restart |
-| `TEAM_LONG_RUN_MAX_HOURS` | `24` | a worker job stops this long after it started (0 = no limit) |
+| `TEAM_BUDGET_USD` | unset | **Initial value only (then Settings):** monthly USD limit of the workspace ledger (also in Settings) |
+| `TEAM_SPAWN_CAP` | `4` | **Initial value only (then Settings):** role agents the lead runs at once (also in Settings) |
+| `TEAM_CONTEXT_CAP` | unset | **Initial value only (then Settings):** deprecated optional global ceiling on every agent's context window (logged once when set). By default the window is the model's own; each agent can set a smaller limit and a summarize-at percent (50-95, default 80) in its settings |
+| `TEAM_LONG_RUN_MAX_COST_USD` | `10` | **Initial value only (then Settings):** a background worker job stops at this estimated cost (0 = no limit); workers run as long jobs in chunks of 80 steps with no fixed step cap, and resume after a restart |
+| `TEAM_LONG_RUN_MAX_HOURS` | `24` | **Initial value only (then Settings):** a worker job stops this long after it started (0 = no limit) |
+| `TEAM_LONG_RUN_CHUNK_STEPS` | `80` | **Initial value only (then Settings):** steps per chunk of a worker job (at least 10) |
+| `TEAM_CONNECTOR_HEALTH_TTL_MS` / `TEAM_CONNECTOR_PROBE_RETRY_MS` | `60000` / `3000` | **Initial value only (then Settings):** how old the last check of a custom connector may be before it is re-checked in the background (`0` = every listing, negative = off) / the delay before one failed check is retried |
+| `TEAM_MAX_REPEATING_REMINDERS` | `10` | **Initial value only (then Settings):** most active repeating reminders one person may have (`0` = no limit) |
+| `TEAM_NAME` | - | **Initial value only (then Settings):** the team's name, given to agents in chats |
 | `TEAM_ARTIFACT_URL` | - (root-relative `/art/*` on the host that shows the page) | public base URL of a separate artifact content origin, e.g. `https://artifacts.example.com` (sandboxed HTML runs there; recommended in production) |
 | `TEAM_ARTIFACT_PORT` | - | also serve only the artifact content routes (`/art/*`) on this port, for a separate content origin; signed content URLs then point at it (or at `TEAM_ARTIFACT_URL`) |
 | `TEAM_CODE_DRIVER` | `local` when the interpreter is found, else `off` | where agents run Python (`run_python` of the **Files & Sandbox** connector): `off` or `local` (a scratch directory under an OS sandbox: no network, the data directory and your home are unreadable); for a separate machine use the **Remote sandbox** connector (below) |
@@ -116,22 +120,50 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_BROWSER_XVFB` | - | `1` = headed Chrome on a Linux server without a display (needs `xvfb-run`) |
 | `TEAM_BROWSER_MAX` | `4` | browsers open at once; the Browser page shows each running profile's memory and CPU and the server's free memory |
 | `TEAM_ROUTINE_TICK_MS` | `15000` | routine ticker interval (`0` = off) |
-| `TEAM_LOG_MAX_ROWS` | `5000` | model call log (Logs page): rows kept |
-| `TEAM_LOG_RETENTION_DAYS` | `7` | model call log: days kept |
-| `TEAM_EVENTS_RETENTION_HOURS` | `72` | events feed (SSE source, includes one `model-call` row per model call): hours kept, pruned at boot and every 10 min; `0` = by count only |
-| `TEAM_EVENTS_MAX_ROWS` | `100000` | events feed: rows kept (the oldest go first). The newest event and the latest message of each agent are always kept. A client resuming from a pruned cursor gets a `resync` signal (SSE `event: resync`, or `resync: true` on `GET /activity`) and refetches its state |
-| `TEAM_ROUTINE_RUNS_RETENTION_DAYS` / `TEAM_TASKS_RETENTION_DAYS` / `TEAM_LIBRARY_HISTORY_RETENTION_DAYS` | `30` / `90` / `180` | days kept of finished routine runs, finished tasks (their chat messages stay in the session store) and library history rows (besides the per-path cap); `0` = keep. Pruned at boot and every 10 min together with events |
-| `TEAM_MEDIA_RETENTION_DAYS` | `3` | screenshots of MCP tools (`/.eharness/tool-media/`, stored as library files, the chat keeps only a small reference) and of the browser (`/.browser/shots/`): days kept; older files are deleted (the chat then shows "screenshot expired"); `0` = keep. Same schedule as the other retention. A new database gives the freed pages back to the disk (`auto_vacuum=INCREMENTAL`); an existing one only reuses them, so the file stops growing but does not shrink until you set `TEAM_DB_COMPACT=1` for one boot (see below) |
+| `TEAM_LOG_MAX_ROWS` | `5000` | **Initial value only (then Settings):** model call log (Logs page): rows kept |
+| `TEAM_LOG_RETENTION_DAYS` | `7` | **Initial value only (then Settings):** model call log: days kept |
+| `TEAM_EVENTS_RETENTION_HOURS` | `72` | **Initial value only (then Settings):** events feed (SSE source, includes one `model-call` row per model call): hours kept, pruned at boot and every 10 min; `0` = by count only |
+| `TEAM_EVENTS_MAX_ROWS` | `100000` | **Initial value only (then Settings):** events feed: rows kept (the oldest go first). The newest event and the latest message of each agent are always kept. A client resuming from a pruned cursor gets a `resync` signal (SSE `event: resync`, or `resync: true` on `GET /activity`) and refetches its state |
+| `TEAM_ROUTINE_RUNS_RETENTION_DAYS` / `TEAM_TASKS_RETENTION_DAYS` / `TEAM_LIBRARY_HISTORY_RETENTION_DAYS` | `30` / `90` / `180` | **Initial value only (then Settings):** days kept of finished routine runs, finished tasks (their chat messages stay in the session store) and library history rows (besides the per-path cap); `0` = keep. Pruned at boot and every 10 min together with events |
+| `TEAM_MEDIA_RETENTION_DAYS` | `3` | **Initial value only (then Settings):** screenshots of MCP tools (`/.eharness/tool-media/`, stored as library files, the chat keeps only a small reference) and of the browser (`/.browser/shots/`): days kept; older files are deleted (the chat then shows "screenshot expired"); `0` = keep. Same schedule as the other retention. A new database gives the freed pages back to the disk (`auto_vacuum=INCREMENTAL`); an existing one only reuses them, so the file stops growing but does not shrink until you set `TEAM_DB_COMPACT=1` for one boot (see below) |
 | `TEAM_DB_COMPACT` | off | `1` = convert an existing database to `auto_vacuum=INCREMENTAL` once at boot (a full `VACUUM`: needs free disk of about the database size, blocks writers while it runs, skipped when already converted). Set it, restart once, then unset it |
 | `TEAM_CHANNEL_KEY` | dev key file | 32 bytes, base64: encrypts the channel message log at rest (its own key; dev: `data/channel.key`); `TEAM_CHANNEL_KEY_PREVIOUS` for rotation |
 | `TEAM_TELEGRAM_API_ROOT` | `https://api.telegram.org` | Bot API root of the Telegram bot (a local Bot API server, or a test fake) |
 | `TEAM_TELEGRAM_API_ID` / `TEAM_TELEGRAM_API_HASH` | - | api_id / api_hash of the Telegram account (MTProto) channel, from my.telegram.org/apps; or enter them once in the web connect flow |
 | `TEAM_WEB_DIR` | - | serve the built web (`web/build`) from the server on one port; the API then lives under `/api` (set by the Docker image) |
-| `TZ` | host timezone | default of the team timezone (Settings): the one clock of the app, what agents read as now (`datetime` tool), routines, reminders, chat times, the digest and active hours |
+| `TZ` | host timezone | **Initial value only (then Settings):** default of the team timezone (Settings): the one clock of the app, what agents read as now (`datetime` tool), routines, reminders, chat times, the digest and active hours |
 | `TEAM_SEED_AGENTS` | - | a new workspace starts empty; `1` = add the example agents (Lead, Researcher, Writer, Analyst, Ops) when the database is first created |
 | `TEAM_DEMO_COLLECTOR` | - | `1` = register the demo community source (5 000 deterministic chat messages) for the big-data tools |
 | `PUBLIC_TEAM_TOKEN` | - | web only: token the browser sends (else saved from Settings) |
 | `TEAM_API_PROXY` | `http://localhost:4000` | web dev server only: where `/api` goes |
+
+### Environment or Settings?
+
+Rule: **environment = infrastructure and secrets of this deployment; Settings = product behaviour.**
+Every product knob is a workspace setting (database, changed in the web, applied without a restart:
+agents are rebuilt on their next use, other reads happen per call). Its environment variable, when
+set, is read **once at boot as the initial value** only. Precedence: saved setting > env initial
+value > built-in default. A value you saved wins forever; removing the variable later changes nothing.
+
+| Settings (web: Settings page) | Environment variable (initial value only) |
+|---|---|
+| General: default model and profile, permission mode, tool access, monthly budget, delegation cap, team timezone, team name | `TEAM_BUDGET_USD`, `TEAM_SPAWN_CAP`, `TZ`, `TEAM_NAME` (`TEAM_MODEL` names the default profile's model, see below) |
+| Models: Auto-mode classifier (default "Same as the agent"), web search model (default: the provider's small built-in model); shows the model every kind of background call runs on and warns about the built-in fallback | `TEAM_CLASSIFIER_MODEL`, `TEAM_SEARCH_MODEL` |
+| Limits: stuck-run minutes, connector check interval and retry delay, background job cost / time / chunk size, repeating reminders per person, deprecated context ceiling | `TEAM_CONNECTOR_HEALTH_TTL_MS`, `TEAM_CONNECTOR_PROBE_RETRY_MS`, `TEAM_LONG_RUN_MAX_COST_USD`, `TEAM_LONG_RUN_MAX_HOURS`, `TEAM_LONG_RUN_CHUNK_STEPS`, `TEAM_MAX_REPEATING_REMINDERS`, `TEAM_CONTEXT_CAP` |
+| Data retention: events feed, model call log, media, routine runs, tasks, library history | `TEAM_EVENTS_RETENTION_HOURS`, `TEAM_EVENTS_MAX_ROWS`, `TEAM_LOG_MAX_ROWS`, `TEAM_LOG_RETENTION_DAYS`, `TEAM_MEDIA_RETENTION_DAYS`, `TEAM_ROUTINE_RUNS_RETENTION_DAYS`, `TEAM_TASKS_RETENTION_DAYS`, `TEAM_LIBRARY_HISTORY_RETENTION_DAYS` |
+
+Environment only (infrastructure, secrets, security, boot-time wiring): `OPENROUTER_API_KEY`,
+`AI_GATEWAY_API_KEY`, `OPENROUTER_BASE_URL`, `TEAM_PROVIDER`, `TEAM_MODEL` (the model of the env
+default profile; the Settings default model wins over it), `TEAM_OFFLINE`, `TEAM_SCRIPTED_MODEL`,
+`TEAM_DB`, `TEAM_DB_COMPACT`, `PORT`, `TEAM_HOST`, `TEAM_INSTANCE_ID`, `TEAM_TOKEN`,
+`BASIC_AUTH_PASSWORD`, `TEAM_TRUST_PROXY`, `TEAM_SECRET_KEY(_PREVIOUS)`, `TEAM_CHANNEL_KEY(_PREVIOUS)`,
+`TEAM_ALLOWED_HOSTS`, `TEAM_ALLOWED_ORIGINS`, `TEAM_ALLOW_PRIVATE_MCP`, `TEAM_PUBLIC_URL`,
+`TEAM_WEB_URL`, `TEAM_WEB_DIR`, `TEAM_ARTIFACT_URL`, `TEAM_ARTIFACT_PORT`, `TEAM_<CONNECTOR>_CLIENT_ID/_SECRET`,
+`TEAM_TELEGRAM_API_ROOT/_ID/_HASH`, `TEAM_CODE_*`, `TEAM_BROWSER_*`, `TEAM_ROUTINE_TICK_MS`,
+`TEAM_SEED_AGENTS`, `TEAM_DEMO_COLLECTOR`, `TEAM_DEBUG_INVARIANTS`, `PUBLIC_TEAM_TOKEN`,
+`TEAM_API_PROXY`. The code-sandbox install policy and the browser driver stay in the environment on
+purpose (they widen what the server may run). Background calls (compaction summaries, heartbeat,
+programs, routines) always run on the agent's own model; Settings > Models shows it.
 
 The web reads the token from `PUBLIC_TEAM_TOKEN` (build/dev env) or from the one saved on its Settings page (browser storage). Migrations are generated by
 drizzle-kit (`bun run db:generate`) and applied at boot.

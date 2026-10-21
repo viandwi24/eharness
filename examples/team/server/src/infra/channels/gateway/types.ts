@@ -218,7 +218,7 @@ export interface GatewayDeps {
     }
     ids?: () => string
     /** Most active repeating reminders one person may have (default 10; 0 = no limit). */
-    maxRepeatingPerPerson?: number
+    maxRepeatingPerPerson?: number | (() => number)
     /**
      * Reminders made in a web chat thread (`connectionId` `web`): a fire posts the fixed text into
      * that thread and rings the bell, no model call. Absent = thread reminders are not set up.

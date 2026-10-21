@@ -1822,7 +1822,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       )
       if ('error' in when) return when
       // a person cannot pile up unlimited daily reminders (a one-time reminder is not counted)
-      const cap = r.maxRepeatingPerPerson ?? 10
+      const cap =
+        typeof r.maxRepeatingPerPerson === 'function'
+          ? r.maxRepeatingPerPerson()
+          : (r.maxRepeatingPerPerson ?? 10)
       const owner = input.createdBy?.identityId
       if (cap > 0 && owner !== undefined && when.spec.kind !== 'at') {
         const mine = reminderStore
@@ -1888,7 +1891,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         r.schedule.next({ kind: 'cron', expr, tz: zone }, after),
       )
       if ('error' in when) return when
-      const cap = r.maxRepeatingPerPerson ?? 10
+      const cap =
+        typeof r.maxRepeatingPerPerson === 'function'
+          ? r.maxRepeatingPerPerson()
+          : (r.maxRepeatingPerPerson ?? 10)
       if (cap > 0 && when.spec.kind !== 'at') {
         const mine = reminderStore
           .list(WEB_REMINDER_CONNECTION, { status: 'active' })

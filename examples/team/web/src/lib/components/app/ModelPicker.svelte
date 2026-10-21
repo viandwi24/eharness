@@ -24,7 +24,8 @@
 		defaultLabel = 'Workspace default',
 		id = 'model-picker',
 		disabled = false,
-		fallback
+		fallback,
+		showEffective = true
 	}: {
 		profileId?: string | null;
 		modelId?: string | null;
@@ -34,6 +35,8 @@
 		disabled?: boolean;
 		/** The workspace pick used when nothing is picked here; read from the settings when absent. `null` = none. */
 		fallback?: ModelPick | null;
+		/** Show "Uses <model>" under the profile select when nothing is picked. Off where "no pick" means something else (the classifier follows each agent). */
+		showEffective?: boolean;
 	} = $props();
 
 	// With nothing picked the effective profile and model are shown, so "default" is never a mystery.
@@ -141,7 +144,7 @@
 		{/each}
 	</NativeSelect>
 
-	{#if !showModel && effective}
+	{#if !showModel && effective && showEffective}
 		<p class="text-xs text-muted-foreground" data-testid="effective-model">Uses <span class="font-mono">{effectiveModelText(effective)}</span></p>
 	{/if}
 	{#if showModel}

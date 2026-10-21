@@ -33,6 +33,75 @@ export const SettingsSchema = z
       description:
         'A program, routine or queued run with no activity for this many minutes is stopped through the Stop path and raises an alarm (Health, Needs attention). It is never run again by itself. Default 45.',
     }),
+    classifierModel: z.string().nullable().openapi({
+      description:
+        'Model of the Auto mode classifier. null = "Same as the agent": the model of the agent whose action is judged. The initial value is `TEAM_CLASSIFIER_MODEL` when set.',
+    }),
+    classifierProfile: z.string().nullable().openapi({
+      description: 'Provider profile of `classifierModel`; null = the workspace default profile.',
+    }),
+    searchModel: z.string().nullable().openapi({
+      description:
+        'Model of `web_search`. null = the built-in small model of the provider. The initial value is `TEAM_SEARCH_MODEL` when set.',
+    }),
+    searchProfile: z.string().nullable().openapi({
+      description:
+        'Provider profile of `searchModel` (an OpenRouter or AI Gateway profile); null = the workspace default profile, else the first that can search.',
+    }),
+    contextCap: z.number().int().min(16000).nullable().openapi({
+      description:
+        'Deprecated ceiling on every agent context window (tokens). null = none: the window follows each agent model. Initial value: `TEAM_CONTEXT_CAP`.',
+    }),
+    connectorHealthTtlMs: z.number().int().min(0).max(86400000).nullable().openapi({
+      description:
+        'A custom connector is re-checked in the background when its last check is older than this (ms); 0 = on every listing; null = never. Default 60000.',
+    }),
+    connectorProbeRetryMs: z.number().int().min(0).max(60000).openapi({
+      description:
+        'A failed check of a connected server is retried once after this long (ms) before the connection counts as down. Default 3000.',
+    }),
+    longRunMaxCostUsd: z.number().min(0).openapi({
+      description:
+        'A background worker job stops at this estimated cost (USD); 0 = no limit. Default 10.',
+    }),
+    longRunMaxHours: z.number().min(0).openapi({
+      description:
+        'A background worker job stops this many hours after it started; 0 = no limit. Default 24.',
+    }),
+    longRunChunkSteps: z.number().int().min(10).max(500).openapi({
+      description: 'Steps per chunk of a background worker job. Default 80.',
+    }),
+    maxRepeatingReminders: z.number().int().min(0).max(1000).openapi({
+      description: 'Most active repeating reminders one person may have; 0 = no limit. Default 10.',
+    }),
+    teamName: z.string().nullable().openapi({
+      description:
+        'The team name given to agents in chats; null = none. Initial value: `TEAM_NAME`.',
+    }),
+    eventsRetentionHours: z.number().int().min(0).openapi({
+      description: 'Events feed: hours kept; 0 = by count only. Default 72.',
+    }),
+    eventsMaxRows: z.number().int().min(1000).openapi({
+      description: 'Events feed: rows kept. Default 100000.',
+    }),
+    logMaxRows: z.number().int().min(100).openapi({
+      description: 'Model call log (Logs page): rows kept. Default 5000.',
+    }),
+    logRetentionDays: z.number().min(1).openapi({
+      description: 'Model call log: days kept. Default 7.',
+    }),
+    mediaRetentionDays: z.number().int().min(0).openapi({
+      description: 'Tool media and browser screenshots kept this many days; 0 = keep. Default 3.',
+    }),
+    routineRunsRetentionDays: z.number().int().min(0).openapi({
+      description: 'Finished routine runs kept this many days; 0 = keep. Default 30.',
+    }),
+    tasksRetentionDays: z.number().int().min(0).openapi({
+      description: 'Finished tasks kept this many days; 0 = keep. Default 90.',
+    }),
+    libraryHistoryRetentionDays: z.number().int().min(0).openapi({
+      description: 'Library history kept this many days; 0 = keep. Default 180.',
+    }),
     updatedAt: z.number().int().openapi({ description: '0 until a person changed something.' }),
   })
   .openapi('Settings')
@@ -53,6 +122,26 @@ export const SettingsPatchSchema = z
     defaultProfile: z.string().min(1).max(64).nullable().optional(),
     timezone: z.string().min(1).max(64).optional().openapi({ description: 'IANA timezone.' }),
     stuckRunMinutes: z.number().int().min(5).max(1440).optional(),
+    classifierModel: z.string().min(1).max(200).nullable().optional(),
+    classifierProfile: z.string().min(1).max(64).nullable().optional(),
+    searchModel: z.string().min(1).max(200).nullable().optional(),
+    searchProfile: z.string().min(1).max(64).nullable().optional(),
+    contextCap: z.number().int().min(16000).nullable().optional(),
+    connectorHealthTtlMs: z.number().int().min(0).max(86400000).nullable().optional(),
+    connectorProbeRetryMs: z.number().int().min(0).max(60000).optional(),
+    longRunMaxCostUsd: z.number().min(0).max(100000).optional(),
+    longRunMaxHours: z.number().min(0).max(8760).optional(),
+    longRunChunkSteps: z.number().int().min(10).max(500).optional(),
+    maxRepeatingReminders: z.number().int().min(0).max(1000).optional(),
+    teamName: z.string().min(1).max(100).nullable().optional(),
+    eventsRetentionHours: z.number().int().min(0).max(87600).optional(),
+    eventsMaxRows: z.number().int().min(1000).optional(),
+    logMaxRows: z.number().int().min(100).optional(),
+    logRetentionDays: z.number().min(1).max(3650).optional(),
+    mediaRetentionDays: z.number().int().min(0).max(36500).optional(),
+    routineRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
+    tasksRetentionDays: z.number().int().min(0).max(36500).optional(),
+    libraryHistoryRetentionDays: z.number().int().min(0).max(36500).optional(),
   })
   .openapi('SettingsPatch')
 
@@ -85,3 +174,43 @@ export const CodeSandboxSchema = z
       }),
   })
   .openapi('CodeSandbox')
+
+const ModelSourceSchema = z.enum(['setting', 'env', 'built-in', 'agent']).openapi({
+  description:
+    '`setting`: picked in Settings or on the agent; `env`: from `TEAM_MODEL`; `built-in`: the provider fallback nobody chose; `agent`: follows the model of each agent.',
+})
+
+export const SettingsModelsSchema = z
+  .object({
+    workspaceDefault: z
+      .object({
+        profileId: z.string(),
+        profileLabel: z.string(),
+        modelId: z.string(),
+        source: z.enum(['setting', 'env', 'built-in']),
+      })
+      .nullable()
+      .openapi({
+        description:
+          'What an agent without a model of its own runs on; null when no provider is configured.',
+      }),
+    background: z.array(
+      z.object({
+        key: z.enum(['classifier', 'search', 'compaction', 'heartbeat', 'programs']),
+        label: z.string(),
+        profileId: z.string().nullable(),
+        profileLabel: z.string().nullable(),
+        modelId: z
+          .string()
+          .nullable()
+          .openapi({ description: 'null: follows the model of each agent.' }),
+        source: ModelSourceSchema,
+        note: z.string(),
+      }),
+    ),
+    agentsOnFallback: z.array(z.string()).openapi({
+      description: 'Names of agents that run on a built-in fallback model because none was picked.',
+    }),
+    warnings: z.array(z.string()),
+  })
+  .openapi('SettingsModels')
