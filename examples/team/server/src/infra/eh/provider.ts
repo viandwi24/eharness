@@ -42,10 +42,12 @@ export interface ModelConfig {
   /** Prices and context windows of the models `resolve` makes. */
   catalog?: ModelCatalog
   /**
-   * Model of the Auto mode classifier (`TEAM_CLASSIFIER_MODEL`, else the default model). Absent
-   * (scripted model) = Auto mode is not offered.
+   * Model of the Auto mode classifier when no agent model is known: `TEAM_CLASSIFIER_MODEL`, else
+   * the default model. Absent (scripted model) = Auto mode is not offered.
    */
   classifierModel?: () => LanguageModel
+  /** `TEAM_CLASSIFIER_MODEL` when set: it wins over the agent's own model for the classifier. */
+  classifierOverride?: () => LanguageModel | undefined
   /** Provider web search for `web_search`; absent (scripted model) = the tool is not offered. */
   search?: SearchFn
   /** Bumps when the profiles change (agents are rebuilt). */
@@ -165,6 +167,12 @@ export function providerModelConfig(service: ProviderService): ModelConfig {
     classifierModel: () => {
       const r = fromEnvModel(service.env.TEAM_CLASSIFIER_MODEL) ?? defaultResolved()
       return manager.resolve({ profile: r.profileId, model: r.modelId })
+    },
+    classifierOverride: () => {
+      const r = fromEnvModel(service.env.TEAM_CLASSIFIER_MODEL)
+      return r === undefined
+        ? undefined
+        : manager.resolve({ profile: r.profileId, model: r.modelId })
     },
     search,
     rev: service.rev,
