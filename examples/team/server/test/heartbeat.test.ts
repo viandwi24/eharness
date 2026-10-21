@@ -145,6 +145,7 @@ interface HeartbeatView {
     activeFrom: string
     activeTo: string
     timezone: string | null
+    afterActivity: boolean
   }
   effectiveTimezone: string
   stored: boolean
@@ -602,6 +603,8 @@ describe('configuration', () => {
       everyMinutes: 30,
       activeFrom: '08:00',
       activeTo: '20:00',
+      // a beat after chat activity is a model call: off unless the owner turns it on
+      afterActivity: false,
     })
     expect(lead.stored).toBe(false)
     expect(lead.trigger?.status).toBe('active')
@@ -640,6 +643,8 @@ describe('configuration', () => {
       activeFrom: '08:00',
       activeTo: '20:00',
       timezone: null,
+      // an agent stored before the setting existed is off too
+      afterActivity: false,
     })
     // validation
     for (const bad of [{ everyMinutes: 1 }, { activeFrom: '8am' }, { timezone: 'Mars/Base' }]) {

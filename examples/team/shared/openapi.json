@@ -51,6 +51,10 @@
       "description": "Workspace settings read by the agent factory."
     },
     {
+      "name": "backups",
+      "description": "Verified snapshots of the whole database and a readable export of every library and memory file; restore of files (new versions, nothing deleted)."
+    },
+    {
       "name": "providers",
       "description": "Model providers: definitions with their form fields, saved profiles (secrets encrypted, never returned), connection tests and model lists with prices and context windows."
     },
@@ -5077,6 +5081,11 @@
             "minimum": 16000,
             "description": "Deprecated ceiling on every agent context window (tokens). null = none: the window follows each agent model. Initial value: `TEAM_CONTEXT_CAP`."
           },
+          "heartbeatContextWindow": {
+            "type": "integer",
+            "minimum": 16000,
+            "description": "The working context window (tokens) of every heartbeat session, independent of the chat window of the agent and clamped to its model window. History is summarized early so each beat starts small. Default 64000."
+          },
           "connectorHealthTtlMs": {
             "type": [
               "integer",
@@ -5161,6 +5170,27 @@
             "minimum": 0,
             "description": "Library history kept this many days; 0 = keep. Default 180."
           },
+          "backupEnabled": {
+            "type": "boolean",
+            "description": "Automatic backups: a snapshot every day at `backupTime` and one at start-up when none was taken today. Default on. Manual and before-risky-operation snapshots always work."
+          },
+          "backupTime": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "description": "Local time (team timezone) of the daily snapshot, HH:MM. Default 02:00."
+          },
+          "backupKeepDaily": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365,
+            "description": "The newest snapshot of each of this many days is kept. Default 14."
+          },
+          "backupKeepWeekly": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 520,
+            "description": "The newest snapshot of each of this many weeks is kept. Default 8."
+          },
           "updatedAt": {
             "type": "integer",
             "description": "0 until a person changed something."
@@ -5180,6 +5210,7 @@
           "searchModel",
           "searchProfile",
           "contextCap",
+          "heartbeatContextWindow",
           "connectorHealthTtlMs",
           "connectorProbeRetryMs",
           "longRunMaxCostUsd",
@@ -5195,6 +5226,10 @@
           "routineRunsRetentionDays",
           "tasksRetentionDays",
           "libraryHistoryRetentionDays",
+          "backupEnabled",
+          "backupTime",
+          "backupKeepDaily",
+          "backupKeepWeekly",
           "updatedAt"
         ]
       },
@@ -5641,6 +5676,11 @@
             ],
             "minimum": 16000
           },
+          "heartbeatContextWindow": {
+            "type": "integer",
+            "minimum": 16000,
+            "maximum": 10000000
+          },
           "connectorHealthTtlMs": {
             "type": [
               "integer",
@@ -5719,8 +5759,369 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 36500
+          },
+          "backupEnabled": {
+            "type": "boolean"
+          },
+          "backupTime": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "backupKeepDaily": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          },
+          "backupKeepWeekly": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 520
           }
         }
+      },
+      "BackupList": {
+        "type": "object",
+        "properties": {
+          "dir": {
+            "type": "string",
+            "description": "`TEAM_BACKUP_DIR`: mount it on a persistent volume."
+          },
+          "backups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Backup"
+            }
+          },
+          "lastVerifiedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "No verified snapshot exists, or the newest is older than 36 hours."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "time": {
+            "type": "string",
+            "description": "HH:MM in the team timezone."
+          }
+        },
+        "required": [
+          "dir",
+          "backups",
+          "lastVerifiedAt",
+          "stale",
+          "enabled",
+          "time"
+        ]
+      },
+      "Backup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "team-20261022T020000123Z-ab12"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string",
+            "description": "`daily`, `startup`, `manual`, or `before: <operation>` (taken before a risky one)."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "startup",
+              "manual",
+              "before"
+            ]
+          },
+          "dbBytes": {
+            "type": "integer"
+          },
+          "filesBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Size of the files export (zip); null = none."
+          },
+          "fileCount": {
+            "type": "integer",
+            "description": "Library and memory files in the snapshot."
+          },
+          "agentCount": {
+            "type": "integer"
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "`PRAGMA integrity_check` of the copy answered `ok` and its row counts of library files and agents matched the live database."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exportError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "reason",
+          "kind",
+          "dbBytes",
+          "filesBytes",
+          "fileCount",
+          "agentCount",
+          "verified",
+          "error",
+          "exportError"
+        ]
+      },
+      "BackupCreated": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "backup": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Backup"
+              },
+              {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "error",
+          "backup"
+        ]
+      },
+      "BackupEntries": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "updatedAt": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "size",
+                "updatedAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "files"
+        ]
+      },
+      "RestorePlan": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "all"
+            ]
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "create": {
+                "type": "integer"
+              },
+              "replace": {
+                "type": "integer"
+              },
+              "keep": {
+                "type": "integer"
+              },
+              "same": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "create",
+              "replace",
+              "keep",
+              "same"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "create",
+                    "replace",
+                    "keep",
+                    "same"
+                  ]
+                },
+                "snapshotSize": {
+                  "type": "integer"
+                },
+                "snapshotUpdatedAt": {
+                  "type": "integer"
+                },
+                "liveSize": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "liveUpdatedAt": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "liveIsNewer": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "path",
+                "action",
+                "snapshotSize",
+                "snapshotUpdatedAt",
+                "liveSize",
+                "liveUpdatedAt",
+                "liveIsNewer"
+              ]
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "mode",
+          "counts",
+          "entries",
+          "truncated"
+        ]
+      },
+      "RestoreBody": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "One file, a folder, or `/` for every library and memory file of the snapshot.",
+            "example": "/memories/agents"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "all"
+            ],
+            "default": "missing",
+            "description": "`missing`: only files that are gone; `all`: also replace files whose content differs (the previous version stays in the history)."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "RestoreResult": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "integer"
+          },
+          "replaced": {
+            "type": "integer"
+          },
+          "unchanged": {
+            "type": "integer"
+          },
+          "kept": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "error"
+              ]
+            }
+          },
+          "safetyBackupId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "created",
+          "replaced",
+          "unchanged",
+          "kept",
+          "failed",
+          "safetyBackupId"
+        ]
       },
       "WorkspaceUsage": {
         "type": "object",
@@ -12421,6 +12822,34 @@
             },
             "description": "Newest first (the last 50)."
           },
+          "week": {
+            "type": "object",
+            "properties": {
+              "beats": {
+                "type": "integer",
+                "description": "Beats that called the model."
+              },
+              "unchanged": {
+                "type": "integer",
+                "description": "Beats skipped without a model call because nothing was new."
+              },
+              "items": {
+                "type": "integer",
+                "description": "New items the beats reported."
+              },
+              "costUsd": {
+                "type": "number",
+                "description": "What the heartbeat model calls cost."
+              }
+            },
+            "required": [
+              "beats",
+              "unchanged",
+              "items",
+              "costUsd"
+            ],
+            "description": "The last 7 days of this heartbeat."
+          },
           "digest": {
             "$ref": "#/components/schemas/DigestView"
           }
@@ -12437,6 +12866,7 @@
           "notes",
           "trigger",
           "beats",
+          "week",
           "digest"
         ]
       },
@@ -12470,6 +12900,10 @@
             "minLength": 1,
             "maxLength": 64,
             "description": "IANA timezone; null = the team timezone (workspace setting)."
+          },
+          "afterActivity": {
+            "type": "boolean",
+            "description": "Also start an early beat when a watched chat gets new messages. Off by default (also for agents that existed before): every beat is a model call and the scheduled beat already sees the new messages."
           }
         },
         "required": [
@@ -12477,7 +12911,8 @@
           "everyMinutes",
           "activeFrom",
           "activeTo",
-          "timezone"
+          "timezone",
+          "afterActivity"
         ]
       },
       "StandingOrder": {
@@ -12906,6 +13341,10 @@
             "minLength": 1,
             "maxLength": 64,
             "description": "IANA timezone; null = the team timezone (workspace setting)."
+          },
+          "afterActivity": {
+            "type": "boolean",
+            "description": "Also start an early beat when a watched chat gets new messages. Off by default (also for agents that existed before): every beat is a model call and the scheduled beat already sees the new messages."
           }
         }
       },
@@ -23429,6 +23868,561 @@
           },
           "401": {
             "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Snapshots of the database",
+        "description": "Newest first, with whether each verified. `stale` is true when there is no verified snapshot or the newest is older than 36 hours.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Snapshots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Back up now",
+        "description": "A consistent copy of the whole database (`VACUUM INTO`, online) plus a zip of every library and memory file, verified after writing. A failure answers 200 with `ok: false` and also raises an alarm.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/{id}": {
+      "delete": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Delete a snapshot",
+        "description": "The newest verified snapshot cannot be deleted (`BACKUP_NEWEST`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`BACKUP_NEWEST`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/{id}/db": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Download the database snapshot",
+        "description": "The SQLite file as it was at the snapshot (open it with any SQLite tool).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bytes, streamed"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/{id}/files": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Download the files export",
+        "description": "A zip with every library and memory file as a folder tree (`library/...`, `memories/agents/<agent slug>/...`) and `manifest.json` (path, size, sha256, updatedAt).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bytes, streamed"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/{id}/entries": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Files inside a snapshot",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 512,
+              "default": "/"
+            },
+            "required": false,
+            "name": "prefix",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000,
+              "default": 500
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupEntries"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/{id}/restore-preview": {
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "What a restore of files would change",
+        "description": "Compares the files of the snapshot under `path` with the live ones: `create` (gone now), `replace` (differs; only in mode `all`), `keep` (differs, left alone in mode `missing`), `same`. Nothing is written.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestorePlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/{id}/restore": {
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Restore files from a snapshot",
+        "description": "Writes the files back as new versions (the previous version stays in the history) and never deletes anything. A full safety snapshot is taken first; when it fails nothing is restored (`BACKUP_FAILED`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`BACKUP_FAILED`",
             "content": {
               "application/json": {
                 "schema": {

@@ -151,12 +151,13 @@ export function checkInvariants(dbFile: string, ctx: SoakContext): Violation[] {
       }
     }
 
-    // 5. budget: the workspace ledger equals the sum of the calls that were paid
+    // 5. budget: the workspace ledger equals the sum of every paid call: turn steps and the
+    // compaction summaries and memory flushes the ledger charges too (heartbeat beats compact often)
     const ledger = all(db, "SELECT spent_usd FROM eh_budget_scope WHERE scope LIKE 'workspace:%'")
     const spent = ledger.reduce((sum, r) => sum + Number(r.spent_usd), 0)
     const calls = all(
       db,
-      "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM model_calls WHERE kind = 'step'",
+      "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM model_calls WHERE kind IN ('step', 'compaction', 'flush')",
     )
     const total = Number(calls[0]?.total ?? 0)
     if (Math.abs(spent - total) > 1e-6) {

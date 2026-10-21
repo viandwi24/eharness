@@ -172,6 +172,7 @@ const view = async (i: Instance) => {
     checklist: { exists: boolean; empty: boolean }
     watched: Array<{ nodeId: string; title: string }>
     notes: { path: string; exists: boolean }
+    week: { beats: number; unchanged: number; items: number; costUsd: number }
     beats: Array<{
       status: string
       reason: string | null
@@ -187,6 +188,8 @@ const configure = async (i: Instance, body: Record<string, unknown>) => {
 const write = (i: Instance, text: string) =>
   i.server.deps.library.writeText(checklistPath(i.agentId), text)
 const ALWAYS = { activeFrom: '00:00', activeTo: '00:00' }
+/** Early beats on chat activity are off by default: the tests that wake on activity turn them on. */
+const WAKING = { ...ALWAYS, afterActivity: true }
 const beatSession = async (i: Instance): Promise<string> =>
   JSON.stringify(await i.server.factory.peek(`heartbeat:${i.agentId}`).messages({ limit: 100 }))
 let slot = Date.now()
@@ -585,7 +588,7 @@ describe('waking on activity', () => {
   test('new messages start one early beat, debounced to 10 minutes; the model sees where the activity is', async () => {
     const i = instance([call('team_status', {}), final('ok'), ...OK])
     const rooms = await connect(i)
-    await configure(i, ALWAYS)
+    await configure(i, WAKING)
     await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
     // a burst in the community chat: one early beat after the settle time
     for (const t of ['one', 'two', 'three'])
@@ -628,7 +631,7 @@ describe('waking on activity', () => {
         nodeId: rooms.community,
         at: Date.now(),
       })
-    await configure(i, ALWAYS)
+    await configure(i, WAKING)
     expect(await wake()).toBeUndefined() // nothing to watch: no order, no checklist
     await write(i, '# nothing\n')
     expect(await wake()).toBeUndefined()
@@ -646,7 +649,7 @@ describe('waking on activity', () => {
   test('an activity beat with no new messages makes no model call and leaves no record', async () => {
     const i = instance([])
     const rooms = await connect(i)
-    await configure(i, ALWAYS)
+    await configure(i, WAKING)
     await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
     const out = await i.server.heartbeats.heartbeat(i.agentId, {
       slot: ++slot,
@@ -655,6 +658,69 @@ describe('waking on activity', () => {
     expect(out).toMatchObject({ started: false, reason: 'no new activity' })
     expect(i.model.calls).toHaveLength(0)
     expect((await view(i)).beats).toEqual([])
+  })
+
+  test('off by default: new messages wake no beat until the owner turns it on', async () => {
+    const i = instance([call('team_status', {}), final('ok')])
+    const rooms = await connect(i)
+    await configure(i, ALWAYS)
+    await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
+    expect((await view(i)).config.afterActivity).toBe(false)
+    const wake = () =>
+      planActivityWake(i.server.deps, {
+        connectionId: 'c1',
+        nodeId: rooms.community,
+        at: Date.now(),
+      })
+    expect(await wake()).toBeUndefined()
+    await rooms.mock.say({ chat: 'community', from: { id: '9', name: 'Eve' }, text: 'hello' })
+    await sleep(300)
+    expect(i.model.calls).toHaveLength(0)
+    expect((await view(i)).beats).toEqual([])
+    // even a forced early beat is refused, without a record
+    const forced = await i.server.heartbeats.heartbeat(i.agentId, {
+      slot: ++slot,
+      trigger: 'activity',
+    })
+    expect(forced).toMatchObject({ started: false })
+    expect(i.model.calls).toHaveLength(0)
+    // turned on, the same message wakes it; the scheduled beat is unaffected either way
+    await configure(i, { afterActivity: true })
+    expect(await wake()).toBeDefined()
+  })
+})
+
+describe('a beat with nothing new makes no model call', () => {
+  test('an unchanged observation is skipped; new messages or a new order run it again', async () => {
+    const i = instance([call('team_status', {}), final('ok'), call('team_status', {}), final('ok')])
+    const rooms = await connect(i)
+    await configure(i, ALWAYS)
+    await order(i, { kind: 'chat', connectionId: 'c1', nodeId: rooms.internal })
+    const at = () => Date.now() + 5
+    // the first beat has nothing to compare with: it runs
+    expect((await i.server.heartbeats.heartbeat(i.agentId, { slot: at() })).started).toBe(true)
+    await beatsEnd(i, 1)
+    const calls = i.model.calls.length
+    expect(calls).toBeGreaterThan(0)
+    // same orders, same findings, no new messages: no model call, a skipped record
+    await sleep(15)
+    const again = await i.server.heartbeats.heartbeat(i.agentId, { slot: at() })
+    expect(again).toMatchObject({ started: false, reason: 'nothing new since the last beat' })
+    expect(i.model.calls).toHaveLength(calls)
+    expect((await view(i)).beats[0]).toMatchObject({
+      status: 'skipped',
+      reason: 'nothing new since the last beat',
+    })
+    expect((await view(i)).week.unchanged).toBe(1)
+    // a new message in a watched chat: it runs
+    await sleep(15)
+    await rooms.mock.say({ chat: 'community', from: { id: '9', name: 'Eve' }, text: 'something' })
+    await sleep(15)
+    expect((await i.server.heartbeats.heartbeat(i.agentId, { slot: at() })).started).toBe(true)
+    await beatsEnd(i, 2)
+    expect(i.model.calls.length).toBeGreaterThan(calls)
+    const week = (await view(i)).week
+    expect(week).toMatchObject({ beats: 2, unchanged: 1 })
   })
 })
 

@@ -1,0 +1,471 @@
+/**
+ * Snapshots of the SQLite database (`VACUUM INTO`: an online, consistent copy that is safe with
+ * WAL and concurrent writers), verified after writing, plus a readable export of every library and
+ * memory file as a zip with a manifest. Restore of files reads a snapshot and writes the files into
+ * the live database as new versions through the same file system the agents use.
+ *
+ * One snapshot is three files in the backup directory, written under temporary names and renamed
+ * when complete, the sidecar last: `<id>.db`, `<id>.zip`, `<id>.json`.
+ */
+import { Database } from 'bun:sqlite'
+import { createHash } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { join } from 'node:path'
+import type { BackupPort } from '../../app/ports.ts'
+import {
+  type BackupRecord,
+  kindOfReason,
+  normalizeScope,
+  RESTORE_LIST_MAX,
+  type RestoreAction,
+  type RestoreEntry,
+  type RestoreMode,
+  type RestorePlan,
+  type RestoreResult,
+} from '../../domain/backups.ts'
+import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from '../eh/library-fs.ts'
+import { zipFileWriter } from './zip-file.ts'
+
+export interface BackupServiceOptions {
+  sqlite: Database
+  dir: string
+  now?: () => number
+  /** Reaches the event feed for every file a restore writes. */
+  onChange?: (change: LibraryChange) => void
+  /** Test seam: runs on the copy right after it is written, before it is verified. */
+  afterCopy?: (file: string) => void
+}
+
+const ID = /^team-\d{8}T\d{9}Z-[0-9a-f]{4}$/
+const encoder = new TextEncoder()
+const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
+
+const stampOf = (at: number): string =>
+  new Date(at)
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.(\d{3})Z$/, '$1Z')
+
+interface Counts {
+  files: number
+  agents: number
+}
+
+const countsOf = (db: Database): Counts => ({
+  files: db.query<{ n: number }, []>('SELECT count(*) AS n FROM library_files').get()?.n ?? 0,
+  agents: db.query<{ n: number }, []>('SELECT count(*) AS n FROM agents').get()?.n ?? 0,
+})
+
+/**
+ * Check a copy: `PRAGMA integrity_check` answers `ok`, and its row counts of library files and
+ * agents lie between the live counts before and after the copy (writers may run meanwhile).
+ */
+export function verifyCopy(
+  file: string,
+  before: Counts,
+  after: Counts,
+): { ok: true; counts: Counts } | { ok: false; error: string } {
+  let db: Database | undefined
+  try {
+    db = new Database(file, { readonly: true, strict: true })
+    const rows = db.query<Record<string, string>, []>('PRAGMA integrity_check').all()
+    const answers = rows.map((r) => Object.values(r)[0])
+    if (answers.length !== 1 || answers[0] !== 'ok') {
+      return { ok: false, error: `integrity check failed: ${answers.slice(0, 3).join('; ')}` }
+    }
+    const counts = countsOf(db)
+    for (const key of ['files', 'agents'] as const) {
+      const lo = Math.min(before[key], after[key])
+      const hi = Math.max(before[key], after[key])
+      if (counts[key] < lo || counts[key] > hi) {
+        return {
+          ok: false,
+          error: `row count of ${key === 'files' ? 'library_files' : 'agents'} differs: copy ${counts[key]}, live ${before[key]}..${after[key]}`,
+        }
+      }
+    }
+    return { ok: true, counts }
+  } catch (error) {
+    return { ok: false, error: `the copy cannot be read: ${errorMessage(error)}` }
+  } finally {
+    db?.close()
+  }
+}
+
+interface SnapRow {
+  path: string
+  version: string
+  text: string | null
+  bytes: Uint8Array | null
+  media_type: string | null
+  size: number
+  updated_at: number
+}
+
+/** Write the files export of a verified copy; returns the file count and size. */
+function exportFiles(copy: string, zipFile: string, now: number): { files: number; bytes: number } {
+  const db = new Database(copy, { readonly: true, strict: true })
+  const writer = zipFileWriter(zipFile)
+  try {
+    const slugs = new Map(
+      db
+        .query<{ id: string; slug: string }, []>('SELECT id, slug FROM agents')
+        .all()
+        .map((a) => [a.id, a.slug]),
+    )
+    // memory lives under /memories/agents/<agent id>: the export names the folder by slug
+    const zipPath = (path: string): string => {
+      const parts = path
+        .replace(/^\/+/, '')
+        .split('/')
+        .map((p) => (p === '..' ? '__' : p))
+      if (parts[0] === 'memories' && parts[1] === 'agents' && parts[2] !== undefined) {
+        parts[2] = slugs.get(parts[2]) ?? parts[2]
+      }
+      return parts.join('/')
+    }
+    const manifest: Array<Record<string, unknown>> = []
+    let skipped = 0
+    for (const row of db
+      .query<SnapRow, []>(
+        'SELECT path, version, text, bytes, media_type, size, updated_at FROM library_files ORDER BY path',
+      )
+      .iterate()) {
+      // tool media is a cache of tool results, pruned in days: not part of the readable export
+      if (row.path.startsWith(`${TOOL_MEDIA_DIR}/`)) {
+        skipped++
+        continue
+      }
+      const bytes = row.bytes ?? encoder.encode(row.text ?? '')
+      const entry = zipPath(row.path)
+      writer.add(entry, bytes, row.updated_at)
+      manifest.push({
+        path: `/${entry}`,
+        libraryPath: row.path,
+        size: bytes.byteLength,
+        sha256: sha256(bytes),
+        updatedAt: row.updated_at,
+        mediaType: row.media_type,
+      })
+    }
+    writer.add(
+      'manifest.json',
+      encoder.encode(
+        JSON.stringify(
+          {
+            createdAt: now,
+            files: manifest,
+            excluded: skipped > 0 ? [{ prefix: TOOL_MEDIA_DIR, files: skipped }] : [],
+          },
+          null,
+          2,
+        ),
+      ),
+      now,
+    )
+    writer.finish()
+    return { files: manifest.length, bytes: statSync(zipFile).size }
+  } catch (error) {
+    writer.abort()
+    throw error
+  } finally {
+    db.close()
+  }
+}
+
+export function createBackupService(options: BackupServiceOptions): BackupPort {
+  const { sqlite, dir } = options
+  const now = options.now ?? Date.now
+  mkdirSync(dir, { recursive: true })
+  const path = (id: string, ext: 'db' | 'zip' | 'json'): string => join(dir, `${id}.${ext}`)
+  const known = (id: string): boolean => ID.test(id)
+
+  // one snapshot at a time on this instance
+  let chain: Promise<unknown> = Promise.resolve()
+  const serial = <T>(job: () => Promise<T>): Promise<T> => {
+    const next = chain.then(job, job)
+    chain = next.catch(() => undefined)
+    return next
+  }
+
+  const readRecord = (id: string): BackupRecord | undefined => {
+    try {
+      return JSON.parse(readFileSync(path(id, 'json'), 'utf8')) as BackupRecord
+    } catch {
+      return undefined
+    }
+  }
+
+  const list = (): BackupRecord[] => {
+    const names = readdirSync(dir)
+    const ids = new Set<string>()
+    for (const n of names) {
+      const m = /^(.*)\.(db|json)$/.exec(n)
+      if (m?.[1] !== undefined && known(m[1])) ids.add(m[1])
+    }
+    const out: BackupRecord[] = []
+    for (const id of ids) {
+      const rec = readRecord(id)
+      if (rec !== undefined) {
+        out.push(rec)
+        continue
+      }
+      // a copy without its sidecar (a crash between the two renames): shown, never trusted
+      if (existsSync(path(id, 'db'))) {
+        out.push({
+          id,
+          createdAt: statSync(path(id, 'db')).mtimeMs,
+          reason: 'unknown',
+          kind: 'manual',
+          dbBytes: statSync(path(id, 'db')).size,
+          filesBytes: null,
+          fileCount: 0,
+          agentCount: 0,
+          verified: false,
+          error: 'incomplete: the record of this snapshot is missing',
+          exportError: null,
+        })
+      }
+    }
+    return out.sort((a, b) => b.createdAt - a.createdAt)
+  }
+
+  const create = (reason: string): Promise<BackupRecord> =>
+    serial(async () => {
+      const at = now()
+      const id = `team-${stampOf(at)}-${crypto
+        .randomUUID()
+        .slice(0, 4)
+        .replace(/[^0-9a-f]/g, '0')}`
+      const tmpDb = `${path(id, 'db')}.tmp`
+      const tmpZip = `${path(id, 'zip')}.tmp`
+      const before = countsOf(sqlite)
+      // VACUUM INTO: a read transaction of its own, so writers carry on and the copy is one
+      // consistent point in time (never half of a transaction)
+      try {
+        sqlite.run(`VACUUM INTO '${tmpDb.replaceAll("'", "''")}'`)
+      } catch (error) {
+        rmSync(tmpDb, { force: true })
+        throw new Error(`the database copy could not be written: ${errorMessage(error)}`)
+      }
+      const after = countsOf(sqlite)
+      options.afterCopy?.(tmpDb)
+      const verdict = verifyCopy(tmpDb, before, after)
+      let filesBytes: number | null = null
+      let fileCount = 0
+      let exportError: string | null = null
+      if (verdict.ok) {
+        try {
+          const out = exportFiles(tmpDb, tmpZip, at)
+          filesBytes = out.bytes
+          fileCount = out.files
+        } catch (error) {
+          exportError = errorMessage(error)
+          rmSync(tmpZip, { force: true })
+        }
+      }
+      renameSync(tmpDb, path(id, 'db'))
+      if (filesBytes !== null) renameSync(tmpZip, path(id, 'zip'))
+      const record: BackupRecord = {
+        id,
+        createdAt: at,
+        reason,
+        kind: kindOfReason(reason),
+        dbBytes: statSync(path(id, 'db')).size,
+        filesBytes,
+        fileCount,
+        agentCount: verdict.ok ? verdict.counts.agents : 0,
+        verified: verdict.ok,
+        error: verdict.ok ? null : verdict.error,
+        exportError,
+      }
+      writeFileSync(`${path(id, 'json')}.tmp`, JSON.stringify(record, null, 2))
+      renameSync(`${path(id, 'json')}.tmp`, path(id, 'json'))
+      return record
+    })
+
+  /** The snapshot as a read-only database (the caller closes it). */
+  const open = (id: string): Database | undefined => {
+    if (!known(id) || !existsSync(path(id, 'db'))) return undefined
+    return new Database(path(id, 'db'), { readonly: true, strict: true })
+  }
+
+  const scopeWhere = (scope: string): { sql: string; params: Array<string | number> } =>
+    scope === '/'
+      ? { sql: '1 = 1', params: [] }
+      : {
+          sql: '(path = ? OR substr(path, 1, ?) = ?)',
+          params: [scope, scope.length + 1, `${scope}/`],
+        }
+
+  const ORDER: Record<RestoreAction, number> = { create: 0, replace: 1, keep: 2, same: 3 }
+
+  const plan = (db: Database, scope: string, mode: RestoreMode): RestorePlan => {
+    const where = scopeWhere(scope)
+    const rows = db
+      .query<
+        { path: string; version: string; size: number; updated_at: number },
+        Array<string | number>
+      >(
+        `SELECT path, version, size, updated_at FROM library_files WHERE ${where.sql} ORDER BY path`,
+      )
+      .all(...where.params)
+    const live = sqlite.query<{ version: string; size: number; updated_at: number }, [string]>(
+      'SELECT version, size, updated_at FROM library_files WHERE path = ?',
+    )
+    const counts: Record<RestoreAction, number> = { create: 0, replace: 0, keep: 0, same: 0 }
+    const entries: RestoreEntry[] = []
+    for (const r of rows) {
+      const cur = live.get(r.path)
+      const action: RestoreAction =
+        cur === null
+          ? 'create'
+          : cur.version === r.version
+            ? 'same'
+            : mode === 'all'
+              ? 'replace'
+              : 'keep'
+      counts[action]++
+      entries.push({
+        path: r.path,
+        action,
+        snapshotSize: r.size,
+        snapshotUpdatedAt: r.updated_at,
+        liveSize: cur?.size ?? null,
+        liveUpdatedAt: cur?.updated_at ?? null,
+        liveIsNewer: cur !== null && cur.updated_at > r.updated_at,
+      })
+    }
+    entries.sort((a, b) => ORDER[a.action] - ORDER[b.action])
+    return {
+      path: scope,
+      mode,
+      counts,
+      entries: entries.slice(0, RESTORE_LIST_MAX),
+      truncated: entries.length > RESTORE_LIST_MAX,
+    }
+  }
+
+  return {
+    dir,
+    create,
+    list,
+    get: (id) => (known(id) ? list().find((r) => r.id === id) : undefined),
+    remove(id) {
+      if (!known(id)) return false
+      let removed = false
+      for (const ext of ['json', 'db', 'zip'] as const) {
+        if (existsSync(path(id, ext))) {
+          rmSync(path(id, ext), { force: true })
+          removed = true
+        }
+      }
+      return removed
+    },
+    download(id, what) {
+      if (!known(id)) return undefined
+      const file = path(id, what === 'db' ? 'db' : 'zip')
+      if (!existsSync(file)) return undefined
+      return {
+        stream: Bun.file(file).stream(),
+        size: statSync(file).size,
+        filename: `${id}.${what === 'db' ? 'db' : 'zip'}`,
+        mediaType: what === 'db' ? 'application/vnd.sqlite3' : 'application/zip',
+      }
+    },
+    entries(id, prefix, limit) {
+      const db = open(id)
+      if (db === undefined) return undefined
+      try {
+        const where = scopeWhere(normalizeScope(prefix))
+        return db
+          .query<{ path: string; size: number; updated_at: number }, Array<string | number>>(
+            `SELECT path, size, updated_at FROM library_files WHERE ${where.sql} ORDER BY path LIMIT ${Math.max(1, Math.floor(limit))}`,
+          )
+          .all(...where.params)
+          .map((r) => ({ path: r.path, size: r.size, updatedAt: r.updated_at }))
+      } finally {
+        db.close()
+      }
+    },
+    restorePlan(id, scope, mode) {
+      const db = open(id)
+      if (db === undefined) return undefined
+      try {
+        return plan(db, normalizeScope(scope), mode)
+      } finally {
+        db.close()
+      }
+    },
+    async restore(id, scope, mode) {
+      const db = open(id)
+      if (db === undefined) return undefined
+      try {
+        const clean = normalizeScope(scope)
+        const where = scopeWhere(clean)
+        const fs = libraryFs(sqlite, options.onChange ? { onChange: options.onChange } : {})
+        const rows = db
+          .query<SnapRow, Array<string | number>>(
+            `SELECT path, version, text, bytes, media_type, size, updated_at FROM library_files WHERE ${where.sql} ORDER BY path`,
+          )
+          .all(...where.params)
+        const result: RestoreResult = {
+          created: 0,
+          replaced: 0,
+          unchanged: 0,
+          kept: 0,
+          failed: [],
+        }
+        for (const r of rows) {
+          const cur = sqlite
+            .query<{ version: string }, [string]>(
+              'SELECT version FROM library_files WHERE path = ?',
+            )
+            .get(r.path)
+          if (cur !== null && cur.version === r.version) {
+            result.unchanged++
+            continue
+          }
+          if (cur !== null && mode !== 'all') {
+            result.kept++
+            continue
+          }
+          // create only if still absent, replace only the version that was seen: a file that
+          // changed meanwhile is never overwritten
+          const ifVersion = cur === null ? null : cur.version
+          try {
+            const written =
+              r.bytes !== null
+                ? await fs.writeBytes?.(r.path, r.bytes, {
+                    ifVersion,
+                    ...(r.media_type === null ? {} : { mediaType: r.media_type }),
+                  })
+                : await fs.write(r.path, r.text ?? '', { ifVersion })
+            if (written?.ok === true) {
+              if (cur === null) result.created++
+              else result.replaced++
+            } else {
+              result.failed.push({ path: r.path, error: 'changed while restoring: left as it is' })
+            }
+          } catch (error) {
+            result.failed.push({ path: r.path, error: errorMessage(error) })
+          }
+        }
+        return result
+      } finally {
+        db.close()
+      }
+    },
+  }
+}

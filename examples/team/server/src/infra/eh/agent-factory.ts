@@ -73,7 +73,12 @@ import {
   MAX_UPLOAD_BYTES,
   uploadPathOfUrl,
 } from '../../domain/chat.ts'
-import { compactRatio, effectiveWindow, UNKNOWN_MODEL_WINDOW } from '../../domain/context-window.ts'
+import {
+  compactRatio,
+  effectiveWindow,
+  HEARTBEAT_COMPACTION,
+  UNKNOWN_MODEL_WINDOW,
+} from '../../domain/context-window.ts'
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
 import { type DriftNote, pinnedServers, stripMcpPins } from '../../domain/mcp-pins.ts'
 import {
@@ -101,7 +106,7 @@ import {
 import { HAND_OVER_REMINDER, LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
 import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
-import type { WorkspaceSettings } from '../../domain/settings.ts'
+import { SETTINGS_BUILTIN, type WorkspaceSettings } from '../../domain/settings.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { taskGrantRules } from '../../domain/work-queue.ts'
 import {
@@ -229,6 +234,7 @@ export interface AgentFactoryDeps {
     | 'budgetUsd'
     | 'timezone'
     | 'contextCap'
+    | 'heartbeatContextWindow'
     | 'longRunMaxCostUsd'
     | 'longRunMaxHours'
     | 'longRunChunkSteps'
@@ -653,6 +659,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       budgetUsd: deps.budgetUsd ?? null,
       timezone: 'UTC',
       contextCap: deps.limits?.contextCap ?? null,
+      heartbeatContextWindow: SETTINGS_BUILTIN.heartbeatContextWindow,
       longRunMaxCostUsd: deps.limits?.longRun?.maxCostUsd ?? 10,
       longRunMaxHours: (deps.limits?.longRun?.maxDurationMs ?? 24 * 60 * 60 * 1000) / 3_600_000,
       longRunChunkSteps: deps.limits?.longRun?.chunkSteps ?? 80,
@@ -993,9 +1000,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     def: AgentDef,
     settings: ReturnType<typeof currentSettings>,
     out: ActivatedConnectors,
-    variant: 'main' | 'worker' = 'main',
+    variant: 'main' | 'worker' | 'heartbeat' = 'main',
   ): HarnessAgent {
     const worker = variant === 'worker'
+    // the heartbeat variant is the main agent with a window and a compaction of its own
+    const beat = variant === 'heartbeat'
     // the main variant is `self`; a worker variant reports to it
     const main = (): HarnessAgent => selves.get(def.id) as HarnessAgent
     let workerSelf: HarnessAgent | undefined
@@ -1454,11 +1463,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       model: deps.models.resolve(...selectionOf(def, settings)),
       // the window comes from the model (the catalog knows real models; 200k only for models it does
       // not list), or the agent's own smaller limit: compaction summarizes at the agent's percent of it
-      contextWindow: workingWindow(def, modelInfoOf(def, settings)),
+      contextWindow: workingWindow(def, modelInfoOf(def, settings), beat),
       // the output reserve only matters against the model's real window: a custom limit below it
       // leaves room for the whole output beyond the limit, so the limit is not cut by the output
       // cap too
-      guard: { reserveTokens: outputReserve(def, modelInfoOf(def, settings)) },
+      guard: { reserveTokens: outputReserve(def, modelInfoOf(def, settings), beat) },
       ...(catalog === undefined ? {} : { models: catalog }),
       // never leave the output cap to the provider: OpenRouter-style gateways then reserve (and
       // check credits for) the model maximum on every call
@@ -1522,7 +1531,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             },
           }
         : {}),
-      compaction: { summarizeAt: compactRatio(def.compactAtPercent), prune: {} },
+      // a beat is a small repeated job: summarize early and keep no finished beat verbatim, so every
+      // beat starts from the summary plus its own prompt (`HEARTBEAT_COMPACTION`)
+      compaction: beat
+        ? { ...HEARTBEAT_COMPACTION, prune: {} }
+        : { summarizeAt: compactRatio(def.compactAtPercent), prune: {} },
       // screenshots (browser, phone and other MCP tools) pile up: the model sees the newest three
       toolOutput: { maxChars: 30_000, strategy: 'evict', keepImages: 3 },
       onWarning: (w: HarnessWarning) => {
@@ -1531,7 +1544,22 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       },
     })
     if (worker) workerSelf = agent
-    else selves.set(def.id, agent)
+    else if (!beat) selves.set(def.id, agent)
+    return agent
+  }
+
+  /** The heartbeat variant of an agent (same version key as the main one, built once). */
+  const beats = new Map<string, HarnessAgent>()
+  function beatAgentFor(def: AgentDef): HarnessAgent {
+    factoryAgentFor(def, def.archivedAt !== null)
+    const key = `${latest.get(def.id) ?? def.id}#heartbeat`
+    let agent = beats.get(key)
+    if (agent === undefined) {
+      const out = deps.connectors.activated(def.id) ?? EMPTY_ACTIVATION
+      agent = build(def, currentSettings(), out, 'heartbeat')
+      for (const k of [...beats.keys()]) if (k.startsWith(`${def.id}@`)) beats.delete(k)
+      beats.set(key, agent)
+    }
     return agent
   }
 
@@ -1574,10 +1602,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
   /** The catalog's output limit of the model, capped; a sane default for models it does not list. */
   /** The working window: the model's window, or the agent's own smaller limit (and the deprecated global ceiling). */
-  function workingWindow(def: AgentDef, info: { contextWindow?: number }): number {
+  function workingWindow(def: AgentDef, info: { contextWindow?: number }, beat = false): number {
     return effectiveWindow({
       modelWindow: info.contextWindow,
-      custom: def.contextWindow,
+      // a heartbeat session has its own window, whatever the agent's chat window is
+      custom: beat ? currentSettings().heartbeatContextWindow : def.contextWindow,
       ceiling: currentSettings().contextCap ?? undefined,
     })
   }
@@ -1589,10 +1618,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   function outputReserve(
     def: AgentDef,
     info: { contextWindow?: number; maxOutputTokens?: number },
+    beat = false,
   ): number {
     const out = outputCapOf(info.maxOutputTokens)
     const real = info.contextWindow ?? UNKNOWN_MODEL_WINDOW
-    return Math.max(0, out - (real - workingWindow(def, info)))
+    return Math.max(0, out - (real - workingWindow(def, info, beat)))
   }
 
   function outputCapOf(catalogMax: number | undefined): number {
@@ -1729,6 +1759,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     for (const [k, a] of cache) if (k.startsWith(`${agentId}@`)) out.add(a)
     for (const a of superseded.get(agentId) ?? []) out.add(a)
     for (const [k, a] of workers) if (k.startsWith(`${agentId}@`)) out.add(a)
+    for (const [k, a] of beats) if (k.startsWith(`${agentId}@`)) out.add(a)
     return [...out]
   }
 
@@ -2006,7 +2037,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     agentFor: (def, sessionId) =>
       sessionId !== undefined && isWorkerSession(sessionId)
         ? workerAgentFor(def)
-        : factoryAgentFor(def, def.archivedAt !== null),
+        : sessionId !== undefined && originOfSession(sessionId) === 'heartbeat'
+          ? beatAgentFor(def)
+          : factoryAgentFor(def, def.archivedAt !== null),
     modelInfo: (def) => modelInfoOf(def, currentSettings()),
     toolAvailability: (def, authority) =>
       availabilityOf(def, deps.connectors.activated(def.id) ?? EMPTY_ACTIVATION, authority),
@@ -2057,7 +2090,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     openSession: (def, sessionId) => {
       const agent = isWorkerSession(sessionId)
         ? workerAgentFor(def)
-        : factoryAgentFor(def, def.archivedAt !== null)
+        : originOfSession(sessionId) === 'heartbeat'
+          ? beatAgentFor(def)
+          : factoryAgentFor(def, def.archivedAt !== null)
       const session = agent.session(sessionId, {
         lock,
         runtime: { workspaceId, agentId: def.id },

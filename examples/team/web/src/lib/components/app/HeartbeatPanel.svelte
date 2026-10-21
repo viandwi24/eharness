@@ -10,6 +10,7 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { formatTime } from '#lib/format.js';
 	import {
+		ACTIVITY_COST_NOTE,
 		BEAT_LABEL,
 		beatDetail,
 		beatTone,
@@ -26,6 +27,7 @@
 		refLink,
 		scheduleSummary,
 		timezoneOptions,
+		weekSummary,
 		type Heartbeat,
 		type HeartbeatForm,
 		type StandingOrder
@@ -123,6 +125,21 @@
 		}
 	}
 
+	let togglingActivity = $state(false);
+	async function setAfterActivity(on: boolean): Promise<void> {
+		if (!hb) return;
+		togglingActivity = true;
+		try {
+			hb = await api.patch('/agents/{id}/heartbeat', { params: { id: agentId }, body: { afterActivity: on } });
+			if (form && !dirty) form = formOf(hb.config);
+			toast.success(on ? 'Early beats on chat activity are on' : 'Early beats on chat activity are off');
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not save');
+		} finally {
+			togglingActivity = false;
+		}
+	}
+
 	async function removeOrder(id: string): Promise<void> {
 		removing = id;
 		try {
@@ -193,10 +210,19 @@
 				<div class="min-w-0">
 					<div class="font-medium">Standing orders</div>
 					<p class="text-xs text-muted-foreground">
-						Tell the agent in chat what to watch; it keeps the orders here. It looks {scheduleSummary(hb.config, hb.effectiveTimezone)}{hb.trigger?.nextFireAt && hb.config.enabled ? `, next at ${formatTime(hb.trigger.nextFireAt)}` : ''}, and sooner when the chats it watches get new messages. It says nothing unless something needs you.
+						Tell the agent in chat what to watch; it keeps the orders here. It looks {scheduleSummary(hb.config, hb.effectiveTimezone)}{hb.trigger?.nextFireAt && hb.config.enabled ? `, next at ${formatTime(hb.trigger.nextFireAt)}` : ''}{hb.config.afterActivity ? ', and sooner when the chats it watches get new messages' : ''}. It says nothing unless something needs you.
 					</p>
 				</div>
 				<Button size="sm" variant="outline" disabled={running || !hb.config.enabled} onclick={() => void runNow()}>Run a beat now</Button>
+			</div>
+
+			<p class="text-xs text-muted-foreground" data-testid="heartbeat-week">{weekSummary(hb.week)}</p>
+			<div class="flex items-start justify-between gap-3 rounded-lg border border-border px-3 py-2">
+				<div class="min-w-0">
+					<div class="text-xs font-medium">Also check after chat activity</div>
+					<p class="text-xs text-muted-foreground">{ACTIVITY_COST_NOTE}</p>
+				</div>
+				<Switch checked={hb.config.afterActivity} disabled={togglingActivity} onCheckedChange={(v) => void setAfterActivity(v)} aria-label="Also check after chat activity" />
 			</div>
 
 			{#snippet orderRow(o: StandingOrder)}

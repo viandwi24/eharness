@@ -1,0 +1,28 @@
+import { apiBase, authFetch, getToken } from '#lib/api/index.js';
+
+type SavePicker = (o: { suggestedName: string }) => Promise<{ createWritable(): Promise<WritableStream<Uint8Array>> }>;
+
+/**
+ * Save a snapshot file. The server streams it; where the browser can write a stream straight to a
+ * chosen file (Chromium) nothing is held in memory, elsewhere it is collected into a Blob first.
+ */
+export async function downloadBackupFile(id: string, what: 'db' | 'files'): Promise<void> {
+	const token = getToken();
+	const res = await authFetch(`${apiBase.replace(/\/+$/, '')}/backups/${encodeURIComponent(id)}/${what}`, {
+		headers: token ? { authorization: `Bearer ${token}` } : {}
+	});
+	if (!res.ok) throw new Error(`Download failed (${res.status})`);
+	const name = `${id}.${what === 'db' ? 'db' : 'zip'}`;
+	const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
+	if (picker && res.body) {
+		const handle = await picker({ suggestedName: name });
+		await res.body.pipeTo(await handle.createWritable());
+		return;
+	}
+	const url = URL.createObjectURL(await res.blob());
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = name;
+	a.click();
+	setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}

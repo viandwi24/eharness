@@ -1,5 +1,6 @@
 /** Workspace settings (plan §6.7): defaults the factory and the use cases read. Pure. */
 import { PERMISSION_MODES, type PermissionMode, TOOL_ACCESS, type ToolAccess } from './agents.ts'
+import { checkBackupPatch } from './backups.ts'
 import { invalid } from './errors.ts'
 import { EH_MODE, type TeamMode, teamModeOf } from './modes.ts'
 
@@ -43,6 +44,12 @@ export interface WorkspaceSettings {
   searchModel: string | null
   /** Provider profile of `searchModel`; null = the workspace default profile (else the first that can search). */
   searchProfile: string | null
+  /**
+   * The working context window of an agent's heartbeat session (tokens, at least 16 000),
+   * independent of its chat window and clamped to the model's. A beat is a small, repeated job:
+   * a smaller window keeps every model call of it cheap.
+   */
+  heartbeatContextWindow: number
   /** Deprecated ceiling on every agent's context window (tokens, at least 16 000); null = none. */
   contextCap: number | null
   /** A custom connector is re-checked in the background when its last check is this old (ms); 0 = on every listing; null = never. */
@@ -75,6 +82,14 @@ export interface WorkspaceSettings {
   tasksRetentionDays: number
   /** Library history kept this many days (0 = keep). */
   libraryHistoryRetentionDays: number
+  /** Automatic backups (a daily snapshot and one at start-up when none was taken today). */
+  backupEnabled: boolean
+  /** Local time (team timezone) of the daily snapshot, `HH:MM`. */
+  backupTime: string
+  /** Backups: the newest of each of this many days is kept. */
+  backupKeepDaily: number
+  /** Backups: the newest of each of this many weeks is kept. */
+  backupKeepWeekly: number
 }
 
 /** Built-in values of the knobs that have a fixed default (current behaviour). */
@@ -86,6 +101,7 @@ export const SETTINGS_BUILTIN = {
   searchModel: null,
   searchProfile: null,
   contextCap: null,
+  heartbeatContextWindow: 64_000,
   connectorHealthTtlMs: 60_000,
   connectorProbeRetryMs: 3_000,
   longRunMaxCostUsd: 10,
@@ -101,6 +117,10 @@ export const SETTINGS_BUILTIN = {
   routineRunsRetentionDays: 30,
   tasksRetentionDays: 90,
   libraryHistoryRetentionDays: 180,
+  backupEnabled: true,
+  backupTime: '02:00',
+  backupKeepDaily: 14,
+  backupKeepWeekly: 8,
 } as const satisfies Partial<WorkspaceSettings>
 
 type Env = Record<string, string | undefined>
@@ -303,6 +323,7 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
     }
   }
   intIn('contextCap', patch.contextCap, CONTEXT_CAP_MIN, 10_000_000, true)
+  intIn('heartbeatContextWindow', patch.heartbeatContextWindow, CONTEXT_CAP_MIN, 10_000_000)
   intIn('connectorHealthTtlMs', patch.connectorHealthTtlMs, 0, HEALTH_TTL_MAX_MS, true)
   intIn('connectorProbeRetryMs', patch.connectorProbeRetryMs, 0, PROBE_RETRY_MAX_MS)
   numIn('longRunMaxCostUsd', patch.longRunMaxCostUsd, 0, 100_000)
@@ -321,6 +342,7 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
   ] as const) {
     intIn(key, patch[key], 0, 36_500)
   }
+  checkBackupPatch(patch)
   if (patch.teamName != null && (patch.teamName.trim() === '' || patch.teamName.length > 100)) {
     throw invalid('teamName must be 1-100 characters or null', 'INVALID_SETTINGS')
   }

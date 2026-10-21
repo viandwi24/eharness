@@ -5849,6 +5849,537 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Snapshots of the database
+         * @description Newest first, with whether each verified. `stale` is true when there is no verified snapshot or the newest is older than 36 hours.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Snapshots */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BackupList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Back up now
+         * @description A consistent copy of the whole database (`VACUUM INTO`, online) plus a zip of every library and memory file, verified after writing. A failure answers 200 with `ok: false` and also raises an alarm.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BackupCreated"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a snapshot
+         * @description The newest verified snapshot cannot be deleted (`BACKUP_NEWEST`).
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {boolean} */
+                            deleted: true;
+                        };
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `BACKUP_NEWEST` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{id}/db": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the database snapshot
+         * @description The SQLite file as it was at the snapshot (open it with any SQLite tool).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The bytes, streamed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the files export
+         * @description A zip with every library and memory file as a folder tree (`library/...`, `memories/agents/<agent slug>/...`) and `manifest.json` (path, size, sha256, updatedAt).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The bytes, streamed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{id}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Files inside a snapshot */
+        get: {
+            parameters: {
+                query?: {
+                    prefix?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Files */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BackupEntries"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{id}/restore-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a restore of files would change
+         * @description Compares the files of the snapshot under `path` with the live ones: `create` (gone now), `replace` (differs; only in mode `all`), `keep` (differs, left alone in mode `missing`), `same`. Nothing is written.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RestoreBody"];
+                };
+            };
+            responses: {
+                /** @description The plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RestorePlan"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore files from a snapshot
+         * @description Writes the files back as new versions (the previous version stays in the history) and never deletes anything. A full safety snapshot is taken first; when it fails nothing is restored (`BACKUP_FAILED`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RestoreBody"];
+                };
+            };
+            responses: {
+                /** @description What was restored */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RestoreResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `BACKUP_FAILED` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/usage": {
         parameters: {
             query?: never;
@@ -17373,6 +17904,8 @@ export interface components {
             searchProfile: string | null;
             /** @description Deprecated ceiling on every agent context window (tokens). null = none: the window follows each agent model. Initial value: `TEAM_CONTEXT_CAP`. */
             contextCap: number | null;
+            /** @description The working context window (tokens) of every heartbeat session, independent of the chat window of the agent and clamped to its model window. History is summarized early so each beat starts small. Default 64000. */
+            heartbeatContextWindow: number;
             /** @description A custom connector is re-checked in the background when its last check is older than this (ms); 0 = on every listing; null = never. Default 60000. */
             connectorHealthTtlMs: number | null;
             /** @description A failed check of a connected server is retried once after this long (ms) before the connection counts as down. Default 3000. */
@@ -17403,6 +17936,14 @@ export interface components {
             tasksRetentionDays: number;
             /** @description Library history kept this many days; 0 = keep. Default 180. */
             libraryHistoryRetentionDays: number;
+            /** @description Automatic backups: a snapshot every day at `backupTime` and one at start-up when none was taken today. Default on. Manual and before-risky-operation snapshots always work. */
+            backupEnabled: boolean;
+            /** @description Local time (team timezone) of the daily snapshot, HH:MM. Default 02:00. */
+            backupTime: string;
+            /** @description The newest snapshot of each of this many days is kept. Default 14. */
+            backupKeepDaily: number;
+            /** @description The newest snapshot of each of this many weeks is kept. Default 8. */
+            backupKeepWeekly: number;
             /** @description 0 until a person changed something. */
             updatedAt: number;
         };
@@ -17526,6 +18067,7 @@ export interface components {
             searchModel?: string | null;
             searchProfile?: string | null;
             contextCap?: number | null;
+            heartbeatContextWindow?: number;
             connectorHealthTtlMs?: number | null;
             connectorProbeRetryMs?: number;
             longRunMaxCostUsd?: number;
@@ -17541,6 +18083,98 @@ export interface components {
             routineRunsRetentionDays?: number;
             tasksRetentionDays?: number;
             libraryHistoryRetentionDays?: number;
+            backupEnabled?: boolean;
+            backupTime?: string;
+            backupKeepDaily?: number;
+            backupKeepWeekly?: number;
+        };
+        BackupList: {
+            /** @description `TEAM_BACKUP_DIR`: mount it on a persistent volume. */
+            dir: string;
+            backups: components["schemas"]["Backup"][];
+            lastVerifiedAt: number | null;
+            /** @description No verified snapshot exists, or the newest is older than 36 hours. */
+            stale: boolean;
+            enabled: boolean;
+            /** @description HH:MM in the team timezone. */
+            time: string;
+        };
+        Backup: {
+            /** @example team-20261022T020000123Z-ab12 */
+            id: string;
+            createdAt: number;
+            /** @description `daily`, `startup`, `manual`, or `before: <operation>` (taken before a risky one). */
+            reason: string;
+            /** @enum {string} */
+            kind: "daily" | "startup" | "manual" | "before";
+            dbBytes: number;
+            /** @description Size of the files export (zip); null = none. */
+            filesBytes: number | null;
+            /** @description Library and memory files in the snapshot. */
+            fileCount: number;
+            agentCount: number;
+            /** @description `PRAGMA integrity_check` of the copy answered `ok` and its row counts of library files and agents matched the live database. */
+            verified: boolean;
+            error: string | null;
+            exportError: string | null;
+        };
+        BackupCreated: {
+            ok: boolean;
+            error: string | null;
+            backup: components["schemas"]["Backup"] & (Record<string, never> | null);
+        };
+        BackupEntries: {
+            files: {
+                path: string;
+                size: number;
+                updatedAt: number;
+            }[];
+        };
+        RestorePlan: {
+            path: string;
+            /** @enum {string} */
+            mode: "missing" | "all";
+            counts: {
+                create: number;
+                replace: number;
+                keep: number;
+                same: number;
+            };
+            entries: {
+                path: string;
+                /** @enum {string} */
+                action: "create" | "replace" | "keep" | "same";
+                snapshotSize: number;
+                snapshotUpdatedAt: number;
+                liveSize: number | null;
+                liveUpdatedAt: number | null;
+                liveIsNewer: boolean;
+            }[];
+            truncated: boolean;
+        };
+        RestoreBody: {
+            /**
+             * @description One file, a folder, or `/` for every library and memory file of the snapshot.
+             * @example /memories/agents
+             */
+            path: string;
+            /**
+             * @description `missing`: only files that are gone; `all`: also replace files whose content differs (the previous version stays in the history).
+             * @default missing
+             * @enum {string}
+             */
+            mode: "missing" | "all";
+        };
+        RestoreResult: {
+            created: number;
+            replaced: number;
+            unchanged: number;
+            kept: number;
+            failed: {
+                path: string;
+                error: string;
+            }[];
+            safetyBackupId: string | null;
         };
         WorkspaceUsage: {
             /** @description Spend and limit of the workspace budget this month (UTC), from the budget ledger: not limited by log retention, the same numbers as the briefing cost line. */
@@ -19380,6 +20014,17 @@ export interface components {
             } | null;
             /** @description Newest first (the last 50). */
             beats: components["schemas"]["BeatRecord"][];
+            /** @description The last 7 days of this heartbeat. */
+            week: {
+                /** @description Beats that called the model. */
+                beats: number;
+                /** @description Beats skipped without a model call because nothing was new. */
+                unchanged: number;
+                /** @description New items the beats reported. */
+                items: number;
+                /** @description What the heartbeat model calls cost. */
+                costUsd: number;
+            };
             digest: components["schemas"]["DigestView"];
         };
         HeartbeatConfig: {
@@ -19392,6 +20037,8 @@ export interface components {
             activeTo: string;
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone: string | null;
+            /** @description Also start an early beat when a watched chat gets new messages. Off by default (also for agents that existed before): every beat is a model call and the scheduled beat already sees the new messages. */
+            afterActivity: boolean;
         };
         StandingOrder: {
             id: string;
@@ -19520,6 +20167,8 @@ export interface components {
             activeTo?: string;
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
+            /** @description Also start an early beat when a watched chat gets new messages. Off by default (also for agents that existed before): every beat is a model call and the scheduled beat already sees the new messages. */
+            afterActivity?: boolean;
         };
         BeatRun: {
             started: boolean;

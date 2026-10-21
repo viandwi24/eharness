@@ -96,6 +96,10 @@ export const HeartbeatConfigSchema = z
     timezone: z.string().min(1).max(64).nullable().openapi({
       description: 'IANA timezone; null = the team timezone (workspace setting).',
     }),
+    afterActivity: z.boolean().openapi({
+      description:
+        'Also start an early beat when a watched chat gets new messages. Off by default (also for agents that existed before): every beat is a model call and the scheduled beat already sees the new messages.',
+    }),
   })
   .openapi('HeartbeatConfig')
 
@@ -197,6 +201,16 @@ export const HeartbeatSchema = z
       })
       .nullable(),
     beats: z.array(BeatRecordSchema).openapi({ description: 'Newest first (the last 50).' }),
+    week: z
+      .object({
+        beats: z.number().int().openapi({ description: 'Beats that called the model.' }),
+        unchanged: z.number().int().openapi({
+          description: 'Beats skipped without a model call because nothing was new.',
+        }),
+        items: z.number().int().openapi({ description: 'New items the beats reported.' }),
+        costUsd: z.number().openapi({ description: 'What the heartbeat model calls cost.' }),
+      })
+      .openapi({ description: 'The last 7 days of this heartbeat.' }),
     digest: DigestViewSchema,
   })
   .openapi('Heartbeat')

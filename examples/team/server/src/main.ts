@@ -54,11 +54,13 @@
  *   TEAM_EVENTS_RETENTION_HOURS / TEAM_EVENTS_MAX_ROWS   events feed retention (default 72 h, 100000 rows; 0 hours = by count only)
  *   TEAM_ROUTINE_RUNS_RETENTION_DAYS / TEAM_TASKS_RETENTION_DAYS / TEAM_LIBRARY_HISTORY_RETENTION_DAYS   finished routine runs, finished tasks, library history (default 30 / 90 / 180 days; 0 = keep)
  *
+ *   TEAM_BACKUP_DIR   where backups are written (default `backups/` next to the database; mount it on a persistent volume and copy it off the server). Schedule and retention are in Settings > Backups
+ *
  * New to this file? docs/guides/walkthrough-server.md follows a request through it: the boot
  * order (providers, connectors, then the reconcile pass of section 6-7), the activity feed and its
  * retention (13), `createTeamHttp` (14) and `Bun.serve` with `idleTimeout: 0` (16).
  */
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
@@ -78,6 +80,7 @@ import {
   originOf,
 } from './app/auth.ts'
 import { suggestAuthority } from './app/authority-suggestions.ts'
+import { createBackupScheduler } from './app/backups.ts'
 import { briefingsText } from './app/briefings.ts'
 import { settleTakeovers } from './app/browser.ts'
 import { checkChatBody, uploadFile } from './app/chat.ts'
@@ -161,6 +164,7 @@ import {
   createArtifactService,
 } from './infra/artifacts/index.ts'
 import { KEEP_PRIVATE_OPTION, PUBLISH_OPTION } from './infra/artifacts/plugin.ts'
+import { createBackupService } from './infra/backup/backup-service.ts'
 import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
 import { seedBuiltinSkills } from './infra/bigdata/skills.ts'
 import { createBrowserHook } from './infra/browser/hook.ts'
@@ -344,6 +348,13 @@ export interface ServerConfig {
    * media give their disk space back. Needs free disk of about the database size; see the README.
    */
   dbCompact?: boolean
+  /**
+   * Directory of the database snapshots (default `TEAM_BACKUP_DIR`, else `backups/` next to the
+   * database file; an in-memory database without one has no backups).
+   */
+  backupDir?: string
+  /** Automatic backups: the schedule check every `everyMs` (default 1 min; 0 = never, also off when `reconcile.everyMs` is 0). */
+  backups?: { everyMs?: number }
   /** Retention of finished routine runs, finished tasks, library history and media (days; 0 = keep). */
   retention?: TableRetention
   /** Agent health scan (anomaly findings, bell notice for new high ones): every `everyMs` (default 10 min; 0 = never; off when `reconcile.everyMs` is 0). */
@@ -1029,6 +1040,10 @@ export function compose(config: ServerConfig): Server {
     store: chatToolsStore,
     agentConnectors: (agent) => connectors.agentConnectors(agent),
   })
+  const backupDir =
+    config.backupDir ??
+    ((config.env ?? process.env).TEAM_BACKUP_DIR?.trim() || undefined) ??
+    (config.dbFile === ':memory:' ? undefined : join(dirname(config.dbFile), 'backups'))
   const deps: Deps = {
     agents,
     persona: personaStore,
@@ -1036,6 +1051,15 @@ export function compose(config: ServerConfig): Server {
     threads: threadStore,
     notifications: sqliteNotificationStore(conn.sqlite),
     alarms: sqliteAlarmStore(conn.sqlite),
+    ...(backupDir === undefined
+      ? {}
+      : {
+          backups: createBackupService({
+            sqlite: conn.sqlite,
+            dir: backupDir,
+            onChange: onFileChange,
+          }),
+        }),
     // alarms reach the owner in their direct chat (the channels' outbox); no chat: the bell
     alarmPush: {
       push: async (text) => (await channelGateway?.notifyOwners(text)) ?? 'unavailable',
@@ -1705,6 +1729,14 @@ export function compose(config: ServerConfig): Server {
         )
       : undefined
   alarmTimer?.unref()
+  // backups: a snapshot at the time set in Settings, and one at start-up when none was taken today
+  const backupScheduler = createBackupScheduler(deps)
+  const backupEveryMs = config.reconcile?.everyMs === 0 ? 0 : (config.backups?.everyMs ?? 60_000)
+  const backupTick = (startup = false): void =>
+    void backupScheduler.tick(startup).catch((error) => systemAlarm('backup', error))
+  const backupTimer = backupEveryMs > 0 ? setInterval(backupTick, backupEveryMs) : undefined
+  backupTimer?.unref()
+  if (backupEveryMs > 0) backupTick(true)
 
   // chat, sessions, attention answers and the activity feed: the library's HTTP module
   const harness = createTeamHttp({
@@ -1795,6 +1827,7 @@ export function compose(config: ServerConfig): Server {
       if (timer !== undefined) clearInterval(timer)
       if (healthTimer !== undefined) clearInterval(healthTimer)
       if (alarmTimer !== undefined) clearInterval(alarmTimer)
+      if (backupTimer !== undefined) clearInterval(backupTimer)
       if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)

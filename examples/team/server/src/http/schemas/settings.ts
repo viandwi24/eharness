@@ -52,6 +52,10 @@ export const SettingsSchema = z
       description:
         'Deprecated ceiling on every agent context window (tokens). null = none: the window follows each agent model. Initial value: `TEAM_CONTEXT_CAP`.',
     }),
+    heartbeatContextWindow: z.number().int().min(16000).openapi({
+      description:
+        'The working context window (tokens) of every heartbeat session, independent of the chat window of the agent and clamped to its model window. History is summarized early so each beat starts small. Default 64000.',
+    }),
     connectorHealthTtlMs: z.number().int().min(0).max(86400000).nullable().openapi({
       description:
         'A custom connector is re-checked in the background when its last check is older than this (ms); 0 = on every listing; null = never. Default 60000.',
@@ -102,6 +106,22 @@ export const SettingsSchema = z
     libraryHistoryRetentionDays: z.number().int().min(0).openapi({
       description: 'Library history kept this many days; 0 = keep. Default 180.',
     }),
+    backupEnabled: z.boolean().openapi({
+      description:
+        'Automatic backups: a snapshot every day at `backupTime` and one at start-up when none was taken today. Default on. Manual and before-risky-operation snapshots always work.',
+    }),
+    backupTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .openapi({
+        description: 'Local time (team timezone) of the daily snapshot, HH:MM. Default 02:00.',
+      }),
+    backupKeepDaily: z.number().int().min(1).max(365).openapi({
+      description: 'The newest snapshot of each of this many days is kept. Default 14.',
+    }),
+    backupKeepWeekly: z.number().int().min(0).max(520).openapi({
+      description: 'The newest snapshot of each of this many weeks is kept. Default 8.',
+    }),
     updatedAt: z.number().int().openapi({ description: '0 until a person changed something.' }),
   })
   .openapi('Settings')
@@ -127,6 +147,7 @@ export const SettingsPatchSchema = z
     searchModel: z.string().min(1).max(200).nullable().optional(),
     searchProfile: z.string().min(1).max(64).nullable().optional(),
     contextCap: z.number().int().min(16000).nullable().optional(),
+    heartbeatContextWindow: z.number().int().min(16000).max(10000000).optional(),
     connectorHealthTtlMs: z.number().int().min(0).max(86400000).nullable().optional(),
     connectorProbeRetryMs: z.number().int().min(0).max(60000).optional(),
     longRunMaxCostUsd: z.number().min(0).max(100000).optional(),
@@ -142,6 +163,13 @@ export const SettingsPatchSchema = z
     routineRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
     tasksRetentionDays: z.number().int().min(0).max(36500).optional(),
     libraryHistoryRetentionDays: z.number().int().min(0).max(36500).optional(),
+    backupEnabled: z.boolean().optional(),
+    backupTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
+    backupKeepDaily: z.number().int().min(1).max(365).optional(),
+    backupKeepWeekly: z.number().int().min(0).max(520).optional(),
   })
   .openapi('SettingsPatch')
 

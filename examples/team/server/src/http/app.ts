@@ -18,6 +18,7 @@ import { agentRoutes } from './routes/agents.ts'
 import { alarmRoutes } from './routes/alarms.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
 import { authRoutes } from './routes/auth.ts'
+import { backupRoutes } from './routes/backups.ts'
 import { briefingRoutes } from './routes/briefings.ts'
 import { browserRoutes } from './routes/browser.ts'
 import { channelRoutes } from './routes/channels.ts'
@@ -126,6 +127,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
         'Browsers agents drive (docs/plans/P48-browser.md): adapters and their managed runtimes (download, start, stop), profiles with their logins, resource usage, screenshots, and the live view with takeover (a WebSocket).',
     },
     { name: 'settings', description: 'Workspace settings read by the agent factory.' },
+    {
+      name: 'backups',
+      description:
+        'Verified snapshots of the whole database and a readable export of every library and memory file; restore of files (new versions, nothing deleted).',
+    },
     {
       name: 'providers',
       description:
@@ -390,6 +396,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', libraryRoutes(options.deps))
   app.route('/', artifactRoutes(options.deps))
   app.route('/', settingsRoutes(options.deps))
+  app.route('/', backupRoutes(options.deps))
   app.route('/', usageRoutes(options.deps))
   app.route('/', providerRoutes(options.deps))
   app.route('/', connectorRoutes(options.deps))

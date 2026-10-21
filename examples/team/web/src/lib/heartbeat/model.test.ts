@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import type { BeatRecord, HeartbeatConfig, StandingOrder } from './model';
-import { BEAT_LABEL, beatDetail, beatTone, decisionLine, filesLink, formErrors, formOf, groupOrders, NO_ORDERS, orderTiming, orderWhere, orderWho, patchOf, refLink, scheduleSummary } from './model';
+import { BEAT_LABEL, beatDetail, beatTone, decisionLine, filesLink, formErrors, formOf, groupOrders, NO_ORDERS, orderTiming, orderWhere, orderWho, patchOf, refLink, scheduleSummary, weekSummary } from './model';
 
 const config: HeartbeatConfig = {
 	enabled: true,
 	everyMinutes: 30,
 	activeFrom: '08:00',
 	activeTo: '20:00',
-	timezone: 'UTC'
+	timezone: 'UTC',
+	afterActivity: false
 };
 const beat = (over: Partial<BeatRecord>): BeatRecord => ({
 	id: '1',
@@ -19,6 +20,16 @@ const beat = (over: Partial<BeatRecord>): BeatRecord => ({
 	items: [],
 	duplicates: 0,
 	...over
+});
+
+describe('heartbeat week and activity switch', () => {
+	test('the activity switch is part of the patch', () => {
+		expect(patchOf(config, { ...formOf(config), afterActivity: true })).toEqual({ afterActivity: true });
+	});
+	test('the week line names beats, skipped beats, useful items and cost', () => {
+		expect(weekSummary({ beats: 12, unchanged: 31, items: 3, costUsd: 0.4234 })).toBe('12 beats this week, 31 skipped (nothing new) · 3 useful items · $0.42 this week');
+		expect(weekSummary({ beats: 1, unchanged: 0, items: 1, costUsd: 0.001 })).toBe('1 beat this week · 1 useful item · <$0.01 this week');
+	});
 });
 
 describe('heartbeat form', () => {
@@ -85,7 +96,7 @@ describe('standing orders', () => {
 	});
 
 	test('the form has only the advanced fields; decisions read as an audit line; the notes link points at the file', () => {
-		expect(Object.keys(formOf(config)).sort()).toEqual(['activeFrom', 'activeTo', 'everyMinutes', 'timezone']);
+		expect(Object.keys(formOf(config)).sort()).toEqual(['activeFrom', 'activeTo', 'afterActivity', 'everyMinutes', 'timezone']);
 		expect(decisionLine({ decision: 'report', reason: 'due at 15:00' })).toBe('Reported: due at 15:00');
 		expect(decisionLine({ decision: 'say', reason: 'old word' })).toBe('Reported: old word');
 		expect(decisionLine({ decision: 'note' })).toBe('Noted');

@@ -13,6 +13,7 @@ import { conflict } from '../domain/errors.ts'
 import {
   activityLines,
   activityTotal,
+  addTally,
   type BeatDecision,
   type BeatItem,
   type BeatRecord,
@@ -42,6 +43,7 @@ import {
   MAX_POST_HISTORY_MS,
   noteLine,
   notesPath,
+  observationKey,
   observe,
   type PromptOrder,
   parseBeatResult,
@@ -52,8 +54,11 @@ import {
   type RequestText,
   splitNew,
   statusText,
+  unchangedSince,
   type WatchNode,
+  WEEK_MS,
   watchedNodes,
+  weekTally,
 } from '../domain/heartbeat.ts'
 import { checkNoteEvidence } from '../domain/heartbeat-notes.ts'
 import type { HygieneFinding } from '../domain/order-hygiene.ts'
@@ -148,6 +153,17 @@ export interface HeartbeatView {
   } | null
   /** Newest first. */
   beats: BeatRecord[]
+  /** The last 7 days: what the heartbeat did and what it cost. */
+  week: {
+    /** Beats that called the model. */
+    beats: number
+    /** Beats skipped without a model call because nothing was new. */
+    unchanged: number
+    /** New items the beats reported. */
+    items: number
+    /** What its model calls cost (the call log; older rows may be pruned). */
+    costUsd: number
+  }
   /** `timezone` as stored (null = the team timezone), `effectiveTimezone` as used. */
   digest: DigestConfig & { effectiveTimezone: string; buffered: number; lastSentAt: number | null }
 }
@@ -206,11 +222,23 @@ export async function getHeartbeat(deps: Deps, idOrSlug: string): Promise<Heartb
             lastFireAt: routine.lastFireAt,
           },
     beats: deps.heartbeat.store.state(agent.id).beats,
+    week: weeklyUse(deps, agent.id, now),
     digest: digestView(deps),
   }
 }
 
 const DAY_MS = 24 * 3_600_000
+
+/** Beats, items and cost of an agent's heartbeat over the last 7 days. */
+function weeklyUse(deps: Deps, agentId: string, now: number): HeartbeatView['week'] {
+  const t = weekTally(deps.heartbeat.store.state(agentId).tally, now)
+  const costUsd = deps.modelCalls.stats({
+    from: now - WEEK_MS,
+    to: now,
+    sessionId: `heartbeat:${agentId}`,
+  }).totals.costUsd
+  return { beats: t.ran, unchanged: t.unchanged, items: t.items, costUsd }
+}
 
 /** Today's notes file of an agent (day of the team timezone) and whether it exists. */
 async function todaysNotes(
@@ -668,7 +696,8 @@ export async function planActivityWake(
   const agent = deps.agents.get(agentId)
   if (agent === undefined || agent.archivedAt !== null) return undefined
   const config = effectiveConfig(deps, agent)
-  if (!config.enabled) return undefined
+  // an early beat is a model call: only when the owner turned it on for this agent
+  if (!config.enabled || !config.afterActivity) return undefined
   if (!inActiveHours(input.at, { ...config, timezone: heartbeatTimezone(deps, config) })) {
     return undefined
   }
@@ -762,6 +791,7 @@ export async function beginBeat(
     return skip('the previous beat is still running')
   }
   if (trigger === 'activity') {
+    if (!config.afterActivity) return skip('early beats on chat activity are off')
     if (state.last !== undefined && at - state.last.at < ACTIVITY_MIN_GAP_MS) {
       return skip('too soon after the previous beat')
     }
@@ -803,6 +833,45 @@ export async function beginBeat(
   const grants = grantsFor(deps, agent.id, parsed.orders, at)
   const weekly =
     trigger === 'schedule' ? await weeklyReview(deps, agent, parsed.orders, at) : undefined
+  // the deterministic pre-check: the same orders and checklist as the beat that last ran, no new
+  // chat messages, no finding it was not shown, nothing the model must fetch from outside, no
+  // supervisor finding and no weekly review = a model call could not learn anything
+  const sinceLast = state.last?.at
+  const lookOutside =
+    parsed.plain.length > 0 ||
+    parsed.active.some(
+      (o) => o.needs.length > 0 || (o.kind === 'deadline' && o.due !== undefined && o.due <= at),
+    )
+  if (
+    trigger === 'schedule' &&
+    sinceLast !== undefined &&
+    !lookOutside &&
+    weekly === undefined &&
+    (supervision === undefined || supervision.items.length === 0)
+  ) {
+    const findings = splitNew(await observeTeam(deps, at), state.fingerprints, at).fresh.map(
+      (f) => f.fingerprint,
+    )
+    const newMessages = activityTotal(await activityOf(deps, agent.id, sinceLast, at))
+    const key = observationKey({ orders: parsed.orders, plain: parsed.plain })
+    if (unchangedSince(state.seen, { key, findings, newMessages })) {
+      if (supervision?.deep === true) markDeepDone(deps, agent.id, at)
+      clearSupervision(deps, agent.id, at)
+      deps.heartbeat.store.updateState(
+        agent.id,
+        (s) => ({ ...s, tally: addTally(s.tally, at, { unchanged: 1 }) }),
+        at,
+      )
+      return skip('nothing new since the last beat')
+    }
+  }
+  const seenKey = observationKey({ orders: parsed.orders, plain: parsed.plain })
+  const seenFindings =
+    trigger === 'deadline'
+      ? (state.seen?.findings ?? [])
+      : splitNew(await observeTeam(deps, at), state.fingerprints, at).fresh.map(
+          (f) => f.fingerprint,
+        )
   // the gate of this beat: it may send only to the chats of the active orders
   const chats = new Map<string, OrderDestination>()
   for (const o of parsed.active)
@@ -812,6 +881,12 @@ export async function beginBeat(
     (s) => ({
       ...s,
       last: { at, trigger },
+      // a deadline beat looks at one order only: it says nothing about the others
+      seen:
+        trigger === 'deadline'
+          ? (s.seen ?? { key: seenKey, findings: [] })
+          : { key: seenKey, findings: seenFindings },
+      tally: addTally(s.tally, at, { ran: 1 }),
       window: { since, trigger },
       allowed: [...chats.values()],
       grants,
@@ -967,6 +1042,7 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
           ...pruneFingerprints(s.fingerprints, at),
           ...Object.fromEntries(fresh.map((i) => [i.fingerprint, at])),
         },
+        tally: addTally(s.tally, at, { items: fresh.length }),
         beats,
       }
     },

@@ -183,6 +183,43 @@ describe('agent context window over HTTP', () => {
     expect(stats.context.window).toBe(32_000)
   })
 
+  test('a heartbeat session has its own small window: 64k by default, a setting, clamped to the model, summarized early', async () => {
+    const server = await boot()
+    const a = await create(server, { contextWindow: 256_000 })
+    const def = server.deps.agents.get(a.id)
+    if (def === undefined) throw new Error('no agent')
+    await server.factory.prepare(def)
+    const beat = async (): Promise<{ window: number; summarizeAt: number }> => {
+      const stats = await server.factory.openSession(def, `heartbeat:${a.id}`).stats()
+      return { window: stats.window, summarizeAt: stats.summarizeAt }
+    }
+    // the chat keeps its own window; the beat does not follow it
+    expect((await statsOf(server, a.id)).context.window).toBe(256_000)
+    expect(await beat()).toEqual({ window: 64_000, summarizeAt: 32_000 })
+    // the workspace setting
+    const set = await server.app.request(
+      '/settings',
+      send('PATCH', { heartbeatContextWindow: 20_000 }),
+    )
+    expect(set.status).toBe(200)
+    expect(await beat()).toEqual({ window: 20_000, summarizeAt: 10_000 })
+    expect(
+      (await server.app.request('/settings', send('PATCH', { heartbeatContextWindow: 100 })))
+        .status,
+    ).toBe(400)
+    // never above the model's own window
+    await server.app.request('/settings', send('PATCH', { heartbeatContextWindow: 500_000 }))
+    await server.app.request(
+      `/agents/${a.id}`,
+      send('PATCH', { model: 'small/model', contextWindow: null }),
+    )
+    const small = server.deps.agents.get(a.id)
+    if (small === undefined) throw new Error('no agent')
+    await server.factory.prepare(small)
+    const clamped = await server.factory.openSession(small, `heartbeat:${a.id}`).stats()
+    expect(clamped.window).toBe(32_000)
+  })
+
   test('an existing chat session uses new limits at its next turn: agent edits and the workspace default model', async () => {
     const server = await boot()
     const a = await create(server)

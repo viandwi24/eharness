@@ -12,6 +12,7 @@ import type {
   NewArtifact,
   SignedUrl,
 } from '../domain/artifacts.ts'
+import type { BackupRecord, RestoreMode, RestorePlan, RestoreResult } from '../domain/backups.ts'
 import type { Briefing, Notification, NotificationKind } from '../domain/briefings.ts'
 import type { BrowserDriver, BrowserInfo, BrowserRuntimeView } from '../domain/browser.ts'
 import type {
@@ -1342,8 +1343,39 @@ export interface PersonaStore {
   pendingCount(agentId: string): number
 }
 
+/** What a snapshot download answers: the bytes as a stream, with a file name. */
+export interface BackupDownload {
+  stream: ReadableStream<Uint8Array>
+  size: number
+  filename: string
+  mediaType: string
+}
+
+/** Snapshots of the database and restore of files from them (`infra/backup`). */
+export interface BackupPort {
+  /** The directory the snapshots are written to. */
+  readonly dir: string
+  /** Take a verified snapshot. Throws only when no copy could be written at all. */
+  create(reason: string): Promise<BackupRecord>
+  /** Newest first. */
+  list(): BackupRecord[]
+  get(id: string): BackupRecord | undefined
+  remove(id: string): boolean
+  download(id: string, what: 'db' | 'files'): BackupDownload | undefined
+  /** Files of a snapshot under a prefix (`/` = all). */
+  entries(
+    id: string,
+    prefix: string,
+    limit: number,
+  ): Array<{ path: string; size: number; updatedAt: number }> | undefined
+  restorePlan(id: string, scope: string, mode: RestoreMode): RestorePlan | undefined
+  restore(id: string, scope: string, mode: RestoreMode): Promise<RestoreResult | undefined>
+}
+
 export interface Deps {
   agents: AgentRepo
+  /** Snapshots and restore; absent for an in-memory database without `TEAM_BACKUP_DIR`. */
+  backups?: BackupPort
   persona: PersonaStore
   chat: ChatPort
   chatTools: ChatToolsPort

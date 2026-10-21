@@ -21,6 +21,7 @@
 	import * as Field from '#lib/components/ui/field/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import ModelPicker from '#lib/components/app/ModelPicker.svelte';
+	import BackupsSettings from '#lib/components/app/BackupsSettings.svelte';
 	import ProvidersSettings from '#lib/components/app/ProvidersSettings.svelte';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
@@ -35,6 +36,7 @@
 	import WarningIcon from 'phosphor-svelte/lib/Warning';
 	import TimerIcon from 'phosphor-svelte/lib/Timer';
 	import DatabaseIcon from 'phosphor-svelte/lib/Database';
+	import ArchiveIcon from 'phosphor-svelte/lib/Archive';
 	import { isTimezone, timezoneOptions } from '#lib/heartbeat/model.js';
 	import { applyTeamZone } from '#lib/stores/team-zone.svelte.js';
 	import { formatDateTime } from '#lib/time.js';
@@ -51,6 +53,7 @@
 		{ id: 'models', label: 'Models', icon: BrainIcon },
 		{ id: 'limits', label: 'Limits', icon: TimerIcon },
 		{ id: 'data', label: 'Data retention', icon: DatabaseIcon },
+		{ id: 'backups', label: 'Backups', icon: ArchiveIcon },
 		{ id: 'usage', label: 'Usage', icon: ChartBarIcon },
 		{ id: 'rules', label: 'Saved rules', icon: ShieldCheckIcon },
 		{ id: 'memory', label: 'Memory', icon: BrainIcon },
@@ -501,6 +504,8 @@
 							<Button type="submit" size="sm" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
 						</div>
 					</form>
+				{:else if section === 'backups'}
+					<BackupsSettings />
 				{:else if section === 'usage'}
 					<Card.Root>
 						<Card.Header>

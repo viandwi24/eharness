@@ -57,6 +57,12 @@ export interface HeartbeatConfig {
   activeTo: string
   /** IANA timezone of the active hours; null = the team timezone (the workspace setting). */
   timezone: string | null
+  /**
+   * Also start an early beat when a watched chat gets new messages. Off by default: every beat is
+   * a model call, and the scheduled beat already sees the chats' new messages. Existing agents
+   * (nothing stored for it) are off too.
+   */
+  afterActivity: boolean
 }
 
 /** A conversation of one of the agent's channel connections: a node of the gateway's tree. */
@@ -85,6 +91,7 @@ export const DEFAULT_HEARTBEAT: HeartbeatConfig = {
   activeFrom: '08:00',
   activeTo: '20:00',
   timezone: null,
+  afterActivity: false,
 }
 
 /** The default for every agent: on (a beat with nothing to do is skipped without a model call). */
@@ -105,6 +112,8 @@ export function configOf(
     activeFrom: typeof stored.activeFrom === 'string' ? stored.activeFrom : base.activeFrom,
     activeTo: typeof stored.activeTo === 'string' ? stored.activeTo : base.activeTo,
     timezone: stored.timezone === undefined ? base.timezone : stored.timezone,
+    afterActivity:
+      typeof stored.afterActivity === 'boolean' ? stored.afterActivity : base.afterActivity,
   }
 }
 
@@ -154,6 +163,9 @@ export function checkHeartbeatFields(f: Partial<HeartbeatConfig>): void {
   }
   if (f.timezone != null && !isTimezone(f.timezone)) {
     throw invalid(`unknown timezone: ${f.timezone}`, 'INVALID_HEARTBEAT')
+  }
+  if (f.afterActivity !== undefined && typeof f.afterActivity !== 'boolean') {
+    throw invalid('afterActivity must be true or false', 'INVALID_HEARTBEAT')
   }
 }
 
@@ -369,6 +381,96 @@ export interface HeartbeatState {
   review?: { week: string; at: number }
   /** The supervisor duty (`domain/supervisor.ts`): retries made, items shown, memory edits of the beat. */
   supervisor?: SupervisorState
+  /**
+   * What the last beat that ran looked at: the key of its orders and checklist (`observationKey`)
+   * and the findings it was shown. A beat that would see the same, with nothing new in the chats,
+   * is skipped without a model call (`unchangedSince`).
+   */
+  seen?: { key: string; findings: string[] }
+  /** Beats per UTC day (`YYYY-MM-DD`, the last two weeks): what the Heartbeat tab sums for the week. */
+  tally?: Record<string, BeatTally>
+}
+
+/** One day of beats of an agent. */
+export interface BeatTally {
+  /** Beats that called the model. */
+  ran: number
+  /** Beats the server skipped because nothing was new (no model call). */
+  unchanged: number
+  /** New items the beats that ran reported (what the owners can use). */
+  items: number
+}
+
+/** Days of tally kept. */
+export const TALLY_DAYS = 14
+export const WEEK_MS = 7 * 24 * 3_600_000
+
+const utcDay = (at: number): string => new Date(at).toISOString().slice(0, 10)
+
+/** Add to the tally of the day of `at` and drop days older than `TALLY_DAYS`. */
+export function addTally(
+  tally: Readonly<Record<string, BeatTally>> | undefined,
+  at: number,
+  add: Partial<BeatTally>,
+): Record<string, BeatTally> {
+  const day = utcDay(at)
+  const cutoff = utcDay(at - TALLY_DAYS * 24 * 3_600_000)
+  const out: Record<string, BeatTally> = {}
+  for (const [d, t] of Object.entries(tally ?? {})) if (d >= cutoff) out[d] = t
+  const cur = out[day] ?? { ran: 0, unchanged: 0, items: 0 }
+  out[day] = {
+    ran: cur.ran + (add.ran ?? 0),
+    unchanged: cur.unchanged + (add.unchanged ?? 0),
+    items: cur.items + (add.items ?? 0),
+  }
+  return out
+}
+
+/**
+ * True when a model call could learn nothing: the same orders and checklist as the last beat that
+ * ran, no new chat messages, and every finding not reported yet was already shown to that beat.
+ */
+export function unchangedSince(
+  seen: HeartbeatState['seen'],
+  now: { key: string; findings: readonly string[]; newMessages: number },
+): boolean {
+  if (seen === undefined || seen.key !== now.key || now.newMessages > 0) return false
+  const shown = new Set(seen.findings)
+  return now.findings.every((f) => shown.has(f))
+}
+
+/** The beats of the 7 days up to `now` (the days are UTC calendar days, today included). */
+export function weekTally(
+  tally: Readonly<Record<string, BeatTally>> | undefined,
+  now: number,
+): BeatTally {
+  const from = utcDay(now - 6 * 24 * 3_600_000)
+  const out: BeatTally = { ran: 0, unchanged: 0, items: 0 }
+  for (const [d, t] of Object.entries(tally ?? {})) {
+    if (d < from) continue
+    out.ran += t.ran
+    out.unchanged += t.unchanged
+    out.items += t.items
+  }
+  return out
+}
+
+/** A short key of the live orders and the checklist items: what a beat is asked to look at. */
+export function observationKey(input: {
+  orders: ReadonlyArray<{ id: string; text: string; kind: string; active: boolean }>
+  plain: readonly string[]
+}): string {
+  const text = JSON.stringify([
+    input.orders.filter((o) => o.active).map((o) => [o.id, o.kind, o.text]),
+    input.plain,
+  ])
+  // FNV-1a: a key, not a secret
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return `${h.toString(16)}:${text.length}`
 }
 
 export const EMPTY_HEARTBEAT_STATE: HeartbeatState = { fingerprints: {}, beats: [] }

@@ -37,6 +37,13 @@ export function effectiveWindow(input: WindowInput): number {
   return input.ceiling === undefined ? own : Math.min(own, input.ceiling)
 }
 
+/**
+ * Compaction of a heartbeat session: summarize at half of its (small) window, and summarize every
+ * finished beat (`keepLast: 0`), so a beat starts from the summary and its own prompt, never from
+ * the transcripts of the beats before it. The findings live in the beat log and the notes.
+ */
+export const HEARTBEAT_COMPACTION = { summarizeAt: 0.5, keepLast: 0 } as const
+
 /** The ratio the library's `compaction.summarizeAt` takes. */
 export function compactRatio(percent: number): number {
   return clampPercent(percent) / 100

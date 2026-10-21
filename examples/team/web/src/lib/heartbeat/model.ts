@@ -18,6 +18,7 @@ export interface HeartbeatForm {
 	activeFrom: string;
 	activeTo: string;
 	timezone: string;
+	afterActivity: boolean;
 }
 
 export const formOf = (c: HeartbeatConfig): HeartbeatForm => ({
@@ -25,7 +26,8 @@ export const formOf = (c: HeartbeatConfig): HeartbeatForm => ({
 	activeFrom: c.activeFrom,
 	activeTo: c.activeTo,
 	// empty = follow the team timezone (Settings)
-	timezone: c.timezone ?? ''
+	timezone: c.timezone ?? '',
+	afterActivity: c.afterActivity
 });
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -58,8 +60,21 @@ export function patchOf(saved: HeartbeatConfig, f: HeartbeatForm): Record<string
 		if (f[k] !== saved[k]) out[k] = f[k];
 	}
 	// an empty timezone goes back to following the team timezone
+	if (f.afterActivity !== saved.afterActivity) out.afterActivity = f.afterActivity;
 	if (f.timezone.trim() !== (saved.timezone ?? '')) out.timezone = f.timezone.trim() === '' ? null : f.timezone.trim();
 	return out;
+}
+
+/** The cost note under the "after chat activity" switch. */
+export const ACTIVITY_COST_NOTE =
+	'Every early beat is a model call, and the scheduled beat already reads the new messages of the chats it watches. Leave this off unless a standing order must react within minutes.';
+
+/** The week line of the tab: `12 beats, 31 skipped (nothing new), 3 items, $0.42`. */
+export function weekSummary(w: Heartbeat['week']): string {
+	const beats = `${w.beats} beat${w.beats === 1 ? '' : 's'} this week`;
+	const skipped = w.unchanged > 0 ? `, ${w.unchanged} skipped (nothing new)` : '';
+	const items = `${w.items} useful item${w.items === 1 ? '' : 's'}`;
+	return `${beats}${skipped} · ${items} · ${w.costUsd < 0.01 && w.costUsd > 0 ? '<$0.01' : `$${w.costUsd.toFixed(2)}`} this week`;
 }
 
 /** `/files` link of a library path. */
