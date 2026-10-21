@@ -261,15 +261,25 @@ counted.
 
 ### 4.2 Input repair
 
-Models sometimes send an `object` or `array` argument as a JSON-encoded string
-(`"body": "{\"title\":\"x\"}"`). The AI SDK does not validate `jsonSchema()` tools (MCP, OpenAPI), so
-nothing fixes it and the server rejects the call. Before approval and `execute` (inside the input
-refinement, ahead of `tool.before`), the core reads the tool's JSON Schema and, for each property
-whose declared types (`type`, `type: [..]`, `anyOf`/`oneOf`) include `object` or `array` but **not**
-`string`, replaces a string that `JSON.parse`s to exactly that type with the parsed value. Nested
-object properties are visited two levels deep. Untyped properties, properties that allow `string`,
-and invalid JSON are never touched (the tool's own error stays readable). Zod tools are validated by
-the AI SDK first and are unaffected in practice.
+Models sometimes send an argument in the wrong type: an `object`/`array` as a JSON-encoded string
+(`"body": "{\"title\":\"x\"}"`), an id as a number where a string is declared (`[23026]`), or a number
+as a string. The core reads the tool's JSON Schema (`type`, `type: [..]`, `anyOf`/`oneOf`) and applies
+these conservative rules, per property (nested objects two levels deep) and per array item (`items`):
+
+- `object`/`array` declared but not `string`: a string that `JSON.parse`s to exactly that type is parsed;
+- only `string` declared (no `number`/`integer`/`boolean` as the sent type): a number or boolean becomes its
+  string form, unless the result is longer than `maxLength` (that error is left to the model);
+- `number`/`integer` declared but not `string`: a clean finite number string (`"5"`, `"-1.5"`; an integer
+  for `integer`) becomes the number.
+
+Untyped properties, values whose type the schema already allows, and invalid JSON are never touched.
+
+It runs in two places. For `jsonSchema()` tools (MCP, OpenAPI), which the AI SDK does not validate, it
+runs before approval and `execute` (inside the input refinement, ahead of `tool.before`). For every
+other tool the AI SDK validates the input first, so the core also supplies `repairToolCall`: on an
+`InvalidToolInputError` it parses the input, applies the same rules and returns the repaired call only
+if something changed; otherwise it returns `null` (then `config.repairToolCall`, if set, then the
+readable error for the model).
 
 Each repair raises `W_TOOL_INPUT_REPAIRED` once per agent, tool and property (`details`: `tool`,
 `property`; nested properties use dotted paths). Nothing else is recorded.
@@ -282,7 +292,7 @@ Each repair raises `W_TOOL_INPUT_REPAIRED` once per agent, tool and property (`d
 | Step timeout | `settings.timeout.stepMs` / `chunkMs` / `firstChunkMs` → abort chunk → stop `'timeout'` (spec 04 §2) |
 | Turn timeout | `loop.turnTimeoutMs` (the core's own timer) |
 | Provider retries | `settings.maxRetries` (request) and `settings.streamRetries` (after streaming started; `reset-step` forwarded) |
-| Malformed tool calls | `config.repairToolCall` → AI SDK `repairToolCall`; otherwise the invalid call becomes a tool error the model can read |
+| Malformed tool calls | the core's input repair (§4.2), then `config.repairToolCall` → AI SDK `repairToolCall`; otherwise the invalid call becomes a tool error the model can read |
 | Input normalization | `tool.before` hooks (via `experimental_refineToolInput`) |
 
 **Preliminary results.** A tool whose `execute` returns an `AsyncIterable` streams preliminary

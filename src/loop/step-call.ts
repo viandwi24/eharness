@@ -87,9 +87,11 @@ export async function streamStep(st: StepsCtx, req: StepRequest): Promise<StepRu
       approvalSecret: st.rt.agent.config.approval?.secret,
       refineToolInput: st.registry.refine,
     }),
-    ...(st.rt.agent.config.repairToolCall === undefined
-      ? {}
-      : { repairToolCall: st.rt.agent.config.repairToolCall }),
+    // the core's input repair first (spec 09 §4.2), then the agent's own `repairToolCall`
+    repairToolCall: (async (options: Parameters<typeof st.registry.repair>[0]) =>
+      (await st.registry.repair(options)) ??
+      (await st.rt.agent.config.repairToolCall?.(options)) ??
+      null) as Parameters<typeof streamText>[0]['repairToolCall'],
     ...(st.rt.agent.config.telemetry === undefined
       ? {}
       : { telemetry: st.rt.agent.config.telemetry }),

@@ -9,7 +9,13 @@
  *
  * @see docs/specs/02-context-registry.md#8-registry-api-internal-but-tested
  */
-import type { GenericToolApprovalFunction, Tool, ToolInputRefinement, ToolSet } from 'ai'
+import type {
+  GenericToolApprovalFunction,
+  Tool,
+  ToolCallRepairFunction,
+  ToolInputRefinement,
+  ToolSet,
+} from 'ai'
 import type {
   ApprovalConfig,
   ToolCallsConfig,
@@ -46,6 +52,7 @@ import { TOOL_SEARCH_NAME, type TurnToolEntry } from './tools.ts'
 import {
   type ApprovalGrants,
   buildApproval,
+  buildCallRepair,
   buildRefinement,
   DEFAULT_MAX_IDENTICAL_RESULTS,
   DEFAULT_MAX_TOOL_CALLS_PER_STEP,
@@ -84,6 +91,8 @@ export interface TurnRegistry {
   /** Signature of the request tool declarations ('' = none): cache-bust detection per session. */
   requestToolsSignature: string
   refine: ToolInputRefinement<ToolSet> | undefined
+  /** Input repair of a call that failed validation (AI SDK `repairToolCall`, spec 09 §4.2). */
+  repair: ToolCallRepairFunction<ToolSet>
   approval: GenericToolApprovalFunction<ToolSet, never, unknown> | undefined
   /** Tool set for one step: deferred tools in `discovered` become non-deferred copies. */
   toolsForStep(discovered: ReadonlySet<string>): ToolSet
@@ -436,6 +445,7 @@ export async function resolveTurnRegistry(args: {
     requestTools: requestBuilt?.meta ?? new Map(),
     requestToolsSignature: requestBuilt?.signature ?? '',
     refine: buildRefinement(toolOrder, deps, tools),
+    repair: buildCallRepair(deps),
     approval: buildApproval(args.approval, deps, args.grants),
     skills: skills.entries,
     toolsForStep(discovered) {

@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { tool } from 'ai'
+import { z } from 'zod'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { mcpServerSource } from '../mcp/index.ts'
@@ -101,5 +103,121 @@ describe('tool input repair (spec 09 §4.2)', () => {
     expect(
       warnings.filter((w) => w.code === 'W_TOOL_INPUT_REPAIRED').map((w) => w.details?.property),
     ).toEqual(['maybe', 'nested.inner'])
+  })
+
+  test('JSON Schema tools: numbers become strings, clean number strings become numbers, per item', async () => {
+    const seen: Array<Record<string, unknown>> = []
+    const server = fakeMcpServer([
+      {
+        name: 'typed',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            ids: { type: 'array', items: { type: 'string' } },
+            count: { type: 'integer' },
+            ratio: { type: 'number' },
+            either: { type: ['string', 'number'] },
+            short: { type: 'string', maxLength: 2 },
+          },
+        },
+        call: (a) => {
+          seen.push(a)
+          return 'ok'
+        },
+      },
+    ])
+    const agent = defineHarnessAgent({
+      model: scriptedModel([
+        {
+          toolCalls: [
+            {
+              toolName: 'api_typed',
+              input: { ids: [1, 'b', true], count: '3', ratio: '1.5', either: 7, short: 12345 },
+            },
+            { toolName: 'api_typed', input: { count: '3.5', ratio: ' 2', either: '7' } },
+          ],
+        },
+        { text: 'done' },
+      ]),
+      contextWindow: 100_000,
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
+      logger: silent,
+      mcp: [mcpServerSource({ name: 'api', transport: () => server.transport() })],
+    })
+    await agent.session('s1').send('go').result
+    await agent.close()
+    expect(seen[0]).toEqual({
+      ids: ['1', 'b', 'true'],
+      count: 3,
+      ratio: 1.5,
+      either: 7,
+      short: 12345,
+    })
+    expect(seen[1]).toEqual({ count: '3.5', ratio: ' 2', either: '7' })
+  })
+})
+
+describe('tool call repair of zod tools (spec 09 §4.2)', () => {
+  async function runZod(inputs: unknown[]) {
+    const executed: unknown[] = []
+    const warnings: HarnessWarning[] = []
+    const note = tool({
+      description: 'note',
+      inputSchema: z.object({
+        messageIds: z.array(z.string()),
+        noticed: z.string().max(5),
+        limit: z.number().optional(),
+      }),
+      execute: (input) => {
+        executed.push(input)
+        return 'noted'
+      },
+    })
+    const model = scriptedModel([
+      ...inputs.map((input) => ({ toolCalls: [{ toolName: 'note', input }] })),
+      { text: 'done' },
+    ])
+    const agent = defineHarnessAgent({
+      model,
+      contextWindow: 100_000,
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
+      logger: silent,
+      onWarning: (w) => warnings.push(w),
+      tools: { note },
+    })
+    const run = agent.session('s1').send('go')
+    await run.result
+    const messages = await agent.session('s1').messages()
+    await agent.close()
+    return { executed, warnings, text: JSON.stringify(messages) }
+  }
+
+  test('numeric ids for declared strings are repaired and executed once', async () => {
+    const { executed, warnings } = await runZod([{ messageIds: [23026, 23027], noticed: 'ok' }])
+    expect(executed).toEqual([{ messageIds: ['23026', '23027'], noticed: 'ok' }])
+    expect(
+      warnings.filter((w) => w.code === 'W_TOOL_INPUT_REPAIRED').map((w) => w.details?.property),
+    ).toEqual(['messageIds'])
+  })
+
+  test('a number string for a declared number is repaired', async () => {
+    const { executed } = await runZod([{ messageIds: ['a'], noticed: 'ok', limit: '5' }])
+    expect(executed).toEqual([{ messageIds: ['a'], noticed: 'ok', limit: 5 }])
+  })
+
+  test('valid input is untouched', async () => {
+    const input = { messageIds: ['1'], noticed: 'ok', limit: 2 }
+    const { executed, warnings } = await runZod([input])
+    expect(executed).toEqual([input])
+    expect(warnings.filter((w) => w.code === 'W_TOOL_INPUT_REPAIRED')).toHaveLength(0)
+  })
+
+  test('unrepairable and too-long input still reaches the model as a tool error', async () => {
+    const { executed, text } = await runZod([
+      { messageIds: 'nope', noticed: 'ok' },
+      { messageIds: ['1'], noticed: 123456789 },
+    ])
+    expect(executed).toHaveLength(0)
+    expect(text).toContain('Invalid input')
   })
 })

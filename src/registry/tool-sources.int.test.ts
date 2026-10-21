@@ -769,7 +769,7 @@ describe('timeouts and repair (spec 09 §5)', () => {
       execute: async ({ a, b }) => a + b,
     })
     const steps: ScriptedStepInput[] = [
-      { toolCalls: [{ toolName: 'add', input: { a: '1', b: 2 } }] },
+      { toolCalls: [{ toolName: 'add', input: { a: 'one', b: 2 } }] },
       { text: 'done' },
     ]
     const repaired = setup(steps, {

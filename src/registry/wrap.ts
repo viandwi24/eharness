@@ -8,13 +8,15 @@
  * @see docs/specs/01-agent-and-plugins.md#5-hooks
  * @see docs/specs/11-interaction.md#3-tool-approval
  */
-import type {
-  GenericToolApprovalFunction,
-  Tool,
-  ToolApprovalStatus,
-  ToolExecutionOptions,
-  ToolInputRefinement,
-  ToolSet,
+import {
+  type GenericToolApprovalFunction,
+  InvalidToolInputError,
+  type Tool,
+  type ToolApprovalStatus,
+  type ToolCallRepairFunction,
+  type ToolExecutionOptions,
+  type ToolInputRefinement,
+  type ToolSet,
 } from 'ai'
 import type { ApprovalConfig, ToolErrorTextFn } from '../agent/types.ts'
 import { HarnessToolError, type HarnessWarning } from '../errors.ts'
@@ -24,7 +26,7 @@ import { errorText } from '../internal/util.ts'
 import { rehydrateOutputMedia } from '../messages/tool-media.ts'
 import type { ApprovalDecision, HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
-import { inputJsonSchema, repairToolInput } from './input-repair.ts'
+import { inputJsonSchema, repairInputText, repairToolInput } from './input-repair.ts'
 import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
 import { toolTraits } from './risk.ts'
 import { withToolExecute, withToolFields } from './tool-copy.ts'
@@ -433,6 +435,44 @@ function cloneableOutput(name: string, output: unknown): unknown {
 /** Warn once per agent, tool and property about a repaired input. */
 const repairedWarned = new WeakMap<object, Set<string>>()
 
+/** One `W_TOOL_INPUT_REPAIRED` per agent, tool and property. */
+function warnRepaired(deps: ToolWrapDeps, toolName: string, properties: readonly string[]): void {
+  const seen = repairedWarned.get(deps.warn) ?? new Set<string>()
+  repairedWarned.set(deps.warn, seen)
+  for (const property of properties) {
+    const key = `${toolName}\u0000${property}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deps.warn(
+      {
+        code: 'W_TOOL_INPUT_REPAIRED',
+        message: `The model sent '${property}' of tool '${toolName}' in the wrong type; it was converted before the call.`,
+        details: { tool: toolName, property },
+      },
+      key,
+    )
+  }
+}
+
+/**
+ * AI SDK `repairToolCall` for the input repair of spec 09 §4.2: a call whose input failed
+ * validation is retried once with the conservative type repair; `null` leaves the readable error
+ * to the model.
+ */
+export function buildCallRepair(deps: ToolWrapDeps): ToolCallRepairFunction<ToolSet> {
+  return async ({ toolCall, tools, error }) => {
+    if (!InvalidToolInputError.isInstance(error)) return null
+    const tool = tools[toolCall.toolName] as Tool | undefined
+    if (tool === undefined || tool.type === 'provider') return null
+    const schema = await inputJsonSchema(tool)
+    if (schema === undefined) return null
+    const fixed = repairInputText(toolCall.input, schema)
+    if (fixed === undefined) return null
+    warnRepaired(deps, toolCall.toolName, fixed.repaired)
+    return { ...toolCall, input: fixed.text }
+  }
+}
+
 /**
  * Tool input refinement map (AI SDK `experimental_refineToolInput`, named only in `internal/ai-compat.ts`):
  * the input repair of spec 09 §4.2 (JSON-encoded objects and arrays), then the `tool.before` chain.
@@ -453,21 +493,7 @@ export function buildRefinement(
         if (schema !== undefined) {
           const fixed = repairToolInput(current, schema)
           current = fixed.input
-          const seen = repairedWarned.get(deps.warn) ?? new Set<string>()
-          repairedWarned.set(deps.warn, seen)
-          for (const property of fixed.repaired) {
-            const key = `${toolName}\u0000${property}`
-            if (seen.has(key)) continue
-            seen.add(key)
-            deps.warn(
-              {
-                code: 'W_TOOL_INPUT_REPAIRED',
-                message: `The model sent '${property}' of tool '${toolName}' as a JSON string; it was parsed before the call.`,
-                details: { tool: toolName, property },
-              },
-              key,
-            )
-          }
+          warnRepaired(deps, toolName, fixed.repaired)
         }
       }
       if (!hasBefore) return current

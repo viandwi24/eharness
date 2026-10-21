@@ -187,7 +187,7 @@ describe('static and dynamic skills are indistinguishable for the model (golden)
 describe('skill tool input validation', () => {
   test('invalid input becomes an AI SDK tool error the model can read', async () => {
     const { agent, model } = setup(
-      [{ toolCalls: [{ toolName: 'load_skill', input: { name: 42 } }] }, { text: 'done' }],
+      [{ toolCalls: [{ toolName: 'load_skill', input: { name: { not: 'a name' } } }] }, { text: 'done' }],
       { skills: [defineSkill(PINE)] },
     )
     const result = await agent.session('s').send('go').result
