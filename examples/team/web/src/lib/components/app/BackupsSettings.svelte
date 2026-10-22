@@ -10,6 +10,8 @@
 	import * as Alert from '#lib/components/ui/alert/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import CaretDownIcon from 'phosphor-svelte/lib/CaretDown';
 	import * as Card from '#lib/components/ui/card/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Field from '#lib/components/ui/field/index.js';
@@ -120,6 +122,8 @@
 		}
 	}
 
+	/** A menu item with a title and a description under it (the menu item is one line by default). */
+	const TWO_LINE = 'h-auto items-start py-1.5 whitespace-normal';
 	let toDelete = $state<Backup | null>(null);
 	let deleteOpen = $state(false);
 	async function remove(): Promise<void> {
@@ -364,7 +368,7 @@
 		<Card.Header>
 			<Card.Title>Backups</Card.Title>
 			<Card.Description>
-				Written to <span class="font-mono text-xs">{overview?.dir ?? '…'}</span> (<span class="font-mono text-xs">TEAM_BACKUP_DIR</span>): mount it on a persistent volume and copy it off the server. The whole database can be restored from a verified backup, with a safety backup first and a restart of the server.
+				Written to <span class="font-mono text-xs">{overview?.dir ?? '…'}</span>{#if overview?.temporary}: temporary storage, cleared when the container restarts. Download a backup's zip from its Actions to keep it.{:else}: set by <span class="font-mono text-xs">TEAM_BACKUP_DIR</span>; copy it off the server too.{/if} Each backup has two downloads: the workspace zip (readable files of everything) and the database file (the complete copy, for recovering the whole server).
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="flex flex-col gap-3">
@@ -388,7 +392,7 @@
 								<Table.Head>Time</Table.Head>
 								<Table.Head>Reason</Table.Head>
 								<Table.Head>Size</Table.Head>
-								<Table.Head>Files</Table.Head>
+								<Table.Head title="Library and memory files in the backup">Files</Table.Head>
 								<Table.Head>Status</Table.Head>
 								<Table.Head class="text-right">Actions</Table.Head>
 							</Table.Row>
@@ -398,25 +402,62 @@
 								<Table.Row>
 									<Table.Cell class="whitespace-nowrap text-xs">{formatDateTime(b.createdAt)}</Table.Cell>
 									<Table.Cell class="text-xs">{reasonLabel(b)}</Table.Cell>
-									<Table.Cell class="whitespace-nowrap text-xs">{bytesText(b.dbBytes)}<span class="block text-muted-foreground">export {bytesText(b.filesBytes)}</span></Table.Cell>
+									<Table.Cell class="whitespace-nowrap text-xs">database {bytesText(b.dbBytes)}<span class="block text-muted-foreground">zip {bytesText(b.filesBytes)}</span></Table.Cell>
 									<Table.Cell class="text-xs">{b.fileCount}</Table.Cell>
 									<Table.Cell>
 										<Badge variant={b.verified && !b.exportError ? 'success' : b.verified ? 'warning' : 'destructive'} title={verifiedText(b)}>{b.verified ? (b.exportError ? 'No export' : 'Verified') : 'Not verified'}</Badge>
 									</Table.Cell>
 									<Table.Cell class="whitespace-nowrap text-right">
-										<Button variant="ghost" size="sm" disabled={busy === `${b.id}:db`} onclick={() => download(b, 'db')}>Database</Button>
-										<Button variant="ghost" size="sm" disabled={b.filesBytes === null || busy === `${b.id}:files`} onclick={() => download(b, 'files')}>Export</Button>
-										<Button variant="ghost" size="sm" disabled={b.filesBytes === null} onclick={() => startImport({ backupId: b.id }, `the backup of ${formatDateTime(b.createdAt)}`)}>Import</Button>
-										<Button variant="ghost" size="sm" disabled={!b.verified} onclick={() => openRestore(b)}>Restore files</Button>
-										<Button variant="ghost" size="sm" disabled={!b.verified} onclick={() => startDbRestore(b.id, `the backup of ${formatDateTime(b.createdAt)}`)}>Restore whole database…</Button>
-										<Button
-											variant="ghost"
-											size="sm"
-											onclick={() => {
-												toDelete = b;
-												deleteOpen = true;
-											}}>Delete</Button
-										>
+										<DropdownMenu.Root>
+											<DropdownMenu.Trigger>
+												{#snippet child({ props })}
+													<Button {...props} variant="outline" size="sm" aria-label="Backup actions">Actions<CaretDownIcon class="size-3.5" /></Button>
+												{/snippet}
+											</DropdownMenu.Trigger>
+											<DropdownMenu.Content align="end" class="w-80">
+												<DropdownMenu.Label class="text-xs text-muted-foreground">Download</DropdownMenu.Label>
+												<DropdownMenu.Item class={TWO_LINE} disabled={b.filesBytes === null || busy === `${b.id}:files`} onSelect={() => download(b, 'files')}>
+													<div class="flex flex-col">
+														<span>Workspace zip ({bytesText(b.filesBytes)})</span>
+														<span class="text-xs text-muted-foreground">Readable .md and .json of everything: library, memory, agents, programs… Use it to keep a copy or import it.</span>
+													</div>
+												</DropdownMenu.Item>
+												<DropdownMenu.Item class={TWO_LINE} disabled={busy === `${b.id}:db`} onSelect={() => download(b, 'db')}>
+													<div class="flex flex-col">
+														<span>Database file, .db ({bytesText(b.dbBytes)})</span>
+														<span class="text-xs text-muted-foreground">The complete SQLite copy incl. chats and logs, for recovering the whole server. Needs the same encryption keys.</span>
+													</div>
+												</DropdownMenu.Item>
+												<DropdownMenu.Separator />
+												<DropdownMenu.Label class="text-xs text-muted-foreground">Restore from this backup</DropdownMenu.Label>
+												<DropdownMenu.Item class={TWO_LINE} disabled={b.filesBytes === null} onSelect={() => startImport({ backupId: b.id }, `the backup of ${formatDateTime(b.createdAt)}`)}>
+													<div class="flex flex-col">
+														<span>Import workspace…</span>
+														<span class="text-xs text-muted-foreground">Preview what changes, then add what is missing or overwrite. Undoable.</span>
+													</div>
+												</DropdownMenu.Item>
+												<DropdownMenu.Item class={TWO_LINE} disabled={!b.verified} onSelect={() => openRestore(b)}>
+													<div class="flex flex-col">
+														<span>Restore library and memory files…</span>
+														<span class="text-xs text-muted-foreground">One file, a folder or all files, as new versions. Undoable.</span>
+													</div>
+												</DropdownMenu.Item>
+												<DropdownMenu.Item class={TWO_LINE} variant="destructive" disabled={!b.verified} onSelect={() => startDbRestore(b.id, `the backup of ${formatDateTime(b.createdAt)}`)}>
+													<div class="flex flex-col">
+														<span>Restore the whole database…</span>
+														<span class="text-xs">Replaces everything with this backup and restarts the server. A safety backup is taken first.</span>
+													</div>
+												</DropdownMenu.Item>
+												<DropdownMenu.Separator />
+												<DropdownMenu.Item
+													variant="destructive"
+													onSelect={() => {
+														toDelete = b;
+														deleteOpen = true;
+													}}>Delete this backup</DropdownMenu.Item
+												>
+											</DropdownMenu.Content>
+										</DropdownMenu.Root>
 									</Table.Cell>
 								</Table.Row>
 							{/each}
