@@ -32,7 +32,13 @@ export const BackupSchema = z
 
 export const BackupListSchema = z
   .object({
-    dir: z.string().openapi({ description: '`TEAM_BACKUP_DIR`: mount it on a persistent volume.' }),
+    dir: z.string().openapi({
+      description:
+        '`TEAM_BACKUP_DIR`, else a folder in the OS temporary directory (cleared on a container restart).',
+    }),
+    temporary: z.boolean().openapi({
+      description: 'The backups are in temporary storage: download a backup to keep it.',
+    }),
     backups: z.array(BackupSchema),
     lastVerifiedAt: z.number().int().nullable(),
     stale: z.boolean().openapi({

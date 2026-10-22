@@ -314,6 +314,12 @@
 		{:else}
 			<Alert.Root variant="success"><Alert.Title>Last verified backup: {timeAgo(overview.lastVerifiedAt)}</Alert.Title><Alert.Description>{formatDateTime(overview.lastVerifiedAt ?? 0)}</Alert.Description></Alert.Root>
 		{/if}
+		{#if overview.temporary}
+			<Alert.Root data-testid="backups-temporary">
+				<Alert.Title>Backups are kept in temporary storage</Alert.Title>
+				<Alert.Description>They never fill the data volume and a container restart clears them. Download the zip of a backup to keep it (the server can make a new one any time).</Alert.Description>
+			</Alert.Root>
+		{/if}
 	{/if}
 
 	<Card.Root>

@@ -22,7 +22,8 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import type { BackupPort } from '../../app/ports.ts'
 import {
   type BackupRecord,
@@ -363,8 +364,12 @@ export function createBackupService(options: BackupServiceOptions): BackupPort {
   const data = createDataTables(sqlite)
   const dbFile = options.dbFile
 
+  const tmp = resolve(tmpdir())
+  const abs = resolve(dir)
   return {
     dir,
+    // under the OS temporary directory: cleared when the container restarts
+    temporary: abs === tmp || abs.startsWith(`${tmp}${sep}`),
     create,
     data,
     database: {

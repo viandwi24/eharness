@@ -136,7 +136,8 @@
 						<div class="flex justify-between"><span>Oldest</span><span>{storage.backups.oldestAt ? formatDateTime(storage.backups.oldestAt) : '—'}</span></div>
 						<div class="flex justify-between">
 							<span>Disk</span>
-							{#if storage.backups.sameVolume === true}<Badge variant="destructive">Same disk as the database</Badge>
+							{#if storage.backups.temporary}<Badge variant="secondary">Temporary: cleared on restart</Badge>
+							{:else if storage.backups.sameVolume === true}<Badge variant="destructive">Same disk as the database</Badge>
 							{:else if storage.backups.sameVolume === false}<Badge variant="secondary">Another disk</Badge>
 							{:else}<span>—</span>{/if}
 						</div>

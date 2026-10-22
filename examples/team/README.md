@@ -130,7 +130,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_ROUTINE_RUNS_RETENTION_DAYS` / `TEAM_TASKS_RETENTION_DAYS` / `TEAM_LIBRARY_HISTORY_RETENTION_DAYS` | `30` / `90` / `180` | **Initial value only (then Settings):** days kept of finished routine runs, finished tasks (their chat messages stay in the session store) and library history rows (besides the per-path cap); `0` = keep. Pruned at boot and every 10 min together with events |
 | `TEAM_MEDIA_RETENTION_DAYS` | `3` | **Initial value only (then Settings):** screenshots of MCP tools (`/.eharness/tool-media/`, stored as library files, the chat keeps only a small reference) and of the browser (`/.browser/shots/`): days kept; older files are deleted (the chat then shows "screenshot expired"); `0` = keep. Same schedule as the other retention. A new database gives the freed pages back to the disk (`auto_vacuum=INCREMENTAL`); an existing one only reuses them, so the file stops growing but does not shrink until you set `TEAM_DB_COMPACT=1` for one boot (see below) |
 | `TEAM_DB_COMPACT` | off | `1` = convert an existing database to `auto_vacuum=INCREMENTAL` once at boot (a full `VACUUM`: needs free disk of about the database size, blocks writers while it runs, skipped when already converted). Set it, restart once, then unset it |
-| `TEAM_BACKUP_DIR` | `backups/` next to the database | Where snapshots are written (infrastructure). Mount it on a persistent volume. The schedule and retention are in Settings > Backups |
+| `TEAM_BACKUP_DIR` | `team-backups-<hash>/` in the OS temporary directory | Where snapshots are written (infrastructure). By default temporary: backups never fill the data volume and a container restart clears them, so download a backup to keep it. Point it at a persistent volume to keep them across restarts. The schedule and retention are in Settings > Backups |
 | `TEAM_CHANNEL_KEY` | dev key file | 32 bytes, base64: encrypts the channel message log at rest (its own key; dev: `data/channel.key`); `TEAM_CHANNEL_KEY_PREVIOUS` for rotation |
 | `TEAM_TELEGRAM_API_ROOT` | `https://api.telegram.org` | Bot API root of the Telegram bot (a local Bot API server, or a test fake) |
 | `TEAM_TELEGRAM_API_ID` / `TEAM_TELEGRAM_API_HASH` | - | api_id / api_hash of the Telegram account (MTProto) channel, from my.telegram.org/apps; or enter them once in the web connect flow |
@@ -288,9 +288,12 @@ The library, agent memory and the workspace definition live in the database, so 
   process manager restart it by hand. A restore point is recorded; its undo is the same operation from
   the safety backup. Run with the same `TEAM_SECRET_KEY` and `TEAM_CHANNEL_KEY` as when the backup
   was made, or sealed secrets and the channel log cannot be read.
-- **Production (Dokploy)**: set `TEAM_BACKUP_DIR` to a path on a persistent volume (not the container
-  layer) and copy that directory off the server (object storage, another host). A backup on the same
-  disk does not survive losing the disk.
+- **Production (Dokploy)**: by default backups live in temporary storage inside the container: they
+  never fill the data volume and a container restart clears them. Download the zip of a backup
+  (Settings > Backups) to keep it off the server. To keep backups across restarts instead, set
+  `TEAM_BACKUP_DIR` to a persistent volume, preferably on another disk than the database.
+  A whole-database restore keeps working either way: the server restarts its own process
+  (scripts/serve.ts), not the container, so the staged copy and the safety backup survive the swap.
 
 ## Storage
 
@@ -302,7 +305,7 @@ What lives in the data directory (the folder of `TEAM_DB`, default `./data`):
 |---|---|---|
 | Database (all chats, library, memory, settings) plus `-wal` and `-shm` | `team.db*` | yes, always |
 | Dev key files (only while the env keys are not set) | `secret.key`, `channel.key` | set `TEAM_SECRET_KEY` and `TEAM_CHANNEL_KEY` instead and keep them apart from the data |
-| Backups | `backups/` or `TEAM_BACKUP_DIR` | yes, on a different disk than the database, and copy them off the server |
+| Backups | temporary directory, or `TEAM_BACKUP_DIR` | not needed by default (temporary; download the zip to keep one); if you set `TEAM_BACKUP_DIR`, use a different disk than the database |
 | Code scratch (temporary, rebuilt) | `code-scratch/` | no |
 | Python environments (rebuilt when missing) | `python-envs/` or `TEAM_CODE_ENV_ROOT` | optional, saves a rebuild |
 | Browser engines and managed profile logins | `browser/` or `TEAM_BROWSER_ROOT` | yes if you keep profile logins |

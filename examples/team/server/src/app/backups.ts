@@ -123,6 +123,8 @@ export function backupNow(
 
 export interface BackupOverview {
   dir: string
+  /** Temporary storage: a container restart clears the backups (download one to keep it). */
+  temporary: boolean
   backups: BackupRecord[]
   lastVerifiedAt: number | null
   /** No verified snapshot, or the newest is older than 36 hours. */
@@ -137,6 +139,7 @@ export function listBackups(deps: Deps): BackupOverview {
   const s = deps.settings.get()
   return {
     dir: p.dir,
+    temporary: p.temporary === true,
     backups,
     ...backupFreshness(backups, deps.clock.now()),
     enabled: s.backupEnabled,

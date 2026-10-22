@@ -119,8 +119,8 @@ export const SETTINGS_BUILTIN = {
   libraryHistoryRetentionDays: 180,
   backupEnabled: true,
   backupTime: '02:00',
-  backupKeepDaily: 14,
-  backupKeepWeekly: 8,
+  backupKeepDaily: 7,
+  backupKeepWeekly: 0,
 } as const satisfies Partial<WorkspaceSettings>
 
 type Env = Record<string, string | undefined>

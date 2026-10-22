@@ -32,6 +32,7 @@ function instance(env: Record<string, string> = {}): { server: Server; dir: stri
   dirs.push(dir)
   const server = compose({
     dbFile: join(dir, 'team.db'),
+    backupDir: join(dir, 'backups'),
     instanceId: 'storage-test',
     env,
     tuning: { streams: { flushMs: 5, pollMs: 20 }, inbox: { pollMs: 30 }, abortPollMs: 40 },
@@ -125,7 +126,9 @@ describe('the scan', () => {
 
     expect(view.backups).toMatchObject({ exists: true, files: 2, snapshots: 1, totalBytes: 3072 })
     expect(view.backups?.sameVolume).toBe(true)
-    expect(view.warnings.map((w) => w.code)).toContain('backups-same-disk')
+    // the test's data dir lives in the OS temporary directory: the temporary warning wins
+    expect(view.backups?.temporary).toBe(true)
+    expect(view.warnings.map((w) => w.code)).toContain('backups-temporary')
 
     const other = (id: string) => view.others.find((d) => d.id === id)
     expect(other('code-scratch')).toMatchObject({ bytes: 700, files: 1, approximate: false })

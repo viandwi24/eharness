@@ -78,6 +78,7 @@ export const StorageSchema = z
         newestAt: z.number().nullable(),
         oldestAt: z.number().nullable(),
         sameVolume: z.boolean().nullable(),
+        temporary: z.boolean(),
       })
       .nullable(),
     others: z.array(DirUsageSchema),
@@ -91,7 +92,14 @@ export const StorageSchema = z
     ),
     warnings: z.array(
       z.object({
-        code: z.enum(['low-disk', 'backups-same-disk', 'key-file', 'approximate', 'reclaimable']),
+        code: z.enum([
+          'low-disk',
+          'backups-temporary',
+          'backups-same-disk',
+          'key-file',
+          'approximate',
+          'reclaimable',
+        ]),
         text: z.string(),
       }),
     ),

@@ -54,13 +54,14 @@
  *   TEAM_EVENTS_RETENTION_HOURS / TEAM_EVENTS_MAX_ROWS   events feed retention (default 72 h, 100000 rows; 0 hours = by count only)
  *   TEAM_ROUTINE_RUNS_RETENTION_DAYS / TEAM_TASKS_RETENTION_DAYS / TEAM_LIBRARY_HISTORY_RETENTION_DAYS   finished routine runs, finished tasks, library history (default 30 / 90 / 180 days; 0 = keep)
  *
- *   TEAM_BACKUP_DIR   where backups are written (default `backups/` next to the database; mount it on a persistent volume and copy it off the server). Schedule and retention are in Settings > Backups
+ *   TEAM_BACKUP_DIR   where backups are written (default `team-backups/` in the OS temporary directory: cleared on a container restart, never on the data volume; download a backup to keep it). Schedule and retention are in Settings > Backups
  *
  * New to this file? docs/guides/walkthrough-server.md follows a request through it: the boot
  * order (providers, connectors, then the reconcile pass of section 6-7), the activity feed and its
  * retention (13), `createTeamHttp` (14) and `Bun.serve` with `idleTimeout: 0` (16).
  */
-import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
@@ -1061,7 +1062,15 @@ export function compose(config: ServerConfig): Server {
   const backupDir =
     config.backupDir ??
     ((config.env ?? process.env).TEAM_BACKUP_DIR?.trim() || undefined) ??
-    (config.dbFile === ':memory:' ? undefined : join(dirname(config.dbFile), 'backups'))
+    // temporary storage by default: backups never fill the data volume and a container restart
+    // clears them; download a backup to keep it, or point TEAM_BACKUP_DIR at a persistent volume
+    (config.dbFile === ':memory:'
+      ? undefined
+      : join(
+          tmpdir(),
+          // one folder per database, so two servers (or tests) never share their backups
+          `team-backups-${new Bun.CryptoHasher('sha256').update(resolve(config.dbFile)).digest('hex').slice(0, 12)}`,
+        ))
   const storage =
     config.dbFile === ':memory:'
       ? undefined

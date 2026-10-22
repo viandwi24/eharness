@@ -9,7 +9,8 @@
 import type { Database } from 'bun:sqlite'
 import { existsSync, statfsSync, statSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import type { StoragePort } from '../../app/ports.ts'
 import { conflict, invalid } from '../../domain/errors.ts'
 import {
@@ -293,6 +294,7 @@ export function createStorageService(options: StorageServiceOptions): StoragePor
         newestAt: null,
         oldestAt: null,
         sameVolume: null,
+        temporary: isTemporary(path),
       }
     }
     let files = 0
@@ -321,7 +323,17 @@ export function createStorageService(options: StorageServiceOptions): StoragePor
     } catch {
       // unknown
     }
-    return { path, exists: true, files, snapshots, totalBytes, newestAt, oldestAt, sameVolume }
+    return {
+      path,
+      exists: true,
+      files,
+      snapshots,
+      totalBytes,
+      newestAt,
+      oldestAt,
+      sameVolume,
+      temporary: isTemporary(path),
+    }
   }
 
   async function othersReport(): Promise<DirUsage[]> {
@@ -458,4 +470,10 @@ export function createStorageService(options: StorageServiceOptions): StoragePor
   }
 
   return { report, volume, run: runAction }
+}
+
+/** A path under the OS temporary directory: cleared when the container restarts. */
+function isTemporary(path: string): boolean {
+  const tmp = resolve(tmpdir())
+  return path === tmp || path.startsWith(`${tmp}${sep}`)
 }

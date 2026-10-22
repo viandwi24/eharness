@@ -1335,6 +1335,8 @@ export interface ParsedWorkspaceZip {
 export interface BackupPort {
   /** The directory the snapshots are written to. */
   readonly dir: string
+  /** The directory is temporary storage: a container restart clears it. */
+  readonly temporary?: boolean
   /**
    * Take a verified snapshot. Throws only when no copy could be written at all. `entities` are the
    * documents of the workspace export (settings, agents, programs...) the app collected; the

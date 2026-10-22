@@ -19587,8 +19587,10 @@ export interface components {
             backupKeepWeekly?: number;
         };
         BackupList: {
-            /** @description `TEAM_BACKUP_DIR`: mount it on a persistent volume. */
+            /** @description `TEAM_BACKUP_DIR`, else a folder in the OS temporary directory (cleared on a container restart). */
             dir: string;
+            /** @description The backups are in temporary storage: download a backup to keep it. */
+            temporary: boolean;
             backups: components["schemas"]["Backup"][];
             lastVerifiedAt: number | null;
             /** @description No verified snapshot exists, or the newest is older than 36 hours. */
@@ -19973,6 +19975,7 @@ export interface components {
                 newestAt: number | null;
                 oldestAt: number | null;
                 sameVolume: boolean | null;
+                temporary: boolean;
             } | null;
             others: {
                 /** @description `code-scratch`, `code-env` or `browser`. */
@@ -19997,7 +20000,7 @@ export interface components {
             }[];
             warnings: {
                 /** @enum {string} */
-                code: "low-disk" | "backups-same-disk" | "key-file" | "approximate" | "reclaimable";
+                code: "low-disk" | "backups-temporary" | "backups-same-disk" | "key-file" | "approximate" | "reclaimable";
                 text: string;
             }[];
         };

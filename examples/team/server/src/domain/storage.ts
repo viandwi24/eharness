@@ -222,13 +222,21 @@ export interface StorageReport {
     oldestAt: number | null
     /** Same file system as the database: a disk loss takes both. Null when unknown. */
     sameVolume: boolean | null
+    /** Under the OS temporary directory: cleared when the container restarts. */
+    temporary: boolean
   } | null
   others: DirUsage[]
   keys: KeyFileInfo[]
 }
 
 export interface StorageWarning {
-  code: 'low-disk' | 'backups-same-disk' | 'key-file' | 'approximate' | 'reclaimable'
+  code:
+    | 'low-disk'
+    | 'backups-temporary'
+    | 'backups-same-disk'
+    | 'key-file'
+    | 'approximate'
+    | 'reclaimable'
   text: string
 }
 
@@ -243,7 +251,12 @@ export function storageWarnings(report: StorageReport): StorageWarning[] {
     })
   }
   const b = report.backups
-  if (b !== null && b.sameVolume === true && b.files > 0) {
+  if (b !== null && b.temporary) {
+    out.push({
+      code: 'backups-temporary',
+      text: 'Backups are kept in temporary storage: they are cleared when the container restarts and never fill the data volume. Download the zip of a backup to keep it, or set TEAM_BACKUP_DIR to a persistent volume.',
+    })
+  } else if (b !== null && b.sameVolume === true && b.files > 0) {
     out.push({
       code: 'backups-same-disk',
       text: 'Backups are on the same disk as the database: copies there do not survive a disk loss. Mount TEAM_BACKUP_DIR on another volume or copy the backups off the server.',

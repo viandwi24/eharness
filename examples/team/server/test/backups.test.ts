@@ -37,6 +37,7 @@ function instance(): { server: Server; dir: string; agentId: string } {
   dirs.push(dir)
   const server = compose({
     dbFile: join(dir, 'team.db'),
+    backupDir: join(dir, 'backups'),
     instanceId: 'backups-test',
     env: {},
     tuning: { streams: { flushMs: 5, pollMs: 20 }, inbox: { pollMs: 30 }, abortPollMs: 40 },
