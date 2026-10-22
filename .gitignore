@@ -55,3 +55,6 @@ examples/team/evals/results/
 .mtcute/
 examples/*/server/data/
 examples/*/data/
+
+# local reference material (workspace exports, notes): never committed
+refs/
