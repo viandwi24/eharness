@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, fieldErrors } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
-	import { type Backup, type DatabaseRestoreStatus, type ImportSource, type RestorePlan, type RestorePoint, type SectionId, bytesText, lastRestoreText, passphraseProblem, planSummary, reasonLabel, resultSummary, restorePointText, verifiedText } from '#lib/backups/model.js';
+	import { type Backup, type DatabaseRestoreStatus, type ImportSource, type Migration, migrationText, type RestorePlan, type RestorePoint, type SectionId, bytesText, lastRestoreText, passphraseProblem, planSummary, reasonLabel, resultSummary, restorePointText, verifiedText } from '#lib/backups/model.js';
 	import { downloadBackupFile, downloadWorkspaceExport, uploadWorkspaceZip } from '#lib/backups/download.js';
 	import DatabaseRestoreDialog from '#lib/components/app/DatabaseRestoreDialog.svelte';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
@@ -53,6 +53,7 @@
 	}
 
 	let restorePoints = $state<RestorePoint[]>([]);
+	let migrations = $state<Migration[]>([]);
 
 	let dbStatus = $state<DatabaseRestoreStatus | null>(null);
 	const dbLast = $derived(dbStatus ? lastRestoreText(dbStatus.last) : null);
@@ -72,6 +73,7 @@
 			dbStatus = await api.get('/backups/database-restore').catch(() => null);
 			overview = await api.get('/backups');
 			restorePoints = (await api.get('/backups/restore-points')).restorePoints;
+			migrations = (await api.get('/backups/moves')).migrations;
 			loadError = '';
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'Could not load the backups';
@@ -142,7 +144,7 @@
 	let importSource = $state<ImportSource | null>(null);
 	let importLabel = $state('');
 	let importUndoOf = $state<string | undefined>(undefined);
-	let importInitial = $state<{ sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite?: boolean } | undefined>(undefined);
+	let importInitial = $state<{ sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite?: boolean; overwriteConflicts?: boolean; rewriteReferences?: boolean } | undefined>(undefined);
 	let uploading = $state(false);
 	let exporting = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
@@ -486,6 +488,37 @@
 								{#if p.counts.failed}<div class="text-xs text-destructive-text">{p.counts.failed} failed: {p.items.filter((i) => i.action === 'failed').slice(0, 3).map((i) => `${i.key} (${i.note ?? 'failed'})`).join('; ')}</div>{/if}
 							</div>
 							<Button variant="outline" size="sm" disabled={!!p.undoneBy || busy === `undo:${p.id}`} onclick={() => startUndo(p)}>Undo</Button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</Card.Content>
+	</Card.Root>
+
+	<Card.Root>
+		<Card.Header>
+			<Card.Title>Moves</Card.Title>
+			<Card.Description>Files and folders that an import moved (a reorganization made offline). An agent that still uses an old path is sent to the new one: a read says "Moved: old → new", a write goes to the new path. Undo returns the paths and the references of that import.</Card.Description>
+		</Card.Header>
+		<Card.Content class="flex flex-col gap-2">
+			{#if !migrations.length}
+				<p class="text-sm text-muted-foreground">No moves yet.</p>
+			{:else}
+				<ul class="divide-y divide-border">
+					{#each migrations as m (m.restorePointId ?? m.at)}
+						{@const point = restorePoints.find((p) => p.id === m.restorePointId)}
+						<li class="flex flex-wrap items-start gap-3 py-2 text-sm">
+							<div class="min-w-0 flex-1">
+								<div>{migrationText(m)}</div>
+								<div class="text-xs text-muted-foreground">{formatDateTime(m.at)}{m.label ? ` from ${m.label}` : ''}{m.by ? ` by ${m.by}` : ''}</div>
+								<ul class="mt-1 text-xs">
+									{#each m.moves.slice(0, 8) as mv (mv.from)}
+										<li class="truncate font-mono">{mv.from} → {mv.to}{mv.note ? ` (${mv.note})` : ''}</li>
+									{/each}
+									{#if m.moves.length > 8}<li class="text-muted-foreground">… {m.moves.length - 8} more</li>{/if}
+								</ul>
+							</div>
+							<Button variant="outline" size="sm" disabled={!point || !m.canUndo || busy === `undo:${m.restorePointId}`} onclick={() => point && startUndo(point)}>Undo</Button>
 						</li>
 					{/each}
 				</ul>

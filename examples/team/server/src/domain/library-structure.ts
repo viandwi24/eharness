@@ -16,7 +16,9 @@
  */
 import { invalid } from './errors.ts'
 import { LIBRARY_ROOT } from './library.ts'
+import { MOVED_PATHS_RULE } from './library-moves.ts'
 import { hasControlOrBackslash } from './text.ts'
+import { journalProtocol, WORKS_ROOT_DEFAULT } from './works-journal.ts'
 
 export const COMPANY_DIR = `${LIBRARY_ROOT}/company`
 export const PROGRAMS_DIR = `${LIBRARY_ROOT}/programs`
@@ -528,7 +530,14 @@ export function memoryReportRefusal(toolName: string, input: unknown): string | 
  * The memory instruction every agent gets (the memory plugin's protocol): memory holds short rules
  * and an index only; facts are in the library. Static text (prompt-cache prefix).
  */
-export const TEAM_MEMORY_PROTOCOL = `You have a small persistent memory (the memory tools). It holds only two things: short standing rules in rules.md, and an index in index.md that says where things are in the library. It is not a notebook.
+export const teamMemoryProtocol = (
+  worksRoot: string,
+): string => `You have a small persistent memory (the memory tools). It holds only two things: short standing rules in rules.md, and an index in index.md that says where things are in the library. It is not a notebook.
 - Facts live in the library, which is the source of truth. Before you answer or act on a fact (the company, people and roles, procedures, a topic, a tracker), read the library file: ${COMPANY_DIR}/ (profile, organization, people and roles, SOPs and rules), ${KNOWLEDGE_DIR}/ (topics), ${DATA_DIR}/ (trackers, ledgers, sheets), ${PROGRAMS_DIR}/<program>/ (brief.md and notes.md of a program). Read index.md first to find the file.
 - Write to memory only a short rule or preference that you must follow every time, and one line in index.md when you create or move a library file. Keep both small. Never write a report, a dated file, a table of data or a long note to memory: reports go to ${REPORTS_DIR}/, data to ${DATA_DIR}/, knowledge to ${KNOWLEDGE_DIR}/.
-- Update or remove outdated lines instead of appending duplicates. Never store secrets or credentials in memory. Assume your context may be reset: a rule you did not write down can be lost, a fact you did not save in the library can be lost.`
+- Update or remove outdated lines instead of appending duplicates. Never store secrets or credentials in memory. Assume your context may be reset: a rule you did not write down can be lost, a fact you did not save in the library can be lost.
+- ${MOVED_PATHS_RULE}
+${journalProtocol(worksRoot)}`
+
+/** The protocol with the default works folder (tests, and a server that was not given a setting). */
+export const TEAM_MEMORY_PROTOCOL = teamMemoryProtocol(WORKS_ROOT_DEFAULT)

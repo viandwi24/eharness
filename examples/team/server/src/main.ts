@@ -777,6 +777,7 @@ export function compose(config: ServerConfig): Server {
       return { ttlMs: s.connectorHealthTtlMs, retryMs: s.connectorProbeRetryMs }
     },
     code: codeRuntime,
+    worksRoot: () => settings.get().worksRoot,
     sqlite: conn.sqlite,
     profiles: profileStore,
     vault,

@@ -82,6 +82,10 @@ export const SettingsSchema = z
       description:
         'The team name given to agents in chats; null = none. Initial value: `TEAM_NAME`.',
     }),
+    worksRoot: z.string().openapi({
+      description:
+        'Library folder of the daily works journal: agents append follow-ups and notes to `<folder>/YYYY/MM/DD.md` (team timezone). Default `/library/works`.',
+    }),
     eventsRetentionHours: z.number().int().min(0).openapi({
       description: 'Events feed: hours kept; 0 = by count only. Default 72.',
     }),
@@ -159,6 +163,7 @@ export const SettingsPatchSchema = z
     longRunChunkSteps: z.number().int().min(10).max(500).optional(),
     maxRepeatingReminders: z.number().int().min(0).max(1000).optional(),
     teamName: z.string().min(1).max(100).nullable().optional(),
+    worksRoot: z.string().min(1).max(200).optional(),
     eventsRetentionHours: z.number().int().min(0).max(87600).optional(),
     eventsMaxRows: z.number().int().min(1000).optional(),
     logMaxRows: z.number().int().min(100).optional(),

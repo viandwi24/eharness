@@ -81,6 +81,10 @@ export interface Ticks {
 	exclude: Set<string>;
 	remove: Set<SectionId>;
 	overwrite: boolean;
+	/** Also replace or remove what was changed here after the zip was exported (the `conflict` items). */
+	overwriteConflicts: boolean;
+	/** Rewrite references (programs, standing orders, notes, API grants) to the moved paths. */
+	rewrite: boolean;
 }
 
 export const MIN_PASSPHRASE = 12;
@@ -106,26 +110,45 @@ const OPT_IN: ReadonlySet<SectionId> = new Set<SectionId>(['conversations', 'sec
  * Every section that can be imported, ticked; nothing excluded, nothing removed, no overwrite (the
  * default). Secrets are ticked only once the passphrase has opened them (`unlocked`).
  */
-export function defaultTicks(preview: Pick<ImportPreview, 'sections'> & Partial<Pick<ImportPreview, 'secrets'>>): Ticks {
+export function defaultTicks(preview: Pick<ImportPreview, 'sections'> & Partial<Pick<ImportPreview, 'secrets'>> & { references?: Pick<ImportPreview['references'], 'rewritable'> }): Ticks {
 	const unlocked = preview.secrets?.unlocked === true;
 	return {
 		sections: new Set(preview.sections.filter((s) => s.applicable && (!OPT_IN.has(s.id) || (s.id === 'secrets' && unlocked))).map((s) => s.id)),
 		exclude: new Set(),
 		remove: new Set(),
-		overwrite: false
+		overwrite: false,
+		// the one-click rewrite is offered ticked when the moves leave references it can fix; conflicts are never ticked
+		overwriteConflicts: false,
+		rewrite: (preview.references?.rewritable ?? 0) > 0
 	};
 }
 
-/** The same rule as the server: ticked section, not left out, applicable, a change; an item that differs needs `overwrite`; only-here items need the removal tick. */
+/**
+ * The same rule as the server: ticked section, not left out, applicable, a change; an item that
+ * differs needs `overwrite`; an item changed here after the export (`conflict`) also needs
+ * `overwriteConflicts`, to be replaced or removed; only-here items need the removal tick; a reference
+ * rewrite needs the rewrite tick (and follows the moves, not a section).
+ */
 export function isSelected(item: ImportItem, t: Ticks): boolean {
 	if (!item.applicable || item.status === 'unchanged') return false;
-	if (!t.sections.has(item.section) || t.exclude.has(item.key)) return false;
+	if (t.exclude.has(item.key)) return false;
+	if (item.kind === 'reference') return t.rewrite;
+	if (!t.sections.has(item.section)) return false;
+	if (item.conflict && !t.overwriteConflicts) return false;
 	if (item.status === 'only-live') return t.remove.has(item.section);
 	return item.status !== 'changed' || t.overwrite;
 }
 
-export function selectionBody(t: Ticks): { sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite: boolean } {
-	return { sections: [...t.sections], exclude: [...t.exclude], removeSections: [...t.remove], overwrite: t.overwrite };
+export function selectionBody(t: Ticks): { sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite: boolean; overwriteConflicts: boolean; rewriteReferences: boolean } {
+	return { sections: [...t.sections], exclude: [...t.exclude], removeSections: [...t.remove], overwrite: t.overwrite, overwriteConflicts: t.overwriteConflicts, rewriteReferences: t.rewrite };
+}
+
+/** The same ticks with the conflict choice set (to count what the tick would add). */
+export const withConflicts = (t: Ticks, overwriteConflicts: boolean): Ticks => ({ ...t, overwriteConflicts });
+
+/** Items changed here after the export that are ticked but kept as they are (the conflict tick is off). */
+export function keptConflictCount(items: readonly ImportItem[], t: Ticks): number {
+	return items.filter((i) => i.conflict && isSelected(i, withConflicts(t, true)) && !isSelected(i, withConflicts(t, false))).length;
 }
 
 /** The same ticks with the overwrite choice set (to count what each button would do). */
@@ -141,11 +164,18 @@ export function applySummary(items: readonly ImportItem[], t: Ticks): string {
 	const picked = items.filter((i) => isSelected(i, t));
 	const kept = t.overwrite ? 0 : skippedCount(items, t);
 	const keptText = kept ? ` ${kept} that ${kept === 1 ? 'differs is' : 'differ are'} kept as ${kept === 1 ? 'it is' : 'they are'}.` : '';
-	if (!picked.length) return `Nothing is selected to change.${keptText}`;
-	const n = (s: ImportItem['status']): number => picked.filter((i) => i.status === s).length;
+	const conflicts = keptConflictCount(items, t);
+	const conflictText = conflicts ? ` ${conflicts} changed here since the export ${conflicts === 1 ? 'keeps' : 'keep'} the live version.` : '';
+	if (!picked.length) return `Nothing is selected to change.${keptText}${conflictText}`;
+	const plain = picked.filter((i) => i.kind !== 'move' && i.kind !== 'reference');
+	const n = (s: ImportItem['status']): number => plain.filter((i) => i.status === s).length;
 	const parts = [`${n('added')} added`, `${n('changed')} replaced`];
+	const moved = picked.filter((i) => i.kind === 'move').length;
+	const rewritten = picked.filter((i) => i.kind === 'reference').length;
+	if (moved) parts.push(`${moved} moved`);
+	if (rewritten) parts.push(`${rewritten} reference${rewritten === 1 ? '' : 's'} rewritten`);
 	if (n('only-live')) parts.push(`${n('only-live')} removed`);
-	return `${parts.join(', ')} will be applied.${keptText}`;
+	return `${parts.join(', ')} will be applied.${keptText}${conflictText}`;
 }
 
 /** What an import did, in a sentence. */
@@ -155,6 +185,16 @@ export function importResultText(r: Pick<ImportResult, 'counts'>): string {
 	if (c.removed) parts.push(`${c.removed} removed`);
 	if (c.failed) parts.push(`${c.failed} failed`);
 	return `${parts.join(', ')}.`;
+}
+
+export type Migration = components['schemas']['MigrationList']['migrations'][number];
+
+/** "3 files and 1 folder moved": the line of one migration of the Moves list. */
+export function migrationText(m: Pick<Migration, 'files' | 'folders'>): string {
+	const parts = [];
+	if (m.folders) parts.push(`${m.folders} folder${m.folders === 1 ? '' : 's'}`);
+	if (m.files) parts.push(`${m.files} file${m.files === 1 ? '' : 's'}`);
+	return `${parts.join(' and ') || 'Nothing'} moved`;
 }
 
 export const restoreKindText: Record<RestorePoint['kind'], string> = {

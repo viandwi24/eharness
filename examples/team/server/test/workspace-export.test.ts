@@ -403,7 +403,7 @@ describe('round trip', () => {
     const result = await applyImport(
       deps,
       { backupId: backup.id },
-      { overwrite: true },
+      { overwrite: true, overwriteConflicts: true },
       {
         by: 'web',
       },
@@ -439,7 +439,7 @@ describe('round trip', () => {
     const res = await applyImport(
       b.deps,
       { uploadId: staged.uploadId },
-      { overwrite: true },
+      { overwrite: true, overwriteConflicts: true },
       {
         by: 'web',
       },
@@ -602,6 +602,7 @@ describe('apply', () => {
         sections: ['agents', 'library', 'memory', 'programs', 'routines', 'people'],
         exclude: ['memory/profile.md'],
         overwrite: true,
+        overwriteConflicts: true,
       },
       { by: 'web' },
     )
@@ -637,7 +638,7 @@ describe('apply', () => {
     const lib = await applyImport(
       deps,
       { backupId: base.id },
-      { removeSections: ['library'] },
+      { removeSections: ['library'], overwriteConflicts: true },
       { by: 'web' },
     )
     expect(lib.counts.removed).toBe(1)
@@ -651,7 +652,10 @@ describe('apply', () => {
     await applyImport(
       deps,
       { backupId: base.id },
-      { removeSections: ['library', 'programs', 'people', 'agents', 'memory', 'routines'] },
+      {
+        removeSections: ['library', 'programs', 'people', 'agents', 'memory', 'routines'],
+        overwriteConflicts: true,
+      },
       { by: 'web' },
     )
     expect(deps.programs.list({ agentId: extra.id })).toHaveLength(0)
@@ -682,7 +686,12 @@ describe('apply', () => {
     const real = server.deps.backups as NonNullable<typeof server.deps.backups>
     server.deps.backups = { ...real, create: () => Promise.reject(new Error('disk full')) }
     await expect(
-      applyImport(server.deps, { backupId: backup.id }, { overwrite: true }, { by: 'web' }),
+      applyImport(
+        server.deps,
+        { backupId: backup.id },
+        { overwrite: true, overwriteConflicts: true },
+        { by: 'web' },
+      ),
     ).rejects.toThrow(/safety backup failed/)
     expect((await server.deps.library.read('/library/reports/q1.md'))?.text).toBe('edited')
     server.deps.backups = real
@@ -748,7 +757,7 @@ describe('restore points and undo', () => {
     const imp = await applyImport(
       deps,
       { backupId: backup.id },
-      { removeSections: ['library'], overwrite: true },
+      { removeSections: ['library'], overwrite: true, overwriteConflicts: true },
       { by: 'web' },
     )
     expect(imp.restorePointId).not.toBeNull()
@@ -852,20 +861,20 @@ describe('refused zips', () => {
     )
   })
 
-  test('tampered content with a valid CRC fails the manifest hash; extra and missing files are caught', async () => {
+  test('a document must match its hash; library and memory files may be reorganized offline', async () => {
     const server = instance()
     const wrongHash = makeZip(
-      { 'library/a.md': 'tampered text' },
+      { 'settings.json': canonicalJson({ settings: {}, digest: {} }) },
       {
         manifest: (m) => ({
           ...m,
-          files: [{ path: 'library/a.md', size: 13, sha256: 'a'.repeat(64) }],
+          files: [{ path: 'settings.json', size: 5, sha256: 'a'.repeat(64) }],
         }),
       },
     )
     await refuses(server, wrongHash, /does not match its hash/)
     const extra = makeZip(
-      { 'library/a.md': 'a', 'library/b.md': 'b' },
+      { 'settings.json': canonicalJson({ settings: {}, digest: {} }), 'agents/x/agent.json': '{}' },
       {
         manifest: (m) => ({
           ...m,
@@ -875,18 +884,34 @@ describe('refused zips', () => {
     )
     await refuses(server, extra, /not in the manifest/)
     const missing = makeZip(
-      { 'library/a.md': 'a' },
+      { 'settings.json': canonicalJson({ settings: {}, digest: {} }) },
       {
         manifest: (m) => ({
           ...m,
           files: [
             ...(m.files as unknown[]),
-            { path: 'library/ghost.md', size: 1, sha256: 'b'.repeat(64) },
+            { path: 'agents/ghost/agent.json', size: 1, sha256: 'b'.repeat(64) },
           ],
         }),
       },
     )
     await refuses(server, missing, /missing from the zip/)
+    // library files: a changed, a new and a missing file are the reorganization, not tampering
+    const reorganized = makeZip(
+      { 'library/a.md': 'edited text', 'library/b.md': 'new' },
+      {
+        manifest: (m) => ({
+          ...m,
+          files: [
+            { path: 'library/a.md', size: 3, sha256: 'a'.repeat(64) },
+            { path: 'library/ghost.md', size: 1, sha256: 'b'.repeat(64) },
+          ],
+        }),
+      },
+    )
+    const staged = await stage(server, reorganized)
+    const preview = await previewImport(server.deps, { uploadId: staged.uploadId })
+    expect(preview.warnings.join(' ')).toMatch(/reorganized offline/)
   })
 
   test('zip-slip: paths that escape or fall outside the expected folders', async () => {
@@ -970,7 +995,10 @@ describe('refused zips', () => {
       preview.items.some((i) => i.key === 'library/reports/q1.md' && i.status === 'changed'),
     ).toBe(true)
     const done = (await (
-      await post('/backups/import', { source: { uploadId }, selection: { overwrite: true } })
+      await post('/backups/import', {
+        source: { uploadId },
+        selection: { overwrite: true, overwriteConflicts: true },
+      })
     ).json()) as {
       restorePointId: string
       counts: { changed: number }
@@ -1098,7 +1126,7 @@ describe('the skip / overwrite policy', () => {
     const over = await applyImport(
       deps,
       { backupId: backup.id },
-      { overwrite: true },
+      { overwrite: true, overwriteConflicts: true },
       { by: 'web' },
     )
     expect(over.counts.changed).toBeGreaterThanOrEqual(2)
@@ -1108,7 +1136,7 @@ describe('the skip / overwrite policy', () => {
     const again = await applyImport(
       deps,
       { backupId: backup.id },
-      { overwrite: true },
+      { overwrite: true, overwriteConflicts: true },
       { by: 'web' },
     )
     expect(again.restorePointId).toBeNull()
@@ -1127,7 +1155,7 @@ describe('the skip / overwrite policy', () => {
     const over = await applyImport(
       deps,
       { backupId: backup.id },
-      { overwrite: true },
+      { overwrite: true, overwriteConflicts: true },
       { by: 'web' },
     )
     expect(over.counts.failed).toBe(0)
@@ -1141,7 +1169,12 @@ describe('the skip / overwrite policy', () => {
     const backup = await newBackup(server)
     await libraryFs(server.conn.sqlite).write('/library/reports/q1.md', 'v2')
     const before = await stateOf(server)
-    const imp = await applyImport(deps, { backupId: backup.id }, { overwrite: true }, { by: 'web' })
+    const imp = await applyImport(
+      deps,
+      { backupId: backup.id },
+      { overwrite: true, overwriteConflicts: true },
+      { by: 'web' },
+    )
     expect((await deps.library.read('/library/reports/q1.md'))?.text).toContain('# Q1')
     const undo = await previewUndo(deps, imp.restorePointId as string)
     expect(undo.selection.overwrite).toBe(true)
@@ -1383,7 +1416,7 @@ describe('secrets in the zip', () => {
     const over = await applyImport(
       b.deps,
       source,
-      { sections: ['secrets'], overwrite: true },
+      { sections: ['secrets'], overwrite: true, overwriteConflicts: true },
       { by: 'web', passphrase: PASSPHRASE },
     )
     expect(over.counts).toMatchObject({ changed: 1, failed: 0 })

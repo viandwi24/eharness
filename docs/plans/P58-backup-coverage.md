@@ -97,6 +97,7 @@ bookkeeping tables).
 | `channel_unlinked` | Legacy unlinked senders | legacy source of the boot-time channels migration; its data lives in the ch_* tables |
 | `eh_budget_scope` | Spend counters of budgets | counters of the running period; the budget limits live in the settings and programs |
 | `library_history` | File history (who changed which path) | the current files travel in the zip; the history stays in the database snapshot |
+| `library_moves` | Moves applied by an import (old path to new path, for the redirects) | a record of what an import renamed; the files themselves travel in the zip at their new paths |
 | `model_calls` | Model call log (Logs page) | large diagnostic log with requests and responses, pruned by count and age |
 | `routine_runs` | Fired schedule slots | a log of fired slots bound to routine ids; the schedules themselves are restorable |
 

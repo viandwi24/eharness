@@ -263,6 +263,31 @@ The library, agent memory and the workspace definition live in the database, so 
   overwrites (it puts back exactly what the import changed). Secrets are not part of an undo: the
   safety backup holds none (its `.db` still has the previous sealed ones). The undo is a restore
   point itself, so it can be undone. The safety backup is a `before` backup: kept 30 days at least.
+- **Reorganizing the library and memory offline** (download the zip, let an AI agent move and rename
+  files and folders, zip again, import). The file entries of the zip may differ from the manifest (a
+  reorganized zip is expected; every other document must still match its hash).
+  - *Moves*: an optional `migrations/moves.json` = `[{ "from": "/library/a/x.md", "to": "...", "note"?: "" }]`
+    (a path ending with `/` moves a folder; agent memory is `/memories/agents/<slug>/...` or the zip
+    name `agents/<slug>/memory/...`). Moves are also found by content: a file here that the zip no longer
+    has, with the same bytes as a new file of the zip, was moved. A move is applied as a move (the history
+    follows the file, the old path gets a deletion), never as a delete plus an add.
+  - *Mirror*: the preview lists moved, new, changed, only here, and conflicts. "Remove what is not in the
+    zip" stays an explicit tick per section. An item changed here after the export (its `updatedAt` is
+    later than the manifest's `createdAt`) is a **conflict**: it keeps the live version, even with
+    "overwrite" and the removal tick, until its own tick (`overwriteConflicts`).
+  - *Reference check*: every path that programs (authority globs, deliverables, brief and notes files),
+    standing orders (HEARTBEAT.md refs and ledger), memory notes, reminders and API agent folder grants
+    name is checked before and after the planned changes. Dangling ones are listed with where the moves
+    put them; "Rewrite references using the moves" (`rewriteReferences`) applies those as preview items
+    (a reference that still points to something is never touched).
+  - *Redirects*: the applied moves are kept in `library_moves` (Settings > Backups > Moves, undo per
+    import). An agent that still uses an old path is redirected: a read answers the moved file with the
+    first line `Moved: <old> → <new>. Use the new path.`, a write or edit lands on the new path
+    (`Written to <new> (moved from <old>)`), a listing of an old folder says `This folder moved to <new>`.
+    A safety net: the import rewrites programs and references itself. The memory instructions tell
+    agents to switch to the new path and fix their notes. Undoing the restore point returns paths and
+    references and forgets the redirects.
+  - API: `GET /backups/moves`; `overwriteConflicts` and `rewriteReferences` in the import selection.
 - **Restore files** (the older, database-based flow): pick a file, folder or `/`, preview, restore.
   Files come back as new versions (the old one stays in the file history); nothing is deleted; a safety
   backup is taken first and a restore point recorded. Mode "missing" (the default: skip files that exist
@@ -294,6 +319,46 @@ The library, agent memory and the workspace definition live in the database, so 
   `TEAM_BACKUP_DIR` to a persistent volume, preferably on another disk than the database.
   A whole-database restore keeps working either way: the server restarts its own process
   (scripts/serve.ts), not the container, so the staged copy and the safety backup survive the swap.
+
+## Reorganizing the workspace
+
+To restructure a big library and the agents' memory with an AI coding agent (for example Claude
+Code), work on a copy of the workspace zip and let the import preview show what changes. Nothing
+changes in the app until you apply.
+
+1. **Pause** the programs (Programs page) and the heartbeat of every agent, so nothing writes to the
+   library while you work.
+2. **Download** a workspace export (Settings > Backups > Download workspace export). Without secrets
+   is fine for this: an import never deletes secrets; if you included them, the passphrase is asked
+   again at import and `secrets.enc.json` must stay untouched.
+3. **Unzip** it into an empty folder.
+4. **Give `tools/reorganize/REORGANIZE.md` to the agent** (copy it into the folder) and tell it to
+   follow it. It describes what may be edited, the target structure (company folder with profile,
+   organization, divisions with SOP/PIC/KPI, KPI, weekly and monthly reports, attendance,
+   knowledge, daily works journal, archive), and the rules: every move recorded in
+   `migrations/moves.json`, every reference updated, memory reduced to `rules.md` + `index.md` +
+   `HEARTBEAT.md`, nothing deleted (archive instead).
+5. **Validate**: `bun tools/reorganize/validate.ts <folder>` (or `bun run reorganize:validate <folder>`).
+   It checks JSON, required files, moves (`to` exists, `from` gone), that every path in programs,
+   standing orders, memory and API agent grants resolves, plaintext secrets, memory size and files
+   outside the template. Exit code 1 on errors; fix them and run it again.
+6. **Pack**: `bun tools/reorganize/pack.ts <folder> [out.zip]`. It runs the validator, recomputes the
+   hashes and counts of `manifest.json` and writes the zip (default `<folder>.reorganized.zip`).
+7. **Upload** it (Settings > Backups > Import from zip) and **read the preview**: the moves, the
+   references, the conflicts and what would be granted. The import takes a safety backup first and
+   records a restore point, so it can be undone.
+8. **Apply** (skip existing, or overwrite what differs when you chose to), check the library, then
+   **resume** the programs and the heartbeat.
+
+`bun run test:tools` runs the tests of the tools.
+
+### Daily works journal
+
+Agents append the day's cache, follow-ups and working notes to `<works root>/YYYY/MM/DD.md` (team
+timezone); heartbeat beats with findings and finished program runs add one line with a link to their
+full report. The root is the setting `worksRoot` (default `/library/works`; `PATCH /settings`
+`{ "worksRoot": "/library/<company>/works" }`). The memory protocol every agent gets names the
+folder, so a changed root reaches new sessions.
 
 ## Storage
 

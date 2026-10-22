@@ -28,11 +28,12 @@ import { webFetch, webSearch } from 'eharness/web'
 import { nodeResolveHost } from 'eharness/web/node'
 import { z } from 'zod'
 import type { AgentDef } from '../../domain/agents.ts'
-import { TEAM_MEMORY_PROTOCOL } from '../../domain/library-structure.ts'
+import { teamMemoryProtocol } from '../../domain/library-structure.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { SESSION_CONTEXT_TOOLS } from '../../domain/session-context.ts'
 import { STANDING_ORDER_TOOL } from '../../domain/standing-orders.ts'
+import { WORKS_ROOT_DEFAULT } from '../../domain/works-journal.ts'
 import { type ArtifactsHook, artifactsConnector } from '../artifacts/index.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { type BrowserHook, browserConnector } from '../browser/connector.ts'
@@ -146,6 +147,8 @@ export interface CatalogOptions {
   telegramUser?: UserConnectorOptions
   /** The code sandbox of the Files & Sandbox connector; absent or driver off = files only. */
   code?: CodeRuntime
+  /** Folder of the daily works journal (Settings); default `/library/works`. */
+  worksRoot?: () => string
 }
 
 /** Connection label of the two memory scopes, as people and the model read them. */
@@ -495,6 +498,8 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
         const files = filesystem({
           fs: libraryFs(sqlite, {
             agentId: def.id,
+            // an old path of a reorganized library reaches the file it moved to (library_moves)
+            redirectMoves: true,
             ...(options.onFileChange ? { onChange: options.onFileChange } : {}),
           }),
           // every tool a program run can be granted is defined; the ones the connection does not
@@ -537,7 +542,7 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
             roots
               .filter((r) => r.path !== WORKSPACE_MEMORY)
               .flatMap((r) => [`${r.path}/rules.md`, `${r.path}/index.md`, `${r.path}/profile.md`]),
-          protocol: TEAM_MEMORY_PROTOCOL,
+          protocol: teamMemoryProtocol(options.worksRoot?.() ?? WORKS_ROOT_DEFAULT),
           flushOnCompaction: true,
         }),
     },

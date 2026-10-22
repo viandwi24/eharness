@@ -23,6 +23,9 @@
  *   data/<table>/NNN.json                  the rows of a data table (`workspace-data.ts`): persona history,
  *                                          reminders, channels configuration, history, artifacts, the
  *                                          developer API, browser profiles and, when asked, conversations
+ *   migrations/moves.json                  OPTIONAL: [{ from, to, note? }] the moves of a reorganization made
+ *                                          offline (a path ending with `/` moves a folder); moves are also
+ *                                          detected by content (`library-moves.ts`)
  *   secrets.enc.json                       OPTIONAL: provider keys, connection credentials, API key hashes and
  *                                          share tokens, encrypted with the passphrase chosen at export
  *                                          (`workspace-secrets.ts`)
@@ -31,6 +34,7 @@
  * snapshot covers them (full restore). `docs/plans/P58-backup-coverage.md` classifies every table.
  */
 import { invalid } from './errors.ts'
+import { MOVES_FILE, type MoveKind } from './library-moves.ts'
 import { datasetOfEntry, SECTIONS, type SectionId } from './workspace-data.ts'
 import { SECRETS_FILE } from './workspace-secrets.ts'
 
@@ -125,6 +129,12 @@ export type EntryKind =
   | 'secrets'
   | 'file'
   | 'data'
+  /** `migrations/moves.json`: read for the moves, never an item of its own. */
+  | 'moves'
+  /** A move of a library or memory file or folder (an item of the preview, not a zip entry). */
+  | 'move'
+  /** A reference (a program, a standing order, a memory note, a grant) rewritten to a moved path. */
+  | 'reference'
 
 export interface Classified {
   section: SectionId | null
@@ -147,6 +157,7 @@ export function classify(entry: string): Classified | undefined {
     if (entry === SECRETS_FILE) return { section: 'secrets', kind: 'secrets' }
     return undefined
   }
+  if (entry === MOVES_FILE) return { section: null, kind: 'moves' }
   if (top === 'data') {
     const set = datasetOfEntry(entry)
     return set === undefined ? undefined : { section: set.section, kind: 'data', table: set.table }
@@ -513,6 +524,19 @@ export interface ImportItem {
   notes: string[]
   sizeBefore: number | null
   sizeAfter: number | null
+  /**
+   * Changed in the workspace after the zip was exported (its `updatedAt` is later than the manifest's
+   * `createdAt`): replacing or removing it needs its own tick (`overwriteConflicts`); the default keeps it.
+   */
+  conflict: boolean
+  /** A move of a file or folder (kind `move`), with how many files it covers. */
+  move: {
+    from: string
+    to: string
+    kind: MoveKind
+    files: number
+    source: 'moves.json' | 'detected'
+  } | null
 }
 
 export interface SectionSummary {
@@ -522,6 +546,10 @@ export interface SectionSummary {
   changed: number
   unchanged: number
   onlyLive: number
+  /** Files and folders that moved (`moved` items are not counted as `added`). */
+  moved: number
+  /** Items changed in the workspace after the export. */
+  conflicts: number
   /** The section can be applied (false: reference only). */
   applicable: boolean
 }
@@ -538,9 +566,44 @@ export interface ImportSelection {
    * are added. An undo always overwrites (it puts back exactly what the import changed).
    */
   overwrite: boolean
+  /**
+   * Also replace (or remove) items that were changed in the workspace after the zip was exported.
+   * Default `false`: those keep the live version.
+   */
+  overwriteConflicts: boolean
+  /** Rewrite references to moved paths (programs, standing orders, memory notes, API grants). */
+  rewriteReferences: boolean
 }
 
 export const PREVIEW_ITEM_MAX = 2000
+
+/** One reference that points to nothing once the planned changes are applied. */
+export interface RefIssue {
+  /** Who holds it: `Program ana: Weekly report`, `ana memory: HEARTBEAT.md`. */
+  owner: string
+  /** The field or place: `authority.write`, `deliverable`, `brief file`, `standing order`, `note`. */
+  where: string
+  /** The path, folder or pattern as written. */
+  ref: string
+  kind: 'program' | 'order' | 'memory' | 'reminder' | 'api-agent'
+  /** Where the moves put it; the one-click rewrite uses it. Null: nothing says where it went. */
+  suggestion: string | null
+}
+
+/** The reference check of a preview. */
+export interface ReferenceReport {
+  /** How many references of every kind were checked. */
+  checked: number
+  /** Point to nothing after the planned changes (a file that existed before is gone or moved). */
+  dangling: RefIssue[]
+  /** Would point to nothing if the "remove what is not in the zip" tick of their section is applied. */
+  atRisk: RefIssue[]
+  /** Dangling ones the rewrite can fix (they have a suggestion; reminders are never rewritten). */
+  rewritable: number
+  truncated: boolean
+}
+
+export const REFERENCE_REPORT_MAX = 200
 
 /** What a preview answers: counts per section for everything, and the items that are not equal. */
 export interface ImportPreview {
@@ -558,13 +621,18 @@ export interface ImportPreview {
   items: ImportItem[]
   truncated: boolean
   warnings: string[]
+  /** What the planned moves and changes leave pointing to nothing, and what the rewrite would fix. */
+  references: ReferenceReport
+  /** The moves of the zip (`migrations/moves.json` and the ones found by content), counted. */
+  moves: { files: number; folders: number; explicit: number; detected: number }
 }
 
 /** Counts of a preview, section by section, in the order of {@link SECTIONS}. */
 export function summarize(items: readonly ImportItem[]): SectionSummary[] {
   return SECTIONS.map((id) => {
     const own = items.filter((i) => i.section === id)
-    const count = (s: ItemStatus): number => own.filter((i) => i.status === s).length
+    const count = (s: ItemStatus): number =>
+      own.filter((i) => i.status === s && i.kind !== 'move' && i.kind !== 'reference').length
     return {
       id,
       label: SECTION_LABELS[id],
@@ -572,16 +640,25 @@ export function summarize(items: readonly ImportItem[]): SectionSummary[] {
       changed: count('changed'),
       unchanged: count('unchanged'),
       onlyLive: count('only-live'),
+      moved: own.filter((i) => i.kind === 'move').length,
+      conflicts: own.filter((i) => i.conflict).length,
       applicable: !REFERENCE_SECTIONS.includes(id),
     }
   })
 }
 
-/** Whether the selection applies an item: ticked section, not excluded, applicable, a change. */
+/**
+ * Whether the selection applies an item: ticked section, not excluded, applicable, a change. A
+ * reference rewrite needs `rewriteReferences` (and no section tick: it follows the moves). An item
+ * that exists here and differs needs `overwrite`; one that was changed here after the export also
+ * needs `overwriteConflicts` (to be replaced or removed).
+ */
 export function selects(item: ImportItem, selection: ImportSelection): boolean {
   if (!item.applicable || item.status === 'unchanged') return false
-  if (!selection.sections.includes(item.section)) return false
   if (selection.exclude.includes(item.key)) return false
+  if (item.kind === 'reference') return selection.rewriteReferences
+  if (!selection.sections.includes(item.section)) return false
+  if (item.conflict && !selection.overwriteConflicts) return false
   if (item.status === 'only-live') return selection.removeSections.includes(item.section)
   // an item that exists here and differs is skipped unless the owner chose to overwrite
   if (item.status === 'changed' && !selection.overwrite) return false
@@ -600,4 +677,6 @@ export const defaultSelection = (): ImportSelection => ({
   exclude: [],
   removeSections: [],
   overwrite: false,
+  overwriteConflicts: false,
+  rewriteReferences: false,
 })

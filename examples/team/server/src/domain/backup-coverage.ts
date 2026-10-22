@@ -121,6 +121,11 @@ export const COVERAGE: readonly TableEntry[] = [
     'File history (who changed which path)',
     'the current files travel in the zip; the history stays in the database snapshot',
   ),
+  snapshot(
+    'library_moves',
+    'Moves applied by an import (old path to new path, for the redirects)',
+    'a record of what an import renamed; the files themselves travel in the zip at their new paths',
+  ),
   // people
   zip('people', 'People directory, roles, notes', 'people/<id>.json', ['people']),
   zip(

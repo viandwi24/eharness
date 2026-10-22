@@ -41,12 +41,12 @@
 		/** The restore point this import undoes. */
 		undoOf?: string;
 		/** A suggested selection (the undo of a restore point). */
-		initial?: { sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite?: boolean };
+		initial?: { sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite?: boolean; overwriteConflicts?: boolean; rewriteReferences?: boolean };
 		onDone: () => void;
 	} = $props();
 
 	let preview = $state<ImportPreview | null>(null);
-	let ticks = $state<Ticks>({ sections: new Set(), exclude: new Set(), remove: new Set(), overwrite: false });
+	let ticks = $state<Ticks>({ sections: new Set(), exclude: new Set(), remove: new Set(), overwrite: false, overwriteConflicts: false, rewrite: false });
 	let passphrase = $state('');
 	let unlocking = $state(false);
 	let secretsError = $state('');
@@ -79,6 +79,8 @@
 				t.exclude = new Set(initial.exclude);
 				t.remove = new Set(initial.removeSections);
 				t.overwrite = initial.overwrite === true;
+				t.overwriteConflicts = initial.overwriteConflicts === true;
+				t.rewrite = initial.rewriteReferences === true;
 			}
 			ticks = t;
 		} catch (e) {
@@ -121,6 +123,9 @@
 	const overwritePicked = $derived(items.filter((i) => isSelected(i, withOverwrite(ticks, true))).length);
 	const skipped = $derived(skippedCount(items, ticks));
 	const granted = $derived(grants(items, withOverwrite(ticks, true)));
+	const conflictCount = $derived(preview?.sections.reduce((n, s) => n + s.conflicts, 0) ?? 0);
+	const refs = $derived(preview?.references);
+	const movesOf = $derived(preview?.moves);
 	const secretsOn = $derived(ticks.sections.has('secrets') && preview?.secrets.unlocked === true);
 	/** The checkbox of an item: ticked unless left out (whether it is replaced is the button's choice). */
 	const ticked = (i: ImportItem): boolean => isSelected(i, withOverwrite(ticks, true));
@@ -150,7 +155,14 @@
 		return ticks.sections.has(id);
 	}
 
-	const badge = (i: ImportItem): 'success' | 'warning' | 'secondary' | 'outline' => (i.status === 'added' ? 'success' : i.status === 'changed' ? 'warning' : 'secondary');
+	const badge = (i: ImportItem): 'success' | 'warning' | 'secondary' | 'outline' => (i.kind === 'move' ? 'success' : i.status === 'added' ? 'success' : i.status === 'changed' ? 'warning' : 'secondary');
+	/** The badge text of an item: a move, a rewrite and an item changed here since the export say so. */
+	const badgeText = (i: ImportItem): string => {
+		if (i.kind === 'move') return i.move?.kind === 'prefix' ? 'Folder moved' : 'Moved';
+		if (i.kind === 'reference') return 'Rewrite';
+		if (i.status === 'only-live') return ticks.remove.has(i.section) && (!i.conflict || ticks.overwriteConflicts) ? 'Will be removed' : 'Kept';
+		return statusText[i.status];
+	};
 </script>
 
 <Dialog.Root open={open} onOpenChange={(o) => (open = o)}>
@@ -158,7 +170,7 @@
 		<Dialog.Header class="border-b border-border px-5 py-4">
 			<Dialog.Title>{undoOf ? 'Undo a restore point' : 'Import into this workspace'}</Dialog.Title>
 			<Dialog.Description>
-				From {label}. Nothing is written until you apply. Items that exist here and differ are kept as they are unless you choose to overwrite them, and an import never deletes unless you tick "remove what is not in the zip" for a section. Conversations are never ticked by default (they are large); secrets come back only from an encrypted export, with its passphrase. A verified safety backup is taken first and recorded as a restore point.
+				From {label}. Nothing is written until you apply. Items that exist here and differ are kept as they are unless you choose to overwrite them, items changed here after the zip was exported keep the live version unless you tick them, files that were moved or renamed offline are applied as moves, and an import never deletes unless you tick "remove what is not in the zip" for a section. Conversations are never ticked by default (they are large); secrets come back only from an encrypted export, with its passphrase. A verified safety backup is taken first and recorded as a restore point.
 			</Dialog.Description>
 		</Dialog.Header>
 		<div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
@@ -191,6 +203,56 @@
 						{#if secretsError}<p class="mt-2 text-sm text-destructive-text" role="alert">{secretsError}</p>{/if}
 					</section>
 				{/if}
+				{#if movesOf && movesOf.files > 0}
+					<Alert.Root>
+						<Alert.Title>{movesOf.files} file{movesOf.files === 1 ? '' : 's'} moved{movesOf.folders ? `, ${movesOf.folders} folder${movesOf.folders === 1 ? '' : 's'}` : ''}</Alert.Title>
+						<Alert.Description>
+							{movesOf.explicit} stated in migrations/moves.json, {movesOf.detected} found by content (same bytes, new name). They are applied as moves: the history follows the file, and an agent that still uses an old path is sent to the new one.
+						</Alert.Description>
+					</Alert.Root>
+				{/if}
+				{#if conflictCount > 0 && !undoOf}
+					<section class="rounded-lg border border-border px-3 py-3">
+						<label class="flex items-start gap-2 text-sm">
+							<Checkbox checked={ticks.overwriteConflicts} onCheckedChange={(v) => (ticks.overwriteConflicts = v === true)} aria-label="Replace or remove what was changed here after the export" />
+							<span>
+								<span class="font-medium">{conflictCount} item{conflictCount === 1 ? ' was' : 's were'} changed here after this zip was exported.</span>
+								<span class="block text-xs text-muted-foreground">They keep the version that is live now. Tick to replace or remove them too (marked "Changed here since the export" below).</span>
+							</span>
+						</label>
+					</section>
+				{/if}
+				{#if refs && (refs.dangling.length > 0 || refs.atRisk.length > 0)}
+					<section class="rounded-lg border border-border px-3 py-3" aria-label="Reference check">
+						<p class="text-sm font-medium">Reference check ({refs.checked} checked)</p>
+						{#if refs.dangling.length}
+							<p class="mt-1 text-xs text-warning-text">{refs.dangling.length} reference{refs.dangling.length === 1 ? '' : 's'} would point to nothing after this import:</p>
+							<ul class="mt-1 max-h-48 list-disc overflow-auto pl-4 text-xs">
+								{#each refs.dangling as r (`${r.owner}|${r.where}|${r.ref}`)}
+									<li><span class="font-medium">{r.owner}</span> ({r.where}): <span class="font-mono">{r.ref}</span>{#if r.suggestion} → <span class="font-mono text-success-text">{r.suggestion}</span>{/if}</li>
+								{/each}
+							</ul>
+							{#if refs.truncated}<p class="mt-1 text-xs text-muted-foreground">The list is cut; the rewrite covers all of them.</p>{/if}
+						{/if}
+						{#if refs.atRisk.length}
+							<p class="mt-2 text-xs text-muted-foreground">{refs.atRisk.length} reference{refs.atRisk.length === 1 ? '' : 's'} work only because of files that "remove what is not in the zip" would delete:</p>
+							<ul class="mt-1 max-h-32 list-disc overflow-auto pl-4 text-xs">
+								{#each refs.atRisk as r (`${r.owner}|${r.where}|${r.ref}`)}
+									<li><span class="font-medium">{r.owner}</span> ({r.where}): <span class="font-mono">{r.ref}</span></li>
+								{/each}
+							</ul>
+						{/if}
+						{#if !undoOf && refs.rewritable > 0}
+							<label class="mt-2 flex items-start gap-2 text-sm">
+								<Checkbox checked={ticks.rewrite} onCheckedChange={(v) => (ticks.rewrite = v === true)} aria-label="Rewrite references using the moves" />
+								<span>
+									<span class="font-medium">Rewrite references using the moves ({refs.rewritable})</span>
+									<span class="block text-xs text-muted-foreground">Programs, standing orders, memory notes and API folder grants are pointed at the new paths; what a program may read and write stays the same. Each rewrite is listed below as a "Rewrite" item.</span>
+								</span>
+							</label>
+						{/if}
+					</section>
+				{/if}
 				{#if !undoOf && skipped}
 					<p class="text-xs text-muted-foreground">{skipped} item{skipped === 1 ? '' : 's'} here differ{skipped === 1 ? 's' : ''} from the zip. "Apply (skip existing)" adds only what is new; "Apply and overwrite existing" replaces the differing ones too.</p>
 				{/if}
@@ -208,12 +270,12 @@
 				{/if}
 				{#each preview.sections as s (s.id)}
 					{@const rows = itemsOf(preview, s.id)}
-					{#if s.added + s.changed + s.onlyLive + s.unchanged > 0}
+					{#if s.added + s.changed + s.onlyLive + s.unchanged + s.moved > 0 || rows.length > 0}
 						<section class="rounded-lg border border-border">
 							<div class="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2">
 								<Checkbox checked={sectionChecked(s.id)} disabled={!s.applicable} onCheckedChange={(v) => (ticks.sections = flip(ticks.sections, s.id, v === true))} aria-label={`Apply ${s.label}`} />
 								<span class="text-sm font-medium">{s.label}</span>
-								<span class="text-xs text-muted-foreground">{s.added} new, {s.changed} differ, {s.unchanged} same{s.onlyLive ? `, ${s.onlyLive} only in the workspace` : ''}</span>
+								<span class="text-xs text-muted-foreground">{s.added} new, {s.changed} differ, {s.unchanged} same{s.moved ? `, ${s.moved} moved` : ''}{s.onlyLive ? `, ${s.onlyLive} only in the workspace` : ''}{s.conflicts ? `, ${s.conflicts} changed here since the export` : ''}</span>
 								{#if s.applicable && s.onlyLive}
 									<label class="ml-auto flex items-center gap-2 text-xs">
 										<Checkbox checked={ticks.remove.has(s.id)} disabled={!sectionChecked(s.id)} onCheckedChange={(v) => (ticks.remove = flip(ticks.remove, s.id, v === true))} aria-label={`Remove what is not in the zip: ${s.label}`} />
@@ -228,11 +290,12 @@
 											<div class="flex items-center gap-2">
 												<Checkbox
 													checked={ticked(i)}
-													disabled={!i.applicable || !sectionChecked(i.section) || (i.status === 'only-live' && !ticks.remove.has(i.section))}
+													disabled={!i.applicable || (i.kind === 'reference' ? !ticks.rewrite : !sectionChecked(i.section) || (i.status === 'only-live' && !ticks.remove.has(i.section)) || (i.conflict && !ticks.overwriteConflicts))}
 													onCheckedChange={(v) => (ticks.exclude = flip(ticks.exclude, i.key, v !== true))}
 													aria-label={`Apply ${i.label}`}
 												/>
-												<Badge variant={badge(i)}>{i.status === 'only-live' ? (ticks.remove.has(i.section) ? 'Will be removed' : 'Kept') : statusText[i.status]}</Badge>
+												<Badge variant={badge(i)}>{badgeText(i)}</Badge>
+												{#if i.conflict}<Badge variant="warning">Changed here since the export</Badge>{/if}
 												<span class="min-w-0 flex-1 truncate font-mono">{i.label}</span>
 												{#if i.sizeAfter !== null}<span class="text-muted-foreground">{bytesText(i.sizeBefore)} → {bytesText(i.sizeAfter)}</span>{/if}
 												{#if i.fields.length || i.diff || i.authority.length || i.notes.length || i.blocked}

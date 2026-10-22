@@ -155,9 +155,11 @@ const refused = (why: string): Error => invalid(`The zip was refused: ${why}`, '
  * not ours, a file whose hash differs from the manifest (tampered), a file the manifest does not
  * list, a listed file that is missing.
  */
-export async function parseWorkspaceZip(
-  bytes: Uint8Array,
-): Promise<{ manifest: WorkspaceManifest; entries: Map<string, Uint8Array> }> {
+export async function parseWorkspaceZip(bytes: Uint8Array): Promise<{
+  manifest: WorkspaceManifest
+  entries: Map<string, Uint8Array>
+  edited: { changed: number; added: number; removed: number }
+}> {
   let all: Map<string, Uint8Array>
   try {
     all = await readZip(bytes, IMPORT_LIMITS)
@@ -184,15 +186,36 @@ export async function parseWorkspaceZip(
     listed.set(f.path, f)
   }
   all.delete('manifest.json')
+  // the owner may have reorganized the library and memory files offline (moved, renamed, edited,
+  // removed): for those files, and the list of moves, the manifest is a description of the export,
+  // not a seal. Every other document must match its hash.
+  const unsealed = (path: string): boolean => {
+    const kind = classify(path)?.kind
+    return kind === 'file' || kind === 'moves'
+  }
+  const edited = { changed: 0, added: 0, removed: 0 }
   for (const [path, content] of all) {
     const f = listed.get(path)
-    if (f === undefined) throw refused(`${path} is in the zip but not in the manifest (tampered?)`)
+    if (f === undefined) {
+      if (!unsealed(path)) {
+        throw refused(`${path} is in the zip but not in the manifest (tampered?)`)
+      }
+      if (classify(path)?.kind === 'file') edited.added++
+      continue
+    }
     if (f.size !== content.byteLength || f.sha256 !== sha256(content)) {
-      throw refused(`${path} does not match its hash in the manifest (tampered or corrupt)`)
+      if (!unsealed(path)) {
+        throw refused(`${path} does not match its hash in the manifest (tampered or corrupt)`)
+      }
+      edited.changed++
     }
   }
   for (const path of listed.keys()) {
-    if (!all.has(path)) throw refused(`${path} is listed in the manifest but missing from the zip`)
+    if (all.has(path)) continue
+    if (!unsealed(path)) {
+      throw refused(`${path} is listed in the manifest but missing from the zip`)
+    }
+    edited.removed++
   }
   const secretsFile = all.get(SECRETS_FILE)
   if (secretsFile !== undefined) {
@@ -208,5 +231,5 @@ export async function parseWorkspaceZip(
   } else if (manifest.secrets.included) {
     throw refused('the manifest says secrets are included but secrets.enc.json is missing')
   }
-  return { manifest, entries: all }
+  return { manifest, entries: all, edited }
 }

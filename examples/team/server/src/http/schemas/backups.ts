@@ -151,6 +151,14 @@ export const ImportSelectionSchema = z
       description:
         'Default `false`: an item that exists here and differs is SKIPPED, only new items are added. `true` also replaces the differing ones. An undo (`undoOf`) always overwrites.',
     }),
+    overwriteConflicts: z.boolean().optional().openapi({
+      description:
+        'Default `false`: an item that was changed here AFTER the zip was exported (its `conflict` flag) keeps the live version, even with `overwrite`, and is not removed by `removeSections`. `true` replaces or removes those too.',
+    }),
+    rewriteReferences: z.boolean().optional().openapi({
+      description:
+        'Default `false`. `true` also applies the `reference` items of the preview: programs, standing orders (HEARTBEAT.md), memory notes and API agent folder grants that name a moved path are rewritten to its new place. Never applied by an undo.',
+    }),
   })
   .openapi('ImportSelection')
 
@@ -174,8 +182,39 @@ export const ImportItemSchema = z
     notes: z.array(z.string()),
     sizeBefore: z.number().int().nullable(),
     sizeAfter: z.number().int().nullable(),
+    conflict: z.boolean().openapi({
+      description:
+        'Changed here after the zip was exported: it keeps the live version unless `overwriteConflicts` is set.',
+    }),
+    move: z
+      .object({
+        from: z.string(),
+        to: z.string(),
+        kind: z.enum(['file', 'prefix']),
+        files: z.number().int(),
+        source: z.enum(['moves.json', 'detected']),
+      })
+      .nullable()
+      .openapi({
+        description:
+          'For a `move` item: the library path (a folder ends with `/`) that moves, where to, and how many files.',
+      }),
   })
   .openapi('ImportItem')
+
+const RefIssueSchema = z
+  .object({
+    owner: z
+      .string()
+      .openapi({ description: 'Who holds the reference (a program, a memory file, ...).' }),
+    where: z.string(),
+    ref: z.string().openapi({ description: 'The path, folder or pattern as written.' }),
+    kind: z.enum(['program', 'order', 'memory', 'reminder', 'api-agent']),
+    suggestion: z.string().nullable().openapi({
+      description: 'Where the moves put it; the rewrite uses it. Null when nothing says.',
+    }),
+  })
+  .openapi('RefIssue')
 
 export const ImportPreviewSchema = z
   .object({
@@ -194,6 +233,14 @@ export const ImportPreviewSchema = z
         changed: z.number().int(),
         unchanged: z.number().int(),
         onlyLive: z.number().int(),
+        moved: z
+          .number()
+          .int()
+          .openapi({ description: 'Files and folders that moved (not counted as new).' }),
+        conflicts: z
+          .number()
+          .int()
+          .openapi({ description: 'Items changed here after the export.' }),
         applicable: z.boolean(),
       }),
     ),
@@ -213,6 +260,34 @@ export const ImportPreviewSchema = z
     }),
     truncated: z.boolean(),
     warnings: z.array(z.string()),
+    references: z
+      .object({
+        checked: z.number().int(),
+        dangling: z.array(RefIssueSchema).openapi({
+          description:
+            'References that point to nothing once the planned changes are applied, though they pointed to something before.',
+        }),
+        atRisk: z.array(RefIssueSchema).openapi({
+          description:
+            'References that exist only because of a file that "remove what is not in the zip" would delete.',
+        }),
+        rewritable: z.number().int().openapi({
+          description: 'Dangling references the rewrite (`rewriteReferences`) can fix.',
+        }),
+        truncated: z.boolean(),
+      })
+      .openapi({ description: 'The reference check: what the planned moves and changes break.' }),
+    moves: z
+      .object({
+        files: z.number().int(),
+        folders: z.number().int(),
+        explicit: z.number().int(),
+        detected: z.number().int(),
+      })
+      .openapi({
+        description:
+          'The moves of the zip: stated in `migrations/moves.json` (`explicit`) or found by content (`detected`).',
+      }),
   })
   .openapi('ImportPreview')
 
@@ -288,6 +363,33 @@ export const RestorePointSchema = z
   })
   .openapi('RestorePoint')
 
+export const MigrationListSchema = z
+  .object({
+    migrations: z.array(
+      z.object({
+        restorePointId: z.string().nullable(),
+        at: z.number().int(),
+        by: z.string().nullable(),
+        label: z.string().nullable(),
+        files: z.number().int(),
+        folders: z.number().int(),
+        moves: z.array(
+          z.object({
+            from: z.string(),
+            to: z.string(),
+            kind: z.enum(['file', 'prefix']),
+            note: z.string().nullable(),
+          }),
+        ),
+        canUndo: z.boolean().openapi({
+          description:
+            'Its restore point exists and was not undone: undo it with the restore point.',
+        }),
+      }),
+    ),
+  })
+  .openapi('MigrationList')
+
 export const RestorePointListSchema = z
   .object({ restorePoints: z.array(RestorePointSchema) })
   .openapi('RestorePointList')
@@ -318,6 +420,8 @@ export const UndoPreviewSchema = z
       exclude: z.array(z.string()),
       removeSections: z.array(z.enum(SECTION_IDS)),
       overwrite: z.boolean(),
+      overwriteConflicts: z.boolean(),
+      rewriteReferences: z.boolean(),
     }),
     preview: ImportPreviewSchema,
   })

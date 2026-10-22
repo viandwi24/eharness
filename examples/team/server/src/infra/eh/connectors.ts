@@ -114,6 +114,8 @@ export interface ConnectorsOptions {
   fetch?: typeof fetch
   /** The code sandbox of the Files & Sandbox connector (driver off = files only). */
   code?: CodeRuntime
+  /** Folder of the daily works journal (Settings). */
+  worksRoot?: () => string
   /** Resolves a host name to its addresses (custom connector SSRF guard; default: system DNS). */
   resolveHost?: (host: string) => Promise<string[]>
   /** The OAuth callback URL of this server. */
@@ -222,6 +224,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     ...(options.onFileChange === undefined ? {} : { onFileChange: options.onFileChange }),
     hooks,
     ...(options.code === undefined ? {} : { code: options.code }),
+    ...(options.worksRoot === undefined ? {} : { worksRoot: options.worksRoot }),
     ...(env.TEAM_TELEGRAM_API_ROOT === undefined
       ? {}
       : { telegramApiRoot: env.TEAM_TELEGRAM_API_ROOT }),

@@ -5299,6 +5299,10 @@
             ],
             "description": "The team name given to agents in chats; null = none. Initial value: `TEAM_NAME`."
           },
+          "worksRoot": {
+            "type": "string",
+            "description": "Library folder of the daily works journal: agents append follow-ups and notes to `<folder>/YYYY/MM/DD.md` (team timezone). Default `/library/works`."
+          },
           "eventsRetentionHours": {
             "type": "integer",
             "minimum": 0,
@@ -5392,6 +5396,7 @@
           "longRunChunkSteps",
           "maxRepeatingReminders",
           "teamName",
+          "worksRoot",
           "eventsRetentionHours",
           "eventsMaxRows",
           "logMaxRows",
@@ -5896,6 +5901,11 @@
             ],
             "minLength": 1,
             "maxLength": 100
+          },
+          "worksRoot": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
           },
           "eventsRetentionHours": {
             "type": "integer",
@@ -6463,6 +6473,14 @@
                 "onlyLive": {
                   "type": "integer"
                 },
+                "moved": {
+                  "type": "integer",
+                  "description": "Files and folders that moved (not counted as new)."
+                },
+                "conflicts": {
+                  "type": "integer",
+                  "description": "Items changed here after the export."
+                },
                 "applicable": {
                   "type": "boolean"
                 }
@@ -6474,6 +6492,8 @@
                 "changed",
                 "unchanged",
                 "onlyLive",
+                "moved",
+                "conflicts",
                 "applicable"
               ]
             }
@@ -6515,6 +6535,67 @@
             "items": {
               "type": "string"
             }
+          },
+          "references": {
+            "type": "object",
+            "properties": {
+              "checked": {
+                "type": "integer"
+              },
+              "dangling": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RefIssue"
+                },
+                "description": "References that point to nothing once the planned changes are applied, though they pointed to something before."
+              },
+              "atRisk": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RefIssue"
+                },
+                "description": "References that exist only because of a file that \"remove what is not in the zip\" would delete."
+              },
+              "rewritable": {
+                "type": "integer",
+                "description": "Dangling references the rewrite (`rewriteReferences`) can fix."
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "checked",
+              "dangling",
+              "atRisk",
+              "rewritable",
+              "truncated"
+            ],
+            "description": "The reference check: what the planned moves and changes break."
+          },
+          "moves": {
+            "type": "object",
+            "properties": {
+              "files": {
+                "type": "integer"
+              },
+              "folders": {
+                "type": "integer"
+              },
+              "explicit": {
+                "type": "integer"
+              },
+              "detected": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "files",
+              "folders",
+              "explicit",
+              "detected"
+            ],
+            "description": "The moves of the zip: stated in `migrations/moves.json` (`explicit`) or found by content (`detected`)."
           }
         },
         "required": [
@@ -6524,7 +6605,9 @@
           "secrets",
           "items",
           "truncated",
-          "warnings"
+          "warnings",
+          "references",
+          "moves"
         ]
       },
       "ImportItem": {
@@ -6633,6 +6716,49 @@
               "integer",
               "null"
             ]
+          },
+          "conflict": {
+            "type": "boolean",
+            "description": "Changed here after the zip was exported: it keeps the live version unless `overwriteConflicts` is set."
+          },
+          "move": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "prefix"
+                ]
+              },
+              "files": {
+                "type": "integer"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "moves.json",
+                  "detected"
+                ]
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "kind",
+              "files",
+              "source"
+            ],
+            "description": "For a `move` item: the library path (a folder ends with `/`) that moves, where to, and how many files."
           }
         },
         "required": [
@@ -6648,7 +6774,49 @@
           "authority",
           "notes",
           "sizeBefore",
-          "sizeAfter"
+          "sizeAfter",
+          "conflict",
+          "move"
+        ]
+      },
+      "RefIssue": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "description": "Who holds the reference (a program, a memory file, ...)."
+          },
+          "where": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "description": "The path, folder or pattern as written."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "program",
+              "order",
+              "memory",
+              "reminder",
+              "api-agent"
+            ]
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the moves put it; the rewrite uses it. Null when nothing says."
+          }
+        },
+        "required": [
+          "owner",
+          "where",
+          "ref",
+          "kind",
+          "suggestion"
         ]
       },
       "ImportPreviewBody": {
@@ -6864,6 +7032,14 @@
           "overwrite": {
             "type": "boolean",
             "description": "Default `false`: an item that exists here and differs is SKIPPED, only new items are added. `true` also replaces the differing ones. An undo (`undoOf`) always overwrites."
+          },
+          "overwriteConflicts": {
+            "type": "boolean",
+            "description": "Default `false`: an item that was changed here AFTER the zip was exported (its `conflict` flag) keeps the live version, even with `overwrite`, and is not removed by `removeSections`. `true` replaces or removes those too."
+          },
+          "rewriteReferences": {
+            "type": "boolean",
+            "description": "Default `false`. `true` also applies the `reference` items of the preview: programs, standing orders (HEARTBEAT.md), memory notes and API agent folder grants that name a moved path are rewritten to its new place. Never applied by an undo."
           }
         }
       },
@@ -7041,6 +7217,96 @@
           "undoneBy"
         ]
       },
+      "MigrationList": {
+        "type": "object",
+        "properties": {
+          "migrations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "restorePointId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "at": {
+                  "type": "integer"
+                },
+                "by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "files": {
+                  "type": "integer"
+                },
+                "folders": {
+                  "type": "integer"
+                },
+                "moves": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "file",
+                          "prefix"
+                        ]
+                      },
+                      "note": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to",
+                      "kind",
+                      "note"
+                    ]
+                  }
+                },
+                "canUndo": {
+                  "type": "boolean",
+                  "description": "Its restore point exists and was not undone: undo it with the restore point."
+                }
+              },
+              "required": [
+                "restorePointId",
+                "at",
+                "by",
+                "label",
+                "files",
+                "folders",
+                "moves",
+                "canUndo"
+              ]
+            }
+          }
+        },
+        "required": [
+          "migrations"
+        ]
+      },
       "UndoPreview": {
         "type": "object",
         "properties": {
@@ -7109,13 +7375,21 @@
               },
               "overwrite": {
                 "type": "boolean"
+              },
+              "overwriteConflicts": {
+                "type": "boolean"
+              },
+              "rewriteReferences": {
+                "type": "boolean"
               }
             },
             "required": [
               "sections",
               "exclude",
               "removeSections",
-              "overwrite"
+              "overwrite",
+              "overwriteConflicts",
+              "rewriteReferences"
             ]
           },
           "preview": {
@@ -26924,6 +27198,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RestorePointList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/moves": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Moves applied by imports",
+        "description": "The files and folders an import moved (a reorganization made offline), one entry per import, newest first. An agent that still uses an old path is redirected to the new one (a read says \"Moved: old → new\", a write goes to the new path). Undo an entry by undoing its restore point (`GET /backups/restore-points/{id}/undo`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Moves by import",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationList"
                 }
               }
             }

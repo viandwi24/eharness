@@ -27,6 +27,7 @@ import { postNotice } from '../../app/briefings.ts'
 import { checkRun, finishRun } from '../../app/deliverables.ts'
 import type { AgentRepo, Deps, EventAppender, ProgramRunner } from '../../app/ports.ts'
 import { resolveProgramText } from '../../app/program-files.ts'
+import { journalProgramRun } from '../../app/works-journal.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import {
   isAllowedMediaType,
@@ -170,7 +171,16 @@ export function createProgramService(
     )
     const out = await verify(program, def, sessionId, stop)
     noticeReview(sessionId)
+    await journalRun(program, sessionId)
     return out
+  }
+
+  /** One line in the daily works journal for a run that ended (not one that parked or is running). */
+  async function journalRun(program: Program, sessionId: string): Promise<void> {
+    const app = deps.app?.()
+    const task = deps.tasks.getBySession(sessionId)
+    if (app === undefined || task === undefined || task.status === 'running') return
+    await journalProgramRun(app, program, task)
   }
 
   /**

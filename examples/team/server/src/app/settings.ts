@@ -1,4 +1,5 @@
 /** Workspace settings use cases. */
+
 import { invalid } from '../domain/errors.ts'
 import { normalizeSelection } from '../domain/providers.ts'
 import {
@@ -7,6 +8,7 @@ import {
   toSettingsMode,
   type WorkspaceSettings,
 } from '../domain/settings.ts'
+import { checkWorksRoot } from '../domain/works-journal.ts'
 import { syncDigestRoutine } from './heartbeat.ts'
 import type { Deps } from './ports.ts'
 
@@ -44,6 +46,7 @@ export function patchSettings(
     Object.entries(patch).filter(([, v]) => v !== undefined),
   ) as SettingsPatch
   checkSettingsPatch(clean)
+  if (clean.worksRoot !== undefined) clean.worksRoot = checkWorksRoot(clean.worksRoot)
   if (clean.defaultModel !== undefined || clean.defaultProfile !== undefined) {
     const known = deps.providers.profileIds()
     const current = deps.settings.get()

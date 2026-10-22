@@ -89,6 +89,7 @@ import type {
   WatchNode,
 } from '../domain/heartbeat.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
+import type { LibraryMove } from '../domain/library-moves.ts'
 import type {
   ModelCallDetail,
   ModelCallFilter,
@@ -1329,6 +1330,12 @@ export interface BackupDownload {
 export interface ParsedWorkspaceZip {
   manifest: WorkspaceManifest
   entries: Map<string, Uint8Array>
+  /**
+   * Library and memory files whose bytes differ from the manifest, files the manifest does not list,
+   * and listed files that are gone: the zip was reorganized offline. Tolerated for files only; every
+   * other document must match its hash.
+   */
+  edited: { changed: number; added: number; removed: number }
 }
 
 /** Snapshots of the database, the workspace export and restore from them (`infra/backup`). */
@@ -1357,6 +1364,22 @@ export interface BackupPort {
   ): Promise<boolean>
   /** Delete a library or memory file; false when it changed meanwhile or is gone. */
   deleteFile(path: string, ifVersion: string): Promise<boolean>
+  /**
+   * Move a library or memory file as a move (its history follows; the old path gets a deletion).
+   * `missing`: no file at `from`; `exists`: `to` is taken; `conflict`: it changed meanwhile.
+   */
+  moveFile(
+    from: string,
+    to: string,
+    ifVersion: string | null,
+  ): Promise<'ok' | 'missing' | 'exists' | 'conflict'>
+  /** The moves imports applied, for the redirects of the agents' file system (`library_moves`). */
+  moves: {
+    list(): LibraryMove[]
+    add(moves: readonly LibraryMove[]): void
+    /** Forget the moves of one import (its undo). */
+    removeOf(restorePointId: string): number
+  }
   /** Active reminders (a reference in the export: they are tied to chats). */
   activeReminders(): ReminderRecord[]
   restorePoints: {

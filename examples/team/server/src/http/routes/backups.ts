@@ -20,6 +20,7 @@ import type { Deps } from '../../app/ports.ts'
 import { exportWorkspace } from '../../app/workspace-export.ts'
 import {
   applyImport,
+  listMigrations,
   listRestorePoints,
   previewImport,
   previewUndo,
@@ -39,6 +40,7 @@ import {
   ImportPreviewSchema,
   ImportResultSchema,
   ImportUploadResultSchema,
+  MigrationListSchema,
   RestoreBodySchema,
   RestorePlanSchema,
   RestorePointListSchema,
@@ -277,6 +279,20 @@ const restorePointsRoute = createRoute({
   },
 })
 
+const migrationsRoute = createRoute({
+  method: 'get',
+  path: '/backups/moves',
+  tags: ['backups'],
+  summary: 'Moves applied by imports',
+  description:
+    'The files and folders an import moved (a reorganization made offline), one entry per import, newest first. An agent that still uses an old path is redirected to the new one (a read says "Moved: old → new", a write goes to the new path). Undo an entry by undoing its restore point (`GET /backups/restore-points/{id}/undo`).',
+  security,
+  responses: {
+    200: { description: 'Moves by import', content: json(MigrationListSchema) },
+    ...errorResponses,
+  },
+})
+
 const undoPreviewRoute = createRoute({
   method: 'get',
   path: '/backups/restore-points/{id}/undo',
@@ -456,6 +472,7 @@ export function backupRoutes(deps: Deps): OpenAPIHono {
       )
     })
     .openapi(restorePointsRoute, (c) => c.json({ restorePoints: listRestorePoints(deps) }, 200))
+    .openapi(migrationsRoute, (c) => c.json({ migrations: listMigrations(deps) }, 200))
     .openapi(undoPreviewRoute, async (c) =>
       c.json(await previewUndo(deps, c.req.valid('param').id), 200),
     )

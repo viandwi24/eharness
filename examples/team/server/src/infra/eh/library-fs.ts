@@ -23,6 +23,7 @@ import {
   type MoveResult,
   type WriteResult,
 } from 'eharness/filesystem'
+import { movedTarget } from './library-moves.ts'
 
 interface Row {
   path: string
@@ -51,6 +52,12 @@ export interface LibraryFsOptions {
   agentId?: string
   /** Called after every successful write, delete or move (event feed hook, M4). */
   onChange?: (change: LibraryChange) => void
+  /**
+   * Follow the moves an import applied (`library_moves`): reading or writing a path that no longer
+   * exists reaches the file it moved to. For the file system of the agents; people and the backup
+   * code see the real paths.
+   */
+  redirectMoves?: boolean
 }
 
 const decoder = new TextDecoder('utf-8', { fatal: false })
@@ -77,6 +84,9 @@ const META_COLS = 'path, version, size, updated_at, bytes IS NOT NULL AS has_byt
 
 export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): FileSystem {
   const agentId = options.agentId ?? null
+  /** The path to act on: a missing path that moved is the file it moved to. */
+  const follow = (path: string): string =>
+    options.redirectMoves === true ? (movedTarget(sqlite, path) ?? path) : path
 
   type MetaRow = Omit<Row, 'text' | 'bytes' | 'created_by_agent_id'> & { has_bytes: number }
   const toMeta = (row: MetaRow): FileMeta =>
@@ -171,28 +181,36 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 
   return {
-    async read(path): Promise<FileEntry | null> {
+    async read(asked): Promise<FileEntry | null> {
+      const path = follow(asked)
       const row = sqlite
         .query<Row, [string]>('SELECT * FROM library_files WHERE path = ?')
         .get(path)
       if (row === null) return null
       if (row.bytes !== null) throw new Error(`binary file: ${path} (use readBytes)`)
-      return { ...metaOf(row), content: row.text ?? '' }
+      // the path the caller asked for: its own accounting (read before edit) is keyed by it
+      return { ...metaOf(row), path: asked, content: row.text ?? '' }
     },
 
-    async readBytes(path): Promise<BinaryFile | null> {
+    async readBytes(asked): Promise<BinaryFile | null> {
+      const path = follow(asked)
       const row = sqlite
         .query<Row, [string]>('SELECT * FROM library_files WHERE path = ?')
         .get(path)
       if (row === null) return null
       const bytes = row.bytes !== null ? new Uint8Array(row.bytes) : encoder.encode(row.text ?? '')
       const mediaType = row.media_type ?? detectMediaType(bytes, path)
-      return { bytes, meta: metaOf(row), ...(mediaType === undefined ? {} : { mediaType }) }
+      return {
+        bytes,
+        meta: { ...metaOf(row), path: asked },
+        ...(mediaType === undefined ? {} : { mediaType }),
+      }
     },
 
-    async write(path, content, opts = {}): Promise<WriteResult> {
+    async write(asked, content, opts = {}): Promise<WriteResult> {
       if (typeof content !== 'string')
         throw new TypeError('libraryFs.write: content must be a string')
+      const path = follow(asked)
       const version = await contentVersion(content)
       return put(
         path,
@@ -207,10 +225,11 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
       )
     },
 
-    async writeBytes(path, bytes, opts = {}): Promise<WriteResult> {
+    async writeBytes(asked, bytes, opts = {}): Promise<WriteResult> {
       if (!(bytes instanceof Uint8Array)) {
         throw new TypeError('libraryFs.writeBytes: bytes must be a Uint8Array')
       }
+      const path = follow(asked)
       // a declared media type wins (spec 08 §4: text/csv of a text file), else detection
       const mediaType = opts.mediaType ?? detectMediaType(bytes, path) ?? null
       if (!looksBinary(bytes)) {
@@ -262,11 +281,11 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
       return listRows(prefix).map(toMeta)
     },
 
-    async stat(path): Promise<FileMeta | null> {
+    async stat(asked): Promise<FileMeta | null> {
       const row = sqlite
         .query<MetaRow, [string]>(`SELECT ${META_COLS} FROM library_files WHERE path = ?`)
-        .get(path)
-      return row === null ? null : toMeta(row)
+        .get(follow(asked))
+      return row === null ? null : { ...toMeta(row), path: asked }
     },
 
     async move(from, to, opts = {}): Promise<MoveResult> {
@@ -282,6 +301,8 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
             .query('UPDATE library_files SET path = ?, updated_at = ? WHERE path = ?')
             .run(to, Date.now(), from)
           record({ path: to, action: 'move', version: cur.version, size: null, fromPath: from })
+          // the old path ends here: its history keeps its last version and then this deletion
+          record({ path: from, action: 'delete', version: null, size: null })
           return { ok: true }
         })
         .immediate()

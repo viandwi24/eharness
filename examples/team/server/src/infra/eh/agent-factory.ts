@@ -137,6 +137,7 @@ import { createProgramGate } from './gates/program-gate.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { memoryDiscipline } from './memory-discipline-plugin.ts'
+import { movedPaths } from './moved-paths-plugin.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import { type PersonaIntake, persona } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
@@ -1135,6 +1136,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             filesystem({
               fs: libraryFs(sqlite, {
                 agentId: def.id,
+                // an old path of a reorganized library reaches the file it moved to (library_moves)
+                redirectMoves: true,
                 ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
               }),
               tools: deps.programs === undefined ? [] : (PROGRAM_FILE_TOOLS as FileToolName[]),
@@ -1201,6 +1204,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       }),
       // memory holds durable facts only: no system state, no style notes (hook only)
       memoryDiscipline(),
+      // a path of a reorganized library that moved: the result tells the model the new path
+      movedPaths(sqlite),
       // long turns: the base step budget grows while the turn makes progress (hook only)
       // a turn that reaches its cap hands the rest of the job to the background worker
       stepBudget({

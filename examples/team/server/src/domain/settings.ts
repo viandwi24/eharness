@@ -3,6 +3,7 @@ import { PERMISSION_MODES, type PermissionMode, TOOL_ACCESS, type ToolAccess } f
 import { checkBackupPatch } from './backups.ts'
 import { invalid } from './errors.ts'
 import { EH_MODE, type TeamMode, teamModeOf } from './modes.ts'
+import { checkWorksRoot, WORKS_ROOT_DEFAULT } from './works-journal.ts'
 
 /**
  * The workspace default mode as stored: one of the three product modes, in eharness spelling
@@ -66,6 +67,8 @@ export interface WorkspaceSettings {
   maxRepeatingReminders: number
   /** The team's name, given to agents in chats ("You are <agent>, the assistant of <team>"); null = none. */
   teamName: string | null
+  /** Folder of the daily works journal (`<root>/YYYY/MM/DD.md`); default `/library/works`. */
+  worksRoot: string
   /** Events feed: hours kept (0 = by count only). */
   eventsRetentionHours: number
   /** Events feed: rows kept. */
@@ -111,6 +114,7 @@ export const SETTINGS_BUILTIN = {
   longRunChunkSteps: 80,
   maxRepeatingReminders: 10,
   teamName: null,
+  worksRoot: WORKS_ROOT_DEFAULT,
   eventsRetentionHours: 72,
   eventsMaxRows: 100_000,
   logMaxRows: 5000,
@@ -348,6 +352,7 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
     intIn(key, patch[key], 0, 36_500)
   }
   checkBackupPatch(patch)
+  if (patch.worksRoot !== undefined) checkWorksRoot(patch.worksRoot)
   if (patch.teamName != null && (patch.teamName.trim() === '' || patch.teamName.length > 100)) {
     throw invalid('teamName must be 1-100 characters or null', 'INVALID_SETTINGS')
   }

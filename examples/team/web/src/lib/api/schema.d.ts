@@ -6629,6 +6629,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backups/moves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Moves applied by imports
+         * @description The files and folders an import moved (a reorganization made offline), one entry per import, newest first. An agent that still uses an old path is redirected to the new one (a read says "Moved: old → new", a write goes to the new path). Undo an entry by undoing its restore point (`GET /backups/restore-points/{id}/undo`).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Moves by import */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MigrationList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/backups/restore-points/{id}/undo": {
         parameters: {
             query?: never;
@@ -19424,6 +19481,8 @@ export interface components {
             maxRepeatingReminders: number;
             /** @description The team name given to agents in chats; null = none. Initial value: `TEAM_NAME`. */
             teamName: string | null;
+            /** @description Library folder of the daily works journal: agents append follow-ups and notes to `<folder>/YYYY/MM/DD.md` (team timezone). Default `/library/works`. */
+            worksRoot: string;
             /** @description Events feed: hours kept; 0 = by count only. Default 72. */
             eventsRetentionHours: number;
             /** @description Events feed: rows kept. Default 100000. */
@@ -19581,6 +19640,7 @@ export interface components {
             longRunChunkSteps?: number;
             maxRepeatingReminders?: number;
             teamName?: string | null;
+            worksRoot?: string;
             eventsRetentionHours?: number;
             eventsMaxRows?: number;
             logMaxRows?: number;
@@ -19728,6 +19788,10 @@ export interface components {
                 changed: number;
                 unchanged: number;
                 onlyLive: number;
+                /** @description Files and folders that moved (not counted as new). */
+                moved: number;
+                /** @description Items changed here after the export. */
+                conflicts: number;
                 applicable: boolean;
             }[];
             secrets: {
@@ -19742,6 +19806,24 @@ export interface components {
             items: components["schemas"]["ImportItem"][];
             truncated: boolean;
             warnings: string[];
+            /** @description The reference check: what the planned moves and changes break. */
+            references: {
+                checked: number;
+                /** @description References that point to nothing once the planned changes are applied, though they pointed to something before. */
+                dangling: components["schemas"]["RefIssue"][];
+                /** @description References that exist only because of a file that "remove what is not in the zip" would delete. */
+                atRisk: components["schemas"]["RefIssue"][];
+                /** @description Dangling references the rewrite (`rewriteReferences`) can fix. */
+                rewritable: number;
+                truncated: boolean;
+            };
+            /** @description The moves of the zip: stated in `migrations/moves.json` (`explicit`) or found by content (`detected`). */
+            moves: {
+                files: number;
+                folders: number;
+                explicit: number;
+                detected: number;
+            };
         };
         ImportItem: {
             /** @description The zip path of the item; unticking uses it. */
@@ -19767,6 +19849,29 @@ export interface components {
             notes: string[];
             sizeBefore: number | null;
             sizeAfter: number | null;
+            /** @description Changed here after the zip was exported: it keeps the live version unless `overwriteConflicts` is set. */
+            conflict: boolean;
+            /** @description For a `move` item: the library path (a folder ends with `/`) that moves, where to, and how many files. */
+            move: {
+                from: string;
+                to: string;
+                /** @enum {string} */
+                kind: "file" | "prefix";
+                files: number;
+                /** @enum {string} */
+                source: "moves.json" | "detected";
+            } | null;
+        };
+        RefIssue: {
+            /** @description Who holds the reference (a program, a memory file, ...). */
+            owner: string;
+            where: string;
+            /** @description The path, folder or pattern as written. */
+            ref: string;
+            /** @enum {string} */
+            kind: "program" | "order" | "memory" | "reminder" | "api-agent";
+            /** @description Where the moves put it; the rewrite uses it. Null when nothing says. */
+            suggestion: string | null;
         };
         ImportPreviewBody: {
             source: components["schemas"]["ImportSource"];
@@ -19813,6 +19918,10 @@ export interface components {
             removeSections?: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "channels" | "history" | "artifacts" | "api" | "browser" | "conversations" | "secrets")[];
             /** @description Default `false`: an item that exists here and differs is SKIPPED, only new items are added. `true` also replaces the differing ones. An undo (`undoOf`) always overwrites. */
             overwrite?: boolean;
+            /** @description Default `false`: an item that was changed here AFTER the zip was exported (its `conflict` flag) keeps the live version, even with `overwrite`, and is not removed by `removeSections`. `true` replaces or removes those too. */
+            overwriteConflicts?: boolean;
+            /** @description Default `false`. `true` also applies the `reference` items of the preview: programs, standing orders (HEARTBEAT.md), memory notes and API agent folder grants that name a moved path are rewritten to its new place. Never applied by an undo. */
+            rewriteReferences?: boolean;
         };
         RestorePointList: {
             restorePoints: components["schemas"]["RestorePoint"][];
@@ -19852,6 +19961,25 @@ export interface components {
             undoOf: string | null;
             undoneBy: string | null;
         };
+        MigrationList: {
+            migrations: {
+                restorePointId: string | null;
+                at: number;
+                by: string | null;
+                label: string | null;
+                files: number;
+                folders: number;
+                moves: {
+                    from: string;
+                    to: string;
+                    /** @enum {string} */
+                    kind: "file" | "prefix";
+                    note: string | null;
+                }[];
+                /** @description Its restore point exists and was not undone: undo it with the restore point. */
+                canUndo: boolean;
+            }[];
+        };
         UndoPreview: {
             restorePoint: components["schemas"]["RestorePoint"];
             source: components["schemas"]["ImportSource"];
@@ -19860,6 +19988,8 @@ export interface components {
                 exclude: string[];
                 removeSections: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "channels" | "history" | "artifacts" | "api" | "browser" | "conversations" | "secrets")[];
                 overwrite: boolean;
+                overwriteConflicts: boolean;
+                rewriteReferences: boolean;
             };
             preview: components["schemas"]["ImportPreview"];
         };

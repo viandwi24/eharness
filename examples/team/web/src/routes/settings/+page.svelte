@@ -75,6 +75,7 @@
 	let model = $state<string | null>(null);
 	let profile = $state<string | null>(null);
 	let teamName = $state('');
+	let worksRoot = $state('/library/works');
 	let classifierProfile = $state<string | null>(null);
 	let classifierModel = $state<string | null>(null);
 	let searchProfile = $state<string | null>(null);
@@ -95,6 +96,7 @@
 		!!settings &&
 			(knobsDirty ||
 				teamName.trim() !== (settings.teamName ?? '') ||
+				worksRoot.trim() !== (settings.worksRoot ?? '/library/works') ||
 				classifierProfile !== settings.classifierProfile ||
 				classifierModel !== settings.classifierModel ||
 				searchProfile !== settings.searchProfile ||
@@ -118,6 +120,7 @@
 		model = s.defaultModel;
 		profile = s.defaultProfile;
 		teamName = s.teamName ?? '';
+		worksRoot = s.worksRoot ?? '/library/works';
 		classifierProfile = s.classifierProfile;
 		classifierModel = s.classifierModel;
 		searchProfile = s.searchProfile;
@@ -198,6 +201,7 @@
 			// only the new knobs that changed are sent: an untouched one keeps following its initial value
 			const extra: Record<string, unknown> = { ...kp.patch };
 			if (settings && teamName.trim() !== (settings.teamName ?? '')) extra.teamName = teamName.trim() || null;
+			if (settings && worksRoot.trim() !== (settings.worksRoot ?? '/library/works')) extra.worksRoot = worksRoot.trim() || '/library/works';
 			if (settings && (classifierModel !== settings.classifierModel || classifierProfile !== settings.classifierProfile)) {
 				extra.classifierModel = classifierModel || null;
 				extra.classifierProfile = classifierProfile || null;
@@ -371,6 +375,11 @@
 										<Field.Label for="s-team-name">Team name</Field.Label>
 										<Input id="s-team-name" bind:value={teamName} placeholder="None" maxlength={100} disabled={!settings} class="max-w-sm" />
 										<Field.Description>Given to agents in chats ("You are the assistant of this team"). Empty means none.</Field.Description>
+									</Field.Field>
+									<Field.Field>
+										<Field.Label for="s-works-root">Daily journal folder</Field.Label>
+										<Input id="s-works-root" bind:value={worksRoot} placeholder="/library/works" maxlength={200} disabled={!settings} class="max-w-sm font-mono text-xs" />
+										<Field.Description>Agents keep the day's follow-ups and notes in <span class="font-mono">{worksRoot || '/library/works'}/YYYY/MM/DD.md</span>, and program runs and heartbeat findings add a line with a link to their report.</Field.Description>
 									</Field.Field>
 									<Field.Field data-invalid={!!errors.timezone}>
 										<Field.Label for="s-tz">Team timezone</Field.Label>

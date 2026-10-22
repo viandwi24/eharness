@@ -632,6 +632,32 @@ export const libraryHistory = sqliteTable(
   (t) => [index('library_history_path').on(t.path, t.seq), index('library_history_at').on(t.at)],
 )
 
+/**
+ * Moves applied by an import (a reorganization of the library or of agent memory made offline): a
+ * file or a folder prefix that now lives elsewhere. Agents that still use the old path are
+ * redirected (reads return the moved file with a note, writes go to the new path). Undoing the
+ * import (its restore point) removes its rows.
+ */
+export const libraryMoves = sqliteTable(
+  'library_moves',
+  {
+    id: text('id').primaryKey(),
+    /** The old library path; a folder prefix ends with `/`. */
+    fromPath: text('from_path').notNull(),
+    toPath: text('to_path').notNull(),
+    /** `file` | `prefix` */
+    kind: text('kind').notNull(),
+    at: integer('at').notNull(),
+    /** The restore point of the import that made the move (undo = that restore point). */
+    restorePointId: text('restore_point_id'),
+    note: text('note'),
+  },
+  (t) => [
+    index('library_moves_from').on(t.fromPath),
+    index('library_moves_point').on(t.restorePointId),
+  ],
+)
+
 /** Library and memory files (memory lives under `/memories/**`, ADR-0022). */
 export const libraryFiles = sqliteTable(
   'library_files',

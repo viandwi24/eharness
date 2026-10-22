@@ -105,6 +105,7 @@ import {
 } from './supervisor.ts'
 import { threadSessionsOf } from './threads.ts'
 import { sessionsWithOpenDecision } from './work-queue.ts'
+import { journalBeat } from './works-journal.ts'
 
 const HOUR = 3_600_000
 /** A beat recorded as running this long ago, with no turn in sight, is a dead one. */
@@ -1073,6 +1074,9 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
       // urgent findings go to the bell, one alert each: no chat message, no interruption
       postAlerts(deps, { agentId, beatId: record?.id ?? String(at), items: urgent, at })
     }
+  }
+  if (fresh.length > 0) {
+    await journalBeat(deps, deps.agents.get(agentId)?.name ?? 'agent', fresh, at)
   }
   changed(deps, agentId, 'beat')
   return record

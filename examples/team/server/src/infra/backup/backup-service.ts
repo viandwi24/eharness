@@ -45,6 +45,7 @@ import {
   type ReminderRecord,
 } from '../../domain/workspace-export.ts'
 import { type LibraryChange, libraryFs } from '../eh/library-fs.ts'
+import { addMoves, listMoves, removeMovesOf } from '../eh/library-moves.ts'
 import { createDataTables, tableCounts } from './data-tables.ts'
 import {
   cancelPendingRestore,
@@ -466,6 +467,20 @@ export function createBackupService(options: BackupServiceOptions): BackupPort {
     async deleteFile(filePath, ifVersion) {
       const fs = libraryFs(sqlite, options.onChange ? { onChange: options.onChange } : {})
       return (await fs.delete(filePath, { ifVersion })).ok
+    },
+    async moveFile(from, to, ifVersion) {
+      const fs = libraryFs(sqlite, options.onChange ? { onChange: options.onChange } : {})
+      const moved = await (fs.move as NonNullable<typeof fs.move>)(
+        from,
+        to,
+        ifVersion === null ? {} : { ifVersion },
+      )
+      return moved.ok ? 'ok' : moved.reason
+    },
+    moves: {
+      list: () => listMoves(sqlite),
+      add: (moves) => addMoves(sqlite, moves),
+      removeOf: (restorePointId) => removeMovesOf(sqlite, restorePointId),
     },
     activeReminders() {
       return sqlite

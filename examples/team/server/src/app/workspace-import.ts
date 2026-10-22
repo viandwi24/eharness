@@ -28,10 +28,16 @@ import { COVERAGE_BY_TABLE } from '../domain/backup-coverage.ts'
 import { beforeReason, type RestorePoint, restorePointId } from '../domain/backups.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import {
+  type LibraryMove,
+  type MoveRule,
+  PathIndex,
+  rewriteRef,
+  rewriteText,
+} from '../domain/library-moves.ts'
+import {
   compareRows,
   DATASETS,
   type DataRow,
-  type DatasetSpec,
   datasetOfEntry,
   IdMap,
   parseRowsFile,
@@ -69,6 +75,7 @@ import {
   jsonFieldDiff,
   lineDiff,
   PREVIEW_ITEM_MAX,
+  REFERENCE_REPORT_MAX,
   REFERENCE_SECTIONS,
   SECTIONS,
   type SectionId,
@@ -108,6 +115,14 @@ import {
   connectionId,
   connectionIndex,
 } from './workspace-export.ts'
+import {
+  checkRefs,
+  type PlannedMove,
+  planMoves,
+  programRefs,
+  type RefSource,
+  textRefs,
+} from './workspace-moves.ts'
 
 // --- plan --------------------------------------------------------------------------------------
 
@@ -127,6 +142,16 @@ interface RunCtx {
   createdAgents: Set<string>
   /** People this run created: the `create` event the directory wrote is replaced by the zip's history. */
   createdPeople: Set<string>
+  /** Rewrite references to moved paths (the owner ticked it). */
+  rewrite: boolean
+  /** Every move of the plan, as rules (what the rewrite maps through). */
+  rules: readonly MoveRule[]
+  /** The library paths after the planned changes (a reference that exists there is never rewritten). */
+  after: PathIndex
+  /** The moves this run applied (recorded in `library_moves` at the end, unless it is an undo). */
+  applied: Array<Omit<LibraryMove, 'id' | 'at' | 'restorePointId'>>
+  /** The keys of the plan entries that ran. */
+  ran: Set<string>
 }
 
 /** One thing the import may do: its preview item and how to apply it. */
@@ -138,6 +163,8 @@ interface PlanEntry {
   run?: (ctx: RunCtx) => Promise<string | undefined>
   /** The key of the section's removal (an only-in-workspace item). */
   removal?: boolean
+  /** The key of an entry that must be applied too (a file written at the new path of a move). */
+  requires?: string
 }
 
 const ORDER = {
@@ -147,8 +174,12 @@ const ORDER = {
   heartbeat: 3,
   connection: 3.5,
   routine: 4,
+  // moves come before the programs: a brief file is where its program says by the time it is written
+  move: 4.5,
   program: 5,
   file: 6,
+  // references are rewritten when every file and program is where it will be
+  reference: 7,
   data: 8,
   // people come after the channels data (their divisions are chats), their rows after them
   person: 8.5,
@@ -187,6 +218,8 @@ function makeItem(
     notes: [],
     sizeBefore: null,
     sizeAfter: null,
+    conflict: false,
+    move: null,
     ...over,
   }
 }
@@ -387,6 +420,12 @@ interface Plan {
   warnings: string[]
   source: ImportPreview['source']
   label: string
+  references: ImportPreview['references']
+  moves: ImportPreview['moves']
+  /** Every move of the plan, as rules. */
+  rules: MoveRule[]
+  /** The library paths after the planned changes. */
+  after: PathIndex
 }
 
 const sourceOf = (source: ImportSource): ImportPreview['source'] =>
@@ -421,6 +460,11 @@ async function buildPlan(
     if (c?.kind === 'agent' && c.agent !== undefined) zipAgents.add(c.agent)
   }
   const manifestFile = new Map(parsed.manifest.files.map((f) => [f.path, f]))
+  /** What changed in the workspace after this instant was changed in production, not by the zip. */
+  const exportedAt =
+    parsed.manifest.createdAt > 0 ? parsed.manifest.createdAt : Number.POSITIVE_INFINITY
+  const changedSince = (updatedAt: number | undefined): boolean =>
+    updatedAt !== undefined && updatedAt > exportedAt
   const planMap = new IdMap()
   /** `conn:<label>` of every connection document of the zip: those get created by this import. */
   const zipConnectionKeys = new Set<string>()
@@ -587,6 +631,7 @@ async function buildPlan(
           blocked,
           fields,
           notes,
+          conflict: status === 'changed' && changedSince(liveAgent?.updatedAt),
           authority:
             liveDoc === undefined
               ? agentAuthority(view)
@@ -744,6 +789,7 @@ async function buildPlan(
         label: a.name,
         status: 'only-live',
         applicable: a.role !== 'lead',
+        conflict: changedSince(a.updatedAt),
         blocked: a.role === 'lead' ? 'the lead agent cannot be removed' : null,
         notes: ['removing an agent archives it: its chats and history stay readable'],
       }),
@@ -820,6 +866,12 @@ async function buildPlan(
       if (liveBrief !== undefined) diff = lineDiff(textOf(liveBrief).replace(/\n$/, ''), brief)
     }
     const changed = fields.length > 0 || (diff !== null && diff !== '')
+    const liveRecord =
+      liveAgent === undefined
+        ? undefined
+        : deps.programs
+            .list({ agentId: liveAgent.id })
+            .find((p) => slugOfName(p.name) === slugOfName(doc.name))
     add({
       order: ORDER.program,
       item: makeItem({
@@ -827,6 +879,7 @@ async function buildPlan(
         section: 'programs',
         kind: 'program',
         label: `${slug}: ${doc.name}`,
+        conflict: changed && changedSince(liveRecord?.updatedAt),
         status: liveJson === undefined ? 'added' : changed ? 'changed' : 'unchanged',
         fields,
         diff: diff === '' ? null : diff,
@@ -851,6 +904,15 @@ async function buildPlan(
         kind: 'program',
         label: `${c?.agent}: ${doc.name}`,
         status: 'only-live',
+        conflict: changedSince(
+          deps.programs
+            .list({})
+            .find(
+              (p) =>
+                p.agentId === idBySlug.get(c?.agent ?? '') &&
+                slugOfName(p.name) === slugOfName(doc.name),
+            )?.updatedAt,
+        ),
       }),
       run: async (ctx) => {
         const id = ctx.agentId(c?.agent ?? '')
@@ -921,6 +983,8 @@ async function buildPlan(
         label: `${slug}: ${doc.name}`,
         status: match === undefined ? 'added' : fields.length > 0 ? 'changed' : 'unchanged',
         fields,
+        conflict:
+          fields.length > 0 && changedSince(match && deps.routines.get(match.doc.id)?.updatedAt),
         authority:
           match === undefined
             ? routineAuthority(doc)
@@ -940,6 +1004,7 @@ async function buildPlan(
         kind: 'routine',
         label: `${l.agent}: ${l.doc.name}`,
         status: 'only-live',
+        conflict: changedSince(deps.routines.get(l.doc.id)?.updatedAt),
       }),
       run: async ({ deps: d }) => {
         deleteRoutine(d, l.doc.id)
@@ -1133,13 +1198,58 @@ async function buildPlan(
     })
   }
 
-  // ---- library and memory files
+  // ---- library and memory files, their moves, and the references to them
   const metas = deps.library.list({
     prefix: '/',
     excludePrefixes: [`${TOOL_MEDIA_PREFIX}/`],
     limit: 10_000_000,
   })
   const liveFileByPath = new Map(metas.map((m) => [m.path, m]))
+  const readLiveBytes = async (path: string): Promise<Uint8Array | undefined> => {
+    const file = await deps.library.read(path)
+    return file === undefined ? undefined : (file.bytes ?? bytesOf(file.text ?? ''))
+  }
+  const movePlan = await planMoves({
+    zip,
+    live: liveFileByPath,
+    readLive: readLiveBytes,
+    idBySlug,
+  })
+  const moveKeyOf = new Map<string, string>()
+  for (const m of movePlan.moves) {
+    for (const f of m.files) moveKeyOf.set(f.from, m.key)
+    const notes = [
+      m.source === 'detected'
+        ? 'found by content: a file here that the zip no longer has, and a new file with the same bytes'
+        : 'stated in migrations/moves.json',
+      ...(m.note === undefined ? [] : [m.note]),
+      m.rule.kind === 'prefix'
+        ? `a folder: ${m.files.length} file${m.files.length === 1 ? '' : 's'} move with their history`
+        : 'the file moves with its history; the old path redirects agents to the new one',
+    ]
+    add({
+      order: ORDER.move,
+      item: makeItem({
+        key: m.key,
+        section: m.section,
+        kind: 'move',
+        label: `${m.rule.from} → ${m.rule.to}`,
+        status: 'added',
+        notes,
+        move: {
+          from: m.rule.from,
+          to: m.rule.to,
+          kind: m.rule.kind,
+          files: m.files.length,
+          source: m.source,
+        },
+      }),
+      run: async (ctx) => applyMove(ctx, m),
+    })
+  }
+  const rules: MoveRule[] = movePlan.moves.map((m) => m.rule)
+  /** The library path of every file of the zip (for an agent that is known), and its entry. */
+  const zipLive = new Map<string, string>()
   const zipFilePaths = new Set<string>()
   for (const [entry, bytes] of zip) {
     const c = classify(entry)
@@ -1148,6 +1258,7 @@ async function buildPlan(
     const section: SectionId = c.section === 'memory' ? 'memory' : 'library'
     const file = manifestFile.get(entry)
     const path = fileOfEntry(entry, idBySlug)
+    if (path !== undefined) zipLive.set(path, entry)
     if (path === undefined && !(c.agent !== undefined && zipAgents.has(c.agent))) {
       add({
         order: ORDER.file,
@@ -1180,28 +1291,28 @@ async function buildPlan(
       })
       continue
     }
-    const meta = path === undefined ? undefined : liveFileByPath.get(path)
+    // a file that moved is compared with the file it came from
+    const movedFrom = path === undefined ? undefined : movePlan.targetMap.get(path)
+    const counterPath = path !== undefined && liveFileByPath.has(path) ? path : movedFrom
+    const meta = counterPath === undefined ? undefined : liveFileByPath.get(counterPath)
     let status: ImportItem['status'] = 'added'
     let diff: string | null = null
     let sizeBefore: number | null = null
-    if (meta !== undefined && path !== undefined) {
+    if (meta !== undefined && counterPath !== undefined) {
       sizeBefore = meta.size
       status = 'changed'
+      const liveBytes = await readLiveBytes(counterPath)
       if (meta.size === bytes.byteLength) {
-        const liveFile = await deps.library.read(path)
-        const liveBytes =
-          liveFile === undefined ? undefined : (liveFile.bytes ?? bytesOf(liveFile.text ?? ''))
         if (liveBytes !== undefined && sameBytes(liveBytes, bytes)) status = 'unchanged'
         else if (liveBytes !== undefined) diff = readableDiff(liveBytes, bytes)
       } else {
-        const liveFile = await deps.library.read(path)
-        const liveBytes =
-          liveFile === undefined ? undefined : (liveFile.bytes ?? bytesOf(liveFile.text ?? ''))
         diff = liveBytes === undefined ? null : readableDiff(liveBytes, bytes)
       }
     }
+    const requires = movedFrom === undefined ? undefined : moveKeyOf.get(movedFrom)
     add({
       order: ORDER.file,
+      ...(requires === undefined ? {} : { requires }),
       item: makeItem({
         key: entry,
         section,
@@ -1211,6 +1322,11 @@ async function buildPlan(
         diff: status === 'changed' ? diff : null,
         sizeBefore,
         sizeAfter: bytes.byteLength,
+        conflict: status === 'changed' && changedSince(meta?.updatedAt),
+        notes:
+          movedFrom === undefined
+            ? []
+            : [`moved here from ${movedFrom}: compared with the file it came from`],
       }),
       run: async (ctx) => {
         const target = fileOfEntry(
@@ -1239,6 +1355,8 @@ async function buildPlan(
     })
   }
   for (const m of metas) {
+    // a file that moved is not "only here": it is the same file at its new path
+    if (movePlan.fileMap.has(m.path)) continue
     const entry = entryOfFile(m.path, slugById)
     if (zipFilePaths.has(entry)) continue
     const c = classify(entry)
@@ -1253,6 +1371,12 @@ async function buildPlan(
         label: m.path,
         status: 'only-live',
         sizeBefore: m.size,
+        conflict: changedSince(m.updatedAt),
+        notes: changedSince(m.updatedAt)
+          ? [
+              'created or changed here after the zip was exported: it is kept unless you also tick the conflicts',
+            ]
+          : [],
       }),
       run: async (ctx) => {
         const ok = await backupPort(ctx.deps).deleteFile(m.path, m.version)
@@ -1260,6 +1384,176 @@ async function buildPlan(
         return undefined
       },
     })
+  }
+
+  // ---- references: what the planned moves and changes leave pointing to nothing
+  const afterPaths = new Set<string>()
+  for (const p of liveFileByPath.keys()) afterPaths.add(movePlan.fileMap.get(p) ?? p)
+  for (const p of zipLive.keys()) afterPaths.add(p)
+  const indexes = {
+    before: new PathIndex(liveFileByPath.keys()),
+    after: new PathIndex(afterPaths),
+    // what is left when "remove what is not in the zip" is ticked
+    afterRemoved: new PathIndex([...zipLive.keys(), ...movePlan.fileMap.values()]),
+  }
+  const refs: RefSource[] = []
+  // programs as they will be: the zip's version when it has the program, else the live one
+  interface EffectiveProgram {
+    slug: string
+    name: string
+    paths: ProgramPaths
+  }
+  const effective = new Map<string, EffectiveProgram>()
+  const takeProgram = (agent: string, doc: ProgramDoc): void => {
+    effective.set(`${agent}/${slugOfName(doc.name)}`, {
+      slug: agent,
+      name: doc.name,
+      paths: {
+        authority: { read: doc.authority.read, write: doc.authority.write },
+        deliverables: doc.deliverables as Array<Record<string, unknown>>,
+        briefPath: doc.briefPath ?? null,
+        notesPath: doc.notesPath ?? null,
+      },
+    })
+  }
+  for (const path of liveProgramPaths) {
+    const agent = classify(path)?.agent
+    const r = parsedOrError(() => parseProgramDoc(json(live.get(path) as Uint8Array, path)))
+    if (agent !== undefined && 'doc' in r) takeProgram(agent, r.doc)
+  }
+  for (const path of zipProgramPaths) {
+    const agent = classify(path)?.agent
+    const r = parsedOrError(() => parseProgramDoc(json(zip.get(path) as Uint8Array, path)))
+    if (agent !== undefined && 'doc' in r) takeProgram(agent, r.doc)
+  }
+  for (const e of effective.values()) {
+    refs.push(...programRefs(`Program ${e.slug}: ${e.name}`, e.paths))
+  }
+  // memory files as they will be (standing orders live in HEARTBEAT.md)
+  const memoryText = new Map<string, { text: string; owner: string }>()
+  const memoryOwner = (path: string): string => {
+    const m = /^\/memories\/agents\/([^/]+)\/(.*)$/.exec(path)
+    return m === null
+      ? `workspace memory: ${path.replace('/memories/workspace/', '')}`
+      : `${slugById.get(m[1] as string) ?? m[1]} memory: ${m[2]}`
+  }
+  for (const [path, entry] of zipLive) {
+    const bytes = zip.get(entry) as Uint8Array
+    if (path.startsWith('/memories/') && looksText(bytes) && bytes.byteLength <= 400_000) {
+      memoryText.set(path, { text: textOf(bytes), owner: memoryOwner(path) })
+    }
+  }
+  for (const m of metas) {
+    if (!m.path.startsWith('/memories/') || m.binary || m.size > 400_000) continue
+    const final = movePlan.fileMap.get(m.path) ?? m.path
+    if (zipLive.has(m.path) || zipLive.has(final)) continue
+    const file = await deps.library.read(m.path)
+    if (file?.text != null) memoryText.set(final, { text: file.text, owner: memoryOwner(final) })
+  }
+  for (const [path, m] of memoryText) {
+    const isOrders = path.endsWith('/HEARTBEAT.md')
+    refs.push(
+      ...textRefs(
+        m.owner,
+        isOrders ? 'order' : 'memory',
+        isOrders ? 'standing order' : 'note',
+        m.text,
+      ),
+    )
+  }
+  for (const r of deps.backups?.activeReminders() ?? []) {
+    refs.push(
+      ...textRefs(
+        `Reminder of ${slugById.get(r.agentId) ?? r.agentId}`,
+        'reminder',
+        'text',
+        r.body,
+      ),
+    )
+  }
+  const apiRows = deps.backups?.data.rows('api_agents') ?? []
+  for (const row of apiRows) {
+    const owner = `API agent ${String(row.name ?? row.id)}`
+    for (const f of grantFolders(row))
+      refs.push({ owner, where: 'folder grant', ref: f, kind: 'api-agent' })
+  }
+  const check = checkRefs(refs, indexes, rules)
+  const references: ImportPreview['references'] = {
+    checked: check.checked,
+    dangling: check.dangling.slice(0, REFERENCE_REPORT_MAX),
+    atRisk: check.atRisk.slice(0, REFERENCE_REPORT_MAX),
+    rewritable: check.rewritable,
+    truncated:
+      check.dangling.length > REFERENCE_REPORT_MAX || check.atRisk.length > REFERENCE_REPORT_MAX,
+  }
+  // the one-click rewrite: each fix is an item of the preview, applied when the owner ticks it
+  if (rules.length > 0) {
+    for (const [path, m] of memoryText) {
+      const r = rewriteText(m.text, rules, indexes.after)
+      if (r.changes.length === 0) continue
+      add({
+        order: ORDER.reference,
+        item: makeItem({
+          key: `ref:memory:${path}`,
+          section: 'memory',
+          kind: 'reference',
+          label: path,
+          status: 'changed',
+          diff: lineDiff(m.text, r.text),
+          notes: [
+            `${r.changes.length} path${r.changes.length === 1 ? '' : 's'} rewritten to where the moves put them`,
+          ],
+        }),
+        run: async (ctx) => rewriteMemoryFile(ctx, path),
+      })
+    }
+    for (const e of effective.values()) {
+      const r = rewriteProgramPaths(e.paths, rules, indexes.after)
+      if (r.fields.length === 0) continue
+      add({
+        order: ORDER.reference,
+        item: makeItem({
+          key: `ref:program:${e.slug}/${slugOfName(e.name)}`,
+          section: 'programs',
+          kind: 'reference',
+          label: `${e.slug}: ${e.name} (paths)`,
+          status: 'changed',
+          fields: r.fields,
+          notes: ['its paths follow the moves; what the program may read and write stays the same'],
+        }),
+        run: async (ctx) => rewriteProgramRun(ctx, e.slug, e.name),
+      })
+    }
+    for (const row of apiRows) {
+      const folders = grantFolders(row)
+      const next = folders.map((f) => rewriteRef(f, rules, indexes.after) ?? f)
+      if (canonicalJson(folders) === canonicalJson(next)) continue
+      add({
+        order: ORDER.reference,
+        item: makeItem({
+          key: `ref:api:${String(row.id)}`,
+          section: 'api',
+          kind: 'reference',
+          label: `API agent ${String(row.name ?? row.id)} (folder grants)`,
+          status: 'changed',
+          fields: jsonFieldDiff({ folders }, { folders: next }),
+          notes: ['the folders it may read and write follow the moves'],
+        }),
+        run: async (ctx) => rewriteApiRun(ctx, String(row.id)),
+      })
+    }
+  }
+  const moveSummary: ImportPreview['moves'] = {
+    files: movePlan.moves.reduce((n, m) => n + m.files.length, 0),
+    folders: movePlan.moves.filter((m) => m.rule.kind === 'prefix').length,
+    explicit: movePlan.moves.filter((m) => m.source === 'moves.json').length,
+    detected: movePlan.moves.filter((m) => m.source === 'detected').length,
+  }
+  warnings.push(...movePlan.problems)
+  if (parsed.edited.changed + parsed.edited.added + parsed.edited.removed > 0) {
+    warnings.push(
+      `This zip was reorganized offline: ${parsed.edited.changed} library or memory files differ from the manifest, ${parsed.edited.added} are new and ${parsed.edited.removed} are gone. Files are compared with what is here, not with the manifest.`,
+    )
   }
 
   // ---- data tables (rows: persona history, reminders, channels, history, artifacts, API, browser, conversations)
@@ -1460,7 +1754,19 @@ async function buildPlan(
   if (parsed.manifest.excluded.length > 0) {
     warnings.push('Tool media (a cache) is not part of the zip and is never touched.')
   }
-  return { entries, parsed, warnings, source: sourceOf(source), label, secrets, idMap: planMap }
+  return {
+    entries,
+    parsed,
+    warnings,
+    source: sourceOf(source),
+    label,
+    secrets,
+    idMap: planMap,
+    references,
+    moves: moveSummary,
+    rules,
+    after: indexes.after,
+  }
 }
 
 const SECRET_KIND_TEXT: Record<string, string> = {
@@ -1507,6 +1813,170 @@ function remapRecord(record: SecretRecord, map: IdMap): SecretRecord {
         : row,
     ),
   }
+}
+
+// --- moves and references: helpers --------------------------------------------------------------
+
+/** The library paths a program names. */
+interface ProgramPaths {
+  authority: { read: string[]; write: string[] }
+  deliverables: Array<Record<string, unknown>>
+  briefPath: string | null
+  notesPath: string | null
+}
+
+/** The paths of a program moved to where the moves put them (only the ones that point to nothing). */
+function rewriteProgramPaths(
+  p: ProgramPaths,
+  rules: readonly MoveRule[],
+  after: PathIndex,
+): { next: ProgramPaths; fields: ImportItem['fields'] } {
+  const map = (x: string): string => rewriteRef(x, rules, after) ?? x
+  const next: ProgramPaths = {
+    authority: { read: p.authority.read.map(map), write: p.authority.write.map(map) },
+    deliverables: p.deliverables.map((d) =>
+      typeof d.path === 'string' ? { ...d, path: map(d.path) } : d,
+    ),
+    briefPath: p.briefPath === null ? null : map(p.briefPath),
+    notesPath: p.notesPath === null ? null : map(p.notesPath),
+  }
+  const pick = (v: ProgramPaths): unknown => ({
+    ...v,
+    deliverables: v.deliverables.map((d) => d.path),
+  })
+  return { next, fields: jsonFieldDiff(pick(p), pick(next)) }
+}
+
+/** The folders an API agent may read and write (the stored row keeps them as JSON text or a list). */
+function grantFolders(row: DataRow): string[] {
+  let read: unknown = row.read_folders
+  if (typeof read === 'string') {
+    try {
+      read = JSON.parse(read)
+    } catch {
+      read = []
+    }
+  }
+  const folders = Array.isArray(read) ? read.filter((f): f is string => typeof f === 'string') : []
+  return typeof row.write_folder === 'string' && row.write_folder !== ''
+    ? [...folders, row.write_folder]
+    : folders
+}
+
+/** Move the files of one planned move; a file that cannot move is told, the rest still move. */
+async function applyMove(ctx: RunCtx, m: PlannedMove): Promise<string | undefined> {
+  const port = backupPort(ctx.deps)
+  const done: Array<{ from: string; to: string }> = []
+  const failed: string[] = []
+  for (const f of m.files) {
+    const result = await port.moveFile(f.from, f.to, null)
+    if (result === 'ok') done.push(f)
+    else failed.push(`${f.from} (${result})`)
+  }
+  if (done.length === 0) throw new Error(`nothing moved: ${failed.slice(0, 3).join(', ')}`)
+  const note = m.note ?? null
+  if (m.rule.kind === 'prefix' && failed.length === 0) {
+    ctx.applied.push({ from: m.rule.from, to: m.rule.to, kind: 'prefix', note })
+  } else {
+    for (const f of done) ctx.applied.push({ from: f.from, to: f.to, kind: 'file', note })
+  }
+  ctx.ran.add(m.key)
+  return failed.length === 0
+    ? `${done.length} file${done.length === 1 ? '' : 's'} moved`
+    : `${done.length} moved, ${failed.length} not moved: ${failed.slice(0, 3).join(', ')}`
+}
+
+/** The text of a memory file with its references to moved paths rewritten (what is there now). */
+async function rewriteMemoryFile(ctx: RunCtx, path: string): Promise<string | undefined> {
+  const file = await ctx.deps.library.read(path)
+  if (file?.text == null) return undefined
+  const r = rewriteText(file.text, ctx.rules, ctx.after)
+  if (r.changes.length === 0) return undefined
+  const ok = await backupPort(ctx.deps).writeFile(path, bytesOf(r.text), {
+    ifVersion: file.meta.version,
+    mediaType: file.meta.mediaType,
+    binary: false,
+  })
+  if (!ok) throw new Error('changed while importing: left as it is')
+  return `${r.changes.length} path${r.changes.length === 1 ? '' : 's'} rewritten`
+}
+
+/** The paths of a program (as it is now) moved to where the moves put them. */
+async function rewriteProgramRun(
+  ctx: RunCtx,
+  slug: string,
+  name: string,
+): Promise<string | undefined> {
+  const agentId = ctx.agentId(slug)
+  const program =
+    agentId === undefined
+      ? undefined
+      : ctx.deps.programs.list({ agentId }).find((p) => slugOfName(p.name) === slugOfName(name))
+  if (program === undefined) return undefined
+  const { next, fields } = rewriteProgramPaths(
+    {
+      authority: { read: program.authority.read, write: program.authority.write },
+      deliverables: program.deliverables as unknown as Array<Record<string, unknown>>,
+      briefPath: program.briefPath,
+      notesPath: program.notesPath,
+    },
+    ctx.rules,
+    ctx.after,
+  )
+  if (fields.length === 0) return undefined
+  const notes: string[] = []
+  updateProgram(ctx.deps, program.id, {
+    authority: { ...program.authority, read: next.authority.read, write: next.authority.write },
+    deliverables: next.deliverables as never,
+  })
+  if (next.briefPath !== program.briefPath || next.notesPath !== program.notesPath) {
+    try {
+      updateProgram(ctx.deps, program.id, {
+        briefPath: next.briefPath,
+        notesPath: next.notesPath,
+      })
+    } catch (error) {
+      notes.push(
+        `brief and notes files kept: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  return `${fields.length} field${fields.length === 1 ? '' : 's'} rewritten${notes.length === 0 ? '' : `; ${notes.join('; ')}`}`
+}
+
+/** The folder grants of an API agent moved to where the moves put them. */
+async function rewriteApiRun(ctx: RunCtx, id: string): Promise<string | undefined> {
+  const port = (ctx.deps.backups as NonNullable<Deps['backups']>).data
+  const row = port.rows('api_agents').find((r) => r.id === id)
+  if (row === undefined) return undefined
+  const map = (f: string): string => rewriteRef(f, ctx.rules, ctx.after) ?? f
+  let read: unknown = row.read_folders
+  const wasText = typeof read === 'string'
+  if (typeof read === 'string') {
+    try {
+      read = JSON.parse(read)
+    } catch {
+      read = []
+    }
+  }
+  const folders = Array.isArray(read) ? read.filter((f): f is string => typeof f === 'string') : []
+  const nextRead = folders.map(map)
+  const nextWrite = typeof row.write_folder === 'string' ? map(row.write_folder) : row.write_folder
+  if (canonicalJson(folders) === canonicalJson(nextRead) && nextWrite === row.write_folder) {
+    return undefined
+  }
+  port.put(
+    'api_agents',
+    [
+      {
+        ...row,
+        read_folders: wasText ? JSON.stringify(nextRead) : nextRead,
+        write_folder: nextWrite,
+      },
+    ],
+    'replace',
+  )
+  return 'folder grants rewritten'
 }
 
 // --- apply helpers -----------------------------------------------------------------------------
@@ -1600,10 +2070,36 @@ function deferArchive(ctx: RunCtx, id: string, role: string, notes: string[]): v
 async function applyProgram(
   ctx: RunCtx,
   slug: string,
-  doc: ProgramDoc,
+  zipDoc: ProgramDoc,
   brief: string,
 ): Promise<string | undefined> {
   const { deps } = ctx
+  // the program of the zip names the paths of the zip's library: where a file moved, follow it (the
+  // brief file would otherwise be written back at its old path)
+  let doc = zipDoc
+  if (ctx.rewrite && ctx.rules.length > 0) {
+    const r = rewriteProgramPaths(
+      {
+        authority: { read: zipDoc.authority.read, write: zipDoc.authority.write },
+        deliverables: zipDoc.deliverables as Array<Record<string, unknown>>,
+        briefPath: zipDoc.briefPath ?? null,
+        notesPath: zipDoc.notesPath ?? null,
+      },
+      ctx.rules,
+      ctx.after,
+    )
+    doc = {
+      ...zipDoc,
+      authority: {
+        ...zipDoc.authority,
+        read: r.next.authority.read,
+        write: r.next.authority.write,
+      },
+      deliverables: r.next.deliverables as ProgramDoc['deliverables'],
+      briefPath: r.next.briefPath,
+      notesPath: r.next.notesPath,
+    }
+  }
   const agentId = ctx.agentId(slug)
   if (agentId === undefined) throw new Error(`the agent ${slug} does not exist`)
   const existing = deps.programs
@@ -1864,6 +2360,8 @@ export function validateSelection(raw: Partial<ImportSelection> | undefined): Im
     exclude: raw?.exclude ?? [],
     removeSections,
     overwrite: raw?.overwrite === true,
+    overwriteConflicts: raw?.overwriteConflicts === true,
+    rewriteReferences: raw?.rewriteReferences === true,
   }
 }
 
@@ -1879,9 +2377,12 @@ export async function previewImport(
   const plan = await buildPlan(deps, source, options.passphrase)
   const items = plan.entries.map((e) => e.item)
   const order = { added: 0, changed: 1, 'only-live': 2, unchanged: 3 } as const
+  // moves first, then what is new, what differs, what is only here; reference rewrites last
+  const rank = (i: ImportItem): number =>
+    i.kind === 'move' ? -1 : i.kind === 'reference' ? 9 : order[i.status]
   const shown = items
     .filter((i) => i.status !== 'unchanged')
-    .sort((a, b) => order[a.status] - order[b.status] || (a.key < b.key ? -1 : 1))
+    .sort((a, b) => rank(a) - rank(b) || (a.key < b.key ? -1 : 1))
   return {
     source: plan.source,
     manifest: {
@@ -1895,6 +2396,8 @@ export async function previewImport(
     items: shown.slice(0, PREVIEW_ITEM_MAX),
     truncated: shown.length > PREVIEW_ITEM_MAX,
     warnings: plan.warnings,
+    references: plan.references,
+    moves: plan.moves,
   }
 }
 
@@ -1927,8 +2430,12 @@ export async function applyImport(
 ): Promise<ImportResult> {
   const port = backupPort(deps)
   const selection = validateSelection(rawSelection)
-  // an undo puts back exactly what the import changed: it always overwrites
-  if (options.undoOf !== undefined) selection.overwrite = true
+  // an undo puts back exactly what the import changed: it always overwrites, whatever changed since
+  if (options.undoOf !== undefined) {
+    selection.overwrite = true
+    selection.overwriteConflicts = true
+    selection.rewriteReferences = false
+  }
   const wantsSecrets = selection.sections.includes('secrets')
   if (wantsSecrets && (options.passphrase === undefined || options.passphrase === '')) {
     throw invalid('Enter the passphrase of this export to restore its secrets', 'IMPORT_PASSPHRASE')
@@ -1950,12 +2457,15 @@ export async function applyImport(
   const revived = new Set(
     picked.filter((e) => e.item.kind === 'agent').map((e) => classify(e.item.key)?.agent),
   )
+  const pickedKeys = new Set(picked.map((e) => e.item.key))
   const chosen = picked
     .filter((e) => {
       const slug =
         e.removal === true || e.item.kind === 'agent' ? undefined : classify(e.item.key)?.agent
       return slug === undefined || !archived.has(slug) || revived.has(slug)
     })
+    // a file written at the new path of a move waits for the move: without it there is nothing to write to
+    .filter((e) => e.requires === undefined || pickedKeys.has(e.requires))
     .sort((a, b) => a.order - b.order || (a.item.key < b.item.key ? -1 : 1))
   if (chosen.length === 0) {
     return {
@@ -1993,7 +2503,13 @@ export async function applyImport(
     deferred: [],
     createdAgents: new Set(),
     createdPeople: new Set(),
+    rewrite: selection.rewriteReferences,
+    rules: plan.rules,
+    after: plan.after,
+    applied: [],
+    ran: new Set(),
   }
+  const pointId = restorePointId(deps.clock.now())
   const counts = { added: 0, changed: 0, removed: 0, failed: 0 }
   const items: RestorePoint['items'] = []
   const touched = new Set<string>()
@@ -2042,7 +2558,7 @@ export async function applyImport(
   }
   const at = deps.clock.now()
   const point: RestorePoint = {
-    id: restorePointId(at),
+    id: pointId,
     at,
     by: options.by,
     kind: options.undoOf === undefined ? 'import' : 'undo',
@@ -2062,8 +2578,72 @@ export async function applyImport(
     undoneBy: null,
   }
   port.restorePoints.add(point)
-  if (options.undoOf !== undefined) port.restorePoints.markUndone(options.undoOf, point.id)
+  if (options.undoOf !== undefined) {
+    port.restorePoints.markUndone(options.undoOf, point.id)
+    // the paths are back where they were: the redirects of that import end with it
+    port.moves.removeOf(options.undoOf)
+  } else if (ctx.applied.length > 0) {
+    // what agents still call by the old path is redirected to the new one (an undo removes these)
+    port.moves.add(
+      ctx.applied.map(
+        (m, i): LibraryMove => ({
+          id: `${pointId}-${String(i + 1).padStart(4, '0')}`,
+          ...m,
+          at,
+          restorePointId: pointId,
+        }),
+      ),
+    )
+  }
   return { restorePointId: point.id, safetyBackupId: safety.backup.id, counts, items: point.items }
+}
+
+export interface MigrationView {
+  /** The restore point of the import that made these moves (undo = that restore point). */
+  restorePointId: string | null
+  at: number
+  /** Who applied it, from the restore point. */
+  by: string | null
+  /** Where it came from, from the restore point (`uploaded zip`). */
+  label: string | null
+  files: number
+  folders: number
+  /** At most `MIGRATION_MOVES_MAX` moves of it, in the order they were applied. */
+  moves: Array<{ from: string; to: string; kind: 'file' | 'prefix'; note: string | null }>
+  /** The restore point still exists and was not undone. */
+  canUndo: boolean
+}
+
+export const MIGRATION_MOVES_MAX = 200
+
+/**
+ * The moves imports applied, one entry per import, newest first. An old path in one of them still
+ * works for the agents (they are redirected); undoing the import removes the entry.
+ */
+export function listMigrations(deps: Deps): MigrationView[] {
+  const port = backupPort(deps)
+  const byPoint = new Map<string, LibraryMove[]>()
+  for (const m of port.moves.list()) {
+    const key = m.restorePointId ?? ''
+    byPoint.set(key, [...(byPoint.get(key) ?? []), m])
+  }
+  return [...byPoint.entries()]
+    .map(([id, moves]): MigrationView => {
+      const point = id === '' ? undefined : port.restorePoints.get(id)
+      return {
+        restorePointId: id === '' ? null : id,
+        at: moves[0]?.at ?? 0,
+        by: point?.by ?? null,
+        label: point?.source.label ?? null,
+        files: moves.filter((m) => m.kind === 'file').length,
+        folders: moves.filter((m) => m.kind === 'prefix').length,
+        moves: moves
+          .slice(0, MIGRATION_MOVES_MAX)
+          .map((m) => ({ from: m.from, to: m.to, kind: m.kind, note: m.note })),
+        canUndo: point !== undefined && point.undoneBy === null && point.kind === 'import',
+      }
+    })
+    .sort((a, b) => b.at - a.at)
 }
 
 /** The restore points, newest first. */
@@ -2109,6 +2689,9 @@ export async function previewUndo(
     exclude: [],
     removeSections: sections,
     overwrite: true,
+    // what was changed here since is part of what an undo puts back: the preview shows it
+    overwriteConflicts: true,
+    rewriteReferences: false,
   }
   const preview = await previewImport(deps, source)
   if (point.sections.includes('secrets')) {

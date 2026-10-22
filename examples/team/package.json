@@ -18,6 +18,9 @@
     "test:soak": "bun scripts/soak.ts",
     "test:e2e": "bun scripts/e2e-flows.ts --port 4700",
     "eval": "bun evals/src/cli.ts",
-    "test:evals": "bun test --no-env-file evals"
+    "test:evals": "bun test --no-env-file evals",
+    "test:tools": "bun test ./tools/reorganize",
+    "reorganize:validate": "bun tools/reorganize/validate.ts",
+    "reorganize:pack": "bun tools/reorganize/pack.ts"
   }
 }
