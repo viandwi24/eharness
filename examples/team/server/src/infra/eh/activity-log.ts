@@ -33,6 +33,8 @@ export interface ActivityLogOptions {
   agentOf(slug: string): { id: string } | undefined
   /** Keep at most this many rows. Default 5000. */
   maxRows?: number | (() => number)
+  /** Keep the full request/response for this many hours; older rows keep metadata. Default 24. */
+  bodyHours?: number | (() => number)
   /** Keep rows for this many days. Default 7. */
   retentionDays?: number | (() => number)
   /** Prune after this many writes (and at most once a `pruneMinMs`). Default 50. */
@@ -76,6 +78,7 @@ export function createActivityLog(options: ActivityLogOptions): ActivityLog {
       return options.store.prune({
         maxRows: settingOf(options.maxRows, DEFAULT_MAX_ROWS),
         olderThan: lastPrune - settingOf(options.retentionDays, DEFAULT_RETENTION_DAYS) * DAY_MS,
+        bodiesOlderThan: lastPrune - settingOf(options.bodyHours, 24) * 3_600_000,
       })
     } catch (error) {
       warn(`prune failed: ${String(error)}`)

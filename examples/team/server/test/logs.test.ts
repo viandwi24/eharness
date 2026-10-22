@@ -60,6 +60,20 @@ function store(jsonCap?: number) {
 }
 
 describe('model call store', () => {
+  test('old calls lose their full request and response but keep tokens and cost', () => {
+    const s = store()
+    s.insert(call('old', { startedAt: T0 }), T0)
+    s.insert(call('new', { startedAt: T0 + 2 * 24 * 60 * MIN }), T0 + 2 * 24 * 60 * MIN)
+    s.prune({ maxRows: 100, olderThan: 0, bodiesOlderThan: T0 + 24 * 60 * MIN })
+    const old = s.get('old', {}) as unknown as Record<string, unknown>
+    expect(old.requestBody ?? null).toBeNull()
+    expect(old.response ?? null).toBeNull()
+    expect(old).toMatchObject({ inputTokens: 100, outputTokens: 20, costUsd: 0.01, status: 'ok' })
+    const fresh = s.get('new', {}) as unknown as Record<string, unknown>
+    expect(fresh.requestBody).toEqual({ big: true })
+    expect(s.count()).toBe(2)
+  })
+
   test('list is newest first, paged by cursor, without JSON columns', () => {
     const s = store()
     for (let i = 0; i < 5; i++) s.insert(call(`c${i}`, { startedAt: T0 + i * MIN }), T0)

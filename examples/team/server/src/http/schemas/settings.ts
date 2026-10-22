@@ -94,6 +94,10 @@ export const SettingsSchema = z
     logRetentionDays: z.number().min(1).openapi({
       description: 'Model call log: days kept. Default 7.',
     }),
+    logBodyHours: z.number().min(0).openapi({
+      description:
+        'Model call log: hours the full request and response are kept; older calls keep metadata only (tokens, cost, timing). 0 = never keep them. Default 24.',
+    }),
     mediaRetentionDays: z.number().int().min(0).openapi({
       description: 'Tool media and browser screenshots kept this many days; 0 = keep. Default 3.',
     }),
@@ -159,6 +163,7 @@ export const SettingsPatchSchema = z
     eventsMaxRows: z.number().int().min(1000).optional(),
     logMaxRows: z.number().int().min(100).optional(),
     logRetentionDays: z.number().min(1).max(3650).optional(),
+    logBodyHours: z.number().min(0).max(8760).optional(),
     mediaRetentionDays: z.number().int().min(0).max(36500).optional(),
     routineRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
     tasksRetentionDays: z.number().int().min(0).max(36500).optional(),

@@ -642,6 +642,7 @@ export function compose(config: ServerConfig): Server {
     // read on every prune: a change in Settings applies at once
     maxRows: () => settings.get().logMaxRows,
     retentionDays: () => settings.get().logRetentionDays,
+    bodyHours: () => settings.get().logBodyHours,
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   activityLog.prune()

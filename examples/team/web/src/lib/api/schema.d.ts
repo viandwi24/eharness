@@ -19426,6 +19426,8 @@ export interface components {
             logMaxRows: number;
             /** @description Model call log: days kept. Default 7. */
             logRetentionDays: number;
+            /** @description Model call log: hours the full request and response are kept; older calls keep metadata only (tokens, cost, timing). 0 = never keep them. Default 24. */
+            logBodyHours: number;
             /** @description Tool media and browser screenshots kept this many days; 0 = keep. Default 3. */
             mediaRetentionDays: number;
             /** @description Finished routine runs kept this many days; 0 = keep. Default 30. */
@@ -19577,6 +19579,7 @@ export interface components {
             eventsMaxRows?: number;
             logMaxRows?: number;
             logRetentionDays?: number;
+            logBodyHours?: number;
             mediaRetentionDays?: number;
             routineRunsRetentionDays?: number;
             tasksRetentionDays?: number;

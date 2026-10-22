@@ -15,6 +15,7 @@ export type KnobKey =
 	| 'eventsMaxRows'
 	| 'logMaxRows'
 	| 'logRetentionDays'
+	| 'logBodyHours'
 	| 'mediaRetentionDays'
 	| 'routineRunsRetentionDays'
 	| 'tasksRetentionDays'
@@ -70,6 +71,7 @@ export const KNOB_GROUPS: KnobGroup[] = [
 			{ key: 'eventsMaxRows', label: 'Events feed rows', min: 1000, max: 100000000, integer: true, description: 'Most rows kept in the events feed.' },
 			{ key: 'logMaxRows', label: 'Model call log rows', min: 100, max: 10000000, integer: true, description: 'Most calls kept on the Logs page.' },
 			{ key: 'logRetentionDays', label: 'Model call log age', unit: 'days', min: 1, max: 3650, integer: false, description: 'Calls older than this are removed.' },
+			{ key: 'logBodyHours', label: 'Full prompts kept', unit: 'hours', min: 0, max: 8760, integer: false, description: 'The whole request and response of a model call (about 0.5 MB each) are kept this long for debugging; older calls keep tokens, cost and timing only.' },
 			{ key: 'mediaRetentionDays', label: 'Screenshots and tool media', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them. A chat that still shows a removed one shows "expired".' },
 			{ key: 'routineRunsRetentionDays', label: 'Finished routine runs', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them.' },
 			{ key: 'tasksRetentionDays', label: 'Finished tasks', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them.' },

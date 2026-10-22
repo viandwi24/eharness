@@ -5319,6 +5319,11 @@
             "minimum": 1,
             "description": "Model call log: days kept. Default 7."
           },
+          "logBodyHours": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Model call log: hours the full request and response are kept; older calls keep metadata only (tokens, cost, timing). 0 = never keep them. Default 24."
+          },
           "mediaRetentionDays": {
             "type": "integer",
             "minimum": 0,
@@ -5391,6 +5396,7 @@
           "eventsMaxRows",
           "logMaxRows",
           "logRetentionDays",
+          "logBodyHours",
           "mediaRetentionDays",
           "routineRunsRetentionDays",
           "tasksRetentionDays",
@@ -5908,6 +5914,11 @@
             "type": "number",
             "minimum": 1,
             "maximum": 3650
+          },
+          "logBodyHours": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 8760
           },
           "mediaRetentionDays": {
             "type": "integer",

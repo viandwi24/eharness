@@ -149,7 +149,11 @@ export interface ModelCallWriter {
    * Delete rows older than `olderThan` (by `created_at`), then the oldest rows beyond `maxRows`.
    * Returns how many were deleted.
    */
-  prune(options: { maxRows: number; olderThan: number }): number
+  /**
+   * Removes rows older than `olderThan` or beyond `maxRows`, and empties the request, response and
+   * output of rows older than `bodiesOlderThan` (their metadata stays: tokens, cost, timing).
+   */
+  prune(options: { maxRows: number; olderThan: number; bodiesOlderThan?: number }): number
   count(): number
 }
 
@@ -217,7 +221,16 @@ export function sqliteModelCallStore(
         )
     },
 
-    prune({ maxRows, olderThan }) {
+    prune({ maxRows, olderThan, bodiesOlderThan }) {
+      if (bodiesOlderThan !== undefined) {
+        sqlite
+          .query(
+            `UPDATE model_calls SET request_options = NULL, request_body = NULL, response = NULL,
+               output = NULL, provider_metadata = NULL
+             WHERE created_at < ? AND (request_body IS NOT NULL OR response IS NOT NULL OR output IS NOT NULL)`,
+          )
+          .run(bodiesOlderThan)
+      }
       let deleted = sqlite
         .query('DELETE FROM model_calls WHERE created_at < ?')
         .run(olderThan).changes

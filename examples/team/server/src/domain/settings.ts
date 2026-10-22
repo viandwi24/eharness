@@ -74,6 +74,8 @@ export interface WorkspaceSettings {
   logMaxRows: number
   /** Model call log: days kept. */
   logRetentionDays: number
+  /** Hours the full request and response of a model call are kept (then metadata only). */
+  logBodyHours: number
   /** Tool media and browser screenshots kept this many days (0 = keep). */
   mediaRetentionDays: number
   /** Finished routine runs kept this many days (0 = keep). */
@@ -113,6 +115,8 @@ export const SETTINGS_BUILTIN = {
   eventsMaxRows: 100_000,
   logMaxRows: 5000,
   logRetentionDays: 7,
+  // full prompts are ~0.5 MB a call: production stored 2.6 GB of them in a week
+  logBodyHours: 24,
   mediaRetentionDays: 3,
   routineRunsRetentionDays: 30,
   tasksRetentionDays: 90,
@@ -334,6 +338,7 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
   intIn('eventsMaxRows', patch.eventsMaxRows, 1000, 100_000_000)
   intIn('logMaxRows', patch.logMaxRows, 100, 10_000_000)
   numIn('logRetentionDays', patch.logRetentionDays, 1, 3650)
+  numIn('logBodyHours', patch.logBodyHours, 0, 24 * 365)
   for (const key of [
     'mediaRetentionDays',
     'routineRunsRetentionDays',
