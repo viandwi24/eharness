@@ -1,5 +1,5 @@
 /**
- * Fixes from a production agent's transcripts: a program note by proposal id, the connection named
+ * Agent-facing error texts: a program note by proposal id, the connection named
  * by its connector id, and attachment names.
  */
 import { describe, expect, test } from 'bun:test'

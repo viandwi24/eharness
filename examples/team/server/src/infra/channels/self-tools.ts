@@ -1150,7 +1150,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
         return 'ERROR: create needs message (what will be posted when it fires, written as the reminder itself). Call again with message, for example {"action":"create","message":"Time to leave","inMinutes":10}.'
       if (!hasWhen) return 'ERROR: create needs when: at, inMinutes, or repeat with time.'
       // one request is one reminder: a second active reminder about the same thing in this chat is
-      // refused unless the person asked for a series (production: three reminders for one "ingatkan")
+      // refused unless the person asked for a series (models tend to create duplicates for one request)
       if (input.series !== true) {
         const twin = gw.reminders
           .list(connectionId, { status: 'active' as const })

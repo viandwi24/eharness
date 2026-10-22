@@ -113,7 +113,7 @@ export function enablementFromTools(
   options: {
     /**
      * Every agent may write the workspace (company) memory, not only the lead. A new agent gets
-     * this (production: a workspace whose only agent was not the lead could not keep company
+     * this (a workspace whose only agent is not the lead must still be able to keep company
      * facts); the migration of legacy agents keeps the old lead-only rule.
      */
     workspaceMemoryWrite?: boolean

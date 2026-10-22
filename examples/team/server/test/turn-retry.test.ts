@@ -53,7 +53,7 @@ const call = (toolName: string, input: Record<string, unknown>): ScriptedStepInp
 })
 const done = (summary = 'done'): ScriptedStepInput =>
   call('final_answer', { status: 'done', summary, outputs: [] })
-/** The provider fails the call the way OpenRouter did in production (a 502 `provider_unavailable`). */
+/** The provider fails the call the way a gateway can (a 502 `provider_unavailable`). */
 const unavailable = (): ScriptedStepInput => ({
   throws: new APICallError({
     message: 'Upstream error from Sail Research: no capacity available for this model right now',

@@ -361,8 +361,8 @@ describe('order hygiene', () => {
     const found = orderHygiene({ ...base, orders: [a, b, c, d] })
     const pairs = found.filter((f) => f.kind === 'conflict').map((f) => f.orderIds.join('+'))
     expect(pairs).toEqual(['a+b', 'a+c', 'b+c'])
-    // a few shared words are not a conflict (production: a YouTube watch and a leave ledger of the
-    // same giver were flagged on "awal, owen, info, catat")
+    // a few shared words are not a conflict (two ledgers of the same giver sharing
+    // generic words are not flagged)
     const yt = order({
       id: 'yt',
       name: 'Owen',
@@ -822,7 +822,7 @@ describe('notes, patterns and the weekly review', () => {
 })
 
 describe('one instruction lives in one place', () => {
-  // production: one message ("Next info ke @agent") became a program note AND a ledger order
+  // one message must not become a program note AND a ledger order
   const note =
     'Setiap info izin, sakit, atau pulang lebih awal/setengah hari dari anggota tim dicatat siapa, kapan dan alasannya'
   const orderText =

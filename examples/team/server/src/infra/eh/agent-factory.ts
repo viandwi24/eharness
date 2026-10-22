@@ -516,7 +516,7 @@ const TEAM_PREAMBLE = [
 ].join(' ')
 
 /**
- * Long work in the background (production feedback: an audit of a whole group ran out of steps
+ * Long work in the background (a long job can run out of steps
  * in the chat turn). Every agent can hand a long job to `worker`, a copy of itself with the same
  * tools and chats that runs as a background child; the chat stays free and the report wakes the
  * agent, which then answers. Worker sessions are `<parent>:worker:<call>`, so the server opens them
@@ -755,8 +755,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   const autoAvailable = deps.classifier !== undefined || classifierModel !== undefined
   /**
    * The classifier judges with the agent's own model (the model the owner picked for it, or the
-   * workspace default), never a hidden fallback: production paid for a premium model on every
-   * Auto decision while every agent ran on a cheap one. `TEAM_CLASSIFIER_MODEL` still wins.
+   * workspace default), never a hidden fallback: a premium model must not silently judge every
+   * Auto decision while the agents run on a cheap one. `TEAM_CLASSIFIER_MODEL` still wins.
    */
   const classifierModelOf = (agentId: string): LanguageModel => {
     const pinned = deps.models.classifierOverride?.()

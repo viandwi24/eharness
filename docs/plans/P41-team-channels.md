@@ -843,7 +843,7 @@ Built (example only, `src/` of the library unchanged):
 - `channel_describe` / `channel_status` print the park and the limits.
 - Tests (written, not run): `server/test/channels-governor.test.ts`. No tests for `infra/telegram-user/**`
   (manual only).
-- Account discovery (production feedback): the account's native actions also include `list_dialogs`
+- Account discovery (follow-up): the account's native actions also include `list_dialogs`
   (read, governed: every group and channel of the account, live, chosen or not), `choose_chat` (write:
   choose for ingest, observe-only, with a REQUIRED `backfill_days`) and `backfill` (write, REQUIRED `days`):
   the same effect as the Channels page. Dialogs are read once per start (new chats listed, not chosen).
@@ -851,7 +851,7 @@ Built (example only, `src/` of the library unchanged):
   reads the dialogs once (at most once a minute) and retries. Forum topic titles are read from the forum
   (`forumTopics`, governed, once per topic per 10 minutes) and given to the gateway as `node.updated`.
   An unknown chat in a generic tool points the model to `list_dialogs` / `choose_chat`.
-- **Account platform layer complete** (`infra/telegram-user/actions.ts`, production feedback: "MTProto full
+- **Account platform layer complete** (`infra/telegram-user/actions.ts`, follow-up: "MTProto full
   API behind our queue" was only two actions). Native actions of a user account, all governed by risk class
   and audited:
   - read: `list_dialogs`, `list_chats` (local), `get_chat`, `get_user`, `list_members` (≤200, Telegram's cap),
@@ -901,7 +901,7 @@ Decisions and open points:
   per connection, never the working directory. `.gitignore` blocks databases, `*.session`, `.mtcute/`
   and example `data/` folders anywhere.
 
-## Long work in chats (production feedback, as built)
+## Long work in chats (follow-up, as built)
 
 An owner asked the agent in a forum group to audit every repeated mistake since the group began. The
 agent read 2 of 13 topics page by page with `channel_read`, hit its 25-step budget, and the chat got
@@ -931,7 +931,7 @@ the web app. Fixes:
   is answered only there and that posting needs `channel_send`.
 
 
-## Approvals answered by a reply (production feedback, as built)
+## Approvals answered by a reply (follow-up, as built)
 
 An owner asked the agent (on a Telegram user account) to tag a member; `channel_send` (external) asked for
 approval, but a user account cannot show buttons, so the card only linked to the web app, and the owner's
@@ -971,7 +971,7 @@ does not need a second confirmation, provided identity and arguments are checked
 
 ## Directory onboarding (as built)
 
-Production finding: in a real company group 24 of 26 people were `guest` because nobody set roles
+In a freshly connected group most people stay `guest` because nobody sets roles
 after connecting. The directory now has a one-minute onboarding.
 
 - `POST /channels/connections/{id}/people/bulk-role`: `{ role, peerIds | allWithoutRole, exclude?, nodeId? }`.

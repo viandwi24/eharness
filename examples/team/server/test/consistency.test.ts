@@ -1,5 +1,5 @@
 /**
- * Consistency detectors (pure) on fixtures shaped like what a real deployment showed: a memory file
+ * Consistency detectors (pure) on fixtures shaped like typical workspaces: a memory file
  * naming tools of a deleted connection, programs that were duplicated and deleted, a stale
  * connection status, two files on one topic with a placeholder. Names are generic.
  */
@@ -348,7 +348,7 @@ describe('memory', () => {
     ],
   ])
 
-  test('tools of a deleted connection (production shape)', () => {
+  test('tools of a deleted connection (realistic shape)', () => {
     const out = detectConsistency(
       base({
         tools,
@@ -410,7 +410,7 @@ describe('memory', () => {
     }
   })
 
-  test('system state (production shape) and the stale "cannot amend" claim', () => {
+  test('system state (realistic shape) and the stale "cannot amend" claim', () => {
     const out = detectConsistency(
       base({
         memory: [

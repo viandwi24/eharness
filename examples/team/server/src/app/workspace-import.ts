@@ -460,7 +460,7 @@ async function buildPlan(
     if (c?.kind === 'agent' && c.agent !== undefined) zipAgents.add(c.agent)
   }
   const manifestFile = new Map(parsed.manifest.files.map((f) => [f.path, f]))
-  /** What changed in the workspace after this instant was changed in production, not by the zip. */
+  /** What changed in the workspace after this instant was changed live, not by the zip. */
   const exportedAt =
     parsed.manifest.createdAt > 0 ? parsed.manifest.createdAt : Number.POSITIVE_INFINITY
   const changedSince = (updatedAt: number | undefined): boolean =>

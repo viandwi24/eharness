@@ -603,7 +603,7 @@ export function forgetProgramMemory(deps: Deps, id: string, memoryId: string): v
 
 /**
  * `program_note` with the check a chat needs: one message saved as a standing order and again as
- * a program note would be done twice (production: "Next info ke @agent" became both).
+ * a program note would be done twice (one instruction lives in one place).
  */
 export async function programNoteChecked(deps: Deps, input: ProgramNoteInput): Promise<string> {
   const text = input.text?.trim() ?? ''

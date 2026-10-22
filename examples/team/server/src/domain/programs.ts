@@ -199,8 +199,8 @@ const usdProblem = (field: string, value: number | null | undefined): void => {
 /** Shape checks that need neither the clock nor the cron library. */
 /**
  * Tools a program grants in its authority and forbids at the same time. Forbidden wins, so the run
- * never even sees such a tool (production: `channel_send` granted by a change, still forbidden from
- * creation, and the daily summary never went out).
+ * never even sees such a tool (a tool granted by a change but still forbidden from
+ * creation would silently stop the run from using it).
  */
 export function grantedAndForbidden(
   authority: Pick<ProgramAuthority, 'tools'>,

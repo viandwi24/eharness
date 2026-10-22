@@ -64,11 +64,9 @@ All returned text is wrapped in `<untrusted-content>` (`untrustedContent` of the
 
 ## Part 2 — standing orders and heartbeat
 
-Production evidence (agent "Scout", four orders of the owner): a rule (a screenshot of another
-broker's platform in the group: report who and when), a watch (a YouTube channel: uploads, rhythm,
-anomalies), a one-shot ("today around 12:00 check whether the analysis video is up; if not, a
-penalty to the person in charge, record it, report"), and a ledger rule ("when I say I took videos,
-record the date and count; not uploaded in 2 days: warn the PIC and report"). The beat could not
+Why: a rule (report who and when), a watch (a channel: uploads, rhythm, anomalies), a one-shot ("today
+around 12:00 check whether the video is up; if not, record it and report") and a ledger rule (record
+date and count; warn when nothing was uploaded in 2 days) need different handling. The beat could not
 verify the video (no web or browser tools in a beat), the one-shot had no exact time (hourly beats),
 nothing kept the video list, notes were free text without proof, and orders never expired.
 

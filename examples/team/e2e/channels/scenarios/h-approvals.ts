@@ -1,5 +1,5 @@
 /**
- * H. Approvals and long work (production feedback): an owner's or admin's direct instruction runs
+ * H. Approvals and long work (follow-up): an owner's or admin's direct instruction runs
  * without a second confirmation when code can verify it (same chat, people they named); everything
  * else still asks, a "ya" / "tidak" reply answers from the chat, only owners and admins can answer,
  * an unrelated message of somebody else never cancels a pending request, and a long turn gets more

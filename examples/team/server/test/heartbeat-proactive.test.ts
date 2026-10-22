@@ -114,7 +114,7 @@ function instance(
   let agentId: string
   let slug: string
   if (options.custom === true) {
-    // a team with no lead: every agent is custom (the production deployment)
+    // a team with no lead: every agent is custom (no lead agent)
     const def = createAgent(server.deps, { name: 'Scout', role: 'custom', instructions: 'x' })
     agentId = def.id
     slug = def.slug

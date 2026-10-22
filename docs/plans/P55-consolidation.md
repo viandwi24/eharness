@@ -1,28 +1,21 @@
-# P55 — Consolidation: remove what production did not use
+# P55 — Consolidation: remove what was not used
 
 Status: in progress · Owner: agent session · Branch: main
 
 ## Goal
 
-After eight days with one company, the team example carried more surface than anyone touched. This
+The team example carried more surface than anyone touched. This
 phase removes the unused parts, merges the overlapping ones and leaves one place for each job. No
 data is dropped: every table stays in the database (the removed features' tables are legacy rows,
 nothing reads or writes them), and every migration stays additive.
 
 The old code is kept in the git tag `archive/pre-consolidation-2026-10-22`.
 
-## Production usage evidence (8 days, one company)
+## Why
 
-| Feature | Use |
-|---|---|
-| Work queue tasks created by the owner | 0 |
-| Routines (not reminders, not program schedules) | 0 |
-| Rehearsals and program test cases | 0 |
-| Workspace (shared) memory files | 0 |
-| Briefings | 7, barely read |
-| Manager agent | unused |
-| Health findings, consistency findings, alarms | three separate places |
-| A standing order and a program note | duplicated (overlap) |
+Unused or overlapping features: owner-created queue tasks, generic routines, rehearsals and program
+test cases, workspace memory files, briefings and the Manager agent saw no use; health findings,
+consistency findings and alarms lived in three places; a standing order and a program note overlapped.
 
 ## What was removed or merged, and why
 
@@ -66,7 +59,7 @@ The old code is kept in the git tag `archive/pre-consolidation-2026-10-22`.
    `/agent-health/findings*` and `/alarms*` stay unchanged.
 7. **Archived agents in pickers.** Every server list excludes archived agents by default; the web
    store no longer adds an archived agent it fetched by id to the picker list (`agents-core.ts`).
-   The Manager agent itself is production data and was not archived.
+   The Manager agent itself is workspace data and was not archived.
 
 The standing order / program note overlap is a data matter (the consistency detector
 `order-duplicates-note` already reports it); no code change.
@@ -100,5 +93,5 @@ agent), `lib/notifications-model.test.ts`. Removed: `test/rehearsal.test.ts`, th
 ## Open questions
 
 - With no owner-facing create route and no Routines page, the worker program flow depends on the lead
-  (`create_task`). If production never uses worker programs, they are the next candidate.
+  (`create_task`). If worker programs stay unused, they are the next candidate.
 - The `/routines/*` HTTP CRUD could go once nothing but programs and reminders uses it.

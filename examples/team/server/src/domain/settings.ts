@@ -119,7 +119,7 @@ export const SETTINGS_BUILTIN = {
   eventsMaxRows: 100_000,
   logMaxRows: 5000,
   logRetentionDays: 7,
-  // full prompts are ~0.5 MB a call: production stored 2.6 GB of them in a week
+  // full prompts are large: keep them for a day only, metadata longer
   logBodyHours: 24,
   mediaRetentionDays: 3,
   routineRunsRetentionDays: 30,

@@ -212,7 +212,7 @@ const sid = (i: Instance, native: string, connectionId = 'c1'): string => {
 }
 
 const textStep = (text: string): ScriptedStepInput => ({ text })
-/** The provider is down (a 502, as OpenRouter answered in production). */
+/** The provider is down (a 502 `provider_unavailable`). */
 const unavailableStep = (): ScriptedStepInput => ({
   throws: new APICallError({
     message: 'no capacity available for this model right now',

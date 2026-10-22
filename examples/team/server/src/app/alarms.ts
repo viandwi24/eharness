@@ -253,8 +253,7 @@ async function interruptStuckRuns(deps: Deps, now: number): Promise<number> {
 /**
  * A connection must stay broken this long before the owner is told: the background health probe
  * tests custom MCP servers about every minute, and one dropped socket or slow listing flips the
- * status to `error` until the next probe (production: an alarm every hour for a server that
- * worked every time someone used it). `needs-auth` waits less: it does not heal by itself.
+ * status to `error` until the next probe (a single dropped socket must not alarm). `needs-auth` waits less: it does not heal by itself.
  */
 export const CONNECTION_GRACE_MS = 10 * 60_000
 export const CONNECTION_AUTH_GRACE_MS = 2 * 60_000

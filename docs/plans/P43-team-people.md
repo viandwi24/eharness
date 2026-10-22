@@ -6,7 +6,7 @@ Status: phases 1–3 done (2026-10-13); phase 4 proposed. Example app only (`exa
 
 Roles lived per platform identity per connection (`ch_people`): a person with two accounts (two
 Telegram accounts, later Telegram + WhatsApp) had two roles that could drift, and nothing said they
-were the same human. Production also showed most group members without any role. The agent needs
+were the same human. Group members also often have no role at all. The agent needs
 one place that says who somebody is (full name, nickname, fields, notes) and what they may do.
 
 Research (competitor repos and the web, 2026-10-13): Paperclip links a chat principal to a user

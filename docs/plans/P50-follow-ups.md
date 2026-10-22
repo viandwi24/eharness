@@ -1,10 +1,10 @@
-# P50 — Production feedback hardening
+# P50 — Follow-up hardening
 
 Status: done · Owner: agent
 
 ## Goal
 
-What a team deployment showed in its first days of real use no longer trips the agents: code runs
+Rough edges found while using the team example no longer trip the agents: code runs
 where the OS sandbox cannot start, "Allowed" means allowed, approvals reach the owners, the agent
 finds (or is told why it cannot find) its tools, and readable errors name the fix.
 
@@ -36,4 +36,4 @@ finds (or is told why it cannot find) its tools, and readable errors name the fi
 
 ## Open questions
 
-- The duplicate photo seen once in production could not be reproduced (defensive fixes only).
+- A duplicate photo seen once could not be reproduced (defensive fixes only).

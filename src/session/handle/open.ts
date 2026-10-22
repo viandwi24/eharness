@@ -404,7 +404,7 @@ export async function persist(
         { details: { messageId: message.id, reason: problem } },
       )
     }
-    // production: never drop a message (it may hold pending state); report and save it
+    // never drop a message (it may hold pending state); report and save it
     s.rt.warn(
       {
         code: 'W_INVALID_MESSAGE',

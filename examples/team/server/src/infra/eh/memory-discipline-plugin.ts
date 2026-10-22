@@ -1,5 +1,5 @@
 /**
- * `memoryDiscipline` plugin (production review): memory keeps short rules and an index; facts, long
+ * `memoryDiscipline` plugin: memory keeps short rules and an index; facts, long
  * reports and dated files live in the library (P57). In every session (web chats, tasks, programs, chats), a memory write
  * that records system state (roles, rights, connection status, what the agent can or cannot do) or a
  * communication style is refused with a sentence the model reads. The channels plugin applies the

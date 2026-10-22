@@ -104,7 +104,7 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   /**
    * Session invariants (spec 05 §15). `true`: an invalid message about to be saved is a programmer
    * error (EH_INVALID_MESSAGE, nothing saved) and an inconsistent session state at turn end is
-   * W_INVARIANT_VIOLATION. Default false (production: W_INVALID_MESSAGE, save anyway). Never
+   * W_INVARIANT_VIOLATION. Default false (warn W_INVALID_MESSAGE, save anyway). Never
    * inferred from NODE_ENV.
    */
   debug?: { invariants?: boolean }

@@ -655,7 +655,7 @@ lead no longer turns "remind me" into a proposal. No library change.
   process may not read, with a safe default for the home directory) would close it. Worked around by
   documenting the limit and by stripping the environment; use a container for hostile code.
 
-## Production feedback: non-blocking escalations, who answered, program agreements (as built)
+## Follow-up: non-blocking escalations, who answered, program agreements (as built)
 
 - **`escalate` does not park any more.** A program run that called `escalate` waited 53 minutes for
   the Decision Center. `escalate` is now an ordinary tool: it stores the escalation without a wait

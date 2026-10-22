@@ -20,7 +20,7 @@ scope here (decided 2026-10-14).
 | W4 | Team outbox and rate governor on `eharness/channels` (SQLite `OutboxStore` passing the conformance suite) | 2 | done, see notes |
 | W5 | Coder uses `eharness/limits` (step budget, budget notice) and `eharness/clock` where it fits | 2 | done |
 
-Behaviour of the production team app stays the same; any difference is listed in the item's notes.
+Behaviour of the team app stays the same; any difference is listed in the item's notes.
 
 ## W4 notes (outbox and governor)
 

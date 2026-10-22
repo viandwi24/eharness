@@ -735,7 +735,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
           const before = c.status
           let result = await service.test(c.id)
           // one dropped socket or slow listing is not an outage: try once more before the
-          // status stays `error` (production: hourly false alarms for a server that worked)
+          // status stays `error` (avoids false alarms)
           if (!result.ok && before === 'connected' && !closing) {
             await new Promise((r) => setTimeout(r, health().retryMs))
             if (!closing) result = await service.test(c.id)
