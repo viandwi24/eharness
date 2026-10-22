@@ -10,12 +10,14 @@ import {
   capJson,
   DEFAULT_JSON_CAP,
   MAX_BUCKETS,
+  type ModelCallBreakdownRow,
   type ModelCallBucket,
   type ModelCallDetail,
   type ModelCallFilter,
   type ModelCallKind,
   type ModelCallStatus,
   type ModelCallSummary,
+  type ModelCallTotals,
   type NewModelCall,
 } from '../../domain/model-calls.ts'
 
@@ -99,6 +101,24 @@ const like = (text: string): string => `%${text.replace(/[\\%_]/g, '\\$&')}%`
 
 type Param = string | number
 
+/**
+ * Source of a call (see `MODEL_CALL_SOURCES`). Uses the task of the session as a scalar subquery
+ * (`tasks.session_id` is unique) so it works in any query on `model_calls` without a join.
+ */
+const SOURCE_SQL = `CASE
+  WHEN kind = 'compaction' THEN 'compaction'
+  WHEN kind = 'flush' THEN 'flush'
+  WHEN kind = 'other' THEN 'classifier'
+  WHEN session_id IS NULL THEN 'other'
+  WHEN session_id LIKE 'heartbeat:%' THEN 'heartbeat'
+  WHEN session_id LIKE 'program:%' OR session_id LIKE 'rehearsal:%' THEN 'program'
+  WHEN session_id LIKE 'routine:%' THEN 'routine'
+  WHEN session_id LIKE 'api:%' THEN 'api'
+  WHEN (SELECT origin FROM tasks WHERE tasks.session_id = model_calls.session_id) = 'user' THEN 'task'
+  WHEN (SELECT origin FROM tasks WHERE tasks.session_id = model_calls.session_id) = 'lead'
+    OR session_id LIKE '%:agent:%' OR session_id LIKE '%:worker:%' THEN 'delegated'
+  ELSE 'chat' END`
+
 /** WHERE conditions of a filter (all optional, AND-ed). */
 function conditions(f: ModelCallFilter): { where: string[]; params: Param[] } {
   const where: string[] = []
@@ -126,6 +146,10 @@ function conditions(f: ModelCallFilter): { where: string[]; params: Param[] } {
   if (f.status !== undefined) {
     where.push('status = ?')
     params.push(f.status)
+  }
+  if (f.source !== undefined) {
+    where.push(`(${SOURCE_SQL}) = ?`)
+    params.push(f.source)
   }
   if (f.model !== undefined && f.model !== '') {
     where.push("model_id LIKE ? ESCAPE '\\'")
@@ -368,23 +392,72 @@ export function sqliteModelCallStore(
       const bucketMs = query.bucketMs ?? bucketWidth(to - from)
       const width = Math.max(bucketMs, Math.ceil((to - from) / MAX_BUCKETS), 1)
       const { where, params } = conditions(query)
+
+      /** Totals and latency percentiles of `lo..hi` under the filters. */
+      const totalsOf = (lo: number, hi: number): ModelCallTotals => {
+        const c = conditions({ ...query, from: lo, to: hi })
+        const t = sqlite
+          .query<Omit<ModelCallTotals, 'p50Ms' | 'p95Ms'> & { timed: number }, Param[]>(
+            `SELECT COUNT(*) AS count, COALESCE(SUM(status = 'error'), 0) AS errors,
+                    COALESCE(SUM(status = 'aborted'), 0) AS aborted,
+                    COALESCE(SUM(input_tokens), 0) AS inputTokens,
+                    COALESCE(SUM(output_tokens), 0) AS outputTokens,
+                    COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
+                    COALESCE(SUM(reasoning_tokens), 0) AS reasoningTokens,
+                    COALESCE(SUM(cost_usd), 0) AS costUsd,
+                    COALESCE(SUM(status != 'aborted'), 0) AS timed
+             FROM model_calls ${clause(c.where)}`,
+          )
+          .get(...c.params)
+        const { timed = 0, ...totals } = t ?? {
+          count: 0,
+          errors: 0,
+          aborted: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          reasoningTokens: 0,
+          costUsd: 0,
+          timed: 0,
+        }
+        // nearest-rank percentile: the row at that offset of the sorted durations
+        const at = (p: number): number | null => {
+          if (timed === 0) return null
+          const w = [...c.where, "status != 'aborted'"]
+          return (
+            sqlite
+              .query<{ d: number }, Param[]>(
+                `SELECT duration_ms AS d FROM model_calls ${clause(w)} ORDER BY duration_ms LIMIT 1 OFFSET ?`,
+              )
+              .get(...c.params, Math.max(0, Math.ceil(p * timed) - 1))?.d ?? null
+          )
+        }
+        return { ...totals, p50Ms: at(0.5), p95Ms: at(0.95) }
+      }
+
       const rows = sqlite
         .query<
           {
             b: number
+            source: string
+            agent_id: string | null
+            status: string
             n: number
-            errors: number
             input: number
             output: number
+            cached: number
+            reasoning: number
             cost: number
+            ms: number
           },
           Param[]
         >(
-          `SELECT CAST((started_at - ?) / ? AS INTEGER) AS b, COUNT(*) AS n,
-                  SUM(status = 'error') AS errors,
+          `SELECT CAST((started_at - ?) / ? AS INTEGER) AS b, ${SOURCE_SQL} AS source, agent_id, status,
+                  COUNT(*) AS n,
                   COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output,
-                  COALESCE(SUM(cost_usd), 0) AS cost
-           FROM model_calls ${clause(where)} GROUP BY b`,
+                  COALESCE(SUM(cached_tokens), 0) AS cached, COALESCE(SUM(reasoning_tokens), 0) AS reasoning,
+                  COALESCE(SUM(cost_usd), 0) AS cost, COALESCE(SUM(duration_ms), 0) AS ms
+           FROM model_calls ${clause(where)} GROUP BY b, source, agent_id, status`,
         )
         .all(from, width, ...params)
       const count = Math.max(1, Math.ceil((to - from + 1) / width))
@@ -392,40 +465,63 @@ export function sqliteModelCallStore(
         start: from + i * width,
         count: 0,
         errors: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        costUsd: 0,
-      }))
-      const totals = {
-        count: 0,
-        errors: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        costUsd: 0,
         aborted: 0,
-      }
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        reasoningTokens: 0,
+        costUsd: 0,
+        costBySource: {},
+        costByAgent: {},
+      }))
+      const agents = new Map<string, ModelCallBreakdownRow>()
       for (const r of rows) {
         const bucket = buckets[Math.min(Math.max(r.b, 0), count - 1)]
         if (bucket === undefined) continue
         bucket.count += r.n
-        bucket.errors += r.errors
+        if (r.status === 'error') bucket.errors += r.n
+        if (r.status === 'aborted') bucket.aborted += r.n
         bucket.inputTokens += r.input
         bucket.outputTokens += r.output
+        bucket.cachedTokens += r.cached
+        bucket.reasoningTokens += r.reasoning
         bucket.costUsd += r.cost
-        totals.count += r.n
-        totals.errors += r.errors
-        totals.inputTokens += r.input
-        totals.outputTokens += r.output
-        totals.costUsd += r.cost
+        if (r.cost > 0) {
+          bucket.costBySource[r.source] = (bucket.costBySource[r.source] ?? 0) + r.cost
+          const agentKey = r.agent_id ?? 'none'
+          bucket.costByAgent[agentKey] = (bucket.costByAgent[agentKey] ?? 0) + r.cost
+        }
+        const row = agents.get(r.agent_id ?? '') ?? {
+          key: r.agent_id,
+          calls: 0,
+          errors: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          avgDurationMs: 0, // holds the duration sum until the end
+        }
+        row.calls += r.n
+        if (r.status === 'error') row.errors += r.n
+        row.inputTokens += r.input
+        row.outputTokens += r.output
+        row.costUsd += r.cost
+        row.avgDurationMs += r.ms
+        agents.set(r.agent_id ?? '', row)
       }
-      const abortedFilter = conditions(query)
-      abortedFilter.where.push("status = 'aborted'")
-      totals.aborted =
-        sqlite
-          .query<{ n: number }, Param[]>(
-            `SELECT COUNT(*) AS n FROM model_calls ${clause(abortedFilter.where)}`,
-          )
-          .get(...abortedFilter.params)?.n ?? 0
+      const byCost = (a: ModelCallBreakdownRow, b: ModelCallBreakdownRow): number =>
+        b.costUsd - a.costUsd || b.calls - a.calls
+      const byAgent = [...agents.values()]
+        .map((r) => ({ ...r, avgDurationMs: r.calls > 0 ? r.avgDurationMs / r.calls : 0 }))
+        .sort(byCost)
+      const byModel = sqlite
+        .query<ModelCallBreakdownRow, Param[]>(
+          `SELECT model_id AS key, COUNT(*) AS calls, COALESCE(SUM(status = 'error'), 0) AS errors,
+                  COALESCE(SUM(input_tokens), 0) AS inputTokens, COALESCE(SUM(output_tokens), 0) AS outputTokens,
+                  COALESCE(SUM(cost_usd), 0) AS costUsd, COALESCE(AVG(duration_ms), 0) AS avgDurationMs
+           FROM model_calls ${clause(where)} GROUP BY model_id`,
+        )
+        .all(...params)
+        .sort(byCost)
       const { model: _model, ...rest } = query
       const others = conditions(rest)
       const models = sqlite
@@ -434,7 +530,18 @@ export function sqliteModelCallStore(
         )
         .all(...others.params)
         .map((r) => r.model_id)
-      return { from, to, bucketMs: width, buckets, totals, models }
+      const length = to - from + 1
+      return {
+        from,
+        to,
+        bucketMs: width,
+        buckets,
+        totals: totalsOf(from, to),
+        previous: totalsOf(from - length, from - 1),
+        byModel,
+        byAgent,
+        models,
+      }
     },
   }
 }

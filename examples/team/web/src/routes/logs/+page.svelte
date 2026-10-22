@@ -15,7 +15,7 @@
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
 	import LogDetailSheet from '#lib/components/logs/LogDetailSheet.svelte';
-	import LogHistogram from '#lib/components/logs/LogHistogram.svelte';
+	import LogsInsights from '#lib/components/logs/LogsInsights.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
@@ -26,6 +26,7 @@
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import { formatTokens } from '#lib/context.js';
+	import { SOURCES, sourceLabel } from '#lib/logs/charts.js';
 	import { createLogsCore, emptyLogsState } from '#lib/logs/core.js';
 	import {
 		KINDS,
@@ -76,7 +77,7 @@
 	const setFilter = (patch: Partial<LogFilters>): void => go({ ...filters, ...patch });
 	function clearFilters(): void {
 		search = '';
-		go({ ...filters, agentId: '', sessionId: '', kind: '', status: '', model: '', q: '' });
+		go({ ...filters, agentId: '', sessionId: '', kind: '', status: '', source: '', model: '', q: '' });
 	}
 	function onSearch(value: string): void {
 		search = value;
@@ -143,6 +144,7 @@
 			filters.sessionId && { key: 'sessionId', label: `Session: ${filters.sessionId.length > 22 ? `${filters.sessionId.slice(0, 22)}…` : filters.sessionId}` },
 			filters.kind && { key: 'kind', label: `Kind: ${kindLabel(filters.kind)}` },
 			filters.status && { key: 'status', label: `Status: ${filters.status}` },
+			filters.source && { key: 'source', label: `Source: ${sourceLabel(filters.source)}` },
 			filters.model && { key: 'model', label: `Model: ${filters.model}` }
 		].filter((c): c is { key: keyof LogFilters; label: string } => !!c)
 	);
@@ -182,6 +184,12 @@
 						<NativeSelect value={filters.status} onchange={(e: Event) => setFilter({ status: (e.currentTarget as HTMLSelectElement).value })} size="sm" class="w-full text-foreground">
 							<NativeSelectOption value="">Any status</NativeSelectOption>
 							{#each STATUSES as s (s)}<NativeSelectOption value={s} class="capitalize">{s}</NativeSelectOption>{/each}
+						</NativeSelect>
+					</label>
+					<label class="flex flex-col gap-1 text-xs text-muted-foreground">Source
+						<NativeSelect value={filters.source} onchange={(e: Event) => setFilter({ source: (e.currentTarget as HTMLSelectElement).value })} size="sm" class="w-full text-foreground">
+							<NativeSelectOption value="">All sources</NativeSelectOption>
+							{#each SOURCES as s (s.id)}<NativeSelectOption value={s.id}>{s.label}</NativeSelectOption>{/each}
 						</NativeSelect>
 					</label>
 					<label class="flex flex-col gap-1 text-xs text-muted-foreground">Model
@@ -226,11 +234,11 @@
 					</Badge>
 				{/each}
 				<Button variant="ghost" size="sm" class="ml-auto text-muted-foreground" aria-expanded={chartOpen} onclick={toggleChart}>
-					Chart <CaretDownIcon class="transition-transform {chartOpen ? '' : '-rotate-90'}" />
+					Charts <CaretDownIcon class="transition-transform {chartOpen ? '' : '-rotate-90'}" />
 				</Button>
 			</div>
 
-			{#if chartOpen}<LogHistogram {stats} loading={logs.loading} error={logs.statsError} />{/if}
+			{#if chartOpen}<LogsInsights {stats} loading={logs.loading} error={logs.statsError} agentIds={agentsStore.state.agents.map((a) => a.id)} agentName={agentName} />{/if}
 
 			{#if logs.error && logs.items.length === 0}
 				<Empty.Root class="border">

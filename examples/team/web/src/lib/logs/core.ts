@@ -2,6 +2,7 @@
 // events and the open call. Framework-free so it is testable; the page wraps `state` in `$state`.
 import type { ApiClient, ModelCallDetail, ModelCallStats, ModelCallSummary } from '../api/client';
 import type { ActivityRecord } from 'eharness/client';
+import { alignStart, bucketMsFor } from './charts';
 import { type LogFilters, emptyFilters, matchesFilters, queryOf } from './logs';
 
 export type LogsState = {
@@ -102,7 +103,9 @@ export function createLogsCore(api: ApiClient, state: LogsState, deps: LogsDeps 
 			try {
 				const t = now();
 				const q = queryOf(state.filters, t);
-				const stats = await api.get('/logs/stats', { query: { ...q, to: t } as never });
+				const bucketMs = bucketMsFor(state.filters.range);
+				// the first bucket starts on a boundary (whole hours, local midnight) so labels read well
+				const stats = await api.get('/logs/stats', { query: { ...q, from: alignStart(Number(q.from), bucketMs), to: t, bucketMs } as never });
 				if (mine !== statsReq) return;
 				state.stats = stats;
 				state.statsError = null;

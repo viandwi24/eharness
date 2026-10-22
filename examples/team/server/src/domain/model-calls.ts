@@ -64,6 +64,25 @@ export interface NewModelCall extends Omit<ModelCallSummary, 'truncated'> {
   usageRaw: JsonValue
 }
 
+/**
+ * Where a call came from, for the Logs charts: derived from the session id and the kind. `system`
+ * rows are `compaction`, `flush` and `classifier` (the Auto mode classifier); `other` has no session.
+ */
+export const MODEL_CALL_SOURCES = [
+  'chat',
+  'task',
+  'delegated',
+  'program',
+  'routine',
+  'heartbeat',
+  'api',
+  'compaction',
+  'flush',
+  'classifier',
+  'other',
+] as const
+export type ModelCallSource = (typeof MODEL_CALL_SOURCES)[number]
+
 export interface ModelCallFilter {
   /** Start of the call >= from (epoch ms). */
   from?: number
@@ -73,6 +92,7 @@ export interface ModelCallFilter {
   sessionId?: string
   kind?: ModelCallKind
   status?: ModelCallStatus
+  source?: ModelCallSource
   /** Model id contains this text (case-insensitive). */
   model?: string
   /** Free text over model id, provider and agent name. */
@@ -94,9 +114,44 @@ export interface ModelCallBucket {
   start: number
   count: number
   errors: number
+  aborted: number
+  inputTokens: number
+  outputTokens: number
+  /** Input tokens read from the prompt cache. */
+  cachedTokens: number
+  reasoningTokens: number
+  costUsd: number
+  /** Cost per source (only sources with a cost in the bucket). */
+  costBySource: Record<string, number>
+  /** Cost per agent id (`none` for calls without an agent). */
+  costByAgent: Record<string, number>
+}
+
+/** Totals of a range (the selected one, or the equal range before it). */
+export interface ModelCallTotals {
+  count: number
+  errors: number
+  aborted: number
+  inputTokens: number
+  outputTokens: number
+  cachedTokens: number
+  reasoningTokens: number
+  costUsd: number
+  /** Median / 95th percentile of the duration of calls that were not aborted; null when none. */
+  p50Ms: number | null
+  p95Ms: number | null
+}
+
+/** One row of the by-model / by-agent breakdown. */
+export interface ModelCallBreakdownRow {
+  /** Model id, or agent id (null: calls without an agent). */
+  key: string | null
+  calls: number
+  errors: number
   inputTokens: number
   outputTokens: number
   costUsd: number
+  avgDurationMs: number
 }
 
 export interface ModelCallStats {
@@ -104,7 +159,11 @@ export interface ModelCallStats {
   to: number
   bucketMs: number
   buckets: ModelCallBucket[]
-  totals: Omit<ModelCallBucket, 'start'> & { aborted: number }
+  totals: ModelCallTotals
+  /** The equal range right before `from`, under the same filters. */
+  previous: ModelCallTotals
+  byModel: ModelCallBreakdownRow[]
+  byAgent: ModelCallBreakdownRow[]
   /** Distinct model ids in the range (for a filter), most called first. */
   models: string[]
 }

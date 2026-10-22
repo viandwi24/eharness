@@ -16281,6 +16281,8 @@ export interface paths {
                     kind?: "step" | "compaction" | "flush" | "other";
                     /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
                     status?: "ok" | "error" | "aborted";
+                    /** @description Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`. */
+                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "compaction" | "flush" | "classifier" | "other";
                     /** @description Model id contains this text (case-insensitive). */
                     model?: string;
                     /** @description Free text: matches the model id, the provider or the name of the agent. */
@@ -16358,6 +16360,8 @@ export interface paths {
                     kind?: "step" | "compaction" | "flush" | "other";
                     /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
                     status?: "ok" | "error" | "aborted";
+                    /** @description Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`. */
+                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "compaction" | "flush" | "classifier" | "other";
                     /** @description Model id contains this text (case-insensitive). */
                     model?: string;
                     /** @description Free text: matches the model id, the provider or the name of the agent. */
@@ -16434,6 +16438,8 @@ export interface paths {
                     kind?: "step" | "compaction" | "flush" | "other";
                     /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
                     status?: "ok" | "error" | "aborted";
+                    /** @description Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`. */
+                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "compaction" | "flush" | "classifier" | "other";
                     /** @description Model id contains this text (case-insensitive). */
                     model?: string;
                     /** @description Free text: matches the model id, the provider or the name of the agent. */
@@ -22806,21 +22812,77 @@ export interface components {
             buckets: {
                 start: number;
                 count: number;
-                /** @description Calls with status `error`. */
                 errors: number;
+                aborted: number;
                 inputTokens: number;
                 outputTokens: number;
+                cachedTokens: number;
+                reasoningTokens: number;
                 costUsd: number;
+                /** @description Cost per source; only sources with a cost in the bucket. */
+                costBySource: {
+                    [key: string]: number;
+                };
+                /** @description Cost per agent id (`none`: no agent); only agents with a cost. */
+                costByAgent: {
+                    [key: string]: number;
+                };
             }[];
             totals: {
                 count: number;
                 /** @description Calls with status `error`. */
                 errors: number;
+                aborted: number;
+                inputTokens: number;
+                outputTokens: number;
+                /** @description Input tokens read from the prompt cache. */
+                cachedTokens: number;
+                reasoningTokens: number;
+                costUsd: number;
+                /** @description Median duration of the calls that were not aborted; null when there are none. */
+                p50Ms: number | null;
+                /** @description 95th percentile of the same durations. */
+                p95Ms: number | null;
+            };
+            /** @description Totals of the equal range right before `from`, under the same filters. */
+            previous: {
+                count: number;
+                /** @description Calls with status `error`. */
+                errors: number;
+                aborted: number;
+                inputTokens: number;
+                outputTokens: number;
+                /** @description Input tokens read from the prompt cache. */
+                cachedTokens: number;
+                reasoningTokens: number;
+                costUsd: number;
+                /** @description Median duration of the calls that were not aborted; null when there are none. */
+                p50Ms: number | null;
+                /** @description 95th percentile of the same durations. */
+                p95Ms: number | null;
+            };
+            /** @description Per model, most expensive first. */
+            byModel: {
+                /** @description Model id, or agent id (null: no agent). */
+                key: string | null;
+                calls: number;
+                errors: number;
                 inputTokens: number;
                 outputTokens: number;
                 costUsd: number;
-                aborted: number;
-            };
+                avgDurationMs: number;
+            }[];
+            /** @description Per agent, most expensive first. */
+            byAgent: {
+                /** @description Model id, or agent id (null: no agent). */
+                key: string | null;
+                calls: number;
+                errors: number;
+                inputTokens: number;
+                outputTokens: number;
+                costUsd: number;
+                avgDurationMs: number;
+            }[];
             /** @description Distinct model ids in the range (ignoring the `model` filter), most called first. */
             models: string[];
         };

@@ -157,6 +157,96 @@ describe('model call store', () => {
     expect(s.stats({ from: T0, to: T0 + 10 * MIN, status: 'error' }).totals.count).toBe(1)
   })
 
+  test('stats: series by source and agent, tokens, previous range, percentiles, breakdowns', () => {
+    const s = store()
+    const day = 24 * 60 * MIN
+    // previous range (one day before T0): two calls
+    s.insert(call('p1', { startedAt: T0 - day + MIN, costUsd: 0.5 }), T0)
+    s.insert(call('p2', { startedAt: T0 - day + 2 * MIN, status: 'error', costUsd: 0.5 }), T0)
+    // current range: 10 ok calls of 100..1000 ms, plus an error and an aborted one
+    for (let i = 1; i <= 10; i++) {
+      s.insert(
+        call(`c${i}`, {
+          startedAt: T0 + i,
+          durationMs: i * 100,
+          cachedTokens: 40,
+          reasoningTokens: 5,
+          costUsd: 0.1,
+        }),
+        T0,
+      )
+    }
+    s.insert(
+      call('hb', {
+        startedAt: T0 + 90 * MIN,
+        agentId: 'a2',
+        sessionId: 'heartbeat:a2',
+        status: 'error',
+        durationMs: 5000,
+        costUsd: 0.2,
+        modelId: 'other/model',
+      }),
+      T0,
+    )
+    s.insert(
+      call('ab', {
+        startedAt: T0 + 91 * MIN,
+        status: 'aborted',
+        durationMs: 99_999,
+        costUsd: null,
+      }),
+      T0,
+    )
+    s.insert(
+      call('cmp', {
+        startedAt: T0 + 100 * MIN,
+        kind: 'compaction',
+        sessionId: 'dm:a1',
+        costUsd: 0.3,
+      }),
+      T0,
+    )
+    s.insert(
+      call('api', {
+        startedAt: T0 + 100 * MIN,
+        sessionId: 'api:a1:x',
+        agentId: null,
+        costUsd: 0.4,
+      }),
+      T0,
+    )
+    const hour = 60 * MIN
+    const stats = s.stats({ from: T0, to: T0 + day - 1, bucketMs: hour })
+    expect(stats.buckets).toHaveLength(24)
+    expect(stats.buckets[0]).toMatchObject({ count: 10, cachedTokens: 400, reasoningTokens: 50 })
+    expect(stats.buckets[0]?.costBySource.chat).toBeCloseTo(1)
+    expect(stats.buckets[1]).toMatchObject({ count: 4, errors: 1, aborted: 1 })
+    expect(stats.buckets[1]?.costBySource.heartbeat).toBeCloseTo(0.2)
+    expect(stats.buckets[1]?.costBySource.compaction).toBeCloseTo(0.3)
+    expect(stats.buckets[1]?.costBySource.api).toBeCloseTo(0.4)
+    expect(stats.buckets[1]?.costByAgent).toMatchObject({ none: 0.4 })
+    expect(stats.buckets[1]?.costByAgent.a2).toBeCloseTo(0.2)
+    // totals add up; percentiles skip the aborted call (nearest rank over 13 timed calls)
+    expect(stats.totals).toMatchObject({ count: 14, errors: 1, aborted: 1, cachedTokens: 400 })
+    expect(stats.totals.costUsd).toBeCloseTo(1.9)
+    expect(stats.totals.p50Ms).toBe(700) // sorted: 100..900,1000x3,5000 -> rank 7 of 13
+    expect(stats.totals.p95Ms).toBe(5000)
+    // previous: the equal range right before
+    expect(stats.previous).toMatchObject({ count: 2, errors: 1 })
+    expect(stats.previous.costUsd).toBeCloseTo(1)
+    // breakdowns: most expensive first, errors counted
+    expect(stats.byModel.map((r) => r.key)).toEqual(['anthropic/claude-x', 'other/model'])
+    expect(stats.byModel[0]).toMatchObject({ calls: 13, errors: 0 })
+    expect(stats.byAgent.map((r) => r.key)).toEqual(['a1', null, 'a2'])
+    expect(stats.byAgent[2]).toMatchObject({ calls: 1, errors: 1, avgDurationMs: 5000 })
+    // filters by source apply to the totals, buckets and previous
+    const hb = s.stats({ from: T0, to: T0 + day - 1, bucketMs: hour, source: 'heartbeat' })
+    expect(hb.totals.count).toBe(1)
+    expect(hb.previous.count).toBe(0)
+    expect(hb.previous.p50Ms).toBeNull()
+    expect(s.list({ limit: 50, source: 'api' }).items.map((r) => r.id)).toEqual(['api'])
+  })
+
   test('a JSON column over the cap is replaced by a marker and flagged', () => {
     const s = store(300)
     s.insert(call('big', { requestBody: { text: 'x'.repeat(5000) } }), T0)

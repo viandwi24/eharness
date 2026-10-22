@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi'
-import { MODEL_CALL_KINDS, MODEL_CALL_STATUSES } from '../../app/catalog.ts'
+import { MODEL_CALL_KINDS, MODEL_CALL_SOURCES, MODEL_CALL_STATUSES } from '../../app/catalog.ts'
 
 export const ModelCallKindSchema = z.enum(MODEL_CALL_KINDS).openapi({
   description:
@@ -8,6 +8,11 @@ export const ModelCallKindSchema = z.enum(MODEL_CALL_KINDS).openapi({
 export const ModelCallStatusSchema = z.enum(MODEL_CALL_STATUSES).openapi({
   description:
     '`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished).',
+})
+
+export const ModelCallSourceSchema = z.enum(MODEL_CALL_SOURCES).openapi({
+  description:
+    'Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`.',
 })
 
 const epoch = z.coerce.number().int().min(0)
@@ -24,6 +29,7 @@ export const LogFilterQuery = z.object({
   }),
   kind: ModelCallKindSchema.optional(),
   status: ModelCallStatusSchema.optional(),
+  source: ModelCallSourceSchema.optional(),
   model: z
     .string()
     .min(1)
@@ -127,23 +133,70 @@ export const ModelCallDetailSchema = z
   })
   .openapi('ModelCallDetail', { description: 'One call with every JSON column.' })
 
-const BucketShape = {
+const TotalsShape = {
   count: z.number().int(),
   errors: z.number().int().openapi({ description: 'Calls with status `error`.' }),
+  aborted: z.number().int(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  cachedTokens: z
+    .number()
+    .int()
+    .openapi({ description: 'Input tokens read from the prompt cache.' }),
+  reasoningTokens: z.number().int(),
+  costUsd: z.number(),
+}
+
+const TotalsSchema = z.object({
+  ...TotalsShape,
+  p50Ms: z.number().nullable().openapi({
+    description: 'Median duration of the calls that were not aborted; null when there are none.',
+  }),
+  p95Ms: z.number().nullable().openapi({ description: '95th percentile of the same durations.' }),
+})
+
+const BreakdownRow = z.object({
+  key: z.string().nullable().openapi({ description: 'Model id, or agent id (null: no agent).' }),
+  calls: z.number().int(),
+  errors: z.number().int(),
   inputTokens: z.number().int(),
   outputTokens: z.number().int(),
   costUsd: z.number(),
-}
+  avgDurationMs: z.number(),
+})
 
 export const ModelCallStatsSchema = z
   .object({
     from: z.number().int(),
     to: z.number().int(),
     bucketMs: z.number().int().openapi({ description: 'Width of a bucket.' }),
-    buckets: z.array(z.object({ start: z.number().int(), ...BucketShape })).openapi({
-      description: 'Every bucket of the range in order, empty ones included.',
+    buckets: z
+      .array(
+        z.object({
+          start: z.number().int(),
+          count: z.number().int(),
+          errors: z.number().int(),
+          aborted: z.number().int(),
+          inputTokens: z.number().int(),
+          outputTokens: z.number().int(),
+          cachedTokens: z.number().int(),
+          reasoningTokens: z.number().int(),
+          costUsd: z.number(),
+          costBySource: z
+            .record(z.string(), z.number())
+            .openapi({ description: 'Cost per source; only sources with a cost in the bucket.' }),
+          costByAgent: z.record(z.string(), z.number()).openapi({
+            description: 'Cost per agent id (`none`: no agent); only agents with a cost.',
+          }),
+        }),
+      )
+      .openapi({ description: 'Every bucket of the range in order, empty ones included.' }),
+    totals: TotalsSchema,
+    previous: TotalsSchema.openapi({
+      description: 'Totals of the equal range right before `from`, under the same filters.',
     }),
-    totals: z.object({ ...BucketShape, aborted: z.number().int() }),
+    byModel: z.array(BreakdownRow).openapi({ description: 'Per model, most expensive first.' }),
+    byAgent: z.array(BreakdownRow).openapi({ description: 'Per agent, most expensive first.' }),
     models: z.array(z.string()).openapi({
       description:
         'Distinct model ids in the range (ignoring the `model` filter), most called first.',

@@ -12,7 +12,11 @@ export {
   MAX_EVERY_MINUTES,
   MIN_EVERY_MINUTES,
 } from '../domain/heartbeat.ts'
-export { MODEL_CALL_KINDS, MODEL_CALL_STATUSES } from '../domain/model-calls.ts'
+export {
+  MODEL_CALL_KINDS,
+  MODEL_CALL_SOURCES,
+  MODEL_CALL_STATUSES,
+} from '../domain/model-calls.ts'
 export { TEAM_MODES } from '../domain/modes.ts'
 export {
   MAX_ABOUT,

@@ -17,6 +17,8 @@ export const KINDS = [
 	{ id: 'flush', label: 'Memory flush' },
 	{ id: 'other', label: 'Other' }
 ] as const;
+/** Values of the `source` filter (the server's `ModelCallSource`). */
+const SOURCE_IDS: readonly string[] = ['chat', 'task', 'delegated', 'program', 'routine', 'heartbeat', 'api', 'compaction', 'flush', 'classifier', 'other'];
 export const STATUSES = ['ok', 'error', 'aborted'] as const;
 
 export const kindLabel = (kind: string): string => KINDS.find((k) => k.id === kind)?.label ?? kind;
@@ -27,11 +29,12 @@ export type LogFilters = {
 	sessionId: string;
 	kind: string;
 	status: string;
+	source: string;
 	model: string;
 	q: string;
 };
 
-export const emptyFilters = (): LogFilters => ({ range: DEFAULT_RANGE, agentId: '', sessionId: '', kind: '', status: '', model: '', q: '' });
+export const emptyFilters = (): LogFilters => ({ range: DEFAULT_RANGE, agentId: '', sessionId: '', kind: '', status: '', source: '', model: '', q: '' });
 
 const isRange = (v: string | null): v is RangeId => RANGES.some((r) => r.id === v);
 
@@ -46,6 +49,7 @@ export function filtersFromParams(p: Pick<URLSearchParams, 'get'>): LogFilters {
 		sessionId: p.get('sessionId') ?? '',
 		kind: KINDS.some((k) => k.id === kind) ? kind : '',
 		status: (STATUSES as readonly string[]).includes(status) ? status : '',
+		source: SOURCE_IDS.includes(p.get('source') ?? '') ? (p.get('source') ?? '') : '',
 		model: p.get('model') ?? '',
 		q: p.get('q') ?? ''
 	};
@@ -55,7 +59,7 @@ export function filtersFromParams(p: Pick<URLSearchParams, 'get'>): LogFilters {
 export function paramsFromFilters(f: LogFilters, id?: string | null): URLSearchParams {
 	const p = new URLSearchParams();
 	if (f.range !== DEFAULT_RANGE) p.set('range', f.range);
-	for (const k of ['agentId', 'sessionId', 'kind', 'status', 'model', 'q'] as const) if (f[k]) p.set(k, f[k]);
+	for (const k of ['agentId', 'sessionId', 'kind', 'status', 'source', 'model', 'q'] as const) if (f[k]) p.set(k, f[k]);
 	if (id) p.set('id', id);
 	return p;
 }
@@ -64,13 +68,13 @@ export function paramsFromFilters(f: LogFilters, id?: string | null): URLSearchP
 export function queryOf(f: LogFilters, now: number): Record<string, string | number> {
 	const ms = RANGES.find((r) => r.id === f.range)?.ms ?? RANGES[1].ms;
 	const q: Record<string, string | number> = { from: now - ms };
-	for (const k of ['agentId', 'sessionId', 'kind', 'status', 'model', 'q'] as const) if (f[k]) q[k] = f[k];
+	for (const k of ['agentId', 'sessionId', 'kind', 'status', 'source', 'model', 'q'] as const) if (f[k]) q[k] = f[k];
 	return q;
 }
 
-export const activeFilterCount = (f: LogFilters): number => (['agentId', 'sessionId', 'kind', 'status', 'model'] as const).filter((k) => f[k]).length;
+export const activeFilterCount = (f: LogFilters): number => (['agentId', 'sessionId', 'kind', 'status', 'source', 'model'] as const).filter((k) => f[k]).length;
 
-/** Does a live event (agent, session, kind, status, model) belong to the current view? `q` is not checked. */
+/** Does a live event (agent, session, kind, status, model) belong to the current view? `q` and `source` are not checked (events do not carry them; the refresh asks the server). */
 export function matchesFilters(
 	f: LogFilters,
 	e: { agentId: string | null; sessionId: string | null; payload: Record<string, unknown> }

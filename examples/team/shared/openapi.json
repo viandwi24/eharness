@@ -17974,8 +17974,10 @@
                   "type": "integer"
                 },
                 "errors": {
-                  "type": "integer",
-                  "description": "Calls with status `error`."
+                  "type": "integer"
+                },
+                "aborted": {
+                  "type": "integer"
                 },
                 "inputTokens": {
                   "type": "integer"
@@ -17983,17 +17985,42 @@
                 "outputTokens": {
                   "type": "integer"
                 },
+                "cachedTokens": {
+                  "type": "integer"
+                },
+                "reasoningTokens": {
+                  "type": "integer"
+                },
                 "costUsd": {
                   "type": "number"
+                },
+                "costBySource": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "description": "Cost per source; only sources with a cost in the bucket."
+                },
+                "costByAgent": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "description": "Cost per agent id (`none`: no agent); only agents with a cost."
                 }
               },
               "required": [
                 "start",
                 "count",
                 "errors",
+                "aborted",
                 "inputTokens",
                 "outputTokens",
-                "costUsd"
+                "cachedTokens",
+                "reasoningTokens",
+                "costUsd",
+                "costBySource",
+                "costByAgent"
               ]
             },
             "description": "Every bucket of the range in order, empty ones included."
@@ -18008,27 +18035,196 @@
                 "type": "integer",
                 "description": "Calls with status `error`."
               },
+              "aborted": {
+                "type": "integer"
+              },
               "inputTokens": {
                 "type": "integer"
               },
               "outputTokens": {
                 "type": "integer"
               },
+              "cachedTokens": {
+                "type": "integer",
+                "description": "Input tokens read from the prompt cache."
+              },
+              "reasoningTokens": {
+                "type": "integer"
+              },
               "costUsd": {
                 "type": "number"
               },
-              "aborted": {
-                "type": "integer"
+              "p50Ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Median duration of the calls that were not aborted; null when there are none."
+              },
+              "p95Ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "95th percentile of the same durations."
               }
             },
             "required": [
               "count",
               "errors",
+              "aborted",
               "inputTokens",
               "outputTokens",
+              "cachedTokens",
+              "reasoningTokens",
               "costUsd",
-              "aborted"
+              "p50Ms",
+              "p95Ms"
             ]
+          },
+          "previous": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "integer",
+                "description": "Calls with status `error`."
+              },
+              "aborted": {
+                "type": "integer"
+              },
+              "inputTokens": {
+                "type": "integer"
+              },
+              "outputTokens": {
+                "type": "integer"
+              },
+              "cachedTokens": {
+                "type": "integer",
+                "description": "Input tokens read from the prompt cache."
+              },
+              "reasoningTokens": {
+                "type": "integer"
+              },
+              "costUsd": {
+                "type": "number"
+              },
+              "p50Ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Median duration of the calls that were not aborted; null when there are none."
+              },
+              "p95Ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "95th percentile of the same durations."
+              }
+            },
+            "required": [
+              "count",
+              "errors",
+              "aborted",
+              "inputTokens",
+              "outputTokens",
+              "cachedTokens",
+              "reasoningTokens",
+              "costUsd",
+              "p50Ms",
+              "p95Ms"
+            ],
+            "description": "Totals of the equal range right before `from`, under the same filters."
+          },
+          "byModel": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Model id, or agent id (null: no agent)."
+                },
+                "calls": {
+                  "type": "integer"
+                },
+                "errors": {
+                  "type": "integer"
+                },
+                "inputTokens": {
+                  "type": "integer"
+                },
+                "outputTokens": {
+                  "type": "integer"
+                },
+                "costUsd": {
+                  "type": "number"
+                },
+                "avgDurationMs": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "key",
+                "calls",
+                "errors",
+                "inputTokens",
+                "outputTokens",
+                "costUsd",
+                "avgDurationMs"
+              ]
+            },
+            "description": "Per model, most expensive first."
+          },
+          "byAgent": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Model id, or agent id (null: no agent)."
+                },
+                "calls": {
+                  "type": "integer"
+                },
+                "errors": {
+                  "type": "integer"
+                },
+                "inputTokens": {
+                  "type": "integer"
+                },
+                "outputTokens": {
+                  "type": "integer"
+                },
+                "costUsd": {
+                  "type": "number"
+                },
+                "avgDurationMs": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "key",
+                "calls",
+                "errors",
+                "inputTokens",
+                "outputTokens",
+                "costUsd",
+                "avgDurationMs"
+              ]
+            },
+            "description": "Per agent, most expensive first."
           },
           "models": {
             "type": "array",
@@ -18044,6 +18240,9 @@
           "bucketMs",
           "buckets",
           "totals",
+          "previous",
+          "byModel",
+          "byAgent",
           "models"
         ]
       },
@@ -37690,6 +37889,29 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "chat",
+                "task",
+                "delegated",
+                "program",
+                "routine",
+                "heartbeat",
+                "api",
+                "compaction",
+                "flush",
+                "classifier",
+                "other"
+              ],
+              "description": "Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`."
+            },
+            "required": false,
+            "description": "Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`.",
+            "name": "source",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "minLength": 1,
               "maxLength": 200,
               "description": "Model id contains this text (case-insensitive)."
@@ -37859,6 +38081,29 @@
             "required": false,
             "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished).",
             "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "chat",
+                "task",
+                "delegated",
+                "program",
+                "routine",
+                "heartbeat",
+                "api",
+                "compaction",
+                "flush",
+                "classifier",
+                "other"
+              ],
+              "description": "Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`."
+            },
+            "required": false,
+            "description": "Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`.",
+            "name": "source",
             "in": "query"
           },
           {
@@ -38034,6 +38279,29 @@
             "required": false,
             "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished).",
             "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "chat",
+                "task",
+                "delegated",
+                "program",
+                "routine",
+                "heartbeat",
+                "api",
+                "compaction",
+                "flush",
+                "classifier",
+                "other"
+              ],
+              "description": "Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`."
+            },
+            "required": false,
+            "description": "Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`.",
+            "name": "source",
             "in": "query"
           },
           {
