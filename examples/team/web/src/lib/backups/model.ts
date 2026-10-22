@@ -62,3 +62,83 @@ export function resultSummary(r: RestoreResult): string {
 	if (r.failed.length) parts.push(`${r.failed.length} failed`);
 	return `${parts.join(', ')}.`;
 }
+
+// --- workspace import ---------------------------------------------------------------------------
+
+export type ImportPreview = components['schemas']['ImportPreview'];
+export type ImportItem = components['schemas']['ImportItem'];
+export type ImportResult = components['schemas']['ImportResult'];
+export type RestorePoint = components['schemas']['RestorePoint'];
+export type SectionId = ImportItem['section'];
+export type ImportSource = components['schemas']['ImportSource'];
+
+/** What the owner ticked: sections to apply, single items left out, sections where what is not in the zip is removed. */
+export interface Ticks {
+	sections: Set<SectionId>;
+	exclude: Set<string>;
+	remove: Set<SectionId>;
+}
+
+export const statusText: Record<ImportItem['status'], string> = {
+	added: 'New here',
+	changed: 'Differs',
+	unchanged: 'Same',
+	'only-live': 'Only in the workspace'
+};
+
+/** Every section that can be imported, ticked; nothing excluded, nothing removed (the default). */
+export function defaultTicks(preview: Pick<ImportPreview, 'sections'>): Ticks {
+	return { sections: new Set(preview.sections.filter((s) => s.applicable).map((s) => s.id)), exclude: new Set(), remove: new Set() };
+}
+
+/** The same rule as the server: ticked section, not left out, applicable, a change (only-here items need the removal tick). */
+export function isSelected(item: ImportItem, t: Ticks): boolean {
+	if (!item.applicable || item.status === 'unchanged') return false;
+	if (!t.sections.has(item.section) || t.exclude.has(item.key)) return false;
+	return item.status === 'only-live' ? t.remove.has(item.section) : true;
+}
+
+export function selectionBody(t: Ticks): { sections: SectionId[]; exclude: string[]; removeSections: SectionId[] } {
+	return { sections: [...t.sections], exclude: [...t.exclude], removeSections: [...t.remove] };
+}
+
+/** "3 added, 2 changed, 1 removed will be applied." */
+export function applySummary(items: readonly ImportItem[], t: Ticks): string {
+	const picked = items.filter((i) => isSelected(i, t));
+	if (!picked.length) return 'Nothing is selected to change.';
+	const n = (s: ImportItem['status']): number => picked.filter((i) => i.status === s).length;
+	const parts = [`${n('added')} added`, `${n('changed')} changed`];
+	if (n('only-live')) parts.push(`${n('only-live')} removed`);
+	return `${parts.join(', ')} will be applied.`;
+}
+
+/** What an import did, in a sentence. */
+export function importResultText(r: Pick<ImportResult, 'counts'>): string {
+	const c = r.counts;
+	const parts = [`${c.added} added`, `${c.changed} changed`];
+	if (c.removed) parts.push(`${c.removed} removed`);
+	if (c.failed) parts.push(`${c.failed} failed`);
+	return `${parts.join(', ')}.`;
+}
+
+export const restoreKindText: Record<RestorePoint['kind'], string> = {
+	import: 'Import',
+	'files-restore': 'Files restore',
+	undo: 'Undo'
+};
+
+/** The line of a restore point: what, from where. */
+export function restorePointText(p: Pick<RestorePoint, 'kind' | 'source' | 'counts'>): string {
+	const from = p.source.kind === 'backup' ? p.source.label : 'an uploaded zip';
+	return `${restoreKindText[p.kind]} from ${from}: ${importResultText({ counts: p.counts })}`;
+}
+
+/** Items of one section, changes first. */
+export function itemsOf(preview: Pick<ImportPreview, 'items'>, section: SectionId): ImportItem[] {
+	return preview.items.filter((i) => i.section === section);
+}
+
+/** The items that would grant something (permission mode, tools, connectors, roles) and are selected. */
+export function grants(items: readonly ImportItem[], t: Ticks): ImportItem[] {
+	return items.filter((i) => i.authority.length > 0 && isSelected(i, t));
+}

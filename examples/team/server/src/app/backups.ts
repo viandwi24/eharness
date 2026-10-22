@@ -1,6 +1,7 @@
 /**
- * Backups: a verified snapshot of the database plus a readable export of every library and memory
- * file (`infra/backup`). A missing or failed backup is never silent: it raises a `system` alarm.
+ * Backups: a verified snapshot of the database plus the workspace export, one readable zip
+ * (`app/workspace-export.ts`, `infra/backup`); the import and the restore points are
+ * `app/workspace-import.ts`. A missing or failed backup is never silent: it raises a `system` alarm.
  *
  * Other code that is about to do something risky (a bulk move of memory into the library, a mass
  * delete) calls `backupBefore(deps, reason)` first and stops when it answers `ok: false`.
@@ -13,13 +14,19 @@ import {
   normalizeScope,
   planRetention,
   REASON_MANUAL,
+  RESTORE_POINT_ITEMS_MAX,
   type RestoreMode,
   type RestorePlan,
+  type RestorePoint,
   type RestoreResult,
+  restorePointId,
 } from '../domain/backups.ts'
-import { conflict, DomainError, notFound } from '../domain/errors.ts'
+import { conflict, notFound } from '../domain/errors.ts'
+import type { EntityFile } from '../domain/workspace-export.ts'
 import { raiseSystemAlarm } from './alarms.ts'
-import type { BackupDownload, BackupPort, Deps } from './ports.ts'
+import { backupPort } from './backup-port.ts'
+import type { BackupDownload, Deps } from './ports.ts'
+import { collectEntities } from './workspace-export.ts'
 
 export type BackupOutcome =
   | { ok: true; backup: BackupRecord }
@@ -27,16 +34,7 @@ export type BackupOutcome =
 
 const warn = (message: string): void => console.warn(`team: backups: ${message}`)
 
-function port(deps: Deps): BackupPort {
-  if (deps.backups === undefined) {
-    throw new DomainError(
-      'conflict',
-      'BACKUPS_UNAVAILABLE',
-      'Backups are not available: this server runs on an in-memory database without TEAM_BACKUP_DIR',
-    )
-  }
-  return deps.backups
-}
+const port = backupPort
 
 /** Remove the snapshots the retention settings no longer keep. Returns the removed ids. */
 export function pruneBackups(deps: Deps): string[] {
@@ -66,8 +64,16 @@ export async function createBackup(
     return { ok: false, error }
   }
   let backup: BackupRecord
+  let entityError: unknown
   try {
-    backup = await deps.backups.create(reason)
+    // the DB snapshot comes first: documents that cannot be collected leave the export short and alarm
+    let entities: EntityFile[] = []
+    try {
+      entities = await collectEntities(deps)
+    } catch (error) {
+      entityError = error
+    }
+    backup = await deps.backups.create(reason, entities)
   } catch (error) {
     raiseSystemAlarm(deps, 'backup', error)
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -79,6 +85,14 @@ export async function createBackup(
   }
   if (backup.exportError !== null) {
     raiseSystemAlarm(deps, 'backup-export', new Error(backup.exportError))
+  } else if (entityError !== undefined) {
+    raiseSystemAlarm(
+      deps,
+      'backup-export',
+      new Error(
+        `the workspace documents could not be collected (the database copy is fine): ${String(entityError)}`,
+      ),
+    )
   }
   if (options.prune !== false) {
     try {
@@ -177,7 +191,7 @@ export async function restoreFiles(
   deps: Deps,
   id: string,
   input: { path: string; mode: RestoreMode },
-): Promise<RestoreResult & { safetyBackupId: string | null }> {
+): Promise<RestoreResult & { safetyBackupId: string | null; restorePointId: string | null }> {
   const p = port(deps)
   const plan = previewRestore(deps, id, input)
   if (plan.counts.create + plan.counts.replace === 0) {
@@ -188,6 +202,7 @@ export async function restoreFiles(
       kept: plan.counts.keep,
       failed: [],
       safetyBackupId: null,
+      restorePointId: null,
     }
   }
   const safety = await createBackup(deps, beforeReason(`restore of ${plan.path} from ${id}`), {
@@ -202,7 +217,37 @@ export async function restoreFiles(
   }
   const result = await p.restore(id, plan.path, input.mode)
   if (result === undefined) throw notFound('Backup', id)
-  return { ...result, safetyBackupId: safety.backup.id }
+  // a restore point: what came back, from which backup, and the safety backup to undo it
+  const at = deps.clock.now()
+  const point: RestorePoint = {
+    id: restorePointId(at),
+    at,
+    by: 'web',
+    kind: 'files-restore',
+    source: { kind: 'backup', backupId: id, label: `backup ${id}` },
+    safetyBackupId: safety.backup.id,
+    sections: ['library', 'memory'],
+    removedSections: [],
+    counts: {
+      added: result.created,
+      changed: result.replaced,
+      removed: 0,
+      failed: result.failed.length,
+    },
+    items: [
+      ...result.failed.map((f) => ({ key: f.path, action: 'failed' as const, note: f.error })),
+      ...plan.entries
+        .filter((e) => e.action === 'create' || (e.action === 'replace' && input.mode === 'all'))
+        .map((e) => ({
+          key: e.path,
+          action: e.action === 'create' ? ('added' as const) : ('changed' as const),
+        })),
+    ].slice(0, RESTORE_POINT_ITEMS_MAX),
+    undoOf: null,
+    undoneBy: null,
+  }
+  p.restorePoints.add(point)
+  return { ...result, safetyBackupId: safety.backup.id, restorePointId: point.id }
 }
 
 // --- the schedule -------------------------------------------------------------------------------
@@ -241,4 +286,13 @@ export function createBackupScheduler(deps: Deps): BackupScheduler {
       return undefined
     },
   }
+}
+
+/** Verify an uploaded workspace zip and keep it for the import that follows. */
+export function stageImport(
+  deps: Deps,
+  bytes: Uint8Array,
+  name: string,
+): Promise<{ uploadId: string; name: string }> {
+  return port(deps).stageUpload(bytes, name)
 }

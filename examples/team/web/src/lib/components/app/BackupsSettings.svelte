@@ -2,9 +2,10 @@
 	import { onMount } from 'svelte';
 	import { api, fieldErrors } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
-	import { type Backup, type RestorePlan, bytesText, planSummary, reasonLabel, resultSummary, verifiedText } from '#lib/backups/model.js';
-	import { downloadBackupFile } from '#lib/backups/download.js';
+	import { type Backup, type ImportSource, type RestorePlan, type RestorePoint, type SectionId, bytesText, planSummary, reasonLabel, resultSummary, restorePointText, verifiedText } from '#lib/backups/model.js';
+	import { downloadBackupFile, downloadWorkspaceExport, uploadWorkspaceZip } from '#lib/backups/download.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
+	import WorkspaceImportDialog from '#lib/components/app/WorkspaceImportDialog.svelte';
 	import * as Alert from '#lib/components/ui/alert/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -46,9 +47,12 @@
 		keepWeekly = String(s.backupKeepWeekly);
 	}
 
+	let restorePoints = $state<RestorePoint[]>([]);
+
 	async function load(): Promise<void> {
 		try {
 			overview = await api.get('/backups');
+			restorePoints = (await api.get('/backups/restore-points')).restorePoints;
 			loadError = '';
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'Could not load the backups';
@@ -110,6 +114,67 @@
 			toast.error(e instanceof Error ? e.message : 'Could not delete');
 		}
 		await load();
+	}
+
+	// --- the workspace export and the import -----------------------------------------------------
+	let importOpen = $state(false);
+	let importSource = $state<ImportSource | null>(null);
+	let importLabel = $state('');
+	let importUndoOf = $state<string | undefined>(undefined);
+	let importInitial = $state<{ sections: SectionId[]; exclude: string[]; removeSections: SectionId[] } | undefined>(undefined);
+	let uploading = $state(false);
+	let exporting = $state(false);
+	let fileInput = $state<HTMLInputElement | null>(null);
+
+	async function exportNow(): Promise<void> {
+		exporting = true;
+		try {
+			await downloadWorkspaceExport();
+		} catch (e) {
+			if (!(e instanceof DOMException && e.name === 'AbortError')) toast.error(e instanceof Error ? e.message : 'Download failed');
+		} finally {
+			exporting = false;
+		}
+	}
+
+	function startImport(source: ImportSource, label: string): void {
+		importSource = source;
+		importLabel = label;
+		importUndoOf = undefined;
+		importInitial = undefined;
+		importOpen = true;
+	}
+
+	async function pickedFile(e: Event): Promise<void> {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file) return;
+		uploading = true;
+		try {
+			const up = await uploadWorkspaceZip(file);
+			startImport({ uploadId: up.uploadId }, up.name);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'The zip was refused');
+		} finally {
+			uploading = false;
+		}
+	}
+
+	async function startUndo(p: RestorePoint): Promise<void> {
+		busy = `undo:${p.id}`;
+		try {
+			const u = await api.get('/backups/restore-points/{id}/undo', { params: { id: p.id } });
+			importSource = u.source;
+			importLabel = `the safety backup taken before ${formatDateTime(p.at)}`;
+			importUndoOf = p.id;
+			importInitial = u.selection;
+			importOpen = true;
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not prepare the undo');
+		} finally {
+			busy = '';
+		}
 	}
 
 	// --- restore of files ------------------------------------------------------------------------
@@ -186,7 +251,7 @@
 	<Card.Root>
 		<Card.Header>
 			<Card.Title>Schedule</Card.Title>
-			<Card.Description>A consistent copy of the whole database is written while the server runs, then checked (integrity and row counts), with a zip of every library and memory file next to it. One is also taken before risky operations such as reorganizing memory, and at start-up when none was taken today.</Card.Description>
+			<Card.Description>A consistent copy of the whole database is written while the server runs, then checked (integrity and row counts), with one readable zip of the workspace next to it (settings, agents, personas, memory, library, programs, routines, people; no chats, no secrets). One is also taken before risky operations such as reorganizing memory, and at start-up when none was taken today.</Card.Description>
 		</Card.Header>
 		<Card.Content>
 			<form
@@ -229,7 +294,12 @@
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="flex flex-col gap-3">
-			<div><Button size="sm" onclick={backUpNow} disabled={running}>{running ? 'Backing up…' : 'Back up now'}</Button></div>
+			<div class="flex flex-wrap gap-2">
+				<Button size="sm" onclick={backUpNow} disabled={running}>{running ? 'Backing up…' : 'Back up now'}</Button>
+				<Button size="sm" variant="outline" onclick={exportNow} disabled={exporting}>{exporting ? 'Preparing…' : 'Download workspace export'}</Button>
+				<Button size="sm" variant="outline" onclick={() => fileInput?.click()} disabled={uploading}>{uploading ? 'Checking the zip…' : 'Import from zip'}</Button>
+				<input bind:this={fileInput} type="file" accept=".zip,application/zip" class="hidden" onchange={pickedFile} aria-label="Workspace zip to import" />
+			</div>
 			{#if overview && !overview.backups.length}
 				<p class="text-sm text-muted-foreground">No backups yet.</p>
 			{:else if overview}
@@ -257,7 +327,8 @@
 									</Table.Cell>
 									<Table.Cell class="whitespace-nowrap text-right">
 										<Button variant="ghost" size="sm" disabled={busy === `${b.id}:db`} onclick={() => download(b, 'db')}>Database</Button>
-										<Button variant="ghost" size="sm" disabled={b.filesBytes === null || busy === `${b.id}:files`} onclick={() => download(b, 'files')}>Files</Button>
+										<Button variant="ghost" size="sm" disabled={b.filesBytes === null || busy === `${b.id}:files`} onclick={() => download(b, 'files')}>Export</Button>
+										<Button variant="ghost" size="sm" disabled={b.filesBytes === null} onclick={() => startImport({ backupId: b.id }, `the backup of ${formatDateTime(b.createdAt)}`)}>Import</Button>
 										<Button variant="ghost" size="sm" disabled={!b.verified} onclick={() => openRestore(b)}>Restore files</Button>
 										<Button
 											variant="ghost"
@@ -276,7 +347,34 @@
 			{/if}
 		</Card.Content>
 	</Card.Root>
+
+	<Card.Root>
+		<Card.Header>
+			<Card.Title>Restore points</Card.Title>
+			<Card.Description>Every import or restore takes a verified safety backup first and is recorded here: what was applied, from where, by whom and when. Undo restores from that safety backup with the same preview, and is a restore point itself, so an undo can be undone.</Card.Description>
+		</Card.Header>
+		<Card.Content class="flex flex-col gap-2">
+			{#if !restorePoints.length}
+				<p class="text-sm text-muted-foreground">No imports or restores yet.</p>
+			{:else}
+				<ul class="divide-y divide-border">
+					{#each restorePoints as p (p.id)}
+						<li class="flex flex-wrap items-center gap-3 py-2 text-sm">
+							<div class="min-w-0 flex-1">
+								<div>{restorePointText(p)}</div>
+								<div class="text-xs text-muted-foreground">{formatDateTime(p.at)} by {p.by}; safety backup <span class="font-mono">{p.safetyBackupId}</span>{p.undoneBy ? '; undone' : ''}</div>
+								{#if p.counts.failed}<div class="text-xs text-destructive-text">{p.counts.failed} failed: {p.items.filter((i) => i.action === 'failed').slice(0, 3).map((i) => `${i.key} (${i.note ?? 'failed'})`).join('; ')}</div>{/if}
+							</div>
+							<Button variant="outline" size="sm" disabled={!!p.undoneBy || busy === `undo:${p.id}`} onclick={() => startUndo(p)}>Undo</Button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</Card.Content>
+	</Card.Root>
 </div>
+
+<WorkspaceImportDialog bind:open={importOpen} source={importSource} label={importLabel} undoOf={importUndoOf} initial={importInitial} onDone={() => void load()} />
 
 <ConfirmDialog
 	bind:open={deleteOpen}

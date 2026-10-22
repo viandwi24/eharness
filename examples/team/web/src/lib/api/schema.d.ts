@@ -6027,6 +6027,421 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backups/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the workspace export now
+         * @description One zip of everything of the workspace, readable as `.md` and `.json` in folders: `manifest.json` (format, versions, counts, sha256 of every file), `settings.json`, `library/**`, `memory/**`, `agents/<slug>/{agent.json,persona.md,heartbeat.json,memory/**,programs/**,routines/**,reminders/**}`, `connections/<label>.json` (never with secrets) and `people/<id>.json`. Chats, task transcripts and logs are not in it (the database snapshot of a backup covers those). The same zip is part of every backup.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The bytes, streamed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload a workspace zip for an import
+         * @description The raw zip as the request body (`application/zip`, `?name=` the file name, at most 128 MB). It is verified before it is kept: size and entry limits, entry names (zip-slip), the manifest and the sha256 of every file. A refused zip answers 400 `IMPORT_REFUSED` with the reason. The answer's `uploadId` is the source of the preview and the import.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    name?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The staged zip */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ImportUpload"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Zip too large */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/import-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What an import would change
+         * @description Compares the zip with the workspace, entity by entity: `added`, `changed` (with a readable diff for text and the changed fields of JSON), `unchanged` (only counted), `only-live` (kept: an import never deletes unless a section is ticked for removal). Each item lists what applying it would grant (`authority`: permission mode, tool rules, connector enablement, program authority, directory roles). Connections and reminders are reference only. Nothing is written.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ImportPreviewBody"];
+                };
+            };
+            responses: {
+                /** @description The preview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ImportPreview"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply an import
+         * @description Applies the selected sections and items. A verified safety backup is taken first (`BACKUP_FAILED` and nothing applied when it fails) and a restore point is recorded. Ids are kept for matched entities (agent slug, program name per agent, library path, routine id then name, person id then name); new ones get new ids; references are remapped. Secrets are never imported. One failing item does not stop the rest (see `counts.failed`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ImportBody"];
+                };
+            };
+            responses: {
+                /** @description What was applied */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ImportResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `BACKUP_FAILED` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/restore-points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Restore points
+         * @description Every import or restore with what was applied, from which backup, by whom, when, and the safety backup taken first. Newest first.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Restore points */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RestorePointList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/restore-points/{id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview the undo of a restore point
+         * @description Undo = an import of the restore point's safety backup. This answers the source, the suggested selection (the touched sections ticked, with removal of what the import added) and the same preview. Apply it with `POST /backups/import` and `undoOf` set; that creates a restore point itself, so an undo can be undone.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The undo preview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UndoPreview"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `ALREADY_UNDONE` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/backups/{id}/db": {
         parameters: {
             query?: never;
@@ -6101,8 +6516,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download the files export
-         * @description A zip with every library and memory file as a folder tree (`library/...`, `memories/agents/<agent slug>/...`) and `manifest.json` (path, size, sha256, updatedAt).
+         * Download the workspace export of a backup
+         * @description The workspace zip of that backup (the same layout as `GET /backups/export`): readable `.md` and `.json` in folders with `manifest.json` (format, versions, counts, sha256 of every file). Backups made before this format hold a files-only zip that the import refuses.
          */
         get: {
             parameters: {
@@ -18108,9 +18523,9 @@ export interface components {
             /** @enum {string} */
             kind: "daily" | "startup" | "manual" | "before";
             dbBytes: number;
-            /** @description Size of the files export (zip); null = none. */
+            /** @description Size of the workspace export (zip); null = none. */
             filesBytes: number | null;
-            /** @description Library and memory files in the snapshot. */
+            /** @description Library and memory files in the workspace export. */
             fileCount: number;
             agentCount: number;
             /** @description `PRAGMA integrity_check` of the copy answered `ok` and its row counts of library files and agents matched the live database. */
@@ -18122,6 +18537,152 @@ export interface components {
             ok: boolean;
             error: string | null;
             backup: components["schemas"]["Backup"] & (Record<string, never> | null);
+        };
+        ImportUpload: {
+            uploadId: string;
+            name: string;
+        };
+        ImportPreview: {
+            source: {
+                /** @enum {string} */
+                kind: "backup" | "upload";
+                id: string;
+            };
+            manifest: {
+                createdAt: number;
+                appVersion: string;
+                formatVersion: number;
+                counts: {
+                    [key: string]: number;
+                };
+            };
+            sections: {
+                /** @enum {string} */
+                id: "settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders";
+                label: string;
+                added: number;
+                changed: number;
+                unchanged: number;
+                onlyLive: number;
+                applicable: boolean;
+            }[];
+            /** @description Added, changed and only-in-workspace items (unchanged ones are only counted). */
+            items: components["schemas"]["ImportItem"][];
+            truncated: boolean;
+            warnings: string[];
+        };
+        ImportItem: {
+            /** @description The zip path of the item; unticking uses it. */
+            key: string;
+            /** @enum {string} */
+            section: "settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders";
+            kind: string;
+            label: string;
+            /** @enum {string} */
+            status: "added" | "changed" | "unchanged" | "only-live";
+            applicable: boolean;
+            blocked: string | null;
+            /** @description Changed fields of a JSON entity. */
+            fields: {
+                field: string;
+                before: string;
+                after: string;
+            }[];
+            /** @description A line diff of a text entry. */
+            diff: string | null;
+            /** @description What applying it would grant: permission mode, tool rules, connector enablement, program authority, directory roles. */
+            authority: string[];
+            notes: string[];
+            sizeBefore: number | null;
+            sizeAfter: number | null;
+        };
+        ImportPreviewBody: {
+            source: components["schemas"]["ImportSource"];
+        };
+        /** @description Where the import reads from: `{ backupId }` (the workspace zip of a stored backup) or `{ uploadId }` (a zip uploaded with `POST /backups/imports`). */
+        ImportSource: {
+            backupId: string;
+        } | {
+            uploadId: string;
+        };
+        ImportResult: {
+            /** @description Null when nothing was selected to change: no safety backup and no restore point. */
+            restorePointId: string | null;
+            safetyBackupId: string | null;
+            counts: {
+                added: number;
+                changed: number;
+                removed: number;
+                failed: number;
+            };
+            items: {
+                key: string;
+                /** @enum {string} */
+                action: "added" | "changed" | "removed" | "failed";
+                note?: string;
+            }[];
+        };
+        ImportBody: {
+            source: components["schemas"]["ImportSource"];
+            selection?: components["schemas"]["ImportSelection"];
+            /** @description The restore point this import undoes (marks it as undone). */
+            undoOf?: string;
+        };
+        ImportSelection: {
+            /** @description Sections to apply (default: every section that can be imported). */
+            sections?: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders")[];
+            /** @description Keys (zip paths) of single items that are unticked. */
+            exclude?: string[];
+            /** @description Sections where what is only in the workspace is removed too (default none: an import never deletes). Agents are archived. */
+            removeSections?: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders")[];
+        };
+        RestorePointList: {
+            restorePoints: components["schemas"]["RestorePoint"][];
+        };
+        RestorePoint: {
+            id: string;
+            at: number;
+            by: string;
+            /** @enum {string} */
+            kind: "import" | "files-restore" | "undo";
+            source: {
+                /** @enum {string} */
+                kind: "backup";
+                backupId: string;
+                label: string;
+            } | {
+                /** @enum {string} */
+                kind: "upload";
+                label: string;
+            };
+            /** @description The verified backup taken right before; undo restores from it. */
+            safetyBackupId: string;
+            sections: string[];
+            removedSections: string[];
+            counts: {
+                added: number;
+                changed: number;
+                removed: number;
+                failed: number;
+            };
+            items: {
+                key: string;
+                /** @enum {string} */
+                action: "added" | "changed" | "removed" | "failed";
+                note?: string;
+            }[];
+            undoOf: string | null;
+            undoneBy: string | null;
+        };
+        UndoPreview: {
+            restorePoint: components["schemas"]["RestorePoint"];
+            source: components["schemas"]["ImportSource"];
+            selection: {
+                sections: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders")[];
+                exclude: string[];
+                removeSections: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders")[];
+            };
+            preview: components["schemas"]["ImportPreview"];
         };
         BackupEntries: {
             files: {
@@ -18175,6 +18736,8 @@ export interface components {
                 error: string;
             }[];
             safetyBackupId: string | null;
+            /** @description The restore point recorded for this restore (null when nothing was restored). */
+            restorePointId: string | null;
         };
         WorkspaceUsage: {
             /** @description Spend and limit of the workspace budget this month (UTC), from the budget ledger: not limited by log retention, the same numbers as the briefing cost line. */

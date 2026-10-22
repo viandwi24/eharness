@@ -5850,11 +5850,11 @@
               "integer",
               "null"
             ],
-            "description": "Size of the files export (zip); null = none."
+            "description": "Size of the workspace export (zip); null = none."
           },
           "fileCount": {
             "type": "integer",
-            "description": "Library and memory files in the snapshot."
+            "description": "Library and memory files in the workspace export."
           },
           "agentCount": {
             "type": "integer"
@@ -5920,6 +5920,689 @@
           "ok",
           "error",
           "backup"
+        ]
+      },
+      "ImportUpload": {
+        "type": "object",
+        "properties": {
+          "uploadId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uploadId",
+          "name"
+        ]
+      },
+      "ImportPreview": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "backup",
+                  "upload"
+                ]
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ]
+          },
+          "manifest": {
+            "type": "object",
+            "properties": {
+              "createdAt": {
+                "type": "integer"
+              },
+              "appVersion": {
+                "type": "string"
+              },
+              "formatVersion": {
+                "type": "integer"
+              },
+              "counts": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number"
+                }
+              }
+            },
+            "required": [
+              "createdAt",
+              "appVersion",
+              "formatVersion",
+              "counts"
+            ]
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "enum": [
+                    "settings",
+                    "agents",
+                    "programs",
+                    "routines",
+                    "memory",
+                    "library",
+                    "people",
+                    "connections",
+                    "reminders"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "added": {
+                  "type": "integer"
+                },
+                "changed": {
+                  "type": "integer"
+                },
+                "unchanged": {
+                  "type": "integer"
+                },
+                "onlyLive": {
+                  "type": "integer"
+                },
+                "applicable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "added",
+                "changed",
+                "unchanged",
+                "onlyLive",
+                "applicable"
+              ]
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportItem"
+            },
+            "description": "Added, changed and only-in-workspace items (unchanged ones are only counted)."
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "source",
+          "manifest",
+          "sections",
+          "items",
+          "truncated",
+          "warnings"
+        ]
+      },
+      "ImportItem": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The zip path of the item; unticking uses it."
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "settings",
+              "agents",
+              "programs",
+              "routines",
+              "memory",
+              "library",
+              "people",
+              "connections",
+              "reminders"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "added",
+              "changed",
+              "unchanged",
+              "only-live"
+            ]
+          },
+          "applicable": {
+            "type": "boolean"
+          },
+          "blocked": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "before": {
+                  "type": "string"
+                },
+                "after": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "field",
+                "before",
+                "after"
+              ]
+            },
+            "description": "Changed fields of a JSON entity."
+          },
+          "diff": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A line diff of a text entry."
+          },
+          "authority": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What applying it would grant: permission mode, tool rules, connector enablement, program authority, directory roles."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sizeBefore": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sizeAfter": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "section",
+          "kind",
+          "label",
+          "status",
+          "applicable",
+          "blocked",
+          "fields",
+          "diff",
+          "authority",
+          "notes",
+          "sizeBefore",
+          "sizeAfter"
+        ]
+      },
+      "ImportPreviewBody": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/ImportSource"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "ImportSource": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "backupId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            },
+            "required": [
+              "backupId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "uploadId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            },
+            "required": [
+              "uploadId"
+            ]
+          }
+        ],
+        "description": "Where the import reads from: `{ backupId }` (the workspace zip of a stored backup) or `{ uploadId }` (a zip uploaded with `POST /backups/imports`)."
+      },
+      "ImportResult": {
+        "type": "object",
+        "properties": {
+          "restorePointId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null when nothing was selected to change: no safety backup and no restore point."
+          },
+          "safetyBackupId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "added": {
+                "type": "integer"
+              },
+              "changed": {
+                "type": "integer"
+              },
+              "removed": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "added",
+              "changed",
+              "removed",
+              "failed"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "added",
+                    "changed",
+                    "removed",
+                    "failed"
+                  ]
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "action"
+              ]
+            }
+          }
+        },
+        "required": [
+          "restorePointId",
+          "safetyBackupId",
+          "counts",
+          "items"
+        ]
+      },
+      "ImportBody": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/ImportSource"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ImportSelection"
+          },
+          "undoOf": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "The restore point this import undoes (marks it as undone)."
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "ImportSelection": {
+        "type": "object",
+        "properties": {
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "settings",
+                "agents",
+                "programs",
+                "routines",
+                "memory",
+                "library",
+                "people",
+                "connections",
+                "reminders"
+              ]
+            },
+            "description": "Sections to apply (default: every section that can be imported)."
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 700
+            },
+            "maxItems": 50000,
+            "description": "Keys (zip paths) of single items that are unticked."
+          },
+          "removeSections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "settings",
+                "agents",
+                "programs",
+                "routines",
+                "memory",
+                "library",
+                "people",
+                "connections",
+                "reminders"
+              ]
+            },
+            "description": "Sections where what is only in the workspace is removed too (default none: an import never deletes). Agents are archived."
+          }
+        }
+      },
+      "RestorePointList": {
+        "type": "object",
+        "properties": {
+          "restorePoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestorePoint"
+            }
+          }
+        },
+        "required": [
+          "restorePoints"
+        ]
+      },
+      "RestorePoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "at": {
+            "type": "integer"
+          },
+          "by": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "import",
+              "files-restore",
+              "undo"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "backup"
+                    ]
+                  },
+                  "backupId": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "backupId",
+                  "label"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "upload"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "label"
+                ]
+              }
+            ]
+          },
+          "safetyBackupId": {
+            "type": "string",
+            "description": "The verified backup taken right before; undo restores from it."
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removedSections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "added": {
+                "type": "integer"
+              },
+              "changed": {
+                "type": "integer"
+              },
+              "removed": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "added",
+              "changed",
+              "removed",
+              "failed"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "added",
+                    "changed",
+                    "removed",
+                    "failed"
+                  ]
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "action"
+              ]
+            }
+          },
+          "undoOf": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "undoneBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "by",
+          "kind",
+          "source",
+          "safetyBackupId",
+          "sections",
+          "removedSections",
+          "counts",
+          "items",
+          "undoOf",
+          "undoneBy"
+        ]
+      },
+      "UndoPreview": {
+        "type": "object",
+        "properties": {
+          "restorePoint": {
+            "$ref": "#/components/schemas/RestorePoint"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ImportSource"
+          },
+          "selection": {
+            "type": "object",
+            "properties": {
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "settings",
+                    "agents",
+                    "programs",
+                    "routines",
+                    "memory",
+                    "library",
+                    "people",
+                    "connections",
+                    "reminders"
+                  ]
+                }
+              },
+              "exclude": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "removeSections": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "settings",
+                    "agents",
+                    "programs",
+                    "routines",
+                    "memory",
+                    "library",
+                    "people",
+                    "connections",
+                    "reminders"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "sections",
+              "exclude",
+              "removeSections"
+            ]
+          },
+          "preview": {
+            "$ref": "#/components/schemas/ImportPreview"
+          }
+        },
+        "required": [
+          "restorePoint",
+          "source",
+          "selection",
+          "preview"
         ]
       },
       "BackupEntries": {
@@ -6112,6 +6795,13 @@
               "string",
               "null"
             ]
+          },
+          "restorePointId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The restore point recorded for this restore (null when nothing was restored)."
           }
         },
         "required": [
@@ -6120,7 +6810,8 @@
           "unchanged",
           "kept",
           "failed",
-          "safetyBackupId"
+          "safetyBackupId",
+          "restorePointId"
         ]
       },
       "WorkspaceUsage": {
@@ -24058,6 +24749,389 @@
         }
       }
     },
+    "/backups/export": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Download the workspace export now",
+        "description": "One zip of everything of the workspace, readable as `.md` and `.json` in folders: `manifest.json` (format, versions, counts, sha256 of every file), `settings.json`, `library/**`, `memory/**`, `agents/<slug>/{agent.json,persona.md,heartbeat.json,memory/**,programs/**,routines/**,reminders/**}`, `connections/<label>.json` (never with secrets) and `people/<id>.json`. Chats, task transcripts and logs are not in it (the database snapshot of a backup covers those). The same zip is part of every backup.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bytes, streamed"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/imports": {
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Upload a workspace zip for an import",
+        "description": "The raw zip as the request body (`application/zip`, `?name=` the file name, at most 128 MB). It is verified before it is kept: size and entry limits, entry names (zip-slip), the manifest and the sha256 of every file. A refused zip answers 400 `IMPORT_REFUSED` with the reason. The answer's `uploadId` is the source of the preview and the import.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "workspace.zip"
+            },
+            "required": false,
+            "name": "name",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The staged zip",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportUpload"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Zip too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/import-preview": {
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "What an import would change",
+        "description": "Compares the zip with the workspace, entity by entity: `added`, `changed` (with a readable diff for text and the changed fields of JSON), `unchanged` (only counted), `only-live` (kept: an import never deletes unless a section is ticked for removal). Each item lists what applying it would grant (`authority`: permission mode, tool rules, connector enablement, program authority, directory roles). Connections and reminders are reference only. Nothing is written.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPreviewBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/import": {
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Apply an import",
+        "description": "Applies the selected sections and items. A verified safety backup is taken first (`BACKUP_FAILED` and nothing applied when it fails) and a restore point is recorded. Ids are kept for matched entities (agent slug, program name per agent, library path, routine id then name, person id then name); new ones get new ids; references are remapped. Secrets are never imported. One failing item does not stop the rest (see `counts.failed`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`BACKUP_FAILED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/restore-points": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Restore points",
+        "description": "Every import or restore with what was applied, from which backup, by whom, when, and the safety backup taken first. Newest first.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Restore points",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestorePointList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/restore-points/{id}/undo": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Preview the undo of a restore point",
+        "description": "Undo = an import of the restore point's safety backup. This answers the source, the suggested selection (the touched sections ticked, with removal of what the import added) and the same preview. Apply it with `POST /backups/import` and `undoOf` set; that creates a restore point itself, so an undo can be undone.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The undo preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UndoPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`ALREADY_UNDONE`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/backups/{id}/db": {
       "get": {
         "tags": [
@@ -24124,8 +25198,8 @@
         "tags": [
           "backups"
         ],
-        "summary": "Download the files export",
-        "description": "A zip with every library and memory file as a folder tree (`library/...`, `memories/agents/<agent slug>/...`) and `manifest.json` (path, size, sha256, updatedAt).",
+        "summary": "Download the workspace export of a backup",
+        "description": "The workspace zip of that backup (the same layout as `GET /backups/export`): readable `.md` and `.json` in folders with `manifest.json` (format, versions, counts, sha256 of every file). Backups made before this format hold a files-only zip that the import refuses.",
         "security": [
           {
             "Bearer": []

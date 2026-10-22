@@ -217,3 +217,58 @@ export interface RestoreResult {
   kept: number
   failed: Array<{ path: string; error: string }>
 }
+
+// --- restore points ----------------------------------------------------------------------------
+
+/** `import` a zip applied, `files-restore` files put back from a snapshot, `undo` a restore point undone. */
+export const RESTORE_POINT_KINDS = ['import', 'files-restore', 'undo'] as const
+export type RestorePointKind = (typeof RESTORE_POINT_KINDS)[number]
+
+export interface RestorePointItem {
+  key: string
+  action: 'added' | 'changed' | 'removed' | 'failed'
+  note?: string
+}
+
+/**
+ * The record of one import or restore: what was applied, from where, by whom, when, and the verified
+ * safety backup taken right before. Undo = restore from that safety backup (and it is a restore
+ * point itself, so an undo can be undone).
+ */
+export interface RestorePoint {
+  id: string
+  at: number
+  /** Who applied it (the web owner). */
+  by: string
+  kind: RestorePointKind
+  /** What was applied: a backup of the server, or an uploaded zip. */
+  source: { kind: 'backup'; backupId: string; label: string } | { kind: 'upload'; label: string }
+  /** The `before:` backup taken first; undo restores from it. */
+  safetyBackupId: string
+  /** The sections the apply touched. */
+  sections: string[]
+  /** The sections where items only in the workspace were removed. */
+  removedSections: string[]
+  counts: { added: number; changed: number; removed: number; failed: number }
+  /** At most `RESTORE_POINT_ITEMS_MAX` items, failures first. */
+  items: RestorePointItem[]
+  /** The restore point this undoes. */
+  undoOf: string | null
+  /** The restore point that undid this one. */
+  undoneBy: string | null
+}
+
+export const RESTORE_POINT_ITEMS_MAX = 500
+
+/** `rp-<time>-<4 hex>`: sorts by time, like the backup ids. */
+export function restorePointId(at: number): string {
+  const stamp = new Date(at)
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.(\d{3})Z$/, '$1Z')
+  const hex = crypto
+    .randomUUID()
+    .slice(0, 4)
+    .replace(/[^0-9a-f]/g, '0')
+  return `rp-${stamp}-${hex}`
+}

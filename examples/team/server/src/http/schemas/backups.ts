@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi'
-import { BACKUP_KINDS, RESTORE_MODES } from '../../app/catalog.ts'
+import { BACKUP_KINDS, RESTORE_MODES, WORKSPACE_SECTIONS } from '../../app/catalog.ts'
 
 export const BackupSchema = z
   .object({
@@ -15,11 +15,11 @@ export const BackupSchema = z
       .number()
       .int()
       .nullable()
-      .openapi({ description: 'Size of the files export (zip); null = none.' }),
+      .openapi({ description: 'Size of the workspace export (zip); null = none.' }),
     fileCount: z
       .number()
       .int()
-      .openapi({ description: 'Library and memory files in the snapshot.' }),
+      .openapi({ description: 'Library and memory files in the workspace export.' }),
     agentCount: z.number().int(),
     verified: z.boolean().openapi({
       description:
@@ -105,5 +105,173 @@ export const RestoreResultSchema = z
     kept: z.number().int(),
     failed: z.array(z.object({ path: z.string(), error: z.string() })),
     safetyBackupId: z.string().nullable(),
+    restorePointId: z.string().nullable().openapi({
+      description: 'The restore point recorded for this restore (null when nothing was restored).',
+    }),
   })
   .openapi('RestoreResult')
+
+// --- the workspace export and import -----------------------------------------------------------
+
+const SECTION_IDS = WORKSPACE_SECTIONS
+
+export const ImportSourceSchema = z
+  .union([
+    z.object({ backupId: z.string().min(1).max(100) }),
+    z.object({ uploadId: z.string().min(1).max(100) }),
+  ])
+  .openapi('ImportSource', {
+    description:
+      'Where the import reads from: `{ backupId }` (the workspace zip of a stored backup) or `{ uploadId }` (a zip uploaded with `POST /backups/imports`).',
+  })
+
+export const ImportUploadResultSchema = z
+  .object({ uploadId: z.string(), name: z.string() })
+  .openapi('ImportUpload')
+
+export const ImportSelectionSchema = z
+  .object({
+    sections: z.array(z.enum(SECTION_IDS)).optional().openapi({
+      description: 'Sections to apply (default: every section that can be imported).',
+    }),
+    exclude: z.array(z.string().max(700)).max(50_000).optional().openapi({
+      description: 'Keys (zip paths) of single items that are unticked.',
+    }),
+    removeSections: z.array(z.enum(SECTION_IDS)).optional().openapi({
+      description:
+        'Sections where what is only in the workspace is removed too (default none: an import never deletes). Agents are archived.',
+    }),
+  })
+  .openapi('ImportSelection')
+
+const FieldChangeSchema = z.object({ field: z.string(), before: z.string(), after: z.string() })
+
+export const ImportItemSchema = z
+  .object({
+    key: z.string().openapi({ description: 'The zip path of the item; unticking uses it.' }),
+    section: z.enum(SECTION_IDS),
+    kind: z.string(),
+    label: z.string(),
+    status: z.enum(['added', 'changed', 'unchanged', 'only-live']),
+    applicable: z.boolean(),
+    blocked: z.string().nullable(),
+    fields: z.array(FieldChangeSchema).openapi({ description: 'Changed fields of a JSON entity.' }),
+    diff: z.string().nullable().openapi({ description: 'A line diff of a text entry.' }),
+    authority: z.array(z.string()).openapi({
+      description:
+        'What applying it would grant: permission mode, tool rules, connector enablement, program authority, directory roles.',
+    }),
+    notes: z.array(z.string()),
+    sizeBefore: z.number().int().nullable(),
+    sizeAfter: z.number().int().nullable(),
+  })
+  .openapi('ImportItem')
+
+export const ImportPreviewSchema = z
+  .object({
+    source: z.object({ kind: z.enum(['backup', 'upload']), id: z.string() }),
+    manifest: z.object({
+      createdAt: z.number().int(),
+      appVersion: z.string(),
+      formatVersion: z.number().int(),
+      counts: z.record(z.string(), z.number()),
+    }),
+    sections: z.array(
+      z.object({
+        id: z.enum(SECTION_IDS),
+        label: z.string(),
+        added: z.number().int(),
+        changed: z.number().int(),
+        unchanged: z.number().int(),
+        onlyLive: z.number().int(),
+        applicable: z.boolean(),
+      }),
+    ),
+    items: z.array(ImportItemSchema).openapi({
+      description: 'Added, changed and only-in-workspace items (unchanged ones are only counted).',
+    }),
+    truncated: z.boolean(),
+    warnings: z.array(z.string()),
+  })
+  .openapi('ImportPreview')
+
+export const ImportPreviewBodySchema = z
+  .object({ source: ImportSourceSchema })
+  .openapi('ImportPreviewBody')
+
+export const ImportBodySchema = z
+  .object({
+    source: ImportSourceSchema,
+    selection: ImportSelectionSchema.optional(),
+    undoOf: z.string().min(1).max(100).optional().openapi({
+      description: 'The restore point this import undoes (marks it as undone).',
+    }),
+  })
+  .openapi('ImportBody')
+
+const RestorePointItemSchema = z.object({
+  key: z.string(),
+  action: z.enum(['added', 'changed', 'removed', 'failed']),
+  note: z.string().optional(),
+})
+
+export const RestorePointSchema = z
+  .object({
+    id: z.string(),
+    at: z.number().int(),
+    by: z.string(),
+    kind: z.enum(['import', 'files-restore', 'undo']),
+    source: z.union([
+      z.object({ kind: z.literal('backup'), backupId: z.string(), label: z.string() }),
+      z.object({ kind: z.literal('upload'), label: z.string() }),
+    ]),
+    safetyBackupId: z
+      .string()
+      .openapi({ description: 'The verified backup taken right before; undo restores from it.' }),
+    sections: z.array(z.string()),
+    removedSections: z.array(z.string()),
+    counts: z.object({
+      added: z.number().int(),
+      changed: z.number().int(),
+      removed: z.number().int(),
+      failed: z.number().int(),
+    }),
+    items: z.array(RestorePointItemSchema),
+    undoOf: z.string().nullable(),
+    undoneBy: z.string().nullable(),
+  })
+  .openapi('RestorePoint')
+
+export const RestorePointListSchema = z
+  .object({ restorePoints: z.array(RestorePointSchema) })
+  .openapi('RestorePointList')
+
+export const ImportResultSchema = z
+  .object({
+    restorePointId: z.string().nullable().openapi({
+      description:
+        'Null when nothing was selected to change: no safety backup and no restore point.',
+    }),
+    safetyBackupId: z.string().nullable(),
+    counts: z.object({
+      added: z.number().int(),
+      changed: z.number().int(),
+      removed: z.number().int(),
+      failed: z.number().int(),
+    }),
+    items: z.array(RestorePointItemSchema),
+  })
+  .openapi('ImportResult')
+
+export const UndoPreviewSchema = z
+  .object({
+    restorePoint: RestorePointSchema,
+    source: ImportSourceSchema,
+    selection: z.object({
+      sections: z.array(z.enum(SECTION_IDS)),
+      exclude: z.array(z.string()),
+      removeSections: z.array(z.enum(SECTION_IDS)),
+    }),
+    preview: ImportPreviewSchema,
+  })
+  .openapi('UndoPreview')

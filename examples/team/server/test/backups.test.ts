@@ -242,7 +242,7 @@ describe('retention', () => {
 })
 
 describe('export', () => {
-  test('the zip holds every file with the right hash, memory by agent slug', async () => {
+  test('the zip holds every library and memory file with the right hash, memory by agent slug', async () => {
     const { server, agentId } = instance()
     const fs = libraryFs(server.conn.sqlite)
     const bin = new Uint8Array([0, 1, 2, 3, 255, 254, 0, 9])
@@ -257,36 +257,34 @@ describe('export', () => {
     const zipFile = join(server.deps.backups!.dir, `${record.id}.zip`)
     const entries = unzip(zipFile)
     const manifest = JSON.parse(new TextDecoder().decode(entries.get('manifest.json'))) as {
-      files: Array<{
-        path: string
-        libraryPath: string
-        size: number
-        sha256: string
-        updatedAt: number
-      }>
+      format: string
+      formatVersion: number
+      files: Array<{ path: string; size: number; sha256: string }>
       excluded: Array<{ prefix: string }>
     }
+    expect(manifest).toMatchObject({ format: 'eharness-team-workspace', formatVersion: 1 })
     const live = server.conn.sqlite
       .query<{ path: string }, []>(
         "SELECT path FROM library_files WHERE path NOT LIKE '/.eharness/tool-media/%'",
       )
       .all()
-    expect(manifest.files.map((f) => f.libraryPath).sort()).toEqual(live.map((l) => l.path).sort())
+    // every library and memory file, and only those (entities come from the app, not in this call)
+    expect(manifest.files.length).toBe(live.length)
     expect(manifest.excluded[0]?.prefix).toBe('/.eharness/tool-media')
     for (const f of manifest.files) {
-      const bytes = entries.get(f.path.slice(1))
+      const bytes = entries.get(f.path)
       expect(bytes).toBeDefined()
       expect(sha256(bytes as Uint8Array)).toBe(f.sha256)
       expect(f.size).toBe((bytes as Uint8Array).byteLength)
-      expect(f.updatedAt).toBeGreaterThan(0)
     }
     expect(entries.get('library/data/blob.bin')).toEqual(bin)
     expect(new TextDecoder().decode(entries.get('library/reports/q1.md'))).toBe('# Q1\nrevenue up')
     expect(new TextDecoder().decode(entries.get('library/ünï/名前.txt'))).toBe('unicode name')
-    expect(new TextDecoder().decode(entries.get('memories/agents/lead/profile.md'))).toBe(
+    expect(new TextDecoder().decode(entries.get('agents/lead/memory/profile.md'))).toBe(
       'I am the lead',
     )
-    expect(entries.has('memories/workspace/profile.md')).toBe(true)
+    expect(entries.has('memory/profile.md')).toBe(true)
+    expect(entries.has('other/.eharness/tool-media/x.png')).toBe(false)
   })
 })
 

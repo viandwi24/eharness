@@ -12,7 +12,13 @@ import type {
   NewArtifact,
   SignedUrl,
 } from '../domain/artifacts.ts'
-import type { BackupRecord, RestoreMode, RestorePlan, RestoreResult } from '../domain/backups.ts'
+import type {
+  BackupRecord,
+  RestoreMode,
+  RestorePlan,
+  RestorePoint,
+  RestoreResult,
+} from '../domain/backups.ts'
 import type { Briefing, Notification, NotificationKind } from '../domain/briefings.ts'
 import type { BrowserDriver, BrowserInfo, BrowserRuntimeView } from '../domain/browser.ts'
 import type {
@@ -114,6 +120,12 @@ import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
 import type { Thread, ThreadSeed, ThreadSource } from '../domain/threads.ts'
 import type { PendingRetry } from '../domain/turn-retry.ts'
+import type {
+  EntityFile,
+  ImportSource,
+  ReminderRecord,
+  WorkspaceManifest,
+} from '../domain/workspace-export.ts'
 
 export interface Clock {
   now(): number
@@ -1351,12 +1363,45 @@ export interface BackupDownload {
   mediaType: string
 }
 
-/** Snapshots of the database and restore of files from them (`infra/backup`). */
+/** A workspace zip read and verified: its manifest and every file by entry path (manifest excluded). */
+export interface ParsedWorkspaceZip {
+  manifest: WorkspaceManifest
+  entries: Map<string, Uint8Array>
+}
+
+/** Snapshots of the database, the workspace export and restore from them (`infra/backup`). */
 export interface BackupPort {
   /** The directory the snapshots are written to. */
   readonly dir: string
-  /** Take a verified snapshot. Throws only when no copy could be written at all. */
-  create(reason: string): Promise<BackupRecord>
+  /**
+   * Take a verified snapshot. Throws only when no copy could be written at all. `entities` are the
+   * documents of the workspace export (settings, agents, programs...) the app collected; the
+   * library and memory files are read from the verified copy.
+   */
+  create(reason: string, entities?: readonly EntityFile[]): Promise<BackupRecord>
+  /** The workspace export of the live database, as a zip to download now. */
+  exportNow(entities: readonly EntityFile[]): Promise<BackupDownload>
+  /** Read and verify a workspace zip (limits, paths, manifest hashes); throws `IMPORT_REFUSED`. */
+  readWorkspace(source: ImportSource): Promise<ParsedWorkspaceZip>
+  /** Verify an uploaded zip and keep it for the import that follows; returns its id. */
+  stageUpload(bytes: Uint8Array, name: string): Promise<{ uploadId: string; name: string }>
+  /** Write a library or memory file (`ifVersion` null = create only). */
+  writeFile(
+    path: string,
+    bytes: Uint8Array,
+    options: { ifVersion: string | null; mediaType: string | null; binary: boolean },
+  ): Promise<boolean>
+  /** Delete a library or memory file; false when it changed meanwhile or is gone. */
+  deleteFile(path: string, ifVersion: string): Promise<boolean>
+  /** Active reminders (a reference in the export: they are tied to chats). */
+  activeReminders(): ReminderRecord[]
+  restorePoints: {
+    list(): RestorePoint[]
+    get(id: string): RestorePoint | undefined
+    add(point: RestorePoint): void
+    /** Mark a restore point as undone by another. */
+    markUndone(id: string, by: string): void
+  }
   /** Newest first. */
   list(): BackupRecord[]
   get(id: string): BackupRecord | undefined

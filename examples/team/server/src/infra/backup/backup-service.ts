@@ -1,14 +1,17 @@
 /**
  * Snapshots of the SQLite database (`VACUUM INTO`: an online, consistent copy that is safe with
- * WAL and concurrent writers), verified after writing, plus a readable export of every library and
- * memory file as a zip with a manifest. Restore of files reads a snapshot and writes the files into
- * the live database as new versions through the same file system the agents use.
+ * WAL and concurrent writers), verified after writing, plus the workspace export: one readable zip
+ * (`workspace-zip.ts`) with the entity documents the app collected and every library and memory
+ * file of the copy. Restore of files reads a snapshot and writes the files into the live database
+ * as new versions through the same file system the agents use. The import reads a workspace zip
+ * (a backup's, or an uploaded one kept as `import-<id>.zip` until used or six hours old). Restore
+ * points (what an import applied and the safety backup to undo it) are `rp-<id>.json` files here,
+ * so they survive a database restore.
  *
  * One snapshot is three files in the backup directory, written under temporary names and renamed
  * when complete, the sidecar last: `<id>.db`, `<id>.zip`, `<id>.json`.
  */
 import { Database } from 'bun:sqlite'
-import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -30,10 +33,18 @@ import {
   type RestoreEntry,
   type RestoreMode,
   type RestorePlan,
+  type RestorePoint,
   type RestoreResult,
 } from '../../domain/backups.ts'
-import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from '../eh/library-fs.ts'
-import { zipFileWriter } from './zip-file.ts'
+import { invalid, notFound } from '../../domain/errors.ts'
+import {
+  type EntityFile,
+  IMPORT_LIMITS,
+  type ImportSource,
+  type ReminderRecord,
+} from '../../domain/workspace-export.ts'
+import { type LibraryChange, libraryFs } from '../eh/library-fs.ts'
+import { parseWorkspaceZip, writeWorkspaceZip } from './workspace-zip.ts'
 
 export interface BackupServiceOptions {
   sqlite: Database
@@ -43,11 +54,15 @@ export interface BackupServiceOptions {
   onChange?: (change: LibraryChange) => void
   /** Test seam: runs on the copy right after it is written, before it is verified. */
   afterCopy?: (file: string) => void
+  /** The app version written into the manifest of every export. */
+  appVersion?: string
 }
 
 const ID = /^team-\d{8}T\d{9}Z-[0-9a-f]{4}$/
-const encoder = new TextEncoder()
-const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
+const UPLOAD_ID = /^up-[0-9a-f]{16}$/
+const POINT_ID = /^rp-\d{8}T\d{9}Z-[0-9a-f]{4}$/
+/** A staged upload or a download built on demand is removed after this long. */
+const TEMP_TTL_MS = 6 * 3_600_000
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
@@ -113,80 +128,10 @@ interface SnapRow {
   updated_at: number
 }
 
-/** Write the files export of a verified copy; returns the file count and size. */
-function exportFiles(copy: string, zipFile: string, now: number): { files: number; bytes: number } {
-  const db = new Database(copy, { readonly: true, strict: true })
-  const writer = zipFileWriter(zipFile)
-  try {
-    const slugs = new Map(
-      db
-        .query<{ id: string; slug: string }, []>('SELECT id, slug FROM agents')
-        .all()
-        .map((a) => [a.id, a.slug]),
-    )
-    // memory lives under /memories/agents/<agent id>: the export names the folder by slug
-    const zipPath = (path: string): string => {
-      const parts = path
-        .replace(/^\/+/, '')
-        .split('/')
-        .map((p) => (p === '..' ? '__' : p))
-      if (parts[0] === 'memories' && parts[1] === 'agents' && parts[2] !== undefined) {
-        parts[2] = slugs.get(parts[2]) ?? parts[2]
-      }
-      return parts.join('/')
-    }
-    const manifest: Array<Record<string, unknown>> = []
-    let skipped = 0
-    for (const row of db
-      .query<SnapRow, []>(
-        'SELECT path, version, text, bytes, media_type, size, updated_at FROM library_files ORDER BY path',
-      )
-      .iterate()) {
-      // tool media is a cache of tool results, pruned in days: not part of the readable export
-      if (row.path.startsWith(`${TOOL_MEDIA_DIR}/`)) {
-        skipped++
-        continue
-      }
-      const bytes = row.bytes ?? encoder.encode(row.text ?? '')
-      const entry = zipPath(row.path)
-      writer.add(entry, bytes, row.updated_at)
-      manifest.push({
-        path: `/${entry}`,
-        libraryPath: row.path,
-        size: bytes.byteLength,
-        sha256: sha256(bytes),
-        updatedAt: row.updated_at,
-        mediaType: row.media_type,
-      })
-    }
-    writer.add(
-      'manifest.json',
-      encoder.encode(
-        JSON.stringify(
-          {
-            createdAt: now,
-            files: manifest,
-            excluded: skipped > 0 ? [{ prefix: TOOL_MEDIA_DIR, files: skipped }] : [],
-          },
-          null,
-          2,
-        ),
-      ),
-      now,
-    )
-    writer.finish()
-    return { files: manifest.length, bytes: statSync(zipFile).size }
-  } catch (error) {
-    writer.abort()
-    throw error
-  } finally {
-    db.close()
-  }
-}
-
 export function createBackupService(options: BackupServiceOptions): BackupPort {
   const { sqlite, dir } = options
   const now = options.now ?? Date.now
+  const appVersion = options.appVersion ?? 'unknown'
   mkdirSync(dir, { recursive: true })
   const path = (id: string, ext: 'db' | 'zip' | 'json'): string => join(dir, `${id}.${ext}`)
   const known = (id: string): boolean => ID.test(id)
@@ -241,7 +186,7 @@ export function createBackupService(options: BackupServiceOptions): BackupPort {
     return out.sort((a, b) => b.createdAt - a.createdAt)
   }
 
-  const create = (reason: string): Promise<BackupRecord> =>
+  const create = (reason: string, entities: readonly EntityFile[] = []): Promise<BackupRecord> =>
     serial(async () => {
       const at = now()
       const id = `team-${stampOf(at)}-${crypto
@@ -266,13 +211,16 @@ export function createBackupService(options: BackupServiceOptions): BackupPort {
       let fileCount = 0
       let exportError: string | null = null
       if (verdict.ok) {
+        const copy = new Database(tmpDb, { readonly: true, strict: true })
         try {
-          const out = exportFiles(tmpDb, tmpZip, at)
+          const out = writeWorkspaceZip(copy, tmpZip, entities, { now: at, appVersion })
           filesBytes = out.bytes
           fileCount = out.files
         } catch (error) {
           exportError = errorMessage(error)
           rmSync(tmpZip, { force: true })
+        } finally {
+          copy.close()
         }
       }
       renameSync(tmpDb, path(id, 'db'))
@@ -357,9 +305,156 @@ export function createBackupService(options: BackupServiceOptions): BackupPort {
     }
   }
 
+  // --- workspace zips: uploads, on-demand exports, restore points -----------------------------
+
+  const tempFile = (name: string): string => join(dir, name)
+  /** Staged uploads and on-demand exports older than the TTL (a crash or an abandoned import). */
+  const sweepTemp = (): void => {
+    const cutoff = now() - TEMP_TTL_MS
+    for (const n of readdirSync(dir)) {
+      if (!/^(import-up-[0-9a-f]{16}\.(zip|json)|export-.*\.zip)(\.tmp)?$/.test(n)) continue
+      try {
+        if (statSync(join(dir, n)).mtimeMs < cutoff) rmSync(join(dir, n), { force: true })
+      } catch {
+        // gone meanwhile
+      }
+    }
+  }
+
+  const readPoint = (id: string): RestorePoint | undefined => {
+    try {
+      return JSON.parse(readFileSync(tempFile(`${id}.json`), 'utf8')) as RestorePoint
+    } catch {
+      return undefined
+    }
+  }
+  const writePoint = (point: RestorePoint): void => {
+    const file = tempFile(`${point.id}.json`)
+    writeFileSync(`${file}.tmp`, JSON.stringify(point, null, 2))
+    renameSync(`${file}.tmp`, file)
+  }
+
+  const workspaceBytes = (source: ImportSource): Uint8Array => {
+    if ('backupId' in source) {
+      if (!known(source.backupId) || !existsSync(path(source.backupId, 'zip'))) {
+        throw notFound('Backup export', source.backupId)
+      }
+      return readFileSync(path(source.backupId, 'zip'))
+    }
+    if (
+      !UPLOAD_ID.test(source.uploadId) ||
+      !existsSync(tempFile(`import-${source.uploadId}.zip`))
+    ) {
+      throw notFound('Uploaded zip', source.uploadId)
+    }
+    return readFileSync(tempFile(`import-${source.uploadId}.zip`))
+  }
+
   return {
     dir,
     create,
+    async exportNow(entities) {
+      sweepTemp()
+      const at = now()
+      const name = `export-${stampOf(at)}-${crypto.randomUUID().slice(0, 4)}.zip`
+      const file = tempFile(name)
+      writeWorkspaceZip(sqlite, `${file}.tmp`, entities, { now: at, appVersion })
+      renameSync(`${file}.tmp`, file)
+      return {
+        stream: Bun.file(file).stream(),
+        size: statSync(file).size,
+        filename: `team-workspace-${stampOf(at)}.zip`,
+        mediaType: 'application/zip',
+      }
+    },
+    async readWorkspace(source) {
+      return parseWorkspaceZip(workspaceBytes(source))
+    },
+    async stageUpload(bytes, name) {
+      if (bytes.byteLength > IMPORT_LIMITS.zipBytes) {
+        throw invalid(
+          `The zip was refused: it is larger than ${IMPORT_LIMITS.zipBytes / 1048576} MB`,
+          'IMPORT_REFUSED',
+        )
+      }
+      sweepTemp()
+      // verified before it is kept: a refused zip never reaches the preview
+      await parseWorkspaceZip(bytes)
+      const uploadId = `up-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`
+      const file = tempFile(`import-${uploadId}.zip`)
+      writeFileSync(`${file}.tmp`, bytes)
+      renameSync(`${file}.tmp`, file)
+      return { uploadId, name: name.slice(0, 120) }
+    },
+    async writeFile(filePath, bytes, opts) {
+      const fs = libraryFs(sqlite, options.onChange ? { onChange: options.onChange } : {})
+      const written = await fs.writeBytes?.(filePath, bytes, {
+        ifVersion: opts.ifVersion,
+        ...(opts.mediaType === null ? {} : { mediaType: opts.mediaType }),
+      })
+      return written?.ok === true
+    },
+    async deleteFile(filePath, ifVersion) {
+      const fs = libraryFs(sqlite, options.onChange ? { onChange: options.onChange } : {})
+      return (await fs.delete(filePath, { ifVersion })).ok
+    },
+    activeReminders() {
+      return sqlite
+        .query<
+          {
+            id: string
+            agent_id: string
+            connection_id: string
+            node_id: string
+            body: string
+            mentions: string
+            schedule: string
+            when_text: string
+            timezone: string
+            created_at: number
+            fire_count: number
+          },
+          []
+        >(
+          "SELECT id, agent_id, connection_id, node_id, body, mentions, schedule, when_text, timezone, created_at, fire_count FROM ch_reminders WHERE status = 'active' ORDER BY created_at, id",
+        )
+        .all()
+        .map(
+          (r): ReminderRecord => ({
+            id: r.id,
+            agentId: r.agent_id,
+            connectionId: r.connection_id,
+            nodeId: r.node_id,
+            body: r.body,
+            mentions: JSON.parse(r.mentions) as string[],
+            schedule: JSON.parse(r.schedule) as unknown,
+            whenText: r.when_text,
+            timezone: r.timezone,
+            createdAt: r.created_at,
+            fireCount: r.fire_count,
+          }),
+        )
+    },
+    restorePoints: {
+      list() {
+        return readdirSync(dir)
+          .flatMap((n) => {
+            const m = /^(rp-.*)\.json$/.exec(n)
+            return m?.[1] !== undefined && POINT_ID.test(m[1]) ? [m[1]] : []
+          })
+          .flatMap((id) => {
+            const p = readPoint(id)
+            return p === undefined ? [] : [p]
+          })
+          .sort((a, b) => b.at - a.at)
+      },
+      get: (id) => (POINT_ID.test(id) ? readPoint(id) : undefined),
+      add: (point) => writePoint(point),
+      markUndone(id, by) {
+        const p = POINT_ID.test(id) ? readPoint(id) : undefined
+        if (p !== undefined) writePoint({ ...p, undoneBy: by })
+      },
+    },
     list,
     get: (id) => (known(id) ? list().find((r) => r.id === id) : undefined),
     remove(id) {
