@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { remindersFor, reminderBadge, reminderStatus, showsRoutines, type ReminderRow } from './reminders';
+import { remindersFor, reminderBadge, reminderStatus, type ReminderRow } from './reminders';
 
 const r = (over: Partial<ReminderRow>): ReminderRow => ({
 	id: 'r1',
@@ -17,7 +17,7 @@ const r = (over: Partial<ReminderRow>): ReminderRow => ({
 	...over
 });
 
-describe('reminders on the Routines page', () => {
+describe('reminders page', () => {
 	test('badge names the chat and topic; status tells done from cancelled', () => {
 		expect(reminderBadge(r({}))).toBe('Reminder · TEAMKU/produksi');
 		expect(reminderStatus(r({ status: 'active' })).label).toBe('active');
@@ -27,11 +27,8 @@ describe('reminders on the Routines page', () => {
 	test('the filter keeps finished reminders visible and respects the agent filter', () => {
 		const rows = [r({ id: 'a' }), r({ id: 'b', status: 'done' }), r({ id: 'c', status: 'cancelled', agentId: 'a2' })];
 		expect(remindersFor('all', rows).map((x) => x.id)).toEqual(['a', 'b', 'c']);
-		expect(remindersFor('reminders', rows).map((x) => x.id)).toEqual(['a']);
+		expect(remindersFor('active', rows).map((x) => x.id)).toEqual(['a']);
 		expect(remindersFor('finished', rows).map((x) => x.id)).toEqual(['b', 'c']);
-		expect(remindersFor('routines', rows)).toEqual([]);
 		expect(remindersFor('all', rows, 'a1').map((x) => x.id)).toEqual(['a', 'b']);
-		expect(showsRoutines('finished')).toBe(false);
-		expect(showsRoutines('all')).toBe(true);
 	});
 });

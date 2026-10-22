@@ -3,7 +3,6 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import FlaskIcon from 'phosphor-svelte/lib/Flask';
 	import LightningIcon from 'phosphor-svelte/lib/Lightning';
 	import PauseIcon from 'phosphor-svelte/lib/Pause';
 	import PlayIcon from 'phosphor-svelte/lib/Play';
@@ -11,7 +10,6 @@
 	import StrategyIcon from 'phosphor-svelte/lib/Strategy';
 	import { api } from '#lib/api/index.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
-	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -22,7 +20,7 @@
 	import * as Table from '#lib/components/ui/table/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { authoritySummary, budgetSummary, programBadge, type Program } from '#lib/programs/form.js';
-	import { activationText, programAction } from '#lib/programs/actions.js';
+	import { programAction } from '#lib/programs/actions.js';
 	import { describeSpec, relativeTime } from '#lib/routines/schedule.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openEditProgram, openNewProgram } from '#lib/stores/dialogs.svelte.js';
@@ -57,21 +55,8 @@
 		void load();
 	});
 
-	// activating a program whose test cases fail asks first (a warning, never a block)
-	let activating = $state<{ program: Program; text: string } | null>(null);
-	let confirmActivate = $state(false);
-
 	async function act(p: Program, action: 'pause' | 'resume' | 'run'): Promise<void> {
 		busy = p.id;
-		if (action === 'resume') {
-			const text = await activationText(p);
-			if (text !== null) {
-				activating = { program: p, text };
-				confirmActivate = true;
-				busy = null;
-				return;
-			}
-		}
 		await programAction(p, action);
 		busy = null;
 	}
@@ -90,19 +75,6 @@
 		<Tooltip.Content>{label}</Tooltip.Content>
 	</Tooltip.Root>
 {/snippet}
-
-{#if activating}
-	<ConfirmDialog
-		bind:open={confirmActivate}
-		title="Activate {activating.program.name}?"
-		description={activating.text}
-		confirmLabel="Activate anyway"
-		confirmVariant="default"
-		onConfirm={async () => {
-			if (activating) await programAction(activating.program, 'resume');
-		}}
-	/>
-{/if}
 
 <Tooltip.Provider>
 	<div class="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -185,7 +157,7 @@
 											{/if}
 											{@render iconAction('Run now', busy === p.id, () => void act(p, 'run'), LightningIcon)}
 											<Button size="xs" variant="ghost" onclick={() => openEditProgram(p.id)}>Edit</Button>
-											<Button size="xs" variant="outline" onclick={() => void goto(`/programs/${p.id}`)} title="Tests and test runs"><FlaskIcon class="size-3.5" /> Test run</Button>
+											<Button size="xs" variant="outline" onclick={() => void goto(`/programs/${p.id}`)}>Details</Button>
 										</div>
 									</Table.Cell>
 								</Table.Row>

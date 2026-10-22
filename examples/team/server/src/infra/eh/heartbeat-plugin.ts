@@ -14,7 +14,6 @@ import { tool } from 'ai'
 import { definePlugin, errorText, type HarnessContext, type HarnessPlugin } from 'eharness'
 import { z } from 'zod'
 import { ACTION_KINDS, type ActionKind } from '../../app/answer-actions.ts'
-import { READ_BRIEFINGS_DESCRIPTION, READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import {
   BEAT_DECISIONS,
   type HeartbeatDestination,
@@ -35,10 +34,6 @@ import type { StandingOrderApi } from './standing-order-plugin.ts'
 export interface HeartbeatIntake {
   status(agentId: string): Promise<string>
   ended(end: { agentId: string; stop: string; output: unknown }): Promise<void>
-  /** The agent (slug) may read the briefings: the lead, in a chat thread. */
-  canReadBriefings(agentSlug: string): boolean
-  /** The latest briefings, or the one of a day, as text. */
-  briefings(query: { limit?: number; day?: string }): string
   /** Append a line to today's notes of the agent (fixed path, append-only). */
   note(
     agentId: string,
@@ -142,36 +137,6 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
         origin === 'dm' && options.intake()?.heartbeatOn(ctx.agent.id) === true
           ? { instructions: [{ text: HEARTBEAT_NOTE, id: 'heartbeat-note' }] as never }
           : {}
-      // the lead reads the briefings from any chat thread (the digest is a page, not a message)
-      if (origin === 'dm') {
-        if (options.intake()?.canReadBriefings(ctx.agent.id) !== true) return note
-        return {
-          ...note,
-          tools: {
-            [READ_BRIEFINGS_TOOL]: tool({
-              description: READ_BRIEFINGS_DESCRIPTION,
-              inputSchema: z.object({
-                days: z.number().int().min(1).max(7).optional(),
-                day: z
-                  .string()
-                  .regex(/^\d{4}-\d{2}-\d{2}$/)
-                  .optional(),
-              }),
-              metadata: { risk: 'read', idempotent: true },
-              execute: async (input): Promise<string> => {
-                try {
-                  return intake().briefings({
-                    ...(input.days === undefined ? {} : { limit: input.days }),
-                    ...(input.day === undefined ? {} : { day: input.day }),
-                  })
-                } catch (error) {
-                  return `ERROR: could not read the briefings: ${errorText(error)}`
-                }
-              },
-            }),
-          } as never,
-        }
-      }
       if (origin !== 'heartbeat') return note
       const agentId = sessionId.slice('heartbeat:'.length)
       return {

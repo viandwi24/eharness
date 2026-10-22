@@ -29,29 +29,6 @@ export function closeAgentDialog(): void {
 	agentDialog.open = false;
 }
 
-/** The routine dialog: create (optionally for a preset agent) or edit one routine. */
-export const routineDialog = $state<{ open: boolean; routineId: string | null; agentId: string | null }>({
-	open: false,
-	routineId: null,
-	agentId: null
-});
-
-export function openNewRoutine(agentId: string | null = null): void {
-	routineDialog.routineId = null;
-	routineDialog.agentId = agentId;
-	routineDialog.open = true;
-}
-
-export function openEditRoutine(routineId: string): void {
-	routineDialog.routineId = routineId;
-	routineDialog.agentId = null;
-	routineDialog.open = true;
-}
-
-export function closeRoutineDialog(): void {
-	routineDialog.open = false;
-}
-
 /** The program dialog: create (optionally for a preset agent) or edit one program. */
 export const programDialog = $state<{ open: boolean; programId: string | null; agentId: string | null; worker: boolean }>({
 	open: false,
@@ -77,16 +54,4 @@ export function openEditProgram(programId: string): void {
 
 export function closeProgramDialog(): void {
 	programDialog.open = false;
-}
-
-/** The new-task dialog (the work queue): optionally for a preset agent. */
-export const taskDialog = $state<{ open: boolean; agentId: string | null }>({ open: false, agentId: null });
-
-export function openNewTask(agentId: string | null = null): void {
-	taskDialog.agentId = agentId;
-	taskDialog.open = true;
-}
-
-export function closeTaskDialog(): void {
-	taskDialog.open = false;
 }

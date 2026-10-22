@@ -19,7 +19,7 @@ import type {
   RestorePoint,
   RestoreResult,
 } from '../domain/backups.ts'
-import type { Briefing, Notification, NotificationKind } from '../domain/briefings.ts'
+import type { Notification, NotificationKind } from '../domain/briefings.ts'
 import type { BrowserDriver, BrowserInfo, BrowserRuntimeView } from '../domain/browser.ts'
 import type {
   ChannelActivityPage,
@@ -113,7 +113,6 @@ import type {
   ProviderFieldView,
   TestResultView,
 } from '../domain/providers.ts'
-import type { Rehearsal, RehearsalSample, TestCase, TestResult } from '../domain/rehearsal.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { BlockedTool, ConfiguredGroup, LastCallTools } from '../domain/session-tools.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
@@ -126,6 +125,7 @@ import type {
   ReminderRecord,
   WorkspaceManifest,
 } from '../domain/workspace-export.ts'
+import type { SecretRecord } from '../domain/workspace-secrets.ts'
 
 export interface Clock {
   now(): number
@@ -504,52 +504,6 @@ export interface ProgramRunner {
   }): Promise<ProgramWarning[]>
 }
 
-/** Rehearsals (test runs) of programs (`infra/db/rehearsal-repo.ts`, `domain/rehearsal.ts`). */
-export interface RehearsalStore {
-  /** Insert or replace by id. */
-  save(rehearsal: Rehearsal): void
-  get(id: string): Rehearsal | undefined
-  getBySession(sessionId: string): Rehearsal | undefined
-  /** Newest first; the produced files keep names and sizes, not their content. */
-  list(programId: string, limit: number): Rehearsal[]
-  delete(id: string): boolean
-  deleteByProgram(programId: string): void
-  /** Delete all but the newest `keep` finished rehearsals of a program. */
-  prune(programId: string, keep: number): void
-  running(): Rehearsal[]
-  /** USD the rehearsals started in a time window spent (the digest leaves it out of its cost line). */
-  spentBetween(from: number, to: number): number
-  /** Mark the rehearsals that were running as failed (the process that ran them is gone). */
-  failRunning(reason: string, now: number): number
-}
-
-/** Saved test cases of programs. */
-export interface ProgramTestStore {
-  list(programId: string): TestCase[]
-  get(id: string): TestCase | undefined
-  /** Insert or replace by id. */
-  save(testCase: TestCase): void
-  /** Store the last result without changing `updatedAt`. */
-  setResult(id: string, result: TestResult | null): void
-  delete(id: string): boolean
-  deleteByProgram(programId: string): void
-}
-
-/** Starts rehearsals (`infra/eh/rehearsal-service.ts`). */
-export interface RehearsalRunner {
-  /** Create the rehearsal row and start its session; returns while it runs. */
-  start(
-    program: Program,
-    options: { sample: RehearsalSample; budgetUsd: number; testId?: string | null },
-  ): Promise<Rehearsal>
-  /** Run the cases one after the other in the background; each stores its result. */
-  runCases(program: Program, cases: TestCase[]): void
-  /** Rehearsals that are running in this process. */
-  runningCount(): number
-  /** The chat of a rehearsal session (UI messages, oldest first). */
-  messages(sessionId: string): Promise<unknown[]>
-}
-
 /** Heartbeat configuration, beat history and the digest buffer (`infra/db/heartbeat-repo.ts`). */
 export interface HeartbeatStore {
   /** The stored configuration of an agent; undefined = never set (the default of its role). */
@@ -650,15 +604,6 @@ export interface NotificationStore {
   dismiss(id: string, now: number): Notification | undefined
   dismissAll(now: number): number
   dismissByKeyPrefix(prefix: string, now: number): number
-}
-
-export interface BriefingStore {
-  get(id: string): Briefing | undefined
-  getByDay(day: string): Briefing | undefined
-  /** Newest day first. */
-  list(limit: number): Briefing[]
-  /** undefined when that day has one already. */
-  insert(b: Briefing): Briefing | undefined
 }
 
 /** What the heartbeat and the digest need besides the stores (`app/heartbeat.ts`). */
@@ -1417,10 +1362,26 @@ export interface BackupPort {
   restore(id: string, scope: string, mode: RestoreMode): Promise<RestoreResult | undefined>
 }
 
+/**
+ * The stored secrets (provider keys, connection credentials, OAuth client credentials) as the
+ * workspace export carries them, encrypted by the export itself. Plain values live in memory only
+ * while an export or a restore runs; nothing here logs them.
+ */
+export interface SecretsPort {
+  /** Every stored secret, plain, grouped as `SecretRecord` (a connection with its credentials). */
+  list(): Promise<SecretRecord[]>
+  /** Write a record back under its own ids (overwrites what is stored there). */
+  put(record: SecretRecord): Promise<void>
+  /** Tell the running server that secrets were written (reload the provider profiles). */
+  changed(): Promise<void>
+}
+
 export interface Deps {
   agents: AgentRepo
   /** Snapshots and restore; absent for an in-memory database without `TEAM_BACKUP_DIR`. */
   backups?: BackupPort
+  /** Secrets for the encrypted part of the workspace export; absent: exports never hold secrets. */
+  secrets?: SecretsPort
   persona: PersonaStore
   chat: ChatPort
   chatTools: ChatToolsPort
@@ -1432,7 +1393,6 @@ export interface Deps {
   alarmPush?: AlarmPush
   /** Interrupts a stuck run (the same abort as the Stop button). */
   interruptRun?: RunInterrupter
-  briefings: BriefingStore
   uploads: UploadStore
   tasks: TaskStore
   turnRetry: TurnRetryPort
@@ -1458,10 +1418,7 @@ export interface Deps {
   routineEngine: RoutineEngine
   programs: ProgramStore
   programRunner: ProgramRunner
-  rehearsals: RehearsalStore
-  programTests: ProgramTestStore
   programMemory: ProgramMemoryStore
-  rehearsalRunner: RehearsalRunner
   decisions: DecisionStore
   decisionResolver: DecisionResolver
   decisionHandoff: DecisionHandoff

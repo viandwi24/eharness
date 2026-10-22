@@ -1,52 +1,38 @@
 /**
- * Briefings and the bell (P40 phase M). System news leaves the chat: the daily digest is a page
- * (one entry per local day, plus one bell notification) and an urgent heartbeat finding is an
- * alert in the bell. Both are idempotent, so a recovered fire or a retried beat adds nothing twice.
- * Channels will deliver the same two things later; this is the one place that creates them.
+ * The bell (P40 phase M; P55 folded the Briefing page into it). System news leaves the chat: the
+ * daily digest is one bell notification per local day carrying the whole digest text, and an urgent
+ * heartbeat finding is an alert in the bell. Both are idempotent, so a recovered fire or a retried
+ * beat adds nothing twice. The legacy `briefings` table stays in place and is no longer written.
  */
-import {
-  type Briefing,
-  type BriefingItem,
-  briefingTitle,
-  type Notification,
-} from '../domain/briefings.ts'
+import { digestTitle, type Notification } from '../domain/briefings.ts'
 import { notFound } from '../domain/errors.ts'
 import type { BeatItem } from '../domain/heartbeat.ts'
 import type { Deps } from './ports.ts'
 
 const changed = (
   deps: Deps,
-  type: 'notification-changed' | 'briefing-added',
+  type: 'notification-changed',
   payload: Record<string, unknown>,
 ): void => deps.events.append({ type, payload })
 
-/** Store the briefing of a day and tell the bell. undefined: that day has one already. */
-export function postBriefing(
-  deps: Deps,
-  input: { day: string; body: string; items: BriefingItem[]; at: number },
-): Briefing | undefined {
-  const briefing = deps.briefings.insert({
-    id: deps.ids.next(),
-    day: input.day,
-    title: briefingTitle(input.day),
-    body: input.body,
-    items: input.items,
-    createdAt: input.at,
-  })
-  if (briefing === undefined) return undefined
-  deps.notifications.insert({
+/** Longest digest text a notification keeps. */
+const DIGEST_BODY_MAX = 8000
+
+/** Post the digest of a day to the bell. false: that day has one already (even a dismissed one). */
+export function postDigest(deps: Deps, input: { day: string; body: string; at: number }): boolean {
+  const n = deps.notifications.insert({
     id: deps.ids.next(),
     kind: 'briefing',
-    key: `briefing:${briefing.day}`,
-    title: `Your briefing for ${briefing.day} is ready`,
-    body: `${briefing.items.length} item(s)`,
-    link: `/briefings?id=${briefing.id}`,
+    key: `briefing:${input.day}`,
+    title: digestTitle(input.day),
+    body: input.body.slice(0, DIGEST_BODY_MAX),
+    link: null,
     agentId: null,
     createdAt: input.at,
   })
-  changed(deps, 'briefing-added', { briefingId: briefing.id, day: briefing.day })
+  if (n === undefined) return false
   changed(deps, 'notification-changed', { kind: 'briefing' })
-  return briefing
+  return true
 }
 
 /** An urgent finding of a beat goes to the bell, one alert per finding (deduplicated by its fingerprint). */
@@ -118,31 +104,4 @@ export function dismissAllNotifications(deps: Deps): number {
   const n = deps.notifications.dismissAll(deps.clock.now())
   if (n > 0) changed(deps, 'notification-changed', { dismissed: 'all' })
   return n
-}
-
-export function listBriefings(deps: Deps, limit = 60): Briefing[] {
-  return deps.briefings.list(limit)
-}
-
-/** Opening a briefing clears its "ready" notification. */
-export function getBriefing(deps: Deps, id: string): Briefing {
-  const b = deps.briefings.get(id)
-  if (b === undefined) throw notFound('briefing', id)
-  return b
-}
-
-export function markBriefingSeen(deps: Deps, id: string): void {
-  const b = getBriefing(deps, id)
-  const n = deps.notifications.dismissByKeyPrefix(`briefing:${b.day}`, deps.clock.now())
-  if (n > 0) changed(deps, 'notification-changed', { kind: 'briefing', dismissed: b.id })
-}
-
-/** What the lead's `read_briefings` tool returns: the latest briefings as text. */
-export function briefingsText(deps: Deps, opts: { limit?: number; day?: string } = {}): string {
-  const found =
-    opts.day === undefined
-      ? deps.briefings.list(Math.min(Math.max(opts.limit ?? 1, 1), 7))
-      : [deps.briefings.getByDay(opts.day)].filter((b): b is Briefing => b !== undefined)
-  if (found.length === 0) return 'No briefing found.'
-  return found.map((b) => `# ${b.title}\n\n${b.body}`).join('\n\n---\n\n')
 }

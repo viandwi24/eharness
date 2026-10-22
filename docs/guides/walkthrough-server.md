@@ -969,8 +969,8 @@ conversation (phase M).
 the team timezone, or the digest's own): program runs since the last digest (`report: 'digest'` programs with
 summary and outputs, `task` programs as a count, `silent` none), open decisions, tasks waiting for
 you or in Review, the heartbeat items of the day, and the cost from the model call log (with the
-heartbeat's share). Idempotent per local day; a quiet day adds nothing. The digest is stored as a
-briefing (a page, one per day) with one bell notification (section 27).
+heartbeat's share). Idempotent per local day; a quiet day adds nothing. The digest is one bell
+notification per day carrying the whole text (section 27; the Briefing page was folded into it in P55).
 
 **Web.** Agent dialog, Heartbeat tab: on/off, interval, active hours, timezone, the checklist editor
 (the memory file), "Run a beat now", the recent beats (ok, attention, skipped, failed with their
@@ -1063,88 +1063,12 @@ decision re-checks when the run ends; the editing API and proposals.
 single fix-up:* an agent can loop on a file forever; one turn with exact errors fixes the usual
 cases and the rest goes to a person.
 
-## 25. Rehearsal: a test run before a program is activated
+## 25. Rehearsal: removed
 
-A client who is about to activate a program wants to see what it does first, without it touching
-anything real. A **rehearsal** (P40 phase K) runs the program as saved on sample data in a safe
-mode; it works for any program, nothing in it is specific to a client.
-
-```
-POST /programs/{id}/rehearsals { sample: { copy, files, task, reads }, budgetUsd }   -> 201, runs
-GET  /rehearsals/{id}              result (report, deliverable checks, files, simulated, would ask, cost)
-GET  /rehearsals/{id}/messages     the chat of the run, read only
-```
-
-- **A session of its own**: `rehearsal:<programId>:<ts>` (a run profile, `domain/run-profiles.ts`:
-  unattended, the program's authority, no task). It is never a task, so it is not in the run
-  history, the board, the Review column or the heartbeat, and a worker program does not claim a
-  queued task. The digest leaves its spend out of its cost line (`RehearsalStore.spentBetween`).
-- **Files go to an overlay**: `infra/eh/overlay-fs.ts` is a `FileSystem` over a scratch
-  `inMemoryFs` and the real library. Writes, deletes and moves land in the scratch; reads see the
-  scratch first and then the library (the real one is only read, never written, and sends no file
-  events); `ifVersion` is checked against what the overlay shows. The overlay reaches the
-  agent three ways, all keyed by session id through `infra/eh/rehearsal-registry.ts`: the file tools
-  and the memory plugin take `fs` as a function of the session (`sessionFileSystem`), and the
-  big-data plugin is wrapped with `wrapPlugin` so its tools use the overlay in a rehearsal
-  session. **Fail closed**: a rehearsal session id that is not running (the server restarted, the
-  rehearsal ended) gets a read-only view, never the writable library.
-- **External writes are simulated**: the program gate (`gateOf` in `agent-factory.ts`) has an
-  extra step for a rehearsal. After the authority and the engine approved a call, a tool of a
-  connector that is not built in (MCP, OpenAPI, third party; the built-ins are `files`, `memory`,
-  `planning`, `web`, `ask`, `bigdata`) whose risk is not `read` (unknown counts as a write) is
-  refused with `SIMULATED: would call <tool> with <input>. This is a rehearsal: ...`, recorded, and
-  the agent carries on. Calls the real run would refuse (outside the authority, a pinned ask) are
-  refused the same way as in a real run, so the rehearsal does not promise more than the real run
-  does. (A denial text rather than a faked tool output is the one AI SDK mechanism that covers every
-  tool kind; the model reads it as the result.)
-- **Decisions are recorded, not raised**: in a rehearsal `escalate` and `request_authority` are
-  plain tools (`decisions-plugin.ts`) that record a "would ask" entry and tell the agent to assume
-  the safest answer; a report of `needs_decision` is recorded the same way. Nothing reaches the
-  Decision Center and the run never parks. `create_task` and `update_task` are simulated,
-  `complete_task` checks the outputs in the overlay and is simulated (a worker program is rehearsed
-  on a **sample task**, a draft that is never queued).
-- **Budget**: its own ledger scope `rehearsal:<session>` with a small cap (default 0.5 USD, at most
-  5; `cost-cap` fails the rehearsal). The program's own scopes (per run, per day) are not touched.
-- **Sample data** (`domain/rehearsal.ts` `RehearsalSample`): library paths to copy into the
-  overlay (files or `/dir/`), text files the client attached or pasted, the sample task for a
-  worker program, and `reads`: `library` (the default: the run can read the rest of the real
-  library, it still cannot change it) or `sample` (the run sees only the sample).
-- **Deliverables** are checked against the overlay files with the same function and the same one
-  fix-up turn as a real run (`rehearsal-service.ts`); a failure is shown, no decision or partial
-  task is made.
-- **Result**: `report`, `deliverables`, `files` (produced files, with their text up to caps),
-  `deleted` (library files it deleted in the overlay), `simulated`, `wouldAsk`, `toolsCalled`, cost
-  and the chat. A row per rehearsal (`rehearsals`, the whole result as JSON; the last 50 per
-  program are kept). A rehearsal that was running when the server stopped is marked failed at boot.
-
-**Test cases** turn a good rehearsal into a regression test: a case is a sample plus expectations
-(`deliverablesPass`, `mustNotCall` tools, an expected `reportStatus`), stored in `program_tests`
-with its last result. `POST /programs/{id}/tests/run` re-runs the cases one after the other (each a
-rehearsal linked to its case) and stores pass, fail (with the reasons) or error. A result is tied to
-a **fingerprint** of what makes a program behave (agent, name, brief, authority, gates,
-escalation, forbidden, worker, deliverables): an edit that matters makes it *stale*, pausing, the
-schedule and the budget do not. `GET /programs/{id}/tests` returns the cases and a summary; the
-web warns before activating a program with failing cases ("Activate anyway": a warning, not a
-block).
-
-**Web**: the Programs list has a Tests and test run action and the editor a Test run button; both
-open the program page (`/programs/{id}`, `PageHeader` and `PageBody`) with the Test run dialog and
-the Tests and Test runs tabs; a run lands on its result page
-(`/programs/{id}/rehearsals/{rid}`), which polls while it runs and offers Save as test case and Run
-again.
-
-Tests (`test/rehearsal.test.ts`, scripted models, an in-process fake MCP server): the overlay
-unit (conditional writes, deletes, moves, read-only fallback); a rehearsal writes only into the
-overlay and the real library is unchanged; sample files and `reads: sample`; a write tool of an
-external connector is simulated and recorded while the same call in a real run is made; would-ask
-decisions with an empty Decision Center; deliverables against overlay files including the fix-up;
-a worker program on a sample task; the budget cap; no run history, no digest line, cleanup with the
-program; a saved case passes, then fails after an edit that breaks it, is stale in between and
-survives a pause.
-
-*Without the overlay:* "try it" writes into the client's library. *Without simulating at the gate:*
-a rehearsal posts to the real company system. *Without the fingerprint:* pausing a program makes a
-failing test look stale and the warning disappears.
+Rehearsals (test runs of a program on sample data) and program test cases were removed in P55
+(`docs/plans/P55-consolidation.md`): a production month showed no use. The `rehearsals` and
+`program_tests` tables stay in the database as legacy rows and are no longer read or written. The
+old code is in the git tag `archive/pre-consolidation-2026-10-22`.
 
 ## 26. Operations: soak test, end-to-end flows, what the invariants mean
 
@@ -1206,7 +1130,7 @@ the revision comes back; the heartbeat finds something and the digest (set to th
 the team timezone, so this flow takes about a minute) carries it. There is no browser
 automation dependency in the repository, so this is the API the pages call, not their DOM.
 
-## 27. Chat threads, the Briefing page and the bell (phase M)
+## 27. Chat threads and the bell (phase M)
 
 **Threads.** An agent has any number of chat threads, all equal (no pinned "main" chat). A thread
 is one eharness session plus a row in `chat_threads` (`domain/threads.ts`, `app/threads.ts`):
@@ -1236,26 +1160,26 @@ Threads are created only on demand.
 `main.ts`). An agent with no thread rows yet uses `dm:<agentId>`; an agent whose threads are all
 archived gets a new thread titled "Routines". It never writes into an archived thread.
 
-**Briefing page and bell.** `runDigest` stores a `briefings` row (markdown body plus items) and one
-`briefing` notification; `finishBeat` adds one `alert` notification per urgent finding
-(`app/briefings.ts`, tables `briefings`, `notifications`, both idempotent by key). `GET /briefings`,
-`GET /notifications`, `POST /notifications/{id}/dismiss`, `POST /notifications/dismiss-all`. The
-lead reads briefings from any thread with the read-only tool `read_briefings`
-(`heartbeat-plugin.ts`, allowed without approval like the other app tools).
+**The bell.** `runDigest` posts one `briefing` notification per local day with the whole digest text
+as its body (`postDigest`); `finishBeat` adds one `alert` notification per urgent finding
+(`app/briefings.ts`, table `notifications`, idempotent by key). `GET /notifications`,
+`POST /notifications/{id}/dismiss`, `POST /notifications/dismiss-all`. Since P55 there is no Briefing
+page, no `/briefings` route and no `read_briefings` tool; the legacy `briefings` table is kept and
+no longer written.
 
 **Following up.** A program or task run is already its own session: open it from the board, a
-notification or a briefing and use its follow-up box (`POST /tasks/{id}/messages`, same session and
-context). "Discuss in chat" on a briefing (or one of its items), an alert or a run
+notification or an alert and use its follow-up box (`POST /tasks/{id}/messages`, same session and
+context). "Discuss in chat" on an alert or a run
 (`discussInChat`) creates a NEW thread on the lead, seeded with that context as one `eh.event`
 message (no model call). Continuity across threads comes from memory, not chat history.
 
 **Web.** A thread bar above the chat (switcher with archived section, New chat, rename, archive),
-`?t=` in the URL (thread id or session id), a Briefing page in the rail, alerts with "Discuss in
-chat" and Dismiss in the bell, empty assistant messages hidden.
+`?t=` in the URL (thread id or session id), the daily digest and alerts in the bell (alerts with
+"Discuss in chat", both with Dismiss), empty assistant messages hidden.
 
 **Test it.** `server/test/threads.test.ts` (CRUD, migration, delegation back to its thread,
-briefing, alerts, `read_briefings`, discuss seeding), `heartbeat.test.ts`, and the web unit tests
-`lib/threads/model.test.ts`, `lib/briefings/model.test.ts`, `lib/stores/threads.test.ts`,
+the digest notification, alerts, discuss seeding), `heartbeat.test.ts`, and the web unit tests
+`lib/threads/model.test.ts`, `lib/notifications-model.test.ts`, `lib/stores/threads.test.ts`,
 `lib/stores/live.test.ts`.
 
 ## 27b. Fixes of the browser end-to-end pass (P40)

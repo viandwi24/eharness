@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, fieldErrors } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
-	import { type Backup, type ImportSource, type RestorePlan, type RestorePoint, type SectionId, bytesText, planSummary, reasonLabel, resultSummary, restorePointText, verifiedText } from '#lib/backups/model.js';
+	import { type Backup, type ImportSource, type RestorePlan, type RestorePoint, type SectionId, bytesText, passphraseProblem, planSummary, reasonLabel, resultSummary, restorePointText, verifiedText } from '#lib/backups/model.js';
 	import { downloadBackupFile, downloadWorkspaceExport, uploadWorkspaceZip } from '#lib/backups/download.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import WorkspaceImportDialog from '#lib/components/app/WorkspaceImportDialog.svelte';
@@ -121,19 +121,36 @@
 	let importSource = $state<ImportSource | null>(null);
 	let importLabel = $state('');
 	let importUndoOf = $state<string | undefined>(undefined);
-	let importInitial = $state<{ sections: SectionId[]; exclude: string[]; removeSections: SectionId[] } | undefined>(undefined);
+	let importInitial = $state<{ sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite?: boolean } | undefined>(undefined);
 	let uploading = $state(false);
 	let exporting = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
 
+	// the export: without secrets, or with the provider keys and connection credentials encrypted by a passphrase
+	let exportOpen = $state(false);
+	let withSecrets = $state(false);
+	let exportPass = $state('');
+	let exportPass2 = $state('');
+	const exportProblem = $derived(withSecrets ? passphraseProblem(exportPass, exportPass2) : null);
+
+	function openExport(): void {
+		withSecrets = false;
+		exportPass = '';
+		exportPass2 = '';
+		exportOpen = true;
+	}
+
 	async function exportNow(): Promise<void> {
 		exporting = true;
 		try {
-			await downloadWorkspaceExport();
+			await downloadWorkspaceExport(withSecrets ? exportPass : undefined);
+			exportOpen = false;
 		} catch (e) {
 			if (!(e instanceof DOMException && e.name === 'AbortError')) toast.error(e instanceof Error ? e.message : 'Download failed');
 		} finally {
 			exporting = false;
+			exportPass = '';
+			exportPass2 = '';
 		}
 	}
 
@@ -251,7 +268,7 @@
 	<Card.Root>
 		<Card.Header>
 			<Card.Title>Schedule</Card.Title>
-			<Card.Description>A consistent copy of the whole database is written while the server runs, then checked (integrity and row counts), with one readable zip of the workspace next to it (settings, agents, personas, memory, library, programs, routines, people; no chats, no secrets). One is also taken before risky operations such as reorganizing memory, and at start-up when none was taken today.</Card.Description>
+			<Card.Description>A consistent copy of the whole database is written while the server runs, then checked (integrity and row counts), with one readable zip of the workspace next to it (settings, agents, personas, memory, library, programs, routines, people; no chats, no secrets: an export you download by hand can carry them, encrypted). One is also taken before risky operations such as reorganizing memory, and at start-up when none was taken today.</Card.Description>
 		</Card.Header>
 		<Card.Content>
 			<form
@@ -296,7 +313,7 @@
 		<Card.Content class="flex flex-col gap-3">
 			<div class="flex flex-wrap gap-2">
 				<Button size="sm" onclick={backUpNow} disabled={running}>{running ? 'Backing up…' : 'Back up now'}</Button>
-				<Button size="sm" variant="outline" onclick={exportNow} disabled={exporting}>{exporting ? 'Preparing…' : 'Download workspace export'}</Button>
+				<Button size="sm" variant="outline" onclick={openExport} disabled={exporting}>{exporting ? 'Preparing…' : 'Download workspace export'}</Button>
 				<Button size="sm" variant="outline" onclick={() => fileInput?.click()} disabled={uploading}>{uploading ? 'Checking the zip…' : 'Import from zip'}</Button>
 				<input bind:this={fileInput} type="file" accept=".zip,application/zip" class="hidden" onchange={pickedFile} aria-label="Workspace zip to import" />
 			</div>
@@ -374,6 +391,43 @@
 	</Card.Root>
 </div>
 
+<Dialog.Root open={exportOpen} onOpenChange={(o) => (exportOpen = o)}>
+	<Dialog.Content elevation="floating" class="sm:max-w-lg">
+		<Dialog.Header>
+			<Dialog.Title>Download the workspace export</Dialog.Title>
+			<Dialog.Description>One readable zip of the workspace. Secrets are left out unless you choose a passphrase: then provider keys and connection credentials travel in the zip, encrypted. Scheduled backups never hold secrets.</Dialog.Description>
+		</Dialog.Header>
+		<form
+			class="flex flex-col gap-4"
+			onsubmit={(e) => {
+				e.preventDefault();
+				if (!exportProblem) void exportNow();
+			}}
+		>
+			<Field.Field orientation="horizontal">
+				<Switch id="export-secrets" bind:checked={withSecrets} aria-label="Include secrets, encrypted" />
+				<Field.Label for="export-secrets">Include secrets, encrypted with a passphrase</Field.Label>
+			</Field.Field>
+			{#if withSecrets}
+				<Field.Field>
+					<Field.Label for="export-pass">Passphrase (at least 12 characters)</Field.Label>
+					<Input id="export-pass" type="password" autocomplete="new-password" bind:value={exportPass} />
+				</Field.Field>
+				<Field.Field>
+					<Field.Label for="export-pass2">Type it again</Field.Label>
+					<Input id="export-pass2" type="password" autocomplete="new-password" bind:value={exportPass2} />
+					<Field.Description>Nothing can recover this passphrase. Without it the secrets in the zip cannot be read (AES-256-GCM, key from PBKDF2-SHA256); with it, anyone who has the zip can read them, so keep both apart.</Field.Description>
+				</Field.Field>
+				{#if exportPass && exportProblem}<p class="text-sm text-destructive-text" role="alert">{exportProblem}</p>{/if}
+			{/if}
+			<Dialog.Footer>
+				<Button type="button" variant="ghost" onclick={() => (exportOpen = false)}>Cancel</Button>
+				<Button type="submit" disabled={exporting || !!exportProblem}>{exporting ? 'Preparing…' : withSecrets ? 'Download with secrets' : 'Download without secrets'}</Button>
+			</Dialog.Footer>
+		</form>
+	</Dialog.Content>
+</Dialog.Root>
+
 <WorkspaceImportDialog bind:open={importOpen} source={importSource} label={importLabel} undoOf={importUndoOf} initial={importInitial} onDone={() => void load()} />
 
 <ConfirmDialog
@@ -401,8 +455,8 @@
 			<Field.Field>
 				<Field.Label for="restore-mode">Files that exist now</Field.Label>
 				<NativeSelect id="restore-mode" bind:value={restoreMode} onchange={() => (plan = null)}>
-					<NativeSelectOption value="missing">Leave them as they are, restore only what is missing</NativeSelectOption>
-					<NativeSelectOption value="all">Replace the ones whose content differs from the backup</NativeSelectOption>
+					<NativeSelectOption value="missing">Skip them: restore only what is missing</NativeSelectOption>
+					<NativeSelectOption value="all">Overwrite the ones whose content differs from the backup</NativeSelectOption>
 				</NativeSelect>
 			</Field.Field>
 			<div class="flex gap-2">

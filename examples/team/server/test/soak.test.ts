@@ -69,7 +69,7 @@ describe('the invariant checker', () => {
         beats: [{ id: 'b1', at: 5, endedAt: null, status: 'running', reason: null, items: [] }],
       }),
     ])
-    // a program run that has no task, an eh session with a pending wait, a digest written into a chat and two briefings on one day
+    // a program run that has no task, an eh session with a pending wait, and a digest written into a chat
     db.run(
       "INSERT INTO routines (id, agent_id, name, prompt, spec, created_at, updated_at, program_id) VALUES ('r1', 'a', 'n', 'p', '{}', 1, 1, 'p1')",
     )
@@ -89,14 +89,6 @@ describe('the invariant checker', () => {
           JSON.stringify([{ type: 'data-eh.event', data: { name: 'daily-digest', text: id } }]),
           now,
         ],
-      )
-    }
-    // the unique index would refuse it: the invariant is the second line of defence
-    db.run('DROP INDEX briefings_day')
-    for (const id of ['b1', 'b2']) {
-      db.run(
-        "INSERT INTO briefings (id, day, title, body, items, created_at) VALUES (?, '2026-01-01', 't', 'b', '[]', ?)",
-        [id, now],
       )
     }
     db.run(

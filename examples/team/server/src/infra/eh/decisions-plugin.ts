@@ -42,10 +42,8 @@ import {
   REQUEST_AUTHORITY_DESCRIPTION,
 } from '../../domain/decisions.ts'
 import { MAX_BRIEF_CHARS, parseProgramSession, parseReport } from '../../domain/programs.ts'
-import { SIMULATED_ESCALATION_TEXT } from '../../domain/rehearsal.ts'
 import { profileOfSession } from '../../domain/run-profiles.ts'
 import type { TaskReport } from '../../domain/tasks.ts'
-import { rehearsalSessions } from './rehearsal-registry.ts'
 
 export const PROPOSE_PLAN_TOOL = 'propose_plan'
 export const ESCALATE_TOOL = 'escalate'
@@ -391,61 +389,6 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
           },
         })
       }
-      if (origin === 'rehearsal') {
-        // a rehearsal never parks and never writes to the Decision Center: what the run would ask
-        // is recorded ("would ask") and the model carries on (`domain/rehearsal.ts`)
-        const wouldAsk = rehearsalSessions.get(sessionId)?.recorder.wouldAsk
-        tools[ESCALATE_TOOL] = tool({
-          description: ESCALATE_DESCRIPTION,
-          inputSchema: escalateInputSchema,
-          metadata: { risk: 'write', idempotent: true },
-          execute: (input): string => {
-            wouldAsk?.({
-              kind: 'escalation',
-              title: input.title,
-              question: input.question,
-              details: input.details,
-              options: input.options,
-            })
-            return SIMULATED_ESCALATION_TEXT
-          },
-        })
-        tools[ESCALATE_WAIT_TOOL] = tool({
-          description: ESCALATE_WAIT_DESCRIPTION,
-          inputSchema: escalateSchema,
-          metadata: { risk: 'write', idempotent: true },
-          execute: (input): string => {
-            wouldAsk?.({
-              kind: 'escalation',
-              title: input.title,
-              question: input.question,
-              details: input.details,
-              options: input.options,
-            })
-            return SIMULATED_ESCALATION_TEXT
-          },
-        })
-        tools[REQUEST_AUTHORITY_TOOL] = tool({
-          description: REQUEST_AUTHORITY_DESCRIPTION,
-          inputSchema: authoritySchemaAsk,
-          metadata: { risk: 'write', idempotent: true },
-          execute: (input): string => {
-            const asked = [
-              ...(input.tools ?? []),
-              ...(input.connectors ?? []).map((c) => `connector ${c}`),
-              ...(input.read ?? []).map((g) => `read ${g}`),
-              ...(input.write ?? []).map((g) => `write ${g}`),
-            ]
-            wouldAsk?.({
-              kind: 'amendment',
-              title: 'More authority',
-              question: input.why,
-              details: asked.map((a) => `- ${a}`).join('\n'),
-            })
-            return SIMULATED_ESCALATION_TEXT
-          },
-        })
-      }
       if (origin === 'program' || origin === 'routine' || origin === 'task') {
         // not parked by default: the question is stored without a wait and the run carries on;
         // the answer continues the session as a new message (like a report-made escalation)
@@ -529,16 +472,6 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
             if (e.stop !== 'complete') return
             const report = parseReport(e.output)
             if (report?.status !== 'needs_decision') return
-            if (origin === 'rehearsal') {
-              // would ask: the report itself is the decision the client would get
-              rehearsalSessions.get(sessionId)?.recorder.wouldAsk({
-                kind: 'report',
-                title: 'The run ended needing a decision',
-                question: report.summary,
-                details: report.notes,
-              })
-              return
-            }
             if (parseProgramSession(sessionId) === undefined) return
             try {
               intake().reportNeedsDecision({ agentId: self().id, sessionId, report })

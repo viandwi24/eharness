@@ -72,11 +72,24 @@ export type RestorePoint = components['schemas']['RestorePoint'];
 export type SectionId = ImportItem['section'];
 export type ImportSource = components['schemas']['ImportSource'];
 
-/** What the owner ticked: sections to apply, single items left out, sections where what is not in the zip is removed. */
+/**
+ * What the owner ticked: sections to apply, single items left out, sections where what is not in the
+ * zip is removed, and whether an item that exists here and differs is replaced (`overwrite`) or skipped.
+ */
 export interface Ticks {
 	sections: Set<SectionId>;
 	exclude: Set<string>;
 	remove: Set<SectionId>;
+	overwrite: boolean;
+}
+
+export const MIN_PASSPHRASE = 12;
+
+/** Why a passphrase is not good enough, or null. */
+export function passphraseProblem(pass: string, again?: string): string | null {
+	if (pass.length < MIN_PASSPHRASE) return `Use at least ${MIN_PASSPHRASE} characters.`;
+	if (again !== undefined && again !== pass) return 'The two passphrases differ.';
+	return null;
 }
 
 export const statusText: Record<ImportItem['status'], string> = {
@@ -86,30 +99,50 @@ export const statusText: Record<ImportItem['status'], string> = {
 	'only-live': 'Only in the workspace'
 };
 
-/** Every section that can be imported, ticked; nothing excluded, nothing removed (the default). */
-export function defaultTicks(preview: Pick<ImportPreview, 'sections'>): Ticks {
-	return { sections: new Set(preview.sections.filter((s) => s.applicable).map((s) => s.id)), exclude: new Set(), remove: new Set() };
+/**
+ * Every section that can be imported, ticked; nothing excluded, nothing removed, no overwrite (the
+ * default). Secrets are ticked only once the passphrase has opened them (`unlocked`).
+ */
+export function defaultTicks(preview: Pick<ImportPreview, 'sections'> & Partial<Pick<ImportPreview, 'secrets'>>): Ticks {
+	const unlocked = preview.secrets?.unlocked === true;
+	return {
+		sections: new Set(preview.sections.filter((s) => s.applicable && (s.id !== 'secrets' || unlocked)).map((s) => s.id)),
+		exclude: new Set(),
+		remove: new Set(),
+		overwrite: false
+	};
 }
 
-/** The same rule as the server: ticked section, not left out, applicable, a change (only-here items need the removal tick). */
+/** The same rule as the server: ticked section, not left out, applicable, a change; an item that differs needs `overwrite`; only-here items need the removal tick. */
 export function isSelected(item: ImportItem, t: Ticks): boolean {
 	if (!item.applicable || item.status === 'unchanged') return false;
 	if (!t.sections.has(item.section) || t.exclude.has(item.key)) return false;
-	return item.status === 'only-live' ? t.remove.has(item.section) : true;
+	if (item.status === 'only-live') return t.remove.has(item.section);
+	return item.status !== 'changed' || t.overwrite;
 }
 
-export function selectionBody(t: Ticks): { sections: SectionId[]; exclude: string[]; removeSections: SectionId[] } {
-	return { sections: [...t.sections], exclude: [...t.exclude], removeSections: [...t.remove] };
+export function selectionBody(t: Ticks): { sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite: boolean } {
+	return { sections: [...t.sections], exclude: [...t.exclude], removeSections: [...t.remove], overwrite: t.overwrite };
 }
 
-/** "3 added, 2 changed, 1 removed will be applied." */
+/** The same ticks with the overwrite choice set (to count what each button would do). */
+export const withOverwrite = (t: Ticks, overwrite: boolean): Ticks => ({ ...t, overwrite });
+
+/** Differing items that "skip existing" leaves as they are (ticked, applicable, but not replaced). */
+export function skippedCount(items: readonly ImportItem[], t: Ticks): number {
+	return items.filter((i) => i.status === 'changed' && isSelected(i, withOverwrite(t, true)) && !isSelected(i, withOverwrite(t, false))).length;
+}
+
+/** "3 added, 2 changed, 1 removed will be applied; 4 that differ are kept as they are." */
 export function applySummary(items: readonly ImportItem[], t: Ticks): string {
 	const picked = items.filter((i) => isSelected(i, t));
-	if (!picked.length) return 'Nothing is selected to change.';
+	const kept = t.overwrite ? 0 : skippedCount(items, t);
+	const keptText = kept ? ` ${kept} that ${kept === 1 ? 'differs is' : 'differ are'} kept as ${kept === 1 ? 'it is' : 'they are'}.` : '';
+	if (!picked.length) return `Nothing is selected to change.${keptText}`;
 	const n = (s: ImportItem['status']): number => picked.filter((i) => i.status === s).length;
-	const parts = [`${n('added')} added`, `${n('changed')} changed`];
+	const parts = [`${n('added')} added`, `${n('changed')} replaced`];
 	if (n('only-live')) parts.push(`${n('only-live')} removed`);
-	return `${parts.join(', ')} will be applied.`;
+	return `${parts.join(', ')} will be applied.${keptText}`;
 }
 
 /** What an import did, in a sentence. */

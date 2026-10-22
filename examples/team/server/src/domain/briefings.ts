@@ -1,6 +1,6 @@
-/** Briefings and notifications (P40 phase M). Pure. */
+/** Notifications: the bell (P40 phase M; the daily digest lives here since P55). Pure. */
 
-/** One line of a briefing that can be talked about (`Discuss in chat`). */
+/** One line of the digest (`buildDigest` also returns the digest as items). */
 export interface BriefingItem {
   kind: 'run' | 'decision' | 'waiting' | 'noticed' | 'cost'
   title: string
@@ -9,22 +9,11 @@ export interface BriefingItem {
   link: string | null
 }
 
-/** The daily digest, kept as a page: one per local day. */
-export interface Briefing {
-  id: string
-  /** Local day `YYYY-MM-DD` (the digest timezone). */
-  day: string
-  title: string
-  /** The digest as markdown. */
-  body: string
-  items: BriefingItem[]
-  createdAt: number
-}
-
+/** `briefing` is the daily digest (the stored kind of the rows the Briefing page used to announce). */
 export const NOTIFICATION_KINDS = ['alert', 'briefing'] as const
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number]
 
-/** What the bell shows: an urgent finding of the heartbeat, or "your briefing is ready". */
+/** What the bell shows: an urgent finding of the heartbeat, or the daily digest. */
 export interface Notification {
   id: string
   kind: NotificationKind
@@ -36,12 +25,4 @@ export interface Notification {
   dismissedAt: number | null
 }
 
-export const briefingTitle = (day: string): string => `Briefing ${day}`
-
-/** The lead's read-only tool for the briefings of the Briefing page (any chat thread). */
-export const READ_BRIEFINGS_TOOL = 'read_briefings'
-export const READ_BRIEFINGS_DESCRIPTION =
-  'Read the daily briefings the client sees on the Briefing page: what ran, what waits for them, ' +
-  'what the heartbeat noticed and the cost. Without arguments the latest one; `days` returns that ' +
-  'many (up to 7), `day` a given local day (YYYY-MM-DD). Read-only. Use it when the client asks ' +
-  'about their briefing or what happened lately.'
+export const digestTitle = (day: string): string => `Daily digest ${day}`

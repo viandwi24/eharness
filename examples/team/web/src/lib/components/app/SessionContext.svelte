@@ -203,7 +203,6 @@
 	);
 
 	let toolsOpen = $state(false);
-	const routinesCount = $derived(context?.routines.length ?? 0);
 	const colorOf = (id: string): string | undefined => agentsStore.find(id)?.color;
 	const loading = $derived(context === null && sessions === null && messages.length === 0);
 </script>
@@ -347,7 +346,7 @@
 	<SessionPanelDivider />
 	<nav class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-label="Agent shortcuts">
 		<a href="/routines?agentId={encodeURIComponent(agentId)}" class="rounded underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
-			Routines{context ? ` (${routinesCount})` : ''}
+			Reminders
 		</a>
 		<button type="button" class="rounded underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring" onclick={() => openEditAgent(agentId, 'memory')} disabled={!agent}>
 			Agent memory

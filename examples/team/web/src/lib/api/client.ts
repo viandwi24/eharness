@@ -193,6 +193,4 @@ export type ModelCallKind = ModelCallSummary['kind'];
 export type ModelCallStatus = ModelCallSummary['status'];
 
 export type Thread = components['schemas']['Thread'];
-export type Briefing = components['schemas']['Briefing'];
-export type BriefingItem = components['schemas']['BriefingItem'];
 export type Notification = components['schemas']['Notification'];

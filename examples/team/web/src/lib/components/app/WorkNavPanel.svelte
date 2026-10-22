@@ -8,7 +8,7 @@
 	import { cn } from '#lib/utils.js';
 
 	/**
-	 * The menu of the agent's work (tasks, briefing, decisions, programs, routines): the second column
+	 * The menu of the agent's work (tasks, decisions, programs, reminders): the second column
 	 * next to the rail on a desktop, a row you scroll above the page on a phone (`row`).
 	 */
 	let { row = false }: { row?: boolean } = $props();
@@ -17,17 +17,14 @@
 	const current = $derived(sectionOf(page.url.pathname));
 	const HINTS: Partial<Record<SectionId, string>> = {
 		tasks: 'Work the agents do',
-		briefings: 'What happened, in short',
 		decisions: 'Questions waiting for you',
 		programs: 'Standing orders',
-		routines: 'Scheduled runs'
+		routines: 'Reminders you set'
 	};
 
-	/** What waits for a person: open decisions, new briefings. */
+	/** What waits for a person: open decisions. */
 	function badge(id: SectionId): { text: number; tone: 'warning' | 'secondary' } | undefined {
 		if (id === 'decisions' && live.state.decisions.length > 0) return { text: live.state.decisions.length, tone: 'warning' };
-		const briefings = live.state.notifications.filter((n) => n.kind === 'briefing').length;
-		if (id === 'briefings' && briefings > 0) return { text: briefings, tone: 'secondary' };
 		return undefined;
 	}
 </script>

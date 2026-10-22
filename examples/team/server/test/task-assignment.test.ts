@@ -15,7 +15,7 @@ import {
   scriptedModel,
 } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
-import { dispatchQueue } from '../src/app/work-queue.ts'
+import { createTask, dispatchQueue } from '../src/app/work-queue.ts'
 import { inReview, type Task } from '../src/domain/tasks.ts'
 import {
   assignedSessionId,
@@ -90,6 +90,7 @@ function fresh(script: Partial<Record<Slug, ScriptedStepInput[]>>): Instance {
     if (def === undefined) throw new Error('seed missing')
     updateAgent(server.deps, def.id, { model: `m-${slug}` })
   }
+  serverOfApp.set(server.app, server)
   return { server, app: server.app, models }
 }
 
@@ -98,6 +99,8 @@ const json = (method: string, body?: unknown): RequestInit => ({
   headers: { 'content-type': 'application/json' },
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 })
+/** The owner-facing create route was removed (P55): tests assign through the use case. */
+const serverOfApp = new WeakMap<object, Server>()
 type TaskView = Task & { column?: string; queue?: string | null }
 async function getTask(app: Server['app'], id: string): Promise<TaskView> {
   const res = await app.request(`/tasks/${id}`)
@@ -105,9 +108,8 @@ async function getTask(app: Server['app'], id: string): Promise<TaskView> {
   return ((await res.json()) as { task: TaskView }).task
 }
 async function assign(app: Server['app'], body: Record<string, unknown>): Promise<TaskView> {
-  const res = await app.request('/tasks', json('POST', body))
-  if (res.status !== 201) throw new Error(await res.text())
-  return (await res.json()) as TaskView
+  const server = serverOfApp.get(app) as Server
+  return createTask(server.deps, body as never) as TaskView
 }
 const post = (app: Server['app'], path: string, body?: unknown) =>
   app.request(path, json('POST', body))
@@ -453,11 +455,9 @@ describe('task grants', () => {
     expect(done.status).toBe('done')
     expect((await server.deps.library.read('/library/out/note.md'))?.text).toBe('hello')
     // bad paths are refused
-    const bad = await app.request(
-      '/tasks',
-      json('POST', { agentId: 'writer', title: 'x', grants: { write: ['library'] } }),
-    )
-    expect(bad.status).toBe(400)
+    expect(() =>
+      createTask(server.deps, { agentId: 'writer', title: 'x', grants: { write: ['library'] } }),
+    ).toThrow()
   })
 })
 

@@ -2,14 +2,13 @@ import type { components } from '../api/schema';
 
 export type ReminderRow = components['schemas']['ChannelReminder'];
 
-/** What the Routines page shows: everything, only routines, only active reminders, or finished reminders. */
-export type RoutineKind = 'all' | 'routines' | 'reminders' | 'finished';
+/** What the Reminders page shows: active reminders, finished ones, or both. */
+export type ReminderFilter = 'active' | 'finished' | 'all';
 
-export const KIND_OPTIONS: ReadonlyArray<{ value: RoutineKind; label: string }> = [
-	{ value: 'all', label: 'Routines and reminders' },
-	{ value: 'routines', label: 'Routines only' },
-	{ value: 'reminders', label: 'Active reminders' },
-	{ value: 'finished', label: 'Finished reminders' }
+export const FILTER_OPTIONS: ReadonlyArray<{ value: ReminderFilter; label: string }> = [
+	{ value: 'active', label: 'Active reminders' },
+	{ value: 'finished', label: 'Finished reminders' },
+	{ value: 'all', label: 'All reminders' }
 ];
 
 /** The badge of a reminder row: where it posts. */
@@ -21,12 +20,9 @@ export function reminderStatus(r: Pick<ReminderRow, 'status'>): { label: string;
 	return r.status === 'done' ? { label: 'done', variant: 'secondary' } : { label: 'cancelled', variant: 'secondary' };
 }
 
-export const showsRoutines = (kind: RoutineKind): boolean => kind === 'all' || kind === 'routines';
-
 /** The reminders a filter shows (the server already puts active ones first, then the finished ones, newest first). */
-export function remindersFor(kind: RoutineKind, reminders: readonly ReminderRow[], agentId = ''): ReminderRow[] {
-	if (kind === 'routines') return [];
+export function remindersFor(filter: ReminderFilter, reminders: readonly ReminderRow[], agentId = ''): ReminderRow[] {
 	return reminders.filter(
-		(r) => (agentId === '' || r.agentId === agentId) && (kind === 'all' || (kind === 'finished' ? r.status !== 'active' : r.status === 'active'))
+		(r) => (agentId === '' || r.agentId === agentId) && (filter === 'all' || (filter === 'finished' ? r.status !== 'active' : r.status === 'active'))
 	);
 }

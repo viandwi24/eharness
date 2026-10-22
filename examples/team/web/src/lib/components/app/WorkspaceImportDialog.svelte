@@ -14,13 +14,16 @@
 		isSelected,
 		itemsOf,
 		selectionBody,
-		statusText
+		skippedCount,
+		statusText,
+		withOverwrite
 	} from '#lib/backups/model.js';
 	import * as Alert from '#lib/components/ui/alert/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import { Input } from '#lib/components/ui/input/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 
 	let {
@@ -38,12 +41,15 @@
 		/** The restore point this import undoes. */
 		undoOf?: string;
 		/** A suggested selection (the undo of a restore point). */
-		initial?: { sections: SectionId[]; exclude: string[]; removeSections: SectionId[] };
+		initial?: { sections: SectionId[]; exclude: string[]; removeSections: SectionId[]; overwrite?: boolean };
 		onDone: () => void;
 	} = $props();
 
 	let preview = $state<ImportPreview | null>(null);
-	let ticks = $state<Ticks>({ sections: new Set(), exclude: new Set(), remove: new Set() });
+	let ticks = $state<Ticks>({ sections: new Set(), exclude: new Set(), remove: new Set(), overwrite: false });
+	let passphrase = $state('');
+	let unlocking = $state(false);
+	let secretsError = $state('');
 	let loading = $state(false);
 	let applying = $state(false);
 	let error = $state('');
@@ -51,7 +57,11 @@
 	let expanded = $state<Set<string>>(new Set());
 
 	$effect(() => {
-		if (open && source) void load(source);
+		if (open && source) {
+			passphrase = '';
+			secretsError = '';
+			void load(source);
+		}
 	});
 
 	async function load(s: ImportSource): Promise<void> {
@@ -68,12 +78,29 @@
 				t.sections = new Set(initial.sections);
 				t.exclude = new Set(initial.exclude);
 				t.remove = new Set(initial.removeSections);
+				t.overwrite = initial.overwrite === true;
 			}
 			ticks = t;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not compare the zip';
 		} finally {
 			loading = false;
+		}
+	}
+
+	/** Open the secrets of the zip with the passphrase: a wrong one leaves the preview as it is. */
+	async function unlock(): Promise<void> {
+		if (!source || !passphrase) return;
+		unlocking = true;
+		secretsError = '';
+		try {
+			const p = await api.post('/backups/import-preview', { body: { source, passphrase } });
+			preview = p;
+			ticks.sections = new Set([...ticks.sections, 'secrets']);
+		} catch (e) {
+			secretsError = e instanceof Error ? e.message : 'Could not open the secrets';
+		} finally {
+			unlocking = false;
 		}
 	}
 
@@ -89,19 +116,28 @@
 	}
 
 	const items = $derived(preview?.items ?? []);
-	const picked = $derived(items.filter((i) => isSelected(i, ticks)).length);
-	const granted = $derived(grants(items, ticks));
+	// what each button would do: the skip choice adds new items only, the overwrite choice replaces the differing ones too
+	const skipPicked = $derived(items.filter((i) => isSelected(i, withOverwrite(ticks, false))).length);
+	const overwritePicked = $derived(items.filter((i) => isSelected(i, withOverwrite(ticks, true))).length);
+	const skipped = $derived(skippedCount(items, ticks));
+	const granted = $derived(grants(items, withOverwrite(ticks, true)));
+	const secretsOn = $derived(ticks.sections.has('secrets') && preview?.secrets.unlocked === true);
+	/** The checkbox of an item: ticked unless left out (whether it is replaced is the button's choice). */
+	const ticked = (i: ImportItem): boolean => isSelected(i, withOverwrite(ticks, true));
 
-	async function apply(): Promise<void> {
+	async function apply(overwrite: boolean): Promise<void> {
 		if (!source) return;
 		applying = true;
 		error = '';
 		try {
-			const r = await api.post('/backups/import', { body: { source, selection: selectionBody(ticks), ...(undoOf ? { undoOf } : {}) } });
+			const r = await api.post('/backups/import', {
+				body: { source, selection: selectionBody(withOverwrite(ticks, overwrite)), ...(secretsOn ? { passphrase } : {}), ...(undoOf ? { undoOf } : {}) }
+			});
 			outcome = r.restorePointId ? `${importResultText(r)} A safety backup was taken first; undo it from the restore points.` : 'Nothing was selected to change.';
 			if (r.counts.failed) toast.warning(`${r.counts.failed} item${r.counts.failed === 1 ? '' : 's'} failed: see the restore point`);
 			else toast.success('Import applied');
 			preview = null;
+			passphrase = '';
 			onDone();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Import failed';
@@ -122,7 +158,7 @@
 		<Dialog.Header class="border-b border-border px-5 py-4">
 			<Dialog.Title>{undoOf ? 'Undo a restore point' : 'Import into this workspace'}</Dialog.Title>
 			<Dialog.Description>
-				From {label}. Nothing is written until you apply. An import never deletes unless you tick "remove what is not in the zip" for a section. Secrets are never imported; connections and reminders are shown for reading only. A verified safety backup is taken first and recorded as a restore point.
+				From {label}. Nothing is written until you apply. Items that exist here and differ are kept as they are unless you choose to overwrite them, and an import never deletes unless you tick "remove what is not in the zip" for a section. Connections and reminders are shown for reading only; secrets come back only from an encrypted export, with its passphrase. A verified safety backup is taken first and recorded as a restore point.
 			</Dialog.Description>
 		</Dialog.Header>
 		<div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
@@ -134,6 +170,30 @@
 					Zip made {new Date(preview.manifest.createdAt).toLocaleString()} by version {preview.manifest.appVersion}, format {preview.manifest.formatVersion}; its hashes were verified.
 				</p>
 				{#each preview.warnings as w (w)}<p class="text-xs text-muted-foreground">{w}</p>{/each}
+				{#if preview.secrets.included}
+					<section class="rounded-lg border border-border px-3 py-3">
+						<p class="text-sm font-medium">Secrets included: {preview.secrets.count} (encrypted)</p>
+						{#if preview.secrets.unlocked}
+							<p class="mt-1 text-xs text-muted-foreground">The passphrase opened them. They are listed below by name only; values are never shown. Untick the Secrets section to leave them out.</p>
+						{:else}
+							<p class="mt-1 text-xs text-muted-foreground">Provider keys and connection credentials travel in this zip, encrypted. Enter the passphrase chosen when it was exported to list and restore them.</p>
+							<form
+								class="mt-2 flex flex-wrap items-center gap-2"
+								onsubmit={(e) => {
+									e.preventDefault();
+									void unlock();
+								}}
+							>
+								<Input type="password" autocomplete="off" bind:value={passphrase} placeholder="Passphrase of the export" aria-label="Passphrase of the export" class="max-w-72" />
+								<Button type="submit" size="sm" variant="outline" disabled={!passphrase || unlocking}>{unlocking ? 'Opening…' : 'Enter passphrase'}</Button>
+							</form>
+						{/if}
+						{#if secretsError}<p class="mt-2 text-sm text-destructive-text" role="alert">{secretsError}</p>{/if}
+					</section>
+				{/if}
+				{#if !undoOf && skipped}
+					<p class="text-xs text-muted-foreground">{skipped} item{skipped === 1 ? '' : 's'} here differ{skipped === 1 ? 's' : ''} from the zip. "Apply (skip existing)" adds only what is new; "Apply and overwrite existing" replaces the differing ones too.</p>
+				{/if}
 				{#if granted.length}
 					<Alert.Root variant="warning" role="alert">
 						<Alert.Title>This import grants authority</Alert.Title>
@@ -167,7 +227,7 @@
 										<li class="px-3 py-1.5 text-xs">
 											<div class="flex items-center gap-2">
 												<Checkbox
-													checked={isSelected(i, ticks)}
+													checked={ticked(i)}
 													disabled={!i.applicable || !sectionChecked(i.section) || (i.status === 'only-live' && !ticks.remove.has(i.section))}
 													onCheckedChange={(v) => (ticks.exclude = flip(ticks.exclude, i.key, v !== true))}
 													aria-label={`Apply ${i.label}`}
@@ -212,12 +272,17 @@
 					{/if}
 				{/each}
 				{#if preview.truncated}<p class="text-xs text-muted-foreground">The list shows the first {preview.items.length} items; the import covers all of them.</p>{/if}
-				<p class="text-sm" role="status">{applySummary(items, ticks)}</p>
+				<p class="text-sm" role="status">{applySummary(items, withOverwrite(ticks, undoOf ? true : false))}</p>
 			{/if}
 		</div>
 		<Dialog.Footer class="border-t border-border px-5 py-3">
 			<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
-			<Button onclick={apply} disabled={applying || loading || !preview || picked === 0}>{applying ? 'Applying…' : `Apply ${picked} change${picked === 1 ? '' : 's'}`}</Button>
+			{#if undoOf}
+				<Button onclick={() => apply(true)} disabled={applying || loading || !preview || overwritePicked === 0}>{applying ? 'Undoing…' : `Undo: put back ${overwritePicked} change${overwritePicked === 1 ? '' : 's'}`}</Button>
+			{:else}
+				<Button variant="outline" onclick={() => apply(false)} disabled={applying || loading || !preview || skipPicked === 0}>{applying ? 'Applying…' : `Apply (skip existing) · ${skipPicked}`}</Button>
+				<Button onclick={() => apply(true)} disabled={applying || loading || !preview || overwritePicked === 0}>{applying ? 'Applying…' : `Apply and overwrite existing · ${overwritePicked}`}</Button>
+			{/if}
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

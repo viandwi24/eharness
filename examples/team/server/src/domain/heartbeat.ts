@@ -1636,7 +1636,7 @@ export interface DigestInput {
 
 export interface Digest {
   text: string
-  /** The same content as items (the Briefing page and "Discuss in chat"). */
+  /** The same content as items (the digest and "Discuss in chat"). */
   items: BriefingItem[]
   /** Nothing ran, nothing waits, nothing was found and nothing was spent. */
   empty: boolean
@@ -1791,7 +1791,7 @@ export function buildDigest(input: DigestInput): Digest {
         kind: 'noticed',
         title: oneLine(f.explanation, 120),
         detail: oneLine(f.fix),
-        link: f.link ?? '/health',
+        link: f.link ?? '/attention',
       })
     }
   }

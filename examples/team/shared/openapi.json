@@ -24,11 +24,11 @@
     },
     {
       "name": "threads",
-      "description": "Chat threads per agent, all equal: new chat, rename, archive, and \"Discuss in chat\" (a new thread seeded with a briefing item, an alert or a run)."
+      "description": "Chat threads per agent, all equal: new chat, rename, archive, and \"Discuss in chat\" (a new thread seeded with an alert or a run)."
     },
     {
-      "name": "briefings",
-      "description": "The daily digest as a page (one briefing per day) and the bell: urgent alerts and \"briefing ready\"."
+      "name": "notifications",
+      "description": "The bell: urgent alerts and the daily digest (one notification per day)."
     },
     {
       "name": "library",
@@ -61,10 +61,6 @@
     {
       "name": "routines",
       "description": "Scheduled prompts per agent (multi-instance safe, on the durable inbox)."
-    },
-    {
-      "name": "rehearsals",
-      "description": "Test runs of a program on sample data in a safe mode (scratch files, simulated external writes, decisions recorded as \"would ask\") and the program test cases that re-run them after an edit."
     },
     {
       "name": "programs",
@@ -1647,7 +1643,7 @@
           },
           "ref": {
             "type": "string",
-            "description": "Id of the briefing, notification or task."
+            "description": "Id of the notification or task."
           },
           "title": {
             "type": "string"
@@ -1689,19 +1685,13 @@
           "kind": {
             "type": "string",
             "enum": [
-              "briefing",
               "alert",
               "run"
             ]
           },
           "ref": {
             "type": "string",
-            "description": "Briefing id, alert (notification) id or task id."
-          },
-          "item": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "With a briefing: the index of one item of it."
+            "description": "Alert (notification) id or task id."
           },
           "agent": {
             "type": "string",
@@ -1711,90 +1701,6 @@
         "required": [
           "kind",
           "ref"
-        ]
-      },
-      "BriefingList": {
-        "type": "object",
-        "properties": {
-          "briefings": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Briefing"
-            }
-          }
-        },
-        "required": [
-          "briefings"
-        ]
-      },
-      "Briefing": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "day": {
-            "type": "string",
-            "example": "2026-10-12",
-            "description": "Local day (digest timezone)."
-          },
-          "title": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string",
-            "description": "The digest as markdown."
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BriefingItem"
-            }
-          },
-          "createdAt": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "day",
-          "title",
-          "body",
-          "items",
-          "createdAt"
-        ]
-      },
-      "BriefingItem": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "run",
-              "decision",
-              "waiting",
-              "noticed",
-              "cost"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "detail": {
-            "type": "string"
-          },
-          "link": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "kind",
-          "title",
-          "detail",
-          "link"
         ]
       },
       "NotificationList": {
@@ -2808,7 +2714,6 @@
               "connectors-changed",
               "thread-changed",
               "notification-changed",
-              "briefing-added",
               "turn-started",
               "pending-changed",
               "approval-decided",
@@ -3522,68 +3427,6 @@
           "header",
           "options",
           "multiSelect"
-        ]
-      },
-      "TaskCreate": {
-        "type": "object",
-        "properties": {
-          "agentId": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Owner: agent id or slug."
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "brief": {
-            "type": "string",
-            "maxLength": 20000
-          },
-          "inputs": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 500
-            },
-            "maxItems": 50,
-            "description": "Library paths (start with /)."
-          },
-          "priority": {
-            "$ref": "#/components/schemas/TaskPriority"
-          },
-          "dueAt": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "exclusiveMinimum": 0,
-            "description": "Epoch milliseconds."
-          },
-          "hold": {
-            "type": "boolean",
-            "description": "Do not start on its own (default false: the task starts when the agent has a free slot)."
-          },
-          "review": {
-            "type": "boolean",
-            "description": "Finished work waits in Review. Default true for the client."
-          },
-          "grants": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/TaskGrants"
-              },
-              {
-                "description": "Extra permissions for one task: tool names or rules, connectors (every tool), library path globs to read and to write. Pre-approved on top of what the agent has in chat."
-              }
-            ]
-          }
-        },
-        "required": [
-          "agentId",
-          "title"
         ]
       },
       "TaskPatch": {
@@ -5922,6 +5765,20 @@
           "backup"
         ]
       },
+      "ExportBody": {
+        "type": "object",
+        "properties": {
+          "passphrase": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 256,
+            "description": "At least 12 characters. Provider keys and connection credentials are encrypted with a key derived from it (PBKDF2-SHA256, AES-256-GCM) into `secrets.enc.json`. It cannot be recovered: keep it."
+          }
+        },
+        "required": [
+          "passphrase"
+        ]
+      },
       "ImportUpload": {
         "type": "object",
         "properties": {
@@ -6001,7 +5858,8 @@
                     "library",
                     "people",
                     "connections",
-                    "reminders"
+                    "reminders",
+                    "secrets"
                   ]
                 },
                 "label": {
@@ -6034,6 +5892,28 @@
               ]
             }
           },
+          "secrets": {
+            "type": "object",
+            "properties": {
+              "included": {
+                "type": "boolean",
+                "description": "The zip holds `secrets.enc.json`."
+              },
+              "count": {
+                "type": "integer",
+                "description": "How many secrets (a count, never names or values)."
+              },
+              "unlocked": {
+                "type": "boolean",
+                "description": "The passphrase of the request opened them: the `secrets` section lists them by name."
+              }
+            },
+            "required": [
+              "included",
+              "count",
+              "unlocked"
+            ]
+          },
           "items": {
             "type": "array",
             "items": {
@@ -6055,6 +5935,7 @@
           "source",
           "manifest",
           "sections",
+          "secrets",
           "items",
           "truncated",
           "warnings"
@@ -6078,7 +5959,8 @@
               "library",
               "people",
               "connections",
-              "reminders"
+              "reminders",
+              "secrets"
             ]
           },
           "kind": {
@@ -6182,6 +6064,12 @@
         "properties": {
           "source": {
             "$ref": "#/components/schemas/ImportSource"
+          },
+          "passphrase": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The passphrase of the export, to list its secrets by name. A wrong one answers 400 `IMPORT_PASSPHRASE`. Never stored or logged."
           }
         },
         "required": [
@@ -6302,6 +6190,12 @@
           "selection": {
             "$ref": "#/components/schemas/ImportSelection"
           },
+          "passphrase": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The passphrase of the export; required when `selection.sections` includes `secrets`. Checked before anything is written."
+          },
           "undoOf": {
             "type": "string",
             "minLength": 1,
@@ -6329,7 +6223,8 @@
                 "library",
                 "people",
                 "connections",
-                "reminders"
+                "reminders",
+                "secrets"
               ]
             },
             "description": "Sections to apply (default: every section that can be imported)."
@@ -6356,10 +6251,15 @@
                 "library",
                 "people",
                 "connections",
-                "reminders"
+                "reminders",
+                "secrets"
               ]
             },
-            "description": "Sections where what is only in the workspace is removed too (default none: an import never deletes). Agents are archived."
+            "description": "Sections where what is only in the workspace is removed too (default none: an import never deletes). Agents are archived. `secrets` cannot be removed."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Default `false`: an item that exists here and differs is SKIPPED, only new items are added. `true` also replaces the differing ones. An undo (`undoOf`) always overwrites."
           }
         }
       },
@@ -6560,7 +6460,8 @@
                     "library",
                     "people",
                     "connections",
-                    "reminders"
+                    "reminders",
+                    "secrets"
                   ]
                 }
               },
@@ -6583,15 +6484,20 @@
                     "library",
                     "people",
                     "connections",
-                    "reminders"
+                    "reminders",
+                    "secrets"
                   ]
                 }
+              },
+              "overwrite": {
+                "type": "boolean"
               }
             },
             "required": [
               "sections",
               "exclude",
-              "removeSections"
+              "removeSections",
+              "overwrite"
             ]
           },
           "preview": {
@@ -11177,764 +11083,6 @@
         "required": [
           "runs"
         ]
-      },
-      "Rehearsal": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "programId": {
-            "type": "string"
-          },
-          "programVersion": {
-            "type": "integer",
-            "description": "The program version it ran against."
-          },
-          "programFingerprint": {
-            "type": "string",
-            "description": "What the program was when it ran (brief, authority, deliverables, ...): an edit that matters changes it."
-          },
-          "sessionId": {
-            "type": "string",
-            "example": "rehearsal:0198…:1760000000000"
-          },
-          "testId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "running",
-              "done",
-              "failed"
-            ]
-          },
-          "stop": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "sample": {
-            "$ref": "#/components/schemas/RehearsalSample"
-          },
-          "budgetUsd": {
-            "type": "number"
-          },
-          "startedAt": {
-            "type": "integer"
-          },
-          "endedAt": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "report": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/TaskReport"
-              },
-              {
-                "description": "The structured final report a program run ends with (`SendOptions.output`)."
-              }
-            ]
-          },
-          "deliverables": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/DeliverableResult"
-              },
-              {
-                "description": "The deliverable checks against the overlay; null when the program lists none."
-              }
-            ]
-          },
-          "simulated": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SimulatedAction"
-            }
-          },
-          "wouldAsk": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WouldAsk"
-            }
-          },
-          "toolsCalled": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RehearsalFile"
-            },
-            "description": "Files the run produced (new or changed against the sample), from the overlay. The list endpoint leaves their content out."
-          },
-          "deleted": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "costUsd": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "id",
-          "programId",
-          "programVersion",
-          "programFingerprint",
-          "sessionId",
-          "testId",
-          "status",
-          "stop",
-          "error",
-          "sample",
-          "budgetUsd",
-          "startedAt",
-          "endedAt",
-          "report",
-          "deliverables",
-          "simulated",
-          "wouldAsk",
-          "toolsCalled",
-          "files",
-          "deleted",
-          "costUsd"
-        ],
-        "description": "A test run of a program on sample data: library writes went to a scratch overlay, external writes were simulated, decisions are recorded as \"would ask\"."
-      },
-      "RehearsalSample": {
-        "type": "object",
-        "properties": {
-          "copy": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 500
-            },
-            "maxItems": 50,
-            "description": "Library files or directories (`/library/data/`, `/library/data/**`) copied into the scratch overlay."
-          },
-          "files": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 500,
-                  "example": "/library/inputs/sample.md"
-                },
-                "content": {
-                  "type": "string",
-                  "maxLength": 500000
-                }
-              },
-              "required": [
-                "path",
-                "content"
-              ]
-            },
-            "maxItems": 20,
-            "description": "Text files the client attached: written into the overlay."
-          },
-          "task": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "title": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200
-              },
-              "brief": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "inputs": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 500
-                },
-                "maxItems": 50
-              }
-            },
-            "required": [
-              "title",
-              "brief",
-              "inputs"
-            ],
-            "description": "Worker programs: the sample work item the rehearsal works on (a draft; the real board is not touched)."
-          },
-          "reads": {
-            "type": "string",
-            "enum": [
-              "library",
-              "sample"
-            ],
-            "description": "`library`: reads see the real library under the overlay. `sample`: only the sample files (and the inputs of the sample task) are visible."
-          }
-        },
-        "required": [
-          "copy",
-          "files",
-          "task",
-          "reads"
-        ]
-      },
-      "SimulatedAction": {
-        "type": "object",
-        "properties": {
-          "tool": {
-            "type": "string"
-          },
-          "input": {},
-          "at": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "tool",
-          "at"
-        ],
-        "description": "A call of an external write tool that was not made: the model read `SIMULATED: would call <tool> with <input>`."
-      },
-      "WouldAsk": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "escalation",
-              "amendment",
-              "proposal",
-              "report"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "question": {
-            "type": "string"
-          },
-          "details": {
-            "type": "string"
-          },
-          "options": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "at": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "kind",
-          "title",
-          "question",
-          "at"
-        ],
-        "description": "A decision the run would have raised in the Decision Center (nothing was created)."
-      },
-      "RehearsalFile": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "size": {
-            "type": "integer"
-          },
-          "mediaType": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "text": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Text of a text file; null for binary or over the caps."
-          },
-          "base64": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "truncated": {
-            "type": "boolean",
-            "description": "The content is not stored (over the caps)."
-          }
-        },
-        "required": [
-          "path",
-          "size",
-          "mediaType",
-          "text",
-          "base64",
-          "truncated"
-        ]
-      },
-      "RehearsalStart": {
-        "type": "object",
-        "properties": {
-          "sample": {
-            "$ref": "#/components/schemas/RehearsalSampleInput"
-          },
-          "budgetUsd": {
-            "type": "number",
-            "exclusiveMinimum": 0,
-            "maximum": 5,
-            "description": "Spend cap of this rehearsal (default 0.5, at most 5). A separate ledger scope."
-          }
-        }
-      },
-      "RehearsalSampleInput": {
-        "type": "object",
-        "properties": {
-          "copy": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 500
-            },
-            "maxItems": 50,
-            "description": "Library files or directories (`/library/data/`, `/library/data/**`) copied into the scratch overlay."
-          },
-          "files": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 500,
-                  "example": "/library/inputs/sample.md"
-                },
-                "content": {
-                  "type": "string",
-                  "maxLength": 500000
-                }
-              },
-              "required": [
-                "path",
-                "content"
-              ]
-            },
-            "maxItems": 20,
-            "description": "Text files the client attached: written into the overlay."
-          },
-          "task": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "title": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 200
-              },
-              "brief": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "inputs": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 500
-                },
-                "maxItems": 50
-              }
-            },
-            "required": [
-              "title",
-              "brief",
-              "inputs"
-            ],
-            "description": "Worker programs: the sample work item the rehearsal works on (a draft; the real board is not touched)."
-          },
-          "reads": {
-            "type": "string",
-            "enum": [
-              "library",
-              "sample"
-            ],
-            "description": "`library`: reads see the real library under the overlay. `sample`: only the sample files (and the inputs of the sample task) are visible."
-          }
-        }
-      },
-      "RehearsalList": {
-        "type": "object",
-        "properties": {
-          "rehearsals": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Rehearsal"
-            }
-          }
-        },
-        "required": [
-          "rehearsals"
-        ]
-      },
-      "RehearsalMessages": {
-        "type": "object",
-        "properties": {
-          "messages": {
-            "type": "array",
-            "items": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/UiMessage"
-                },
-                {
-                  "description": "An AI SDK `UIMessage`. Stored messages carry `metadata.eharness` (turn id, stop reason, usage, pending approvals)."
-                }
-              ]
-            }
-          }
-        },
-        "required": [
-          "messages"
-        ]
-      },
-      "TestList": {
-        "type": "object",
-        "properties": {
-          "cases": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TestCaseView"
-            }
-          },
-          "summary": {
-            "$ref": "#/components/schemas/TestSummary"
-          }
-        },
-        "required": [
-          "cases",
-          "summary"
-        ]
-      },
-      "TestCaseView": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/TestCase"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "stale": {
-                "type": "boolean",
-                "description": "The last result is older than an edit that matters: run the test again."
-              }
-            },
-            "required": [
-              "stale"
-            ]
-          }
-        ]
-      },
-      "TestExpect": {
-        "type": "object",
-        "properties": {
-          "deliverablesPass": {
-            "type": "boolean",
-            "description": "Every deliverable of the program must pass (vacuous when it lists none)."
-          },
-          "mustNotCall": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 100
-            },
-            "maxItems": 50,
-            "description": "Tool names the run must not call; a trailing `*` is a prefix."
-          },
-          "reportStatus": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "done",
-              "partial",
-              "failed",
-              "needs_decision",
-              null
-            ],
-            "description": "The report must say this; null = any."
-          }
-        },
-        "required": [
-          "deliverablesPass",
-          "mustNotCall",
-          "reportStatus"
-        ]
-      },
-      "TestResult": {
-        "type": [
-          "object",
-          "null"
-        ],
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": [
-              "running",
-              "pass",
-              "fail",
-              "error"
-            ]
-          },
-          "rehearsalId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "programFingerprint": {
-            "type": "string",
-            "description": "The program as it was when this ran. An edit that changes what a run does (not pausing, the schedule or the budget) makes the result stale."
-          },
-          "failures": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "at": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "status",
-          "rehearsalId",
-          "programFingerprint",
-          "failures",
-          "at"
-        ]
-      },
-      "TestCase": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "programId": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "sample": {
-            "$ref": "#/components/schemas/RehearsalSample"
-          },
-          "expect": {
-            "$ref": "#/components/schemas/TestExpect"
-          },
-          "lastResult": {
-            "$ref": "#/components/schemas/TestResult"
-          },
-          "createdAt": {
-            "type": "integer"
-          },
-          "updatedAt": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "programId",
-          "name",
-          "sample",
-          "expect",
-          "lastResult",
-          "createdAt",
-          "updatedAt"
-        ]
-      },
-      "TestSummary": {
-        "type": "object",
-        "properties": {
-          "total": {
-            "type": "integer"
-          },
-          "passing": {
-            "type": "integer"
-          },
-          "failing": {
-            "type": "integer",
-            "description": "Failed or errored at the current program version."
-          },
-          "stale": {
-            "type": "integer",
-            "description": "Never run, or not run since the last edit of the program."
-          },
-          "running": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "total",
-          "passing",
-          "failing",
-          "stale",
-          "running"
-        ]
-      },
-      "TestCreate": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "rehearsalId": {
-            "type": "string",
-            "description": "Take the sample of this rehearsal; the case is judged against that run at once."
-          },
-          "sample": {
-            "$ref": "#/components/schemas/RehearsalSampleInput"
-          },
-          "expect": {
-            "type": "object",
-            "properties": {
-              "deliverablesPass": {
-                "type": "boolean",
-                "description": "Every deliverable of the program must pass (vacuous when it lists none)."
-              },
-              "mustNotCall": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 100
-                },
-                "maxItems": 50,
-                "description": "Tool names the run must not call; a trailing `*` is a prefix."
-              },
-              "reportStatus": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "enum": [
-                  "done",
-                  "partial",
-                  "failed",
-                  "needs_decision",
-                  null
-                ],
-                "description": "The report must say this; null = any."
-              }
-            }
-          }
-        },
-        "required": [
-          "name"
-        ]
-      },
-      "TestRunStarted": {
-        "type": "object",
-        "properties": {
-          "started": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "started"
-        ]
-      },
-      "TestRun": {
-        "type": "object",
-        "properties": {
-          "caseId": {
-            "type": "string",
-            "description": "One case; absent: all of them."
-          }
-        }
-      },
-      "TestPatch": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "sample": {
-            "$ref": "#/components/schemas/RehearsalSampleInput"
-          },
-          "expect": {
-            "type": "object",
-            "properties": {
-              "deliverablesPass": {
-                "type": "boolean",
-                "description": "Every deliverable of the program must pass (vacuous when it lists none)."
-              },
-              "mustNotCall": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 100
-                },
-                "maxItems": 50,
-                "description": "Tool names the run must not call; a trailing `*` is a prefix."
-              },
-              "reportStatus": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "enum": [
-                  "done",
-                  "partial",
-                  "failed",
-                  "needs_decision",
-                  null
-                ],
-                "description": "The report must say this; null = any."
-              }
-            }
-          }
-        }
       },
       "DecisionList": {
         "type": "object",
@@ -19813,7 +18961,7 @@
           "threads"
         ],
         "summary": "Discuss in chat",
-        "description": "Opens a NEW thread on the lead (or `agent`) seeded with the context of a briefing (or one of its items), an alert or a run: one context message, no model call. The client then asks what they want to know.",
+        "description": "Opens a NEW thread on the lead (or `agent`) seeded with the context of an alert or a run: one context message, no model call. The client then asks what they want to know.",
         "security": [
           {
             "Bearer": []
@@ -19883,209 +19031,13 @@
         }
       }
     },
-    "/briefings": {
-      "get": {
-        "tags": [
-          "briefings"
-        ],
-        "summary": "Briefings (the daily digest), newest day first",
-        "description": "The digest is a page, not a chat message: one entry per local day, built from data. A quiet day has none.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200
-            },
-            "required": false,
-            "name": "limit",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Briefings",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BriefingList"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/briefings/{id}": {
-      "get": {
-        "tags": [
-          "briefings"
-        ],
-        "summary": "A briefing",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "0198f0a2-0000-7000-8000-000000000000",
-              "description": "Agent id or slug."
-            },
-            "required": true,
-            "description": "Agent id or slug.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The briefing",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Briefing"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown briefing",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/briefings/{id}/seen": {
-      "post": {
-        "tags": [
-          "briefings"
-        ],
-        "summary": "Mark a briefing as seen (clears its bell notification)",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "0198f0a2-0000-7000-8000-000000000000",
-              "description": "Agent id or slug."
-            },
-            "required": true,
-            "description": "Agent id or slug.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The briefing",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Briefing"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown briefing",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/notifications": {
       "get": {
         "tags": [
-          "briefings"
+          "notifications"
         ],
-        "summary": "The bell: alerts and \"briefing ready\"",
-        "description": "Urgent heartbeat findings (one alert each) and one notification per briefing. Not the things that wait for a decision or an answer: those are `/decisions` and `/approvals`.",
+        "summary": "The bell: alerts and the daily digest",
+        "description": "Urgent heartbeat findings (one alert each) and one notification per day with the daily digest. Not the things that wait for a decision or an answer: those are `/decisions` and `/approvals`.",
         "security": [
           {
             "Bearer": []
@@ -20154,7 +19106,7 @@
     "/notifications/dismiss-all": {
       "post": {
         "tags": [
-          "briefings"
+          "notifications"
         ],
         "summary": "Dismiss every notification",
         "security": [
@@ -20199,7 +19151,7 @@
     "/notifications/{id}/dismiss": {
       "post": {
         "tags": [
-          "briefings"
+          "notifications"
         ],
         "summary": "Dismiss a notification",
         "security": [
@@ -21518,80 +20470,6 @@
           },
           "404": {
             "description": "Unknown agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Queue a task for an agent (the work queue)",
-        "description": "Assigns a task to an agent: it has an owner, a brief, inputs (library paths), a priority, an optional due date, optional `grants` (extra permissions for this task) and `hold` / `review` flags. It starts on its own (`status: queued` until the agent has a free slot, see `Agent.taskConcurrency`) and the agent works with its normal tools and permissions, as in chat. An agent with an active worker program leaves its queue to that program. Managers do the same with the `create_task` tool.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TaskCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Queued",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Task"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The agent is archived",
             "content": {
               "application/json": {
                 "schema": {
@@ -24796,6 +23674,63 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Download the workspace export now, with encrypted secrets",
+        "description": "The same zip as `GET /backups/export`, plus `secrets.enc.json`: every provider profile key and connection credential (and OAuth client credential), encrypted with AES-256-GCM under a key derived from the `passphrase` (PBKDF2-SHA256, 600 000 iterations, random salt and IV, versioned). `manifest.json` says secrets are included and how many, never their names or values. The passphrase travels in the body, is never stored or logged and cannot be recovered. Scheduled backups and safety backups never hold secrets.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The bytes, streamed"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`SECRETS_UNAVAILABLE`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/backups/imports": {
@@ -24872,7 +23807,7 @@
           "backups"
         ],
         "summary": "What an import would change",
-        "description": "Compares the zip with the workspace, entity by entity: `added`, `changed` (with a readable diff for text and the changed fields of JSON), `unchanged` (only counted), `only-live` (kept: an import never deletes unless a section is ticked for removal). Each item lists what applying it would grant (`authority`: permission mode, tool rules, connector enablement, program authority, directory roles). Connections and reminders are reference only. Nothing is written.",
+        "description": "Compares the zip with the workspace, entity by entity: `added`, `changed` (with a readable diff for text and the changed fields of JSON), `unchanged` (only counted), `only-live` (kept: an import never deletes unless a section is ticked for removal). Each item lists what applying it would grant (`authority`: permission mode, tool rules, connector enablement, program authority, directory roles). Connections and reminders are reference only. With `passphrase` the zip's encrypted secrets are listed by name (never their values); a wrong passphrase answers 400 `IMPORT_PASSPHRASE`. Nothing is written.",
         "security": [
           {
             "Bearer": []
@@ -24938,7 +23873,7 @@
           "backups"
         ],
         "summary": "Apply an import",
-        "description": "Applies the selected sections and items. A verified safety backup is taken first (`BACKUP_FAILED` and nothing applied when it fails) and a restore point is recorded. Ids are kept for matched entities (agent slug, program name per agent, library path, routine id then name, person id then name); new ones get new ids; references are remapped. Secrets are never imported. One failing item does not stop the rest (see `counts.failed`).",
+        "description": "Applies the selected sections and items. A verified safety backup is taken first (`BACKUP_FAILED` and nothing applied when it fails) and a restore point is recorded. Ids are kept for matched entities (agent slug, program name per agent, library path, routine id then name, person id then name); new ones get new ids; references are remapped. An item that exists here and differs is skipped unless `selection.overwrite` is true (an undo always overwrites). Secrets come back only from the encrypted `secrets.enc.json`, when `selection.sections` includes `secrets` and the `passphrase` is right (a wrong one answers 400 `IMPORT_PASSPHRASE` and nothing is applied). One failing item does not stop the rest (see `counts.failed`).",
         "security": [
           {
             "Bearer": []
@@ -29955,855 +28890,6 @@
         }
       }
     },
-    "/programs/{id}/rehearsals": {
-      "post": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Test run (rehearsal) of a program",
-        "description": "Runs the program as it is saved now on sample data, in a safe mode: its own session `rehearsal:<programId>:<ts>` (never a task: not in the run history, the board, the digest or the heartbeat); library writes go to a scratch overlay and the real library is never modified (reads see the real library unless the sample says `reads: sample`); tools of external connectors that write are simulated (`SIMULATED: would call <tool> with <input>`) and recorded; decisions it would raise are recorded as \"would ask\", none is created; a separate small budget cap. Send `{}` for the defaults. Returns when the run has started: poll `GET /rehearsals/{id}`.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Program id."
-            },
-            "required": true,
-            "description": "Program id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RehearsalStart"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created: the rehearsal is running",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Rehearsal"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown program",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "`REHEARSAL_BUSY` or archived agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Rehearsals of a program, newest first",
-        "description": "Without the content of the produced files (read one rehearsal for that).",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Program id."
-            },
-            "required": true,
-            "description": "Program id.",
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 30
-            },
-            "required": false,
-            "name": "limit",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Rehearsals",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RehearsalList"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown program",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/rehearsals/{id}": {
-      "get": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "A rehearsal with its result",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Rehearsal id."
-            },
-            "required": true,
-            "description": "Rehearsal id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The rehearsal",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Rehearsal"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown rehearsal",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Delete a finished rehearsal",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Rehearsal id."
-            },
-            "required": true,
-            "description": "Rehearsal id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The deleted rehearsal",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Rehearsal"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown rehearsal",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "`REHEARSAL_BUSY`: still running",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/rehearsals/{id}/file": {
-      "get": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Download a file the rehearsal produced",
-        "description": "The bytes with `Content-Disposition: attachment`. Files over the stored caps have no content (404).",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Rehearsal id."
-            },
-            "required": true,
-            "description": "Rehearsal id.",
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 500
-            },
-            "required": true,
-            "name": "path",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The file",
-            "content": {
-              "application/octet-stream": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown rehearsal or file, or the content was not stored",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/rehearsals/{id}/messages": {
-      "get": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "The chat of the rehearsal session (read only)",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Rehearsal id."
-            },
-            "required": true,
-            "description": "Rehearsal id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Messages, oldest first",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RehearsalMessages"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown rehearsal",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/programs/{id}/tests": {
-      "get": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Test cases of a program, with a summary",
-        "description": "The summary says how many pass, fail (at the current program version) or are stale (never run, or not run since the last edit). The web warns when a program with failing tests is activated; it is not a block.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Program id."
-            },
-            "required": true,
-            "description": "Program id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Test cases",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TestList"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown program",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Save a test case",
-        "description": "Sample inputs plus expectations (deliverables must pass, tools that must not be called, an expected report status). Give `rehearsalId` to save the sample of a rehearsal you just ran.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Program id."
-            },
-            "required": true,
-            "description": "Program id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TestCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TestCase"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown program or rehearsal",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Too many test cases",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/programs/{id}/tests/run": {
-      "post": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Run the test cases",
-        "description": "Re-runs all cases (or one with `caseId`) one after the other in the background, each as a rehearsal; poll `GET /programs/{id}/tests` for the results.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Program id."
-            },
-            "required": true,
-            "description": "Program id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TestRun"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Started",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TestRunStarted"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown program or case",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "`TESTS_BUSY`",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/program-tests/{id}": {
-      "patch": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Edit a test case",
-        "description": "Changing the sample or the expectations clears the last result.",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Test case id."
-            },
-            "required": true,
-            "description": "Test case id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TestPatch"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The case",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TestCase"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown test case",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "rehearsals"
-        ],
-        "summary": "Delete a test case",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Test case id."
-            },
-            "required": true,
-            "description": "Test case id.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The deleted case",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TestCase"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Unknown test case",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/decisions": {
       "get": {
         "tags": [
@@ -31498,7 +29584,7 @@
           "heartbeat"
         ],
         "summary": "Change the daily digest",
-        "description": "Once a day at `time` (default 18:00, in `timezone` or the team timezone) the Briefing page gets an entry (and the bell one notification) with what ran, what waits, what the heartbeat noticed and the cost. A quiet day adds nothing.",
+        "description": "Once a day at `time` (default 18:00, in `timezone` or the team timezone) the bell gets one notification with what ran, what waits, what the heartbeat noticed and the cost. A quiet day adds nothing.",
         "security": [
           {
             "Bearer": []

@@ -1,4 +1,4 @@
-// The Health page's view model (agent health findings). Pure.
+// The Needs attention page's view model: health findings, consistency findings and alarms in one list. Pure.
 import type { components } from '../api/schema';
 
 export type Finding = components['schemas']['HealthFinding'];
@@ -36,11 +36,6 @@ export const CONSISTENCY_LABEL: Record<string, string> = {
 };
 
 export const isConsistency = (f: Pick<Finding, 'kind'>): boolean => f.kind === 'consistency';
-
-/** Split the list: runtime problems first, the consistency checks as their own group. */
-export function splitConsistency(list: readonly Finding[]): { runtime: Finding[]; consistency: Finding[] } {
-	return { runtime: list.filter((f) => !isConsistency(f)), consistency: list.filter(isConsistency) };
-}
 
 /** "line 3 of status.md" for a memory finding, else null. */
 export function memoryWhere(f: Pick<Finding, 'consistency'>): string | null {
@@ -98,7 +93,38 @@ export function alarmAction(a: Pick<Alarm, 'refs'>): { href: string; label: stri
 	if (href === undefined) return undefined;
 	if (href.startsWith('/tasks/')) return { href, label: 'Open the run' };
 	if (href === '/connectors') return { href, label: 'Reconnect' };
-	if (href.startsWith('/routines')) return { href, label: 'Open routines' };
+	if (href.startsWith('/routines')) return { href, label: 'Open reminders' };
 	if (href.startsWith('/programs/')) return { href, label: 'Open the program' };
 	return { href, label: 'Open' };
+}
+
+/** How serious an alarm is, so it sorts among the findings (a failed run or a broken connection is high). */
+export const ALARM_SEVERITY: Record<Alarm['kind'], Severity> = {
+	'run-failed': 'high',
+	'run-stuck': 'high',
+	'routine-paused': 'medium',
+	'approval-expired': 'medium',
+	'connection-broken': 'high',
+	system: 'medium'
+};
+
+/** One row of the page: a finding (health or consistency) or an alarm, with one way to dismiss it. */
+export type AttentionItem =
+	| { type: 'finding'; key: string; severity: Severity; at: number; finding: Finding }
+	| { type: 'alarm'; key: string; severity: Severity; at: number; alarm: Alarm };
+
+/** Findings and alarms as one list: high severity first, then the most recent. */
+export function mergeAttention(findings: readonly Finding[], alarms: readonly Alarm[]): AttentionItem[] {
+	const items: AttentionItem[] = [
+		...findings.map((finding): AttentionItem => ({ type: 'finding', key: `f:${finding.fingerprint}`, severity: finding.severity, at: finding.lastSeen, finding })),
+		...alarms.map((alarm): AttentionItem => ({ type: 'alarm', key: `a:${alarm.id}`, severity: ALARM_SEVERITY[alarm.kind], at: alarm.createdAt, alarm }))
+	];
+	return items.sort((a, b) => RANK[a.severity] - RANK[b.severity] || b.at - a.at);
+}
+
+/** Open alarms count toward the severity totals of the filter menu. */
+export function attentionCounts(findings: readonly Finding[], alarms: readonly Alarm[]): Record<Severity, number> {
+	const out = severityCounts(findings);
+	for (const a of alarms) out[ALARM_SEVERITY[a.kind]]++;
+	return out;
 }

@@ -1,14 +1,13 @@
 // Main navigation of the app shell (icon rail on desktop, bottom bar on mobile). Pure.
 
-export type SectionId = 'agents' | 'tasks' | 'briefings' | 'decisions' | 'programs' | 'routines' | 'files' | 'artifacts' | 'channels' | 'people' | 'connectors' | 'browser' | 'logs' | 'health' | 'settings';
+export type SectionId = 'agents' | 'tasks' | 'decisions' | 'programs' | 'routines' | 'files' | 'artifacts' | 'channels' | 'people' | 'connectors' | 'browser' | 'logs' | 'attention' | 'settings';
 
 export const SECTIONS: { id: SectionId; href: string; label: string }[] = [
 	{ id: 'agents', href: '/', label: 'Agents' },
 	{ id: 'tasks', href: '/tasks', label: 'Tasks' },
-	{ id: 'briefings', href: '/briefings', label: 'Briefing' },
 	{ id: 'decisions', href: '/decisions', label: 'Decisions' },
 	{ id: 'programs', href: '/programs', label: 'Programs' },
-	{ id: 'routines', href: '/routines', label: 'Routines' },
+	{ id: 'routines', href: '/routines', label: 'Reminders' },
 	{ id: 'files', href: '/files', label: 'Files' },
 	{ id: 'artifacts', href: '/artifacts', label: 'Artifacts' },
 	{ id: 'channels', href: '/channels', label: 'Channels' },
@@ -16,12 +15,12 @@ export const SECTIONS: { id: SectionId; href: string; label: string }[] = [
 	{ id: 'connectors', href: '/connectors', label: 'Connectors' },
 	{ id: 'browser', href: '/browser', label: 'Browser' },
 	{ id: 'logs', href: '/logs', label: 'Logs' },
-	{ id: 'health', href: '/health', label: 'Health' },
+	{ id: 'attention', href: '/attention', label: 'Needs attention' },
 	{ id: 'settings', href: '/settings', label: 'Settings' }
 ];
 
 /** The agent's work: one rail item, the sections are a second column (a row on a phone). */
-export const WORK_SECTIONS = ['tasks', 'briefings', 'decisions', 'programs', 'routines'] as const satisfies readonly SectionId[];
+export const WORK_SECTIONS = ['tasks', 'decisions', 'programs', 'routines'] as const satisfies readonly SectionId[];
 
 export const isWorkSection = (id: SectionId): boolean => (WORK_SECTIONS as readonly SectionId[]).includes(id);
 

@@ -23,6 +23,7 @@ import {
   BackupCreatedSchema,
   BackupEntriesSchema,
   BackupListSchema,
+  ExportBodySchema,
   ImportBodySchema,
   ImportPreviewBodySchema,
   ImportPreviewSchema,
@@ -185,6 +186,22 @@ const exportRoute = createRoute({
   responses: downloadResponses,
 })
 
+const exportWithSecretsRoute = createRoute({
+  method: 'post',
+  path: '/backups/export',
+  tags: ['backups'],
+  summary: 'Download the workspace export now, with encrypted secrets',
+  description:
+    'The same zip as `GET /backups/export`, plus `secrets.enc.json`: every provider profile key and connection credential (and OAuth client credential), encrypted with AES-256-GCM under a key derived from the `passphrase` (PBKDF2-SHA256, 600 000 iterations, random salt and IV, versioned). `manifest.json` says secrets are included and how many, never their names or values. The passphrase travels in the body, is never stored or logged and cannot be recovered. Scheduled backups and safety backups never hold secrets.',
+  security,
+  request: { body: { required: true, content: json(ExportBodySchema) } },
+  responses: {
+    200: { description: 'The bytes, streamed' },
+    409: jsonError('`SECRETS_UNAVAILABLE`'),
+    ...errorResponses,
+  },
+})
+
 const uploadRoute = createRoute({
   method: 'post',
   path: '/backups/imports',
@@ -207,7 +224,7 @@ const importPreviewRoute = createRoute({
   tags: ['backups'],
   summary: 'What an import would change',
   description:
-    'Compares the zip with the workspace, entity by entity: `added`, `changed` (with a readable diff for text and the changed fields of JSON), `unchanged` (only counted), `only-live` (kept: an import never deletes unless a section is ticked for removal). Each item lists what applying it would grant (`authority`: permission mode, tool rules, connector enablement, program authority, directory roles). Connections and reminders are reference only. Nothing is written.',
+    "Compares the zip with the workspace, entity by entity: `added`, `changed` (with a readable diff for text and the changed fields of JSON), `unchanged` (only counted), `only-live` (kept: an import never deletes unless a section is ticked for removal). Each item lists what applying it would grant (`authority`: permission mode, tool rules, connector enablement, program authority, directory roles). Connections and reminders are reference only. With `passphrase` the zip's encrypted secrets are listed by name (never their values); a wrong passphrase answers 400 `IMPORT_PASSPHRASE`. Nothing is written.",
   security,
   request: { body: { required: true, content: json(ImportPreviewBodySchema) } },
   responses: {
@@ -223,7 +240,7 @@ const importRoute = createRoute({
   tags: ['backups'],
   summary: 'Apply an import',
   description:
-    'Applies the selected sections and items. A verified safety backup is taken first (`BACKUP_FAILED` and nothing applied when it fails) and a restore point is recorded. Ids are kept for matched entities (agent slug, program name per agent, library path, routine id then name, person id then name); new ones get new ids; references are remapped. Secrets are never imported. One failing item does not stop the rest (see `counts.failed`).',
+    'Applies the selected sections and items. A verified safety backup is taken first (`BACKUP_FAILED` and nothing applied when it fails) and a restore point is recorded. Ids are kept for matched entities (agent slug, program name per agent, library path, routine id then name, person id then name); new ones get new ids; references are remapped. An item that exists here and differs is skipped unless `selection.overwrite` is true (an undo always overwrites). Secrets come back only from the encrypted `secrets.enc.json`, when `selection.sections` includes `secrets` and the `passphrase` is right (a wrong one answers 400 `IMPORT_PASSPHRASE` and nothing is applied). One failing item does not stop the rest (see `counts.failed`).',
   security,
   request: { body: { required: true, content: json(ImportBodySchema) } },
   responses: {
@@ -295,6 +312,9 @@ export function backupRoutes(deps: Deps): OpenAPIHono {
       return c.json({ deleted: true as const }, 200)
     })
     .openapi(exportRoute, async () => raw(attachment(await exportWorkspace(deps))))
+    .openapi(exportWithSecretsRoute, async (c) =>
+      raw(attachment(await exportWorkspace(deps, { passphrase: c.req.valid('json').passphrase }))),
+    )
     .openapi(uploadRoute, async (c) =>
       c.json(
         await stageImport(
@@ -306,7 +326,12 @@ export function backupRoutes(deps: Deps): OpenAPIHono {
       ),
     )
     .openapi(importPreviewRoute, async (c) =>
-      c.json(await previewImport(deps, c.req.valid('json').source), 200),
+      c.json(
+        await previewImport(deps, c.req.valid('json').source, {
+          passphrase: c.req.valid('json').passphrase,
+        }),
+        200,
+      ),
     )
     .openapi(importRoute, async (c) => {
       const body = c.req.valid('json')
@@ -314,6 +339,7 @@ export function backupRoutes(deps: Deps): OpenAPIHono {
         await applyImport(deps, body.source, body.selection, {
           by: 'web',
           undoOf: body.undoOf,
+          passphrase: body.passphrase,
         }),
         200,
       )

@@ -16,6 +16,7 @@ import {
   entryOfFile,
   IMPORT_LIMITS,
   MANIFEST_NOTICE,
+  MANIFEST_NOTICE_WITH_SECRETS,
   type ManifestFile,
   parseManifest,
   TOOL_MEDIA_PREFIX,
@@ -24,6 +25,7 @@ import {
   WORKSPACE_FORMAT_VERSION,
   type WorkspaceManifest,
 } from '../../domain/workspace-export.ts'
+import { SECRETS_FILE, secretsHeader } from '../../domain/workspace-secrets.ts'
 import { zipFileWriter } from './zip-file.ts'
 import { readZip, ZipError } from './zip-reader.ts'
 
@@ -64,6 +66,7 @@ export function writeWorkspaceZip(
         .map((a) => [a.id, a.slug]),
     )
     const files: ManifestFile[] = []
+    let secrets: WorkspaceManifest['secrets'] = { included: false, count: 0 }
     const counts: Record<string, number> = {}
     const bump = (key: string): void => {
       counts[key] = (counts[key] ?? 0) + 1
@@ -80,6 +83,10 @@ export function writeWorkspaceZip(
       else if (kind === 'reminder') bump('reminders')
       else if (kind === 'connection') bump('connections')
       else if (kind === 'person') bump('people')
+      else if (e.path === SECRETS_FILE) {
+        secrets = { included: true, count: secretsHeader(e.bytes).count }
+        counts.secrets = secrets.count
+      }
     }
     let skipped = 0
     let libraryFiles = 0
@@ -119,7 +126,8 @@ export function writeWorkspaceZip(
       counts,
       files,
       excluded: skipped > 0 ? [{ prefix: TOOL_MEDIA_PREFIX, files: skipped }] : [],
-      notice: MANIFEST_NOTICE,
+      secrets,
+      notice: secrets.included ? MANIFEST_NOTICE_WITH_SECRETS : MANIFEST_NOTICE,
     }
     writer.add('manifest.json', bytesOf(canonicalJson(manifest)), options.now)
     writer.finish()
@@ -177,6 +185,20 @@ export async function parseWorkspaceZip(
   }
   for (const path of listed.keys()) {
     if (!all.has(path)) throw refused(`${path} is listed in the manifest but missing from the zip`)
+  }
+  const secretsFile = all.get(SECRETS_FILE)
+  if (secretsFile !== undefined) {
+    let count: number
+    try {
+      count = secretsHeader(secretsFile).count
+    } catch (error) {
+      throw refused(error instanceof Error ? error.message : 'the secrets file is not readable')
+    }
+    if (!manifest.secrets.included || manifest.secrets.count !== count) {
+      throw refused('the secrets file does not match what the manifest says about it (tampered?)')
+    }
+  } else if (manifest.secrets.included) {
+    throw refused('the manifest says secrets are included but secrets.enc.json is missing')
   }
   return { manifest, entries: all }
 }

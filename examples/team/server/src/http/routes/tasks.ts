@@ -15,7 +15,6 @@ import {
 import {
   acceptTask,
   cancelQueuedTask,
-  createTask,
   sendBackHint,
   sendBackTask,
   startTaskNow,
@@ -28,7 +27,6 @@ import {
   AgentSessionsSchema,
   ApprovalListSchema,
   ReadMarkerSchema,
-  TaskCreateSchema,
   TaskDetailSchema,
   TaskIdParam,
   TaskListSchema,
@@ -92,23 +90,6 @@ const taskRoute = createRoute({
   responses: {
     200: { description: 'The task', content: json(TaskDetailSchema) },
     404: jsonError('Unknown task'),
-    ...errorResponses,
-  },
-})
-
-const createTaskRoute = createRoute({
-  method: 'post',
-  path: '/tasks',
-  tags: ['tasks'],
-  summary: 'Queue a task for an agent (the work queue)',
-  description:
-    'Assigns a task to an agent: it has an owner, a brief, inputs (library paths), a priority, an optional due date, optional `grants` (extra permissions for this task) and `hold` / `review` flags. It starts on its own (`status: queued` until the agent has a free slot, see `Agent.taskConcurrency`) and the agent works with its normal tools and permissions, as in chat. An agent with an active worker program leaves its queue to that program. Managers do the same with the `create_task` tool.',
-  security,
-  request: { body: { required: true, content: json(TaskCreateSchema) } },
-  responses: {
-    201: { description: 'Queued', content: json(TaskSchema) },
-    404: jsonError('Unknown agent'),
-    409: jsonError('The agent is archived'),
     ...errorResponses,
   },
 })
@@ -347,9 +328,6 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
       const [task] = withColumns(deps, [detail.task])
       return c.json({ ...detail, task } as never, 200)
     })
-    .openapi(createTaskRoute, (c) =>
-      c.json(createTask(deps, c.req.valid('json') as never) as never, 201),
-    )
     .openapi(patchTaskRoute, (c) =>
       c.json(
         updateQueuedTask(deps, c.req.valid('param').id, c.req.valid('json') as never) as never,

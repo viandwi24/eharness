@@ -1,7 +1,7 @@
 /**
  * Alarms (docs/plans/P54-alarms.md): scheduled or background work that failed must never stay
  * silent. An alarm is one stored incident with a plain text (what failed, why, the one next step),
- * shown on the Health page until acknowledged and pushed to the owner. Everything here is
+ * shown on the Needs attention page until acknowledged and pushed to the owner. Everything here is
  * deterministic and pure; no model writes an alarm.
  */
 
@@ -102,7 +102,7 @@ export function routinePausedText(input: {
   // failures 0: it cannot run at all (a configuration problem), so no run failed
   if (input.failures === 0)
     return `"${input.name}" cannot run, so its schedule is paused. Why: ${oneLine(input.reason, 300)} Next: fix the cause, then resume it.`
-  return `Routine "${input.name}" paused itself after ${input.failures} failed runs in a row. Why: ${oneLine(input.reason, 300)} Next: fix the cause, then resume it on the Routines page.`
+  return `Routine "${input.name}" paused itself after ${input.failures} failed runs in a row. Why: ${oneLine(input.reason, 300)} Next: fix the cause, then resume it (a program on the Programs page).`
 }
 
 export function approvalExpiredText(input: { tool: string; where: string; agent: string }): string {
@@ -157,7 +157,7 @@ export function pushText(alarms: readonly Alarm[], link: (ref: string) => string
   if (alarms.length === 1) return `Needs attention: ${first.text}${open(first)}`
   const lines = alarms.slice(0, ALARM_BATCH_LINES).map((a) => `- ${a.text}${open(a)}`)
   const more = alarms.length - lines.length
-  return `${alarms.length} things need attention:\n${lines.join('\n')}${more > 0 ? `\n...and ${more} more on the Health page.` : ''}`
+  return `${alarms.length} things need attention:\n${lines.join('\n')}${more > 0 ? `\n...and ${more} more on the Needs attention page.` : ''}`
 }
 
 // --- stuck runs ----------------------------------------------------------------------------------

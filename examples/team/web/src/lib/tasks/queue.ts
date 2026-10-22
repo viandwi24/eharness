@@ -1,8 +1,6 @@
-// The work queue's forms and labels. Pure.
+// Labels of queued tasks (hand-overs and worker tasks). Pure.
 import type { components } from '../api/schema';
-import { splitLines } from '../programs/form';
 
-export type TaskCreate = components['schemas']['TaskCreate'];
 export type Priority = components['schemas']['TaskPriority'];
 
 export const PRIORITIES: { value: Priority; label: string }[] = [
@@ -11,90 +9,6 @@ export const PRIORITIES: { value: Priority; label: string }[] = [
 	{ value: 'high', label: 'High' },
 	{ value: 'urgent', label: 'Urgent' }
 ];
-
-export type TaskForm = {
-	agentId: string;
-	title: string;
-	brief: string;
-	/** One library path per line. */
-	inputs: string;
-	priority: Priority;
-	/** `YYYY-MM-DD` from a date input; empty = no due date. */
-	due: string;
-	/** Do not start on its own: the client starts it later. */
-	hold: boolean;
-	/** The finished work waits in Review (default on for what the client makes). */
-	review: boolean;
-	/** Extra permissions for this task, one per line (optional). */
-	grantTools: string;
-	grantRead: string;
-	grantWrite: string;
-};
-
-export const emptyTaskForm = (agentId = ''): TaskForm => ({
-	agentId,
-	title: '',
-	brief: '',
-	inputs: '',
-	priority: 'normal',
-	due: '',
-	hold: false,
-	review: true,
-	grantTools: '',
-	grantRead: '',
-	grantWrite: ''
-});
-
-/** A date input value as the end of that day in UTC milliseconds (`null` when empty or invalid). */
-export function dueFromInput(value: string): number | null {
-	if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-	const at = Date.parse(`${value}T23:59:59Z`);
-	return Number.isNaN(at) ? null : at;
-}
-
-export const dueToInput = (at: number | null): string => (at === null ? '' : new Date(at).toISOString().slice(0, 10));
-
-/** Problems the form can find without the server (field -> message). */
-export function validateTaskForm(f: TaskForm): Record<string, string> {
-	const errors: Record<string, string> = {};
-	if (f.agentId === '') errors.agentId = 'Choose who does the task.';
-	if (f.title.trim() === '') errors.title = 'Give the task a title.';
-	const bad = splitLines(f.inputs).find((p) => !p.startsWith('/') || p.includes('..'));
-	if (bad !== undefined) errors.inputs = `Inputs are library paths starting with /, like /library/notes/inputs.md (not "${bad}").`;
-	if (f.due.trim() !== '' && dueFromInput(f.due) === null) errors.due = 'Pick a date.';
-	for (const [field, text] of [['grantRead', f.grantRead], ['grantWrite', f.grantWrite]] as const) {
-		const path = splitLines(text).find((p) => !p.startsWith('/'));
-		if (path !== undefined) errors[field] = `Paths start with /, like /library/reports/** (not "${path}").`;
-	}
-	return errors;
-}
-
-const LOCAL_FIELDS = ['agentId', 'title', 'inputs', 'due', 'grantRead', 'grantWrite'];
-
-/** The shown errors minus the fields that are valid now (an error clears as soon as its field is fixed); server errors stay. */
-export function clearFixedErrors(errors: Record<string, string>, f: TaskForm): Record<string, string> {
-	const now = validateTaskForm(f);
-	const out: Record<string, string> = {};
-	for (const [k, v] of Object.entries(errors)) if (now[k] !== undefined || !LOCAL_FIELDS.includes(k)) out[k] = v;
-	return out;
-}
-
-export function bodyFromTaskForm(f: TaskForm): TaskCreate {
-	const grants = { tools: splitLines(f.grantTools), read: splitLines(f.grantRead), write: splitLines(f.grantWrite) };
-	const granted = grants.tools.length + grants.read.length + grants.write.length > 0;
-	return {
-		agentId: f.agentId,
-		title: f.title.trim(),
-		...(f.brief.trim() === '' ? {} : { brief: f.brief.trim() }),
-		inputs: splitLines(f.inputs),
-		priority: f.priority,
-		dueAt: dueFromInput(f.due),
-		// only what differs from the defaults is sent: it starts on its own and goes to Review
-		...(f.hold ? { hold: true } : {}),
-		...(f.review ? {} : { review: false }),
-		...(granted ? { grants } : {})
-	};
-}
 
 /** "due Nov 15" for a card; red-flag text when it is past. */
 export function dueLabel(dueAt: number | null, now = Date.now()): { text: string; late: boolean } | null {

@@ -339,7 +339,7 @@
 				<div class="flex items-start justify-between gap-3">
 					<div>
 						<div class="font-medium">Daily digest</div>
-						<p class="text-xs text-muted-foreground">One entry on the Briefing page (and one notification in the bell): what ran, what waits for you, what the heartbeat noticed and what it cost. A quiet day adds nothing.</p>
+						<p class="text-xs text-muted-foreground">One notification a day in the bell: what ran, what waits for you, what the heartbeat noticed and what it cost. A quiet day adds nothing.</p>
 					</div>
 					<Switch bind:checked={digest.enabled} aria-label="Daily digest on" />
 				</div>

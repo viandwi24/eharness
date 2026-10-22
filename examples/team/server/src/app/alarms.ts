@@ -88,7 +88,7 @@ export function raiseSystemAlarm(deps: Deps, step: string, error: unknown): Alar
       key: `system:${step}:${day}`,
       subject: `system:${step}`,
       text: systemText({ step, error: message }),
-      refs: ['/health'],
+      refs: ['/attention'],
     })
   } catch (alarmError) {
     // the alarm itself cannot be stored (the database is the problem): the log line above is all
@@ -282,7 +282,7 @@ async function raiseBrokenConnections(deps: Deps, now: number): Promise<number> 
     since.set(c.id, first)
     const grace = c.status === 'needs-auth' ? CONNECTION_AUTH_GRACE_MS : CONNECTION_GRACE_MS
     if (now - first < grace) continue
-    // it broke, healed and broke again today: the earlier alarm said it; the Health page shows it
+    // it broke, healed and broke again today: the earlier alarm said it; the Needs attention page shows it
     if (recent.some((a) => a.subject === `connection:${c.id}`)) continue
     const alarm = raiseConnectionBroken(deps, {
       id: c.id,
@@ -410,7 +410,7 @@ export function deliverAlarms(
           key: `alarm:${a.id}`,
           title: bellTitle(a),
           body: a.text,
-          link: a.refs[0] ?? '/health',
+          link: a.refs[0] ?? '/attention',
           agentId: a.agentId,
           at: now,
         })

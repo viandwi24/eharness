@@ -11,9 +11,7 @@
 	import AppRail from '#lib/components/app/AppRail.svelte';
 	import WorkNavPanel from '#lib/components/app/WorkNavPanel.svelte';
 	import { subSidebarOf } from '#lib/nav/sections.js';
-	import NewTaskDialog from '#lib/components/app/NewTaskDialog.svelte';
 	import ProgramDialog from '#lib/components/app/ProgramDialog.svelte';
-	import RoutineDialog from '#lib/components/app/RoutineDialog.svelte';
 	import ReconnectingBar from '#lib/components/app/ReconnectingBar.svelte';
 	import TaskDrawer from '#lib/components/app/TaskDrawer.svelte';
 	import { startLive } from '#lib/stores/live.svelte.js';
@@ -109,8 +107,6 @@
 	<ReconnectingBar />
 	<TaskDrawer />
 	<AgentDialog />
-	<RoutineDialog />
 	<ProgramDialog />
-	<NewTaskDialog />
 	<Toaster />
 {/if}

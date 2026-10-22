@@ -1,7 +1,7 @@
-/** Notifications (the bell) and briefings (the digest page), plain SQL on the shared connection. */
+/** Notifications (the bell, the daily digest included), plain SQL on the shared connection. */
 import type { Database } from 'bun:sqlite'
-import type { BriefingStore, NotificationStore } from '../../app/ports.ts'
-import type { Briefing, BriefingItem, Notification } from '../../domain/briefings.ts'
+import type { NotificationStore } from '../../app/ports.ts'
+import type { Notification } from '../../domain/briefings.ts'
 
 interface NotificationRow {
   id: string
@@ -80,55 +80,6 @@ export function sqliteNotificationStore(sqlite: Database): NotificationStore {
     byKey: (key) => {
       const r = byKey.get(key)
       return r === null ? undefined : toNotification(r)
-    },
-  }
-}
-
-interface BriefingRow {
-  id: string
-  day: string
-  title: string
-  body: string
-  items: string
-  created_at: number
-}
-
-const toBriefing = (r: BriefingRow): Briefing => {
-  let items: BriefingItem[] = []
-  try {
-    const parsed: unknown = JSON.parse(r.items)
-    if (Array.isArray(parsed)) items = parsed as BriefingItem[]
-  } catch {
-    items = []
-  }
-  return { id: r.id, day: r.day, title: r.title, body: r.body, items, createdAt: r.created_at }
-}
-
-export function sqliteBriefingStore(sqlite: Database): BriefingStore {
-  const byId = sqlite.query<BriefingRow, [string]>('SELECT * FROM briefings WHERE id = ?')
-  const byDay = sqlite.query<BriefingRow, [string]>('SELECT * FROM briefings WHERE day = ?')
-  return {
-    get: (id) => {
-      const r = byId.get(id)
-      return r === null ? undefined : toBriefing(r)
-    },
-    getByDay: (day) => {
-      const r = byDay.get(day)
-      return r === null ? undefined : toBriefing(r)
-    },
-    list: (limit) =>
-      sqlite
-        .query<BriefingRow, [number]>('SELECT * FROM briefings ORDER BY day DESC LIMIT ?')
-        .all(limit)
-        .map(toBriefing),
-    insert(b) {
-      const res = sqlite
-        .query(
-          `INSERT INTO briefings (id, day, title, body, items, created_at) VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT (day) DO NOTHING`,
-        )
-        .run(b.id, b.day, b.title, b.body, JSON.stringify(b.items), b.createdAt)
-      return res.changes === 0 ? undefined : toBriefing(byId.get(b.id) as BriefingRow)
     },
   }
 }

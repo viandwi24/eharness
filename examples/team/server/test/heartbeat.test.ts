@@ -590,7 +590,7 @@ describe('domain', () => {
     expect(sick.empty).toBe(false)
     expect(sick.text).toContain('### Agent health')
     expect(sick.text).toContain('2 open finding(s) on /health.')
-    expect(sick.items.at(-1)).toMatchObject({ kind: 'noticed', link: '/health' })
+    expect(sick.items.at(-1)).toMatchObject({ kind: 'noticed', link: '/attention' })
   })
 })
 
@@ -1035,16 +1035,12 @@ describe('the daily digest', () => {
 
     expect(await i.server.heartbeats.digest({ slot: Date.now() + 1000 })).toBe('sent')
     expect(await dmEvents(i)).toEqual([]) // the digest is a page, not a chat message
-    const page = (await (await i.app.request('/briefings')).json()) as {
-      briefings: Array<{ id: string; body: string; items: Array<{ kind: string }> }>
+    const bell = (await (await i.app.request('/notifications')).json()) as {
+      notifications: Array<{ kind: string; body: string }>
     }
-    expect(page.briefings).toHaveLength(1)
-    expect(page.briefings[0]?.items.map((x) => x.kind)).toEqual(
-      expect.arrayContaining(['run', 'decision', 'noticed']),
-    )
-    const bell = await notifications(i)
-    expect(bell.filter((n) => n.kind === 'briefing')).toHaveLength(1)
-    const text = page.briefings[0]?.body ?? ''
+    const digests = bell.notifications.filter((n) => n.kind === 'briefing')
+    expect(digests).toHaveLength(1)
+    const text = digests[0]?.body ?? ''
     expect(text).toContain('**Video scripts**: done — Wrote 3 scripts')
     expect(text).toContain('/library/reports/a.md')
     expect(text).toContain('Approve the audit plan')
@@ -1055,13 +1051,15 @@ describe('the daily digest', () => {
     // the buffer is consumed, and a recovered fire the same day sends nothing twice
     expect(digestBuffer(i.server.deps).buffer).toEqual([])
     expect(await i.server.heartbeats.digest({ slot: Date.now() + 2000 })).toBe('duplicate')
-    expect((await (await i.app.request('/briefings')).json()).briefings).toHaveLength(1)
+    const again = (await (await i.app.request('/notifications')).json()) as {
+      notifications: Array<{ kind: string }>
+    }
+    expect(again.notifications.filter((n) => n.kind === 'briefing')).toHaveLength(1)
   })
 
   test('a quiet day sends nothing; turning it off sends nothing', async () => {
     const i = instance({})
     expect(await i.server.heartbeats.digest({ slot: ++slot })).toBe('empty')
-    expect((await (await i.app.request('/briefings')).json()).briefings).toEqual([])
     expect(await notifications(i)).toEqual([])
     await i.app.request('/digest', json('PATCH', { enabled: false }))
     expect(await i.server.heartbeats.digest({ slot: ++slot })).toBe('off')

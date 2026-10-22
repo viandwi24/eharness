@@ -7,7 +7,7 @@
 	import type { Approval, Notification } from '#lib/api/client.js';
 	import { api } from '#lib/api/index.js';
 	import { toast } from 'svelte-sonner';
-	import { notificationLink } from '#lib/briefings/model.js';
+	import { notificationLink } from '#lib/notifications-model.js';
 	import { threadsStore } from '#lib/stores/threads.svelte.js';
 	import { chatHref, threadHref } from '#lib/threads/model.js';
 	import { decisionText } from '#lib/decisions/model.js';
@@ -46,7 +46,7 @@
 			toast.error(e instanceof Error ? e.message : 'Could not dismiss');
 		}
 	}
-	/** An alert opens its link; a briefing opens the Briefing page (which clears it). */
+	/** An alert opens its link; the daily digest has none (its text is in the bell). */
 	function openNotification(n: Notification): void {
 		open = false;
 		const link = notificationLink(n);
@@ -97,7 +97,7 @@
 			<div class="flex flex-col gap-1 rounded-md px-2 py-2 text-sm hover:bg-accent" data-testid="notification-{n.kind}">
 				<button type="button" class="text-left focus-visible:outline-2 focus-visible:outline-ring" onclick={() => openNotification(n)}>
 					<span class="font-medium">{n.title}</span>
-					{#if n.body}<span class="block text-muted-foreground">{n.body}</span>{/if}
+					{#if n.body}<span class="block text-muted-foreground {n.kind === 'briefing' ? 'max-h-48 overflow-y-auto whitespace-pre-wrap' : ''}">{n.body}</span>{/if}
 				</button>
 				<div class="flex gap-1">
 					{#if n.kind === 'alert'}<Button size="xs" variant="outline" onclick={() => void discuss(n)}>Discuss in chat</Button>{/if}

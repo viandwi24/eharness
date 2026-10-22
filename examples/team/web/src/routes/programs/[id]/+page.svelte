@@ -1,37 +1,27 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import FlaskIcon from 'phosphor-svelte/lib/Flask';
 	import PauseIcon from 'phosphor-svelte/lib/Pause';
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimple';
 	import PlayIcon from 'phosphor-svelte/lib/Play';
 	import { onMount } from 'svelte';
 	import { api } from '#lib/api/index.js';
-	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
 	import ProgramMemory from '#lib/components/app/ProgramMemory.svelte';
-	import ProgramRehearsals from '#lib/components/app/ProgramRehearsals.svelte';
-	import ProgramTests from '#lib/components/app/ProgramTests.svelte';
-	import RehearsalDialog from '#lib/components/app/RehearsalDialog.svelte';
 	import Surface from '#lib/components/app/Surface.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
-	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { authoritySummary, budgetSummary, programBadge, type Program } from '#lib/programs/form.js';
-	import { activationText, programAction } from '#lib/programs/actions.js';
+	import { programAction } from '#lib/programs/actions.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openEditProgram } from '#lib/stores/dialogs.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 
 	let program = $state<Program | null>(null);
 	let error = $state('');
-	let tab = $state('tests');
-	let testRun = $state(false);
-	let warning = $state<string | null>(null);
-	let confirmActivate = $state(false);
 	let seq = 0;
 
 	const id = $derived(page.params.id ?? '');
@@ -52,33 +42,18 @@
 
 	onMount(() => {
 		void agentsStore.load();
-		// the "Test run" button of the editor lands here with ?test=1
-		if (page.url.searchParams.get('test') === '1') testRun = true;
 	});
 	$effect(() => {
 		void id;
 		void live.state.revs.programs;
 		void load();
 	});
-
-	async function resume(): Promise<void> {
-		if (!program) return;
-		// failing test cases are a warning, never a block
-		const text = await activationText(program);
-		if (text !== null) {
-			warning = text;
-			confirmActivate = true;
-			return;
-		}
-		await programAction(program, 'resume');
-	}
 </script>
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-	<PageHeader title={program?.name ?? 'Program'} description="Test runs and test cases of this program." breadcrumb={[{ label: 'Programs', href: '/programs' }]} backHref="/programs">
+	<PageHeader title={program?.name ?? 'Program'} description="The standing order, its notes and its runs." breadcrumb={[{ label: 'Programs', href: '/programs' }]} backHref="/programs">
 		{#if program}
 			<Button size="sm" variant="outline" onclick={() => openEditProgram(program?.id ?? '')}><PencilSimpleIcon class="size-4" /> Edit</Button>
-			<Button size="sm" onclick={() => (testRun = true)}><FlaskIcon class="size-4" /> Test run</Button>
 		{/if}
 	</PageHeader>
 
@@ -100,7 +75,7 @@
 					{#if program.status === 'active'}
 						<Button size="sm" variant="ghost" onclick={() => program && void programAction(program, 'pause')}><PauseIcon class="size-4" /> Pause</Button>
 					{:else}
-						<Button size="sm" variant="ghost" onclick={() => void resume()}><PlayIcon class="size-4" /> Activate</Button>
+						<Button size="sm" variant="ghost" onclick={() => program && void programAction(program, 'resume')}><PlayIcon class="size-4" /> Activate</Button>
 					{/if}
 				</div>
 				<p class="line-clamp-3 whitespace-pre-wrap">{program.brief}</p>
@@ -116,29 +91,6 @@
 			</Surface>
 
 			<ProgramMemory {program} />
-
-			<Tabs.Root bind:value={tab} class="flex flex-col gap-3">
-				<Tabs.List variant="line" class="h-10 shrink-0 gap-4 border-b border-border">
-					<Tabs.Trigger value="tests">Tests</Tabs.Trigger>
-					<Tabs.Trigger value="rehearsals">Test runs</Tabs.Trigger>
-				</Tabs.List>
-				<Tabs.Content value="tests"><ProgramTests {program} /></Tabs.Content>
-				<Tabs.Content value="rehearsals"><ProgramRehearsals {program} /></Tabs.Content>
-			</Tabs.Root>
 		{/if}
 	</PageBody>
 </div>
-
-{#if program}
-	<RehearsalDialog {program} bind:open={testRun} />
-	<ConfirmDialog
-		bind:open={confirmActivate}
-		title="Activate {program.name}?"
-		description={warning ?? ''}
-		confirmLabel="Activate anyway"
-		confirmVariant="default"
-		onConfirm={async () => {
-			if (program) await programAction(program, 'resume');
-		}}
-	/>
-{/if}

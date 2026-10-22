@@ -19,8 +19,9 @@ export type ThreadSource = (typeof THREAD_SOURCES)[number]
 
 /** What a thread was opened to discuss (`Discuss in chat`); shown as a chip, kept as context. */
 export interface ThreadSeed {
+  /** `briefing` only on threads opened before the Briefing page was removed (P55). */
   kind: 'briefing' | 'alert' | 'run'
-  /** Id of the briefing, notification or task it came from. */
+  /** Id of the notification or task it came from. */
   ref: string
   title: string
 }

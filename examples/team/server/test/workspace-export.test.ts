@@ -2,7 +2,8 @@
  * The workspace export (one readable zip) and its import: every entity type in the zip, a round trip
  * export -> wipe -> import, the preview (counts, readable diffs, authority), unticking, never
  * deleting without the tick, restore points and undo, corrupt/tampered/zip-slip/oversize zips
- * refused, secrets absent.
+ * refused, secrets absent unless the export has a passphrase (then encrypted, restored under the
+ * same skip/overwrite policy), and no overwrite unless the owner chooses it.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test'
@@ -34,6 +35,14 @@ import {
   type ImportPreview,
   textOf,
 } from '../src/domain/workspace-export.ts'
+import {
+  openSecrets,
+  PASSPHRASE_MIN,
+  SECRETS_FILE,
+  type SecretRecord,
+  sealSecrets,
+  secretsHeader,
+} from '../src/domain/workspace-secrets.ts'
 import { zip } from '../src/infra/artifacts/zip.ts'
 import { sha256 } from '../src/infra/backup/workspace-zip.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
@@ -52,14 +61,14 @@ afterEach(async () => {
 
 const SECRET_KEY = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64')
 
-function instance(): Server {
+function instance(secretKey = SECRET_KEY): Server {
   const dir = mkdtempSync(join(tmpdir(), 'team-workspace-'))
   dirs.push(dir)
   const server = compose({
     dbFile: join(dir, 'team.db'),
     instanceId: 'workspace-test',
     models: scriptedModelConfig(scriptedModel([]) as never),
-    env: { TEAM_SECRET_KEY: SECRET_KEY, TEAM_ALLOW_PRIVATE_MCP: '1' },
+    env: { TEAM_SECRET_KEY: secretKey, TEAM_ALLOW_PRIVATE_MCP: '1' },
     tuning: { streams: { flushMs: 5, pollMs: 20 }, inbox: { pollMs: 30 }, abortPollMs: 40 },
     eventsPollMs: 30,
     reconcile: { onBoot: false, everyMs: 0 },
@@ -387,7 +396,14 @@ describe('round trip', () => {
 
     const preview = await previewImport(deps, { backupId: backup.id })
     expect(preview.items.length).toBeGreaterThan(5)
-    const result = await applyImport(deps, { backupId: backup.id }, undefined, { by: 'web' })
+    const result = await applyImport(
+      deps,
+      { backupId: backup.id },
+      { overwrite: true },
+      {
+        by: 'web',
+      },
+    )
     expect(result.counts.failed).toBe(0)
     expect(result.restorePointId).not.toBeNull()
     // the analyst came back under the same id (matched by slug), not as a new agent
@@ -412,7 +428,14 @@ describe('round trip', () => {
     expect(analyst?.status).toBe('added')
     // the connection does not exist in this workspace: its enablement is dropped with a note
     expect(analyst?.notes.join(' ')).toContain('company-docs')
-    const res = await applyImport(b.deps, { uploadId: staged.uploadId }, undefined, { by: 'web' })
+    const res = await applyImport(
+      b.deps,
+      { uploadId: staged.uploadId },
+      { overwrite: true },
+      {
+        by: 'web',
+      },
+    )
     expect(res.counts.failed).toBe(0)
     const created = b.deps.agents.getBySlug('forecaster')
     expect(created).toBeDefined()
@@ -564,6 +587,7 @@ describe('apply', () => {
       {
         sections: ['agents', 'library', 'memory', 'programs', 'routines', 'people'],
         exclude: ['memory/profile.md'],
+        overwrite: true,
       },
       { by: 'web' },
     )
@@ -644,7 +668,7 @@ describe('apply', () => {
     const real = server.deps.backups as NonNullable<typeof server.deps.backups>
     server.deps.backups = { ...real, create: () => Promise.reject(new Error('disk full')) }
     await expect(
-      applyImport(server.deps, { backupId: backup.id }, undefined, { by: 'web' }),
+      applyImport(server.deps, { backupId: backup.id }, { overwrite: true }, { by: 'web' }),
     ).rejects.toThrow(/safety backup failed/)
     expect((await server.deps.library.read('/library/reports/q1.md'))?.text).toBe('edited')
     server.deps.backups = real
@@ -710,7 +734,7 @@ describe('restore points and undo', () => {
     const imp = await applyImport(
       deps,
       { backupId: backup.id },
-      { removeSections: ['library'] },
+      { removeSections: ['library'], overwrite: true },
       { by: 'web' },
     )
     expect(imp.restorePointId).not.toBeNull()
@@ -931,7 +955,9 @@ describe('refused zips', () => {
     expect(
       preview.items.some((i) => i.key === 'library/reports/q1.md' && i.status === 'changed'),
     ).toBe(true)
-    const done = (await (await post('/backups/import', { source: { uploadId } })).json()) as {
+    const done = (await (
+      await post('/backups/import', { source: { uploadId }, selection: { overwrite: true } })
+    ).json()) as {
       restorePointId: string
       counts: { changed: number }
     }
@@ -1030,3 +1056,344 @@ function rawZip(name: string, data: Uint8Array, declared: number, method: number
   }
   return out
 }
+
+// --- skip existing, overwrite on request ---------------------------------------------------------
+
+describe('the skip / overwrite policy', () => {
+  test('by default an item that exists here and differs is skipped; new items are added; identical ones are no-ops', async () => {
+    const world = await populate(instance())
+    const { server } = world
+    const deps = server.deps
+    const backup = await newBackup(server)
+    const fs = libraryFs(server.conn.sqlite)
+    await fs.write('/library/reports/q1.md', 'edited since')
+    await fs.delete('/library/notes/ünï.txt')
+    patchSettings(deps, { teamName: 'Renamed' })
+
+    const preview = await previewImport(deps, { backupId: backup.id })
+    expect(item(preview, 'library/reports/q1.md')?.status).toBe('changed')
+    expect(item(preview, 'library/notes/ünï.txt')?.status).toBe('added')
+
+    const res = await applyImport(deps, { backupId: backup.id }, undefined, { by: 'web' })
+    expect(res.counts).toMatchObject({ added: 1, changed: 0, removed: 0, failed: 0 })
+    expect((await deps.library.read('/library/reports/q1.md'))?.text).toBe('edited since')
+    expect((await deps.library.read('/library/notes/ünï.txt'))?.text).toBe('unicode name')
+    expect(deps.settings.get().teamName).toBe('Renamed')
+
+    // overwrite on request replaces the differing ones too
+    const over = await applyImport(
+      deps,
+      { backupId: backup.id },
+      { overwrite: true },
+      { by: 'web' },
+    )
+    expect(over.counts.changed).toBeGreaterThanOrEqual(2)
+    expect((await deps.library.read('/library/reports/q1.md'))?.text).toContain('# Q1')
+    expect(deps.settings.get().teamName).toBe('Acme Team')
+    // nothing left to do
+    const again = await applyImport(
+      deps,
+      { backupId: backup.id },
+      { overwrite: true },
+      { by: 'web' },
+    )
+    expect(again.restorePointId).toBeNull()
+  })
+
+  test('an agent archived here is not brought back without overwrite, and its items wait with it', async () => {
+    const world = await populate(instance())
+    const { server, analystId } = world
+    const deps = server.deps
+    const backup = await newBackup(server)
+    const { archiveAgent } = await import('../src/app/agents.ts')
+    archiveAgent(deps, analystId)
+    const skip = await applyImport(deps, { backupId: backup.id }, undefined, { by: 'web' })
+    expect(skip.counts.failed).toBe(0)
+    expect(deps.agents.get(analystId)?.archivedAt).not.toBeNull()
+    const over = await applyImport(
+      deps,
+      { backupId: backup.id },
+      { overwrite: true },
+      { by: 'web' },
+    )
+    expect(over.counts.failed).toBe(0)
+    expect(deps.agents.get(analystId)?.archivedAt).toBeNull()
+  })
+
+  test('an undo always overwrites, and its preview says so', async () => {
+    const world = await populate(instance())
+    const { server } = world
+    const deps = server.deps
+    const backup = await newBackup(server)
+    await libraryFs(server.conn.sqlite).write('/library/reports/q1.md', 'v2')
+    const before = await stateOf(server)
+    const imp = await applyImport(deps, { backupId: backup.id }, { overwrite: true }, { by: 'web' })
+    expect((await deps.library.read('/library/reports/q1.md'))?.text).toContain('# Q1')
+    const undo = await previewUndo(deps, imp.restorePointId as string)
+    expect(undo.selection.overwrite).toBe(true)
+    // even a client that sends overwrite: false gets an exact undo
+    await applyImport(
+      deps,
+      undo.source,
+      { ...undo.selection, overwrite: false },
+      { by: 'web', undoOf: imp.restorePointId as string },
+    )
+    expect(await stateOf(server)).toEqual(before)
+  })
+
+  test('the files restore has the same two choices: missing or all', async () => {
+    const world = await populate(instance())
+    const { server } = world
+    const backup = await newBackup(server)
+    const fs = libraryFs(server.conn.sqlite)
+    await fs.write('/library/reports/q1.md', 'edited')
+    await fs.delete('/library/notes/ünï.txt')
+    const missing = await restoreFiles(server.deps, backup.id, { path: '/', mode: 'missing' })
+    expect(missing).toMatchObject({ created: 1, replaced: 0 })
+    expect((await server.deps.library.read('/library/reports/q1.md'))?.text).toBe('edited')
+    const all = await restoreFiles(server.deps, backup.id, { path: '/', mode: 'all' })
+    expect(all.replaced).toBeGreaterThanOrEqual(1)
+    expect((await server.deps.library.read('/library/reports/q1.md'))?.text).toContain('# Q1')
+  })
+})
+
+// --- secrets, encrypted -------------------------------------------------------------------------
+
+const PROVIDER_KEY = 'sk-test-PROVIDERSECRET-1234567890'
+const PASSPHRASE = 'correct horse battery staple'
+
+interface SecretsFile {
+  count: number
+  kdf: { iterations: number; salt: string }
+  cipher: { iv: string }
+}
+
+describe('secrets in the zip', () => {
+  test('the format: versioned, random salt and IV, at least 600 000 PBKDF2 rounds, nothing in plain text', async () => {
+    const records: SecretRecord[] = [
+      {
+        key: 'provider/p1',
+        label: 'Provider one',
+        rows: [{ kind: 'provider', id: 'p1', profile: { settings: { apiKey: PROVIDER_KEY } } }],
+      },
+    ]
+    const a = await sealSecrets(records, PASSPHRASE)
+    const b = await sealSecrets(records, PASSPHRASE)
+    expect(textOf(a)).not.toContain(PROVIDER_KEY)
+    expect(textOf(a)).not.toContain('Provider one')
+    const file = JSON.parse(textOf(a)) as SecretsFile
+    expect(file).toMatchObject({
+      format: 'eharness-team-secrets',
+      version: 1,
+      count: 1,
+      kdf: { name: 'PBKDF2', hash: 'SHA-256' },
+      cipher: { name: 'AES-256-GCM' },
+    })
+    expect(file.kdf.iterations).toBeGreaterThanOrEqual(600_000)
+    const other = JSON.parse(textOf(b)) as SecretsFile
+    expect(other.kdf.salt).not.toBe(file.kdf.salt)
+    expect(other.cipher.iv).not.toBe(file.cipher.iv)
+    expect(secretsHeader(a)).toEqual({ count: 1 })
+    expect(await openSecrets(a, PASSPHRASE)).toEqual(records)
+    // wrong passphrase, and a changed count, fail readably
+    await expect(openSecrets(a, `${PASSPHRASE}!`)).rejects.toThrow(/passphrase is wrong/)
+    file.count = 2
+    await expect(openSecrets(bytesOf(JSON.stringify(file)), PASSPHRASE)).rejects.toThrow(
+      /passphrase is wrong/,
+    )
+    // a hostile iteration count is refused before any work
+    file.count = 1
+    file.kdf.iterations = 1_000
+    await expect(openSecrets(bytesOf(JSON.stringify(file)), PASSPHRASE)).rejects.toThrow(
+      /not in the format/,
+    )
+    await expect(sealSecrets(records, 'x'.repeat(PASSPHRASE_MIN - 1))).rejects.toThrow(
+      /at least 12 characters/,
+    )
+  })
+
+  async function withSecrets(): Promise<{ world: World; zipBytes: Uint8Array }> {
+    const world = await populate(instance())
+    const made = await world.server.app.request('/providers/profiles', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        providerId: 'openrouter',
+        id: 'main-key',
+        label: 'Main key',
+        settings: { apiKey: PROVIDER_KEY },
+      }),
+    })
+    expect(made.status).toBeLessThan(300)
+    const res = await world.server.app.request('/backups/export', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ passphrase: PASSPHRASE }),
+    })
+    expect(res.status).toBe(200)
+    return { world, zipBytes: new Uint8Array(await res.arrayBuffer()) }
+  }
+
+  test('export with a passphrase: secrets.enc.json, the manifest counts them, the zip holds no plain secret', async () => {
+    const { world, zipBytes } = await withSecrets()
+    const entries = unzip(zipBytes)
+    expect(entries.has(SECRETS_FILE)).toBe(true)
+    const manifest = JSON.parse(textOf(entries.get('manifest.json') as Uint8Array)) as {
+      secrets: { included: boolean; count: number }
+      notice: string
+      counts: Record<string, number>
+    }
+    expect(manifest.secrets).toEqual({ included: true, count: 2 })
+    expect(manifest.counts.secrets).toBe(2)
+    expect(manifest.notice).toContain('secrets.enc.json')
+    // no plain secret anywhere: not in the raw bytes, not in any entry, not as the connection token
+    for (const needle of [PROVIDER_KEY, SECRET, 'X-Api-Key']) {
+      expect(Buffer.from(zipBytes).includes(Buffer.from(needle))).toBe(false)
+      for (const [name, bytes] of entries) {
+        expect(`${name}: ${textOf(bytes).includes(needle)}`).toBe(`${name}: false`)
+      }
+    }
+    // without a passphrase (the GET export, scheduled and safety backups) there are no secrets
+    const plain = await world.server.app.request('/backups/export')
+    const plainEntries = unzip(new Uint8Array(await plain.arrayBuffer()))
+    expect(plainEntries.has(SECRETS_FILE)).toBe(false)
+    const backup = await newBackup(world.server)
+    expect(unzip(backupZip(world.server, backup.id)).has(SECRETS_FILE)).toBe(false)
+    // a short passphrase is refused
+    const short = await world.server.app.request('/backups/export', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ passphrase: 'too short' }),
+    })
+    expect(short.status).toBe(400)
+  })
+
+  test('import: the preview counts them, the passphrase lists them by name, a wrong one fails and imports nothing secret', async () => {
+    const { zipBytes } = await withSecrets()
+    // another workspace with ANOTHER server key: the zip depends on the passphrase only
+    const b = instance(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'))
+    await b.connectorsReady
+    const staged = await stage(b, zipBytes)
+    const source = { uploadId: staged.uploadId }
+
+    const locked = await previewImport(b.deps, source)
+    expect(locked.secrets).toEqual({ included: true, count: 2, unlocked: false })
+    expect(locked.items.some((i) => i.section === 'secrets')).toBe(false)
+
+    const open = await previewImport(b.deps, source, { passphrase: PASSPHRASE })
+    expect(open.secrets.unlocked).toBe(true)
+    const secretItems = open.items.filter((i) => i.section === 'secrets')
+    expect(secretItems.map((i) => i.label).sort()).toEqual([
+      'Connection credentials: Company docs',
+      'Model provider key: Main key',
+    ])
+    expect(secretItems.every((i) => i.status === 'added')).toBe(true)
+    for (const text of [JSON.stringify(locked), JSON.stringify(open)]) {
+      expect(text).not.toContain(PROVIDER_KEY)
+      expect(text).not.toContain(SECRET)
+    }
+
+    await expect(
+      previewImport(b.deps, source, { passphrase: 'not the passphrase' }),
+    ).rejects.toThrow(/passphrase is wrong/)
+    const before = await b.deps.secrets?.list()
+    const pointsBefore = listRestorePoints(b.deps).length
+    for (const passphrase of ['not the passphrase', undefined]) {
+      await expect(
+        applyImport(
+          b.deps,
+          source,
+          { sections: ['secrets', 'library'] },
+          { by: 'web', passphrase },
+        ),
+      ).rejects.toThrow(/passphrase/)
+    }
+    // nothing at all was applied, not even the non-secret part
+    expect(await b.deps.secrets?.list()).toEqual(before)
+    expect(await b.deps.library.read('/library/reports/q1.md')).toBeUndefined()
+    expect(listRestorePoints(b.deps).length).toBe(pointsBefore)
+
+    // over HTTP a wrong passphrase is a readable 400
+    const bad = await b.app.request('/backups/import-preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source, passphrase: 'not the passphrase' }),
+    })
+    expect(bad.status).toBe(400)
+    expect(((await bad.json()) as { error: { code: string } }).error.code).toBe('IMPORT_PASSPHRASE')
+  })
+
+  test('import with the right passphrase restores the secrets under the skip / overwrite policy', async () => {
+    const { zipBytes } = await withSecrets()
+    const b = instance(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'))
+    await b.connectorsReady
+    const staged = await stage(b, zipBytes)
+    const source = { uploadId: staged.uploadId }
+    const apiKeyOf = async (): Promise<unknown> => {
+      const rec = (await b.deps.secrets?.list())?.find((r) => r.key === 'provider/main-key')
+      return (rec?.rows[0]?.profile.settings as Record<string, unknown> | undefined)?.apiKey
+    }
+
+    const res = await applyImport(
+      b.deps,
+      source,
+      { sections: ['secrets'] },
+      { by: 'web', passphrase: PASSPHRASE },
+    )
+    expect(res.counts).toMatchObject({ added: 2, failed: 0 })
+    expect(JSON.stringify(res)).not.toContain(PROVIDER_KEY)
+    expect(await apiKeyOf()).toBe(PROVIDER_KEY)
+    expect(b.deps.providers.profileIds()).toContain('main-key')
+    expect((await b.deps.connectors.connections()).some((c) => c.label === 'Company docs')).toBe(
+      true,
+    )
+    expect(JSON.stringify(listRestorePoints(b.deps))).not.toContain(PROVIDER_KEY)
+
+    // the same zip again: identical secrets are no-ops
+    const again = await previewImport(b.deps, source, { passphrase: PASSPHRASE })
+    expect(again.items.filter((i) => i.section === 'secrets')).toEqual([])
+
+    // a secret that differs here is skipped by default and replaced on request
+    await b.deps.providers.update('main-key', { settings: { apiKey: 'sk-other-key-0987654321' } })
+    expect(await apiKeyOf()).toBe('sk-other-key-0987654321')
+    const differ = await previewImport(b.deps, source, { passphrase: PASSPHRASE })
+    expect(differ.items.find((i) => i.key === 'secrets/provider/main-key')?.status).toBe('changed')
+    const skipped = await applyImport(
+      b.deps,
+      source,
+      { sections: ['secrets'] },
+      { by: 'web', passphrase: PASSPHRASE },
+    )
+    expect(skipped.restorePointId).toBeNull()
+    expect(await apiKeyOf()).toBe('sk-other-key-0987654321')
+    const over = await applyImport(
+      b.deps,
+      source,
+      { sections: ['secrets'], overwrite: true },
+      { by: 'web', passphrase: PASSPHRASE },
+    )
+    expect(over.counts).toMatchObject({ changed: 1, failed: 0 })
+    expect(await apiKeyOf()).toBe(PROVIDER_KEY)
+
+    // an undo never touches secrets, and says so
+    const undo = await previewUndo(b.deps, over.restorePointId as string)
+    expect(undo.selection.sections).not.toContain('secrets')
+    expect(undo.preview.warnings.join(' ')).toContain('Secrets restored by this import')
+    // secrets are never removed by an import
+    await expect(
+      applyImport(b.deps, source, { removeSections: ['secrets'] }, { by: 'web' }),
+    ).rejects.toThrow(/never removed/)
+  })
+
+  test('a zip whose manifest and secrets file disagree is refused', async () => {
+    const { zipBytes } = await withSecrets()
+    const entries = unzip(zipBytes)
+    const files: Record<string, Uint8Array> = {}
+    for (const [k, v] of entries) if (k !== 'manifest.json') files[k] = v
+    const forged = makeZip(files, {
+      manifest: (m) => ({ ...m, secrets: { included: false, count: 0 } }),
+    })
+    const b = instance()
+    await expect(stage(b, forged)).rejects.toThrow(/secrets file does not match/)
+  })
+})

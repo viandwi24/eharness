@@ -23,7 +23,7 @@ export type LiveState = {
 	decisionsLoaded: boolean;
 	tasks: Task[];
 	tasksLoaded: boolean;
-	/** The bell: urgent alerts and "briefing ready" (not dismissed). */
+	/** The bell: urgent alerts and the daily digest (not dismissed). */
 	notifications: Notification[];
 	notificationsLoaded: boolean;
 	connection: FeedStatus;
@@ -34,7 +34,7 @@ export type LiveState = {
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
 	/** Counters bumped (debounced) by file / routine / settings / mode / message events; screens refetch when one moves. */
-	revs: { files: number; routines: number; programs: number; heartbeat: number; decisions: number; settings: number; modes: number; chat: number; providers: number; connectors: number; threads: number; briefings: number };
+	revs: { files: number; routines: number; programs: number; heartbeat: number; decisions: number; settings: number; modes: number; chat: number; providers: number; connectors: number; threads: number };
 };
 
 export const emptyLiveState = (): LiveState => ({
@@ -51,7 +51,7 @@ export const emptyLiveState = (): LiveState => ({
 	reconnecting: false,
 	unreachable: false,
 	viewing: null,
-	revs: { files: 0, routines: 0, programs: 0, heartbeat: 0, decisions: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0, threads: 0, briefings: 0 }
+	revs: { files: 0, routines: 0, programs: 0, heartbeat: 0, decisions: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0, threads: 0 }
 });
 
 /** What the team posts to `POST /attention/{id}/answer`: the wire answers plus its question kind. */
@@ -282,9 +282,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			} else if (e.type === 'thread-changed') {
 				// a chat was created, renamed, archived or restored (any tab, a discussion opened elsewhere)
 				later('threads', bump('threads'));
-			} else if (e.type === 'notification-changed' || e.type === 'briefing-added') {
+			} else if (e.type === 'notification-changed') {
 				later('notifications', core.loadNotifications);
-				if (e.type === 'briefing-added') later('briefings', bump('briefings'));
 			} else if (e.type === 'providers-changed') {
 				// a profile was added, edited or removed (any tab or instance): lists refetch
 				later('providers', bump('providers'));

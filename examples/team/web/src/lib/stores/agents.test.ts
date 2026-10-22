@@ -33,6 +33,17 @@ describe('agents core', () => {
 		expect(s.find('b')).toBeUndefined();
 	});
 
+	test('an archived agent fetched by id for its name never joins the picker list', async () => {
+		const api = fake({
+			'get /agents': () => ({ agents: [agent('a')] }),
+			'get /agents/{id}': () => agent('old', { archivedAt: 5 } as Partial<Agent>)
+		});
+		const s = createAgentsCore(api, emptyAgentsState());
+		await s.load();
+		expect((await s.get('old')).id).toBe('old');
+		expect(s.state.agents.map((a) => a.id)).toEqual(['a']);
+	});
+
 	test('failed update and archive roll back', async () => {
 		const fail = () => {
 			throw new ApiError(409, 'CONFLICT', 'nope');

@@ -15,7 +15,7 @@ import {
   scriptedModel,
 } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
-import { columnsOf } from '../src/app/work-queue.ts'
+import { columnsOf, createTask } from '../src/app/work-queue.ts'
 import type { Decision } from '../src/domain/decisions.ts'
 import type { Program } from '../src/domain/programs.ts'
 import { checkProgramFields, programRules } from '../src/domain/programs.ts'
@@ -47,6 +47,9 @@ async function until(what: string, condition: () => boolean | Promise<boolean>, 
     await sleep(15)
   }
 }
+
+/** The owner-facing create route was removed (P55): tests queue through the use case. */
+const serverOfApp = new WeakMap<object, Server>()
 
 type Slug = 'lead' | 'researcher' | 'writer'
 interface Instance {
@@ -94,6 +97,7 @@ function fresh(script: Partial<Record<Slug, ScriptedStepInput[]>>): Instance {
     if (def === undefined) throw new Error('seed missing')
     updateAgent(server.deps, def.id, { model: `m-${slug}` })
   }
+  serverOfApp.set(server.app, server)
   return { server, app: server.app, models, dbFile }
 }
 
@@ -115,9 +119,8 @@ async function getTask(app: Server['app'], id: string): Promise<TaskView> {
   return ((await res.json()) as { task: TaskView }).task
 }
 async function queue(app: Server['app'], body: Record<string, unknown>): Promise<TaskView> {
-  const res = await app.request('/tasks', json('POST', body))
-  if (res.status !== 201) throw new Error(await res.text())
-  return (await res.json()) as TaskView
+  const server = serverOfApp.get(app) as Server
+  return createTask(server.deps, body as never) as TaskView
 }
 const post = (app: Server['app'], path: string, body?: unknown) =>
   app.request(path, json('POST', body))
@@ -269,17 +272,9 @@ describe('the queue on the API', () => {
     expect((await listTasks(app, '&status=queued')).map((x) => x.id)).toEqual([t.id])
 
     // errors the client can read
-    expect(
-      (await app.request('/tasks', json('POST', { agentId: 'nobody', title: 'x' }))).status,
-    ).toBe(404)
-    expect(
-      (
-        await app.request(
-          '/tasks',
-          json('POST', { agentId: 'writer', title: 'x', inputs: ['nope'] }),
-        )
-      ).status,
-    ).toBe(400)
+    const deps = server.deps
+    expect(() => createTask(deps, { agentId: 'nobody', title: 'x' })).toThrow()
+    expect(() => createTask(deps, { agentId: 'writer', title: 'x', inputs: ['nope'] })).toThrow()
 
     const patched = await app.request(
       `/tasks/${t.id}`,

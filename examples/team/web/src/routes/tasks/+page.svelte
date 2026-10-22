@@ -5,7 +5,6 @@
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotch';
 	import HandPalmIcon from 'phosphor-svelte/lib/HandPalm';
 	import EyeIcon from 'phosphor-svelte/lib/Eye';
-	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import TrayIcon from 'phosphor-svelte/lib/Tray';
 	import KanbanIcon from 'phosphor-svelte/lib/Kanban';
 	import ListBulletsIcon from 'phosphor-svelte/lib/ListBullets';
@@ -28,7 +27,6 @@
 	import { badgeOf, COLUMNS, groupBoard, type Column } from '#lib/board/board.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openTask } from '#lib/stores/drawer.svelte.js';
-	import { openNewTask } from '#lib/stores/dialogs.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { formatUsd, timeAgo } from '#lib/time.js';
 
@@ -116,13 +114,12 @@
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 	<PageHeader
 		title="Tasks"
-		description={loaded ? `${board.queued.length} queued · ${board.running.length} running · ${needsCount} waiting for you · ${board.review.length} to review` : 'Work your agents have queued, are running or need you to review.'}
+		description={loaded ? `${board.queued.length} queued · ${board.running.length} running · ${needsCount} waiting for you · ${board.review.length} to review` : 'Runs and hand-overs: what your agents are doing, what waits for you and what to review.'}
 	>
-		{#snippet actions()}{@render filters('hidden md:flex')}<Button size="sm" onclick={() => openNewTask()}><PlusIcon /> New task</Button>{/snippet}
+		{#snippet actions()}{@render filters('hidden md:flex')}{/snippet}
 	</PageHeader>
 	<div class="flex items-center gap-2 border-b border-border px-3 py-2 md:hidden">
 		<div class="min-w-0 flex-1">{@render filters('')}</div>
-		<Button size="icon-sm" aria-label="New task" onclick={() => openNewTask()}><PlusIcon /></Button>
 	</div>
 
 	<!-- Full width on purpose: the kanban board needs every column visible. -->

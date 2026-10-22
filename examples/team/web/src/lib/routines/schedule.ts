@@ -219,23 +219,6 @@ export function timezones(current?: string): string[] {
 	return current && !list.includes(current) ? [current, ...list] : list;
 }
 
-export type RoutineBadge = { label: string; variant: 'success' | 'secondary' | 'warning' | 'destructive' };
-
-const PAUSE_TEXT: Record<string, string> = {
-	manual: 'paused',
-	'max-failures': 'paused: too many failures',
-	'max-fires': 'finished',
-	ended: 'ended',
-	completed: 'completed',
-	'agent-archived': 'agent archived',
-	unrunnable: 'paused: cannot run'
-};
-
-export function routineBadge(r: { status: 'active' | 'paused'; pausedReason: string | null; failures: number }): RoutineBadge {
-	if (r.status === 'active') return { label: r.failures > 0 ? `active, ${r.failures} failed` : 'active', variant: r.failures > 0 ? 'warning' : 'success' };
-	return { label: PAUSE_TEXT[r.pausedReason ?? 'manual'] ?? 'paused', variant: r.pausedReason === 'max-failures' ? 'destructive' : 'secondary' };
-}
-
 /** "in 5 min", "in 2 h", "tomorrow 09:00" style text for the next fire. */
 export function relativeTime(ms: number | null | undefined, now: number = Date.now()): string {
 	if (!ms) return '—';

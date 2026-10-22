@@ -27,13 +27,23 @@ export async function downloadBackupFile(id: string, what: 'db' | 'files'): Prom
 	setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-/** Save the workspace export of the live workspace (the zip built now). */
-export async function downloadWorkspaceExport(): Promise<void> {
+/**
+ * Save the workspace export of the live workspace (the zip built now). With a passphrase the
+ * provider keys and connection credentials travel too, encrypted in the zip; the passphrase goes in
+ * the request body only.
+ */
+export async function downloadWorkspaceExport(passphrase?: string): Promise<void> {
 	const token = getToken();
-	const res = await authFetch(`${apiBase.replace(/\/+$/, '')}/backups/export`, {
-		headers: token ? { authorization: `Bearer ${token}` } : {}
-	});
-	if (!res.ok) throw new Error(`Download failed (${res.status})`);
+	const endpoint = `${apiBase.replace(/\/+$/, '')}/backups/export`;
+	const auth: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {};
+	const res = await authFetch(
+		endpoint,
+		passphrase === undefined ? { headers: auth } : { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ passphrase }) }
+	);
+	if (!res.ok) {
+		const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+		throw new Error(body.error?.message ?? `Download failed (${res.status})`);
+	}
 	const name = `team-workspace-${new Date().toISOString().slice(0, 10)}.zip`;
 	const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
 	if (picker && res.body) {

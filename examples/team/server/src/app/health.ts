@@ -328,7 +328,7 @@ export function notifyFindings(
       key: `health:${f.fingerprint}`,
       title: `Health: ${f.explanation}`.slice(0, 160),
       body: f.fix,
-      link: '/health',
+      link: '/attention',
       agentId: f.agentId,
       at: now,
     })

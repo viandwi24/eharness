@@ -9,7 +9,7 @@
  * 1. create a program, Run now, the report shows on the board
  * 2. a proposal in the lead's chat, Approve, the program exists and is scheduled
  * 3. an escalation parks a run, Decide, the same run resumes and finishes
- * 4. a queued task, the worker moves it to Review, Send back with a note, it is revised
+ * 4. the lead hands a task to the writer, the worker moves it to Review, Send back with a note, it is revised
  * 5. the heartbeat finds something, the digest (its cron slot, one minute ahead) carries it
  */
 import {
@@ -56,7 +56,15 @@ const steps = [
     options: ['publish', 'hold'],
   }),
   final('published after the client said yes'),
-  // 4. worker: two runs of the same task (the second after Send back)
+  // 4. the lead queues a held task in its chat, then a worker: two runs of the same task (the second after Send back)
+  call('create_task', {
+    agent: 'writer',
+    title: 'Script: the island',
+    brief: 'Write /library/scripts/island.md',
+    hold: true,
+    review: true,
+  }),
+  { text: 'I queued it on hold.' },
   call('write_file', { path: '/library/scripts/island.md', content: 'v1' }),
   call('complete_task', { summary: 'drafted v1', outputs: ['/library/scripts/island.md'] }),
   final('drafted v1', ['/library/scripts/island.md']),
@@ -191,13 +199,8 @@ try {
     return 'parked on the decision, resumed in the same session, done'
   })
 
-  await scenario('4. queued task, Review, Send back, revised', async () => {
-    const queued = await send<Task>('POST', '/tasks', {
-      agentId: 'writer',
-      title: 'Script: the island',
-      brief: 'Write /library/scripts/island.md',
-    })
-    check(queued.status === 'queued', `status ${queued.status}`)
+  await scenario('4. handed-over task, Review, Send back, revised', async () => {
+    // an active worker program of the writer leaves the writer's queue to itself
     const worker = await send<{ id: string }>('POST', '/programs', {
       ...base,
       agentId: 'writer',
@@ -206,6 +209,16 @@ try {
       authority: { read: ['/library/**'], write: ['/library/scripts/**'] },
       worker: { maxTasks: 1 },
     })
+    // the lead queues the task from its chat (there is no owner-facing create route any more)
+    const res = await fetch(
+      `${server?.url}/sessions/dm:lead/chat`,
+      postAs('dm:lead', userMessage('Please have the writer draft the island script.')),
+    )
+    check(res.status === 200, `chat: ${res.status}`)
+    await res.text()
+    const queued = (await tasks('&status=queued')).find((t) => t.status === 'queued')
+    check(queued !== undefined, 'the lead did not queue the task')
+    await send('PATCH', `/tasks/${queued.id}`, { hold: false })
     await send('POST', `/programs/${worker.id}/run`)
     await until('the task is in Review', async () => {
       const t = (await tasks()).find((x) => x.id === queued.id)
@@ -269,16 +282,15 @@ try {
       },
       150_000,
     )
-    // the digest is a Briefing page plus one bell notification, never a chat message
-    const page = await get<{ briefings: Array<{ body: string }> }>('/briefings')
-    check(
-      page.briefings.some((b) => b.body.includes('The audit program has no owner')),
-      'the digest is not on the Briefing page',
+    // the digest is one bell notification with the whole text, never a chat message
+    const bell = await get<{ notifications: Array<{ kind: string; body: string }> }>(
+      '/notifications',
     )
-    const bell = await get<{ notifications: Array<{ kind: string }> }>('/notifications')
     check(
-      bell.notifications.some((n) => n.kind === 'briefing'),
-      'the bell has no "briefing ready" notification',
+      bell.notifications.some(
+        (n) => n.kind === 'briefing' && n.body.includes('The audit program has no owner'),
+      ),
+      'the bell has no daily digest notification with the heartbeat item',
     )
     const after = await get<{ digest: { buffered: number } }>(`/agents/${lead.id}/heartbeat`)
     check(after.digest.buffered === 0, 'the buffer was not emptied')

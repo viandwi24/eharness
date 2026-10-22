@@ -353,9 +353,7 @@ export function deleteProgram(deps: Deps, id: string): Program {
   const routine = routineOf(deps, id)
   if (routine !== undefined) deleteRoutine(deps, routine.id)
   deps.programs.delete(id)
-  // its rehearsals and test cases go with it
-  deps.rehearsals.deleteByProgram(id)
-  deps.programTests.deleteByProgram(id)
+  // the legacy rehearsal and program_tests rows stay in place (docs/plans/P55-consolidation.md)
   deps.programMemory.deleteByProgram(id)
   changed(deps, program, 'deleted')
   return program

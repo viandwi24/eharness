@@ -290,7 +290,7 @@ Usage page passes $15.
 
 ---
 
-## 7. Suite S5: Routines (Routines page; ticker is 2 s)
+## 7. Suite S5: Routines (the routine engine; since P55 the web has no page to create routines, so drive it through the API `POST /routines`; ticker is 2 s)
 
 For each routine: create, wait, check Runs, check the Tracker. Prompt used unless stated: `Add a comment "routine tick <local time>" to T-07.` (manager, writes allowed by the routine's permission source; if it asks it must pause/park with a readable state: record that as the result).
 
@@ -374,13 +374,11 @@ For each routine: create, wait, check Runs, check the Tracker. Prompt used unles
 - Steps: click Run now twice quickly on a slow program.
 - Expect: the second gets a clear "already running" message (409 PROGRAM_BUSY), no second run.
 
-### P-10 Rehearsal
-- Steps: open the program's Rehearse tab; start a rehearsal (dry run with a fake/sandbox mode).
-- Expect: rehearsal session runs the brief without real writes (Tracker unchanged), shows what it would do and the authority checks; can be discarded.
+### P-10 Rehearsal (removed in P55)
+- Rehearsals no longer exist (docs/plans/P55-consolidation.md). Skip.
 
-### P-11 Test cases
-- Steps: add 2 test cases (input scenario + expected outcome, e.g. `Tracker has T-01 overdue` -> `comment on T-01`); run them.
-- Expect: a pass/fail per case with reasons; failures show the diff; results stored.
+### P-11 Test cases (removed in P55)
+- Program test cases no longer exist (docs/plans/P55-consolidation.md). Skip.
 
 ### P-12 Unrunnable program
 - Steps: program with authority naming `channel_send` while the agent has no channel.
@@ -427,8 +425,8 @@ For each routine: create, wait, check Runs, check the Tracker. Prompt used unles
 - Expect: no spam: the second beat reports no change or is skipped; cost per beat small.
 
 ### H-03 Daily briefing
-- Steps: Briefings page: generate/preview today's briefing (or set the digest time to now+2 min).
-- Expect: a briefing with sections (done, failed, waiting, spend); consistent with Usage and Tasks counts.
+- Steps: set the digest time to now+2 min (there is no Briefing page since P55; the digest is one bell notification).
+- Expect: a bell notification with the digest text (done, failed, waiting, spend); consistent with Usage and Tasks counts.
 
 ### H-04 Bell and Discuss in chat
 - Steps: click the bell; open an item; click Discuss in chat.

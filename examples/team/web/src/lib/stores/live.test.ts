@@ -95,7 +95,7 @@ describe('live store', () => {
 		live.handleEvent(ev('mode-changed', 'lead-id', { mode: 'auto' }));
 		live.handleEvent(ev('providers-changed', 'lead-id', { profileId: 'openrouter', action: 'put' }));
 		live.handleEvent(ev('connectors-changed', 'lead-id', { instance: 'x' }));
-		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, heartbeat: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1, threads: 0, briefings: 0 });
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, heartbeat: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1, threads: 0 });
 		// a stored message moves the context size of the open chat
 		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant' }));
 		expect(live.state.revs.chat).toBe(1);
@@ -283,7 +283,7 @@ describe('live store: threads and the bell', () => {
 		expect(live.ownApproval('lead', 'own', 'chat:lead-id:t2')).toBeUndefined();
 	});
 
-	test('notification and briefing events refetch the bell; thread events bump the list revision', async () => {
+	test('notification events refetch the bell; thread events bump the list revision', async () => {
 		const { live, setNotifications } = setup();
 		setNotifications([{ id: 'n1', kind: 'alert', title: 'Budget', body: '', link: null, agentId: null, createdAt: 1, dismissedAt: null }]);
 		live.handleEvent(ev('notification-changed', 'lead-id'));
@@ -294,9 +294,5 @@ describe('live store: threads and the bell', () => {
 		live.handleEvent(ev('thread-changed', 'lead-id'));
 		await Promise.resolve();
 		expect(live.state.revs.threads).toBe(before + 1);
-		const briefings = live.state.revs.briefings;
-		live.handleEvent(ev('briefing-added', 'lead-id'));
-		await Promise.resolve();
-		expect(live.state.revs.briefings).toBe(briefings + 1);
 	});
 });

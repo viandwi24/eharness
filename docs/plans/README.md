@@ -64,6 +64,7 @@ Update this table in the same commit that changes a phase's status.
 | P52 | [Context and standing orders v2](P52-context-and-orders.md) — sessions_search / session_read / runs_list / run_read with a privacy gate; order kinds (watch, rule, deadline, ledger), exact deadline wakes, order needs grant tools, evidence-backed notes, weekly patterns, order hygiene | done | P51 | P51 |
 | P53 | [Supervisor duty and consistency](P53-supervisor-and-consistency.md) — the heartbeat supervises its own work (retry, escalate, fix its own memory) and the deterministic consistency detectors feed it | in progress | P52 | P52 |
 | P54 | [Alarms](P54-alarms.md) — no failure of scheduled or background work stays silent: deterministic alarms (failed, stuck, paused, expired, broken, system), Health "Needs attention", owner push with rate limit | in progress | P53 | P53 |
+| P55 | [Consolidation](P55-consolidation.md) — remove what production did not use (work queue form, generic routines, rehearsals and program tests, workspace memory, Briefing page), one Needs attention page, tables kept | in progress | P54 | P54 |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

@@ -19,7 +19,7 @@
 	/**
 	 * Main navigation as an icon rail (WhatsApp / Slack style): sections at the top, notifications,
 	 * theme and settings at the bottom. `bar`: the same items as a bottom tab bar on mobile. The agent's
-	 * work (tasks, briefing, decisions, programs, routines) is one item with its own menu.
+	 * work (tasks, decisions, programs, reminders) is one item with its own menu.
 	 */
 	let { bar = false }: { bar?: boolean } = $props();
 
@@ -27,7 +27,6 @@
 	$effect(() => lastWork.visit(page.url.pathname));
 	const unread = $derived(Object.values(agentsStore.state.activity).reduce((n, a) => n + (a?.unread ? 1 : 0), 0));
 	const decisionCount = $derived(live.state.decisions.length);
-	const briefingCount = $derived(live.state.notifications.filter((n) => n.kind === 'briefing').length);
 	$effect(() => {
 		void loadBrowserNav();
 	});
@@ -71,8 +70,6 @@
 					{#if bar}<span>{s.label}</span>{/if}
 					{#if s.id === 'work' && decisionCount > 0}
 						<Badge shape="number" variant="warning" class="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 text-[10px]" aria-label="{decisionCount} decisions waiting">{decisionCount}</Badge>
-					{:else if s.id === 'work' && briefingCount > 0}
-						<span class="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" aria-label="New briefing"></span>
 					{/if}
 					{#if s.id === 'agents' && unread > 0}
 						<span class="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" aria-label="{unread} unread chats"></span>

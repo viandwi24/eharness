@@ -56,7 +56,8 @@ export function createAgentsCore(api: ApiClient, state: AgentsState) {
 			const cached = find(idOrSlug);
 			if (cached) return cached;
 			const agent = await api.get('/agents/{id}', { params: { id: idOrSlug } });
-			replace(agent);
+			// an archived agent is fetched for its name only: it never joins the list the pickers use
+			if (agent.archivedAt === null || agent.archivedAt === undefined) replace(agent);
 			return agent;
 		},
 

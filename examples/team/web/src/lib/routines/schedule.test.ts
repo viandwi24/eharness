@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildSpec, defaultScheduleForm, describeSpec, parseSpec, relativeTime, routineBadge, validCronShape } from './schedule';
+import { buildSpec, defaultScheduleForm, describeSpec, parseSpec, relativeTime, validCronShape } from './schedule';
 
 const form = (o: Partial<ReturnType<typeof defaultScheduleForm>>) => ({ ...defaultScheduleForm('Europe/Berlin'), ...o });
 
@@ -58,10 +58,7 @@ describe('schedule presets', () => {
 		expect(describeSpec({ kind: 'cron', expr: '*/5 * * * *', tz: 'UTC' })).toBe('Cron */5 * * * *');
 	});
 
-	test('badge and relative time', () => {
-		expect(routineBadge({ status: 'active', pausedReason: null, failures: 0 }).variant).toBe('success');
-		expect(routineBadge({ status: 'paused', pausedReason: 'max-failures', failures: 3 }).variant).toBe('destructive');
-		expect(routineBadge({ status: 'paused', pausedReason: 'manual', failures: 0 }).label).toBe('paused');
+	test('relative time', () => {
 		expect(relativeTime(1_000_000 + 5 * 60_000, 1_000_000)).toBe('in 5 min');
 		expect(relativeTime(1_000_000 - 2 * 3_600_000, 1_000_000)).toBe('2 h ago');
 		expect(relativeTime(null)).toBe('—');

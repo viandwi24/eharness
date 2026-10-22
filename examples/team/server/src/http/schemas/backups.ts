@@ -139,7 +139,11 @@ export const ImportSelectionSchema = z
     }),
     removeSections: z.array(z.enum(SECTION_IDS)).optional().openapi({
       description:
-        'Sections where what is only in the workspace is removed too (default none: an import never deletes). Agents are archived.',
+        'Sections where what is only in the workspace is removed too (default none: an import never deletes). Agents are archived. `secrets` cannot be removed.',
+    }),
+    overwrite: z.boolean().optional().openapi({
+      description:
+        'Default `false`: an item that exists here and differs is SKIPPED, only new items are added. `true` also replaces the differing ones. An undo (`undoOf`) always overwrites.',
     }),
   })
   .openapi('ImportSelection')
@@ -187,6 +191,17 @@ export const ImportPreviewSchema = z
         applicable: z.boolean(),
       }),
     ),
+    secrets: z.object({
+      included: z.boolean().openapi({ description: 'The zip holds `secrets.enc.json`.' }),
+      count: z
+        .number()
+        .int()
+        .openapi({ description: 'How many secrets (a count, never names or values).' }),
+      unlocked: z.boolean().openapi({
+        description:
+          'The passphrase of the request opened them: the `secrets` section lists them by name.',
+      }),
+    }),
     items: z.array(ImportItemSchema).openapi({
       description: 'Added, changed and only-in-workspace items (unchanged ones are only counted).',
     }),
@@ -195,14 +210,35 @@ export const ImportPreviewSchema = z
   })
   .openapi('ImportPreview')
 
+const PassphraseSchema = z.string().min(1).max(256)
+
 export const ImportPreviewBodySchema = z
-  .object({ source: ImportSourceSchema })
+  .object({
+    source: ImportSourceSchema,
+    passphrase: PassphraseSchema.optional().openapi({
+      description:
+        'The passphrase of the export, to list its secrets by name. A wrong one answers 400 `IMPORT_PASSPHRASE`. Never stored or logged.',
+    }),
+  })
   .openapi('ImportPreviewBody')
+
+export const ExportBodySchema = z
+  .object({
+    passphrase: z.string().min(12).max(256).openapi({
+      description:
+        'At least 12 characters. Provider keys and connection credentials are encrypted with a key derived from it (PBKDF2-SHA256, AES-256-GCM) into `secrets.enc.json`. It cannot be recovered: keep it.',
+    }),
+  })
+  .openapi('ExportBody')
 
 export const ImportBodySchema = z
   .object({
     source: ImportSourceSchema,
     selection: ImportSelectionSchema.optional(),
+    passphrase: PassphraseSchema.optional().openapi({
+      description:
+        'The passphrase of the export; required when `selection.sections` includes `secrets`. Checked before anything is written.',
+    }),
     undoOf: z.string().min(1).max(100).optional().openapi({
       description: 'The restore point this import undoes (marks it as undone).',
     }),
@@ -271,6 +307,7 @@ export const UndoPreviewSchema = z
       sections: z.array(z.enum(SECTION_IDS)),
       exclude: z.array(z.string()),
       removeSections: z.array(z.enum(SECTION_IDS)),
+      overwrite: z.boolean(),
     }),
     preview: ImportPreviewSchema,
   })

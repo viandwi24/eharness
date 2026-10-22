@@ -362,9 +362,6 @@
 					{#if memory}
 						<section class="flex flex-col gap-3">
 							<h3 class="text-sm font-medium">Where memory lives</h3>
-							{#each memory.workspace as c (c.id)}
-								{@render connectionCard(c, 'Workspace memory, shared by the whole team', 'Whole team')}
-							{/each}
 							{#if memory.agents.length}
 								<Collapsible.Root>
 									<Collapsible.Trigger class="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">

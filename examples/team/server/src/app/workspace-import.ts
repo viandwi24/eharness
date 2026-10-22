@@ -11,6 +11,12 @@
  *    name per agent, a routine by id then name, a library or memory file by path, a person by id
  *    then name. New entities get new ids; references (the agent of a program, the memory folder of
  *    an agent, the connections of an enablement) are remapped.
+ *  - An item that exists here and differs is SKIPPED unless the owner chose to overwrite ("Apply
+ *    (skip existing)" adds new items only; "Apply and overwrite existing" replaces the changed ones
+ *    too). An undo always overwrites: it puts back exactly what the import changed.
+ *  - Secrets travel only in `secrets.enc.json`, encrypted with the passphrase of the export. The
+ *    preview lists them (names, never values) once the passphrase opens the file; a wrong passphrase
+ *    fails readably and nothing secret is imported. They are restored under the same policy.
  *  - What an import would GRANT (permission mode, tool rules, connector enablement, program
  *    authority, directory roles) is listed on the item. Secrets are never imported: connections and
  *    reminders are shown for reading and never written.
@@ -42,6 +48,7 @@ import {
   defaultSelection,
   entryOfFile,
   fileOfEntry,
+  GATED_SECTIONS,
   type ImportItem,
   type ImportPreview,
   type ImportSelection,
@@ -59,6 +66,7 @@ import {
   TOOL_MEDIA_PREFIX,
   textOf,
 } from '../domain/workspace-export.ts'
+import { openSecrets, SECRETS_FILE, type SecretRecord } from '../domain/workspace-secrets.ts'
 import { archiveAgent, createAgent, updateAgent } from './agents.ts'
 import { backupPort } from './backup-port.ts'
 import { createBackup } from './backups.ts'
@@ -118,6 +126,7 @@ const ORDER = {
   program: 5,
   file: 6,
   person: 7,
+  secret: 9,
 }
 const REMOVAL = 100
 
@@ -321,6 +330,7 @@ const parsedOrError = <T>(fn: () => T): { doc: T } | { error: string } => {
 }
 
 interface Plan {
+  secrets: ImportPreview['secrets']
   entries: PlanEntry[]
   parsed: Awaited<ReturnType<ReturnType<typeof backupPort>['readWorkspace']>>
   warnings: string[]
@@ -334,7 +344,11 @@ const sourceOf = (source: ImportSource): ImportPreview['source'] =>
     : { kind: 'upload', id: source.uploadId }
 
 /** Compare the zip with the live workspace. Reads, never writes. */
-async function buildPlan(deps: Deps, source: ImportSource): Promise<Plan> {
+async function buildPlan(
+  deps: Deps,
+  source: ImportSource,
+  passphrase?: string | undefined,
+): Promise<Plan> {
   const port = backupPort(deps)
   const parsed = await port.readWorkspace(source)
   const zip = parsed.entries
@@ -1111,11 +1125,107 @@ async function buildPlan(deps: Deps, source: ImportSource): Promise<Plan> {
     })
   }
 
+  // ---- secrets (encrypted in the zip; listed by name once the passphrase opens them)
+  const secretsBytes = zip.get(SECRETS_FILE)
+  const secrets: ImportPreview['secrets'] = {
+    included: secretsBytes !== undefined,
+    count: parsed.manifest.secrets.count,
+    unlocked: false,
+  }
+  if (secretsBytes !== undefined && passphrase !== undefined && passphrase !== '') {
+    // a wrong passphrase throws here: nothing is previewed or applied from the secrets
+    const records = await openSecrets(secretsBytes, passphrase)
+    secrets.unlocked = true
+    const port = deps.secrets
+    const liveByKey = new Map(
+      port === undefined ? [] : (await port.list()).map((r) => [r.key, r] as const),
+    )
+    const liveAgentIds = new Set(liveAgents.map((a) => a.id))
+    for (const record of records) {
+      const live = liveByKey.get(record.key)
+      const scopeId = scopeOf(record)
+      const blocked =
+        port === undefined
+          ? 'secrets cannot be restored on this server'
+          : scopeId !== null && !liveAgentIds.has(scopeId)
+            ? 'the agent this connection belongs to is not in this workspace under the same id'
+            : null
+      const status: ImportItem['status'] =
+        live === undefined
+          ? 'added'
+          : fingerprint(live) === fingerprint(record)
+            ? 'unchanged'
+            : 'changed'
+      add({
+        order: ORDER.secret,
+        item: makeItem({
+          key: `secrets/${record.key}`,
+          section: 'secrets',
+          kind: 'secrets',
+          label: `${secretKindText(record.key)}: ${record.label}`,
+          status,
+          applicable: blocked === null,
+          blocked,
+          authority:
+            status === 'unchanged'
+              ? []
+              : [`${secretKindText(record.key)} "${record.label}" becomes usable by the agents`],
+          notes:
+            status === 'changed'
+              ? ['a different secret is stored here (values are never shown)']
+              : [],
+        }),
+        run: async (ctx) => {
+          await (ctx.deps.secrets as NonNullable<Deps['secrets']>).put(record)
+          return undefined
+        },
+      })
+    }
+  }
+
+  // what belongs to an agent that is archived here waits for the agent to come back
+  for (const e of entries) {
+    const slug = e.removal === true ? undefined : classify(e.item.key)?.agent
+    if (slug === undefined || e.item.kind === 'agent' || e.item.status === 'unchanged') continue
+    if (agentBySlug.get(slug)?.archivedAt !== null && agentBySlug.has(slug)) {
+      e.item.notes.push(
+        'the agent is archived here: this is applied only together with the agent (overwrite brings it back)',
+      )
+    }
+  }
+
   const label = 'backupId' in source ? `backup ${source.backupId}` : 'uploaded zip'
   if (parsed.manifest.excluded.length > 0) {
     warnings.push('Tool media (a cache) is not part of the zip and is never touched.')
   }
-  return { entries, parsed, warnings, source: sourceOf(source), label }
+  return { entries, parsed, warnings, source: sourceOf(source), label, secrets }
+}
+
+const SECRET_KIND_TEXT: Record<string, string> = {
+  provider: 'Model provider key',
+  connection: 'Connection credentials',
+  'connector-client': 'OAuth client',
+}
+const secretKindText = (key: string): string =>
+  SECRET_KIND_TEXT[key.split('/')[0] ?? ''] ?? 'Secret'
+
+/** The agent a connection record belongs to (agent scope), or null. */
+function scopeOf(record: SecretRecord): string | null {
+  const row = record.rows.find((r) => r.kind === 'connection')
+  return row !== undefined &&
+    row.profile.scope === 'agent' &&
+    typeof row.profile.scopeId === 'string'
+    ? row.profile.scopeId
+    : null
+}
+
+/** What makes two secret records equal: every row's profile without its write time. Kept in memory only. */
+function fingerprint(record: SecretRecord): string {
+  return canonicalJson(
+    [...record.rows]
+      .sort((a, b) => (a.kind + a.id < b.kind + b.id ? -1 : 1))
+      .map((r) => ({ kind: r.kind, id: r.id, profile: { ...r.profile, updatedAt: undefined } })),
+  )
 }
 
 // --- apply helpers -----------------------------------------------------------------------------
@@ -1309,12 +1419,27 @@ export function validateSelection(raw: Partial<ImportSelection> | undefined): Im
       throw invalid(`${s} is for reading only: it cannot be imported`, 'INVALID_SELECTION')
     }
   }
-  return { sections, exclude: raw?.exclude ?? [], removeSections }
+  if (removeSections.some((s) => GATED_SECTIONS.includes(s))) {
+    throw invalid('Secrets are never removed by an import', 'INVALID_SELECTION')
+  }
+  return {
+    sections,
+    exclude: raw?.exclude ?? [],
+    removeSections,
+    overwrite: raw?.overwrite === true,
+  }
 }
 
-/** What an import of this zip would change. Writes nothing. */
-export async function previewImport(deps: Deps, source: ImportSource): Promise<ImportPreview> {
-  const plan = await buildPlan(deps, source)
+/**
+ * What an import of this zip would change. Writes nothing. With the `passphrase` of the export the
+ * secrets are listed too (a wrong one fails with `IMPORT_PASSPHRASE`).
+ */
+export async function previewImport(
+  deps: Deps,
+  source: ImportSource,
+  options: { passphrase?: string | undefined } = {},
+): Promise<ImportPreview> {
+  const plan = await buildPlan(deps, source, options.passphrase)
   const items = plan.entries.map((e) => e.item)
   const order = { added: 0, changed: 1, 'only-live': 2, unchanged: 3 } as const
   const shown = items
@@ -1329,6 +1454,7 @@ export async function previewImport(deps: Deps, source: ImportSource): Promise<I
       counts: plan.parsed.manifest.counts,
     },
     sections: summarize(items),
+    secrets: plan.secrets,
     items: shown.slice(0, PREVIEW_ITEM_MAX),
     truncated: shown.length > PREVIEW_ITEM_MAX,
     warnings: plan.warnings,
@@ -1348,6 +1474,8 @@ export interface ImportOptions {
   by: string
   /** The restore point this import undoes. */
   undoOf?: string | undefined
+  /** The passphrase of the export; needed when the `secrets` section is selected. */
+  passphrase?: string | undefined
 }
 
 /**
@@ -1362,14 +1490,35 @@ export async function applyImport(
 ): Promise<ImportResult> {
   const port = backupPort(deps)
   const selection = validateSelection(rawSelection)
+  // an undo puts back exactly what the import changed: it always overwrites
+  if (options.undoOf !== undefined) selection.overwrite = true
+  const wantsSecrets = selection.sections.includes('secrets')
+  if (wantsSecrets && (options.passphrase === undefined || options.passphrase === '')) {
+    throw invalid('Enter the passphrase of this export to restore its secrets', 'IMPORT_PASSPHRASE')
+  }
   let undone: RestorePoint | undefined
   if (options.undoOf !== undefined) {
     undone = port.restorePoints.get(options.undoOf)
     if (undone === undefined) throw notFound('Restore point', options.undoOf)
   }
-  const plan = await buildPlan(deps, source)
-  const chosen = plan.entries
-    .filter((e) => e.run !== undefined && selects(e.item, selection))
+  const plan = await buildPlan(deps, source, wantsSecrets ? options.passphrase : undefined)
+  const picked = plan.entries.filter((e) => e.run !== undefined && selects(e.item, selection))
+  // an agent archived here that is not brought back (its change is skipped) keeps its items too
+  const archived = new Set(
+    deps.agents
+      .list({ includeArchived: true })
+      .filter((a) => a.archivedAt !== null)
+      .map((a) => a.slug),
+  )
+  const revived = new Set(
+    picked.filter((e) => e.item.kind === 'agent').map((e) => classify(e.item.key)?.agent),
+  )
+  const chosen = picked
+    .filter((e) => {
+      const slug =
+        e.removal === true || e.item.kind === 'agent' ? undefined : classify(e.item.key)?.agent
+      return slug === undefined || !archived.has(slug) || revived.has(slug)
+    })
     .sort((a, b) => a.order - b.order || (a.item.key < b.item.key ? -1 : 1))
   if (chosen.length === 0) {
     return {
@@ -1418,6 +1567,13 @@ export async function applyImport(
         action: 'failed',
         note: error instanceof Error ? error.message : String(error),
       })
+    }
+  }
+  if (touched.has('secrets')) {
+    try {
+      await deps.secrets?.changed()
+    } catch {
+      // the provider profiles load again at the next change or restart
     }
   }
   // agents made by the import get their heartbeat routine like at boot
@@ -1480,15 +1636,23 @@ export async function previewUndo(
     )
   }
   const source: ImportSource = { backupId: point.safetyBackupId }
+  // secrets are not part of a safety backup (it is never made with a passphrase): not undoable here
   const sections = (point.sections.filter(isSection) as SectionId[]).filter(
-    (s) => !REFERENCE_SECTIONS.includes(s),
+    (s) => !REFERENCE_SECTIONS.includes(s) && !GATED_SECTIONS.includes(s),
   )
   const selection: ImportSelection = {
     sections: sections.length > 0 ? sections : defaultSelection().sections,
     exclude: [],
     removeSections: sections,
+    overwrite: true,
   }
-  return { restorePoint: point, source, selection, preview: await previewImport(deps, source) }
+  const preview = await previewImport(deps, source)
+  if (point.sections.includes('secrets')) {
+    preview.warnings.push(
+      'Secrets restored by this import are not part of the undo: the safety backup holds none. The database file of that backup still has the previous ones.',
+    )
+  }
+  return { restorePoint: point, source, selection, preview }
 }
 
 export { SECTIONS }

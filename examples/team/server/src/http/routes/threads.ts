@@ -106,7 +106,7 @@ const discussRoute = createRoute({
   tags: ['threads'],
   summary: 'Discuss in chat',
   description:
-    'Opens a NEW thread on the lead (or `agent`) seeded with the context of a briefing (or one of its items), an alert or a run: one context message, no model call. The client then asks what they want to know.',
+    'Opens a NEW thread on the lead (or `agent`) seeded with the context of an alert or a run: one context message, no model call. The client then asks what they want to know.',
   security,
   request: { body: { required: true, content: json(DiscussSchema) } },
   responses: {

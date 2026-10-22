@@ -367,31 +367,6 @@ export const AgentContextSchema = z
 
 const paths = z.array(z.string().min(1).max(500)).max(50)
 
-export const TaskCreateSchema = z
-  .object({
-    agentId: z.string().min(1).openapi({ description: 'Owner: agent id or slug.' }),
-    title: z.string().min(1).max(200),
-    brief: z.string().max(20_000).optional(),
-    inputs: paths.optional().openapi({ description: 'Library paths (start with /).' }),
-    priority: TaskPrioritySchema.optional(),
-    dueAt: z
-      .number()
-      .int()
-      .positive()
-      .nullable()
-      .optional()
-      .openapi({ description: 'Epoch milliseconds.' }),
-    hold: z.boolean().optional().openapi({
-      description:
-        'Do not start on its own (default false: the task starts when the agent has a free slot).',
-    }),
-    review: z.boolean().optional().openapi({
-      description: 'Finished work waits in Review. Default true for the client.',
-    }),
-    grants: GrantsSchema.nullable().optional(),
-  })
-  .openapi('TaskCreate')
-
 export const TaskPatchSchema = z
   .object({
     agentId: z.string().min(1).optional().openapi({ description: 'Reassign (agent id or slug).' }),

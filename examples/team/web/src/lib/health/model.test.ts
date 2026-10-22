@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { alarmAction, type Finding, filterFindings, memoryWhere, seenLine, severityCounts, sortFindings, splitConsistency } from './model';
+import { type Alarm, alarmAction, mergeAttention, type Finding, filterFindings, memoryWhere, seenLine, severityCounts, sortFindings } from './model';
 
 const f = (over: Partial<Finding>): Finding => ({
 	fingerprint: 'x',
@@ -41,11 +41,8 @@ describe('health model', () => {
 		expect(seenLine(f({ count: 1, firstSeen: 5, lastSeen: 5 }), ago)).toBe('Seen once, 5s ago');
 		expect(seenLine(f({ count: 4 }), ago)).toBe('Seen 4 times, first 1000s ago, last 2000s ago');
 	});
-	test('consistency findings are their own group, with the memory file and line', () => {
+	test('the memory file and line of a consistency finding', () => {
 		const c = f({ fingerprint: 'c', kind: 'consistency', consistency: { kind: 'memory-dead-ref', memoryPath: 'status.md', line: 3, refs: ['status.md'] } });
-		const g = splitConsistency([f({ fingerprint: 'r' }), c]);
-		expect(g.runtime.map((x) => x.fingerprint)).toEqual(['r']);
-		expect(g.consistency.map((x) => x.fingerprint)).toEqual(['c']);
 		expect(memoryWhere(c)).toBe('status.md, line 3');
 		expect(memoryWhere(f({}))).toBeNull();
 	});
@@ -57,5 +54,13 @@ describe('alarms', () => {
 		expect(alarmAction({ refs: ['/connectors'] })?.label).toBe('Reconnect');
 		expect(alarmAction({ refs: ['/programs/p1'] })?.label).toBe('Open the program');
 		expect(alarmAction({ refs: [] })).toBeUndefined();
+	});
+	test('findings and alarms are one list, high first, then the newest', () => {
+		const alarm = (id: string, kind: Alarm['kind'], createdAt: number): Alarm => ({ id, kind, subject: id, agentId: null, text: id, refs: [], createdAt, ackedAt: null, ackedBy: null, deliveredAt: null });
+		const list = mergeAttention(
+			[f({ fingerprint: 'm-old', severity: 'medium', lastSeen: 1 }), f({ fingerprint: 'h', severity: 'high', lastSeen: 5 }), f({ fingerprint: 'lo', severity: 'low', lastSeen: 99 })],
+			[alarm('a-run', 'run-failed', 50), alarm('a-sys', 'system', 10)]
+		);
+		expect(list.map((x) => x.key)).toEqual(['a:a-run', 'f:h', 'a:a-sys', 'f:m-old', 'f:lo']);
 	});
 });

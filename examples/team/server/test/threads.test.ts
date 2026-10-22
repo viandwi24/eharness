@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
-import { postAlerts, postBriefing } from '../src/app/briefings.ts'
+import { postAlerts, postDigest } from '../src/app/briefings.ts'
 import { createProposal } from '../src/app/decisions.ts'
 import type { Task } from '../src/domain/tasks.ts'
 import type { Thread } from '../src/domain/threads.ts'
@@ -501,51 +501,29 @@ describe('work started from a thread', () => {
   })
 })
 
-describe('briefings and the bell', () => {
-  const items = [
-    {
-      kind: 'run' as const,
-      title: 'Video scripts',
-      detail: 'done — Wrote 3 scripts',
-      link: '/tasks/t1',
-    },
-    { kind: 'waiting' as const, title: 'Draft email', detail: 'in Review', link: '/tasks/t2' },
-  ]
-
-  test('a briefing is one page per day plus one bell notification; opening it clears the bell', async () => {
+describe('the daily digest and the bell', () => {
+  test('the digest is one bell notification per day with the whole text', async () => {
     const i = instance(tmp(), {})
     const deps = i.server.deps
-    const made = postBriefing(deps, {
-      day: '2026-10-12',
-      body: '**Daily digest**\n- Video scripts',
-      items,
-      at: 1000,
-    })
-    expect(made?.title).toBe('Briefing 2026-10-12')
-    // idempotent per day
     expect(
-      postBriefing(deps, { day: '2026-10-12', body: 'again', items: [], at: 2000 }),
-    ).toBeUndefined()
-
-    const list = (await (await i.app.request('/briefings')).json()) as {
-      briefings: Array<{ id: string; day: string }>
-    }
-    expect(list.briefings.map((b) => b.day)).toEqual(['2026-10-12'])
+      postDigest(deps, { day: '2026-10-12', body: '**Daily digest**\n- Video scripts', at: 1000 }),
+    ).toBe(true)
+    // idempotent per day
+    expect(postDigest(deps, { day: '2026-10-12', body: 'again', at: 2000 })).toBe(false)
     const bell = (await (await i.app.request('/notifications')).json()) as {
-      notifications: Array<{ id: string; kind: string; link: string | null }>
+      notifications: Array<{ id: string; kind: string; link: string | null; body: string }>
       open: number
     }
     expect(bell.open).toBe(1)
-    expect(bell.notifications[0]).toMatchObject({
-      kind: 'briefing',
-      link: `/briefings?id=${made?.id}`,
-    })
-
-    expect((await i.app.request(`/briefings/${made?.id}/seen`, json('POST'))).status).toBe(200)
+    expect(bell.notifications[0]).toMatchObject({ kind: 'briefing', link: null })
+    expect(bell.notifications[0]?.body).toContain('Video scripts')
+    // the page and its routes are gone
+    expect((await i.app.request('/briefings')).status).toBe(404)
+    const id = bell.notifications[0]?.id
+    expect((await i.app.request(`/notifications/${id}/dismiss`, json('POST'))).status).toBe(200)
     expect(((await (await i.app.request('/notifications')).json()) as { open: number }).open).toBe(
       0,
     )
-    expect((await i.app.request('/briefings/none')).status).toBe(404)
   })
 
   test('urgent findings are alerts, one each, once; dismiss one or all', async () => {
@@ -587,52 +565,15 @@ describe('briefings and the bell', () => {
     expect((await read()).open).toBe(0)
     expect((await i.app.request('/notifications/nope/dismiss', json('POST'))).status).toBe(404)
   })
-
-  test('the lead reads the briefing with a tool from any thread', async () => {
-    const i = instance(tmp(), {
-      lead: [
-        { toolCalls: [{ toolName: 'read_briefings', input: {}, toolCallId: 'rb-1' }] },
-        { text: 'Your scripts are done.' },
-      ],
-    })
-    postBriefing(i.server.deps, {
-      day: '2026-10-12',
-      body: '**Daily digest**\n- Video scripts: done',
-      items,
-      at: 1000,
-    })
-    const t = await newThread(i, 'Morning')
-    expect((await say(i, t.sessionId, 'What does my briefing say?')).status).toBe(200)
-    const text = await messagesOf(i, t.sessionId)
-    expect(text).toContain('read_briefings')
-    expect(text).toContain('Video scripts: done')
-    // a role agent has no such tool
-    const researcher = i.server.deps.agents.getBySlug('researcher')?.id
-    const rt = await (await i.app.request(`/agents/${researcher}/context`)).json()
-    expect(JSON.stringify(rt)).not.toContain('read_briefings')
-  })
 })
 
 describe('Discuss in chat', () => {
   const discuss = (i: Instance, body: Record<string, unknown>) =>
     i.app.request('/threads/discuss', json('POST', body))
 
-  test('a briefing item, an alert and a run each open a NEW thread seeded with that context', async () => {
+  test('an alert and a run each open a NEW thread seeded with that context', async () => {
     const i = instance(tmp(), {})
     const deps = i.server.deps
-    const b = postBriefing(deps, {
-      day: '2026-10-12',
-      body: '**Daily digest**',
-      items: [
-        {
-          kind: 'noticed',
-          title: 'Connector needs sign-in: GitHub',
-          detail: 'Reconnect it.',
-          link: '/connectors',
-        },
-      ],
-      at: 1000,
-    })
     postAlerts(deps, {
       agentId: i.leadId,
       beatId: 'b1',
@@ -650,16 +591,6 @@ describe('Discuss in chat', () => {
     })
     const alert = deps.notifications.list({ open: true, limit: 10 }).find((n) => n.kind === 'alert')
     const before = (await threadsOf(i)).length
-
-    const fromItem = await discuss(i, { kind: 'briefing', ref: b?.id, item: 0 })
-    expect(fromItem.status).toBe(201)
-    const t1 = (await fromItem.json()) as Thread
-    expect(t1.agentId).toBe(i.leadId) // the lead by default
-    expect(t1.title).toBe('Connector needs sign-in: GitHub')
-    expect(t1.seed).toMatchObject({ kind: 'briefing', ref: b?.id })
-    const seeded = await messagesOf(i, t1.sessionId)
-    expect(seeded).toContain('Reconnect it.')
-    expect(seeded).toContain('/connectors')
 
     const fromAlert = (await (await discuss(i, { kind: 'alert', ref: alert?.id })).json()) as Thread
     expect(await messagesOf(i, fromAlert.sessionId)).toContain('Runs stop at the limit.')
@@ -687,22 +618,18 @@ describe('Discuss in chat', () => {
     expect(runText).toContain('Write the October scripts')
     expect(runText).toContain(`/tasks/${queued.id}`)
 
-    // always a new thread: the same item again is another one, and nothing is created by events
-    const again = (await (
-      await discuss(i, { kind: 'briefing', ref: b?.id, item: 0 })
-    ).json()) as Thread
-    expect(again.id).not.toBe(t1.id)
-    expect(await threadsOf(i)).toHaveLength(before + 4)
+    // always a new thread: the same alert again is another one, and nothing is created by events
+    const again = (await (await discuss(i, { kind: 'alert', ref: alert?.id })).json()) as Thread
+    expect(again.id).not.toBe(fromAlert.id)
+    expect(await threadsOf(i)).toHaveLength(before + 3)
 
-    expect((await discuss(i, { kind: 'briefing', ref: 'missing' })).status).toBe(404)
-    expect((await discuss(i, { kind: 'briefing', ref: b?.id, item: 9 })).status).toBe(404)
-    expect((await discuss(i, { kind: 'alert', ref: b?.id })).status).toBe(404)
+    expect((await discuss(i, { kind: 'alert', ref: 'missing' })).status).toBe(404)
   })
 
-  test('creating a briefing or an alert opens no thread by itself', async () => {
+  test('creating a digest or an alert opens no thread by itself', async () => {
     const i = instance(tmp(), {})
     const before = (await threadsOf(i)).length
-    postBriefing(i.server.deps, { day: '2026-10-13', body: 'x', items: [], at: 1 })
+    postDigest(i.server.deps, { day: '2026-10-13', body: 'x', at: 1 })
     postAlerts(i.server.deps, {
       agentId: i.leadId,
       beatId: 'b',

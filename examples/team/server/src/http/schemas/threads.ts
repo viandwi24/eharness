@@ -2,8 +2,9 @@ import { z } from '@hono/zod-openapi'
 
 export const ThreadSeedSchema = z
   .object({
+    // `briefing` only on threads that were opened before the Briefing page was removed (P55)
     kind: z.enum(['briefing', 'alert', 'run']),
-    ref: z.string().openapi({ description: 'Id of the briefing, notification or task.' }),
+    ref: z.string().openapi({ description: 'Id of the notification or task.' }),
     title: z.string(),
   })
   .openapi('ThreadSeed', { description: 'What a "Discuss in chat" thread was opened about.' })
@@ -59,14 +60,8 @@ export const ThreadPatchSchema = z
 
 export const DiscussSchema = z
   .object({
-    kind: z.enum(['briefing', 'alert', 'run']),
-    ref: z.string().openapi({ description: 'Briefing id, alert (notification) id or task id.' }),
-    item: z
-      .number()
-      .int()
-      .min(0)
-      .optional()
-      .openapi({ description: 'With a briefing: the index of one item of it.' }),
+    kind: z.enum(['alert', 'run']),
+    ref: z.string().openapi({ description: 'Alert (notification) id or task id.' }),
     agent: z.string().optional().openapi({ description: 'Agent id or slug; default the lead.' }),
   })
   .openapi('Discuss')

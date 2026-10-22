@@ -34,8 +34,11 @@ docs/     architecture, API, operations
   person. Approvals and questions are answered only inline in the session's chat (the agent's DM
   or the task view); notifications and the board just link there.
 - **Library and memory**: shared files agents write and you edit (stale edits lose to agent writes),
-  workspace and per-agent memory.
-- **Routines**: cron / interval / one-shot prompts, safe with several instances.
+  and per-agent memory (the shared workspace memory scope was removed in P55: the library replaces it).
+- **Reminders and programs**: reminders made from chats on the **Reminders** page, and programs
+  (standing orders) with their own cron / interval / one-shot schedule, safe with several instances.
+- **Needs attention**: one page for failed runs, broken connections, health findings and consistency
+  findings, most serious first, one Dismiss. The daily digest is one notification per day in the bell.
 - **Connectors** (Claude style): built-in Files, Memory, Planning, Web, Ask the user and Team; GitHub and any remote MCP URL, connected once for the workspace (available to all agents, each agent may override) or for one agent; per agent each capability is Allowed, Ask first or Off. Secrets are encrypted, writes of external connectors always ask, even in Bypass mode. Custom connectors are added like in Claude: **Add custom connector** → name + remote MCP URL → the server probes it (OAuth detected or not) → choose *Sign in now*, *Sign in when needed* or *No sign in*, an optional OAuth client and request headers → each one becomes its own card. Their tool prefix is a slug of the name taken at creation, so renaming never renames tools. The composer's tools menu switches connectors per chat, and **Tool access** (Auto / On demand) decides whether third-party tools are loaded up front or found through `tool_search`. A chat pins the tool definitions a remote MCP server first showed it (a server must not silently rewrite what a tool does), so after a server upgrade the changed tools stay off in long-lived chats: the chat's **Tools** panel marks them *Changed on the server*, Health lists a finding, and the owner accepts the new definitions with **Accept & reload** (one chat), **Reload tools** (every chat of an agent) or **Accept new definitions in all chats** on the connection. Reloading clears the library's MCP pins (`mcp:<name>:pins`) from the stored session states; see `docs/specs/09-tools-and-mcp.md`.
 - **Channels** (Telegram bot): the **Channels** page lists your connected channels as cards; open one for its own pages (overview, chats, people, inbox, activity, reminders, delivery, settings): connect a bot (token from @BotFather), bind it to an agent, see the chats it was added to with a policy each (wake on mention, always, or observe only; reply or post-by-tool; retention), the people who wrote (link them to a team member, or ignore them; strangers get silence), the conversations with their logs, an activity feed and the outbound queue, all as searchable, sortable, paged tables. Groups, forum topics, channels and DMs; approvals with buttons. See [Telegram bot](#telegram-bot).
 - **Persona**: who an agent is is editable and versioned, from the agent dialog's **Persona** tab or by asking the agent in a chat: identity, voice and preferences, admin-only operating rules, per-chat overlays (Channels page) and notes on how people like to be addressed. Owners and admins confirm a change (a button in the chat); members can only propose it; every version has its author, source and diff and can be reverted. A persona never weakens the rules: roles and approvals stay code. See [the walkthrough](../../docs/guides/walkthrough-server.md#28f-the-persona-of-an-agent-editable-versioned-never-above-the-rules-p42).
@@ -45,7 +48,7 @@ docs/     architecture, API, operations
 
 Screenshots (to be added under `docs/img/`): `chat.png` (chat with the context panel),
 `board.png` (tasks board with an approval drawer), `library.png`,
-`routines.png`, `agent-editor.png`.
+`reminders.png`, `agent-editor.png`.
 
 ## Quick start
 
@@ -179,7 +182,9 @@ The library, agent memory and the workspace definition live in the database, so 
   `<TEAM_BACKUP_DIR>/team-<time>-<id>.db`, `.zip`, `.json`.
 - **The workspace export** (`<id>.zip`, part of every backup, also **Download workspace export** on
   demand, `GET /backups/export`): one zip a person can open and read, `.md` and `.json` in folders.
-  Chats, task transcripts and logs are not in it; **secrets never are**.
+  Chats, task transcripts and logs are not in it. **Secrets are not in it either, unless you set a
+  passphrase** when you download it by hand (see "Secrets in the zip" below); scheduled backups and
+  the safety backups of an import never hold secrets.
 
   ```
   manifest.json                        format, format version, app version, created at, counts, sha256 of every file
@@ -197,7 +202,20 @@ The library, agent memory and the workspace definition live in the database, so 
   connections/<label>.json             connector, settings WITHOUT secrets, who uses it ("secrets not exported:
                                        reconnect after import"; reading only)
   people/<id>.json                     a person of the directory
+  secrets.enc.json                     only with a passphrase: provider keys and connection credentials, encrypted
   ```
+- **Secrets in the zip** (optional, encrypted). **Download workspace export** asks whether to include
+  secrets; with a passphrase (at least 12 characters, typed twice, `POST /backups/export` with
+  `{ "passphrase": "…" }`; it travels in the body, is never stored or logged and cannot be recovered)
+  `secrets.enc.json` holds every provider profile key, every connection with its credentials (this
+  covers the bot tokens of channel connectors) and OAuth client credentials. Format
+  `eharness-team-secrets` version 1: `{ format, version, count, kdf: { name: "PBKDF2", hash: "SHA-256",
+  iterations ≥ 600000, salt }, cipher: { name: "AES-256-GCM", iv }, data }`, key from the passphrase
+  with Web Crypto (random 16-byte salt and 12-byte IV per export), the count is authenticated. The
+  manifest says `secrets: { included: true, count: N }` (a number, never names or values). The zip
+  holds no plain secret anywhere; the import never needs `TEAM_SECRET_KEY` of the source server (the
+  target seals what it restores with its own key). Not covered: the channel log's own key
+  (`TEAM_CHANNEL_KEY`), the server keys themselves, and env-defined providers.
 - **When**: daily at the Settings time (default 02:00, team timezone), at start-up when none was taken
   today, on **Back up now**, and before risky operations (code calls `backupBefore(deps, reason)` from
   `app/backups.ts` and must stop when it answers `ok: false`). Retention (Settings): the newest of the
@@ -209,6 +227,20 @@ The library, agent memory and the workspace definition live in the database, so 
   **preview** compares it with the workspace entity by entity: *new here*, *differs* (a readable line
   diff for `.md` and text, the changed fields for JSON), *same* (counted), *only in the workspace*.
   Untick whole sections or single items; apply only after you confirm.
+  - **Nothing is overwritten unless you choose it.** An item that exists here and differs is *skipped*.
+    The preview has two buttons: **Apply (skip existing)** adds only what is new (identical items are
+    no-ops, differing ones stay as they are) and **Apply and overwrite existing** also replaces the
+    differing ones; unticking single items works with both. API: `selection.overwrite` (default
+    `false`). Things that belong to an agent archived here wait with the agent: they are applied
+    only together with it (overwrite brings it back).
+  - **Secrets**: the preview says "Secrets included: N (encrypted)"; type the passphrase of the
+    export to list them by name (values are never shown). A wrong passphrase answers a readable
+    `IMPORT_PASSPHRASE` error and nothing secret is imported; applying with the Secrets section ticked
+    checks the passphrase before anything is written. Secrets are restored under the same policy
+    (a different stored value is skipped unless you overwrite) and are never removed by an import.
+    Restoring a connection recreates it with its credentials under the same ids; its enablement per
+    agent is imported with the agents (run the import again, or enable it by hand, for agents imported
+    in the same run). Agent-scoped connections need their agent under the same id.
   - Matching is by stable keys and keeps the live ids: an agent by slug (an archived one is brought
     back), a program by name per agent, a routine by id then name, a library or memory file by path
     (an agent's memory goes to its folder here), a person by id then name. New things get new ids and
@@ -227,12 +259,14 @@ The library, agent memory and the workspace definition live in the database, so 
   (`before: import ...`; nothing is applied when it fails) and records a **restore point**: what was
   applied, from which backup, by whom, when, and the safety backup id (stored as `rp-*.json` next to
   the backups, so they survive a database restore). **Undo** imports that safety backup with the same
-  preview, the touched sections ticked for removal of what the import added. The undo is a restore
+  preview, the touched sections ticked for removal of what the import added. An undo always
+  overwrites (it puts back exactly what the import changed). Secrets are not part of an undo: the
+  safety backup holds none (its `.db` still has the previous sealed ones). The undo is a restore
   point itself, so it can be undone. The safety backup is a `before` backup: kept 30 days at least.
 - **Restore files** (the older, database-based flow): pick a file, folder or `/`, preview, restore.
   Files come back as new versions (the old one stays in the file history); nothing is deleted; a safety
-  backup is taken first and a restore point recorded. Mode "missing" only recreates absent files,
-  "all" also replaces differing ones.
+  backup is taken first and a restore point recorded. Mode "missing" (the default: skip files that exist
+  and differ) only recreates absent files, "all" also overwrites differing ones.
 - **Restore the whole database (manual)**: stop the server, copy the `.db` of a snapshot over
   `TEAM_DB` (delete `team.db-wal` and `team.db-shm` next to it), start the server.
 - **Production (Dokploy)**: set `TEAM_BACKUP_DIR` to a path on a persistent volume (not the container
@@ -328,7 +362,7 @@ For a company group (for example a forum supergroup with a topic per division):
 
     `--db` defaults to `TEAM_DB` or `./data/team.db`. Read the listed lines first: a flagged file can hold other
     useful notes too. A backup JSON is written next to the database before anything is removed.
-11. **Reminders on the Routines page**: reminders made from chats show on **Routines** with a
+11. **Reminders page**: reminders made from chats show on **Reminders** (`/routines`) with a
     "Reminder · <chat>/<topic>" badge (active ones, and the recent finished or cancelled ones); cancel works there
     too. The `reminder` tool takes `message` (what is posted when it fires, written as the reminder itself, for
     example "Waktunya pulang"), `request` (what the person asked; context only) and `verbatim` (the person quoted

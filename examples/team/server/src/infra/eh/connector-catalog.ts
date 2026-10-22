@@ -28,7 +28,6 @@ import { webFetch, webSearch } from 'eharness/web'
 import { nodeResolveHost } from 'eharness/web/node'
 import { z } from 'zod'
 import type { AgentDef } from '../../domain/agents.ts'
-import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { SESSION_CONTEXT_TOOLS } from '../../domain/session-context.ts'
@@ -45,7 +44,6 @@ import { DECISION_TOOLS, PROGRAM_NOTE_TOOL } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { PERSONA_TOOLS } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
-import { sessionFileSystem } from './rehearsal-registry.ts'
 import { WORK_QUEUE_TOOLS } from './work-queue-plugin.ts'
 
 /** Name of the clock tool (`eharness/clock`'s default). */
@@ -85,8 +83,6 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       ...WORK_QUEUE_TOOLS,
       // reading other sessions and runs of the agent (read-only; what a caller may see is decided in code)
       ...SESSION_CONTEXT_TOOLS,
-      // reading the Briefing page is read-only
-      READ_BRIEFINGS_TOOL,
       // the clock is read-only
       DATETIME_TOOL,
       // the checkpoint of a long-run worker job only stores the model's own note
@@ -496,13 +492,10 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
       plugin: ({ tools }, ctx) => {
         const def = defOf(ctx.agent.id)
         const files = filesystem({
-          // a rehearsal session sees an overlay over the library (`rehearsal-registry.ts`)
-          fs: sessionFileSystem(
-            libraryFs(sqlite, {
-              agentId: def.id,
-              ...(options.onFileChange ? { onChange: options.onFileChange } : {}),
-            }),
-          ),
+          fs: libraryFs(sqlite, {
+            agentId: def.id,
+            ...(options.onFileChange ? { onChange: options.onFileChange } : {}),
+          }),
           // every tool a program run can be granted is defined; the ones the connection does not
           // offer are hidden from every session but a run that is granted them (`fileGrant`)
           tools: [
@@ -519,7 +512,7 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
             : { readonlyPrefixes: [CODE_LIST_PATH.slice(0, CODE_LIST_PATH.lastIndexOf('/'))] }),
           ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
         })
-        // `code()` reads the `fs` service of the plugin before it, so a rehearsal overlay applies
+        // `code()` reads the `fs` service of the plugin before it
         return options.code !== undefined &&
           tools.includes('run_python') &&
           options.hooks.remoteRun?.() !== true
@@ -531,8 +524,14 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
       paths: { workspace: WORKSPACE_MEMORY, agent: agentMemory },
       plugin: (roots) =>
         memory({
-          roots: () => roots.map(({ path, write, label }) => ({ path, write, label })),
-          pinned: () => roots.map((r) => `${r.path}/profile.md`),
+          // the shared workspace memory is not offered any more (the library replaces it, P55);
+          // agents keep their own memory
+          roots: () =>
+            roots
+              .filter((r) => r.path !== WORKSPACE_MEMORY)
+              .map(({ path, write, label }) => ({ path, write, label })),
+          pinned: () =>
+            roots.filter((r) => r.path !== WORKSPACE_MEMORY).map((r) => `${r.path}/profile.md`),
           flushOnCompaction: true,
         }),
     },

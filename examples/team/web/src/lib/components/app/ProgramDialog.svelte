@@ -1,7 +1,6 @@
 <script lang="ts">
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import { untrack } from 'svelte';
-	import FlaskIcon from 'phosphor-svelte/lib/Flask';
 	import TrashIcon from 'phosphor-svelte/lib/Trash';
 	import { goto } from '$app/navigation';
 	import { api } from '#lib/api/index.js';
@@ -97,10 +96,6 @@
 				<div class="flex gap-2">
 					<Button type="button" variant="ghost" class="text-destructive-text" onclick={() => (confirmDelete = true)}>
 						<TrashIcon class="size-4" /> Delete
-					</Button>
-					<!-- the test run uses the program as saved: it opens on the program page -->
-					<Button type="button" variant="ghost" onclick={() => { const id = program?.id; closeProgramDialog(); if (id) void goto(`/programs/${id}?test=1`); }}>
-						<FlaskIcon class="size-4" /> Test run
 					</Button>
 				</div>
 			{:else}

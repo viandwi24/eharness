@@ -106,7 +106,7 @@ describe('health job', () => {
       n.title.startsWith('Health:'),
     )
     expect(health).toHaveLength(1)
-    expect(health[0].link).toBe('/health')
+    expect(health[0].link).toBe('/attention')
 
     const list = await get(server, '/agent-health/findings')
     expect(list.open).toBe(1)

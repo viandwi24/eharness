@@ -64,7 +64,6 @@ import {
 import { subagent } from 'eharness/subagent'
 import type { EventAppender, PersonaStore, ProgramStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import {
   isAllowedMediaType,
   isDmSession,
@@ -104,7 +103,6 @@ import {
   WORKER_TOOLS,
 } from '../../domain/programs.ts'
 import { HAND_OVER_REMINDER, LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
-import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import { SETTINGS_BUILTIN, type WorkspaceSettings } from '../../domain/settings.ts'
 import { parseChatSession } from '../../domain/threads.ts'
@@ -142,7 +140,6 @@ import { memoryDiscipline } from './memory-discipline-plugin.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import { type PersonaIntake, persona } from './persona-plugin.ts'
 import type { ModelConfig } from './provider.ts'
-import { rehearsalSessions, sessionFileSystem } from './rehearsal-registry.ts'
 import { routineOutcomes } from './routine-plugin.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
 import { sessionContext } from './session-context-plugin.ts'
@@ -468,9 +465,6 @@ export interface SessionModes {
 /** Ledger scope of the workspace: every model call of every agent reserves against it. */
 export const workspaceScope = (workspaceId: string): string => `workspace:${workspaceId}`
 
-/** Ledger scope of one rehearsal (its own small cap, `domain/rehearsal.ts`). */
-export const rehearsalScope = (sessionId: string): string => `rehearsal:${sessionId}`
-
 function createStorage(sqlite: Database) {
   return {
     messages: sqliteMessages(sqlite),
@@ -530,12 +524,7 @@ const WORKER_MARK = ':worker:'
 export const isWorkerSession = (sessionId: string): boolean => sessionId.includes(WORKER_MARK)
 
 /** Runs whose budget is set by their runner: the step budget never extends them. */
-const FIXED_STEP_ORIGINS: ReadonlySet<string> = new Set([
-  'program',
-  'rehearsal',
-  'heartbeat',
-  'routine',
-])
+const FIXED_STEP_ORIGINS: ReadonlySet<string> = new Set(['program', 'heartbeat', 'routine'])
 
 /**
  * The hard step cap of a turn of this session (0 = never extended): a chat turn 120 steps; a
@@ -673,13 +662,6 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
    * every turn, so an edit applies to the next turn.
    */
   const programScopes = (sessionId: string): string[] => {
-    // a rehearsal spends from a small cap of its own, never from the program's scopes
-    const rehearsal = rehearsalSessions.get(sessionId)
-    if (rehearsal !== undefined) {
-      const scope = rehearsalScope(sessionId)
-      setBudgetLimit(sqlite, scope, rehearsal.budgetUsd)
-      return [scope]
-    }
     if (profileOfSession(sessionId).budget !== 'program') return []
     const parsed = parseProgramSession(sessionId)
     const program = parsed === undefined ? undefined : deps.programs?.get(parsed.programId)
@@ -979,7 +961,6 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...WORKER_TOOLS,
       ...DECISION_TOOLS,
       ...WORK_QUEUE_TOOLS,
-      READ_BRIEFINGS_TOOL,
       'final_answer',
       ...runFileTools(authority),
     ])
@@ -1099,34 +1080,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           channels: deps.channels,
         })
       }
-      const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
+      const parsed = parseProgramSession(sessionId)
       if (parsed === undefined) return undefined
       const gate = createProgramGate({ programId: parsed.programId, out, programs: deps.programs })
-      return {
-        ...gate,
-        // a rehearsal does not call external systems that would change something: the call is
-        // recorded and the model reads what it would have done (`domain/rehearsal.ts`)
-        ...(originOfSession(sessionId) !== 'rehearsal'
-          ? {}
-          : {
-              simulate(call: { toolName: string; input: unknown; risk?: string | undefined }) {
-                const origin = out.toolNameMap[call.toolName]
-                if (
-                  !isSimulatedCall({
-                    connectorId: origin?.connectorId,
-                    risk: call.risk,
-                    kind: deps.connectors.toolKinds(def.id)?.[call.toolName],
-                  })
-                ) {
-                  return undefined
-                }
-                rehearsalSessions
-                  .get(sessionId)
-                  ?.recorder.simulated({ tool: call.toolName, input: call.input })
-                return simulatedText(call.toolName, call.input)
-              },
-            }),
-      }
+      return gate
     }
 
     // file tools the Files connector of this agent does not offer (switched off, or no connection)
@@ -1137,7 +1094,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     const grantedFileTools = (sessionId: string): ReadonlySet<string> => {
       const task = deps.taskGrants?.(sessionId)
       if (task !== undefined) return new Set(runFileTools(task))
-      const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
+      const parsed = parseProgramSession(sessionId)
       const program = parsed === undefined ? undefined : deps.programs?.get(parsed.programId)
       return new Set(program === undefined ? [] : runFileTools(program.authority))
     }
@@ -1174,12 +1131,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       !pluginNames.has('filesystem')
         ? [
             filesystem({
-              fs: sessionFileSystem(
-                libraryFs(sqlite, {
-                  agentId: def.id,
-                  ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
-                }),
-              ),
+              fs: libraryFs(sqlite, {
+                agentId: def.id,
+                ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
+              }),
               tools: deps.programs === undefined ? [] : (PROGRAM_FILE_TOOLS as FileToolName[]),
               hiddenPrefixes: ['/memories', TOOL_MEDIA_DIR],
               ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),

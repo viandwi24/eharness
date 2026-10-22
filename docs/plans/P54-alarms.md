@@ -1,5 +1,7 @@
 # P54 — Alarms: no silent failure
 
+> P55 note: the Health page became the "Needs attention" page (`/attention`): alarms, health findings and consistency findings in one list, one Dismiss. See `P55-consolidation.md`.
+
 Status: in progress · Owner: agent session · Branch: main
 
 ## Goal

@@ -66,6 +66,8 @@ export interface ProviderService extends ProvidersPort {
   manager: ProviderManager
   /** Load profiles and the catalogs (never throws). */
   ready(): Promise<void>
+  /** Read the profiles from the store again (after rows were written behind the manager's back). */
+  reload(): Promise<void>
   /** Bumps whenever the profiles change on this or another instance (cache key of agents). */
   rev(): number
   /** Profiles as of now (synchronous). */
@@ -219,6 +221,10 @@ export function createProviderService(options: ProviderServiceOptions): Provider
     manager,
     env,
     ready,
+    async reload() {
+      await ready()
+      await reloadFromFeed()
+    },
     rev: () => revision,
     profiles: () => views,
     defaultProfileId,

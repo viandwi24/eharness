@@ -5,6 +5,7 @@
  * zip itself, its manifest and its hashes too. Reading it back is `workspace-import.ts`.
  */
 import type { AgentDef } from '../domain/agents.ts'
+import { conflict } from '../domain/errors.ts'
 import {
   type AgentDoc,
   type PersonDoc,
@@ -22,6 +23,7 @@ import {
   slugOfName,
   uniqueName,
 } from '../domain/workspace-export.ts'
+import { checkPassphrase, SECRETS_FILE, sealSecrets } from '../domain/workspace-secrets.ts'
 import { backupPort } from './backup-port.ts'
 import { effectiveConfig } from './heartbeat.ts'
 import type { Deps } from './ports.ts'
@@ -258,8 +260,26 @@ export async function collectEntities(deps: Deps): Promise<EntityFile[]> {
   return files
 }
 
-/** The workspace export of the live database as a zip to download now. */
-export async function exportWorkspace(deps: Deps) {
+/**
+ * The workspace export of the live database as a zip to download now. With a `passphrase` (at least
+ * 12 characters) the provider keys and connection credentials travel too, encrypted in
+ * `secrets.enc.json`; without one secrets are left out. Scheduled and safety backups never hold them.
+ */
+export async function exportWorkspace(
+  deps: Deps,
+  options: { passphrase?: string | undefined } = {},
+) {
   const port = backupPort(deps)
-  return port.exportNow(await collectEntities(deps))
+  const entities = await collectEntities(deps)
+  if (options.passphrase !== undefined) {
+    const passphrase = checkPassphrase(options.passphrase)
+    if (deps.secrets === undefined) {
+      throw conflict('Secrets cannot be exported on this server', 'SECRETS_UNAVAILABLE')
+    }
+    const records = await deps.secrets.list()
+    if (records.length > 0) {
+      entities.push({ path: SECRETS_FILE, bytes: await sealSecrets(records, passphrase) })
+    }
+  }
+  return port.exportNow(entities)
 }

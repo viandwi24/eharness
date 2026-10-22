@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
 import { teamStatus } from '../src/app/heartbeat.ts'
+import { createTask } from '../src/app/work-queue.ts'
 import {
   boardLine,
   buildDigest,
@@ -758,11 +759,7 @@ describe('manager, worker and auditor programs with Files edit off (real client 
       worker: { maxTasks: 1 },
     })
     expect(worker.warnings).toEqual([])
-    const queued = await app.request(
-      '/tasks',
-      json('POST', { agentId: 'writer', title: 'Script: the island', brief: 'Write it.' }),
-    )
-    expect(queued.status).toBe(201)
+    createTask(server.deps, { agentId: 'writer', title: 'Script: the island', brief: 'Write it.' })
     await runNow(app, worker.id)
     const run = await firstRun(app, worker.id)
     expect(run.status).toBe('done')

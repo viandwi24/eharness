@@ -11,7 +11,6 @@
 	import { auth, signOut } from '#lib/stores/auth.svelte.js';
 	import type { components } from '#lib/api/schema.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
-	import MemoryEditor from '#lib/components/app/MemoryEditor.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import * as AllocationBar from '#lib/components/ui/allocation-bar/index.js';
@@ -56,7 +55,6 @@
 		{ id: 'backups', label: 'Backups', icon: ArchiveIcon },
 		{ id: 'usage', label: 'Usage', icon: ChartBarIcon },
 		{ id: 'rules', label: 'Saved rules', icon: ShieldCheckIcon },
-		{ id: 'memory', label: 'Memory', icon: BrainIcon },
 		{ id: 'connection', label: 'Connection', icon: PlugsConnectedIcon }
 	] as const;
 	type SectionId = (typeof sections)[number]['id'];
@@ -633,16 +631,6 @@
 								</div>
 							{/each}
 						</Card.Content>
-					</Card.Root>
-				{:else if section === 'memory'}
-					<Card.Root>
-						<Card.Header>
-							<Card.Title>Workspace memory</Card.Title>
-							<Card.Description>
-								Shared by every agent. Agents read it each turn; the lead and explicit roles can write it. If an agent edited a file while you were typing, saving shows the conflict.
-							</Card.Description>
-						</Card.Header>
-						<Card.Content><MemoryEditor scope="workspace" /></Card.Content>
 					</Card.Root>
 				{:else}
 					<form onsubmit={saveToken}>

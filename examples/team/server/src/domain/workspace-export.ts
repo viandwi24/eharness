@@ -20,11 +20,14 @@
  *   agents/<slug>/reminders/<id>.json      an active reminder (a reference: never imported)
  *   connections/<label>.json               a connection WITHOUT secrets (a reference: never imported)
  *   people/<id>.json                       a person of the directory
+ *   secrets.enc.json                       OPTIONAL: provider keys and connection credentials, encrypted with
+ *                                          the passphrase chosen at export (`workspace-secrets.ts`)
  *
  * Chats, task transcripts and logs are not in it: the verified database snapshot covers full
  * disaster recovery.
  */
 import { invalid } from './errors.ts'
+import { SECRETS_FILE } from './workspace-secrets.ts'
 
 export const WORKSPACE_FORMAT = 'eharness-team-workspace'
 export const WORKSPACE_FORMAT_VERSION = 1
@@ -77,6 +80,7 @@ export const SECTIONS = [
   'people',
   'connections',
   'reminders',
+  'secrets',
 ] as const
 export type SectionId = (typeof SECTIONS)[number]
 
@@ -90,9 +94,10 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   people: 'People',
   connections: 'Connections (reference only)',
   reminders: 'Reminders (reference only)',
+  secrets: 'Secrets (encrypted in the zip)',
 }
 
-/** Sections that are listed for reading and never written: secrets and chats do not travel. */
+/** Sections that are listed for reading and never written (a connection's secrets come back through the secrets section). */
 export const REFERENCE_SECTIONS: readonly SectionId[] = ['connections', 'reminders']
 
 export const isSection = (value: string): value is SectionId =>
@@ -117,6 +122,7 @@ export type EntryKind =
   | 'reminder'
   | 'connection'
   | 'person'
+  | 'secrets'
   | 'file'
 
 export interface Classified {
@@ -135,6 +141,7 @@ export function classify(entry: string): Classified | undefined {
   if (parts.length === 1) {
     if (entry === 'manifest.json') return { section: null, kind: 'manifest' }
     if (entry === 'settings.json') return { section: 'settings', kind: 'settings' }
+    if (entry === SECRETS_FILE) return { section: 'secrets', kind: 'secrets' }
     return undefined
   }
   if (top === 'library' || top === 'uploads' || top === 'other') {
@@ -294,12 +301,27 @@ export interface WorkspaceManifest {
   files: ManifestFile[]
   /** What was left out on purpose (tool media). */
   excluded: Array<{ prefix: string; files: number }>
+  /**
+   * Whether `secrets.enc.json` is in the zip and how many secrets it holds (a count, never names or
+   * values). Absent in the zips of earlier versions: no secrets.
+   */
+  secrets: { included: boolean; count: number }
   /** Said in the file so a reader of the zip knows: connections never carry secrets. */
   notice: string
 }
 
 export const MANIFEST_NOTICE =
   'Secrets are not exported: reconnect connections after an import. Chats, task transcripts and logs are not in this file; the database snapshot of the same backup keeps them.'
+
+export const MANIFEST_NOTICE_WITH_SECRETS =
+  'Secrets are in secrets.enc.json, encrypted (AES-256-GCM, key from a passphrase by PBKDF2-SHA256): they cannot be read without the passphrase of this export. Chats, task transcripts and logs are not in this file; the database snapshot of the same backup keeps them.'
+
+function parseSecrets(value: unknown): WorkspaceManifest['secrets'] {
+  const o = (value ?? {}) as Record<string, unknown>
+  return o.included === true && typeof o.count === 'number' && Number.isInteger(o.count)
+    ? { included: true, count: o.count }
+    : { included: false, count: 0 }
+}
 
 /** The manifest of a zip, checked for shape; anything else is refused with a readable reason. */
 export function parseManifest(value: unknown): WorkspaceManifest {
@@ -356,6 +378,7 @@ export function parseManifest(value: unknown): WorkspaceManifest {
       m.counts !== null && typeof m.counts === 'object' ? (m.counts as Record<string, number>) : {},
     files,
     excluded: Array.isArray(m.excluded) ? (m.excluded as WorkspaceManifest['excluded']) : [],
+    secrets: parseSecrets(m.secrets),
     notice: typeof m.notice === 'string' ? m.notice : MANIFEST_NOTICE,
   }
 }
@@ -503,6 +526,11 @@ export interface ImportSelection {
   exclude: string[]
   /** Sections where the items only in the workspace are removed too (agents are archived). */
   removeSections: SectionId[]
+  /**
+   * Replace items that exist here and differ. False (the default): they are skipped, only new items
+   * are added. An undo always overwrites (it puts back exactly what the import changed).
+   */
+  overwrite: boolean
 }
 
 export const PREVIEW_ITEM_MAX = 2000
@@ -517,6 +545,8 @@ export interface ImportPreview {
     counts: Record<string, number>
   }
   sections: SectionSummary[]
+  /** The zip's secrets: whether there are any, how many, and whether the passphrase opened them. */
+  secrets: { included: boolean; count: number; unlocked: boolean }
   /** Changes first; at most `PREVIEW_ITEM_MAX`. */
   items: ImportItem[]
   truncated: boolean
@@ -546,12 +576,18 @@ export function selects(item: ImportItem, selection: ImportSelection): boolean {
   if (!selection.sections.includes(item.section)) return false
   if (selection.exclude.includes(item.key)) return false
   if (item.status === 'only-live') return selection.removeSections.includes(item.section)
+  // an item that exists here and differs is skipped unless the owner chose to overwrite
+  if (item.status === 'changed' && !selection.overwrite) return false
   return true
 }
 
-/** A selection of every applicable section, nothing excluded, nothing removed. */
+/** Sections that need more than a tick: secrets also need the passphrase. */
+export const GATED_SECTIONS: readonly SectionId[] = ['secrets']
+
+/** A selection of every applicable section (secrets only when asked for), nothing excluded, nothing removed, no overwrite. */
 export const defaultSelection = (): ImportSelection => ({
-  sections: SECTIONS.filter((s) => !REFERENCE_SECTIONS.includes(s)),
+  sections: SECTIONS.filter((s) => !REFERENCE_SECTIONS.includes(s) && !GATED_SECTIONS.includes(s)),
   exclude: [],
   removeSections: [],
+  overwrite: false,
 })

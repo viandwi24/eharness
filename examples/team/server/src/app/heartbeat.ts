@@ -79,7 +79,7 @@ import {
 import { supervisorSteps } from '../domain/supervisor.ts'
 import { boardColumn, type Task } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
-import { postAlerts, postBriefing } from './briefings.ts'
+import { postAlerts, postDigest } from './briefings.ts'
 import { healthSummary } from './health.ts'
 import {
   beatReadScope,
@@ -1163,16 +1163,15 @@ export async function runDigest(deps: Deps, at = deps.clock.now()): Promise<Dige
     decisions: deps.decisions.list({ status: 'open', limit: 50 }),
     waiting,
     items: state.buffer.filter((e) => e.at <= at),
-    // test runs (rehearsals) are not part of the day's work
-    costUsd: Math.max(0, cost() - deps.rehearsals.spentBetween(since, at)),
+    costUsd: cost(),
     heartbeatCostUsd: deps.agents.list().reduce((sum, a) => sum + cost(`heartbeat:${a.id}`), 0),
     // what the Health page found (a failed scan never stops the digest)
     ...(await healthSummary(deps)
       .then((h) => ({ health: { open: h.open, high: h.high } }))
       .catch(() => ({}))),
   })
-  // the digest is a page (one briefing per day) plus one bell notification, not a chat message
-  if (!digest.empty) postBriefing(deps, { day, body: digest.text, items: digest.items, at })
+  // the digest is one bell notification per day (the whole text), not a chat message
+  if (!digest.empty) postDigest(deps, { day, body: digest.text, at })
   deps.heartbeat.store.updateDigest(
     (d): DigestState => ({
       lastSentAt: at,

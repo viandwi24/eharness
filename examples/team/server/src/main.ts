@@ -81,7 +81,6 @@ import {
 } from './app/auth.ts'
 import { suggestAuthority } from './app/authority-suggestions.ts'
 import { createBackupScheduler } from './app/backups.ts'
-import { briefingsText } from './app/briefings.ts'
 import { settleTakeovers } from './app/browser.ts'
 import { checkChatBody, uploadFile } from './app/chat.ts'
 import {
@@ -150,7 +149,6 @@ import { localDay } from './domain/heartbeat.ts'
 import { areaOf } from './domain/library.ts'
 import { nameOf } from './domain/persona.ts'
 import { parseProgramSession } from './domain/programs.ts'
-import { parseRehearsalSession } from './domain/rehearsal.ts'
 import { settingsDefaults } from './domain/settings.ts'
 import { legacyThreadSessionId, sortThreads } from './domain/threads.ts'
 import { parseAssignedSession } from './domain/work-queue.ts'
@@ -196,11 +194,10 @@ import { sqliteHealthStore } from './infra/db/health-repo.ts'
 import { sqliteHeartbeatStore } from './infra/db/heartbeat-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
-import { sqliteBriefingStore, sqliteNotificationStore } from './infra/db/notifications-repo.ts'
+import { sqliteNotificationStore } from './infra/db/notifications-repo.ts'
 import { sqlitePersonaStore } from './infra/db/persona-repo.ts'
 import { sqliteProgramMemory } from './infra/db/program-memory-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
-import { sqliteProgramTestStore, sqliteRehearsalStore } from './infra/db/rehearsal-repo.ts'
 import {
   compactDatabase,
   pruneTables,
@@ -247,13 +244,13 @@ import {
   scriptedModelConfigFromEnv,
 } from './infra/eh/provider.ts'
 import { createProviderService, PROVIDER_KIND, type ProviderService } from './infra/eh/providers.ts'
-import { createRehearsalService, type RehearsalService } from './infra/eh/rehearsal-service.ts'
 import {
   createRoutineService,
   type RoutineEngineConfig,
   type RoutineService,
 } from './infra/eh/routine-service.ts'
 import { teamVaultFromEnv } from './infra/eh/secret-vault.ts'
+import { createSecretsPort } from './infra/eh/secrets-port.ts'
 import { sqliteSessionQueue } from './infra/eh/session-queue.ts'
 import { createSessionResolver } from './infra/eh/session-resolve.ts'
 import { createSessionToolsService } from './infra/eh/session-tools-service.ts'
@@ -429,8 +426,6 @@ export interface Server {
   routines: RoutineService
   /** Program runs (`infra/eh/program-service.ts`). */
   programs: ProgramService
-  /** Rehearsals (test runs) and program test cases (`infra/eh/rehearsal-service.ts`). */
-  rehearsals: RehearsalService
   /** Resumes the sessions parked on a decision (`infra/eh/decision-service.ts`). */
   decisions: DecisionService
   /** Heartbeat beats and the daily digest (`infra/eh/heartbeat-service.ts`). */
@@ -892,20 +887,6 @@ export function compose(config: ServerConfig): Server {
     app: () => deps,
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
-  const rehearsalStore = sqliteRehearsalStore(conn.sqlite)
-  const programTestStore = sqliteProgramTestStore(conn.sqlite)
-  // a rehearsal that was running when the process stopped cannot be continued
-  rehearsalStore.failRunning('the server restarted while it ran', Date.now())
-  const rehearsalService = createRehearsalService(factory, {
-    agents,
-    rehearsals: rehearsalStore,
-    tests: programTestStore,
-    programs: programStore,
-    // the real library, read through the overlay and never written (no `onChange`: no events)
-    library: libraryFs(conn.sqlite),
-    ids: () => uuidv7(),
-    log: { warn: (message) => console.warn(`team: ${message}`) },
-  })
   // a run the client let continue after failed deliverables is checked again when it ends
   const afterResumed = async (sessionId: string): Promise<void> => {
     // a transient failure waits for its retry: the retry's end is the end of the run
@@ -1052,6 +1033,7 @@ export function compose(config: ServerConfig): Server {
     threads: threadStore,
     notifications: sqliteNotificationStore(conn.sqlite),
     alarms: sqliteAlarmStore(conn.sqlite),
+    secrets: createSecretsPort({ profiles: profileStore, reload: () => providers.reload() }),
     ...(backupDir === undefined
       ? {}
       : {
@@ -1074,7 +1056,6 @@ export function compose(config: ServerConfig): Server {
       const out = await factory.openSession(def, task.sessionId).abort(reason)
       return out.target === 'idle' ? 'idle' : 'aborted'
     },
-    briefings: sqliteBriefingStore(conn.sqlite),
     chatTools: chatToolsService,
     sessionTools: createSessionToolsService({
       factory,
@@ -1115,10 +1096,7 @@ export function compose(config: ServerConfig): Server {
     routineEngine: routines,
     programs: programStore,
     programRunner,
-    rehearsals: rehearsalStore,
-    programTests: programTestStore,
     programMemory: sqliteProgramMemory(conn.sqlite),
-    rehearsalRunner: rehearsalService,
     decisions: decisionStore,
     decisionResolver: decisionService,
     decisionHandoff: createDecisionHandoff(decisionStore, decisionService),
@@ -1288,7 +1266,7 @@ export function compose(config: ServerConfig): Server {
         return out.target === 'idle' ? 'idle' : 'aborted'
       }),
     authorizes: (sessionId, toolName) => {
-      const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
+      const parsed = parseProgramSession(sessionId)
       const program = parsed === undefined ? undefined : programStore.get(parsed.programId)
       // a worker program is given its work: reporting a task done is part of it
       if (toolName === 'complete_task' && program?.worker != null) return true
@@ -1301,8 +1279,6 @@ export function compose(config: ServerConfig): Server {
     ended: async (end) => {
       await finishBeat(deps, { ...end, at: Date.now() })
     },
-    canReadBriefings: (slug) => agents.getBySlug(slug)?.role === 'lead',
-    briefings: (query) => briefingsText(deps, query),
     heartbeatOn: (slug) => {
       const def = agents.getBySlug(slug)
       return def !== undefined && effectiveConfig(deps, def).enabled
@@ -1808,7 +1784,6 @@ export function compose(config: ServerConfig): Server {
     team,
     routines,
     programs: programRunner,
-    rehearsals: rehearsalService,
     decisions: decisionService,
     heartbeats,
     channels,

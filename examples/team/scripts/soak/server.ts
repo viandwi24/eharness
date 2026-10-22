@@ -5,12 +5,14 @@
  *
  *   GET  /__soak/info      agent ids by slug and the brain counters
  *   POST /__soak/digest    run the digest now (the cron slot is once a day, so it cannot be waited for)
+ *   POST /__soak/task      queue a task (body: agentId, title, brief); the product has no owner-facing create route
  *   GET  /__soak/parked    the sessions with a pending wait (a parked run) among `?sessions=a,b`
  *
  * Env: PORT, TEAM_DB, TEAM_INSTANCE_ID, SOAK_SEED, SOAK_FAULT_RATE, SOAK_ESCALATE_RATE.
  */
 import { updateAgent } from '../../server/src/app/agents.ts'
 import { runDigest } from '../../server/src/app/heartbeat.ts'
+import { createTask } from '../../server/src/app/work-queue.ts'
 import { checklistPath } from '../../server/src/domain/heartbeat.ts'
 import { compose } from '../../server/src/main.ts'
 import { soakModels } from './brain.ts'
@@ -68,6 +70,10 @@ const http = Bun.serve({
     if (url.pathname === '/__soak/info') return Response.json({ agents: ids, brain: stats })
     if (url.pathname === '/__soak/digest' && request.method === 'POST') {
       return Response.json({ outcome: await runDigest(server.deps) })
+    }
+    if (url.pathname === '/__soak/task' && request.method === 'POST') {
+      const body = (await request.json()) as { agentId: string; title: string; brief?: string }
+      return Response.json(createTask(server.deps, body), { status: 201 })
     }
     if (url.pathname === '/__soak/parked') {
       const sessions = (url.searchParams.get('sessions') ?? '').split(',').filter(Boolean)

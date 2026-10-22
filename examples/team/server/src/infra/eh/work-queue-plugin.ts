@@ -16,12 +16,10 @@ import { tool } from 'ai'
 import { definePlugin, errorText, type HarnessContext, type HarnessPlugin } from 'eharness'
 import { z } from 'zod'
 import { DomainError } from '../../app/errors.ts'
-import { simulatedTaskText } from '../../domain/rehearsal.ts'
 import { profileOfSession } from '../../domain/run-profiles.ts'
 import { BOARD_COLUMNS, TASK_PRIORITIES, type Task } from '../../domain/tasks.ts'
 import type { TaskDraft, TaskPatch } from '../../domain/work-queue.ts'
 import { costText, describeTask, taskLine } from '../../domain/work-queue.ts'
-import { rehearsalSessions } from './rehearsal-registry.ts'
 
 export const CREATE_TASK_TOOL = 'create_task'
 export const LIST_TASKS_TOOL = 'list_tasks'
@@ -150,35 +148,6 @@ export const COMPLETE_TASK_DESCRIPTION =
 
 const dueAt = (value: string): number => Date.parse(value)
 
-/** A rehearsal does not touch the real board: the call is recorded and the model told so. */
-function simulateTask(
-  sessionId: string,
-  tool: string,
-  input: unknown,
-  kind: 'create' | 'update',
-  detail: string,
-): string {
-  rehearsalSessions.get(sessionId)?.recorder.simulated({ tool, input })
-  return simulatedTaskText(kind, detail)
-}
-
-/** `complete_task` of a rehearsal: the outputs must exist in the overlay, nothing else changes. */
-async function completeInRehearsal(
-  sessionId: string,
-  input: { summary: string; outputs: string[] },
-): Promise<string> {
-  const rehearsal = rehearsalSessions.get(sessionId)
-  const missing: string[] = []
-  for (const path of input.outputs) {
-    if ((await rehearsal?.fs.stat?.(path)) == null) missing.push(path)
-  }
-  if (missing.length > 0) {
-    return `ERROR: these outputs do not exist: ${missing.join(', ')}. Write them first, then call complete_task again.`
-  }
-  rehearsal?.recorder.simulated({ tool: COMPLETE_TASK_TOOL, input })
-  return 'SIMULATED: this is a rehearsal, so the task is not completed on the board. Treat it as complete and give your final report, listing the same outputs.'
-}
-
 export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-queue'> {
   return definePlugin({
     name: 'work-queue',
@@ -201,7 +170,7 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
       // a program run is offered a manager tool only when its authority names it (the engine of a
       // run is closed-world anyway: this keeps tools it can never use out of its prompt)
       const offered = (name: string): boolean =>
-        origin === 'program' || origin === 'rehearsal'
+        origin === 'program'
           ? intake().authorizes(sessionId, name)
           : (origin === 'dm' || origin === 'heartbeat' || origin === 'task') &&
             agent?.role === 'lead'
@@ -211,15 +180,6 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
           inputSchema: createSchema,
           metadata: { risk: 'write', idempotent: false },
           execute: (input): string => {
-            if (origin === 'rehearsal') {
-              return simulateTask(
-                sessionId,
-                CREATE_TASK_TOOL,
-                input,
-                'create',
-                `${input.title} for ${input.agent}`,
-              )
-            }
             try {
               const task = intake().create({
                 agentId: input.agent,
@@ -274,15 +234,6 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
           inputSchema: updateSchema,
           metadata: { risk: 'write', idempotent: false },
           execute: async (input): Promise<string> => {
-            if (origin === 'rehearsal') {
-              return simulateTask(
-                sessionId,
-                UPDATE_TASK_TOOL,
-                input,
-                'update',
-                input.cancel === true ? `cancel ${input.id}` : input.id,
-              )
-            }
             try {
               if (input.cancel === true) {
                 try {
@@ -319,16 +270,12 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
           },
         })
       }
-      if (
-        (origin === 'program' || origin === 'rehearsal') &&
-        intake().authorizes(sessionId, COMPLETE_TASK_TOOL)
-      ) {
+      if (origin === 'program' && intake().authorizes(sessionId, COMPLETE_TASK_TOOL)) {
         tools[COMPLETE_TASK_TOOL] = tool({
           description: COMPLETE_TASK_DESCRIPTION,
           inputSchema: completeSchema,
           metadata: { risk: 'write', idempotent: true },
           execute: async (input): Promise<string> => {
-            if (origin === 'rehearsal') return completeInRehearsal(sessionId, input)
             try {
               const done = await intake().complete(sessionId, input)
               return done.ok

@@ -19,7 +19,6 @@ import { alarmRoutes } from './routes/alarms.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
 import { authRoutes } from './routes/auth.ts'
 import { backupRoutes } from './routes/backups.ts'
-import { briefingRoutes } from './routes/briefings.ts'
 import { browserRoutes } from './routes/browser.ts'
 import { channelRoutes } from './routes/channels.ts'
 import { chatRoutes } from './routes/chat.ts'
@@ -31,11 +30,11 @@ import { heartbeatRoutes } from './routes/heartbeat.ts'
 import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
+import { notificationRoutes } from './routes/notifications.ts'
 import { peopleRoutes } from './routes/people.ts'
 import { personaRoutes } from './routes/persona.ts'
 import { programRoutes } from './routes/programs.ts'
 import { providerRoutes } from './routes/providers.ts'
-import { rehearsalRoutes } from './routes/rehearsals.ts'
 import { routineRoutes } from './routes/routines.ts'
 import { sessionToolsRoutes } from './routes/session-tools.ts'
 import { settingsRoutes } from './routes/settings.ts'
@@ -107,12 +106,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
     {
       name: 'threads',
       description:
-        'Chat threads per agent, all equal: new chat, rename, archive, and "Discuss in chat" (a new thread seeded with a briefing item, an alert or a run).',
+        'Chat threads per agent, all equal: new chat, rename, archive, and "Discuss in chat" (a new thread seeded with an alert or a run).',
     },
     {
-      name: 'briefings',
-      description:
-        'The daily digest as a page (one briefing per day) and the bell: urgent alerts and "briefing ready".',
+      name: 'notifications',
+      description: 'The bell: urgent alerts and the daily digest (one notification per day).',
     },
     { name: 'library', description: 'Shared files: agent artifacts, uploads, version history.' },
     {
@@ -140,11 +138,6 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
     {
       name: 'routines',
       description: 'Scheduled prompts per agent (multi-instance safe, on the durable inbox).',
-    },
-    {
-      name: 'rehearsals',
-      description:
-        'Test runs of a program on sample data in a safe mode (scratch files, simulated external writes, decisions recorded as "would ask") and the program test cases that re-run them after an edit.',
     },
     {
       name: 'programs',
@@ -387,7 +380,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', modeRoutes(options.deps))
   app.route('/', chatRoutes(options.deps))
   app.route('/', threadRoutes(options.deps))
-  app.route('/', briefingRoutes(options.deps))
+  app.route('/', notificationRoutes(options.deps))
   app.route('/', alarmRoutes(options.deps))
   app.route('/', sessionToolsRoutes(options.deps))
   app.route('/', harnessRoutes(options.harness))
@@ -403,7 +396,6 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', browserRoutes(options.deps, { allowedOrigins: options.allowedOrigins }))
   app.route('/', routineRoutes(options.deps))
   app.route('/', programRoutes(options.deps))
-  app.route('/', rehearsalRoutes(options.deps))
   app.route('/', decisionRoutes(options.deps))
   app.route('/', heartbeatRoutes(options.deps))
   app.route('/', channelRoutes(options.deps))

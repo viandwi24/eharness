@@ -14,7 +14,7 @@ import {
   scriptedModel,
 } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
-import { columnsOf } from '../src/app/work-queue.ts'
+import { columnsOf, createTask } from '../src/app/work-queue.ts'
 import type { Decision } from '../src/domain/decisions.ts'
 import {
   checkContent,
@@ -486,12 +486,12 @@ describe('work items', () => {
       worker: { maxTasks: 1 },
       deliverables: [spec],
     })
-    const queued = await app.request(
-      '/tasks',
-      json('POST', { agentId: 'writer', title: 'The island', brief: 'Draft the script.' }),
-    )
-    expect(queued.status).toBe(201)
-    const task0 = (await queued.json()) as Task
+    // there is no owner-facing create route any more (P55): queue through the use case
+    const task0 = createTask(server.deps, {
+      agentId: 'writer',
+      title: 'The island',
+      brief: 'Draft the script.',
+    })
     await runNow(app, program.id)
     await server.programs.idle()
 

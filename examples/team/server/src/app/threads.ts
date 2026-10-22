@@ -1,6 +1,6 @@
 /**
  * Chat thread use cases (P40 phase M, `domain/threads.ts`): any number of equal threads per agent,
- * new / rename / archive, and "Discuss in chat" (a new thread seeded with a briefing item, an
+ * new / rename / archive, and "Discuss in chat" (a new thread seeded with an
  * alert or a run). Threads are created on demand, never by an event.
  */
 import type { AgentDef } from '../domain/agents.ts'
@@ -165,7 +165,6 @@ export function threadSessionsOf(deps: Deps, agentId: string): string[] {
 // --- Discuss in chat -------------------------------------------------------------------------
 
 export type DiscussInput =
-  | { kind: 'briefing'; ref: string; item?: number | undefined; agent?: string | undefined }
   | { kind: 'alert'; ref: string; agent?: string | undefined }
   | { kind: 'run'; ref: string; agent?: string | undefined }
 
@@ -177,20 +176,6 @@ function lead(deps: Deps): AgentDef {
 
 /** The context a seeded thread opens with, read from the thing it is about. */
 function contextOf(deps: Deps, input: DiscussInput): { seed: ThreadSeed; body: string } {
-  if (input.kind === 'briefing') {
-    const b = deps.briefings.get(input.ref)
-    if (b === undefined) throw notFound('briefing', input.ref)
-    if (input.item !== undefined) {
-      const item = b.items[input.item]
-      if (item === undefined) throw notFound('briefing item', String(input.item))
-      const link = item.link === null ? '' : `\nLink: ${item.link}`
-      return {
-        seed: { kind: 'briefing', ref: b.id, title: item.title },
-        body: `From the briefing of ${b.day} (${item.kind}):\n${item.title}\n${item.detail}${link}`,
-      }
-    }
-    return { seed: { kind: 'briefing', ref: b.id, title: b.title }, body: b.body }
-  }
   if (input.kind === 'alert') {
     const n = deps.notifications.get(input.ref)
     if (n === undefined || n.kind !== 'alert') throw notFound('alert', input.ref)
@@ -216,7 +201,7 @@ function contextOf(deps: Deps, input: DiscussInput): { seed: ThreadSeed; body: s
 }
 
 /**
- * A new thread seeded with the context of a briefing item, an alert or a run, on the lead (or the
+ * A new thread seeded with the context of an alert or a run, on the lead (or the
  * agent named). The context is one `eh.event` message, no model call: the client's first message
  * starts the conversation. Always a new thread, never an existing one.
  */

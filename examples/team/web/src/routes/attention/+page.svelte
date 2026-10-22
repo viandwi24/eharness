@@ -12,7 +12,7 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
-	import { ALARM_LABEL, type Alarm, alarmAction, CONSISTENCY_LABEL, type Finding, filterFindings, KIND_LABEL, memoryWhere, SEVERITY_LABEL, SEVERITY_VARIANT, type Severity, seenLine, severityCounts, sortFindings, splitConsistency } from '#lib/health/model.js';
+	import { ALARM_LABEL, type Alarm, ALARM_SEVERITY, alarmAction, attentionCounts, CONSISTENCY_LABEL, type Finding, filterFindings, KIND_LABEL, memoryWhere, mergeAttention, SEVERITY_LABEL, SEVERITY_VARIANT, type Severity, seenLine } from '#lib/health/model.js';
 	import { openEditAgent } from '#lib/stores/dialogs.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { timeAgo } from '#lib/time.js';
@@ -110,10 +110,16 @@
 		}
 	}
 
-	const shown = $derived(sortFindings(filterFindings(findings ?? [], { agentId: agentFilter, severity: severityFilter })));
-	const groups = $derived(splitConsistency(shown));
-	const counts = $derived(severityCounts(findings ?? []));
-	const agentsWithFindings = $derived(agentsStore.state.agents.filter((a) => (findings ?? []).some((f) => f.agentId === a.id)));
+	const shownFindings = $derived(filterFindings(findings ?? [], { agentId: agentFilter, severity: severityFilter }));
+	// alarms are failures that still need an acknowledgement: they follow the same filters
+	const shownAlarms = $derived(
+		alarms.filter((a) => (!agentFilter || a.agentId === agentFilter) && (!severityFilter || ALARM_SEVERITY[a.kind] === severityFilter))
+	);
+	const items = $derived(mergeAttention(shownFindings, shownAlarms));
+	const counts = $derived(attentionCounts(findings ?? [], alarms));
+	const agentsWithFindings = $derived(
+		agentsStore.state.agents.filter((a) => (findings ?? []).some((f) => f.agentId === a.id) || alarms.some((x) => x.agentId === a.id))
+	);
 </script>
 
 {#snippet card(f: Finding)}
@@ -147,10 +153,26 @@
 				</Card>
 {/snippet}
 
+{#snippet alarmCard(a: Alarm)}
+	{@const action = alarmAction(a)}
+	<Card size="sm" class="gap-2 px-4 py-3.5" data-testid="health-alarm" data-kind={a.kind} data-severity={ALARM_SEVERITY[a.kind]}>
+		<div class="flex flex-wrap items-center gap-2">
+			<Badge variant={SEVERITY_VARIANT[ALARM_SEVERITY[a.kind]]} class="h-5 px-1.5 text-[11px]">{SEVERITY_LABEL[ALARM_SEVERITY[a.kind]]}</Badge>
+			<Badge variant="secondary" class="h-5 px-1.5 text-[11px]">{ALARM_LABEL[a.kind]}</Badge>
+			<span class="ml-auto text-xs text-muted-foreground">{timeAgo(a.createdAt)}</span>
+		</div>
+		<p class="text-[14px] leading-snug">{a.text}</p>
+		<div class="flex flex-wrap items-center gap-2">
+			{#if action}<Button size="sm" variant="outline" href={action.href}>{action.label}</Button>{/if}
+			<Button size="sm" variant="ghost" disabled={busy === a.id} onclick={() => void ack(a)}>Dismiss</Button>
+		</div>
+	</Card>
+{/snippet}
+
 <ConfirmDialog bind:open={fixOpen} title={fixing?.fixAction?.label ?? 'Fix it'} description={fixing?.fixAction?.confirm ?? ''} confirmLabel="Do it" confirmVariant="default" onConfirm={runFix} />
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-	<PageHeader title="Health" description="Problems the server noticed in the last 24 hours, from its own data.">
+	<PageHeader title="Needs attention" description="Failed runs, broken connections and problems the server noticed, most serious first. One list, one Dismiss.">
 		<NativeSelect bind:value={agentFilter} aria-label="Filter by agent" class="w-40">
 			<NativeSelectOption value="">All agents</NativeSelectOption>
 			{#each agentsWithFindings as a (a.id)}
@@ -167,52 +189,30 @@
 	</PageHeader>
 
 	<PageBody size="narrow" class="gap-3">
-		{#if alarms.length}
-			<section class="flex flex-col gap-2" data-testid="health-alarms" aria-label="Needs attention">
-				<h2 class="text-sm font-semibold">Needs attention</h2>
-				{#each alarms as a (a.id)}
-					{@const action = alarmAction(a)}
-					<Card size="sm" class="gap-2 border-destructive/40 px-4 py-3.5" data-testid="health-alarm" data-kind={a.kind}>
-						<div class="flex flex-wrap items-center gap-2">
-							<Badge variant="destructive" class="h-5 px-1.5 text-[11px]">{ALARM_LABEL[a.kind]}</Badge>
-							<span class="ml-auto text-xs text-muted-foreground">{timeAgo(a.createdAt)}</span>
-						</div>
-						<p class="text-[14px] leading-snug">{a.text}</p>
-						<div class="flex flex-wrap items-center gap-2">
-							{#if action}<Button size="sm" variant="outline" href={action.href}>{action.label}</Button>{/if}
-							<Button size="sm" variant="ghost" disabled={busy === a.id} onclick={() => void ack(a)}>Acknowledge</Button>
-						</div>
-					</Card>
-				{/each}
-			</section>
-		{/if}
 		{#if error}
 			<p class="text-sm text-destructive-text" role="alert">{error} <button class="underline underline-offset-4" onclick={() => void load()}>Retry</button></p>
 		{:else if !findings}
 			<div class="flex flex-col gap-2">{#each [0, 1, 2] as i (i)}<Skeleton class="h-24 w-full" />{/each}</div>
-		{:else if !shown.length}
+		{:else if !items.length}
 			<Empty.Root class="border border-dashed border-border">
 				<Empty.Header>
 					<Empty.Media variant="icon"><HeartbeatIcon /></Empty.Media>
-					<Empty.Title>{findings.length ? 'Nothing matches these filters' : 'No problems noticed'}</Empty.Title>
+					<Empty.Title>{findings.length || alarms.length ? 'Nothing matches these filters' : 'Nothing needs your attention'}</Empty.Title>
 					<Empty.Description>
-						The server checks every ten minutes for tools that are denied again and again, loops, repeated errors, approvals nobody answers, context spikes, program runs that end partial or failed, and provider errors. Serious ones also ring the bell.
+						The server watches scheduled and background runs, connections, approvals nobody answers, loops, repeated errors, context spikes, provider errors, and places that contradict each other (duplicate programs, memory that names things that are gone). Serious ones also ring the bell.
 					</Empty.Description>
 				</Empty.Header>
 			</Empty.Root>
 		{:else}
-			{#each groups.runtime as f (f.fingerprint)}
-				{@render card(f)}
-			{/each}
-			{#if groups.consistency.length}
-				<div class="mt-2 flex flex-col gap-1" data-testid="health-consistency">
-					<h2 class="text-sm font-semibold">Consistency</h2>
-					<p class="text-[13px] text-muted-foreground">Places that contradict each other or hold stale state: duplicate programs, memory files that name tools or ids that are gone, decisions nobody answered, connections that are down but still used.</p>
-				</div>
-				{#each groups.consistency as f (f.fingerprint)}
-					{@render card(f)}
+			<div class="flex flex-col gap-3" data-testid="attention-list">
+				{#each items as item (item.key)}
+					{#if item.type === 'alarm'}
+						{@render alarmCard(item.alarm)}
+					{:else}
+						{@render card(item.finding)}
+					{/if}
 				{/each}
-			{/if}
+			</div>
 		{/if}
 	</PageBody>
 </div>

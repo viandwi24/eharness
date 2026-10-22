@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
-import { sendBackHint } from '../src/app/work-queue.ts'
+import { createTask, sendBackHint } from '../src/app/work-queue.ts'
 import { checklistPath } from '../src/domain/heartbeat.ts'
 import type { NewModelCall } from '../src/domain/model-calls.ts'
 import { programDayScope } from '../src/domain/programs.ts'
@@ -259,42 +259,6 @@ describe('D6: a program authority satisfies the "Ask first" of the connector it 
   })
 })
 
-describe('D7: a rehearsal runs read tools for real and simulates writes', () => {
-  test('docs_lookup (read) is called, docs_create_note (write) is only recorded', async () => {
-    const mcp = fakeMcp()
-    try {
-      const { app, server } = instance(
-        {
-          researcher: [
-            call('docs_lookup', { q: 'overdue' }),
-            call('docs_create_note', { q: 'overdue' }),
-            finalReport(),
-          ],
-        },
-        { env: ENV },
-      )
-      await server.connectorsReady
-      const id = await connectDocs(app, mcp.url)
-      await setModes(app, 'researcher', server, id, { read: 'allow', write: 'allow' })
-      const program = await createProgram(app, {
-        authority: { tools: ['docs_lookup', 'docs_create_note'], read: [], write: [] },
-      })
-      const res = await app.request(`/programs/${program.id}/rehearsals`, json('POST', {}))
-      expect(res.status).toBe(201)
-      await server.rehearsals.idle()
-      const list = (await (await app.request(`/programs/${program.id}/rehearsals`)).json()) as {
-        rehearsals: Array<{ simulated: Array<{ tool: string }>; toolsCalled: string[] }>
-      }
-      const r = list.rehearsals[0]
-      expect(r?.simulated.map((a) => a.tool)).toEqual(['docs_create_note'])
-      expect(r?.toolsCalled).toEqual(['docs_lookup', 'docs_create_note'])
-      expect(mcp.seen.calls).toEqual(['lookup'])
-    } finally {
-      mcp.server.stop(true)
-    }
-  })
-})
-
 describe('D8: the proposing agent hears how its proposal ended', () => {
   const PLAN = {
     title: 'Weekly board summary',
@@ -348,11 +312,11 @@ describe('D11: Review in the bell, and a send-back says who picks the task up', 
       worker: { maxTasks: 1 },
       authority: { tools: [], read: [], write: ['/library/out/**'] },
     })
-    const queued = await app.request(
-      '/tasks',
-      json('POST', { agentId: 'writer', title: 'Write A', brief: 'Write /library/out/a.md' }),
-    )
-    const task = (await queued.json()) as { id: string }
+    const task = createTask(server.deps, {
+      agentId: 'writer',
+      title: 'Write A',
+      brief: 'Write /library/out/a.md',
+    })
     await app.request(`/programs/${worker.id}/run`, json('POST'))
     await until('the task is in review', async () => {
       const t = (await (await app.request(`/tasks/${task.id}`)).json()) as {

@@ -22,9 +22,7 @@ import {
 } from 'eharness'
 import { z } from 'zod'
 import { isAllowedMediaType, MAX_UPLOAD_BYTES, mediaTypeOfName } from '../../domain/chat.ts'
-import { simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession } from '../../domain/run-profiles.ts'
-import { rehearsalSessions } from '../eh/rehearsal-registry.ts'
 import { resolveConnectionRef } from './connection-ref.ts'
 import {
   type ChannelGateway,
@@ -231,15 +229,8 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       const bound = gw.connectionsOf(agentId)
       if (!inChannel && bound.length === 0) return {}
       const origin = originOfSession(sessionId)
-      const rehearsal = origin === 'rehearsal'
       const unattended =
         UNATTENDED.has(origin) && !(origin === 'task' && options.taskMayPost?.(sessionId) === true)
-
-      /** A rehearsal does not touch real chats: the call is recorded and the model told so. */
-      const simulate = (toolName: string, input: unknown): string => {
-        rehearsalSessions.get(sessionId)?.recorder.simulated({ tool: toolName, input })
-        return simulatedText(toolName, input)
-      }
 
       const resolve = (input: TargetInput): ResolvedTarget => {
         let named = input
@@ -519,7 +510,6 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       })
 
       const send = async (input: z.infer<typeof sendSchema>): Promise<string> => {
-        if (rehearsal) return simulate(CHANNEL_SEND_TOOL, input)
         const t = resolve(input)
         // a reaction is an emoji on a message somebody wrote: no text, no mention, no file, so it is
         // not a proactive post and stays free for every session
@@ -622,7 +612,6 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       }
 
       const manage = async (input: z.infer<typeof manageSchema>): Promise<string> => {
-        if (rehearsal) return simulate(CHANNEL_MANAGE_TOOL, input)
         const t = resolve(input)
         const run = <T>(op: () => Promise<T>): Promise<T> => gw.outbound.run(laneOf(t), op)
         const a = t.adapter
@@ -703,15 +692,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         // outside a chat the `reminder` tool is the web one (`web-reminders.ts`), which hands a named
         // chat back to this implementation, and `person_note` is the web one (`web-person-note.ts`)
         if (!inChannel && (name === REMINDER_TOOL || name === PERSON_NOTE_TOOL)) continue
-        const writes = (SELF_WRITE_TOOLS as readonly string[]).includes(name)
-        tools[name] =
-          rehearsal && writes
-            ? {
-                ...(def as object),
-                // a rehearsal never writes a note or schedules a real reminder
-                execute: (input: unknown): string => simulate(name, input),
-              }
-            : def
+        tools[name] = def
       }
 
       // native actions: one deferred tool each (found with tool_search), grouped by tool name. A
@@ -811,7 +792,6 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           metadata: { risk, idempotent: risk === 'read' },
           execute: (input: Record<string, unknown>): Promise<string> =>
             guard(async () => {
-              if (rehearsal && risk !== 'read') return simulate(name, input)
               const { connection, ...rest } = input as { connection?: string }
               const pick =
                 connection === undefined

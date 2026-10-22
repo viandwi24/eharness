@@ -174,12 +174,12 @@ export function checkInvariants(dbFile: string, ctx: SoakContext): Violation[] {
       bad('budget', `${open[0]?.n} expired budget reservations are still open`)
     }
 
-    // 6. at most one briefing per local day, and the digest is a page, never a chat message
+    // 6. at most one digest notification per local day, and the digest is never a chat message
     for (const row of all(
       db,
-      'SELECT day, COUNT(*) AS n FROM briefings GROUP BY day HAVING COUNT(*) > 1',
+      "SELECT key, COUNT(*) AS n FROM notifications WHERE key LIKE 'briefing:%' GROUP BY key HAVING COUNT(*) > 1",
     )) {
-      bad('digest-once', `${row.n} briefings on ${row.day}`)
+      bad('digest-once', `${row.n} digest notifications for ${row.key}`)
     }
     const inChat = all(
       db,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applySummary, bytesText, defaultTicks, grants, importResultText, type ImportItem, isSelected, planSummary, reasonLabel, resultSummary, selectionBody, verifiedText } from './model';
+import { applySummary, bytesText, defaultTicks, grants, importResultText, type ImportItem, isSelected, passphraseProblem, planSummary, reasonLabel, resultSummary, selectionBody, skippedCount, verifiedText, withOverwrite } from './model';
 
 describe('backups model', () => {
 	test('sizes', () => {
@@ -50,6 +50,7 @@ describe('import ticks', () => {
 	});
 	test('selection follows the server rule: sections, single items, removal tick, reference items', () => {
 		const t = defaultTicks({ sections });
+		t.overwrite = true;
 		expect(isSelected(item({}), t)).toBe(true);
 		expect(isSelected(item({ status: 'unchanged' }), t)).toBe(false);
 		expect(isSelected(item({ applicable: false }), t)).toBe(false);
@@ -62,14 +63,34 @@ describe('import ticks', () => {
 		expect(isSelected(only, t)).toBe(true);
 		t.sections.delete('library');
 		expect(isSelected(only, t)).toBe(false);
-		expect(selectionBody(t)).toEqual({ sections: ['agents'], exclude: [], removeSections: ['library'] });
+		expect(selectionBody(t)).toEqual({ sections: ['agents'], exclude: [], removeSections: ['library'], overwrite: true });
+	});
+	test('an item that differs is skipped unless overwrite is chosen; new ones are always added', () => {
+		const t = defaultTicks({ sections });
+		expect(t.overwrite).toBe(false);
+		expect(isSelected(item({ status: 'changed' }), t)).toBe(false);
+		expect(isSelected(item({ status: 'added' }), t)).toBe(true);
+		expect(isSelected(item({ status: 'changed' }), withOverwrite(t, true))).toBe(true);
+		expect(selectionBody(withOverwrite(t, true)).overwrite).toBe(true);
+	});
+	test('secrets are ticked only once the passphrase opened them', () => {
+		const withSecrets = [...sections, { id: 'secrets' as const, label: 'Secrets', added: 0, changed: 0, unchanged: 0, onlyLive: 0, applicable: true }];
+		expect(defaultTicks({ sections: withSecrets, secrets: { included: true, count: 2, unlocked: false } }).sections.has('secrets')).toBe(false);
+		expect(defaultTicks({ sections: withSecrets, secrets: { included: true, count: 2, unlocked: true } }).sections.has('secrets')).toBe(true);
+	});
+	test('passphrases: at least 12 characters, typed twice', () => {
+		expect(passphraseProblem('short')).toContain('at least 12');
+		expect(passphraseProblem('a long enough one', 'another one entirely')).toContain('differ');
+		expect(passphraseProblem('a long enough one', 'a long enough one')).toBeNull();
 	});
 	test('summaries and grants', () => {
 		const t = defaultTicks({ sections });
 		const items = [item({ status: 'added' }), item({ key: 'b', status: 'changed', authority: ['permission mode: auto'] }), item({ key: 'c', status: 'only-live' })];
-		expect(applySummary(items, t)).toBe('1 added, 1 changed will be applied.');
+		expect(applySummary(items, t)).toBe('1 added, 0 replaced will be applied. 1 that differs is kept as it is.');
+		expect(skippedCount(items, t)).toBe(1);
+		expect(applySummary(items, withOverwrite(t, true))).toBe('1 added, 1 replaced will be applied.');
 		expect(applySummary([item({ status: 'only-live' })], t)).toBe('Nothing is selected to change.');
-		expect(grants(items, t).map((i) => i.key)).toEqual(['b']);
+		expect(grants(items, withOverwrite(t, true)).map((i) => i.key)).toEqual(['b']);
 		expect(importResultText({ counts: { added: 1, changed: 2, removed: 0, failed: 1 } })).toBe('1 added, 2 changed, 1 failed.');
 	});
 });

@@ -228,7 +228,8 @@ async function setup(): Promise<void> {
 let taskSeq = 0
 async function load(): Promise<void> {
   // new work, steady: a queued task every tick, run-now of the manual and worker programs
-  const t = await api<{ id: string }>('POST', '/tasks', {
+  // the owner-facing create route is gone: the soak control route queues it through the use case
+  const t = await api<{ id: string }>('POST', '/__soak/task', {
     agentId: 'writer',
     title: `Script ${++taskSeq}`,
     brief: 'Write it.',
