@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { type SecretVault, webCryptoVault } from 'eharness/providers'
-import { generateSecretKey, parseSecretKey } from '../eh/secret-vault.ts'
+import { generateSecretKey, parseSecretKey, withKeyFileFallback } from '../eh/secret-vault.ts'
 
 const keyId = (key: Uint8Array): string =>
   createHash('sha256').update(key).digest('hex').slice(0, 8)
@@ -35,7 +35,16 @@ export function channelVaultFromEnv(
     .filter((s) => s !== '')
     .map((s) => parseSecretKey(s, 'TEAM_CHANNEL_KEY_PREVIOUS'))
   const configured = env.TEAM_CHANNEL_KEY?.trim()
-  if (configured) return channelVault([parseSecretKey(configured, 'TEAM_CHANNEL_KEY'), ...previous])
+  if (configured) {
+    return channelVault(
+      withKeyFileFallback(
+        [parseSecretKey(configured, 'TEAM_CHANNEL_KEY'), ...previous],
+        options.dataDir === undefined ? undefined : join(options.dataDir, 'channel.key'),
+        'TEAM_CHANNEL_KEY',
+        warn,
+      ),
+    )
+  }
   if (options.dataDir === undefined) {
     return channelVault([parseSecretKey(generateSecretKey()), ...previous])
   }

@@ -112,7 +112,14 @@ export function secretKeysFromEnv(options: TeamVaultOptions = {}): Uint8Array<Ar
     .filter((s) => s !== '')
     .map((s) => parseSecretKey(s, 'TEAM_SECRET_KEY_PREVIOUS'))
   const configured = env.TEAM_SECRET_KEY?.trim()
-  if (configured) return [parseSecretKey(configured), ...previous]
+  if (configured) {
+    return withKeyFileFallback(
+      [parseSecretKey(configured), ...previous],
+      options.dataDir === undefined ? undefined : join(options.dataDir, 'secret.key'),
+      'TEAM_SECRET_KEY',
+      warn,
+    )
+  }
 
   if (options.dataDir === undefined) {
     warn(
@@ -162,4 +169,32 @@ export function lazyTeamVault(create: () => SecretVault): SecretVault {
 /** The vault of this server from the environment (lazy). */
 export function teamVaultFromEnv(options: TeamVaultOptions = {}): SecretVault {
   return lazyTeamVault(() => teamVault(secretKeysFromEnv(options)))
+}
+
+/**
+ * A key set from the environment that differs from the dev key file next to the database: the
+ * data written before was sealed with the file's key, so that key stays usable for reading (as
+ * if listed in `<NAME>_PREVIOUS`) and a warning says so. Setting a new key by mistake can then
+ * never lock the data; copy the file's content into the variable to make them equal.
+ */
+export function withKeyFileFallback(
+  keys: Uint8Array<ArrayBuffer>[],
+  file: string | undefined,
+  name: string,
+  warn: (message: string) => void,
+): Uint8Array<ArrayBuffer>[] {
+  if (file === undefined || !existsSync(file)) return keys
+  let fromFile: Uint8Array<ArrayBuffer>
+  try {
+    fromFile = parseSecretKey(readFileSync(file, 'utf8'), file)
+  } catch {
+    return keys
+  }
+  const same = (a: Uint8Array, b: Uint8Array): boolean =>
+    a.length === b.length && a.every((x, i) => x === b[i])
+  if (keys.some((k) => same(k, fromFile))) return keys
+  warn(
+    `WARNING: ${name} differs from the key in ${file}. Data written before was sealed with the file's key, so it is still used to read it (as ${name}_PREVIOUS). To make them one key, set ${name} to the content of that file.`,
+  )
+  return [...keys, fromFile]
 }
