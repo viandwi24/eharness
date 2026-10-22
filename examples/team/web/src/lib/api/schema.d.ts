@@ -3993,6 +3993,234 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/memory/reorganize/propose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Propose a reorganization of an agent memory
+         * @description The agent (its own model, one call per small batch of files) proposes one action per memory file: `keep-as-rule` (merged into rules.md), `move` (a library path), `merge-into` (another file) or `archive`. The answer is already the checked plan (nothing is changed). `HEARTBEAT.md` is never touched. 409 `COMPLETION_UNAVAILABLE` without a model.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MemoryReorgProposeBody"];
+                };
+            };
+            responses: {
+                /** @description The proposal */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MemoryReorgProposal"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `COMPLETION_UNAVAILABLE` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/reorganize/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check a reorganization plan
+         * @description Runs the deterministic checks on the rows (as proposed or as the owner edited them) and answers the plan: no target outside `/library`, no overwrite of an existing library file (a numeric suffix is added), dated reports to `/library/reports/`, the final target of every row and the diff of `rules.md` and `index.md`. Nothing is changed.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MemoryReorgRowsBody"];
+                };
+            };
+            responses: {
+                /** @description The plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MemoryReorgPlan"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/reorganize/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply a reorganization of an agent memory
+         * @description A verified backup (`before: memory reorganization`) is taken first: when it fails nothing is changed (`BACKUP_FAILED`). Then the new library files are created and read back, `rules.md` and `index.md` are rewritten, and the original memory files are moved (never deleted) to `/library/archive/memory/<agent>/original/`. A restore point is recorded: undo it with `POST /backups/restore-points/{id}/undo` flow. A plan with errors answers 400 `REORG_PLAN_INVALID`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MemoryReorgRowsBody"];
+                };
+            };
+            responses: {
+                /** @description What was done */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MemoryReorgResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `BACKUP_FAILED` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/library": {
         parameters: {
             query?: never;
@@ -10021,6 +10249,128 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/program-files/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview moving program briefs and notes to the library
+         * @description Which programs would get `/library/programs/<slug>/brief.md` and `notes.md`, with the text it would write (nothing is changed). Programs already in file mode are listed as `already`; a name clash gets a suffix, or is `blocked`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ProgramFilesBody"];
+                };
+            };
+            responses: {
+                /** @description The plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProgramFilesPreview"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/program-files/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move program briefs and notes to the library
+         * @description Creates the files (never overwrites one), reads them back, then switches each program to file mode: every later run reads the current file, the library history versions it. The old text stays in the program as the fallback copy. Authority, forbidden, gates and budget stay in the program record.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ProgramFilesBody"];
+                };
+            };
+            responses: {
+                /** @description What moved */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProgramFilesResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/programs": {
         parameters: {
             query?: never;
@@ -16009,6 +16359,1268 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/developer/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * API agents
+         * @description Isolated agents that other applications call with an API key. They are not team agents: no chats, channels or team tools.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    includeArchived?: "true" | "false";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The API agents */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiAgentList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create an API agent
+         * @description Default access is nothing: no tools. Grant read-only library folders (`readFolders`), at most one `writeFolder`, and web search.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ApiAgentCreate"];
+                };
+            };
+            responses: {
+                /** @description The agent */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiAgent"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The slug is taken (`SLUG_TAKEN`) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/developer/agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One API agent (by id or slug) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The agent */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiAgent"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown API agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /**
+         * Archive an API agent
+         * @description It stops answering API calls (404 for developers). Nothing is deleted.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The archived agent */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiAgent"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown API agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Edit an API agent
+         * @description Takes effect on the next request; open conversations keep their history.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ApiAgentPatch"];
+                };
+            };
+            responses: {
+                /** @description The agent */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiAgent"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown API agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/developer/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** API keys with today usage and the last 30 days */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The keys */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiKeyList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create an API key
+         * @description The answer holds the whole key once (`ehk_...`); only its SHA-256 is stored. Send it as `Authorization: Bearer ehk_...` to `/v1`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreate"];
+                };
+            };
+            responses: {
+                /** @description The key (shown once) */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiKeyCreated"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/developer/keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit an API key (name, agents, limits, origins, expiry) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ApiKeyPatch"];
+                };
+            };
+            responses: {
+                /** @description The key */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiKey"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/developer/keys/{id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke an API key
+         * @description The key stops working at once. It cannot be restored.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The revoked key */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiKey"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/developer/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent API requests (metadata only)
+         * @description Time, key, agent, mode, status, tokens and cost. Inputs and answers are never logged.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    keyId?: string;
+                    agentId?: string;
+                    limit?: number;
+                    before?: number | null;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Newest first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiRequestList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/developer/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Requests and cost per day */
+        get: {
+            parameters: {
+                query?: {
+                    keyId?: string;
+                    days?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Totals and one row per UTC day */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiUsage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The API agents this key may call */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Agents */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["V1Agents"];
+                    };
+                };
+                /** @description Missing, invalid, expired or revoked API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{slug}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mode A: run an agent once
+         * @description One-shot: send an input, get an answer. Nothing is stored except metadata (time, key, tokens, cost). With `outputSchema` the answer is validated JSON.
+         *
+         *     ```bash
+         *     curl -X POST $BASE/v1/agents/support-bot/run \
+         *       -H "Authorization: Bearer $EHARNESS_KEY" -H "content-type: application/json" \
+         *       -d '{"input":"Where is order 1042?","context":{"customer":"Acme"}}'
+         *     ```
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    slug: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["V1RunBody"];
+                };
+            };
+            responses: {
+                /** @description The answer */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["V1RunResponse"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing, invalid, expired or revoked API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such agent or conversation for this key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Input too large */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again. */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The agent failed, or its answer never matched `outputSchema` (`OUTPUT_INVALID`) */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mode B: open a conversation
+         * @description Returns `201` for a new conversation, `200` (with `reused: true`) when an open conversation of the same `endUserId` and agent exists for this key.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["V1ConversationCreate"];
+                };
+            };
+            responses: {
+                /** @description An open conversation was reused */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["V1Conversation"];
+                    };
+                };
+                /** @description A new conversation */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["V1Conversation"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing, invalid, expired or revoked API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such agent or conversation for this key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again. */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A conversation */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Conversation id from `POST /v1/conversations`. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The conversation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["V1Conversation"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing, invalid, expired or revoked API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such agent or conversation for this key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again. */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete a conversation and its messages */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Conversation id from `POST /v1/conversations`. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            deleted: boolean;
+                        };
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing, invalid, expired or revoked API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such agent or conversation for this key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again. */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close a conversation
+         * @description A closed conversation takes no more messages (`409 CONVERSATION_CLOSED`); its history stays until retention deletes it.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Conversation id from `POST /v1/conversations`. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The closed conversation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["V1Conversation"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing, invalid, expired or revoked API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such agent or conversation for this key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again. */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The messages of a conversation (newest page, oldest first)
+         * @description Text only: tool calls and reasoning are never returned.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    /** @description `nextBefore` of the previous page. */
+                    before?: string;
+                };
+                header?: never;
+                path: {
+                    /** @description Conversation id from `POST /v1/conversations`. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["V1History"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing, invalid, expired or revoked API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such agent or conversation for this key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again. */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Send a message; the answer streams
+         * @description Default: Server-Sent Events in the AI SDK UI message stream format, so `useChat` (`DefaultChatTransport({ api })`) and `eharness/client` can read it. The body may be `{ text }` or what `useChat` sends (`{ messages }`: the last user message is used). With `"stream": false` (or `?stream=false`) the answer is one JSON object.
+         *
+         *     ```bash
+         *     curl -N -X POST $BASE/v1/conversations/$ID/messages \
+         *       -H "Authorization: Bearer $EHARNESS_KEY" -H "content-type: application/json" \
+         *       -d '{"text":"Hello"}'
+         *     ```
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Conversation id from `POST /v1/conversations`. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["V1MessageBody"];
+                };
+            };
+            responses: {
+                /** @description A UI message stream, or JSON when `stream` is false */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                        "application/json": components["schemas"]["V1MessageResponse"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing, invalid, expired or revoked API key */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such agent or conversation for this key */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The conversation is closed (`CONVERSATION_CLOSED`) or still answering (`CONVERSATION_BUSY`) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again. */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -17117,6 +18729,80 @@ export interface components {
             agentId: string;
             lastReadSeq: number;
         };
+        MemoryReorgProposal: {
+            plan: components["schemas"]["MemoryReorgPlan"];
+            warnings: string[];
+            modelCalls: number;
+        };
+        MemoryReorgPlan: {
+            agentSlug: string;
+            rows: components["schemas"]["MemoryReorgPlanRow"][];
+            issues: {
+                source: string;
+                /** @enum {string} */
+                level: "error" | "note";
+                message: string;
+            }[];
+            /** @description false while any `error` issue remains: apply refuses. */
+            ok: boolean;
+            originals: {
+                rules: string;
+                index: string;
+            };
+            rules: {
+                before: string;
+                after: string;
+            };
+            index: {
+                before: string;
+                after: string;
+            };
+            /** @description The new library files, with their full text. */
+            writes: {
+                path: string;
+                text: string;
+            }[];
+        };
+        MemoryReorgPlanRow: components["schemas"]["MemoryReorgRow"] & {
+            /** @description Where the content ends up after the checks: a library path, `memory:rules.md`, or the archive path. Empty when the row has an error. */
+            finalTarget: string;
+            /** @description Where the untouched original is kept (the originals folder, or the archive path). */
+            originalPath: string;
+        };
+        MemoryReorgRow: {
+            /** @description The memory file, relative to the agent memory root (`notes/ads.md`). */
+            source: string;
+            /** @enum {string} */
+            action: "keep-as-rule" | "move" | "merge-into" | "archive";
+            /** @description move: an absolute library path (`/library/knowledge/ads.md`). merge-into: another memory file of this list. Else null. */
+            target: string | null;
+            reason: string;
+        };
+        MemoryReorgProposeBody: {
+            /** @description Agent id or slug. */
+            agentId: string;
+        };
+        MemoryReorgRowsBody: {
+            /** @description Agent id or slug. */
+            agentId: string;
+            rows: components["schemas"]["MemoryReorgRow"][];
+        };
+        MemoryReorgResult: {
+            restorePointId: string | null;
+            safetyBackupId: string | null;
+            counts: {
+                added: number;
+                changed: number;
+                removed: number;
+                failed: number;
+            };
+            items: {
+                key: string;
+                /** @enum {string} */
+                action: "added" | "changed" | "removed" | "failed";
+                note?: string;
+            }[];
+        };
         LibraryList: {
             files: components["schemas"]["LibraryEntry"][];
         };
@@ -17680,7 +19366,7 @@ export interface components {
             at: number;
             by: string;
             /** @enum {string} */
-            kind: "import" | "files-restore" | "undo";
+            kind: "import" | "files-restore" | "undo" | "memory-reorganization";
             source: {
                 /** @enum {string} */
                 kind: "backup";
@@ -18715,6 +20401,46 @@ export interface components {
         RoutineRuns: {
             runs: components["schemas"]["RoutineRun"][];
         };
+        ProgramFilesPreview: {
+            items: {
+                programId: string;
+                name: string;
+                agentId: string;
+                briefPath: string | null;
+                notesPath: string | null;
+                briefChars: number;
+                /** @description Standing agreements that go to notes.md. */
+                notes: number;
+                /** @enum {string} */
+                status: "ready" | "already" | "blocked";
+                note: string | null;
+            }[];
+        };
+        ProgramFilesBody: {
+            /** @description The programs to move; absent = all programs not in file mode yet. */
+            programIds?: string[];
+        };
+        ProgramFilesResult: {
+            moved: number;
+            already: number;
+            failed: {
+                programId: string;
+                error: string;
+            }[];
+            items: {
+                programId: string;
+                name: string;
+                agentId: string;
+                briefPath: string | null;
+                notesPath: string | null;
+                briefChars: number;
+                /** @description Standing agreements that go to notes.md. */
+                notes: number;
+                /** @enum {string} */
+                status: "ready" | "already" | "blocked";
+                note: string | null;
+            }[];
+        };
         ProgramList: {
             programs: components["schemas"]["Program"][];
         };
@@ -18741,6 +20467,10 @@ export interface components {
             deliverables: components["schemas"]["Deliverable"][];
             /** @description Standing agreements: what the client and the agent agreed about this program. Told to every run after the brief. They never grant authority or lift a gate. */
             notes: string[];
+            /** @description File mode: the library file that holds the brief (`/library/programs/<slug>/brief.md`), read at every run. `brief` is then the fallback copy used when the file is missing. null = the brief is the text. */
+            briefPath: string | null;
+            /** @description File mode of the agreements (`/library/programs/<slug>/notes.md`); `notes` is the fallback copy. A file never grants authority. */
+            notesPath: string | null;
             /** @enum {string} */
             status: "active" | "paused";
             /** @description `client`, or the id of the proposing agent. */
@@ -18989,6 +20719,10 @@ export interface components {
             } | null;
             deliverables?: components["schemas"]["Deliverable"][];
             notes?: string[];
+            /** @description Point the brief to a file under `/library/programs/<program>/` (file mode) or null for text mode. While a file is set, `brief` cannot be edited here (409 `BRIEF_IN_FILE`): edit the file. */
+            briefPath?: string | null;
+            /** @description Same for the agreements (409 `NOTES_IN_FILE` for an edit of `notes` while a file is set). */
+            notesPath?: string | null;
             /** @description The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`. */
             version?: number;
         };
@@ -20648,6 +22382,281 @@ export interface components {
              * @enum {boolean}
              */
             confirm: true;
+        };
+        ApiAgentList: {
+            agents: components["schemas"]["ApiAgent"][];
+        };
+        ApiAgent: {
+            id: string;
+            /**
+             * @description Used in `/v1/agents/{slug}/run`.
+             * @example support-bot
+             */
+            slug: string;
+            /** @example Support bot */
+            name: string;
+            description: string;
+            instructions: string;
+            rules: string[];
+            /** @description Null = the workspace default model. */
+            model: string | null;
+            modelProfile: string | null;
+            /**
+             * @description Library folders the agent may read (everything under them). It sees nothing else.
+             * @example [
+             *       "/library/public/cs"
+             *     ]
+             */
+            readFolders: string[];
+            /**
+             * @description The one folder the agent may also write to; null = read-only.
+             * @example /library/tickets
+             */
+            writeFolder: string | null;
+            webSearch: boolean;
+            /** @description Idle conversations are deleted after this many days. */
+            retentionDays: number;
+            version: number;
+            archivedAt: number | null;
+            createdAt: number;
+            updatedAt: number;
+        };
+        ApiAgentCreate: {
+            name: string;
+            instructions: string;
+            /** @description Lowercase letters, digits and dashes. Default: from the name. */
+            slug?: string;
+            description?: string;
+            rules?: string[];
+            model?: string | null;
+            modelProfile?: string | null;
+            readFolders?: string[];
+            writeFolder?: string | null;
+            webSearch?: boolean;
+            retentionDays?: number;
+        };
+        ApiAgentPatch: {
+            name?: string;
+            instructions?: string;
+            /** @description Lowercase letters, digits and dashes. Default: from the name. */
+            slug?: string;
+            description?: string;
+            rules?: string[];
+            model?: string | null;
+            modelProfile?: string | null;
+            readFolders?: string[];
+            writeFolder?: string | null;
+            webSearch?: boolean;
+            retentionDays?: number;
+        };
+        ApiKeyList: {
+            keys: components["schemas"]["ApiKey"][];
+        };
+        ApiKey: {
+            /**
+             * @description The visible part of the key.
+             * @example ehk_a1b2c3d4
+             */
+            id: string;
+            name: string;
+            /** @description Slugs of the API agents the key may call. */
+            agents: string[];
+            dailyCostLimitUsd: number | null;
+            rateLimitPerMin: number | null;
+            /** @description Browser origins allowed to call with this key (CORS). */
+            origins: string[];
+            expiresAt: number | null;
+            revokedAt: number | null;
+            lastUsedAt: number | null;
+            createdAt: number;
+            /** @description USD spent today (UTC) and requests in the last minute. */
+            today: {
+                costUsd: number;
+                requests: number;
+            };
+            month: components["schemas"]["ApiUsageTotals"];
+        };
+        /** @description The last 30 days. */
+        ApiUsageTotals: {
+            requests: number;
+            costUsd: number;
+            inputTokens: number;
+            outputTokens: number;
+        };
+        ApiKeyCreated: {
+            /**
+             * @description The whole key. Shown once: only its hash is stored.
+             * @example ehk_a1b2c3d4_0123456789abcdefghijklmnopqrstuv
+             */
+            key: string;
+            view: components["schemas"]["ApiKey"];
+        };
+        ApiKeyCreate: {
+            name: string;
+            agents: string[];
+            dailyCostLimitUsd?: number | null;
+            rateLimitPerMin?: number | null;
+            origins?: string[];
+            expiresAt?: number | null;
+        };
+        ApiKeyPatch: {
+            name?: string;
+            agents?: string[];
+            dailyCostLimitUsd?: number | null;
+            rateLimitPerMin?: number | null;
+            origins?: string[];
+            expiresAt?: number | null;
+        };
+        ApiRequestList: {
+            requests: components["schemas"]["ApiRequest"][];
+        };
+        ApiRequest: {
+            id: string;
+            at: number;
+            keyId: string;
+            agentId: string;
+            /** @enum {string} */
+            mode: "run" | "conversation";
+            conversationId: string | null;
+            /** @description HTTP status; 0 while the request runs. */
+            status: number;
+            errorCode: string | null;
+            inputTokens: number;
+            outputTokens: number;
+            costUsd: number;
+            durationMs: number;
+        };
+        ApiUsage: {
+            totals: components["schemas"]["ApiUsageTotals"];
+            days: {
+                day: number;
+                requests: number;
+                costUsd: number;
+            }[];
+        };
+        V1Agents: {
+            agents: {
+                slug: string;
+                name: string;
+                description: string;
+            }[];
+        };
+        V1RunResponse: {
+            /** @description Text, or the validated JSON object when `outputSchema` was sent. */
+            output?: unknown;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            /** @description What this request cost, in USD. */
+            costUsd: number;
+        };
+        V1RunBody: {
+            /**
+             * @description The request: a string, or a transcript of `{ role, content }` messages that ends with a `user` message.
+             * @example Where is my order 1042?
+             */
+            input: string | {
+                /** @enum {string} */
+                role: "user" | "assistant";
+                content: string;
+            }[];
+            /**
+             * @description Extra facts for this request (customer, page, plan). Untrusted: the agent treats it as data.
+             * @example {
+             *       "customer": "Acme",
+             *       "plan": "pro"
+             *     }
+             */
+            context?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description A JSON Schema (`"type": "object"`). The answer is then validated JSON in `output`; an answer that does not match is retried and, failing that, a 502.
+             * @example {
+             *       "type": "object",
+             *       "properties": {
+             *         "intent": {
+             *           "type": "string",
+             *           "enum": [
+             *             "refund",
+             *             "shipping",
+             *             "other"
+             *           ]
+             *         },
+             *         "urgent": {
+             *           "type": "boolean"
+             *         }
+             *       },
+             *       "required": [
+             *         "intent",
+             *         "urgent"
+             *       ]
+             *     }
+             */
+            outputSchema?: {
+                [key: string]: unknown;
+            };
+        };
+        V1Conversation: {
+            id: string;
+            agent: string;
+            endUserId: string | null;
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "open" | "closed";
+            createdAt: number;
+            lastMessageAt: number;
+            /** @description True when an open conversation of this `endUserId` was returned. */
+            reused?: boolean;
+        };
+        V1ConversationCreate: {
+            /**
+             * @description Slug of an API agent.
+             * @example support-bot
+             */
+            agent: string;
+            /**
+             * @description Your id of the person talking. The same `endUserId` + agent returns the open conversation.
+             * @example user-42
+             */
+            endUserId?: string;
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        V1History: {
+            messages: {
+                id: string;
+                /** @enum {string} */
+                role: "user" | "assistant";
+                text: string;
+                createdAt: number | null;
+            }[];
+            /** @description Pass as `before` for the page of older messages. */
+            nextBefore?: string;
+        };
+        V1MessageResponse: {
+            text: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            costUsd: number;
+        };
+        V1MessageBody: {
+            /** @example Hello, I need help with my invoice. */
+            text?: string;
+            /** @description What `useChat` sends: the text of the last user message is used (the server keeps the history). */
+            messages?: {
+                role: string;
+                parts?: unknown[];
+                content?: string;
+            }[];
+            /** @description Default true: a UI message stream (SSE). False: one JSON answer. */
+            stream?: boolean;
         };
     };
     responses: never;

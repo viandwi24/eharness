@@ -89,6 +89,14 @@
     {
       "name": "events",
       "description": "The feed of changes (`eharness/http` activity): JSON and SSE."
+    },
+    {
+      "name": "developer",
+      "description": "The Developers page: API agents (isolated agents other applications call), API keys with limits and origins, the request log and usage (docs/plans/P56-developer-api.md)."
+    },
+    {
+      "name": "v1",
+      "description": "The public Developer API, for other machines: `Authorization: Bearer ehk_...`. Mode A runs an agent once, mode B keeps conversations and streams answers in the AI SDK UI message stream format. Errors: `{ error: { code, message } }`."
     }
   ],
   "components": {
@@ -97,6 +105,11 @@
         "type": "http",
         "scheme": "bearer",
         "description": "The value of TEAM_TOKEN. Not required when the server runs without one."
+      },
+      "ApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API key made on the Developers page: `Authorization: Bearer ehk_...`. Only `/v1` accepts it."
       }
     },
     "schemas": {
@@ -4094,6 +4107,315 @@
           "lastReadSeq"
         ]
       },
+      "MemoryReorgProposal": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "$ref": "#/components/schemas/MemoryReorgPlan"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "modelCalls": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "plan",
+          "warnings",
+          "modelCalls"
+        ]
+      },
+      "MemoryReorgPlan": {
+        "type": "object",
+        "properties": {
+          "agentSlug": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryReorgPlanRow"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string"
+                },
+                "level": {
+                  "type": "string",
+                  "enum": [
+                    "error",
+                    "note"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "level",
+                "message"
+              ]
+            }
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "false while any `error` issue remains: apply refuses."
+          },
+          "originals": {
+            "type": "object",
+            "properties": {
+              "rules": {
+                "type": "string"
+              },
+              "index": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "rules",
+              "index"
+            ]
+          },
+          "rules": {
+            "type": "object",
+            "properties": {
+              "before": {
+                "type": "string"
+              },
+              "after": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "before",
+              "after"
+            ]
+          },
+          "index": {
+            "type": "object",
+            "properties": {
+              "before": {
+                "type": "string"
+              },
+              "after": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "before",
+              "after"
+            ]
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "text"
+              ]
+            },
+            "description": "The new library files, with their full text."
+          }
+        },
+        "required": [
+          "agentSlug",
+          "rows",
+          "issues",
+          "ok",
+          "originals",
+          "rules",
+          "index",
+          "writes"
+        ]
+      },
+      "MemoryReorgPlanRow": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MemoryReorgRow"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "finalTarget": {
+                "type": "string",
+                "description": "Where the content ends up after the checks: a library path, `memory:rules.md`, or the archive path. Empty when the row has an error."
+              },
+              "originalPath": {
+                "type": "string",
+                "description": "Where the untouched original is kept (the originals folder, or the archive path)."
+              }
+            },
+            "required": [
+              "finalTarget",
+              "originalPath"
+            ]
+          }
+        ]
+      },
+      "MemoryReorgRow": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "description": "The memory file, relative to the agent memory root (`notes/ads.md`)."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "keep-as-rule",
+              "move",
+              "merge-into",
+              "archive"
+            ]
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 400,
+            "description": "move: an absolute library path (`/library/knowledge/ads.md`). merge-into: another memory file of this list. Else null."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "source",
+          "action",
+          "target",
+          "reason"
+        ]
+      },
+      "MemoryReorgProposeBody": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent id or slug."
+          }
+        },
+        "required": [
+          "agentId"
+        ]
+      },
+      "MemoryReorgRowsBody": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent id or slug."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryReorgRow"
+            },
+            "maxItems": 1000
+          }
+        },
+        "required": [
+          "agentId",
+          "rows"
+        ]
+      },
+      "MemoryReorgResult": {
+        "type": "object",
+        "properties": {
+          "restorePointId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "safetyBackupId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "added": {
+                "type": "integer"
+              },
+              "changed": {
+                "type": "integer"
+              },
+              "removed": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "added",
+              "changed",
+              "removed",
+              "failed"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "added",
+                    "changed",
+                    "removed",
+                    "failed"
+                  ]
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "action"
+              ]
+            }
+          }
+        },
+        "required": [
+          "restorePointId",
+          "safetyBackupId",
+          "counts",
+          "items"
+        ]
+      },
       "LibraryList": {
         "type": "object",
         "properties": {
@@ -6294,7 +6616,8 @@
             "enum": [
               "import",
               "files-restore",
-              "undo"
+              "undo",
+              "memory-reorganization"
             ]
           },
           "source": {
@@ -9863,6 +10186,184 @@
           "runs"
         ]
       },
+      "ProgramFilesPreview": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "programId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "agentId": {
+                  "type": "string"
+                },
+                "briefPath": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "notesPath": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "briefChars": {
+                  "type": "integer"
+                },
+                "notes": {
+                  "type": "integer",
+                  "description": "Standing agreements that go to notes.md."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "already",
+                    "blocked"
+                  ]
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "programId",
+                "name",
+                "agentId",
+                "briefPath",
+                "notesPath",
+                "briefChars",
+                "notes",
+                "status",
+                "note"
+              ]
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ProgramFilesBody": {
+        "type": "object",
+        "properties": {
+          "programIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "description": "The programs to move; absent = all programs not in file mode yet."
+          }
+        }
+      },
+      "ProgramFilesResult": {
+        "type": "object",
+        "properties": {
+          "moved": {
+            "type": "integer"
+          },
+          "already": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "programId": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "programId",
+                "error"
+              ]
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "programId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "agentId": {
+                  "type": "string"
+                },
+                "briefPath": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "notesPath": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "briefChars": {
+                  "type": "integer"
+                },
+                "notes": {
+                  "type": "integer",
+                  "description": "Standing agreements that go to notes.md."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "already",
+                    "blocked"
+                  ]
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "programId",
+                "name",
+                "agentId",
+                "briefPath",
+                "notesPath",
+                "briefChars",
+                "notes",
+                "status",
+                "note"
+              ]
+            }
+          }
+        },
+        "required": [
+          "moved",
+          "already",
+          "failed",
+          "items"
+        ]
+      },
       "ProgramList": {
         "type": "object",
         "properties": {
@@ -9943,6 +10444,20 @@
               "type": "string"
             },
             "description": "Standing agreements: what the client and the agent agreed about this program. Told to every run after the brief. They never grant authority or lift a gate."
+          },
+          "briefPath": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "File mode: the library file that holds the brief (`/library/programs/<slug>/brief.md`), read at every run. `brief` is then the fallback copy used when the file is missing. null = the brief is the text."
+          },
+          "notesPath": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "File mode of the agreements (`/library/programs/<slug>/notes.md`); `notes` is the fallback copy. A file never grants authority."
           },
           "status": {
             "type": "string",
@@ -10115,6 +10630,8 @@
           "worker",
           "deliverables",
           "notes",
+          "briefPath",
+          "notesPath",
           "status",
           "createdBy",
           "createdAt",
@@ -10971,6 +11488,22 @@
               "maxLength": 1000
             },
             "maxItems": 50
+          },
+          "briefPath": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300,
+            "description": "Point the brief to a file under `/library/programs/<program>/` (file mode) or null for text mode. While a file is set, `brief` cannot be edited here (409 `BRIEF_IN_FILE`): edit the file."
+          },
+          "notesPath": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300,
+            "description": "Same for the agreements (409 `NOTES_IN_FILE` for an edit of `notes` while a file is set)."
           },
           "version": {
             "type": "integer",
@@ -17159,6 +17692,925 @@
         "required": [
           "confirm"
         ]
+      },
+      "ApiAgentList": {
+        "type": "object",
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiAgent"
+            }
+          }
+        },
+        "required": [
+          "agents"
+        ]
+      },
+      "ApiAgent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string",
+            "example": "support-bot",
+            "description": "Used in `/v1/agents/{slug}/run`."
+          },
+          "name": {
+            "type": "string",
+            "example": "Support bot"
+          },
+          "description": {
+            "type": "string"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null = the workspace default model."
+          },
+          "modelProfile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readFolders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "/library/public/cs"
+            ],
+            "description": "Library folders the agent may read (everything under them). It sees nothing else."
+          },
+          "writeFolder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "/library/tickets",
+            "description": "The one folder the agent may also write to; null = read-only."
+          },
+          "webSearch": {
+            "type": "boolean"
+          },
+          "retentionDays": {
+            "type": "integer",
+            "description": "Idle conversations are deleted after this many days."
+          },
+          "version": {
+            "type": "integer"
+          },
+          "archivedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "description",
+          "instructions",
+          "rules",
+          "model",
+          "modelProfile",
+          "readFolders",
+          "writeFolder",
+          "webSearch",
+          "retentionDays",
+          "version",
+          "archivedAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "ApiAgentCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "instructions": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50000
+          },
+          "slug": {
+            "type": "string",
+            "description": "Lowercase letters, digits and dashes. Default: from the name."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "maxItems": 50
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modelProfile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readFolders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          },
+          "writeFolder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webSearch": {
+            "type": "boolean"
+          },
+          "retentionDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650
+          }
+        },
+        "required": [
+          "name",
+          "instructions"
+        ]
+      },
+      "ApiAgentPatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "instructions": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50000
+          },
+          "slug": {
+            "type": "string",
+            "description": "Lowercase letters, digits and dashes. Default: from the name."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "maxItems": 50
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modelProfile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readFolders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          },
+          "writeFolder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webSearch": {
+            "type": "boolean"
+          },
+          "retentionDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650
+          }
+        }
+      },
+      "ApiKeyList": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiKey"
+            }
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
+      "ApiKey": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "ehk_a1b2c3d4",
+            "description": "The visible part of the key."
+          },
+          "name": {
+            "type": "string"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Slugs of the API agents the key may call."
+          },
+          "dailyCostLimitUsd": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "rateLimitPerMin": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Browser origins allowed to call with this key (CORS)."
+          },
+          "expiresAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "revokedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lastUsedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "today": {
+            "type": "object",
+            "properties": {
+              "costUsd": {
+                "type": "number"
+              },
+              "requests": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "costUsd",
+              "requests"
+            ],
+            "description": "USD spent today (UTC) and requests in the last minute."
+          },
+          "month": {
+            "$ref": "#/components/schemas/ApiUsageTotals"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "agents",
+          "dailyCostLimitUsd",
+          "rateLimitPerMin",
+          "origins",
+          "expiresAt",
+          "revokedAt",
+          "lastUsedAt",
+          "createdAt",
+          "today",
+          "month"
+        ]
+      },
+      "ApiUsageTotals": {
+        "type": "object",
+        "properties": {
+          "requests": {
+            "type": "integer"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "inputTokens": {
+            "type": "integer"
+          },
+          "outputTokens": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requests",
+          "costUsd",
+          "inputTokens",
+          "outputTokens"
+        ],
+        "description": "The last 30 days."
+      },
+      "ApiKeyCreated": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "example": "ehk_a1b2c3d4_0123456789abcdefghijklmnopqrstuv",
+            "description": "The whole key. Shown once: only its hash is stored."
+          },
+          "view": {
+            "$ref": "#/components/schemas/ApiKey"
+          }
+        },
+        "required": [
+          "key",
+          "view"
+        ]
+      },
+      "ApiKeyCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "dailyCostLimitUsd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0
+          },
+          "rateLimitPerMin": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "exclusiveMinimum": 0
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          },
+          "expiresAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "agents"
+        ]
+      },
+      "ApiKeyPatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "dailyCostLimitUsd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0
+          },
+          "rateLimitPerMin": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "exclusiveMinimum": 0
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          },
+          "expiresAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "ApiRequestList": {
+        "type": "object",
+        "properties": {
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiRequest"
+            }
+          }
+        },
+        "required": [
+          "requests"
+        ]
+      },
+      "ApiRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "at": {
+            "type": "number"
+          },
+          "keyId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "run",
+              "conversation"
+            ]
+          },
+          "conversationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "integer",
+            "description": "HTTP status; 0 while the request runs."
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inputTokens": {
+            "type": "integer"
+          },
+          "outputTokens": {
+            "type": "integer"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "durationMs": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "keyId",
+          "agentId",
+          "mode",
+          "conversationId",
+          "status",
+          "errorCode",
+          "inputTokens",
+          "outputTokens",
+          "costUsd",
+          "durationMs"
+        ]
+      },
+      "ApiUsage": {
+        "type": "object",
+        "properties": {
+          "totals": {
+            "$ref": "#/components/schemas/ApiUsageTotals"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "number"
+                },
+                "requests": {
+                  "type": "integer"
+                },
+                "costUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "day",
+                "requests",
+                "costUsd"
+              ]
+            }
+          }
+        },
+        "required": [
+          "totals",
+          "days"
+        ]
+      },
+      "V1Agents": {
+        "type": "object",
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "slug",
+                "name",
+                "description"
+              ]
+            }
+          }
+        },
+        "required": [
+          "agents"
+        ]
+      },
+      "V1RunResponse": {
+        "type": "object",
+        "properties": {
+          "output": {
+            "description": "Text, or the validated JSON object when `outputSchema` was sent."
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "inputTokens": {
+                "type": "integer"
+              },
+              "outputTokens": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "inputTokens",
+              "outputTokens"
+            ]
+          },
+          "costUsd": {
+            "type": "number",
+            "description": "What this request cost, in USD."
+          }
+        },
+        "required": [
+          "usage",
+          "costUsd"
+        ]
+      },
+      "V1RunBody": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "assistant"
+                      ]
+                    },
+                    "content": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "role",
+                    "content"
+                  ]
+                },
+                "minItems": 1
+              }
+            ],
+            "description": "The request: a string, or a transcript of `{ role, content }` messages that ends with a `user` message.",
+            "example": "Where is my order 1042?"
+          },
+          "context": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Extra facts for this request (customer, page, plan). Untrusted: the agent treats it as data.",
+            "example": {
+              "customer": "Acme",
+              "plan": "pro"
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "A JSON Schema (`\"type\": \"object\"`). The answer is then validated JSON in `output`; an answer that does not match is retried and, failing that, a 502.",
+            "example": {
+              "type": "object",
+              "properties": {
+                "intent": {
+                  "type": "string",
+                  "enum": [
+                    "refund",
+                    "shipping",
+                    "other"
+                  ]
+                },
+                "urgent": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "intent",
+                "urgent"
+              ]
+            }
+          }
+        },
+        "required": [
+          "input"
+        ]
+      },
+      "V1Conversation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "endUserId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ]
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "lastMessageAt": {
+            "type": "number"
+          },
+          "reused": {
+            "type": "boolean",
+            "description": "True when an open conversation of this `endUserId` was returned."
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "endUserId",
+          "metadata",
+          "status",
+          "createdAt",
+          "lastMessageAt"
+        ]
+      },
+      "V1ConversationCreate": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string",
+            "minLength": 1,
+            "example": "support-bot",
+            "description": "Slug of an API agent."
+          },
+          "endUserId": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Your id of the person talking. The same `endUserId` + agent returns the open conversation.",
+            "example": "user-42"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "agent"
+        ]
+      },
+      "V1History": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "role",
+                "text",
+                "createdAt"
+              ]
+            }
+          },
+          "nextBefore": {
+            "type": "string",
+            "description": "Pass as `before` for the page of older messages."
+          }
+        },
+        "required": [
+          "messages"
+        ]
+      },
+      "V1MessageResponse": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "inputTokens": {
+                "type": "integer"
+              },
+              "outputTokens": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "inputTokens",
+              "outputTokens"
+            ]
+          },
+          "costUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "text",
+          "usage",
+          "costUsd"
+        ]
+      },
+      "V1MessageBody": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Hello, I need help with my invoice."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "parts": {
+                  "type": "array",
+                  "items": {}
+                },
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "role"
+              ]
+            },
+            "description": "What `useChat` sends: the text of the last user message is used (the server keeps the history)."
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Default true: a UI message stream (SSE). False: one JSON answer."
+          }
+        }
       }
     },
     "parameters": {}
@@ -21569,6 +23021,224 @@
           },
           "404": {
             "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/memory/reorganize/propose": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Propose a reorganization of an agent memory",
+        "description": "The agent (its own model, one call per small batch of files) proposes one action per memory file: `keep-as-rule` (merged into rules.md), `move` (a library path), `merge-into` (another file) or `archive`. The answer is already the checked plan (nothing is changed). `HEARTBEAT.md` is never touched. 409 `COMPLETION_UNAVAILABLE` without a model.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryReorgProposeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The proposal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryReorgProposal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`COMPLETION_UNAVAILABLE`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/memory/reorganize/preview": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Check a reorganization plan",
+        "description": "Runs the deterministic checks on the rows (as proposed or as the owner edited them) and answers the plan: no target outside `/library`, no overwrite of an existing library file (a numeric suffix is added), dated reports to `/library/reports/`, the final target of every row and the diff of `rules.md` and `index.md`. Nothing is changed.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryReorgRowsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryReorgPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/memory/reorganize/apply": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Apply a reorganization of an agent memory",
+        "description": "A verified backup (`before: memory reorganization`) is taken first: when it fails nothing is changed (`BACKUP_FAILED`). Then the new library files are created and read back, `rules.md` and `index.md` are rewritten, and the original memory files are moved (never deleted) to `/library/archive/memory/<agent>/original/`. A restore point is recorded: undo it with `POST /backups/restore-points/{id}/undo` flow. A plan with errors answers 400 `REORG_PLAN_INVALID`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryReorgRowsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryReorgResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`BACKUP_FAILED`",
             "content": {
               "application/json": {
                 "schema": {
@@ -28000,6 +29670,118 @@
           },
           "404": {
             "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/program-files/preview": {
+      "post": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Preview moving program briefs and notes to the library",
+        "description": "Which programs would get `/library/programs/<slug>/brief.md` and `notes.md`, with the text it would write (nothing is changed). Programs already in file mode are listed as `already`; a name clash gets a suffix, or is `blocked`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgramFilesBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramFilesPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/program-files/apply": {
+      "post": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Move program briefs and notes to the library",
+        "description": "Creates the files (never overwrites one), reads them back, then switches each program to file mode: every later run reads the current file, the library history versions it. The old text stays in the program as the fallback copy. Authority, forbidden, gates and budget stay in the program record.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgramFilesBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What moved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramFilesResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
             "content": {
               "application/json": {
                 "schema": {
@@ -35374,6 +37156,1438 @@
           },
           "409": {
             "description": "`NO_FIX`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/developer/agents": {
+      "get": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "API agents",
+        "description": "Isolated agents that other applications call with an API key. They are not team agents: no chats, channels or team tools.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "required": false,
+            "name": "includeArchived",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The API agents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiAgentList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "Create an API agent",
+        "description": "Default access is nothing: no tools. Grant read-only library folders (`readFolders`), at most one `writeFolder`, and web search.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiAgentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiAgent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The slug is taken (`SLUG_TAKEN`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/developer/agents/{id}": {
+      "get": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "One API agent (by id or slug)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiAgent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown API agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "Edit an API agent",
+        "description": "Takes effect on the next request; open conversations keep their history.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiAgentPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiAgent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown API agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "Archive an API agent",
+        "description": "It stops answering API calls (404 for developers). Nothing is deleted.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiAgent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown API agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/developer/keys": {
+      "get": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "API keys with today usage and the last 30 days",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "Create an API key",
+        "description": "The answer holds the whole key once (`ehk_...`); only its SHA-256 is stored. Send it as `Authorization: Bearer ehk_...` to `/v1`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The key (shown once)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/developer/keys/{id}": {
+      "patch": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "Edit an API key (name, agents, limits, origins, expiry)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKey"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/developer/keys/{id}/revoke": {
+      "post": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "Revoke an API key",
+        "description": "The key stops working at once. It cannot be restored.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revoked key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKey"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/developer/requests": {
+      "get": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "Recent API requests (metadata only)",
+        "description": "Time, key, agent, mode, status, tokens and cost. Inputs and answers are never logged.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "keyId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "required": false,
+            "name": "before",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiRequestList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/developer/usage": {
+      "get": {
+        "tags": [
+          "developer"
+        ],
+        "summary": "Requests and cost per day",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "keyId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 14
+            },
+            "required": false,
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Totals and one row per UTC day",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiUsage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "The API agents this key may call",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1Agents"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{slug}/run": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Mode A: run an agent once",
+        "description": "One-shot: send an input, get an answer. Nothing is stored except metadata (time, key, tokens, cost). With `outputSchema` the answer is validated JSON.\n\n```bash\ncurl -X POST $BASE/v1/agents/support-bot/run \\\n  -H \"Authorization: Bearer $EHARNESS_KEY\" -H \"content-type: application/json\" \\\n  -d '{\"input\":\"Where is order 1042?\",\"context\":{\"customer\":\"Acme\"}}'\n```",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "support-bot"
+            },
+            "required": true,
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V1RunBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The answer",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "text": {
+                    "summary": "Text",
+                    "value": {
+                      "output": "Order 1042 shipped on Monday.",
+                      "usage": {
+                        "inputTokens": 412,
+                        "outputTokens": 31
+                      },
+                      "costUsd": 0.0021
+                    }
+                  },
+                  "structured": {
+                    "summary": "With outputSchema",
+                    "value": {
+                      "output": {
+                        "intent": "shipping",
+                        "urgent": false
+                      },
+                      "usage": {
+                        "inputTokens": 380,
+                        "outputTokens": 22
+                      },
+                      "costUsd": 0.0018
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/V1RunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent or conversation for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Input too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed, or its answer never matched `outputSchema` (`OUTPUT_INVALID`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Mode B: open a conversation",
+        "description": "Returns `201` for a new conversation, `200` (with `reused: true`) when an open conversation of the same `endUserId` and agent exists for this key.",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V1ConversationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "An open conversation was reused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1Conversation"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "A new conversation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1Conversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent or conversation for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "A conversation",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Conversation id from `POST /v1/conversations`."
+            },
+            "required": true,
+            "description": "Conversation id from `POST /v1/conversations`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The conversation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1Conversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent or conversation for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Delete a conversation and its messages",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Conversation id from `POST /v1/conversations`."
+            },
+            "required": true,
+            "description": "Conversation id from `POST /v1/conversations`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent or conversation for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}/close": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Close a conversation",
+        "description": "A closed conversation takes no more messages (`409 CONVERSATION_CLOSED`); its history stays until retention deletes it.",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Conversation id from `POST /v1/conversations`."
+            },
+            "required": true,
+            "description": "Conversation id from `POST /v1/conversations`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The closed conversation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1Conversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent or conversation for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}/messages": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "The messages of a conversation (newest page, oldest first)",
+        "description": "Text only: tool calls and reasoning are never returned.",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Conversation id from `POST /v1/conversations`."
+            },
+            "required": true,
+            "description": "Conversation id from `POST /v1/conversations`.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`nextBefore` of the previous page."
+            },
+            "required": false,
+            "description": "`nextBefore` of the previous page.",
+            "name": "before",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1History"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent or conversation for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Send a message; the answer streams",
+        "description": "Default: Server-Sent Events in the AI SDK UI message stream format, so `useChat` (`DefaultChatTransport({ api })`) and `eharness/client` can read it. The body may be `{ text }` or what `useChat` sends (`{ messages }`: the last user message is used). With `\"stream\": false` (or `?stream=false`) the answer is one JSON object.\n\n```bash\ncurl -N -X POST $BASE/v1/conversations/$ID/messages \\\n  -H \"Authorization: Bearer $EHARNESS_KEY\" -H \"content-type: application/json\" \\\n  -d '{\"text\":\"Hello\"}'\n```",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Conversation id from `POST /v1/conversations`."
+            },
+            "required": true,
+            "description": "Conversation id from `POST /v1/conversations`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V1MessageBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A UI message stream, or JSON when `stream` is false",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events in the AI SDK UI message stream format (`text-delta` chunks, then `[DONE]`). Tool calls and reasoning are never sent."
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1MessageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such agent or conversation for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The conversation is closed (`CONVERSATION_CLOSED`) or still answering (`CONVERSATION_BUSY`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or daily cost limit of the key, or the workspace budget (`RATE_LIMITED`, `DAILY_COST_LIMIT`, `WORKSPACE_BUDGET`). `Retry-After` says when to try again.",
             "content": {
               "application/json": {
                 "schema": {

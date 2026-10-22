@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
+import { applyProgramFiles, previewProgramFiles } from '../../app/program-files.ts'
 import {
   authorityGrant,
   checkProgramDraft,
@@ -22,6 +23,9 @@ import {
   ProgramCheckResultSchema,
   ProgramCheckSchema,
   ProgramCreateSchema,
+  ProgramFilesBodySchema,
+  ProgramFilesPreviewSchema,
+  ProgramFilesResultSchema,
   ProgramIdParam,
   ProgramListSchema,
   ProgramMemoryParam,
@@ -230,8 +234,47 @@ const forgetRoute = createRoute({
   },
 })
 
+const filesPreviewRoute = createRoute({
+  method: 'post',
+  path: '/program-files/preview',
+  tags: ['programs'],
+  summary: 'Preview moving program briefs and notes to the library',
+  description:
+    'Which programs would get `/library/programs/<slug>/brief.md` and `notes.md`, with the text it would write (nothing is changed). Programs already in file mode are listed as `already`; a name clash gets a suffix, or is `blocked`.',
+  security,
+  request: { body: { required: true, content: json(ProgramFilesBodySchema) } },
+  responses: {
+    200: { description: 'The plan', content: json(ProgramFilesPreviewSchema) },
+    ...errorResponses,
+  },
+})
+
+const filesApplyRoute = createRoute({
+  method: 'post',
+  path: '/program-files/apply',
+  tags: ['programs'],
+  summary: 'Move program briefs and notes to the library',
+  description:
+    'Creates the files (never overwrites one), reads them back, then switches each program to file mode: every later run reads the current file, the library history versions it. The old text stays in the program as the fallback copy. Authority, forbidden, gates and budget stay in the program record.',
+  security,
+  request: { body: { required: true, content: json(ProgramFilesBodySchema) } },
+  responses: {
+    200: { description: 'What moved', content: json(ProgramFilesResultSchema) },
+    ...errorResponses,
+  },
+})
+
 export function programRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
+    .openapi(filesPreviewRoute, async (c) =>
+      c.json(
+        { items: await previewProgramFiles(deps, c.req.valid('json').programIds) } as never,
+        200,
+      ),
+    )
+    .openapi(filesApplyRoute, async (c) =>
+      c.json((await applyProgramFiles(deps, c.req.valid('json').programIds)) as never, 200),
+    )
     .openapi(listRoute, (c) => {
       const { agentId } = c.req.valid('query')
       return c.json(

@@ -80,6 +80,7 @@ import {
   getProgram,
   runProgramNow,
   updateProgram,
+  updateProgramText,
 } from './programs.ts'
 
 export const CLIENT = 'client'
@@ -356,7 +357,12 @@ function proposeChange(
   }
   const patch = changeSnapshot(after as Parameters<typeof changeSnapshot>[0], fields)
   const kept = changeSnapshot(program, fields)
-  const diff = diffLines(kept, patch)
+  // a file-mode brief changes as a new version of its library file: the card says so
+  const diff = diffLines(kept, patch).map((l) =>
+    l.field === 'brief' && program.briefPath != null
+      ? { ...l, label: `Brief (new version of ${program.briefPath})` }
+      : l,
+  )
   const twin = pending.find((d) => JSON.stringify(d.payload.patch) === JSON.stringify(patch))
   if (twin !== undefined) return { decision: twin, duplicate: true }
   const payload: ChangePayload = {
@@ -1010,7 +1016,7 @@ async function approveChange(
     outcome: { decision: 'approved', programId: program.id },
   })
   try {
-    updateProgram(deps, program.id, patch)
+    await updateProgramText(deps, program.id, patch)
   } catch (error) {
     deps.decisions.reopen(d.id)
     throw error

@@ -218,7 +218,7 @@
 					<Empty.Header>
 						<Empty.Media variant="icon"><FilesIcon /></Empty.Media>
 						<Empty.Title>No files yet</Empty.Title>
-						<Empty.Description>Agents add artifacts here. You can also create or upload a file.</Empty.Description>
+						<Empty.Description>Agents add artifacts here. You can also create or upload a file. The library is the source of truth: company/ (profile, organization, people and roles, SOPs), programs/&lt;name&gt;/ (brief.md, notes.md), knowledge/, reports/, data/.</Empty.Description>
 					</Empty.Header>
 					<Empty.Content>
 						<div class="flex gap-2">

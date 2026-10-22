@@ -1,5 +1,6 @@
 // Icons of the navigation (rail, bottom bar, work menu).
 import BriefcaseIcon from 'phosphor-svelte/lib/Briefcase';
+import CodeIcon from 'phosphor-svelte/lib/Code';
 import GlobeIcon from 'phosphor-svelte/lib/Globe';
 import ChatCircleDotsIcon from 'phosphor-svelte/lib/ChatCircleDots';
 import ChatsCircleIcon from 'phosphor-svelte/lib/ChatsCircle';
@@ -30,6 +31,7 @@ export const NAV_ICONS: Record<SectionId | RailId, Component> = {
 	people: UsersThreeIcon,
 	connectors: PlugsConnectedIcon,
 	browser: GlobeIcon,
+	developers: CodeIcon,
 	logs: PulseIcon,
 	attention: HeartbeatIcon,
 	settings: GearIcon

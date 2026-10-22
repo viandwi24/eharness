@@ -34,7 +34,7 @@ docs/     architecture, API, operations
   person. Approvals and questions are answered only inline in the session's chat (the agent's DM
   or the task view); notifications and the board just link there.
 - **Library and memory**: shared files agents write and you edit (stale edits lose to agent writes),
-  and per-agent memory (the shared workspace memory scope was removed in P55: the library replaces it).
+  and per-agent memory (the shared workspace memory scope was removed in P55: the library replaces it). Since P57 the library has a fixed structure and agent memory keeps only `rules.md` and `index.md` (see `docs/plans/P57-library-structure.md`).
 - **Reminders and programs**: reminders made from chats on the **Reminders** page, and programs
   (standing orders) with their own cron / interval / one-shot schedule, safe with several instances.
 - **Needs attention**: one page for failed runs, broken connections, health findings and consistency
@@ -507,6 +507,58 @@ Keep **Files & Sandbox** on for the files themselves. Settings shows `Remote san
 Python x · <isolation>`. `examples/sandbox-server/docker-compose.example.yml` runs the team example
 next to a sandbox on an `internal` network (no internet egress for scripts). The team image
 contains the sandbox client (`examples/sandbox-server/src`), nothing else of it.
+
+## Developer API
+
+The **Developers** page lets other applications (a website, a backend, a mobile app) call isolated
+agents with an API key. Plan: [P56](../../docs/plans/P56-developer-api.md).
+
+- **API agents** are their own kind, not team agents: they never appear in chats, Telegram or the
+  roster, and team agents never see them. Name, slug, model, instructions, rules and **access**.
+  The default is no tools at all. The owner can grant read-only library folders
+  (`/library/public/support`: everything under them, nothing else exists for the agent), at most one
+  write folder (for tickets, say) and web search. No channels, no team agents, no programs,
+  decisions, tasks, connectors or memory of other agents. What callers send is untrusted (built-in
+  hardening text); a caller `context` object is framed as untrusted data.
+- **Keys** (`ehk_<id>_<secret>`): shown once, stored as SHA-256 with the visible `ehk_<id>` prefix.
+  Each key lists the API agents it may call, an optional daily cost limit (USD, UTC day), a rate
+  limit (requests per minute), browser origins (CORS) and an optional expiry; it can be revoked.
+  The page shows last use, today and 30-day usage and a chart per day. Every model call of a request
+  is tagged with the key (`api_calls`). A key over its limit gets `429` with a readable error and
+  `Retry-After`; the workspace budget still applies (`429 WORKSPACE_BUDGET`).
+- **Auth**: `Authorization: Bearer ehk_...` on `/v1/*` only. The owner login and `TEAM_TOKEN` do not
+  open `/v1`, and a key does not open anything else. A browser call needs the page origin in the
+  key's origins (or the same host as this server); without origins a key works from servers only.
+
+```bash
+# Mode A: one shot (nothing is stored but metadata)
+curl -X POST $BASE/v1/agents/support-bot/run \
+  -H "Authorization: Bearer $EHARNESS_KEY" -H "content-type: application/json" \
+  -d '{"input":"Where is order 1042?","context":{"customer":"Acme"},
+       "outputSchema":{"type":"object","properties":{"intent":{"type":"string"}},"required":["intent"]}}'
+# -> { "output": { "intent": "shipping" }, "usage": { ... }, "costUsd": 0.0018 }
+
+# Mode B: conversations (history stored, retention per agent, default 30 days)
+curl -X POST $BASE/v1/conversations -H "Authorization: Bearer $EHARNESS_KEY" \
+  -H "content-type: application/json" -d '{"agent":"support-bot","endUserId":"user-42"}'
+curl -N -X POST $BASE/v1/conversations/$ID/messages -H "Authorization: Bearer $EHARNESS_KEY" \
+  -H "content-type: application/json" -d '{"text":"Hello"}'      # SSE; "stream": false for JSON
+curl $BASE/v1/conversations/$ID/messages -H "Authorization: Bearer $EHARNESS_KEY"   # paged history
+```
+
+`$BASE` is the server (`/api` behind the web server of the Docker image). Reusing the same
+`endUserId` with the same agent and key returns the open conversation. The message stream is the
+AI SDK UI message stream (text only: tool calls and reasoning are never sent), so `useChat` reads it
+with `DefaultChatTransport({ api: '$BASE/v1/conversations/$ID/messages' })` or with
+`eharness/client` (`createHarnessClient({ baseUrl: '$BASE/v1' })` + `createHarnessTransport`, served
+by the `/v1/sessions/{id}/chat` alias). The Developers page has a **Try it** console and copyable
+curl, `fetch` and `useChat` snippets; `/docs` has the `v1` routes with examples.
+
+Isolation is in the code, not only in the prompt: API agents are built outside the team agent
+factory (`infra/eh/api-agents.ts`), their files go through a scoped file system, their sessions are
+`api:<agentId>:...` (no team route resolves them), and one-shot runs use in-memory storage. Retention
+(a sweep every 10 minutes) deletes idle conversations with their messages; the request log keeps 90
+days of metadata only (never the input or the answer).
 
 ## Scripts and checks
 

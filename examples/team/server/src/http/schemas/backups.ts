@@ -256,7 +256,7 @@ export const RestorePointSchema = z
     id: z.string(),
     at: z.number().int(),
     by: z.string(),
-    kind: z.enum(['import', 'files-restore', 'undo']),
+    kind: z.enum(['import', 'files-restore', 'undo', 'memory-reorganization']),
     source: z.union([
       z.object({ kind: z.literal('backup'), backupId: z.string(), label: z.string() }),
       z.object({ kind: z.literal('upload'), label: z.string() }),

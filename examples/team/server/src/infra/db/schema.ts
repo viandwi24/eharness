@@ -448,6 +448,13 @@ export const programs = sqliteTable(
     deliverables: json<unknown[]>('deliverables').notNull().default([]),
     /** Standing agreements from the client about this program, told to every run; `[]` = none. */
     notes: json<string[]>('notes').notNull().default([]),
+    /**
+     * File mode (P57): the library file holding the brief (`/library/programs/<slug>/brief.md`).
+     * Each run reads it; `brief` stays as the fallback copy. null = the brief is the text above.
+     */
+    briefPath: text('brief_path'),
+    /** File mode of the notes (`/library/programs/<slug>/notes.md`); `notes` is the fallback copy. */
+    notesPath: text('notes_path'),
     /** `active` | `paused` */
     status: text('status').notNull().default('active'),
     /** `client`, or the id of the agent that proposed it. */
@@ -1814,4 +1821,105 @@ export const browserProfiles = sqliteTable(
     updatedAt: integer('updated_at').notNull(),
   },
   (t) => [index('browser_profiles_created').on(t.createdAt)],
+)
+
+// --- Developer API (docs/plans/P56-developer-api.md) ------------------------------------------
+// API agents are their own kind: they are never rows of `agents`, so no team feature lists them.
+
+export const apiAgents = sqliteTable(
+  'api_agents',
+  {
+    id: text('id').primaryKey(),
+    slug: text('slug').notNull().unique(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    instructions: text('instructions').notNull(),
+    rules: json<string[]>('rules').notNull(),
+    model: text('model'),
+    modelProfile: text('model_profile'),
+    /** Library folders the agent may read; nothing else is visible to it. */
+    readFolders: json<string[]>('read_folders').notNull(),
+    writeFolder: text('write_folder'),
+    webSearch: integer('web_search').notNull().default(0),
+    retentionDays: integer('retention_days').notNull().default(30),
+    version: integer('version').notNull().default(1),
+    archivedAt: integer('archived_at'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('api_agents_created').on(t.createdAt)],
+)
+
+/** API keys: the key itself is never stored, only its SHA-256 and the visible id (`ehk_<8>`). */
+export const apiKeys = sqliteTable('api_keys', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  hash: text('hash').notNull(),
+  agents: json<string[]>('agents').notNull(),
+  dailyCostLimitUsd: real('daily_cost_limit_usd'),
+  rateLimitPerMin: integer('rate_limit_per_min'),
+  origins: json<string[]>('origins').notNull(),
+  expiresAt: integer('expires_at'),
+  revokedAt: integer('revoked_at'),
+  lastUsedAt: integer('last_used_at'),
+  createdAt: integer('created_at').notNull(),
+})
+
+export const apiConversations = sqliteTable(
+  'api_conversations',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id').notNull(),
+    keyId: text('key_id').notNull(),
+    endUserId: text('end_user_id'),
+    metadata: json<Record<string, unknown>>('metadata').notNull(),
+    /** `open` | `closed` */
+    status: text('status').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    lastMessageAt: integer('last_message_at').notNull(),
+  },
+  (t) => [
+    index('api_conversations_user').on(t.agentId, t.keyId, t.endUserId, t.status),
+    index('api_conversations_idle').on(t.agentId, t.lastMessageAt),
+  ],
+)
+
+/** One row per API request (metadata only: never the input or the answer). */
+export const apiRequests = sqliteTable(
+  'api_requests',
+  {
+    id: text('id').primaryKey(),
+    at: integer('at').notNull(),
+    keyId: text('key_id').notNull(),
+    agentId: text('agent_id').notNull(),
+    /** `run` | `conversation` */
+    mode: text('mode').notNull(),
+    conversationId: text('conversation_id'),
+    /** 0 while the request runs. */
+    status: integer('status').notNull(),
+    errorCode: text('error_code'),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    costUsd: real('cost_usd').notNull().default(0),
+    durationMs: integer('duration_ms').notNull().default(0),
+  },
+  (t) => [index('api_requests_key').on(t.keyId, t.at), index('api_requests_at').on(t.at)],
+)
+
+/** Every model call of an API request, tagged with the key that paid for it. */
+export const apiCalls = sqliteTable(
+  'api_calls',
+  {
+    id: text('id').primaryKey(),
+    at: integer('at').notNull(),
+    keyId: text('key_id').notNull(),
+    agentId: text('agent_id').notNull(),
+    requestId: text('request_id').notNull(),
+    model: text('model').notNull(),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    costUsd: real('cost_usd').notNull().default(0),
+  },
+  (t) => [index('api_calls_key').on(t.keyId, t.at)],
 )

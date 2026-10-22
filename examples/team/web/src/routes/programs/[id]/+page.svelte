@@ -8,6 +8,7 @@
 	import { api } from '#lib/api/index.js';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import ProgramFiles from '#lib/components/app/ProgramFiles.svelte';
 	import ProgramMemory from '#lib/components/app/ProgramMemory.svelte';
 	import Surface from '#lib/components/app/Surface.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -79,6 +80,7 @@
 					{/if}
 				</div>
 				<p class="line-clamp-3 whitespace-pre-wrap">{program.brief}</p>
+				{#if program.briefPath}<p class="text-xs text-muted-foreground">Saved copy shown; every run reads <span class="font-mono">{program.briefPath}</span>.</p>{/if}
 				{#if program.notes.length}
 					<div class="text-xs" data-testid="program-notes-list">
 						<p class="font-medium">Standing agreements</p>
@@ -89,6 +91,8 @@
 				{/if}
 				<p class="text-xs text-muted-foreground">Authority: {authoritySummary(program.authority)} · Budget: {budgetSummary(program.budget)}{program.deliverables.length ? ` · ${program.deliverables.length} deliverable${program.deliverables.length === 1 ? '' : 's'}` : ''}</p>
 			</Surface>
+
+			<ProgramFiles {program} />
 
 			<ProgramMemory {program} />
 		{/if}

@@ -161,6 +161,14 @@ export const ProgramSchema = z
       description:
         'Standing agreements: what the client and the agent agreed about this program. Told to every run after the brief. They never grant authority or lift a gate.',
     }),
+    briefPath: z.string().nullable().openapi({
+      description:
+        'File mode: the library file that holds the brief (`/library/programs/<slug>/brief.md`), read at every run. `brief` is then the fallback copy used when the file is missing. null = the brief is the text.',
+    }),
+    notesPath: z.string().nullable().openapi({
+      description:
+        'File mode of the agreements (`/library/programs/<slug>/notes.md`); `notes` is the fallback copy. A file never grants authority.',
+    }),
     status: z.enum(['active', 'paused']),
     createdBy: z.string().openapi({ description: '`client`, or the id of the proposing agent.' }),
     createdAt: z.number().int(),
@@ -219,6 +227,14 @@ export const ProgramPatchSchema = z
     worker: ProgramWorkerSchema.partial().nullable().optional(),
     deliverables: z.array(DeliverableSchema).max(20).optional(),
     notes: z.array(z.string().max(1000)).max(50).optional(),
+    briefPath: z.string().max(300).nullable().optional().openapi({
+      description:
+        'Point the brief to a file under `/library/programs/<program>/` (file mode) or null for text mode. While a file is set, `brief` cannot be edited here (409 `BRIEF_IN_FILE`): edit the file.',
+    }),
+    notesPath: z.string().max(300).nullable().optional().openapi({
+      description:
+        'Same for the agreements (409 `NOTES_IN_FILE` for an edit of `notes` while a file is set).',
+    }),
     version: z
       .number()
       .int()
@@ -315,3 +331,36 @@ export const ProgramMemoryParam = z.object({
     .min(1)
     .openapi({ param: { name: 'memoryId', in: 'path' } }),
 })
+
+export const ProgramFilesBodySchema = z
+  .object({
+    programIds: z.array(z.string()).max(500).optional().openapi({
+      description: 'The programs to move; absent = all programs not in file mode yet.',
+    }),
+  })
+  .openapi('ProgramFilesBody')
+
+const ProgramFileItemSchema = z.object({
+  programId: z.string(),
+  name: z.string(),
+  agentId: z.string(),
+  briefPath: z.string().nullable(),
+  notesPath: z.string().nullable(),
+  briefChars: z.number().int(),
+  notes: z.number().int().openapi({ description: 'Standing agreements that go to notes.md.' }),
+  status: z.enum(['ready', 'already', 'blocked']),
+  note: z.string().nullable(),
+})
+
+export const ProgramFilesPreviewSchema = z
+  .object({ items: z.array(ProgramFileItemSchema) })
+  .openapi('ProgramFilesPreview')
+
+export const ProgramFilesResultSchema = z
+  .object({
+    moved: z.number().int(),
+    already: z.number().int(),
+    failed: z.array(z.object({ programId: z.string(), error: z.string() })),
+    items: z.array(ProgramFileItemSchema),
+  })
+  .openapi('ProgramFilesResult')

@@ -28,6 +28,7 @@ import { webFetch, webSearch } from 'eharness/web'
 import { nodeResolveHost } from 'eharness/web/node'
 import { z } from 'zod'
 import type { AgentDef } from '../../domain/agents.ts'
+import { TEAM_MEMORY_PROTOCOL } from '../../domain/library-structure.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { SESSION_CONTEXT_TOOLS } from '../../domain/session-context.ts'
@@ -530,8 +531,13 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
             roots
               .filter((r) => r.path !== WORKSPACE_MEMORY)
               .map(({ path, write, label }) => ({ path, write, label })),
+          // rules and index; an older agent's profile.md stays pinned while it exists (a
+          // reorganization merges it into rules.md and the pin then finds nothing)
           pinned: () =>
-            roots.filter((r) => r.path !== WORKSPACE_MEMORY).map((r) => `${r.path}/profile.md`),
+            roots
+              .filter((r) => r.path !== WORKSPACE_MEMORY)
+              .flatMap((r) => [`${r.path}/rules.md`, `${r.path}/index.md`, `${r.path}/profile.md`]),
+          protocol: TEAM_MEMORY_PROTOCOL,
           flushOnCompaction: true,
         }),
     },

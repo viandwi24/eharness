@@ -9,6 +9,7 @@ import type { Context } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { HTTPException } from 'hono/http-exception'
 import { checkBearer, originAllowed } from '../app/auth.ts'
+import type { DeveloperApi } from '../app/developer-api.ts'
 import { DomainError } from '../app/errors.ts'
 import { createLoginAuth, createLoginThrottle, SESSION_COOKIE } from '../app/login.ts'
 import type { Deps } from '../app/ports.ts'
@@ -24,6 +25,7 @@ import { channelRoutes } from './routes/channels.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { connectorRoutes } from './routes/connectors.ts'
 import { decisionRoutes } from './routes/decisions.ts'
+import { developerRoutes } from './routes/developer.ts'
 import { type HarnessFetch, harnessRoutes } from './routes/harness.ts'
 import { healthRoutes } from './routes/health.ts'
 import { heartbeatRoutes } from './routes/heartbeat.ts'
@@ -42,6 +44,7 @@ import { taskRoutes } from './routes/tasks.ts'
 import { threadRoutes } from './routes/threads.ts'
 import { uploadRoutes } from './routes/uploads.ts'
 import { usageRoutes } from './routes/usage.ts'
+import { v1Routes } from './routes/v1.ts'
 
 export interface AppOptions {
   deps: Deps
@@ -59,6 +62,11 @@ export interface AppOptions {
    * login and token checks: they carry their own signed tokens or share tokens.
    */
   content?: { fetch: (request: Request) => Response | Promise<Response> } | undefined
+  /**
+   * The Developer API (docs/plans/P56-developer-api.md): `/developer/*` for the owner and the public
+   * `/v1/*` with its own API-key auth and per-key CORS. Absent: neither is mounted.
+   */
+  developer?: DeveloperApi | undefined
   /**
    * Password login (`BASIC_AUTH_PASSWORD`). Set: every route except `/health` and `/auth/*` needs
    * the `team_session` cookie or the bearer `token`. Unset: no login, behaviour unchanged.
@@ -168,6 +176,16 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
       name: 'events',
       description: 'The feed of changes (`eharness/http` activity): JSON and SSE.',
     },
+    {
+      name: 'developer',
+      description:
+        'The Developers page: API agents (isolated agents other applications call), API keys with limits and origins, the request log and usage (docs/plans/P56-developer-api.md).',
+    },
+    {
+      name: 'v1',
+      description:
+        'The public Developer API, for other machines: `Authorization: Bearer ehk_...`. Mode A runs an agent once, mode B keeps conversations and streams answers in the AI SDK UI message stream format. Errors: `{ error: { code, message } }`.',
+    },
   ],
 }
 
@@ -196,6 +214,12 @@ const PUBLIC = new Set(['/health', '/openapi.json', '/docs', '/oauth/callback'])
  */
 const isOpenPrefix = (path: string): boolean =>
   path.startsWith('/art/') || path.startsWith('/share/')
+
+/**
+ * `/v1/*` has its own auth (API keys) and CORS (per key): the owner's token, cookie and origin
+ * check do not apply to it, and an owner credential does not open it.
+ */
+const isDeveloperApi = (path: string): boolean => path === '/v1' || path.startsWith('/v1/')
 
 /**
  * Paths that stay open when password login is on: the probe and the login endpoints. The docs, the
@@ -244,7 +268,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
         403,
       )
     }
-    if (isOpenPrefix(c.req.path)) return next()
+    if (isOpenPrefix(c.req.path) || isDeveloperApi(c.req.path)) return next()
     if (
       options.allowedOrigins !== undefined &&
       !originAllowed(c.req.method, c.req.header('origin'), options.allowedOrigins)
@@ -283,7 +307,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
     (trustProxy && c.req.header('x-forwarded-proto') === 'https')
 
   app.use('*', async (c, next) => {
-    if (isOpenPrefix(c.req.path)) return next()
+    if (isOpenPrefix(c.req.path) || isDeveloperApi(c.req.path)) return next()
     // the live view WebSocket carries a one-time ticket instead of a header (live-tickets.ts)
     const liveProfile = liveProfileOf(c.req.path)
     if (liveProfile !== undefined && takeLiveTicket(c.req.query('ticket'), liveProfile))
@@ -402,6 +426,10 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', peopleRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
   app.route('/', agentHealthRoutes(options.deps))
+  if (options.developer !== undefined) {
+    app.route('/', developerRoutes(options.developer))
+    app.route('/', v1Routes(options.developer))
+  }
 
   const content = options.content
   if (content !== undefined) app.all('/art/*', (c) => content.fetch(c.req.raw))

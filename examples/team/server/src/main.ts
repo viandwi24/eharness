@@ -92,6 +92,7 @@ import {
   rejectDecision,
 } from './app/decisions.ts'
 import { recheckTask } from './app/deliverables.ts'
+import { createDeveloperApi, type DeveloperApi } from './app/developer-api.ts'
 import { type HealthJobReport, runHealthJob } from './app/health.ts'
 import {
   abandonBeat,
@@ -190,6 +191,12 @@ import { sqliteAlarmStore } from './infra/db/alarms-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
 import { drizzleDecisionStore } from './infra/db/decisions-repo.ts'
+import {
+  sqliteApiAgents,
+  sqliteApiConversations,
+  sqliteApiKeys,
+  sqliteApiUsage,
+} from './infra/db/developer-repo.ts'
 import { sqliteHealthStore } from './infra/db/health-repo.ts'
 import { sqliteHeartbeatStore } from './infra/db/heartbeat-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
@@ -210,12 +217,15 @@ import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
 import { sqliteThreadStore } from './infra/db/threads-repo.ts'
 import { sqliteTurnRetryStore } from './infra/db/turn-retries-repo.ts'
 import { type ActivityLog, createActivityLog } from './infra/eh/activity-log.ts'
+import { createAgentCompletion } from './infra/eh/agent-completion.ts'
 import {
   type AgentFactory,
   type AgentFactoryDeps,
   createAgentFactory,
   type TeamLimits,
+  workspaceScope,
 } from './infra/eh/agent-factory.ts'
+import { createApiRuntime } from './infra/eh/api-agents.ts'
 import { createChangeFeed } from './infra/eh/change-feed.ts'
 import { createChatService } from './infra/eh/chat-service.ts'
 import { createChatToolsService } from './infra/eh/chat-tools-service.ts'
@@ -420,6 +430,8 @@ export interface Server {
   /** Artifacts: records, versions, signed content URLs (`infra/artifacts`). */
   artifacts: ArtifactService
   deps: Deps
+  /** The Developer API: API agents, keys, `/v1` use cases and the retention sweep (`app/developer-api.ts`). */
+  developer: DeveloperApi
   conn: Connection
   factory: AgentFactory
   team: TeamService
@@ -1096,6 +1108,10 @@ export function compose(config: ServerConfig): Server {
     routineEngine: routines,
     programs: programStore,
     programRunner,
+    completion: createAgentCompletion({
+      agent: (id) => agents.get(id),
+      model: (def) => factory.modelOf(def),
+    }),
     programMemory: sqliteProgramMemory(conn.sqlite),
     decisions: decisionStore,
     decisionResolver: decisionService,
@@ -1744,6 +1760,41 @@ export function compose(config: ServerConfig): Server {
       }
     },
   })
+  // the Developer API (docs/plans/P56-developer-api.md): isolated agents called with API keys
+  const developerApi = createDeveloperApi({
+    agents: sqliteApiAgents(conn.sqlite),
+    keys: sqliteApiKeys(conn.sqlite),
+    usage: sqliteApiUsage(conn.sqlite),
+    conversations: sqliteApiConversations(conn.sqlite),
+    runtime: createApiRuntime({
+      sqlite: conn.sqlite,
+      models,
+      catalog: config.catalog ?? models.catalog,
+      library: libraryFs(conn.sqlite, { onChange: onFileChange }),
+      storage: factory.storage,
+      lock: factory.lock,
+      usage: sqliteApiUsage(conn.sqlite),
+      workspaceId: 'default',
+      workspaceScope,
+      settings: () => settings.get(),
+      ...(config.tuning?.modelMaxRetries === undefined
+        ? {}
+        : { tuning: { modelMaxRetries: config.tuning.modelMaxRetries } }),
+    }),
+  })
+  const developerSweep = (): void => {
+    try {
+      developerApi.sweep()
+    } catch (error) {
+      console.warn(`team: developer api retention failed: ${String(error)}`)
+    }
+  }
+  developerSweep()
+  const developerTimer =
+    (config.events?.pruneEveryMs ?? 600_000) > 0
+      ? setInterval(developerSweep, config.events?.pruneEveryMs ?? 600_000)
+      : undefined
+  developerTimer?.unref()
   const allowedOrigins = [
     ...new Set(
       [webUrl, publicUrl, ...(process.env.TEAM_ALLOWED_ORIGINS ?? '').split(',')]
@@ -1756,6 +1807,7 @@ export function compose(config: ServerConfig): Server {
     token: config.token,
     harness,
     content: artifactContent,
+    developer: developerApi,
     allowedOrigins,
     login: config.loginPassword
       ? {
@@ -1779,6 +1831,7 @@ export function compose(config: ServerConfig): Server {
     artifactContent,
     artifacts,
     deps,
+    developer: developerApi,
     conn,
     factory,
     team,
@@ -1807,6 +1860,7 @@ export function compose(config: ServerConfig): Server {
       if (backupTimer !== undefined) clearInterval(backupTimer)
       if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
+      if (developerTimer !== undefined) clearInterval(developerTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
       offBrowserEvents()
       heartbeats.close()

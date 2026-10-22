@@ -441,6 +441,15 @@ export interface TaskStore {
   ): Task | undefined
 }
 
+/**
+ * One model call (no tools, no session) with the model the agent runs on. Throws a readable error
+ * when the agent's model or provider is unavailable.
+ */
+export type AgentCompletion = (
+  agentId: string,
+  input: { system: string; prompt: string; maxOutputTokens: number },
+) => Promise<string>
+
 /** A program to store; the store sets the timestamps and the version. */
 export type NewProgram = Omit<Program, 'createdAt' | 'updatedAt' | 'version'> & { now: number }
 
@@ -1418,6 +1427,8 @@ export interface Deps {
   routineEngine: RoutineEngine
   programs: ProgramStore
   programRunner: ProgramRunner
+  /** One plain model call with an agent's own model (P57: the memory reorganization proposal). */
+  completion?: AgentCompletion
   programMemory: ProgramMemoryStore
   decisions: DecisionStore
   decisionResolver: DecisionResolver

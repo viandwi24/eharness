@@ -27,6 +27,7 @@ import { checkPassphrase, SECRETS_FILE, sealSecrets } from '../domain/workspace-
 import { backupPort } from './backup-port.ts'
 import { effectiveConfig } from './heartbeat.ts'
 import type { Deps } from './ports.ts'
+import { resolveProgramText } from './program-files.ts'
 
 /** How a connection is named in the export: its key in `agent.json` and its file name. */
 export interface ConnectionIndex {
@@ -190,6 +191,7 @@ export async function collectEntities(deps: Deps): Promise<EntityFile[]> {
     const taken = new Set<string>()
     for (const p of deps.programs.list({ agentId: def.id })) {
       const name = uniqueName(slugOfName(p.name, 'program'), taken)
+      const current = (await resolveProgramText(deps, p, { raise: false })).program
       const programDoc: ProgramDoc = {
         name: p.name,
         status: p.status,
@@ -202,11 +204,17 @@ export async function collectEntities(deps: Deps): Promise<EntityFile[]> {
         report: p.report,
         worker: p.worker,
         deliverables: p.deliverables as unknown[],
-        notes: p.notes,
+        // in file mode the zip carries the current file text (the file itself is in library/)
+        notes: current.notes,
+        ...(p.briefPath == null ? {} : { briefPath: p.briefPath }),
+        ...(p.notesPath == null ? {} : { notesPath: p.notesPath }),
         briefFile: `${name}.brief.md`,
       }
       files.push(json(`${base}/programs/${name}.json`, programDoc))
-      files.push({ path: `${base}/programs/${name}.brief.md`, bytes: bytesOf(`${p.brief}\n`) })
+      files.push({
+        path: `${base}/programs/${name}.brief.md`,
+        bytes: bytesOf(`${current.brief}\n`),
+      })
     }
     for (const r of deps.routines.list({ agentId: def.id })) {
       const routineDoc: RoutineDoc = {

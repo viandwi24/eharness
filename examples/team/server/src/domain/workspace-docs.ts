@@ -42,6 +42,9 @@ export interface ProgramDoc {
   worker: { maxTasks: number } | null
   deliverables: unknown[]
   notes: string[]
+  /** File mode (P57): the library files of the brief and the agreements; absent/null = text. */
+  briefPath?: string | null
+  notesPath?: string | null
   /** The brief is the Markdown file next to this one. */
   briefFile: string
 }

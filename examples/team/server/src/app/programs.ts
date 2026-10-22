@@ -8,6 +8,7 @@
 import { activeMemory, type RememberedDecision } from '../domain/decision-memory.ts'
 import { normalizeDeliverables } from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
+import { checkProgramFilePath, notesToFile } from '../domain/library-structure.ts'
 import { sameInstruction } from '../domain/order-hygiene.ts'
 import {
   type AuthorityInspection,
@@ -31,6 +32,7 @@ import type { Routine } from '../domain/routines.ts'
 import type { Task } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
 import type { Deps, ProgramPatch } from './ports.ts'
+import { noteInFile, writeProgramFile } from './program-files.ts'
 import {
   createRoutine,
   deleteRoutine,
@@ -161,6 +163,8 @@ export function createProgram(
     worker: normalizeWorker(draft.worker),
     deliverables: normalizeDeliverables(draft.deliverables),
     notes: cleanNotes(draft.notes),
+    briefPath: null,
+    notesPath: null,
     status: draft.status ?? 'active',
     createdBy: draft.createdBy ?? 'client',
     now,
@@ -183,7 +187,42 @@ export function updateProgram(deps: Deps, id: string, update: ProgramUpdate): Pr
   }
   checkProgramFields(update)
   if (update.trigger?.kind === 'schedule') deps.schedule.validate(update.trigger.spec)
+  // file mode (P57): the library file is the brief; a text edit here would be silently ignored
+  const nextBriefPath = update.briefPath === undefined ? current.briefPath : update.briefPath
+  const nextNotesPath = update.notesPath === undefined ? current.notesPath : update.notesPath
+  if (
+    update.brief !== undefined &&
+    nextBriefPath !== null &&
+    update.brief.trim() !== current.brief
+  ) {
+    throw conflict(
+      `The brief of "${current.name}" is the library file ${nextBriefPath}: edit that file (or switch the program back to text).`,
+      'BRIEF_IN_FILE',
+    )
+  }
+  if (
+    update.notes !== undefined &&
+    nextNotesPath !== null &&
+    JSON.stringify(cleanNotes(update.notes)) !== JSON.stringify(current.notes)
+  ) {
+    throw conflict(
+      `The agreements of "${current.name}" are the library file ${nextNotesPath}: edit that file (or switch the program back to text).`,
+      'NOTES_IN_FILE',
+    )
+  }
   const patch: ProgramPatch = {
+    ...(update.briefPath === undefined
+      ? {}
+      : {
+          briefPath:
+            update.briefPath === null ? null : checkProgramFilePath(update.briefPath, 'brief'),
+        }),
+    ...(update.notesPath === undefined
+      ? {}
+      : {
+          notesPath:
+            update.notesPath === null ? null : checkProgramFilePath(update.notesPath, 'notes'),
+        }),
     ...(update.name === undefined ? {} : { name: update.name.trim() }),
     ...(update.brief === undefined ? {} : { brief: update.brief.trim() }),
     ...(update.authority === undefined
@@ -231,6 +270,52 @@ export function updateProgram(deps: Deps, id: string, update: ProgramUpdate): Pr
   }
   changed(deps, next, 'updated')
   return programView(deps, next)
+}
+
+/**
+ * `updateProgram` for callers that carry new text (an approved change, an import): when the brief
+ * or the agreements are library files, the new text is written as a new version of the file
+ * (the library history keeps the old one) and the record's fallback copy follows. Authority,
+ * gates and the rest stay record fields. A direct PATCH keeps refusing (`updateProgram`).
+ */
+export async function updateProgramText(
+  deps: Deps,
+  id: string,
+  update: ProgramUpdate,
+): Promise<ProgramView> {
+  const current = getProgram(deps, id)
+  const briefPath = update.briefPath === undefined ? current.briefPath : update.briefPath
+  const notesPath = update.notesPath === undefined ? current.notesPath : update.notesPath
+  const { brief, notes, ...rest } = update
+  const viaBrief = brief !== undefined && briefPath !== null
+  const viaNotes = notes !== undefined && notesPath !== null
+  if (!viaBrief && !viaNotes) return updateProgram(deps, id, update)
+  checkProgramFields({ brief, notes })
+  // the paths first (validated), then the files, then the rest of the fields
+  const withPaths = {
+    ...(update.briefPath === undefined ? {} : { briefPath: update.briefPath }),
+    ...(update.notesPath === undefined ? {} : { notesPath: update.notesPath }),
+  }
+  if (Object.keys(withPaths).length > 0) updateProgram(deps, id, withPaths)
+  const fallback: ProgramPatch = {}
+  if (viaBrief) {
+    await writeProgramFile(deps, briefPath, (brief as string).trim())
+    fallback.brief = (brief as string).trim()
+  }
+  if (viaNotes) {
+    const list = cleanNotes(notes)
+    await writeProgramFile(deps, notesPath, notesToFile(current.name, list))
+    fallback.notes = list
+  }
+  const view = updateProgram(deps, id, {
+    ...rest,
+    ...(brief !== undefined && !viaBrief ? { brief } : {}),
+    ...(notes !== undefined && !viaNotes ? { notes } : {}),
+    briefPath: undefined,
+    notesPath: undefined,
+  })
+  deps.programs.update(id, fallback, deps.clock.now())
+  return programView(deps, getProgram(deps, id))
 }
 
 export interface ProgramNoteInput {
@@ -532,6 +617,12 @@ export async function programNoteChecked(deps: Deps, input: ProgramNoteInput): P
         )
       }
     }
+  }
+  // agreements kept as a library file: the file is edited, not the record
+  const ref = input.program?.trim() ?? ''
+  if (ref !== '') {
+    const found = findProgram(deps, ref, { ambiguousCode: 'INVALID_NOTE' })
+    if (found.notesPath != null) return noteInFile(deps, found, input)
   }
   return programNoteAction(deps, input)
 }

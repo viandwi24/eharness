@@ -358,6 +358,8 @@ export interface AgentFactory {
   agentFor(def: AgentDef, sessionId?: string): HarnessAgent
   /** The model an agent runs on and what the catalog knows about it (window, prices). */
   modelInfo(def: AgentDef): ModelInfoOf
+  /** The language model of an agent (its own pick, else the workspace default): one-off calls. */
+  modelOf(def: AgentDef): LanguageModel
   /**
    * Turn settings of a program run: the output cap its budget can afford (`programMaxOutputTokens`).
    * Every model call reserves its worst case against the budgets, so a run with a small budget
@@ -1996,6 +1998,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           ? beatAgentFor(def)
           : factoryAgentFor(def, def.archivedAt !== null),
     modelInfo: (def) => modelInfoOf(def, currentSettings()),
+    modelOf: (def) => deps.models.resolve(...selectionOf(def, currentSettings())),
     toolAvailability: (def, authority) =>
       availabilityOf(def, deps.connectors.activated(def.id) ?? EMPTY_ACTIVATION, authority),
     authoritySources(def, authority) {

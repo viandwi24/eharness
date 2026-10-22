@@ -11,6 +11,7 @@
 	import AgentConnectors from './AgentConnectors.svelte';
 	import HeartbeatPanel from './HeartbeatPanel.svelte';
 	import MemoryEditor from './MemoryEditor.svelte';
+	import MemoryReorganize from './MemoryReorganize.svelte';
 	import PersonaPanel from './PersonaPanel.svelte';
 
 	const FORM_ID = 'agent-dialog-form';
@@ -89,6 +90,8 @@
 				</div>
 				<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4" hidden={tab !== 'memory'}>
 					{#key session}
+						<MemoryReorganize agentId={agent.id} agentName={agent.name} />
+						<div class="h-3"></div>
 						<MemoryEditor scope="agent" agentId={agent.id} compact />
 					{/key}
 				</div>

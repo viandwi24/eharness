@@ -79,6 +79,7 @@ import {
   pauseProgram,
   resumeProgram,
   updateProgram,
+  updateProgramText,
 } from './programs.ts'
 import {
   createRoutine,
@@ -267,6 +268,8 @@ function parseProgramDoc(raw: unknown): ProgramDoc {
     worker: isObject(raw.worker) ? (raw.worker as { maxTasks: number }) : null,
     deliverables: Array.isArray(raw.deliverables) ? raw.deliverables : [],
     notes: raw.notes === undefined ? [] : strings(raw.notes, 'notes'),
+    briefPath: typeof raw.briefPath === 'string' ? raw.briefPath : null,
+    notesPath: typeof raw.notesPath === 'string' ? raw.notesPath : null,
     briefFile: typeof raw.briefFile === 'string' ? raw.briefFile : '',
   }
 }
@@ -1326,10 +1329,22 @@ async function applyProgram(
     notes: doc.notes,
   }
   if (existing === undefined) {
-    createProgram(deps, { agentId, ...fields, status: doc.status as never })
+    const made = createProgram(deps, { agentId, ...fields, status: doc.status as never })
+    // file mode survives the round trip (the files themselves come with the library section)
+    if (doc.briefPath != null || doc.notesPath != null) {
+      updateProgram(deps, made.id, {
+        briefPath: doc.briefPath ?? null,
+        notesPath: doc.notesPath ?? null,
+      })
+    }
     return undefined
   }
-  updateProgram(deps, existing.id, fields)
+  // a brief or notes that are library files get the new text as a new file version
+  await updateProgramText(deps, existing.id, {
+    ...fields,
+    briefPath: doc.briefPath ?? null,
+    notesPath: doc.notesPath ?? null,
+  })
   const now = deps.programs.get(existing.id)
   if (now !== undefined && now.status !== doc.status) {
     if (doc.status === 'paused') pauseProgram(deps, existing.id)

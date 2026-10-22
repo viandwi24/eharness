@@ -220,8 +220,16 @@ export interface RestoreResult {
 
 // --- restore points ----------------------------------------------------------------------------
 
-/** `import` a zip applied, `files-restore` files put back from a snapshot, `undo` a restore point undone. */
-export const RESTORE_POINT_KINDS = ['import', 'files-restore', 'undo'] as const
+/**
+ * `import` a zip applied, `files-restore` files put back from a snapshot, `undo` a restore point
+ * undone, `memory-reorganization` an agent's memory moved into the library (P57).
+ */
+export const RESTORE_POINT_KINDS = [
+  'import',
+  'files-restore',
+  'undo',
+  'memory-reorganization',
+] as const
 export type RestorePointKind = (typeof RESTORE_POINT_KINDS)[number]
 
 export interface RestorePointItem {

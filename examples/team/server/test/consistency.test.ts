@@ -38,6 +38,8 @@ const program = (over: Partial<Program> = {}): Program => ({
   worker: null,
   deliverables: [],
   notes: [],
+  briefPath: null,
+  notesPath: null,
   status: 'active',
   createdBy: 'client',
   createdAt: NOW - DAY,

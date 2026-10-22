@@ -157,7 +157,8 @@ export function importResultText(r: Pick<ImportResult, 'counts'>): string {
 export const restoreKindText: Record<RestorePoint['kind'], string> = {
 	import: 'Import',
 	'files-restore': 'Files restore',
-	undo: 'Undo'
+	undo: 'Undo',
+	'memory-reorganization': 'Memory reorganization'
 };
 
 /** The line of a restore point: what, from where. */

@@ -23,6 +23,8 @@ const program: Program = {
 	agentId: 'a1',
 	name: 'Weekly summary',
 	brief: 'Write a script for every new title.',
+	briefPath: null,
+	notesPath: null,
 	authority: { tools: ['web_fetch'], connectors: [], read: ['/library/notes/**'], write: ['/library/reports/**'] },
 	gates: ['publishing'],
 	escalation: 'Stop when unsure.',

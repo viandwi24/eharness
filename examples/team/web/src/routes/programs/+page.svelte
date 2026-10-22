@@ -11,6 +11,7 @@
 	import { api } from '#lib/api/index.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import ProgramFilesDialog from '#lib/components/app/ProgramFilesDialog.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -31,6 +32,7 @@
 	// `?agentId=` preselects the filter.
 	let agentFilter = $state(page.url.searchParams.get('agentId') ?? '');
 	let busy = $state<string | null>(null);
+	let moveOpen = $state(false);
 	let seq = 0;
 
 	const agentOf = (id: string) => agentsStore.state.agents.find((a) => a.id === id);
@@ -85,6 +87,9 @@
 					<NativeSelectOption value={a.id}>{a.name}</NativeSelectOption>
 				{/each}
 			</NativeSelect>
+			{#if programs?.some((p) => !p.briefPath)}
+				<Button size="sm" variant="outline" onclick={() => (moveOpen = true)}>Move all briefs to the library</Button>
+			{/if}
 			<Button size="sm" onclick={() => openNewProgram(agentFilter || null)}><PlusIcon class="size-4" /> New program</Button>
 		</PageHeader>
 
@@ -168,4 +173,5 @@
 			{/if}
 		</PageBody>
 	</div>
+<ProgramFilesDialog bind:open={moveOpen} />
 </Tooltip.Provider>

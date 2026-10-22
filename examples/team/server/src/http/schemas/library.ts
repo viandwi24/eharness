@@ -127,3 +127,90 @@ export const MemoryWrittenSchema = z
 export const MemoryDeletedSchema = z
   .object({ scope: MemoryScopeSchema, agentId: z.string().nullable(), path: z.string() })
   .openapi('MemoryDeleted')
+
+export const ReorgRowSchema = z
+  .object({
+    source: z.string().min(1).max(300).openapi({
+      description: 'The memory file, relative to the agent memory root (`notes/ads.md`).',
+    }),
+    action: z.enum(['keep-as-rule', 'move', 'merge-into', 'archive']),
+    target: z.string().max(400).nullable().openapi({
+      description:
+        'move: an absolute library path (`/library/knowledge/ads.md`). merge-into: another memory file of this list. Else null.',
+    }),
+    reason: z.string().max(200),
+  })
+  .openapi('MemoryReorgRow')
+
+const ReorgPlanRowSchema = ReorgRowSchema.extend({
+  finalTarget: z.string().openapi({
+    description:
+      'Where the content ends up after the checks: a library path, `memory:rules.md`, or the archive path. Empty when the row has an error.',
+  }),
+  originalPath: z.string().openapi({
+    description:
+      'Where the untouched original is kept (the originals folder, or the archive path).',
+  }),
+}).openapi('MemoryReorgPlanRow')
+
+export const ReorgPlanSchema = z
+  .object({
+    agentSlug: z.string(),
+    rows: z.array(ReorgPlanRowSchema),
+    issues: z.array(
+      z.object({
+        source: z.string(),
+        level: z.enum(['error', 'note']),
+        message: z.string(),
+      }),
+    ),
+    ok: z
+      .boolean()
+      .openapi({ description: 'false while any `error` issue remains: apply refuses.' }),
+    originals: z.object({ rules: z.string(), index: z.string() }),
+    rules: z.object({ before: z.string(), after: z.string() }),
+    index: z.object({ before: z.string(), after: z.string() }),
+    writes: z.array(z.object({ path: z.string(), text: z.string() })).openapi({
+      description: 'The new library files, with their full text.',
+    }),
+  })
+  .openapi('MemoryReorgPlan')
+
+export const ReorgProposeBodySchema = z
+  .object({ agentId: z.string().min(1).openapi({ description: 'Agent id or slug.' }) })
+  .openapi('MemoryReorgProposeBody')
+
+export const ReorgProposalSchema = z
+  .object({
+    plan: ReorgPlanSchema,
+    warnings: z.array(z.string()),
+    modelCalls: z.number().int(),
+  })
+  .openapi('MemoryReorgProposal')
+
+export const ReorgRowsBodySchema = z
+  .object({
+    agentId: z.string().min(1).openapi({ description: 'Agent id or slug.' }),
+    rows: z.array(ReorgRowSchema).max(1000),
+  })
+  .openapi('MemoryReorgRowsBody')
+
+export const ReorgResultSchema = z
+  .object({
+    restorePointId: z.string().nullable(),
+    safetyBackupId: z.string().nullable(),
+    counts: z.object({
+      added: z.number().int(),
+      changed: z.number().int(),
+      removed: z.number().int(),
+      failed: z.number().int(),
+    }),
+    items: z.array(
+      z.object({
+        key: z.string(),
+        action: z.enum(['added', 'changed', 'removed', 'failed']),
+        note: z.string().optional(),
+      }),
+    ),
+  })
+  .openapi('MemoryReorgResult')

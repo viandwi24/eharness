@@ -8,6 +8,7 @@ import {
   writeLibraryFile,
 } from '../../app/library.ts'
 import { deleteMemoryFile, listMemory, readMemoryFile, writeMemoryFile } from '../../app/memory.ts'
+import { applyReorg, previewReorg, proposeReorg } from '../../app/memory-reorg.ts'
 import type { Deps } from '../../app/ports.ts'
 import { MAX_REQUEST_BYTES, requestLimit } from '../body-limit.ts'
 import { errorResponses, jsonError } from '../schemas/common.ts'
@@ -26,6 +27,11 @@ import {
   MemoryScopeSchema,
   MemoryWriteBodySchema,
   MemoryWrittenSchema,
+  ReorgPlanSchema,
+  ReorgProposalSchema,
+  ReorgProposeBodySchema,
+  ReorgResultSchema,
+  ReorgRowsBodySchema,
 } from '../schemas/library.ts'
 
 const security = [{ Bearer: [] }]
@@ -254,10 +260,71 @@ const memDelete = createRoute({
   },
 })
 
+const reorgProposeRoute = createRoute({
+  method: 'post',
+  path: '/memory/reorganize/propose',
+  tags: ['memory'],
+  summary: 'Propose a reorganization of an agent memory',
+  description:
+    'The agent (its own model, one call per small batch of files) proposes one action per memory file: `keep-as-rule` (merged into rules.md), `move` (a library path), `merge-into` (another file) or `archive`. The answer is already the checked plan (nothing is changed). `HEARTBEAT.md` is never touched. 409 `COMPLETION_UNAVAILABLE` without a model.',
+  security,
+  request: { body: { required: true, content: json(ReorgProposeBodySchema) } },
+  responses: {
+    200: { description: 'The proposal', content: json(ReorgProposalSchema) },
+    404: jsonError('Unknown agent'),
+    409: jsonError('`COMPLETION_UNAVAILABLE`'),
+    ...errorResponses,
+  },
+})
+
+const reorgPreviewRoute = createRoute({
+  method: 'post',
+  path: '/memory/reorganize/preview',
+  tags: ['memory'],
+  summary: 'Check a reorganization plan',
+  description:
+    'Runs the deterministic checks on the rows (as proposed or as the owner edited them) and answers the plan: no target outside `/library`, no overwrite of an existing library file (a numeric suffix is added), dated reports to `/library/reports/`, the final target of every row and the diff of `rules.md` and `index.md`. Nothing is changed.',
+  security,
+  request: { body: { required: true, content: json(ReorgRowsBodySchema) } },
+  responses: {
+    200: { description: 'The plan', content: json(ReorgPlanSchema) },
+    404: jsonError('Unknown agent'),
+    ...errorResponses,
+  },
+})
+
+const reorgApplyRoute = createRoute({
+  method: 'post',
+  path: '/memory/reorganize/apply',
+  tags: ['memory'],
+  summary: 'Apply a reorganization of an agent memory',
+  description:
+    'A verified backup (`before: memory reorganization`) is taken first: when it fails nothing is changed (`BACKUP_FAILED`). Then the new library files are created and read back, `rules.md` and `index.md` are rewritten, and the original memory files are moved (never deleted) to `/library/archive/memory/<agent>/original/`. A restore point is recorded: undo it with `POST /backups/restore-points/{id}/undo` flow. A plan with errors answers 400 `REORG_PLAN_INVALID`.',
+  security,
+  request: { body: { required: true, content: json(ReorgRowsBodySchema) } },
+  responses: {
+    200: { description: 'What was done', content: json(ReorgResultSchema) },
+    404: jsonError('Unknown agent'),
+    409: jsonError('`BACKUP_FAILED`'),
+    ...errorResponses,
+  },
+})
+
 const SAFE_INLINE = /^(image\/(png|jpeg|gif|webp)|application\/pdf)$/
 
 export function libraryRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
+    .openapi(reorgProposeRoute, async (c) =>
+      c.json((await proposeReorg(deps, c.req.valid('json').agentId)) as never, 200),
+    )
+    .openapi(reorgPreviewRoute, async (c) => {
+      const body = c.req.valid('json')
+      return c.json((await previewReorg(deps, body.agentId, body.rows)) as never, 200)
+    })
+    .openapi(reorgApplyRoute, async (c) => {
+      const body = c.req.valid('json')
+      return c.json((await applyReorg(deps, body.agentId, body.rows)) as never, 200)
+    })
     .openapi(listRoute, (c) => {
       const { prefix, limit } = c.req.valid('query')
       return c.json(

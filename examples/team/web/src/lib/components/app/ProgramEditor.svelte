@@ -160,13 +160,14 @@
 	</label>
 	<label class="flex flex-col gap-1">
 		<span class="font-medium">Brief</span>
-		<Textarea bind:value={form.brief} rows={5} placeholder={'What to do, and the steps.\n1. Read /library/notes/items.md\n2. For each item without a summary, write /library/reports/<item>.md'} aria-invalid={!!errors.brief} />
+		<Textarea bind:value={form.brief} rows={5} disabled={!!program?.briefPath} placeholder={'What to do, and the steps.\n1. Read /library/notes/items.md\n2. For each item without a summary, write /library/reports/<item>.md'} aria-invalid={!!errors.brief} />
 		{#if errors.brief}<span class="text-xs text-destructive-text">{errors.brief}</span>{/if}
+		{#if program?.briefPath}<span class="text-xs text-muted-foreground">The brief is the library file <span class="font-mono">{program.briefPath}</span>; edit it on the program page or in the Files page. This text is the saved copy used when the file is missing.</span>{/if}
 	</label>
 
 	<label class="flex flex-col gap-1">
 		<span class="font-medium">Standing agreements</span>
-		<Textarea bind:value={form.notes} rows={3} placeholder={'Warn once, then take a point.\nAudit window: 17:00 yesterday to 17:00 today.'} data-testid="program-notes" />
+		<Textarea bind:value={form.notes} rows={3} disabled={!!program?.notesPath} placeholder={'Warn once, then take a point.\nAudit window: 17:00 yesterday to 17:00 today.'} data-testid="program-notes" />
 		<span class="text-xs text-muted-foreground">One per line. What you agreed with the agent about this program; every run reads them after the brief. They never grant anything: the allowed list and the decisions below still rule. The agent can add to them from a chat.</span>
 	</label>
 

@@ -26,6 +26,7 @@ import { z } from 'zod'
 import { postNotice } from '../../app/briefings.ts'
 import { checkRun, finishRun } from '../../app/deliverables.ts'
 import type { AgentRepo, Deps, EventAppender, ProgramRunner } from '../../app/ports.ts'
+import { resolveProgramText } from '../../app/program-files.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import {
   isAllowedMediaType,
@@ -346,11 +347,15 @@ export function createProgramService(
   }
 
   return {
-    async start(program: Program, { runAt, scheduled }) {
-      const def = deps.agents.get(program.agentId)
-      if (def === undefined) throw notFound('agent', program.agentId)
+    async start(stored: Program, { runAt, scheduled }) {
+      const def = deps.agents.get(stored.agentId)
+      if (def === undefined) throw notFound('agent', stored.agentId)
       if (def.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
       await factory.prepare(def)
+      // file mode (P57): the brief and agreements are read from their library files now; a file
+      // that cannot be read leaves the saved copy and raises an alarm (authority never comes from files)
+      const app = deps.app?.()
+      const program = app === undefined ? stored : (await resolveProgramText(app, stored)).program
       const sessionId = programSessionId(program.id, runAt)
       if (program.worker != null) {
         const reason = unrunnable(program, def)
