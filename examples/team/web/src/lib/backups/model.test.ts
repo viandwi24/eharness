@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applySummary, bytesText, defaultTicks, grants, importResultText, type ImportItem, isSelected, passphraseProblem, planSummary, reasonLabel, resultSummary, selectionBody, skippedCount, verifiedText, withOverwrite } from './model';
+import { applySummary, deltaText, lastRestoreText, phraseMatches, restorePointText, splitTables, bytesText, defaultTicks, grants, importResultText, type ImportItem, type SectionId, isSelected, passphraseProblem, planSummary, reasonLabel, resultSummary, selectionBody, skippedCount, verifiedText, withOverwrite } from './model';
 
 describe('backups model', () => {
 	test('sizes', () => {
@@ -92,5 +92,29 @@ describe('import ticks', () => {
 		expect(applySummary([item({ status: 'only-live' })], t)).toBe('Nothing is selected to change.');
 		expect(grants(items, withOverwrite(t, true)).map((i) => i.key)).toEqual(['b']);
 		expect(importResultText({ counts: { added: 1, changed: 2, removed: 0, failed: 1 } })).toBe('1 added, 2 changed, 1 failed.');
+	});
+});
+
+describe('whole-database restore', () => {
+	const t = (table: string, delta: number) => ({ table, class: 'zip' as const, feature: 'f', backup: 1, live: 1, delta });
+	test('changed tables first, biggest change first', () => {
+		const r = splitTables([t('c', 0), t('b', -5), t('a', 2), t('d', 0)]);
+		expect(r.changed.map((x) => x.table)).toEqual(['b', 'a']);
+		expect(r.unchanged.map((x) => x.table)).toEqual(['c', 'd']);
+		expect(deltaText(3)).toBe('+3');
+		expect(deltaText(-3)).toBe('-3');
+	});
+	test('the phrase must match', () => {
+		expect(phraseMatches(' Restore whole database ', 'restore whole database')).toBe(true);
+		expect(phraseMatches('restore', 'restore whole database')).toBe(false);
+	});
+	test('last restore and restore point text', () => {
+		expect(lastRestoreText(null)).toBeNull();
+		expect(lastRestoreText({ ok: false, at: 1, backupId: 'b', restorePointId: 'r', error: 'boom' })?.text).toContain('boom');
+		expect(restorePointText({ kind: 'database-restore', source: { kind: 'backup', backupId: 'b', label: 'x' }, counts: { added: 0, changed: 0, removed: 0, failed: 0 } })).toBe('Whole database restore from x');
+	});
+	test('conversations are never ticked by default', () => {
+		const sections = ['library', 'conversations'].map((id) => ({ id: id as SectionId, label: id, added: 0, changed: 0, unchanged: 0, onlyLive: 0, applicable: true }));
+		expect([...defaultTicks({ sections }).sections]).toEqual(['library']);
 	});
 });

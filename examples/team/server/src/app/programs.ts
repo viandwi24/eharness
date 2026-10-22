@@ -145,7 +145,10 @@ export function createProgram(
   if (trigger.kind === 'schedule') deps.schedule.validate(trigger.spec)
   const now = deps.clock.now()
   const program = deps.programs.insert({
-    id: deps.ids.next(),
+    id:
+      draft.id !== undefined && draft.id !== '' && deps.programs.get(draft.id) === undefined
+        ? draft.id
+        : deps.ids.next(),
     agentId: agent.id,
     name: draft.name.trim(),
     brief: draft.brief.trim(),

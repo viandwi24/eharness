@@ -99,6 +99,9 @@ export const statusText: Record<ImportItem['status'], string> = {
 	'only-live': 'Only in the workspace'
 };
 
+/** Sections never ticked by default: conversations (large) and secrets (need the passphrase). */
+const OPT_IN: ReadonlySet<SectionId> = new Set<SectionId>(['conversations', 'secrets']);
+
 /**
  * Every section that can be imported, ticked; nothing excluded, nothing removed, no overwrite (the
  * default). Secrets are ticked only once the passphrase has opened them (`unlocked`).
@@ -106,7 +109,7 @@ export const statusText: Record<ImportItem['status'], string> = {
 export function defaultTicks(preview: Pick<ImportPreview, 'sections'> & Partial<Pick<ImportPreview, 'secrets'>>): Ticks {
 	const unlocked = preview.secrets?.unlocked === true;
 	return {
-		sections: new Set(preview.sections.filter((s) => s.applicable && (s.id !== 'secrets' || unlocked)).map((s) => s.id)),
+		sections: new Set(preview.sections.filter((s) => s.applicable && (!OPT_IN.has(s.id) || (s.id === 'secrets' && unlocked))).map((s) => s.id)),
 		exclude: new Set(),
 		remove: new Set(),
 		overwrite: false
@@ -158,11 +161,13 @@ export const restoreKindText: Record<RestorePoint['kind'], string> = {
 	import: 'Import',
 	'files-restore': 'Files restore',
 	undo: 'Undo',
-	'memory-reorganization': 'Memory reorganization'
+	'memory-reorganization': 'Memory reorganization',
+	'database-restore': 'Whole database restore'
 };
 
 /** The line of a restore point: what, from where. */
 export function restorePointText(p: Pick<RestorePoint, 'kind' | 'source' | 'counts'>): string {
+	if (p.kind === 'database-restore') return `${restoreKindText[p.kind]} from ${p.source.kind === 'backup' ? p.source.label : 'a backup'}`;
 	const from = p.source.kind === 'backup' ? p.source.label : 'an uploaded zip';
 	return `${restoreKindText[p.kind]} from ${from}: ${importResultText({ counts: p.counts })}`;
 }
@@ -175,4 +180,52 @@ export function itemsOf(preview: Pick<ImportPreview, 'items'>, section: SectionI
 /** The items that would grant something (permission mode, tools, connectors, roles) and are selected. */
 export function grants(items: readonly ImportItem[], t: Ticks): ImportItem[] {
 	return items.filter((i) => i.authority.length > 0 && isSelected(i, t));
+}
+
+// --- whole-database restore ---------------------------------------------------------------------
+
+export type DatabaseRestorePreview = components['schemas']['DatabaseRestorePreview'];
+export type DatabaseRestoreTable = components['schemas']['DatabaseRestoreTable'];
+export type DatabaseRestoreStatus = components['schemas']['DatabaseRestoreStatus'];
+
+export const tableClassText: Record<DatabaseRestoreTable['class'], string> = {
+	zip: 'Also in the zip',
+	snapshot: 'Database copy only',
+	derived: 'Cache',
+	unknown: 'Unknown'
+};
+
+/** `+3`, `-12`, `0` (a real minus sign is avoided so the text stays plain ASCII). */
+export function deltaText(n: number): string {
+	return n > 0 ? `+${n}` : String(n);
+}
+
+/** Tables whose row count differs first (biggest change first), then the unchanged ones. */
+export function splitTables(tables: readonly DatabaseRestoreTable[]): { changed: DatabaseRestoreTable[]; unchanged: DatabaseRestoreTable[] } {
+	const changed = tables.filter((t) => t.delta !== 0).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.table.localeCompare(b.table));
+	const unchanged = tables.filter((t) => t.delta === 0).sort((a, b) => a.table.localeCompare(b.table));
+	return { changed, unchanged };
+}
+
+/** The confirmation is exact apart from surrounding blanks and letter case. */
+export function phraseMatches(typed: string, phrase: string): boolean {
+	return typed.trim().toLowerCase() === phrase.trim().toLowerCase();
+}
+
+/** What the restart will look like, in words. */
+export function restartText(restart: DatabaseRestorePreview['restart']): string {
+	return restart === 'automatic'
+		? 'The server restarts by itself: it exits and its process manager starts it again. Everyone is disconnected for a moment.'
+		: 'The server cannot restart itself here: after you confirm, the restore is staged and applies when you restart the server yourself.';
+}
+
+/** The totals line of the preview. */
+export function totalsText(totals: DatabaseRestorePreview['totals']): string {
+	return `${totals.backup} rows in the backup, ${totals.live} in the running database (${deltaText(totals.backup - totals.live)}).`;
+}
+
+/** What the last start did with a staged restore, or null when there is nothing to say. */
+export function lastRestoreText(last: DatabaseRestoreStatus['last']): { ok: boolean; text: string } | null {
+	if (!last) return null;
+	return last.ok ? { ok: true, text: `The whole-database restore of backup ${last.backupId} was applied.` } : { ok: false, text: `The whole-database restore of backup ${last.backupId} failed: ${last.error ?? 'unknown problem'}. The database was left as it was.` };
 }

@@ -6,8 +6,10 @@
  */
 import type { AgentDef } from '../domain/agents.ts'
 import { conflict } from '../domain/errors.ts'
+import { chunkRows, DATASETS, dataEntry, type SectionId } from '../domain/workspace-data.ts'
 import {
   type AgentDoc,
+  type ConnectionDoc,
   type PersonDoc,
   type ProgramDoc,
   personaMarkdown,
@@ -93,7 +95,9 @@ export function agentDoc(def: AgentDef, index: ConnectionIndex): AgentDoc {
     if (key !== undefined) connectors[key] = choices as unknown as Record<string, unknown>
   }
   return {
+    id: def.id,
     slug: def.slug,
+    archived: def.archivedAt !== null,
     name: def.name,
     role: def.role,
     avatar: def.avatar,
@@ -147,11 +151,48 @@ async function peopleDocs(deps: Deps): Promise<PersonDoc[]> {
   return out.sort((a, b) => a.id.localeCompare(b.id))
 }
 
+export interface CollectOptions {
+  /** Also carry the conversations (chat history, large). Default false. */
+  includeConversations?: boolean
+}
+
+/** The sections whose data tables a collection carries. */
+export const collectedSections = (options: CollectOptions): SectionId[] =>
+  [...new Set(DATASETS.map((d) => d.section))].filter(
+    (s) => s !== 'conversations' || options.includeConversations === true,
+  )
+
+/** The data tables of the export as chunked JSON files (`data/<table>/NNN.json`). */
+export function dataFiles(deps: Deps, options: CollectOptions): EntityFile[] {
+  const port = deps.backups
+  if (port === undefined) return []
+  const sections = new Set(collectedSections(options))
+  const out: EntityFile[] = []
+  for (const spec of DATASETS) {
+    if (!sections.has(spec.section)) continue
+    const parts = chunkRows(port.data.rows(spec.table))
+    parts.forEach((rows, i) => {
+      out.push(
+        json(dataEntry(spec.table, i + 1), {
+          format: 'eharness-team-rows',
+          table: spec.table,
+          part: i + 1,
+          rows,
+        }),
+      )
+    })
+  }
+  return out
+}
+
 /**
  * The entity documents of the live workspace. Never throws for the content: a person-readable
  * folder tree, secrets absent (connections list their settings without secrets).
  */
-export async function collectEntities(deps: Deps): Promise<EntityFile[]> {
+export async function collectEntities(
+  deps: Deps,
+  options: CollectOptions = {},
+): Promise<EntityFile[]> {
   const files: EntityFile[] = []
   const index = await connectionIndex(deps)
   const { updatedAt: _u, ...settings } = deps.settings.get()
@@ -161,7 +202,7 @@ export async function collectEntities(deps: Deps): Promise<EntityFile[]> {
   }
   files.push(json('settings.json', settingsDoc))
 
-  const agents = deps.agents.list()
+  const agents = deps.agents.list({ includeArchived: true })
   const agentById = new Map(agents.map((a) => [a.id, a]))
   const usedBy = new Map<string, Record<string, unknown>>()
   for (const def of agents) {
@@ -193,6 +234,7 @@ export async function collectEntities(deps: Deps): Promise<EntityFile[]> {
       const name = uniqueName(slugOfName(p.name, 'program'), taken)
       const current = (await resolveProgramText(deps, p, { raise: false })).program
       const programDoc: ProgramDoc = {
+        id: p.id,
         name: p.name,
         status: p.status,
         authority: p.authority,
@@ -246,25 +288,48 @@ export async function collectEntities(deps: Deps): Promise<EntityFile[]> {
     )
   }
 
+  const rows = new Map(
+    ((await deps.secrets?.connectionRows()) ?? []).map((r) => [r.id, r.profile] as const),
+  )
   for (const [key, view] of index.views) {
-    files.push(
-      json(`connections/${key.slice('conn:'.length)}.json`, {
-        label: view.label,
-        connector: view.definitionId,
-        scope: view.scope,
-        ...(view.scope === 'agent' && view.scopeId !== undefined
-          ? { agent: agentById.get(view.scopeId)?.slug ?? null }
-          : {}),
-        enabled: view.enabled,
-        defaultEnabled: view.defaultEnabled,
-        settings: publicSettings(view.settings),
-        usedBy: usedBy.get(key) ?? {},
-        secrets: SECRETS_NOTE,
-      }),
-    )
+    const stored = rows.get(view.id)
+    let profile: Record<string, unknown> | undefined
+    if (stored !== undefined) {
+      const {
+        id: _id,
+        kind: _kind,
+        definitionId: _d,
+        label: _l,
+        enabled: _e,
+        source: _src,
+        updatedAt: _u,
+        scope: _s,
+        scopeId: _si,
+        defaultEnabled: _de,
+        ...rest
+      } = stored
+      profile = rest
+    }
+    const doc: ConnectionDoc = {
+      id: view.id,
+      label: view.label,
+      connector: view.definitionId,
+      scope: view.scope,
+      ...(view.scope === 'agent' && view.scopeId !== undefined
+        ? { agent: agentById.get(view.scopeId)?.slug ?? null }
+        : {}),
+      enabled: view.enabled,
+      defaultEnabled: view.defaultEnabled,
+      settings: publicSettings(view.settings),
+      ...(profile === undefined ? {} : { profile }),
+      usedBy: usedBy.get(key) ?? {},
+      secrets: SECRETS_NOTE,
+    }
+    files.push(json(`connections/${key.slice('conn:'.length)}.json`, doc))
   }
 
   for (const p of await peopleDocs(deps)) files.push(json(`people/${p.id}.json`, p))
+  files.push(...dataFiles(deps, options))
   return files
 }
 
@@ -275,10 +340,12 @@ export async function collectEntities(deps: Deps): Promise<EntityFile[]> {
  */
 export async function exportWorkspace(
   deps: Deps,
-  options: { passphrase?: string | undefined } = {},
+  options: { passphrase?: string | undefined; includeConversations?: boolean } = {},
 ) {
   const port = backupPort(deps)
-  const entities = await collectEntities(deps)
+  const entities = await collectEntities(deps, {
+    includeConversations: options.includeConversations === true,
+  })
   if (options.passphrase !== undefined) {
     const passphrase = checkPassphrase(options.passphrase)
     if (deps.secrets === undefined) {

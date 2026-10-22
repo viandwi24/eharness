@@ -8,6 +8,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator'
+import { applyPendingRestore } from '../backup/database-restore.ts'
 import * as schema from './schema.ts'
 
 export type Db = ReturnType<typeof createDrizzle>
@@ -28,7 +29,18 @@ const MIGRATIONS = new URL('../../../drizzle', import.meta.url).pathname
 
 /** Open (creating the directory) a database file, or `:memory:`; apply the migrations. */
 export function openDatabase(file: string): Connection {
-  if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true })
+  if (file !== ':memory:') {
+    mkdirSync(dirname(file), { recursive: true })
+    // a restore of the whole database staged by the app is swapped in before anything opens the file
+    const restored = applyPendingRestore(file)
+    if (restored !== undefined) {
+      console.warn(
+        restored.ok
+          ? `team: database restored from backup ${restored.backupId} (restore point ${restored.restorePointId})`
+          : `team: database restore from backup ${restored.backupId} did not apply: ${restored.error}`,
+      )
+    }
+  }
   const sqlite = new Database(file, { create: true, strict: true })
   // a new database starts in INCREMENTAL mode (before WAL and the first table fix the mode), so
   // freed media pages can go back to the file system; an existing one keeps its mode

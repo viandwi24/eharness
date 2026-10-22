@@ -24,11 +24,23 @@
  *    import of that safety backup (see `restoreImport` and `app/backups.ts`).
  */
 import { AGENT_ROLES, type AgentDef, PERMISSION_MODES, TOOL_ACCESS } from '../domain/agents.ts'
+import { COVERAGE_BY_TABLE } from '../domain/backup-coverage.ts'
 import { beforeReason, type RestorePoint, restorePointId } from '../domain/backups.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import {
+  compareRows,
+  DATASETS,
+  type DataRow,
+  type DatasetSpec,
+  datasetOfEntry,
+  IdMap,
+  parseRowsFile,
+  rowLabel,
+} from '../domain/workspace-data.ts'
+import {
   type AgentDoc,
   agentAuthority,
+  type ConnectionDoc,
   comparable,
   newLines,
   type PersonDoc,
@@ -105,6 +117,16 @@ interface RunCtx {
   label: string
   /** The id of an agent by slug now (an agent created earlier in this run counts). */
   agentId(slug: string): string | undefined
+  /** Old id (in the zip) -> id here, for everything this run matched or created. */
+  idMap: IdMap
+  /** Whether items that exist here and differ are replaced. */
+  overwrite: boolean
+  /** Steps that run after every item (an agent is archived last, after what belongs to it is written). */
+  deferred: Array<() => Promise<void>>
+  /** Agents this run created: they have nothing of their own yet, so their rows are always replaced. */
+  createdAgents: Set<string>
+  /** People this run created: the `create` event the directory wrote is replaced by the zip's history. */
+  createdPeople: Set<string>
 }
 
 /** One thing the import may do: its preview item and how to apply it. */
@@ -123,10 +145,14 @@ const ORDER = {
   agent: 1,
   persona: 2,
   heartbeat: 3,
+  connection: 3.5,
   routine: 4,
   program: 5,
   file: 6,
-  person: 7,
+  data: 8,
+  // people come after the channels data (their divisions are chats), their rows after them
+  person: 8.5,
+  peopleData: 8.8,
   secret: 9,
 }
 const REMOVAL = 100
@@ -218,7 +244,9 @@ function parseAgentDoc(raw: unknown, slug: string): AgentDoc {
     }
   }
   return {
+    ...(typeof raw.id === 'string' && raw.id !== '' ? { id: raw.id } : {}),
     slug,
+    archived: raw.archived === true,
     name: str(raw.name, 'name'),
     role,
     avatar: orNull(raw.avatar, 'avatar'),
@@ -251,6 +279,7 @@ function parseProgramDoc(raw: unknown): ProgramDoc {
   }
   const status = raw.status === 'paused' ? 'paused' : 'active'
   return {
+    ...(typeof raw.id === 'string' && raw.id !== '' ? { id: raw.id } : {}),
     name: str(raw.name, 'name'),
     status,
     authority: {
@@ -319,6 +348,23 @@ function parsePersonDoc(raw: unknown): PersonDoc {
   }
 }
 
+function parseConnectionDoc(raw: unknown): ConnectionDoc {
+  if (!isObject(raw)) throw new Error('the connection file must be an object')
+  const scope = typeof raw.scope === 'string' ? raw.scope : 'workspace'
+  if (!['workspace', 'agent', 'user'].includes(scope)) throw new Error(`unknown scope: ${scope}`)
+  return {
+    ...(typeof raw.id === 'string' && raw.id !== '' ? { id: raw.id } : {}),
+    label: str(raw.label, 'label'),
+    connector: str(raw.connector, 'connector'),
+    scope,
+    agent: orNull(raw.agent, 'agent'),
+    enabled: raw.enabled !== false,
+    defaultEnabled: raw.defaultEnabled === true,
+    settings: isObject(raw.settings) ? raw.settings : {},
+    ...(isObject(raw.profile) ? { profile: raw.profile } : {}),
+  }
+}
+
 function parseSettingsDoc(raw: unknown): SettingsDoc {
   if (!isObject(raw) || !isObject(raw.settings)) throw new Error('settings.json has no settings')
   return { settings: raw.settings, digest: isObject(raw.digest) ? raw.digest : {} }
@@ -333,6 +379,8 @@ const parsedOrError = <T>(fn: () => T): { doc: T } | { error: string } => {
 }
 
 interface Plan {
+  /** Old id (in the zip) -> id here, for what could be matched while comparing. */
+  idMap: IdMap
   secrets: ImportPreview['secrets']
   entries: PlanEntry[]
   parsed: Awaited<ReturnType<ReturnType<typeof backupPort>['readWorkspace']>>
@@ -373,6 +421,14 @@ async function buildPlan(
     if (c?.kind === 'agent' && c.agent !== undefined) zipAgents.add(c.agent)
   }
   const manifestFile = new Map(parsed.manifest.files.map((f) => [f.path, f]))
+  const planMap = new IdMap()
+  /** `conn:<label>` of every connection document of the zip: those get created by this import. */
+  const zipConnectionKeys = new Set<string>()
+  for (const path of zip.keys()) {
+    if (classify(path)?.kind === 'connection') {
+      zipConnectionKeys.add(`conn:${path.slice('connections/'.length).replace(/\.json$/, '')}`)
+    }
+  }
 
   // ---- settings
   const settingsBytes = zip.get('settings.json')
@@ -481,12 +537,13 @@ async function buildPlan(
         continue
       }
       const doc = r.doc
+      if (doc.id !== undefined && liveAgent !== undefined) planMap.set(doc.id, liveAgent.id)
       const notes: string[] = []
-      // connection keys that this workspace does not have are dropped from the comparison and the apply
+      // connection keys that neither this workspace nor the zip has are dropped from the comparison and the apply
       const connectors: AgentDoc['connectors'] = {}
       for (const [key, choices] of Object.entries(doc.connectors)) {
         const id = connectionId(index, liveAgent?.id ?? '{new}', key)
-        if (id === undefined)
+        if (id === undefined && !zipConnectionKeys.has(key))
           notes.push(
             `connection "${key.replace(/^conn:/, '')}" is not in this workspace: its enablement is not imported (connect it, then enable it)`,
           )
@@ -499,7 +556,12 @@ async function buildPlan(
           ? []
           : jsonFieldDiff(comparable('agent', liveDoc), comparable('agent', view))
       const archived = liveAgent?.archivedAt !== null && liveAgent !== undefined
-      if (archived) notes.push('this agent is archived here: the import brings it back')
+      if (archived && doc.archived !== true) {
+        notes.push('this agent is archived here: the import brings it back')
+      }
+      if (doc.archived === true && liveAgent === undefined) {
+        notes.push('this agent is archived in the zip: it is created and archived again')
+      }
       if (liveAgent !== undefined && liveAgent.role !== doc.role) {
         notes.push(`the role stays "${liveAgent.role}" (an import never changes a role)`)
       }
@@ -508,7 +570,11 @@ async function buildPlan(
           ? `the workspace already has a lead agent (${liveLead.slug})`
           : null
       const status =
-        liveAgent === undefined ? 'added' : fields.length > 0 || archived ? 'changed' : 'unchanged'
+        liveAgent === undefined
+          ? 'added'
+          : fields.length > 0 || (archived && doc.archived !== true)
+            ? 'changed'
+            : 'unchanged'
       add({
         order: ORDER.agent,
         item: makeItem({
@@ -746,7 +812,11 @@ async function buildPlan(
     let liveDoc: ProgramDoc | undefined
     if (liveJson !== undefined) {
       liveDoc = parseProgramDoc(json(liveJson, path))
-      fields = jsonFieldDiff({ ...liveDoc, briefFile: undefined }, { ...doc, briefFile: undefined })
+      if (doc.id !== undefined && liveDoc.id !== undefined) planMap.set(doc.id, liveDoc.id)
+      fields = jsonFieldDiff(
+        comparable('program', { ...liveDoc, briefFile: undefined }),
+        comparable('program', { ...doc, briefFile: undefined }),
+      )
       if (liveBrief !== undefined) diff = lineDiff(textOf(liveBrief).replace(/\n$/, ''), brief)
     }
     const changed = fields.length > 0 || (diff !== null && diff !== '')
@@ -834,7 +904,10 @@ async function buildPlan(
     const match =
       candidates.find((l) => l.doc.id === doc.id) ??
       candidates.find((l) => l.doc.name.trim().toLowerCase() === doc.name.trim().toLowerCase())
-    if (match !== undefined) matchedLive.add(match.path)
+    if (match !== undefined) {
+      matchedLive.add(match.path)
+      planMap.set(doc.id, match.doc.id)
+    }
     const fields =
       match === undefined
         ? []
@@ -907,7 +980,10 @@ async function buildPlan(
     )
     const match =
       candidates.find((l) => l.doc.id === doc.id) ?? (byName.length === 1 ? byName[0] : undefined)
-    if (match !== undefined) matchedPeople.add(match.path)
+    if (match !== undefined) {
+      matchedPeople.add(match.path)
+      planMap.set(doc.id, match.doc.id)
+    }
     const fields =
       match === undefined
         ? []
@@ -950,53 +1026,111 @@ async function buildPlan(
     })
   }
 
-  // ---- connections and reminders: for reading, never written
-  for (const section of ['connections', 'reminders'] as const) {
-    const kind = section === 'connections' ? 'connection' : 'reminder'
-    const note =
-      section === 'connections'
-        ? 'reference only: secrets are not exported, reconnect after import'
-        : 'reference only: a reminder is tied to a chat and is never imported'
-    const livePaths = [...live.keys()].filter((p) => classify(p)?.kind === kind)
-    for (const [path, bytes] of zip) {
-      if (classify(path)?.kind !== kind) continue
-      const liveBytes = live.get(path)
-      let fields: ImportItem['fields'] = []
-      try {
-        fields =
-          liveBytes === undefined ? [] : jsonFieldDiff(json(liveBytes, path), json(bytes, path))
-      } catch {
-        fields = []
+  // ---- connections (created without secrets; the secrets section fills them in)
+  const liveConnections = new Map<string, ConnectionDoc>()
+  for (const [path, bytes] of live) {
+    if (classify(path)?.kind === 'connection') {
+      const parsedLive = parsedOrError(() => parseConnectionDoc(json(bytes, path)))
+      if ('doc' in parsedLive) liveConnections.set(path, parsedLive.doc)
+    }
+  }
+  const matchedConnections = new Set<string>()
+  for (const [path, bytes] of zip) {
+    if (classify(path)?.kind !== 'connection') continue
+    const r = parsedOrError(() => parseConnectionDoc(json(bytes, path)))
+    if ('error' in r) {
+      add({
+        order: ORDER.connection,
+        item: makeItem({
+          key: path,
+          section: 'connections',
+          kind: 'connection',
+          label: path,
+          status: 'added',
+          applicable: false,
+          blocked: r.error,
+        }),
+      })
+      continue
+    }
+    const doc = r.doc
+    const byId =
+      doc.id === undefined ? undefined : [...liveConnections].find(([, d]) => d.id === doc.id)
+    const liveEntry =
+      byId ??
+      (liveConnections.has(path)
+        ? ([path, liveConnections.get(path)] as [string, ConnectionDoc])
+        : undefined)
+    if (liveEntry !== undefined) {
+      matchedConnections.add(liveEntry[0])
+      if (doc.id !== undefined && liveEntry[1].id !== undefined) {
+        planMap.set(doc.id, liveEntry[1].id)
       }
-      add({
-        order: ORDER.person + 1,
-        item: makeItem({
-          key: path,
-          section,
-          kind,
-          label: path.replace(/^(connections|agents)\//, '').replace(/\.json$/, ''),
-          status: liveBytes === undefined ? 'added' : fields.length > 0 ? 'changed' : 'unchanged',
-          applicable: false,
-          fields,
-          notes: [note],
-        }),
-      })
     }
-    for (const path of livePaths) {
-      if (zip.has(path)) continue
-      add({
-        order: ORDER.person + 1,
-        item: makeItem({
-          key: path,
-          section,
-          kind,
-          label: path.replace(/^(connections|agents)\//, '').replace(/\.json$/, ''),
-          status: 'only-live',
-          applicable: false,
-          notes: [note],
-        }),
-      })
-    }
+    const fields =
+      liveEntry === undefined
+        ? []
+        : jsonFieldDiff(comparable('connection', liveEntry[1]), comparable('connection', doc))
+    const agentGone =
+      doc.scope === 'agent' &&
+      (doc.agent === null ||
+        doc.agent === undefined ||
+        (!agentBySlug.has(doc.agent) && !zipAgents.has(doc.agent)))
+    const blocked = agentGone
+      ? 'the agent this connection belongs to is not in this workspace or in the zip'
+      : liveEntry === undefined && deps.secrets === undefined
+        ? 'connections cannot be created on this server'
+        : null
+    add({
+      order: ORDER.connection,
+      item: makeItem({
+        key: path,
+        section: 'connections',
+        kind: 'connection',
+        label: doc.label,
+        status: liveEntry === undefined ? 'added' : fields.length > 0 ? 'changed' : 'unchanged',
+        applicable: blocked === null,
+        blocked,
+        fields,
+        authority:
+          liveEntry === undefined
+            ? [
+                `connection "${doc.label}" (${doc.connector}) becomes usable by the agents it is enabled for`,
+              ]
+            : [],
+        notes:
+          liveEntry === undefined
+            ? [
+                'created without its secrets: tick the secrets section and enter the passphrase to restore the keys, or reconnect it',
+              ]
+            : [],
+      }),
+      run: async (ctx) => applyConnection(ctx, doc, path, zip),
+    })
+  }
+  for (const [path, d] of liveConnections) {
+    if (matchedConnections.has(path)) continue
+    add({
+      order: REMOVAL + ORDER.connection,
+      removal: true,
+      item: makeItem({
+        key: path,
+        section: 'connections',
+        kind: 'connection',
+        label: d.label,
+        status: 'only-live',
+        notes: [
+          "removing a connection also removes its secrets and every agent's choices about it",
+        ],
+      }),
+      run: async (ctx) => {
+        const target = (await ctx.deps.connectors.connections()).find(
+          (c) => !c.builtin && (c.id === d.id || c.label === d.label),
+        )
+        if (target !== undefined) await ctx.deps.connectors.removeConnection(target.id)
+        return undefined
+      },
+    })
   }
 
   // ---- library and memory files
@@ -1128,6 +1262,118 @@ async function buildPlan(
     })
   }
 
+  // ---- data tables (rows: persona history, reminders, channels, history, artifacts, API, browser, conversations)
+  for (const spec of DATASETS) {
+    const partPaths = [...zip.keys()].filter((p) => datasetOfEntry(p)?.table === spec.table).sort()
+    if (partPaths.length === 0) continue
+    const feature = COVERAGE_BY_TABLE.get(spec.table)?.feature ?? spec.table
+    const label = `${feature} (${spec.table})`
+    let zipRows: DataRow[] = []
+    let problem: string | null = null
+    try {
+      for (const path of partPaths) {
+        zipRows = zipRows.concat(parseRowsFile(textOf(zip.get(path) as Uint8Array), spec).rows)
+      }
+    } catch (error) {
+      problem = error instanceof Error ? error.message : String(error)
+    }
+    if (problem !== null || deps.backups === undefined) {
+      add({
+        order: ORDER.data,
+        item: makeItem({
+          key: `data/${spec.table}`,
+          section: spec.section,
+          kind: 'data',
+          label,
+          status: 'added',
+          applicable: false,
+          blocked: problem ?? 'this server has no backups',
+        }),
+      })
+      continue
+    }
+    const liveRows = deps.backups.data.rows(spec.table)
+    const cmp = compareRows(
+      spec,
+      zipRows.map((r) => planMap.row(r)),
+      liveRows,
+    )
+    const names = (rows: DataRow[], mark: string): string[] =>
+      rows.slice(0, 12).map((r) => `${mark} ${rowLabel(spec, r)}`)
+    const diffLines = [
+      ...names(cmp.added, '+'),
+      ...names(
+        cmp.changed.map((c) => c.after),
+        '~',
+      ),
+    ]
+    const extra = cmp.added.length + cmp.changed.length - diffLines.length
+    add({
+      order: spec.section === 'people' ? ORDER.peopleData : ORDER.data,
+      item: makeItem({
+        key: `data/${spec.table}`,
+        section: spec.section,
+        kind: 'data',
+        label,
+        status: cmp.added.length > 0 ? 'added' : cmp.changed.length > 0 ? 'changed' : 'unchanged',
+        fields: [
+          {
+            field: 'rows',
+            before: `${liveRows.length} here`,
+            after: `${zipRows.length} in the zip (${cmp.added.length} new, ${cmp.changed.length} changed, ${cmp.same} equal)`,
+          },
+        ],
+        diff:
+          diffLines.length === 0
+            ? null
+            : `${diffLines.join('\n')}${extra > 0 ? `\n... ${extra} more` : ''}`,
+        notes:
+          cmp.changed.length > 0
+            ? ['rows that differ are replaced only when you choose to overwrite']
+            : [],
+      }),
+      run: async (ctx) => {
+        const port = (ctx.deps.backups as NonNullable<Deps['backups']>).data
+        const rows = zipRows.map((r) => ctx.idMap.row(r))
+        // what belongs to an agent this run created is replaced: that agent has no history of its own yet
+        const own = (r: DataRow): boolean =>
+          typeof r.agent_id === 'string' && ctx.createdAgents.has(r.agent_id)
+        if (spec.table === 'people_events' && ctx.createdPeople.size > 0) {
+          const auto = port
+            .rows('people_events')
+            .filter((r) => typeof r.person_id === 'string' && ctx.createdPeople.has(r.person_id))
+          port.remove('people_events', auto)
+        }
+        const mine = rows.filter(own)
+        const rest = rows.filter((r) => !own(r))
+        const a = port.put(spec.table, mine, 'replace')
+        const b = port.put(spec.table, rest, ctx.overwrite ? 'replace' : 'ignore')
+        return `${a.added + b.added} rows added, ${a.updated + b.updated} updated`
+      },
+    })
+    if (cmp.onlyLive.length > 0) {
+      add({
+        order: REMOVAL + ORDER.data,
+        removal: true,
+        item: makeItem({
+          key: `data/${spec.table}#only-live`,
+          section: spec.section,
+          kind: 'data',
+          label: `${label}: ${cmp.onlyLive.length} rows only here`,
+          status: 'only-live',
+          diff: names(cmp.onlyLive, '-').join('\n'),
+        }),
+        run: async (ctx) => {
+          const removed = (ctx.deps.backups as NonNullable<Deps['backups']>).data.remove(
+            spec.table,
+            cmp.onlyLive,
+          )
+          return `${removed} rows removed`
+        },
+      })
+    }
+  }
+
   // ---- secrets (encrypted in the zip; listed by name once the passphrase opens them)
   const secretsBytes = zip.get(SECRETS_FILE)
   const secrets: ImportPreview['secrets'] = {
@@ -1144,14 +1390,25 @@ async function buildPlan(
       port === undefined ? [] : (await port.list()).map((r) => [r.key, r] as const),
     )
     const liveAgentIds = new Set(liveAgents.map((a) => a.id))
-    for (const record of records) {
+    // agents the zip brings (their ids in the zip): a connection of one of them is created with it
+    const zipAgentIds = new Set<string>()
+    for (const [path, bytes] of zip) {
+      if (classify(path)?.kind !== 'agent') continue
+      const d = parsedOrError(() => json(bytes, path))
+      if ('doc' in d && isObject(d.doc) && typeof d.doc.id === 'string') zipAgentIds.add(d.doc.id)
+    }
+    for (const original of records) {
+      const record = remapRecord(original, planMap)
       const live = liveByKey.get(record.key)
       const scopeId = scopeOf(record)
       const blocked =
         port === undefined
           ? 'secrets cannot be restored on this server'
-          : scopeId !== null && !liveAgentIds.has(scopeId)
-            ? 'the agent this connection belongs to is not in this workspace under the same id'
+          : scopeId !== null &&
+              !liveAgentIds.has(scopeId) &&
+              !zipAgentIds.has(scopeId) &&
+              !zipAgentIds.has(scopeOf(original) ?? '')
+            ? 'the agent this connection belongs to is not in this workspace or in the zip'
             : null
       const status: ImportItem['status'] =
         live === undefined
@@ -1179,7 +1436,9 @@ async function buildPlan(
               : [],
         }),
         run: async (ctx) => {
-          await (ctx.deps.secrets as NonNullable<Deps['secrets']>).put(record)
+          await (ctx.deps.secrets as NonNullable<Deps['secrets']>).put(
+            remapRecord(original, ctx.idMap),
+          )
           return undefined
         },
       })
@@ -1201,13 +1460,15 @@ async function buildPlan(
   if (parsed.manifest.excluded.length > 0) {
     warnings.push('Tool media (a cache) is not part of the zip and is never touched.')
   }
-  return { entries, parsed, warnings, source: sourceOf(source), label, secrets }
+  return { entries, parsed, warnings, source: sourceOf(source), label, secrets, idMap: planMap }
 }
 
 const SECRET_KIND_TEXT: Record<string, string> = {
   provider: 'Model provider key',
   connection: 'Connection credentials',
   'connector-client': 'OAuth client',
+  'api-key': 'API key',
+  'artifact-share': 'Artifact share link',
 }
 const secretKindText = (key: string): string =>
   SECRET_KIND_TEXT[key.split('/')[0] ?? ''] ?? 'Secret'
@@ -1227,8 +1488,25 @@ function fingerprint(record: SecretRecord): string {
   return canonicalJson(
     [...record.rows]
       .sort((a, b) => (a.kind + a.id < b.kind + b.id ? -1 : 1))
-      .map((r) => ({ kind: r.kind, id: r.id, profile: { ...r.profile, updatedAt: undefined } })),
+      .map((r) => ({
+        kind: r.kind,
+        id: r.id,
+        profile: { ...r.profile, updatedAt: undefined, last_used_at: undefined },
+      })),
   )
+}
+
+/** The record with the agent id of a connection mapped to the id here. */
+function remapRecord(record: SecretRecord, map: IdMap): SecretRecord {
+  if (map.size === 0) return record
+  return {
+    ...record,
+    rows: record.rows.map((row) =>
+      row.kind === 'connection' && typeof row.profile.scopeId === 'string'
+        ? { ...row, profile: { ...row.profile, scopeId: map.get(row.profile.scopeId) } }
+        : row,
+    ),
+  }
 }
 
 // --- apply helpers -----------------------------------------------------------------------------
@@ -1274,14 +1552,19 @@ async function applyAgent(
   }
   if (liveAgent === undefined) {
     const created = createAgent(deps, {
+      ...(doc.id === undefined ? {} : { id: doc.id }),
       slug: doc.slug,
       role: doc.role as AgentDef['role'],
       ...fields,
     })
     updateAgent(deps, created.id, { connectors: translate(created.id) })
+    ctx.createdAgents.add(created.id)
+    if (doc.id !== undefined) ctx.idMap.set(doc.id, created.id)
+    if (doc.archived === true) deferArchive(ctx, created.id, doc.role, notes)
   } else {
     let current = deps.agents.get(liveAgent.id) as AgentDef
-    if (current.archivedAt !== null) {
+    if (doc.id !== undefined) ctx.idMap.set(doc.id, current.id)
+    if (current.archivedAt !== null && doc.archived !== true) {
       const revived: AgentDef = {
         ...current,
         archivedAt: null,
@@ -1293,9 +1576,25 @@ async function applyAgent(
       }
       current = revived
     }
-    updateAgent(deps, current.id, { ...fields, connectors: translate(current.id) })
+    if (current.archivedAt === null || doc.archived !== true) {
+      updateAgent(deps, current.id, { ...fields, connectors: translate(current.id) })
+    }
+    if (doc.archived === true && current.archivedAt === null) {
+      deferArchive(ctx, current.id, current.role, notes)
+    }
   }
   return notes.length === 0 ? undefined : notes.join('; ')
+}
+
+/** An agent that is archived in the zip is archived after everything that belongs to it was written. */
+function deferArchive(ctx: RunCtx, id: string, role: string, notes: string[]): void {
+  if (role === 'lead') {
+    notes.push('the lead agent cannot be archived: it stays active')
+    return
+  }
+  ctx.deferred.push(async () => {
+    archiveAgent(ctx.deps, id)
+  })
 }
 
 async function applyProgram(
@@ -1329,7 +1628,13 @@ async function applyProgram(
     notes: doc.notes,
   }
   if (existing === undefined) {
-    const made = createProgram(deps, { agentId, ...fields, status: doc.status as never })
+    const made = createProgram(deps, {
+      ...(doc.id === undefined || doc.id === '' ? {} : { id: doc.id }),
+      agentId,
+      ...fields,
+      status: doc.status as never,
+    })
+    if (doc.id !== undefined) ctx.idMap.set(doc.id, made.id)
     // file mode survives the round trip (the files themselves come with the library section)
     if (doc.briefPath != null || doc.notesPath != null) {
       updateProgram(deps, made.id, {
@@ -1339,6 +1644,7 @@ async function applyProgram(
     }
     return undefined
   }
+  if (doc.id !== undefined) ctx.idMap.set(doc.id, existing.id)
   // a brief or notes that are library files get the new text as a new file version
   await updateProgramText(deps, existing.id, {
     ...fields,
@@ -1374,10 +1680,16 @@ async function applyRoutine(
     endAt: doc.endAt,
   }
   if (liveId === undefined) {
-    const created = createRoutine(deps, { agentId, ...fields })
+    const created = createRoutine(deps, {
+      ...(doc.id === '' ? {} : { id: doc.id }),
+      agentId,
+      ...fields,
+    })
+    ctx.idMap.set(doc.id, created.id)
     if (doc.status === 'paused') pauseRoutine(deps, created.id)
     return undefined
   }
+  ctx.idMap.set(doc.id, liveId)
   updateRoutine(deps, liveId, fields)
   const now = deps.routines.get(liveId)
   if (now !== undefined && now.status !== doc.status) {
@@ -1395,31 +1707,141 @@ async function applyPerson(
   const { deps } = ctx
   const role = doc.role as 'owner' | 'admin' | 'member' | 'guest' | null
   const status = doc.status as 'active' | 'suspended' | 'left'
-  if (liveDoc === undefined) {
-    const created = await deps.people.create({
-      displayName: doc.displayName,
-      nickname: doc.nickname,
-      role,
-      divisions: doc.divisions,
-      fields: doc.fields,
-      notes: doc.notes,
+  // divisions are chats and topics: when the channels data is not here yet they are set at the end
+  let postponed = false
+  const withDivisions = async <T>(write: (divisions: string[]) => Promise<T>): Promise<T> => {
+    try {
+      return await write(doc.divisions)
+    } catch (error) {
+      if (doc.divisions.length === 0 || !/known chat or topic/.test(String(error))) throw error
+      postponed = true
+      return write([])
+    }
+  }
+  const later = (id: string): void => {
+    if (!postponed) return
+    ctx.deferred.push(async () => {
+      try {
+        await deps.people.update(id, { divisions: doc.divisions })
+      } catch {
+        // the chats are not in this workspace: the person keeps no divisions
+      }
     })
+  }
+  if (liveDoc === undefined) {
+    const created = await withDivisions((divisions) =>
+      deps.people.create({
+        ...(doc.id === '' ? {} : { id: doc.id }),
+        displayName: doc.displayName,
+        nickname: doc.nickname,
+        role,
+        divisions,
+        fields: doc.fields,
+        notes: doc.notes,
+      }),
+    )
+    ctx.idMap.set(doc.id, created.id)
+    ctx.createdPeople.add(created.id)
     if (status !== 'active') await deps.people.update(created.id, { status })
+    later(created.id)
     return undefined
   }
+  ctx.idMap.set(doc.id, liveDoc.id)
   // fields of the person that the zip does not have are cleared
   const fields: Record<string, string | null> = { ...doc.fields }
   for (const k of Object.keys(liveDoc.fields)) if (!(k in doc.fields)) fields[k] = null
-  await deps.people.update(liveDoc.id, {
-    displayName: doc.displayName,
-    nickname: doc.nickname,
-    status,
-    role,
-    divisions: doc.divisions,
-    fields,
-    notes: doc.notes,
-  })
+  await withDivisions((divisions) =>
+    deps.people.update(liveDoc.id, {
+      displayName: doc.displayName,
+      nickname: doc.nickname,
+      status,
+      role,
+      divisions,
+      fields,
+      notes: doc.notes,
+    }),
+  )
+  later(liveDoc.id)
   return undefined
+}
+
+/**
+ * Create the connection of a zip (without its secrets: they come with the secrets section) or
+ * bring an existing one in line, then apply every agent's choices about it that the zip holds.
+ */
+async function applyConnection(
+  ctx: RunCtx,
+  doc: ConnectionDoc,
+  path: string,
+  zip: ReadonlyMap<string, Uint8Array>,
+): Promise<string | undefined> {
+  const { deps } = ctx
+  const secrets = deps.secrets
+  const key = `conn:${path.slice('connections/'.length).replace(/\.json$/, '')}`
+  const all = await deps.connectors.connections()
+  const existing = all.find(
+    (c) =>
+      !c.builtin &&
+      ((doc.id !== undefined && c.id === doc.id) ||
+        (c.label === doc.label && c.definitionId === doc.connector)),
+  )
+  let id: string
+  let note: string | undefined
+  if (existing !== undefined) {
+    id = existing.id
+    if (doc.id !== undefined) ctx.idMap.set(doc.id, id)
+    await deps.connectors.updateConnection(id, {
+      label: doc.label,
+      enabled: doc.enabled,
+      defaultEnabled: doc.defaultEnabled,
+    })
+  } else {
+    if (secrets === undefined) throw new Error('connections cannot be created on this server')
+    id = doc.id ?? crypto.randomUUID()
+    const scopeId = doc.scope === 'agent' && doc.agent != null ? ctx.agentId(doc.agent) : undefined
+    if (doc.scope === 'agent' && scopeId === undefined) {
+      throw new Error(`the agent ${String(doc.agent)} does not exist`)
+    }
+    const row = {
+      ...(doc.profile ?? {}),
+      id,
+      kind: 'connection',
+      definitionId: doc.connector,
+      label: doc.label,
+      settings: doc.settings,
+      enabled: doc.enabled,
+      scope: doc.scope,
+      ...(scopeId === undefined ? {} : { scopeId }),
+      defaultEnabled: doc.defaultEnabled,
+      source: 'store',
+      updatedAt: deps.clock.now(),
+      // there are no credentials yet: the secrets section (or a reconnect) makes it usable
+      status: 'needs-auth',
+      statusMessage: 'Restored without secrets: restore them with the passphrase or reconnect',
+    }
+    await secrets.put({
+      key: `connection/${id}`,
+      label: doc.label,
+      rows: [{ kind: 'connection', id, profile: row }],
+    })
+    await secrets.changed()
+    if (doc.id !== undefined) ctx.idMap.set(doc.id, id)
+    note = 'created without secrets'
+  }
+  // what each agent chose about this connection
+  for (const [entry, bytes] of zip) {
+    if (classify(entry)?.kind !== 'agent') continue
+    const slug = classify(entry)?.agent as string
+    const parsedAgent = parsedOrError(() => parseAgentDoc(json(bytes, entry), slug))
+    if ('error' in parsedAgent) continue
+    const choices = parsedAgent.doc.connectors[key]
+    const agentId = ctx.agentId(slug)
+    if (choices === undefined || agentId === undefined) continue
+    const def = deps.agents.get(agentId)
+    if (def === undefined) continue
+    await deps.connectors.setAgentConnectors(def, { [id]: choices as never })
+  }
+  return note
 }
 
 // --- the use cases -----------------------------------------------------------------------------
@@ -1549,6 +1971,8 @@ export async function applyImport(
     {
       // the backup being imported from must survive this run
       prune: false,
+      // an import that touches conversations must be undoable: the safety zip holds them too
+      includeConversations: chosen.some((e) => e.item.section === 'conversations'),
     },
   )
   if (!safety.ok) {
@@ -1557,11 +1981,18 @@ export async function applyImport(
       'BACKUP_FAILED',
     )
   }
+  const idMap = new IdMap()
+  for (const [from, to] of plan.idMap.entries()) idMap.set(from, to)
   const ctx: RunCtx = {
     deps,
     index: await connectionIndex(deps),
     label: plan.label,
     agentId: (slug) => deps.agents.getBySlug(slug)?.id,
+    idMap,
+    overwrite: selection.overwrite,
+    deferred: [],
+    createdAgents: new Set(),
+    createdPeople: new Set(),
   }
   const counts = { added: 0, changed: 0, removed: 0, failed: 0 }
   const items: RestorePoint['items'] = []
@@ -1579,6 +2010,18 @@ export async function applyImport(
       counts.failed++
       items.push({
         key: item.key,
+        action: 'failed',
+        note: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+  for (const step of ctx.deferred) {
+    try {
+      await step()
+    } catch (error) {
+      counts.failed++
+      items.push({
+        key: 'agents',
         action: 'failed',
         note: error instanceof Error ? error.message : String(error),
       })
@@ -1655,6 +2098,12 @@ export async function previewUndo(
   const sections = (point.sections.filter(isSection) as SectionId[]).filter(
     (s) => !REFERENCE_SECTIONS.includes(s) && !GATED_SECTIONS.includes(s),
   )
+  if (point.kind === 'database-restore') {
+    throw conflict(
+      'This restore point replaced the whole database: undo it with "Restore whole database" from its safety backup',
+      'UNDO_DATABASE_RESTORE',
+    )
+  }
   const selection: ImportSelection = {
     sections: sections.length > 0 ? sections : defaultSelection().sections,
     exclude: [],

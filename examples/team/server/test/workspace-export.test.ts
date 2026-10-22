@@ -167,12 +167,16 @@ async function stateOf(server: Server): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const f of await collectEntities(server.deps)) {
     const kind = classify(f.path)?.kind ?? 'other'
+    // the data tables carry ids and times of their own: the big round trip test compares them
+    if (kind === 'data') continue
     if (f.path.endsWith('.md')) {
       out[f.path] = textOf(f.bytes)
       continue
     }
     const doc = JSON.parse(textOf(f.bytes)) as Record<string, unknown>
-    if (kind === 'routine') {
+    if (kind === 'agent' || kind === 'program' || kind === 'connection') {
+      out[f.path] = canonicalJson(comparable(kind, doc))
+    } else if (kind === 'routine') {
       const slug = f.path.split('/')[1]
       out[`routine:${slug}:${String(doc.name)}`] = canonicalJson(comparable('routine', doc))
     } else if (kind === 'person') {
@@ -286,7 +290,7 @@ describe('the export', () => {
       counts: Record<string, number>
       files: Array<{ path: string; size: number; sha256: string }>
     }
-    expect(manifest).toMatchObject({ format: 'eharness-team-workspace', formatVersion: 1 })
+    expect(manifest).toMatchObject({ format: 'eharness-team-workspace', formatVersion: 2 })
     expect(manifest.app.version).not.toBe('')
     expect(manifest.createdAt).toBeGreaterThan(0)
     expect(manifest.counts).toMatchObject({ programs: 1, routines: 1, people: 1, connections: 1 })
@@ -426,8 +430,12 @@ describe('round trip', () => {
     const preview = await previewImport(b.deps, { uploadId: staged.uploadId })
     const analyst = item(preview, 'agents/forecaster/agent.json')
     expect(analyst?.status).toBe('added')
-    // the connection does not exist in this workspace: its enablement is dropped with a note
-    expect(analyst?.notes.join(' ')).toContain('company-docs')
+    // the connection does not exist in this workspace: the zip brings it (without secrets)
+    expect(analyst?.notes.join(' ')).not.toContain('company-docs')
+    expect(item(preview, 'connections/company-docs.json')).toMatchObject({
+      status: 'added',
+      applicable: true,
+    })
     const res = await applyImport(
       b.deps,
       { uploadId: staged.uploadId },
@@ -439,7 +447,6 @@ describe('round trip', () => {
     expect(res.counts.failed).toBe(0)
     const created = b.deps.agents.getBySlug('forecaster')
     expect(created).toBeDefined()
-    expect(created?.id).not.toBe(a.analystId)
     expect(created?.permissionMode).toBe('manual')
     const programs = b.deps.programs.list({ agentId: created?.id as string })
     expect(programs.map((p) => p.name)).toEqual(['Weekly report'])
@@ -458,8 +465,16 @@ describe('round trip', () => {
     expect(
       again.items.filter((i) => i.applicable && (i.status === 'added' || i.status === 'changed')),
     ).toEqual([])
-    // secrets never imported: the connection is not created
-    expect((await b.deps.connectors.connections()).filter((c) => !c.builtin)).toEqual([])
+    // the connection came with the zip, without its secrets
+    const made = (await b.deps.connectors.connections()).filter((c) => !c.builtin)
+    expect(made.map((c) => c.label)).toEqual(['Company docs'])
+    expect(made[0]?.id).toBe(a.connectionId)
+    expect(made[0]?.status).toBe('needs-auth')
+    expect(JSON.stringify(made)).not.toContain(SECRET)
+    // and the agent's choice about it
+    expect(created?.id).toBe(a.analystId)
+    const choices = await b.deps.connectors.agentConnectors(created as never)
+    expect(choices.find((c) => c.connectionId === a.connectionId)?.enabled).toBe(true)
   })
 })
 
@@ -484,7 +499,6 @@ describe('preview', () => {
     expect(section('library')).toMatchObject({ added: 1, changed: 1, onlyLive: 1 })
     expect(section('agents')?.changed).toBe(1)
     expect(section('settings')?.changed).toBe(1)
-    expect(section('connections')?.applicable).toBe(false)
 
     const changed = item(p, 'library/reports/q1.md')
     expect(changed?.status).toBe('changed')
@@ -527,12 +541,12 @@ describe('preview', () => {
     expect(
       item(p, 'agents/forecaster/programs/weekly-report.json')?.authority.join('\n'),
     ).toContain('runs on a schedule')
-    const person = p.items.find((i) => i.section === 'people')
+    const person = p.items.find((i) => i.kind === 'person')
     expect(person?.authority).toContain('directory role: admin')
-    // connections are for reading
+    // a connection is created without its secrets
     const conn = item(p, 'connections/company-docs.json')
-    expect(conn).toMatchObject({ applicable: false, status: 'added' })
-    expect(conn?.notes.join(' ')).toContain('reconnect after import')
+    expect(conn).toMatchObject({ applicable: true, status: 'added' })
+    expect(conn?.notes.join(' ')).toContain('without its secrets')
   })
 
   test('an agent made by a zip with bypass permissions is shown as such', async () => {
@@ -596,10 +610,10 @@ describe('apply', () => {
     expect((await deps.library.read('/memories/workspace/profile.md'))?.text).toBe('edited memory')
     expect(deps.agents.get(analystId)?.description).toBe('Looks at numbers')
     expect(deps.settings.get().teamName).toBe('Renamed')
-    // reference sections cannot be ticked
+    // an unknown section is refused
     await expect(
-      applyImport(deps, { backupId: backup.id }, { sections: ['connections'] }, { by: 'web' }),
-    ).rejects.toThrow(/reading only/)
+      applyImport(deps, { backupId: backup.id }, { sections: ['nope' as never] }, { by: 'web' }),
+    ).rejects.toThrow(/unknown section/)
   })
 
   test('never deletes unless the section is ticked for removal; agents are archived, not deleted', async () => {
@@ -990,7 +1004,7 @@ describe('refused zips', () => {
       (
         await post('/backups/import', {
           source: { uploadId },
-          selection: { sections: ['connections'] },
+          selection: { sections: ['nope'] },
         })
       ).status,
     ).toBe(400)

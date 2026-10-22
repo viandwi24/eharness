@@ -57,7 +57,7 @@ export function pruneBackups(deps: Deps): string[] {
 export async function createBackup(
   deps: Deps,
   reason: string,
-  options: { prune?: boolean } = {},
+  options: { prune?: boolean; includeConversations?: boolean } = {},
 ): Promise<BackupOutcome> {
   if (deps.backups === undefined) {
     const error = 'backups are not available (in-memory database without TEAM_BACKUP_DIR)'
@@ -69,7 +69,9 @@ export async function createBackup(
     // the DB snapshot comes first: documents that cannot be collected leave the export short and alarm
     let entities: EntityFile[] = []
     try {
-      entities = await collectEntities(deps)
+      entities = await collectEntities(deps, {
+        includeConversations: options.includeConversations === true,
+      })
     } catch (error) {
       entityError = error
     }
@@ -112,8 +114,11 @@ export function backupBefore(deps: Deps, reason: string): Promise<BackupOutcome>
   return createBackup(deps, beforeReason(reason))
 }
 
-export function backupNow(deps: Deps): Promise<BackupOutcome> {
-  return createBackup(deps, REASON_MANUAL)
+export function backupNow(
+  deps: Deps,
+  options: { includeConversations?: boolean } = {},
+): Promise<BackupOutcome> {
+  return createBackup(deps, REASON_MANUAL, options)
 }
 
 export interface BackupOverview {

@@ -32,13 +32,13 @@ export async function downloadBackupFile(id: string, what: 'db' | 'files'): Prom
  * provider keys and connection credentials travel too, encrypted in the zip; the passphrase goes in
  * the request body only.
  */
-export async function downloadWorkspaceExport(passphrase?: string): Promise<void> {
+export async function downloadWorkspaceExport(passphrase?: string, includeConversations = false): Promise<void> {
 	const token = getToken();
-	const endpoint = `${apiBase.replace(/\/+$/, '')}/backups/export`;
+	const endpoint = `${apiBase.replace(/\/+$/, '')}/backups/export${passphrase === undefined && includeConversations ? '?conversations=true' : ''}`;
 	const auth: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {};
 	const res = await authFetch(
 		endpoint,
-		passphrase === undefined ? { headers: auth } : { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ passphrase }) }
+		passphrase === undefined ? { headers: auth } : { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ passphrase, ...(includeConversations ? { includeConversations: true } : {}) }) }
 	);
 	if (!res.ok) {
 		const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };

@@ -9,6 +9,8 @@ import { canonicalJson } from './workspace-export.ts'
 export const SECRETS_NOTE = 'secrets not exported: reconnect after import'
 
 export interface AgentDoc {
+  /** The id in the workspace the zip came from (an import maps it to the id here; absent in older zips). */
+  id?: string
   slug: string
   name: string
   role: string
@@ -27,9 +29,13 @@ export interface AgentDoc {
   rules: { allow: string[]; ask: string[]; deny: string[] }
   /** Connector enablement by connection key (`conn:<label>`, or the id of a built-in one). */
   connectors: Record<string, Record<string, unknown>>
+  /** The agent is archived (it keeps its history and can be brought back). */
+  archived?: boolean
 }
 
 export interface ProgramDoc {
+  /** The id in the workspace the zip came from (absent in older zips). */
+  id?: string
   name: string
   status: string
   authority: { tools: string[]; connectors: string[]; read: string[]; write: string[] }
@@ -61,6 +67,26 @@ export interface RoutineDoc {
   maxFires: number | null
   endAt: number | null
   status: string
+}
+
+/** A connection of the workspace, without its secrets (`connections/<label>.json`). */
+export interface ConnectionDoc {
+  /** The id: a restored connection keeps it, so references to it stay valid. */
+  id?: string
+  label: string
+  /** The connector (definition) id. */
+  connector: string
+  scope: string
+  /** Agent scope: the slug of the agent. */
+  agent?: string | null
+  enabled: boolean
+  defaultEnabled: boolean
+  /** The settings without secret fields. */
+  settings: Record<string, unknown>
+  /** The other stored fields of the connection (status, modes, choices, slug, created time), never secrets. */
+  profile?: Record<string, unknown>
+  usedBy?: Record<string, unknown>
+  secrets?: string
 }
 
 export interface PersonDoc {
@@ -186,7 +212,7 @@ export function publicSettings(settings: Record<string, unknown>): Record<string
 
 // --- comparing ---------------------------------------------------------------------------------
 
-type Kind = 'agent' | 'routine' | 'person' | string
+type Kind = 'agent' | 'routine' | 'person' | 'program' | 'connection' | string
 
 /**
  * The part of a document an import compares and applies. What is left out cannot be written by an
@@ -195,7 +221,17 @@ type Kind = 'agent' | 'routine' | 'person' | string
 export function comparable(kind: Kind, doc: unknown): unknown {
   if (doc === null || typeof doc !== 'object') return doc
   const d = { ...(doc as Record<string, unknown>) }
-  if (kind === 'agent') delete d.role
+  if (kind === 'agent') {
+    delete d.role
+    delete d.id
+  }
+  if (kind === 'program') delete d.id
+  if (kind === 'connection') {
+    delete d.id
+    delete d.usedBy
+    delete d.secrets
+    delete d.profile
+  }
   if (kind === 'routine') delete d.id
   if (kind === 'person') {
     delete d.id

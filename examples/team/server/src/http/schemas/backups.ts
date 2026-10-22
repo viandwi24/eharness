@@ -226,7 +226,11 @@ export const ExportBodySchema = z
   .object({
     passphrase: z.string().min(12).max(256).openapi({
       description:
-        'At least 12 characters. Provider keys and connection credentials are encrypted with a key derived from it (PBKDF2-SHA256, AES-256-GCM) into `secrets.enc.json`. It cannot be recovered: keep it.',
+        'At least 12 characters. Provider keys, connection credentials, API key hashes and share tokens are encrypted with a key derived from it (PBKDF2-SHA256, AES-256-GCM) into `secrets.enc.json`. It cannot be recovered: keep it.',
+    }),
+    includeConversations: z.boolean().optional().openapi({
+      description:
+        'Also carry the conversations (chat history; large). Default `false`: the database snapshot of a backup always has them.',
     }),
   })
   .openapi('ExportBody')
@@ -256,7 +260,7 @@ export const RestorePointSchema = z
     id: z.string(),
     at: z.number().int(),
     by: z.string(),
-    kind: z.enum(['import', 'files-restore', 'undo', 'memory-reorganization']),
+    kind: z.enum(['import', 'files-restore', 'undo', 'memory-reorganization', 'database-restore']),
     source: z.union([
       z.object({ kind: z.literal('backup'), backupId: z.string(), label: z.string() }),
       z.object({ kind: z.literal('upload'), label: z.string() }),
@@ -312,3 +316,76 @@ export const UndoPreviewSchema = z
     preview: ImportPreviewSchema,
   })
   .openapi('UndoPreview')
+
+// --- restore of the whole database --------------------------------------------------------------
+
+export const DatabaseRestoreTableSchema = z
+  .object({
+    table: z.string(),
+    class: z.enum(['zip', 'snapshot', 'derived', 'unknown']).openapi({
+      description:
+        '`zip`: also restorable through the workspace zip; `snapshot`: only the database copy has it; `derived`: cache or ephemeral.',
+    }),
+    feature: z.string(),
+    backup: z.number().int().openapi({ description: 'Rows in the backup.' }),
+    live: z.number().int().openapi({ description: 'Rows in the running database.' }),
+    delta: z.number().int().openapi({ description: '`backup - live`.' }),
+  })
+  .openapi('DatabaseRestoreTable')
+
+const PendingDatabaseRestoreSchema = z.object({
+  backupId: z.string(),
+  safetyBackupId: z.string(),
+  restorePointId: z.string(),
+  stagedAt: z.number().int(),
+})
+
+export const DatabaseRestorePreviewSchema = z
+  .object({
+    backup: BackupSchema,
+    phrase: z.string().openapi({ description: 'What the owner types to confirm.' }),
+    tables: z.array(DatabaseRestoreTableSchema),
+    totals: z.object({ backup: z.number().int(), live: z.number().int() }),
+    restart: z.enum(['automatic', 'manual']).openapi({
+      description:
+        '`automatic`: the server exits (code 75) and its process manager starts it again; `manual`: the owner restarts it.',
+    }),
+    pending: PendingDatabaseRestoreSchema.nullable(),
+    warnings: z.array(z.string()),
+  })
+  .openapi('DatabaseRestorePreview')
+
+export const DatabaseRestoreBodySchema = z
+  .object({
+    confirm: z.string().min(1).max(200).openapi({
+      description: 'The confirmation phrase of the preview (`restore whole database`).',
+    }),
+    undoOf: z.string().min(1).max(100).optional().openapi({
+      description:
+        'The database restore point this undoes (its safety backup is then the source). Marks it as undone.',
+    }),
+  })
+  .openapi('DatabaseRestoreBody')
+
+export const DatabaseRestoreResultSchema = z
+  .object({
+    restorePointId: z.string(),
+    safetyBackupId: z.string(),
+    restart: z.enum(['automatic', 'manual']),
+  })
+  .openapi('DatabaseRestoreResult')
+
+export const DatabaseRestoreStatusSchema = z
+  .object({
+    pending: PendingDatabaseRestoreSchema.nullable(),
+    last: z
+      .object({
+        ok: z.boolean(),
+        at: z.number().int(),
+        backupId: z.string(),
+        restorePointId: z.string(),
+        error: z.string().nullable(),
+      })
+      .nullable(),
+  })
+  .openapi('DatabaseRestoreStatus')

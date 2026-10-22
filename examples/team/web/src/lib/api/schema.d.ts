@@ -5875,11 +5875,13 @@ export interface paths {
         put?: never;
         /**
          * Back up now
-         * @description A consistent copy of the whole database (`VACUUM INTO`, online) plus a zip of every library and memory file, verified after writing. A failure answers 200 with `ok: false` and also raises an alarm.
+         * @description A consistent copy of the whole database (`VACUUM INTO`, online) plus the workspace zip of the live workspace (entities, files and data tables; conversations only with `?conversations=true`), verified after writing. A failure answers 200 with `ok: false` and also raises an alarm.
          */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    conversations?: "true" | "false";
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -6010,11 +6012,13 @@ export interface paths {
         };
         /**
          * Download the workspace export now
-         * @description One zip of everything of the workspace, readable as `.md` and `.json` in folders: `manifest.json` (format, versions, counts, sha256 of every file), `settings.json`, `library/**`, `memory/**`, `agents/<slug>/{agent.json,persona.md,heartbeat.json,memory/**,programs/**,routines/**,reminders/**}`, `connections/<label>.json` (never with secrets) and `people/<id>.json`. Chats, task transcripts and logs are not in it (the database snapshot of a backup covers those). The same zip is part of every backup.
+         * @description One zip of everything of the workspace, readable as `.md` and `.json` in folders: `manifest.json` (format, versions, counts, sha256 of every file), `settings.json`, `library/**`, `memory/**`, `agents/<slug>/{agent.json,persona.md,heartbeat.json,memory/**,programs/**,routines/**,reminders/**}`, `connections/<label>.json` (never with secrets), `people/<id>.json` and `data/<table>/NNN.json` (rows of the data tables: persona history, reminders, channels configuration, history, artifacts, the developer API, browser profiles). Conversations only with `?conversations=true` (large). Message logs of channels, model call logs and the file history are not in it (the database snapshot of a backup covers those). The same zip is part of every backup.
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    conversations?: "true" | "false";
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -6060,7 +6064,7 @@ export interface paths {
         put?: never;
         /**
          * Download the workspace export now, with encrypted secrets
-         * @description The same zip as `GET /backups/export`, plus `secrets.enc.json`: every provider profile key and connection credential (and OAuth client credential), encrypted with AES-256-GCM under a key derived from the `passphrase` (PBKDF2-SHA256, 600 000 iterations, random salt and IV, versioned). `manifest.json` says secrets are included and how many, never their names or values. The passphrase travels in the body, is never stored or logged and cannot be recovered. Scheduled backups and safety backups never hold secrets.
+         * @description The same zip as `GET /backups/export`, plus `secrets.enc.json`: every provider profile key and connection credential (and OAuth client credential), the hash of every API key and the share token of every shared artifact, encrypted with AES-256-GCM under a key derived from the `passphrase` (PBKDF2-SHA256, 600 000 iterations, random salt and IV, versioned). `manifest.json` says secrets are included and how many, never their names or values. The passphrase travels in the body, is never stored or logged and cannot be recovered. Scheduled backups and safety backups never hold secrets.
          */
         post: {
             parameters: {
@@ -6101,6 +6105,240 @@ export interface paths {
                     };
                 };
                 /** @description `SECRETS_UNAVAILABLE` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/database-restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The state of a whole-database restore
+         * @description A restore that is staged and waits for the restart (`pending`), and what the last start did with a staged restore (`last`: applied, or why not).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DatabaseRestoreStatus"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /**
+         * Cancel a staged whole-database restore
+         * @description Drops a staged restore that has not been applied (the server has not restarted yet).
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Cancelled */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {boolean} */
+                            cancelled: true;
+                        };
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{id}/database-restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What restoring the whole database from a backup would change
+         * @description Rows per table, backup against the running database, with the class of each table (restorable through the zip, only through the database copy, or derived) and the phrase to type to confirm. Nothing is written.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The preview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DatabaseRestorePreview"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Restore the whole database from a backup
+         * @description Replaces the running database by the backup's copy. A verified safety backup is taken first (`BACKUP_FAILED`, nothing staged when it fails), the copy is verified again and STAGED next to the database, a restore point is recorded and the server restarts (exit code 75; a process manager starts it again, `restart: manual` means you restart it) and swaps the copy in before the database opens. Undo = the same call with the safety backup as `{id}` and `undoOf` set. Needs the confirmation phrase (`CONFIRMATION_REQUIRED`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DatabaseRestoreBody"];
+                };
+            };
+            responses: {
+                /** @description Staged */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DatabaseRestoreResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `NOT_FOUND` */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `BACKUP_FAILED`, `BACKUP_NOT_VERIFIED`, `BACKUP_TOO_NEW`, `RESTORE_PENDING`, `RESTORE_UNAVAILABLE` */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -6805,6 +7043,147 @@ export interface paths {
                     };
                 };
                 /** @description `BACKUP_FAILED` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the data lives and how big it is
+         * @description The data directory and its volume (total, used, free), the database (files, pages, per-table size by feature), the library by folder, the backups directory, other directories (code scratch, code environments, browser) and the key files, with warnings. The scan is reused for 60 seconds; `refresh=1` scans again. Directory sizes are bounded walks and say `approximate` when capped.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Scan again instead of using the report of the last 60 seconds. */
+                    refresh?: "1" | "true";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The report */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Storage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `STORAGE_UNAVAILABLE`: in-memory database */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/actions/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a maintenance action
+         * @description `compact` (VACUUM: needs free disk about the size of the database and blocks writes briefly; refused with `STORAGE_LOW_SPACE` when there is not enough), `checkpoint` (truncate the WAL), `retention` (the retention cleanups of Settings > Data retention) and `clear-media` (tool media and screenshots older than `days`). Needs `confirm: true`. The answer has the sizes before and after.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    action: "compact" | "checkpoint" | "retention" | "clear-media";
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StorageActionBody"];
+                };
+            };
+            responses: {
+                /** @description What was done */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StorageActionResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `STORAGE_LOW_SPACE`, `STORAGE_BUSY` or `STORAGE_UNAVAILABLE` */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -19243,8 +19622,74 @@ export interface components {
             backup: components["schemas"]["Backup"] & (Record<string, never> | null);
         };
         ExportBody: {
-            /** @description At least 12 characters. Provider keys and connection credentials are encrypted with a key derived from it (PBKDF2-SHA256, AES-256-GCM) into `secrets.enc.json`. It cannot be recovered: keep it. */
+            /** @description At least 12 characters. Provider keys, connection credentials, API key hashes and share tokens are encrypted with a key derived from it (PBKDF2-SHA256, AES-256-GCM) into `secrets.enc.json`. It cannot be recovered: keep it. */
             passphrase: string;
+            /** @description Also carry the conversations (chat history; large). Default `false`: the database snapshot of a backup always has them. */
+            includeConversations?: boolean;
+        };
+        DatabaseRestoreStatus: {
+            pending: {
+                backupId: string;
+                safetyBackupId: string;
+                restorePointId: string;
+                stagedAt: number;
+            } | null;
+            last: {
+                ok: boolean;
+                at: number;
+                backupId: string;
+                restorePointId: string;
+                error: string | null;
+            } | null;
+        };
+        DatabaseRestorePreview: {
+            backup: components["schemas"]["Backup"];
+            /** @description What the owner types to confirm. */
+            phrase: string;
+            tables: components["schemas"]["DatabaseRestoreTable"][];
+            totals: {
+                backup: number;
+                live: number;
+            };
+            /**
+             * @description `automatic`: the server exits (code 75) and its process manager starts it again; `manual`: the owner restarts it.
+             * @enum {string}
+             */
+            restart: "automatic" | "manual";
+            pending: {
+                backupId: string;
+                safetyBackupId: string;
+                restorePointId: string;
+                stagedAt: number;
+            } | null;
+            warnings: string[];
+        };
+        DatabaseRestoreTable: {
+            table: string;
+            /**
+             * @description `zip`: also restorable through the workspace zip; `snapshot`: only the database copy has it; `derived`: cache or ephemeral.
+             * @enum {string}
+             */
+            class: "zip" | "snapshot" | "derived" | "unknown";
+            feature: string;
+            /** @description Rows in the backup. */
+            backup: number;
+            /** @description Rows in the running database. */
+            live: number;
+            /** @description `backup - live`. */
+            delta: number;
+        };
+        DatabaseRestoreResult: {
+            restorePointId: string;
+            safetyBackupId: string;
+            /** @enum {string} */
+            restart: "automatic" | "manual";
+        };
+        DatabaseRestoreBody: {
+            /** @description The confirmation phrase of the preview (`restore whole database`). */
+            confirm: string;
+            /** @description The database restore point this undoes (its safety backup is then the source). Marks it as undone. */
+            undoOf?: string;
         };
         ImportUpload: {
             uploadId: string;
@@ -19266,7 +19711,7 @@ export interface components {
             };
             sections: {
                 /** @enum {string} */
-                id: "settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "secrets";
+                id: "settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "channels" | "history" | "artifacts" | "api" | "browser" | "conversations" | "secrets";
                 label: string;
                 added: number;
                 changed: number;
@@ -19291,7 +19736,7 @@ export interface components {
             /** @description The zip path of the item; unticking uses it. */
             key: string;
             /** @enum {string} */
-            section: "settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "secrets";
+            section: "settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "channels" | "history" | "artifacts" | "api" | "browser" | "conversations" | "secrets";
             kind: string;
             label: string;
             /** @enum {string} */
@@ -19350,11 +19795,11 @@ export interface components {
         };
         ImportSelection: {
             /** @description Sections to apply (default: every section that can be imported). */
-            sections?: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "secrets")[];
+            sections?: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "channels" | "history" | "artifacts" | "api" | "browser" | "conversations" | "secrets")[];
             /** @description Keys (zip paths) of single items that are unticked. */
             exclude?: string[];
             /** @description Sections where what is only in the workspace is removed too (default none: an import never deletes). Agents are archived. `secrets` cannot be removed. */
-            removeSections?: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "secrets")[];
+            removeSections?: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "channels" | "history" | "artifacts" | "api" | "browser" | "conversations" | "secrets")[];
             /** @description Default `false`: an item that exists here and differs is SKIPPED, only new items are added. `true` also replaces the differing ones. An undo (`undoOf`) always overwrites. */
             overwrite?: boolean;
         };
@@ -19366,7 +19811,7 @@ export interface components {
             at: number;
             by: string;
             /** @enum {string} */
-            kind: "import" | "files-restore" | "undo" | "memory-reorganization";
+            kind: "import" | "files-restore" | "undo" | "memory-reorganization" | "database-restore";
             source: {
                 /** @enum {string} */
                 kind: "backup";
@@ -19400,9 +19845,9 @@ export interface components {
             restorePoint: components["schemas"]["RestorePoint"];
             source: components["schemas"]["ImportSource"];
             selection: {
-                sections: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "secrets")[];
+                sections: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "channels" | "history" | "artifacts" | "api" | "browser" | "conversations" | "secrets")[];
                 exclude: string[];
-                removeSections: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "secrets")[];
+                removeSections: ("settings" | "agents" | "programs" | "routines" | "memory" | "library" | "people" | "connections" | "reminders" | "channels" | "history" | "artifacts" | "api" | "browser" | "conversations" | "secrets")[];
                 overwrite: boolean;
             };
             preview: components["schemas"]["ImportPreview"];
@@ -19461,6 +19906,124 @@ export interface components {
             safetyBackupId: string | null;
             /** @description The restore point recorded for this restore (null when nothing was restored). */
             restorePointId: string | null;
+        };
+        Storage: {
+            scannedAt: number;
+            tookMs: number;
+            /** @description Absolute path of the folder with the database. */
+            dataDir: string;
+            volume: {
+                path: string;
+                /** @description Size of the volume. */
+                totalBytes: number;
+                /** @description Used space. */
+                usedBytes: number;
+                /** @description Space a normal process can still write. */
+                freeBytes: number;
+            } | null;
+            database: {
+                file: string;
+                dbBytes: number;
+                walBytes: number;
+                shmBytes: number;
+                totalBytes: number;
+                pageSize: number;
+                pageCount: number;
+                freelistPages: number;
+                reclaimableBytes: number;
+                /** @enum {string} */
+                autoVacuum: "none" | "full" | "incremental";
+                perTableBytes: boolean;
+                /** @description The 15 biggest tables. */
+                tables: {
+                    name: string;
+                    /** @enum {string} */
+                    group: "chats" | "library" | "model-calls" | "events" | "channels" | "tasks" | "backups" | "other";
+                    rows: number | null;
+                    /** @description Table plus indexes; null without `dbstat`. */
+                    bytes: number | null;
+                }[];
+                groups: {
+                    /** @enum {string} */
+                    group: "chats" | "library" | "model-calls" | "events" | "channels" | "tasks" | "backups" | "other";
+                    label: string;
+                    rows: number;
+                    bytes: number | null;
+                }[];
+            };
+            library: {
+                files: number;
+                bytes: number;
+                folders: {
+                    folder: string;
+                    files: number;
+                    bytes: number;
+                }[];
+                history: {
+                    versions: number;
+                    bytes: number | null;
+                };
+            };
+            backups: {
+                path: string;
+                exists: boolean;
+                files: number;
+                snapshots: number;
+                totalBytes: number;
+                newestAt: number | null;
+                oldestAt: number | null;
+                sameVolume: boolean | null;
+            } | null;
+            others: {
+                /** @description `code-scratch`, `code-env` or `browser`. */
+                id: string;
+                label: string;
+                path: string;
+                exists: boolean;
+                bytes: number;
+                files: number;
+                /** @description The walk hit its cap: lower bounds. */
+                approximate: boolean;
+                children: {
+                    name: string;
+                    bytes: number;
+                }[];
+            }[];
+            keys: {
+                file: string;
+                env: string;
+                present: boolean;
+                envSet: boolean;
+            }[];
+            warnings: {
+                /** @enum {string} */
+                code: "low-disk" | "backups-same-disk" | "key-file" | "approximate" | "reclaimable";
+                text: string;
+            }[];
+        };
+        StorageActionResult: {
+            /** @enum {string} */
+            action: "compact" | "checkpoint" | "retention" | "clear-media";
+            message: string;
+            before: {
+                dbBytes: number;
+                walBytes: number;
+                freeBytes: number | null;
+            };
+            after: {
+                dbBytes: number;
+                walBytes: number;
+                freeBytes: number | null;
+            };
+            detail: {
+                [key: string]: number;
+            };
+        };
+        StorageActionBody: {
+            /** @description Must be true: the owner confirmed the action. */
+            confirm: boolean;
+            /** @description `clear-media` only: media older than this many days go (default 3). */
+            days?: number;
         };
         WorkspaceUsage: {
             /** @description Spend and limit of the workspace budget this month (UTC), from the budget ledger: not limited by log retention, the same numbers as the briefing cost line. */

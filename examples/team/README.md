@@ -269,9 +269,43 @@ The library, agent memory and the workspace definition live in the database, so 
   and differ) only recreates absent files, "all" also overwrites differing ones.
 - **Restore the whole database (manual)**: stop the server, copy the `.db` of a snapshot over
   `TEAM_DB` (delete `team.db-wal` and `team.db-shm` next to it), start the server.
+- **Everything is covered (P58)**: every table of the database is classified in
+  [docs/plans/P58-backup-coverage.md](../../docs/plans/P58-backup-coverage.md) (restorable through the
+  zip, only through the database copy, or derived), and `test/backup-coverage.test.ts` fails when a new
+  table has no answer. Besides the readable documents the zip carries the rows of persona history,
+  reminders and their schedules, channel configuration (chat bindings, policies, roles in chats,
+  identities, never message logs), history (tasks, decisions, alerts, briefings), artifacts with
+  versions, the developer API (agents, usage; API key hashes and artifact share tokens only inside
+  the encrypted secrets file), browser profiles and, with **Include conversations** ticked (default
+  off, large), the chat history. Connections are created on import without secrets and filled in by
+  the secrets section. `test/backup-everything.test.ts` proves it: every feature filled, exported,
+  imported into a fresh instance and compared entity by entity.
+- **Restore whole database** (Settings > Backups, on a verified backup): preview of rows per table
+  (backup against live), a confirmation phrase (`restore whole database`), a verified safety backup
+  first, then the verified copy is staged next to the database and the server exits with code 75; a
+  process manager (Docker `restart: unless-stopped`, systemd `Restart=always`) starts it again and the
+  copy is swapped in before the database opens (the old file is kept as `<db>.replaced`). Without a
+  process manager restart it by hand. A restore point is recorded; its undo is the same operation from
+  the safety backup. Run with the same `TEAM_SECRET_KEY` and `TEAM_CHANNEL_KEY` as when the backup
+  was made, or sealed secrets and the channel log cannot be read.
 - **Production (Dokploy)**: set `TEAM_BACKUP_DIR` to a path on a persistent volume (not the container
   layer) and copy that directory off the server (object storage, another host). A backup on the same
   disk does not survive losing the disk.
+
+## Storage
+
+Settings > Storage (and `GET /storage`) shows where everything lives and how big it is: the disk (total, used, free), the database by feature and by table, the library by folder, the backups and the scratch folders, with warnings. A low disk (under 10% or 2 GB free) also raises one alarm per day. Maintenance actions, each with a confirmation and the size before and after: compact the database (VACUUM; needs free disk about the size of the database and is refused without it), checkpoint the WAL, apply retention now, clear tool media older than N days.
+
+What lives in the data directory (the folder of `TEAM_DB`, default `./data`):
+
+| What | Where | Mount as a volume |
+|---|---|---|
+| Database (all chats, library, memory, settings) plus `-wal` and `-shm` | `team.db*` | yes, always |
+| Dev key files (only while the env keys are not set) | `secret.key`, `channel.key` | set `TEAM_SECRET_KEY` and `TEAM_CHANNEL_KEY` instead and keep them apart from the data |
+| Backups | `backups/` or `TEAM_BACKUP_DIR` | yes, on a different disk than the database, and copy them off the server |
+| Code scratch (temporary, rebuilt) | `code-scratch/` | no |
+| Python environments (rebuilt when missing) | `python-envs/` or `TEAM_CODE_ENV_ROOT` | optional, saves a rebuild |
+| Browser engines and managed profile logins | `browser/` or `TEAM_BROWSER_ROOT` | yes if you keep profile logins |
 
 ## Login
 

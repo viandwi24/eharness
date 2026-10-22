@@ -121,6 +121,8 @@ export interface Program {
 }
 
 export interface ProgramDraft {
+  /** A given id (a restore keeps ids); used only when no program has it. */
+  id?: string | undefined
   agentId: string
   name: string
   brief: string

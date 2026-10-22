@@ -214,6 +214,16 @@ describe('retention', () => {
     expect(weekOf('2026-10-22')).toBe('2026-10-19')
   })
 
+  test('a manual backup is never displaced by a later automatic one of the same day', () => {
+    const list = [
+      rec('startup-later', base, { kind: 'startup', reason: 'startup' }),
+      rec('manual-earlier', base - 3_600_000, { kind: 'manual', reason: 'manual' }),
+    ]
+    const plan = planRetention(list, opts)
+    expect(plan.keep.sort()).toEqual(['manual-earlier', 'startup-later'])
+    expect(plan.remove).toEqual([])
+  })
+
   test('the newest verified snapshot always survives', () => {
     const plan = planRetention([rec('only', base - 400 * DAY)], opts)
     expect(plan.keep).toEqual(['only'])
@@ -262,7 +272,7 @@ describe('export', () => {
       files: Array<{ path: string; size: number; sha256: string }>
       excluded: Array<{ prefix: string }>
     }
-    expect(manifest).toMatchObject({ format: 'eharness-team-workspace', formatVersion: 1 })
+    expect(manifest).toMatchObject({ format: 'eharness-team-workspace', formatVersion: 2 })
     const live = server.conn.sqlite
       .query<{ path: string }, []>(
         "SELECT path FROM library_files WHERE path NOT LIKE '/.eharness/tool-media/%'",

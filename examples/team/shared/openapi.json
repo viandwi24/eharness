@@ -55,6 +55,10 @@
       "description": "Verified snapshots of the whole database and a readable export of every library and memory file; restore of files (new versions, nothing deleted)."
     },
     {
+      "name": "storage",
+      "description": "Where the data directory lives and how big each part is (disk, database, library, backups, scratch dirs), warnings, and owner maintenance actions (compact, checkpoint, retention, clear media)."
+    },
+    {
       "name": "providers",
       "description": "Model providers: definitions with their form fields, saved profiles (secrets encrypted, never returned), connection tests and model lists with prices and context windows."
     },
@@ -6094,11 +6098,249 @@
             "type": "string",
             "minLength": 12,
             "maxLength": 256,
-            "description": "At least 12 characters. Provider keys and connection credentials are encrypted with a key derived from it (PBKDF2-SHA256, AES-256-GCM) into `secrets.enc.json`. It cannot be recovered: keep it."
+            "description": "At least 12 characters. Provider keys, connection credentials, API key hashes and share tokens are encrypted with a key derived from it (PBKDF2-SHA256, AES-256-GCM) into `secrets.enc.json`. It cannot be recovered: keep it."
+          },
+          "includeConversations": {
+            "type": "boolean",
+            "description": "Also carry the conversations (chat history; large). Default `false`: the database snapshot of a backup always has them."
           }
         },
         "required": [
           "passphrase"
+        ]
+      },
+      "DatabaseRestoreStatus": {
+        "type": "object",
+        "properties": {
+          "pending": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "backupId": {
+                "type": "string"
+              },
+              "safetyBackupId": {
+                "type": "string"
+              },
+              "restorePointId": {
+                "type": "string"
+              },
+              "stagedAt": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "backupId",
+              "safetyBackupId",
+              "restorePointId",
+              "stagedAt"
+            ]
+          },
+          "last": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "at": {
+                "type": "integer"
+              },
+              "backupId": {
+                "type": "string"
+              },
+              "restorePointId": {
+                "type": "string"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "ok",
+              "at",
+              "backupId",
+              "restorePointId",
+              "error"
+            ]
+          }
+        },
+        "required": [
+          "pending",
+          "last"
+        ]
+      },
+      "DatabaseRestorePreview": {
+        "type": "object",
+        "properties": {
+          "backup": {
+            "$ref": "#/components/schemas/Backup"
+          },
+          "phrase": {
+            "type": "string",
+            "description": "What the owner types to confirm."
+          },
+          "tables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DatabaseRestoreTable"
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "backup": {
+                "type": "integer"
+              },
+              "live": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "backup",
+              "live"
+            ]
+          },
+          "restart": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "description": "`automatic`: the server exits (code 75) and its process manager starts it again; `manual`: the owner restarts it."
+          },
+          "pending": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "backupId": {
+                "type": "string"
+              },
+              "safetyBackupId": {
+                "type": "string"
+              },
+              "restorePointId": {
+                "type": "string"
+              },
+              "stagedAt": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "backupId",
+              "safetyBackupId",
+              "restorePointId",
+              "stagedAt"
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "backup",
+          "phrase",
+          "tables",
+          "totals",
+          "restart",
+          "pending",
+          "warnings"
+        ]
+      },
+      "DatabaseRestoreTable": {
+        "type": "object",
+        "properties": {
+          "table": {
+            "type": "string"
+          },
+          "class": {
+            "type": "string",
+            "enum": [
+              "zip",
+              "snapshot",
+              "derived",
+              "unknown"
+            ],
+            "description": "`zip`: also restorable through the workspace zip; `snapshot`: only the database copy has it; `derived`: cache or ephemeral."
+          },
+          "feature": {
+            "type": "string"
+          },
+          "backup": {
+            "type": "integer",
+            "description": "Rows in the backup."
+          },
+          "live": {
+            "type": "integer",
+            "description": "Rows in the running database."
+          },
+          "delta": {
+            "type": "integer",
+            "description": "`backup - live`."
+          }
+        },
+        "required": [
+          "table",
+          "class",
+          "feature",
+          "backup",
+          "live",
+          "delta"
+        ]
+      },
+      "DatabaseRestoreResult": {
+        "type": "object",
+        "properties": {
+          "restorePointId": {
+            "type": "string"
+          },
+          "safetyBackupId": {
+            "type": "string"
+          },
+          "restart": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "manual"
+            ]
+          }
+        },
+        "required": [
+          "restorePointId",
+          "safetyBackupId",
+          "restart"
+        ]
+      },
+      "DatabaseRestoreBody": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The confirmation phrase of the preview (`restore whole database`)."
+          },
+          "undoOf": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "The database restore point this undoes (its safety backup is then the source). Marks it as undone."
+          }
+        },
+        "required": [
+          "confirm"
         ]
       },
       "ImportUpload": {
@@ -6181,6 +6423,12 @@
                     "people",
                     "connections",
                     "reminders",
+                    "channels",
+                    "history",
+                    "artifacts",
+                    "api",
+                    "browser",
+                    "conversations",
                     "secrets"
                   ]
                 },
@@ -6282,6 +6530,12 @@
               "people",
               "connections",
               "reminders",
+              "channels",
+              "history",
+              "artifacts",
+              "api",
+              "browser",
+              "conversations",
               "secrets"
             ]
           },
@@ -6546,6 +6800,12 @@
                 "people",
                 "connections",
                 "reminders",
+                "channels",
+                "history",
+                "artifacts",
+                "api",
+                "browser",
+                "conversations",
                 "secrets"
               ]
             },
@@ -6574,6 +6834,12 @@
                 "people",
                 "connections",
                 "reminders",
+                "channels",
+                "history",
+                "artifacts",
+                "api",
+                "browser",
+                "conversations",
                 "secrets"
               ]
             },
@@ -6617,7 +6883,8 @@
               "import",
               "files-restore",
               "undo",
-              "memory-reorganization"
+              "memory-reorganization",
+              "database-restore"
             ]
           },
           "source": {
@@ -6784,6 +7051,12 @@
                     "people",
                     "connections",
                     "reminders",
+                    "channels",
+                    "history",
+                    "artifacts",
+                    "api",
+                    "browser",
+                    "conversations",
                     "secrets"
                   ]
                 }
@@ -6808,6 +7081,12 @@
                     "people",
                     "connections",
                     "reminders",
+                    "channels",
+                    "history",
+                    "artifacts",
+                    "api",
+                    "browser",
+                    "conversations",
                     "secrets"
                   ]
                 }
@@ -7041,6 +7320,516 @@
           "failed",
           "safetyBackupId",
           "restorePointId"
+        ]
+      },
+      "Storage": {
+        "type": "object",
+        "properties": {
+          "scannedAt": {
+            "type": "integer"
+          },
+          "tookMs": {
+            "type": "integer"
+          },
+          "dataDir": {
+            "type": "string",
+            "description": "Absolute path of the folder with the database."
+          },
+          "volume": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "totalBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Size of the volume."
+              },
+              "usedBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Used space."
+              },
+              "freeBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Space a normal process can still write."
+              }
+            },
+            "required": [
+              "path",
+              "totalBytes",
+              "usedBytes",
+              "freeBytes"
+            ]
+          },
+          "database": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "dbBytes": {
+                "type": "integer"
+              },
+              "walBytes": {
+                "type": "integer"
+              },
+              "shmBytes": {
+                "type": "integer"
+              },
+              "totalBytes": {
+                "type": "integer"
+              },
+              "pageSize": {
+                "type": "integer"
+              },
+              "pageCount": {
+                "type": "integer"
+              },
+              "freelistPages": {
+                "type": "integer"
+              },
+              "reclaimableBytes": {
+                "type": "integer"
+              },
+              "autoVacuum": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "full",
+                  "incremental"
+                ]
+              },
+              "perTableBytes": {
+                "type": "boolean"
+              },
+              "tables": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "group": {
+                      "type": "string",
+                      "enum": [
+                        "chats",
+                        "library",
+                        "model-calls",
+                        "events",
+                        "channels",
+                        "tasks",
+                        "backups",
+                        "other"
+                      ]
+                    },
+                    "rows": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "bytes": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "description": "Table plus indexes; null without `dbstat`."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "group",
+                    "rows",
+                    "bytes"
+                  ]
+                },
+                "description": "The 15 biggest tables."
+              },
+              "groups": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "group": {
+                      "type": "string",
+                      "enum": [
+                        "chats",
+                        "library",
+                        "model-calls",
+                        "events",
+                        "channels",
+                        "tasks",
+                        "backups",
+                        "other"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "rows": {
+                      "type": "integer"
+                    },
+                    "bytes": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "group",
+                    "label",
+                    "rows",
+                    "bytes"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "file",
+              "dbBytes",
+              "walBytes",
+              "shmBytes",
+              "totalBytes",
+              "pageSize",
+              "pageCount",
+              "freelistPages",
+              "reclaimableBytes",
+              "autoVacuum",
+              "perTableBytes",
+              "tables",
+              "groups"
+            ]
+          },
+          "library": {
+            "type": "object",
+            "properties": {
+              "files": {
+                "type": "integer"
+              },
+              "bytes": {
+                "type": "integer"
+              },
+              "folders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "folder": {
+                      "type": "string"
+                    },
+                    "files": {
+                      "type": "integer"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "folder",
+                    "files",
+                    "bytes"
+                  ]
+                }
+              },
+              "history": {
+                "type": "object",
+                "properties": {
+                  "versions": {
+                    "type": "integer"
+                  },
+                  "bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "versions",
+                  "bytes"
+                ]
+              }
+            },
+            "required": [
+              "files",
+              "bytes",
+              "folders",
+              "history"
+            ]
+          },
+          "backups": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "exists": {
+                "type": "boolean"
+              },
+              "files": {
+                "type": "integer"
+              },
+              "snapshots": {
+                "type": "integer"
+              },
+              "totalBytes": {
+                "type": "integer"
+              },
+              "newestAt": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "oldestAt": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "sameVolume": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "exists",
+              "files",
+              "snapshots",
+              "totalBytes",
+              "newestAt",
+              "oldestAt",
+              "sameVolume"
+            ]
+          },
+          "others": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "`code-scratch`, `code-env` or `browser`."
+                },
+                "label": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "exists": {
+                  "type": "boolean"
+                },
+                "bytes": {
+                  "type": "integer"
+                },
+                "files": {
+                  "type": "integer"
+                },
+                "approximate": {
+                  "type": "boolean",
+                  "description": "The walk hit its cap: lower bounds."
+                },
+                "children": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "bytes": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "bytes"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "path",
+                "exists",
+                "bytes",
+                "files",
+                "approximate",
+                "children"
+              ]
+            }
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "env": {
+                  "type": "string"
+                },
+                "present": {
+                  "type": "boolean"
+                },
+                "envSet": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "file",
+                "env",
+                "present",
+                "envSet"
+              ]
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "low-disk",
+                    "backups-same-disk",
+                    "key-file",
+                    "approximate",
+                    "reclaimable"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "text"
+              ]
+            }
+          }
+        },
+        "required": [
+          "scannedAt",
+          "tookMs",
+          "dataDir",
+          "volume",
+          "database",
+          "library",
+          "backups",
+          "others",
+          "keys",
+          "warnings"
+        ]
+      },
+      "StorageActionResult": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "compact",
+              "checkpoint",
+              "retention",
+              "clear-media"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "before": {
+            "type": "object",
+            "properties": {
+              "dbBytes": {
+                "type": "integer"
+              },
+              "walBytes": {
+                "type": "integer"
+              },
+              "freeBytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "dbBytes",
+              "walBytes",
+              "freeBytes"
+            ]
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "dbBytes": {
+                "type": "integer"
+              },
+              "walBytes": {
+                "type": "integer"
+              },
+              "freeBytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "dbBytes",
+              "walBytes",
+              "freeBytes"
+            ]
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "message",
+          "before",
+          "after",
+          "detail"
+        ]
+      },
+      "StorageActionBody": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "description": "Must be true: the owner confirmed the action."
+          },
+          "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650,
+            "description": "`clear-media` only: media older than this many days go (default 3)."
+          }
+        },
+        "required": [
+          "confirm"
         ]
       },
       "WorkspaceUsage": {
@@ -25168,10 +25957,24 @@
           "backups"
         ],
         "summary": "Back up now",
-        "description": "A consistent copy of the whole database (`VACUUM INTO`, online) plus a zip of every library and memory file, verified after writing. A failure answers 200 with `ok: false` and also raises an alarm.",
+        "description": "A consistent copy of the whole database (`VACUUM INTO`, online) plus the workspace zip of the live workspace (entities, files and data tables; conversations only with `?conversations=true`), verified after writing. A failure answers 200 with `ok: false` and also raises an alarm.",
         "security": [
           {
             "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "required": false,
+            "name": "conversations",
+            "in": "query"
           }
         ],
         "responses": {
@@ -25303,10 +26106,24 @@
           "backups"
         ],
         "summary": "Download the workspace export now",
-        "description": "One zip of everything of the workspace, readable as `.md` and `.json` in folders: `manifest.json` (format, versions, counts, sha256 of every file), `settings.json`, `library/**`, `memory/**`, `agents/<slug>/{agent.json,persona.md,heartbeat.json,memory/**,programs/**,routines/**,reminders/**}`, `connections/<label>.json` (never with secrets) and `people/<id>.json`. Chats, task transcripts and logs are not in it (the database snapshot of a backup covers those). The same zip is part of every backup.",
+        "description": "One zip of everything of the workspace, readable as `.md` and `.json` in folders: `manifest.json` (format, versions, counts, sha256 of every file), `settings.json`, `library/**`, `memory/**`, `agents/<slug>/{agent.json,persona.md,heartbeat.json,memory/**,programs/**,routines/**,reminders/**}`, `connections/<label>.json` (never with secrets), `people/<id>.json` and `data/<table>/NNN.json` (rows of the data tables: persona history, reminders, channels configuration, history, artifacts, the developer API, browser profiles). Conversations only with `?conversations=true` (large). Message logs of channels, model call logs and the file history are not in it (the database snapshot of a backup covers those). The same zip is part of every backup.",
         "security": [
           {
             "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "required": false,
+            "name": "conversations",
+            "in": "query"
           }
         ],
         "responses": {
@@ -25350,7 +26167,7 @@
           "backups"
         ],
         "summary": "Download the workspace export now, with encrypted secrets",
-        "description": "The same zip as `GET /backups/export`, plus `secrets.enc.json`: every provider profile key and connection credential (and OAuth client credential), encrypted with AES-256-GCM under a key derived from the `passphrase` (PBKDF2-SHA256, 600 000 iterations, random salt and IV, versioned). `manifest.json` says secrets are included and how many, never their names or values. The passphrase travels in the body, is never stored or logged and cannot be recovered. Scheduled backups and safety backups never hold secrets.",
+        "description": "The same zip as `GET /backups/export`, plus `secrets.enc.json`: every provider profile key and connection credential (and OAuth client credential), the hash of every API key and the share token of every shared artifact, encrypted with AES-256-GCM under a key derived from the `passphrase` (PBKDF2-SHA256, 600 000 iterations, random salt and IV, versioned). `manifest.json` says secrets are included and how many, never their names or values. The passphrase travels in the body, is never stored or logged and cannot be recovered. Scheduled backups and safety backups never hold secrets.",
         "security": [
           {
             "Bearer": []
@@ -25392,6 +26209,261 @@
           },
           "409": {
             "description": "`SECRETS_UNAVAILABLE`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/database-restore": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "The state of a whole-database restore",
+        "description": "A restore that is staged and waits for the restart (`pending`), and what the last start did with a staged restore (`last`: applied, or why not).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseRestoreStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Cancel a staged whole-database restore",
+        "description": "Drops a staged restore that has not been applied (the server has not restarted yet).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cancelled": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "cancelled"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/{id}/database-restore": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "What restoring the whole database from a backup would change",
+        "description": "Rows per table, backup against the running database, with the class of each table (restorable through the zip, only through the database copy, or derived) and the phrase to type to confirm. Nothing is written.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseRestorePreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Restore the whole database from a backup",
+        "description": "Replaces the running database by the backup's copy. A verified safety backup is taken first (`BACKUP_FAILED`, nothing staged when it fails), the copy is verified again and STAGED next to the database, a restore point is recorded and the server restarts (exit code 75; a process manager starts it again, `restart: manual` means you restart it) and swaps the copy in before the database opens. Undo = the same call with the safety backup as `{id}` and `undoOf` set. Needs the confirmation phrase (`CONFIRMATION_REQUIRED`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatabaseRestoreBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Staged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseRestoreResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`NOT_FOUND`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`BACKUP_FAILED`, `BACKUP_NOT_VERIFIED`, `BACKUP_TOO_NEW`, `RESTORE_PENDING`, `RESTORE_UNAVAILABLE`",
             "content": {
               "application/json": {
                 "schema": {
@@ -26102,6 +27174,161 @@
           },
           "409": {
             "description": "`BACKUP_FAILED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/storage": {
+      "get": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Where the data lives and how big it is",
+        "description": "The data directory and its volume (total, used, free), the database (files, pages, per-table size by feature), the library by folder, the backups directory, other directories (code scratch, code environments, browser) and the key files, with warnings. The scan is reused for 60 seconds; `refresh=1` scans again. Directory sizes are bounded walks and say `approximate` when capped.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true"
+              ],
+              "description": "Scan again instead of using the report of the last 60 seconds."
+            },
+            "required": false,
+            "description": "Scan again instead of using the report of the last 60 seconds.",
+            "name": "refresh",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Storage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`STORAGE_UNAVAILABLE`: in-memory database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/storage/actions/{action}": {
+      "post": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Run a maintenance action",
+        "description": "`compact` (VACUUM: needs free disk about the size of the database and blocks writes briefly; refused with `STORAGE_LOW_SPACE` when there is not enough), `checkpoint` (truncate the WAL), `retention` (the retention cleanups of Settings > Data retention) and `clear-media` (tool media and screenshots older than `days`). Needs `confirm: true`. The answer has the sizes before and after.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "checkpoint",
+                "retention",
+                "clear-media"
+              ],
+              "example": "checkpoint"
+            },
+            "required": true,
+            "name": "action",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageActionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageActionResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`STORAGE_LOW_SPACE`, `STORAGE_BUSY` or `STORAGE_UNAVAILABLE`",
             "content": {
               "application/json": {
                 "schema": {

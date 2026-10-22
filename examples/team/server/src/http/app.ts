@@ -40,6 +40,7 @@ import { providerRoutes } from './routes/providers.ts'
 import { routineRoutes } from './routes/routines.ts'
 import { sessionToolsRoutes } from './routes/session-tools.ts'
 import { settingsRoutes } from './routes/settings.ts'
+import { storageRoutes } from './routes/storage.ts'
 import { taskRoutes } from './routes/tasks.ts'
 import { threadRoutes } from './routes/threads.ts'
 import { uploadRoutes } from './routes/uploads.ts'
@@ -137,6 +138,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
       name: 'backups',
       description:
         'Verified snapshots of the whole database and a readable export of every library and memory file; restore of files (new versions, nothing deleted).',
+    },
+    {
+      name: 'storage',
+      description:
+        'Where the data directory lives and how big each part is (disk, database, library, backups, scratch dirs), warnings, and owner maintenance actions (compact, checkpoint, retention, clear media).',
     },
     {
       name: 'providers',
@@ -414,6 +420,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', artifactRoutes(options.deps))
   app.route('/', settingsRoutes(options.deps))
   app.route('/', backupRoutes(options.deps))
+  app.route('/', storageRoutes(options.deps))
   app.route('/', usageRoutes(options.deps))
   app.route('/', providerRoutes(options.deps))
   app.route('/', connectorRoutes(options.deps))

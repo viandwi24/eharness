@@ -36,7 +36,7 @@ import {
   type RestorePoint,
   type RestoreResult,
 } from '../../domain/backups.ts'
-import { invalid, notFound } from '../../domain/errors.ts'
+import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import {
   type EntityFile,
   IMPORT_LIMITS,
@@ -44,11 +44,21 @@ import {
   type ReminderRecord,
 } from '../../domain/workspace-export.ts'
 import { type LibraryChange, libraryFs } from '../eh/library-fs.ts'
+import { createDataTables, tableCounts } from './data-tables.ts'
+import {
+  cancelPendingRestore,
+  inspectDatabase,
+  readPendingRestore,
+  readRestoreResult,
+  stageRestore,
+} from './database-restore.ts'
 import { parseWorkspaceZip, writeWorkspaceZip } from './workspace-zip.ts'
 
 export interface BackupServiceOptions {
   sqlite: Database
   dir: string
+  /** The database file of `sqlite` (absent for an in-memory database: no whole-database restore). */
+  dbFile?: string
   now?: () => number
   /** Reaches the event feed for every file a restore writes. */
   onChange?: (change: LibraryChange) => void
@@ -350,9 +360,63 @@ export function createBackupService(options: BackupServiceOptions): BackupPort {
     return readFileSync(tempFile(`import-${source.uploadId}.zip`))
   }
 
+  const data = createDataTables(sqlite)
+  const dbFile = options.dbFile
+
   return {
     dir,
     create,
+    data,
+    database: {
+      file: dbFile,
+      counts(id) {
+        const db = open(id)
+        if (db === undefined) return undefined
+        try {
+          return tableCounts(db)
+        } finally {
+          db.close()
+        }
+      },
+      stage(id, info) {
+        if (dbFile === undefined) {
+          throw conflict(
+            'The whole database cannot be restored here: this server runs on an in-memory database',
+            'RESTORE_UNAVAILABLE',
+          )
+        }
+        if (!known(id) || !existsSync(path(id, 'db'))) throw notFound('Backup', id)
+        const record = readRecord(id)
+        if (record !== undefined && !record.verified) {
+          throw conflict(
+            'This backup did not verify, so it is not restored (pick a verified one)',
+            'BACKUP_NOT_VERIFIED',
+          )
+        }
+        const verdict = inspectDatabase(path(id, 'db'))
+        if (!verdict.ok) {
+          throw conflict(
+            `This backup is damaged and is not restored (${verdict.error})`,
+            'BACKUP_NOT_VERIFIED',
+          )
+        }
+        const live =
+          sqlite.query<{ n: number }, []>('SELECT count(*) AS n FROM __drizzle_migrations').get()
+            ?.n ?? 0
+        if (verdict.migrations > live) {
+          throw conflict(
+            'This backup was made by a newer version of the server than the one running: update the server first',
+            'BACKUP_TOO_NEW',
+          )
+        }
+        stageRestore(dbFile, path(id, 'db'), info)
+      },
+      pending: () => (dbFile === undefined ? undefined : readPendingRestore(dbFile)),
+      cancel() {
+        if (dbFile !== undefined) cancelPendingRestore(dbFile)
+      },
+      lastResult: () => (dbFile === undefined ? undefined : readRestoreResult(dbFile)),
+    },
     async exportNow(entities) {
       sweepTemp()
       const at = now()

@@ -2,8 +2,9 @@
 	import { onMount } from 'svelte';
 	import { api, fieldErrors } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
-	import { type Backup, type ImportSource, type RestorePlan, type RestorePoint, type SectionId, bytesText, passphraseProblem, planSummary, reasonLabel, resultSummary, restorePointText, verifiedText } from '#lib/backups/model.js';
+	import { type Backup, type DatabaseRestoreStatus, type ImportSource, type RestorePlan, type RestorePoint, type SectionId, bytesText, lastRestoreText, passphraseProblem, planSummary, reasonLabel, resultSummary, restorePointText, verifiedText } from '#lib/backups/model.js';
 	import { downloadBackupFile, downloadWorkspaceExport, uploadWorkspaceZip } from '#lib/backups/download.js';
+	import DatabaseRestoreDialog from '#lib/components/app/DatabaseRestoreDialog.svelte';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import WorkspaceImportDialog from '#lib/components/app/WorkspaceImportDialog.svelte';
 	import * as Alert from '#lib/components/ui/alert/index.js';
@@ -14,6 +15,7 @@
 	import * as Field from '#lib/components/ui/field/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
@@ -25,6 +27,7 @@
 	let overview = $state<Overview | null>(null);
 	let loadError = $state('');
 	let running = $state(false);
+	let backupConversations = $state(false);
 	let busy = $state('');
 
 	// --- schedule (Settings: backupEnabled, backupTime, backupKeepDaily, backupKeepWeekly) -------
@@ -49,8 +52,22 @@
 
 	let restorePoints = $state<RestorePoint[]>([]);
 
+	let dbStatus = $state<DatabaseRestoreStatus | null>(null);
+	const dbLast = $derived(dbStatus ? lastRestoreText(dbStatus.last) : null);
+
+	async function cancelStaged(): Promise<void> {
+		try {
+			await api.delete('/backups/database-restore');
+			toast.success('The staged restore was cancelled');
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not cancel');
+		}
+		await load();
+	}
+
 	async function load(): Promise<void> {
 		try {
+			dbStatus = await api.get('/backups/database-restore').catch(() => null);
 			overview = await api.get('/backups');
 			restorePoints = (await api.get('/backups/restore-points')).restorePoints;
 			loadError = '';
@@ -81,7 +98,7 @@
 	async function backUpNow(): Promise<void> {
 		running = true;
 		try {
-			const r = await api.post('/backups');
+			const r = await api.post('/backups', { query: { conversations: backupConversations ? 'true' : 'false' } });
 			if (r.ok) toast.success('Backup written and verified');
 			else toast.error(`Backup failed: ${r.error ?? 'unknown problem'}`);
 		} catch (e) {
@@ -129,12 +146,14 @@
 	// the export: without secrets, or with the provider keys and connection credentials encrypted by a passphrase
 	let exportOpen = $state(false);
 	let withSecrets = $state(false);
+	let withConversations = $state(false);
 	let exportPass = $state('');
 	let exportPass2 = $state('');
 	const exportProblem = $derived(withSecrets ? passphraseProblem(exportPass, exportPass2) : null);
 
 	function openExport(): void {
 		withSecrets = false;
+		withConversations = false;
 		exportPass = '';
 		exportPass2 = '';
 		exportOpen = true;
@@ -143,7 +162,7 @@
 	async function exportNow(): Promise<void> {
 		exporting = true;
 		try {
-			await downloadWorkspaceExport(withSecrets ? exportPass : undefined);
+			await downloadWorkspaceExport(withSecrets ? exportPass : undefined, withConversations);
 			exportOpen = false;
 		} catch (e) {
 			if (!(e instanceof DOMException && e.name === 'AbortError')) toast.error(e instanceof Error ? e.message : 'Download failed');
@@ -179,6 +198,10 @@
 	}
 
 	async function startUndo(p: RestorePoint): Promise<void> {
+		if (p.kind === 'database-restore') {
+			startDbRestore(p.safetyBackupId, `the safety backup taken before ${formatDateTime(p.at)}`, p.id);
+			return;
+		}
 		busy = `undo:${p.id}`;
 		try {
 			const u = await api.get('/backups/restore-points/{id}/undo', { params: { id: p.id } });
@@ -192,6 +215,19 @@
 		} finally {
 			busy = '';
 		}
+	}
+
+	// --- whole-database restore ------------------------------------------------------------------
+	let dbOpen = $state(false);
+	let dbBackupId = $state<string | null>(null);
+	let dbLabel = $state('');
+	let dbUndoOf = $state<string | undefined>(undefined);
+
+	function startDbRestore(backupId: string, label: string, undoOf?: string): void {
+		dbBackupId = backupId;
+		dbLabel = label;
+		dbUndoOf = undoOf;
+		dbOpen = true;
 	}
 
 	// --- restore of files ------------------------------------------------------------------------
@@ -252,6 +288,21 @@
 </script>
 
 <div class="flex flex-col gap-4">
+	{#if dbStatus?.pending}
+		<Alert.Root variant="warning" role="alert">
+			<Alert.Title>A whole-database restore is staged</Alert.Title>
+			<Alert.Description>
+				<div class="flex flex-wrap items-center gap-3">
+					<span>Backup {dbStatus.pending.backupId} replaces the database when the server restarts (staged {timeAgo(dbStatus.pending.stagedAt)}). Restart the server, or cancel it.</span>
+					<Button size="sm" variant="outline" onclick={cancelStaged}>Cancel the restore</Button>
+				</div>
+			</Alert.Description>
+		</Alert.Root>
+	{/if}
+	{#if dbLast && !dbLast.ok}
+		<Alert.Root variant="destructive" role="alert"><Alert.Title>The last whole-database restore failed</Alert.Title><Alert.Description>{dbLast.text}</Alert.Description></Alert.Root>
+	{/if}
+
 	{#if loadError}
 		<Alert.Root variant="destructive"><Alert.Title>Could not load the backups</Alert.Title><Alert.Description>{loadError}</Alert.Description></Alert.Root>
 	{:else if overview}
@@ -268,7 +319,7 @@
 	<Card.Root>
 		<Card.Header>
 			<Card.Title>Schedule</Card.Title>
-			<Card.Description>A consistent copy of the whole database is written while the server runs, then checked (integrity and row counts), with one readable zip of the workspace next to it (settings, agents, personas, memory, library, programs, routines, people; no chats, no secrets: an export you download by hand can carry them, encrypted). One is also taken before risky operations such as reorganizing memory, and at start-up when none was taken today.</Card.Description>
+			<Card.Description>A consistent copy of the whole database is written while the server runs, then checked (integrity and row counts), with one readable zip of the workspace next to it (settings, agents, memory, library, programs, routines, people, connections, reminders, channels, history, artifacts, the developer API and browser profiles; no chats unless you tick it, no secrets: an export you download by hand can carry them, encrypted). One is also taken before risky operations such as reorganizing memory, and at start-up when none was taken today.</Card.Description>
 		</Card.Header>
 		<Card.Content>
 			<form
@@ -307,12 +358,16 @@
 		<Card.Header>
 			<Card.Title>Backups</Card.Title>
 			<Card.Description>
-				Written to <span class="font-mono text-xs">{overview?.dir ?? '…'}</span> (<span class="font-mono text-xs">TEAM_BACKUP_DIR</span>): mount it on a persistent volume and copy it off the server. Restoring the whole database is a manual step, see the README.
+				Written to <span class="font-mono text-xs">{overview?.dir ?? '…'}</span> (<span class="font-mono text-xs">TEAM_BACKUP_DIR</span>): mount it on a persistent volume and copy it off the server. The whole database can be restored from a verified backup, with a safety backup first and a restart of the server.
 			</Card.Description>
 		</Card.Header>
 		<Card.Content class="flex flex-col gap-3">
 			<div class="flex flex-wrap gap-2">
 				<Button size="sm" onclick={backUpNow} disabled={running}>{running ? 'Backing up…' : 'Back up now'}</Button>
+				<label class="flex items-center gap-2 text-xs text-muted-foreground">
+					<Checkbox checked={backupConversations} onCheckedChange={(v) => (backupConversations = v === true)} aria-label="Include conversations in the workspace zip of the backup" />
+					Include conversations in the zip
+				</label>
 				<Button size="sm" variant="outline" onclick={openExport} disabled={exporting}>{exporting ? 'Preparing…' : 'Download workspace export'}</Button>
 				<Button size="sm" variant="outline" onclick={() => fileInput?.click()} disabled={uploading}>{uploading ? 'Checking the zip…' : 'Import from zip'}</Button>
 				<input bind:this={fileInput} type="file" accept=".zip,application/zip" class="hidden" onchange={pickedFile} aria-label="Workspace zip to import" />
@@ -347,6 +402,7 @@
 										<Button variant="ghost" size="sm" disabled={b.filesBytes === null || busy === `${b.id}:files`} onclick={() => download(b, 'files')}>Export</Button>
 										<Button variant="ghost" size="sm" disabled={b.filesBytes === null} onclick={() => startImport({ backupId: b.id }, `the backup of ${formatDateTime(b.createdAt)}`)}>Import</Button>
 										<Button variant="ghost" size="sm" disabled={!b.verified} onclick={() => openRestore(b)}>Restore files</Button>
+										<Button variant="ghost" size="sm" disabled={!b.verified} onclick={() => startDbRestore(b.id, `the backup of ${formatDateTime(b.createdAt)}`)}>Restore whole database…</Button>
 										<Button
 											variant="ghost"
 											size="sm"
@@ -408,6 +464,10 @@
 				<Switch id="export-secrets" bind:checked={withSecrets} aria-label="Include secrets, encrypted" />
 				<Field.Label for="export-secrets">Include secrets, encrypted with a passphrase</Field.Label>
 			</Field.Field>
+			<Field.Field orientation="horizontal">
+				<Checkbox id="export-conversations" checked={withConversations} onCheckedChange={(v) => (withConversations = v === true)} aria-label="Include conversations" />
+				<Field.Label for="export-conversations">Include conversations (chat history, large)</Field.Label>
+			</Field.Field>
 			{#if withSecrets}
 				<Field.Field>
 					<Field.Label for="export-pass">Passphrase (at least 12 characters)</Field.Label>
@@ -429,6 +489,8 @@
 </Dialog.Root>
 
 <WorkspaceImportDialog bind:open={importOpen} source={importSource} label={importLabel} undoOf={importUndoOf} initial={importInitial} onDone={() => void load()} />
+
+<DatabaseRestoreDialog bind:open={dbOpen} backupId={dbBackupId} label={dbLabel} undoOf={dbUndoOf} onDone={() => void load()} />
 
 <ConfirmDialog
 	bind:open={deleteOpen}

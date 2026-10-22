@@ -37,7 +37,10 @@ export function createRoutine(deps: Deps, draft: RoutineDraft): Routine {
   deps.schedule.validate(draft.schedule)
   const now = deps.clock.now()
   const routine = deps.routines.insert({
-    id: deps.ids.next(),
+    id:
+      draft.id !== undefined && draft.id !== '' && deps.routines.get(draft.id) === undefined
+        ? draft.id
+        : deps.ids.next(),
     agentId: agent.id,
     name: draft.name.trim(),
     prompt: draft.prompt,

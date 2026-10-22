@@ -86,6 +86,8 @@ export interface RoutineRun {
 }
 
 export interface RoutineDraft {
+  /** A given id (a restore keeps ids); used only when no routine has it. */
+  id?: string | undefined
   agentId: string
   name: string
   prompt: string

@@ -20,17 +20,25 @@
  *   agents/<slug>/reminders/<id>.json      an active reminder (a reference: never imported)
  *   connections/<label>.json               a connection WITHOUT secrets (a reference: never imported)
  *   people/<id>.json                       a person of the directory
- *   secrets.enc.json                       OPTIONAL: provider keys and connection credentials, encrypted with
- *                                          the passphrase chosen at export (`workspace-secrets.ts`)
+ *   data/<table>/NNN.json                  the rows of a data table (`workspace-data.ts`): persona history,
+ *                                          reminders, channels configuration, history, artifacts, the
+ *                                          developer API, browser profiles and, when asked, conversations
+ *   secrets.enc.json                       OPTIONAL: provider keys, connection credentials, API key hashes and
+ *                                          share tokens, encrypted with the passphrase chosen at export
+ *                                          (`workspace-secrets.ts`)
  *
- * Chats, task transcripts and logs are not in it: the verified database snapshot covers full
- * disaster recovery.
+ * Message logs of channels, model call logs and the file history are not in it: the verified database
+ * snapshot covers them (full restore). `docs/plans/P58-backup-coverage.md` classifies every table.
  */
 import { invalid } from './errors.ts'
+import { datasetOfEntry, SECTIONS, type SectionId } from './workspace-data.ts'
 import { SECRETS_FILE } from './workspace-secrets.ts'
 
+export { SECTIONS, type SectionId }
+
 export const WORKSPACE_FORMAT = 'eharness-team-workspace'
-export const WORKSPACE_FORMAT_VERSION = 1
+/** 2: adds `data/<table>/NNN.json`. A zip of version 1 is still read. */
+export const WORKSPACE_FORMAT_VERSION = 2
 
 const MIB = 1024 * 1024
 /** What an import accepts: a larger or more crowded zip is refused before anything is read. */
@@ -70,35 +78,27 @@ export interface ReminderRecord {
 
 // --- sections ----------------------------------------------------------------------------------
 
-export const SECTIONS = [
-  'settings',
-  'agents',
-  'programs',
-  'routines',
-  'memory',
-  'library',
-  'people',
-  'connections',
-  'reminders',
-  'secrets',
-] as const
-export type SectionId = (typeof SECTIONS)[number]
-
 export const SECTION_LABELS: Record<SectionId, string> = {
   settings: 'Workspace settings',
-  agents: 'Agents (definition, persona, heartbeat)',
+  agents: 'Agents (definition, persona and its history, heartbeat)',
   programs: 'Programs',
   routines: 'Routines',
   memory: 'Memory files',
   library: 'Library files',
-  people: 'People',
-  connections: 'Connections (reference only)',
-  reminders: 'Reminders (reference only)',
+  people: 'People (directory, platform accounts, notes)',
+  connections: 'Connections (without secrets; they come with the secrets section)',
+  reminders: 'Reminders',
+  channels: 'Channels (chat bindings, policies, roles in chats, identities)',
+  history: 'History (tasks, decisions, alerts, briefings)',
+  artifacts: 'Artifacts (with versions)',
+  api: 'Developer API (agents, usage)',
+  browser: 'Browser profiles',
+  conversations: 'Conversations (chat history; large)',
   secrets: 'Secrets (encrypted in the zip)',
 }
 
-/** Sections that are listed for reading and never written (a connection's secrets come back through the secrets section). */
-export const REFERENCE_SECTIONS: readonly SectionId[] = ['connections', 'reminders']
+/** Sections that are listed for reading and never written. None today: every section can be applied. */
+export const REFERENCE_SECTIONS: readonly SectionId[] = []
 
 export const isSection = (value: string): value is SectionId =>
   (SECTIONS as readonly string[]).includes(value)
@@ -124,12 +124,15 @@ export type EntryKind =
   | 'person'
   | 'secrets'
   | 'file'
+  | 'data'
 
 export interface Classified {
   section: SectionId | null
   kind: EntryKind
   /** The agent slug of `agents/<slug>/...`. */
   agent?: string
+  /** The table of a `data/<table>/NNN.json` entry. */
+  table?: string
 }
 
 const rest = (parts: string[], from: number): string => parts.slice(from).join('/')
@@ -143,6 +146,10 @@ export function classify(entry: string): Classified | undefined {
     if (entry === 'settings.json') return { section: 'settings', kind: 'settings' }
     if (entry === SECRETS_FILE) return { section: 'secrets', kind: 'secrets' }
     return undefined
+  }
+  if (top === 'data') {
+    const set = datasetOfEntry(entry)
+    return set === undefined ? undefined : { section: set.section, kind: 'data', table: set.table }
   }
   if (top === 'library' || top === 'uploads' || top === 'other') {
     return { section: 'library', kind: 'file' }
@@ -311,10 +318,10 @@ export interface WorkspaceManifest {
 }
 
 export const MANIFEST_NOTICE =
-  'Secrets are not exported: reconnect connections after an import. Chats, task transcripts and logs are not in this file; the database snapshot of the same backup keeps them.'
+  'Secrets are not exported: reconnect connections after an import. Message logs of channels, model call logs and the file history are not in this file (conversations only when asked); the database snapshot of the same backup keeps them.'
 
 export const MANIFEST_NOTICE_WITH_SECRETS =
-  'Secrets are in secrets.enc.json, encrypted (AES-256-GCM, key from a passphrase by PBKDF2-SHA256): they cannot be read without the passphrase of this export. Chats, task transcripts and logs are not in this file; the database snapshot of the same backup keeps them.'
+  'Secrets are in secrets.enc.json, encrypted (AES-256-GCM, key from a passphrase by PBKDF2-SHA256): they cannot be read without the passphrase of this export. Message logs of channels, model call logs and the file history are not in this file (conversations only when asked); the database snapshot of the same backup keeps them.'
 
 function parseSecrets(value: unknown): WorkspaceManifest['secrets'] {
   const o = (value ?? {}) as Record<string, unknown>
@@ -584,9 +591,12 @@ export function selects(item: ImportItem, selection: ImportSelection): boolean {
 /** Sections that need more than a tick: secrets also need the passphrase. */
 export const GATED_SECTIONS: readonly SectionId[] = ['secrets']
 
-/** A selection of every applicable section (secrets only when asked for), nothing excluded, nothing removed, no overwrite. */
+/** Sections that are never part of a default selection: secrets (a passphrase) and conversations (large). */
+export const OPT_IN_SECTIONS: readonly SectionId[] = ['secrets', 'conversations']
+
+/** A selection of every applicable section (opt-in ones only when asked for), nothing excluded, nothing removed, no overwrite. */
 export const defaultSelection = (): ImportSelection => ({
-  sections: SECTIONS.filter((s) => !REFERENCE_SECTIONS.includes(s) && !GATED_SECTIONS.includes(s)),
+  sections: SECTIONS.filter((s) => !REFERENCE_SECTIONS.includes(s) && !OPT_IN_SECTIONS.includes(s)),
   exclude: [],
   removeSections: [],
   overwrite: false,

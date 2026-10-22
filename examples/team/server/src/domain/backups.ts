@@ -96,7 +96,8 @@ export interface RetentionPlan {
  * Which snapshots a retention keeps. Only verified snapshots take part (a failed one is never
  * deleted by a rule: the owner sees it and decides). Kept: the newest of each of the last
  * `keepDaily` days that have a snapshot, the newest of each of the last `keepWeekly` weeks, the
- * newest snapshot of all, and every `before` snapshot younger than `BACKUP_PROTECT_DAYS`.
+ * newest snapshot of all, and every `before` or `manual` snapshot younger than
+ * `BACKUP_PROTECT_DAYS`.
  */
 export function planRetention(
   backups: readonly BackupRecord[],
@@ -119,7 +120,12 @@ export function planRetention(
       weeks.add(week)
       keep.add(b.id)
     }
-    if (b.kind === 'before' && opts.now - b.createdAt < BACKUP_PROTECT_DAYS * 86_400_000) {
+    // a backup a person asked for (manual) or one taken before a risky operation is never
+    // displaced by a later automatic one of the same day
+    if (
+      (b.kind === 'before' || b.kind === 'manual') &&
+      opts.now - b.createdAt < BACKUP_PROTECT_DAYS * 86_400_000
+    ) {
       keep.add(b.id)
     }
   }
@@ -222,13 +228,15 @@ export interface RestoreResult {
 
 /**
  * `import` a zip applied, `files-restore` files put back from a snapshot, `undo` a restore point
- * undone, `memory-reorganization` an agent's memory moved into the library (P57).
+ * undone, `memory-reorganization` an agent's memory moved into the library (P57), `database-restore`
+ * the whole database replaced by a backup's copy (staged, applied at the restart; P58).
  */
 export const RESTORE_POINT_KINDS = [
   'import',
   'files-restore',
   'undo',
   'memory-reorganization',
+  'database-restore',
 ] as const
 export type RestorePointKind = (typeof RESTORE_POINT_KINDS)[number]
 

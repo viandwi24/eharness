@@ -10,6 +10,12 @@ import {
   stageImport,
 } from '../../app/backups.ts'
 import { IMPORT_LIMITS } from '../../app/catalog.ts'
+import {
+  cancelDatabaseRestore,
+  databaseRestoreStatus,
+  previewDatabaseRestore,
+  restoreDatabase,
+} from '../../app/database-restore.ts'
 import type { Deps } from '../../app/ports.ts'
 import { exportWorkspace } from '../../app/workspace-export.ts'
 import {
@@ -23,6 +29,10 @@ import {
   BackupCreatedSchema,
   BackupEntriesSchema,
   BackupListSchema,
+  DatabaseRestoreBodySchema,
+  DatabaseRestorePreviewSchema,
+  DatabaseRestoreResultSchema,
+  DatabaseRestoreStatusSchema,
   ExportBodySchema,
   ImportBodySchema,
   ImportPreviewBodySchema,
@@ -69,8 +79,9 @@ const createBackupRoute = createRoute({
   tags: ['backups'],
   summary: 'Back up now',
   description:
-    'A consistent copy of the whole database (`VACUUM INTO`, online) plus a zip of every library and memory file, verified after writing. A failure answers 200 with `ok: false` and also raises an alarm.',
+    'A consistent copy of the whole database (`VACUUM INTO`, online) plus the workspace zip of the live workspace (entities, files and data tables; conversations only with `?conversations=true`), verified after writing. A failure answers 200 with `ok: false` and also raises an alarm.',
   security,
+  request: { query: z.object({ conversations: z.enum(['true', 'false']).optional() }) },
   responses: {
     200: { description: 'The result', content: json(BackupCreatedSchema) },
     ...errorResponses,
@@ -181,8 +192,9 @@ const exportRoute = createRoute({
   tags: ['backups'],
   summary: 'Download the workspace export now',
   description:
-    'One zip of everything of the workspace, readable as `.md` and `.json` in folders: `manifest.json` (format, versions, counts, sha256 of every file), `settings.json`, `library/**`, `memory/**`, `agents/<slug>/{agent.json,persona.md,heartbeat.json,memory/**,programs/**,routines/**,reminders/**}`, `connections/<label>.json` (never with secrets) and `people/<id>.json`. Chats, task transcripts and logs are not in it (the database snapshot of a backup covers those). The same zip is part of every backup.',
+    'One zip of everything of the workspace, readable as `.md` and `.json` in folders: `manifest.json` (format, versions, counts, sha256 of every file), `settings.json`, `library/**`, `memory/**`, `agents/<slug>/{agent.json,persona.md,heartbeat.json,memory/**,programs/**,routines/**,reminders/**}`, `connections/<label>.json` (never with secrets), `people/<id>.json` and `data/<table>/NNN.json` (rows of the data tables: persona history, reminders, channels configuration, history, artifacts, the developer API, browser profiles). Conversations only with `?conversations=true` (large). Message logs of channels, model call logs and the file history are not in it (the database snapshot of a backup covers those). The same zip is part of every backup.',
   security,
+  request: { query: z.object({ conversations: z.enum(['true', 'false']).optional() }) },
   responses: downloadResponses,
 })
 
@@ -192,7 +204,7 @@ const exportWithSecretsRoute = createRoute({
   tags: ['backups'],
   summary: 'Download the workspace export now, with encrypted secrets',
   description:
-    'The same zip as `GET /backups/export`, plus `secrets.enc.json`: every provider profile key and connection credential (and OAuth client credential), encrypted with AES-256-GCM under a key derived from the `passphrase` (PBKDF2-SHA256, 600 000 iterations, random salt and IV, versioned). `manifest.json` says secrets are included and how many, never their names or values. The passphrase travels in the body, is never stored or logged and cannot be recovered. Scheduled backups and safety backups never hold secrets.',
+    'The same zip as `GET /backups/export`, plus `secrets.enc.json`: every provider profile key and connection credential (and OAuth client credential), the hash of every API key and the share token of every shared artifact, encrypted with AES-256-GCM under a key derived from the `passphrase` (PBKDF2-SHA256, 600 000 iterations, random salt and IV, versioned). `manifest.json` says secrets are included and how many, never their names or values. The passphrase travels in the body, is never stored or logged and cannot be recovered. Scheduled backups and safety backups never hold secrets.',
   security,
   request: { body: { required: true, content: json(ExportBodySchema) } },
   responses: {
@@ -282,6 +294,69 @@ const undoPreviewRoute = createRoute({
   },
 })
 
+const databaseRestorePreviewRoute = createRoute({
+  method: 'get',
+  path: '/backups/{id}/database-restore',
+  tags: ['backups'],
+  summary: 'What restoring the whole database from a backup would change',
+  description:
+    'Rows per table, backup against the running database, with the class of each table (restorable through the zip, only through the database copy, or derived) and the phrase to type to confirm. Nothing is written.',
+  security,
+  request: { params: idParam },
+  responses: {
+    200: { description: 'The preview', content: json(DatabaseRestorePreviewSchema) },
+    404: notFoundResponse,
+    ...errorResponses,
+  },
+})
+
+const databaseRestoreRoute = createRoute({
+  method: 'post',
+  path: '/backups/{id}/database-restore',
+  tags: ['backups'],
+  summary: 'Restore the whole database from a backup',
+  description:
+    "Replaces the running database by the backup's copy. A verified safety backup is taken first (`BACKUP_FAILED`, nothing staged when it fails), the copy is verified again and STAGED next to the database, a restore point is recorded and the server restarts (exit code 75; a process manager starts it again, `restart: manual` means you restart it) and swaps the copy in before the database opens. Undo = the same call with the safety backup as `{id}` and `undoOf` set. Needs the confirmation phrase (`CONFIRMATION_REQUIRED`).",
+  security,
+  request: { params: idParam, body: { required: true, content: json(DatabaseRestoreBodySchema) } },
+  responses: {
+    200: { description: 'Staged', content: json(DatabaseRestoreResultSchema) },
+    404: notFoundResponse,
+    409: jsonError(
+      '`BACKUP_FAILED`, `BACKUP_NOT_VERIFIED`, `BACKUP_TOO_NEW`, `RESTORE_PENDING`, `RESTORE_UNAVAILABLE`',
+    ),
+    ...errorResponses,
+  },
+})
+
+const databaseRestoreStatusRoute = createRoute({
+  method: 'get',
+  path: '/backups/database-restore',
+  tags: ['backups'],
+  summary: 'The state of a whole-database restore',
+  description:
+    'A restore that is staged and waits for the restart (`pending`), and what the last start did with a staged restore (`last`: applied, or why not).',
+  security,
+  responses: {
+    200: { description: 'The status', content: json(DatabaseRestoreStatusSchema) },
+    ...errorResponses,
+  },
+})
+
+const databaseRestoreCancelRoute = createRoute({
+  method: 'delete',
+  path: '/backups/database-restore',
+  tags: ['backups'],
+  summary: 'Cancel a staged whole-database restore',
+  description:
+    'Drops a staged restore that has not been applied (the server has not restarted yet).',
+  security,
+  responses: {
+    200: { description: 'Cancelled', content: json(z.object({ cancelled: z.literal(true) })) },
+    ...errorResponses,
+  },
+})
+
 const attachment = (d: ReturnType<typeof downloadBackup>): Response =>
   new Response(d.stream, {
     headers: {
@@ -297,7 +372,9 @@ export function backupRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(listRoute, (c) => c.json(listBackups(deps), 200))
     .openapi(createBackupRoute, async (c) => {
-      const out = await backupNow(deps)
+      const out = await backupNow(deps, {
+        includeConversations: c.req.valid('query').conversations === 'true',
+      })
       return c.json(
         {
           ok: out.ok,
@@ -311,10 +388,44 @@ export function backupRoutes(deps: Deps): OpenAPIHono {
       deleteBackup(deps, c.req.valid('param').id)
       return c.json({ deleted: true as const }, 200)
     })
-    .openapi(exportRoute, async () => raw(attachment(await exportWorkspace(deps))))
-    .openapi(exportWithSecretsRoute, async (c) =>
-      raw(attachment(await exportWorkspace(deps, { passphrase: c.req.valid('json').passphrase }))),
+    .openapi(exportRoute, async (c) =>
+      raw(
+        attachment(
+          await exportWorkspace(deps, {
+            includeConversations: c.req.valid('query').conversations === 'true',
+          }),
+        ),
+      ),
     )
+    .openapi(exportWithSecretsRoute, async (c) =>
+      raw(
+        attachment(
+          await exportWorkspace(deps, {
+            passphrase: c.req.valid('json').passphrase,
+            includeConversations: c.req.valid('json').includeConversations === true,
+          }),
+        ),
+      ),
+    )
+    .openapi(databaseRestoreStatusRoute, (c) => c.json(databaseRestoreStatus(deps), 200))
+    .openapi(databaseRestoreCancelRoute, (c) => {
+      cancelDatabaseRestore(deps)
+      return c.json({ cancelled: true as const }, 200)
+    })
+    .openapi(databaseRestorePreviewRoute, (c) =>
+      c.json(previewDatabaseRestore(deps, c.req.valid('param').id), 200),
+    )
+    .openapi(databaseRestoreRoute, async (c) => {
+      const body = c.req.valid('json')
+      return c.json(
+        await restoreDatabase(deps, c.req.valid('param').id, {
+          confirm: body.confirm,
+          by: 'web',
+          undoOf: body.undoOf,
+        }),
+        200,
+      )
+    })
     .openapi(uploadRoute, async (c) =>
       c.json(
         await stageImport(

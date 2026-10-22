@@ -121,7 +121,7 @@ export function createPeoplePort(options: PeopleAdminOptions): PeoplePort {
       return detailOf(id)
     },
     async create(input) {
-      const { displayName, nickname, role, divisions, fields, notes } = input
+      const { id, displayName, nickname, role, divisions, fields, notes } = input
       const clean: Record<string, string> = {}
       for (const [k, v] of Object.entries(fields ?? {}))
         if (v !== null && v.trim() !== '') clean[k] = v
@@ -129,6 +129,7 @@ export function createPeoplePort(options: PeopleAdminOptions): PeoplePort {
       const p = guard(() =>
         dir.persons.create(
           {
+            ...(id === undefined ? {} : { id }),
             displayName,
             ...(nickname === undefined ? {} : { nickname }),
             ...(role === undefined ? {} : { role }),

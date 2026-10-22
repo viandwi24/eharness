@@ -42,6 +42,8 @@ export interface PersonStore {
   list(query?: { q?: string; limit?: number; offset?: number }): { items: Person[]; total: number }
   create(
     input: {
+      /** A given id (a restore keeps ids); used only when no person has it. */
+      id?: string
       displayName: string
       nickname?: string | null
       role?: Role | null
@@ -217,7 +219,10 @@ export function sqlitePersonStore(sqlite: Database, ids: { next(): string }): Pe
     create(input, actor, now) {
       const name = input.displayName.trim()
       if (name === '') throw new IdentityError('A person needs a name.', 'INVALID_PERSON')
-      const id = ids.next()
+      const id =
+        input.id !== undefined && input.id !== '' && get(input.id) === undefined
+          ? input.id
+          : ids.next()
       sqlite
         .query(
           `INSERT INTO people (id, display_name, nickname, status, role, divisions, fields, notes, member_id, created_by, created_at, updated_at)

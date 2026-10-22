@@ -83,7 +83,15 @@ export function writeWorkspaceZip(
       else if (kind === 'reminder') bump('reminders')
       else if (kind === 'connection') bump('connections')
       else if (kind === 'person') bump('people')
-      else if (e.path === SECRETS_FILE) {
+      else if (kind === 'data') {
+        const table = classify(e.path)?.table as string
+        try {
+          const rows = (JSON.parse(textOf(e.bytes)) as { rows?: unknown[] }).rows
+          counts[table] = (counts[table] ?? 0) + (Array.isArray(rows) ? rows.length : 0)
+        } catch {
+          counts[table] = counts[table] ?? 0
+        }
+      } else if (e.path === SECRETS_FILE) {
         secrets = { included: true, count: secretsHeader(e.bytes).count }
         counts.secrets = secrets.count
       }

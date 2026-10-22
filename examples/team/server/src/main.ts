@@ -122,7 +122,7 @@ import {
   proposePersona,
   revertPersona,
 } from './app/persona.ts'
-import type { ChannelInboxPort, ChannelsPort, Deps, PeoplePort } from './app/ports.ts'
+import type { ChannelInboxPort, ChannelsPort, Deps, Lifecycle, PeoplePort } from './app/ports.ts'
 import { programNoteChecked, repairProgramAuthorities } from './app/programs.ts'
 import { seedAgents } from './app/seed.ts'
 import {
@@ -132,6 +132,7 @@ import {
   listOrders,
   removeOrder,
 } from './app/standing-orders.ts'
+import { checkDiskAlarm } from './app/storage.ts'
 import { askOwner, memoryFixOpen, recordMemoryChange, retryRun } from './app/supervisor.ts'
 import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
@@ -277,6 +278,7 @@ import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
 import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
 import { installJsonSchemaValidator } from './infra/json-schema.ts'
 import { croneSchedule } from './infra/schedule.ts'
+import { createStorageService } from './infra/storage/storage-service.ts'
 import {
   createTelegramChannels,
   lazyChannelsPort,
@@ -361,6 +363,11 @@ export interface ServerConfig {
    * database file; an in-memory database without one has no backups).
    */
   backupDir?: string
+  /**
+   * Restarts the process after a whole-database restore was staged (default: none, the owner restarts
+   * the server; the server entry exits with code 75 so a process manager starts it again).
+   */
+  lifecycle?: Lifecycle
   /** Automatic backups: the schedule check every `everyMs` (default 1 min; 0 = never, also off when `reconcile.everyMs` is 0). */
   backups?: { everyMs?: number }
   /** Retention of finished routine runs, finished tasks, library history and media (days; 0 = keep). */
@@ -664,6 +671,24 @@ export function compose(config: ServerConfig): Server {
       console.warn(`team: pruning tables failed: ${String(error)}`)
     }
   }
+  // Settings > Storage "Apply retention now": every cleanup that runs on a timer, once, with counts
+  const applyRetention = async (): Promise<Record<string, number>> => {
+    const st = settings.get()
+    const pruned = pruneTables(conn.sqlite, {
+      mediaDays: st.mediaRetentionDays,
+      routineRunsDays: st.routineRunsRetentionDays,
+      tasksDays: st.tasksRetentionDays,
+      libraryHistoryDays: st.libraryHistoryRetentionDays,
+    })
+    const modelCalls = activityLog.prune()
+    const eventsMs = st.eventsRetentionHours * 3_600_000
+    const events = await activityStore.prune({
+      ...(eventsMs > 0 ? { olderThan: Date.now() - eventsMs } : {}),
+      keepLast: st.eventsMaxRows,
+      keepLatestOf: [{ type: 'message-added', by: 'agentId' }],
+    })
+    return { ...pruned, modelCalls, events: events.deleted }
+  }
   if (config.dbCompact === true) {
     try {
       if (compactDatabase(conn.sqlite))
@@ -723,18 +748,17 @@ export function compose(config: ServerConfig): Server {
   })
   artifactService = artifacts
   const artifactContent = artifactContentRoutes(artifacts)
-  const codeRuntime = createCodeRuntime(
-    {
-      ...codeConfigFromEnv(config.env ?? process.env, config.dbFile),
-      ...config.code,
-    },
-    { programs: () => programStore },
-  )
+  const codeConfig = {
+    ...codeConfigFromEnv(config.env ?? process.env, config.dbFile),
+    ...config.code,
+  }
+  const codeRuntime = createCodeRuntime(codeConfig, { programs: () => programStore })
   void codeRuntime.start()
   // the browser (plan P48): one manager over profiles sealed with the same vault; engines it starts
   // are killed by `close()`
+  const browserConfig = browserConfigFromEnv(config.env ?? process.env, config.dbFile)
   const browserService = createBrowserService({
-    config: browserConfigFromEnv(config.env ?? process.env, config.dbFile),
+    config: browserConfig,
     sqlite: conn.sqlite,
     vault,
     // the Remote sandbox connection can host managed Chrome profiles (`connectors` comes below)
@@ -1038,20 +1062,42 @@ export function compose(config: ServerConfig): Server {
     config.backupDir ??
     ((config.env ?? process.env).TEAM_BACKUP_DIR?.trim() || undefined) ??
     (config.dbFile === ':memory:' ? undefined : join(dirname(config.dbFile), 'backups'))
+  const storage =
+    config.dbFile === ':memory:'
+      ? undefined
+      : createStorageService({
+          sqlite: conn.sqlite,
+          dbFile: config.dbFile,
+          backupDir,
+          env: config.env ?? process.env,
+          retention: applyRetention,
+          dirs: [
+            { id: 'code-scratch', label: 'Code scratch', path: codeConfig.scratchRoot },
+            { id: 'code-env', label: 'Code environments', path: codeConfig.envRoot },
+            { id: 'browser', label: 'Browser', path: browserConfig.root },
+          ],
+        })
   const deps: Deps = {
     agents,
+    ...(storage === undefined ? {} : { storage }),
     persona: personaStore,
     chat: createChatService(factory, { workspaceId: WORKSPACE_ID }),
     threads: threadStore,
     notifications: sqliteNotificationStore(conn.sqlite),
     alarms: sqliteAlarmStore(conn.sqlite),
-    secrets: createSecretsPort({ profiles: profileStore, reload: () => providers.reload() }),
+    secrets: createSecretsPort({
+      profiles: profileStore,
+      reload: () => providers.reload(),
+      sqlite: conn.sqlite,
+    }),
+    ...(config.lifecycle === undefined ? {} : { lifecycle: config.lifecycle }),
     ...(backupDir === undefined
       ? {}
       : {
           backups: createBackupService({
             sqlite: conn.sqlite,
             dir: backupDir,
+            ...(config.dbFile === ':memory:' ? {} : { dbFile: config.dbFile }),
             onChange: onFileChange,
             appVersion: appVersion(),
           }),
@@ -1723,6 +1769,18 @@ export function compose(config: ServerConfig): Server {
         )
       : undefined
   alarmTimer?.unref()
+  // low disk (Settings > Storage): at start and every 10 minutes; one alarm per local day
+  const diskCheck = (): void => {
+    try {
+      checkDiskAlarm(deps)
+    } catch (error) {
+      console.warn(`team: disk check failed: ${errorText(error)}`)
+    }
+  }
+  const diskEveryMs = config.reconcile?.everyMs === 0 ? 0 : 600_000
+  const diskTimer = diskEveryMs > 0 ? setInterval(diskCheck, diskEveryMs) : undefined
+  diskTimer?.unref()
+  if (diskEveryMs > 0) diskCheck()
   // backups: a snapshot at the time set in Settings, and one at start-up when none was taken today
   const backupScheduler = createBackupScheduler(deps)
   const backupEveryMs = config.reconcile?.everyMs === 0 ? 0 : (config.backups?.everyMs ?? 60_000)
@@ -1857,6 +1915,7 @@ export function compose(config: ServerConfig): Server {
       if (timer !== undefined) clearInterval(timer)
       if (healthTimer !== undefined) clearInterval(healthTimer)
       if (alarmTimer !== undefined) clearInterval(alarmTimer)
+      if (diskTimer !== undefined) clearInterval(diskTimer)
       if (backupTimer !== undefined) clearInterval(backupTimer)
       if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
@@ -1904,6 +1963,14 @@ if (import.meta.main) {
     token,
     loginPassword: process.env.BASIC_AUTH_PASSWORD,
     ...(process.env.TEAM_DB_COMPACT === '1' ? { dbCompact: true } : {}),
+    // a restore of the whole database is applied at the next start: exit and let the process
+    // manager (Docker `restart: unless-stopped`, systemd `Restart=always`) start the server again
+    lifecycle: {
+      restart: () => {
+        console.warn('team: restarting to apply the staged database restore (exit code 75)')
+        setTimeout(() => process.exit(75), 1000)
+      },
+    },
     ...(process.env.TEAM_ROUTINE_TICK_MS !== undefined && Number.isFinite(tickMs) && tickMs >= 0
       ? { routines: { tickMs } }
       : {}),

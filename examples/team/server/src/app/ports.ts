@@ -1,4 +1,5 @@
 /** Ports the use cases depend on; `infra/` implements them. */
+
 import type { AgentDef } from '../domain/agents.ts'
 import type { Alarm, NewAlarm } from '../domain/alarms.ts'
 import type { ApprovalView } from '../domain/approvals.ts'
@@ -116,9 +117,16 @@ import type {
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { BlockedTool, ConfiguredGroup, LastCallTools } from '../domain/session-tools.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
+import type {
+  StorageAction,
+  StorageActionResult,
+  StorageReport,
+  VolumeInfo,
+} from '../domain/storage.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
 import type { Thread, ThreadSeed, ThreadSource } from '../domain/threads.ts'
 import type { PendingRetry } from '../domain/turn-retry.ts'
+import type { DataRow } from '../domain/workspace-data.ts'
 import type {
   EntityFile,
   ImportSource,
@@ -1176,7 +1184,7 @@ export interface PersonPatchInput {
 export interface PeoplePort {
   list(query: { q?: string; page: number; limit: number }): Promise<TablePage<PersonListItem>>
   get(id: string): Promise<PersonDetail>
-  create(input: PersonPatchInput & { displayName: string }): Promise<PersonDetail>
+  create(input: PersonPatchInput & { displayName: string; id?: string }): Promise<PersonDetail>
   update(id: string, patch: PersonPatchInput): Promise<PersonDetail>
   link(
     id: string,
@@ -1356,6 +1364,38 @@ export interface BackupPort {
     /** Mark a restore point as undone by another. */
     markUndone(id: string, by: string): void
   }
+  /** The rows of the data tables of the export (`domain/workspace-data.ts`). */
+  data: {
+    /** Every row of the dataset of a table (its filter, columns and order). */
+    rows(table: string): DataRow[]
+    /** Write rows: `ignore` adds the missing ones, `replace` also updates the ones that are here. */
+    put(
+      table: string,
+      rows: readonly DataRow[],
+      mode: 'ignore' | 'replace',
+    ): { added: number; updated: number }
+    /** Delete the rows that match by key; returns how many. */
+    remove(table: string, rows: readonly DataRow[]): number
+    /** Row count of every table of the live database. */
+    counts(): Record<string, number>
+  }
+  /** Restore of the whole database: staged, swapped in at the next start (`infra/backup/database-restore.ts`). */
+  database: {
+    /** The live database file; undefined for an in-memory database. */
+    readonly file: string | undefined
+    /** Row counts of every table of a backup's database copy. */
+    counts(backupId: string): Record<string, number> | undefined
+    /** Verify the copy of a backup and stage it for the next start; throws a readable `DomainError`. */
+    stage(backupId: string, info: PendingDatabaseRestore): void
+    /** The restore that waits for the restart, if any. */
+    pending(): PendingDatabaseRestore | undefined
+    /** Drop the staged restore. */
+    cancel(): void
+    /** What the last start did with a staged restore. */
+    lastResult():
+      | { ok: boolean; at: number; backupId: string; restorePointId: string; error: string | null }
+      | undefined
+  }
   /** Newest first. */
   list(): BackupRecord[]
   get(id: string): BackupRecord | undefined
@@ -1371,12 +1411,30 @@ export interface BackupPort {
   restore(id: string, scope: string, mode: RestoreMode): Promise<RestoreResult | undefined>
 }
 
+/** A restore of the whole database that waits for the restart of the server. */
+export interface PendingDatabaseRestore {
+  backupId: string
+  safetyBackupId: string
+  restorePointId: string
+  stagedAt: number
+}
+
+/** Restarts the process so a staged database restore is applied (the process manager starts it again). */
+export interface Lifecycle {
+  restart(): void
+}
+
 /**
  * The stored secrets (provider keys, connection credentials, OAuth client credentials) as the
  * workspace export carries them, encrypted by the export itself. Plain values live in memory only
  * while an export or a restore runs; nothing here logs them.
  */
 export interface SecretsPort {
+  /**
+   * The stored rows of the connections that are not built in, WITHOUT their `settings` (which hold
+   * the secret fields): what the zip needs to create a connection before its secrets come back.
+   */
+  connectionRows(): Promise<Array<{ id: string; profile: Record<string, unknown> }>>
   /** Every stored secret, plain, grouped as `SecretRecord` (a connection with its credentials). */
   list(): Promise<SecretRecord[]>
   /** Write a record back under its own ids (overwrites what is stored there). */
@@ -1385,12 +1443,26 @@ export interface SecretsPort {
   changed(): Promise<void>
 }
 
+/** What Settings > Storage reads and does: the scan of the data directory and the maintenance actions. */
+export interface StoragePort {
+  /** The scan, reused for 60 s (`refresh` forces a new one). */
+  report(options?: { refresh?: boolean }): Promise<StorageReport>
+  /** The data volume alone (cheap, never cached): the low-disk alarm reads it. */
+  volume(): (VolumeInfo & { path: string }) | null
+  /** One maintenance action; throws a `DomainError` when it must not run. */
+  run(action: StorageAction, options?: { days?: number }): Promise<StorageActionResult>
+}
+
 export interface Deps {
   agents: AgentRepo
+  /** The storage scan and maintenance; absent for an in-memory database. */
+  storage?: StoragePort
   /** Snapshots and restore; absent for an in-memory database without `TEAM_BACKUP_DIR`. */
   backups?: BackupPort
   /** Secrets for the encrypted part of the workspace export; absent: exports never hold secrets. */
   secrets?: SecretsPort
+  /** Restarts the server after a whole-database restore was staged; absent: the owner restarts it. */
+  lifecycle?: Lifecycle
   persona: PersonaStore
   chat: ChatPort
   chatTools: ChatToolsPort

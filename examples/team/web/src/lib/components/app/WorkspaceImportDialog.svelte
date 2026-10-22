@@ -158,7 +158,7 @@
 		<Dialog.Header class="border-b border-border px-5 py-4">
 			<Dialog.Title>{undoOf ? 'Undo a restore point' : 'Import into this workspace'}</Dialog.Title>
 			<Dialog.Description>
-				From {label}. Nothing is written until you apply. Items that exist here and differ are kept as they are unless you choose to overwrite them, and an import never deletes unless you tick "remove what is not in the zip" for a section. Connections and reminders are shown for reading only; secrets come back only from an encrypted export, with its passphrase. A verified safety backup is taken first and recorded as a restore point.
+				From {label}. Nothing is written until you apply. Items that exist here and differ are kept as they are unless you choose to overwrite them, and an import never deletes unless you tick "remove what is not in the zip" for a section. Conversations are never ticked by default (they are large); secrets come back only from an encrypted export, with its passphrase. A verified safety backup is taken first and recorded as a restore point.
 			</Dialog.Description>
 		</Dialog.Header>
 		<div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">

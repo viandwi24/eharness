@@ -74,6 +74,8 @@ export interface AgentDef {
 
 /** Fields a user can set. */
 export interface AgentDraft {
+  /** A given id (a restore keeps ids); used only when no agent has it. */
+  id?: string | undefined
   slug?: string | undefined
   name: string
   role?: AgentRole | undefined

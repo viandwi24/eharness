@@ -21,6 +21,7 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import ModelPicker from '#lib/components/app/ModelPicker.svelte';
 	import BackupsSettings from '#lib/components/app/BackupsSettings.svelte';
+	import StorageSettings from '#lib/components/app/StorageSettings.svelte';
 	import ProvidersSettings from '#lib/components/app/ProvidersSettings.svelte';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
@@ -36,6 +37,7 @@
 	import TimerIcon from 'phosphor-svelte/lib/Timer';
 	import DatabaseIcon from 'phosphor-svelte/lib/Database';
 	import ArchiveIcon from 'phosphor-svelte/lib/Archive';
+	import HardDrivesIcon from 'phosphor-svelte/lib/HardDrives';
 	import { isTimezone, timezoneOptions } from '#lib/heartbeat/model.js';
 	import { applyTeamZone } from '#lib/stores/team-zone.svelte.js';
 	import { formatDateTime } from '#lib/time.js';
@@ -53,6 +55,7 @@
 		{ id: 'limits', label: 'Limits', icon: TimerIcon },
 		{ id: 'data', label: 'Data retention', icon: DatabaseIcon },
 		{ id: 'backups', label: 'Backups', icon: ArchiveIcon },
+		{ id: 'storage', label: 'Storage', icon: HardDrivesIcon },
 		{ id: 'usage', label: 'Usage', icon: ChartBarIcon },
 		{ id: 'rules', label: 'Saved rules', icon: ShieldCheckIcon },
 		{ id: 'connection', label: 'Connection', icon: PlugsConnectedIcon }
@@ -504,6 +507,8 @@
 					</form>
 				{:else if section === 'backups'}
 					<BackupsSettings />
+				{:else if section === 'storage'}
+					<StorageSettings />
 				{:else if section === 'usage'}
 					<Card.Root>
 						<Card.Header>

@@ -138,7 +138,10 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     slug = draft.slug
   }
   const now = deps.clock.now()
-  const id = deps.ids.next()
+  const id =
+    draft.id !== undefined && draft.id !== '' && deps.agents.get(draft.id) === undefined
+      ? draft.id
+      : deps.ids.next()
   const def: AgentDef = {
     id,
     workspaceId: deps.workspaceId,
