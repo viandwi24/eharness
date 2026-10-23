@@ -101,6 +101,29 @@ describe('owner delivery', () => {
     expect(sent?.conversationId).toBe('dm1')
   })
 
+  test('an owner the account cannot message is skipped, and the note is raised once a day', async () => {
+    const { server, mock } = await setup([{ text: 'unused' }])
+    await knowAsOwner(server, mock)
+    ;(mock as { canDirectMessage?: (id: string) => Promise<boolean> }).canDirectMessage =
+      async () => false
+    const before = mock.sent.length
+    expect(await server.channels.notifyOwners('Needs attention: disk full')).toBe('unavailable')
+    expect(await server.channels.notifyOwners('Needs attention: disk full again')).toBe(
+      'unavailable',
+    )
+    await sleep(100)
+    expect(mock.sent.length).toBe(before)
+    const notes = server.deps.notifications
+      .list({ open: true, limit: 20 })
+      .filter((n) => n.title.includes('cannot reach'))
+    expect(notes).toHaveLength(1)
+    expect(notes[0]?.body).toContain('ask them to send one message to the account first')
+    // once the account does have a conversation, the alarm goes out
+    ;(mock as { canDirectMessage?: (id: string) => Promise<boolean> }).canDirectMessage =
+      async () => true
+    expect(await server.channels.notifyOwners('Needs attention: back')).toBe('sent')
+  })
+
   test('an alarm raised after the owner is known reaches their chat, not the bell', async () => {
     const { server, mock } = await setup([{ text: 'unused' }])
     await knowAsOwner(server, mock)

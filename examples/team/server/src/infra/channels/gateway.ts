@@ -1755,6 +1755,20 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           identities.ofPerson(connectionId, person.id)
         if (who === undefined) continue
         try {
+          // an account that never starts a conversation cannot reach someone it has no chat with:
+          // queue nothing that will certainly fail, and say so once a day
+          if (
+            adapter.canDirectMessage !== undefined &&
+            !(await adapter.canDirectMessage(who.nativeId))
+          ) {
+            deps.notify?.({
+              key: `alarm-unreachable:${person.id}:${connectionId}:${new Date(now()).toISOString().slice(0, 10)}`,
+              title: `Alarms cannot reach ${person.displayName}`,
+              body: `Alarms cannot reach ${person.displayName} on ${connectionId}: ask them to send one message to the account first.`,
+              agentId: config.agentId,
+            })
+            continue
+          }
           const node = directNodeOf(connectionId, adapter, who, person.displayName)
           const scope = scopeOf(node)
           if (scope === undefined) continue

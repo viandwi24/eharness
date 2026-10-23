@@ -108,3 +108,22 @@ backup tooling. Library uploads are rows in the same database, there is no objec
 `GET /health` needs no token. Library warnings (`onWarning`) and errors go to stdout as JSON-ish
 log lines; ship them with your usual collector. After a crash, `reconcile()` at boot repairs parked
 waits and task rows; check `GET /approvals` for work that is waiting for a person.
+
+## Channel delivery and the sending breaker
+
+Every send to a chat platform goes through one outbound queue per connection. It pauses sending for
+the whole connection (the breaker, default cooldown 5 minutes, then one attempt is let through and
+a failure pauses it again; a person can reset it on the Channels page) only for account or
+transport problems: a flood storm, `PEER_FLOOD`, a lost session, or failures of several different
+messages in a row (network, timeouts, unknown errors). Retries of one message count once.
+
+Request and content errors fail that one message only and never pause the connection: every
+`PHOTO_*`, `MEDIA_*`, `FILE_*`, `IMAGE_*`, `WEBPAGE_*` error and any `*_INVALID`, `*_EMPTY`,
+`*_TOO_LONG`, `*_TOO_BIG` (for example `PHOTO_EXT_INVALID`, `ENTITY_BOUNDS_INVALID`). The model
+sees a readable sentence. On a Telegram user account only jpeg, png and webp go as photos, every
+other file type goes as a document, and a refused photo is retried once as a document.
+
+System alarms go to every owner by direct message. A user account never starts a conversation, so
+an owner it has no chat with is skipped (nothing is queued that will certainly fail) and the bell
+shows once per day: "Alarms cannot reach <name> on <connection>: ask them to send one message to
+the account first."

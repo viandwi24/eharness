@@ -474,6 +474,12 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     return { chat, topic: Number.isFinite(topic) && topic !== 0 ? topic : undefined }
   }
 
+  /** The account has a conversation with this person (the dialog list, read again once if it is not there). */
+  async function hasConversation(chat: string): Promise<boolean> {
+    if ((await dialogs()).some((d) => d.id === chat)) return true
+    return (await dialogs(true)).some((d) => d.id === chat)
+  }
+
   async function guardSend(node: ChannelNode): Promise<void> {
     const chat = targetOf(node).chat
     const blocked = options.blocked?.()
@@ -495,9 +501,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
       )
     }
     if (node.kind === 'direct') {
-      let known = (await dialogs()).some((d) => d.id === chat)
-      if (!known) known = (await dialogs(true)).some((d) => d.id === chat)
-      if (!known) {
+      if (!(await hasConversation(chat))) {
         throw new ChannelError(
           'invalid',
           'this account has no conversation with that person, and it never starts one (no cold messages): ask them to write to the account first',
@@ -743,6 +747,14 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     },
     async fetchAttachment(node, messageNativeId) {
       return guarded(node, () => client.download(targetOf(node).chat, Number(messageNativeId)))
+    },
+    async canDirectMessage(identityNativeId) {
+      try {
+        return await hasConversation(identityNativeId)
+      } catch {
+        // the dialog list could not be read: do not claim there is none
+        return true
+      }
     },
     openDirect: (identityNativeId) => ({
       nativeId: identityNativeId,

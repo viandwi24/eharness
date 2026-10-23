@@ -132,6 +132,45 @@ const INVALID_DETAIL: Array<[string, string]> = [
   ],
 ]
 
+/**
+ * Request and content errors: the one message (or file) is wrong, the account is fine. They fail
+ * that message only and never count toward the outbound breaker. The auth-lost codes are
+ * classified before this runs.
+ */
+const CONTENT_PREFIXES = ['PHOTO_', 'MEDIA_', 'FILE_', 'IMAGE_', 'WEBPAGE_']
+const CONTENT_SUFFIXES = ['_INVALID', '_EMPTY', '_TOO_LONG', '_TOO_BIG']
+
+/** The RPC code at the start of a text (`PHOTO_EXT_INVALID`), when the text is one. */
+const rpcCodeOf = (upper: string): string | undefined =>
+  /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![A-Za-z0-9_])/.exec(upper)?.[1]
+
+function contentError(upper: string): { text: string; detail: string } | undefined {
+  const code = rpcCodeOf(upper)
+  if (code === undefined) return undefined
+  if (
+    !CONTENT_PREFIXES.some((p) => code.startsWith(p)) &&
+    !CONTENT_SUFFIXES.some((s) => code.endsWith(s))
+  ) {
+    return undefined
+  }
+  if (code.startsWith('PHOTO_') || code === 'IMAGE_PROCESS_FAILED') {
+    return {
+      text: code,
+      detail: `Telegram does not accept this file as a photo (${code}). Send it as a document instead.`,
+    }
+  }
+  if (code.startsWith('FILE_') || code.startsWith('MEDIA_') || code.startsWith('IMAGE_')) {
+    return {
+      text: code,
+      detail: `Telegram does not accept this file (${code}): it may be empty, too big or damaged. The message was not sent.`,
+    }
+  }
+  return {
+    text: code,
+    detail: `Telegram did not accept this message (${code}); it was not sent. Check its text and attachments.`,
+  }
+}
+
 /** The sentence for a chat or person the account has no access data for (mtcute's peer cache). */
 export function unknownPeerDetail(text: string): string {
   const id = /Peer (-?\d+)/i.exec(text)?.[1]
@@ -171,6 +210,8 @@ export function classifyError(error: unknown): TgErrorKind {
     const detail = INVALID_DETAIL.find(([c]) => upper.startsWith(c))?.[1]
     return { kind: 'invalid', text: upper, ...(detail === undefined ? {} : { detail }) }
   }
+  const content = contentError(upper)
+  if (content !== undefined) return { kind: 'invalid', ...content }
   return { kind: 'transient', text: text.slice(0, 200) }
 }
 

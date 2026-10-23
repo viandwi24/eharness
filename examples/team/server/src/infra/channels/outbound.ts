@@ -109,6 +109,16 @@ export function createOutbound(options: OutboundOptions): Outbound {
     const { connectionId } = target
     const chatKey = `${connectionId}\n${target.conversationId}`
     let attempt = 0
+    // retries of one operation count once: the breaker is about the connection failing for
+    // different messages in a row, never about one message that keeps failing
+    let counted = false
+    const countFailure = (reason: string): void => {
+      if (counted) return
+      counted = true
+      const n = (failures.get(connectionId) ?? 0) + 1
+      failures.set(connectionId, n)
+      if (n >= options.limitsOf(connectionId).breakerFailures) trip(connectionId, reason)
+    }
     for (;;) {
       const limits = options.limitsOf(connectionId)
       const b = open.get(connectionId)
@@ -153,13 +163,12 @@ export function createOutbound(options: OutboundOptions): Outbound {
       } catch (error) {
         if (!(error instanceof ChannelError)) {
           // an adapter bug or a network failure: treat as transient
-          const n = (failures.get(connectionId) ?? 0) + 1
-          failures.set(connectionId, n)
-          if (n >= limits.breakerFailures) trip(connectionId, String(error))
+          countFailure(String(error))
           if (attempt >= limits.maxAttempts) throw error
           await sleep(Math.min(1000 * attempt, 5000))
           continue
         }
+        // a request or content error fails this one message: it is no sign the connection is unwell
         if (error.kind === 'invalid') throw error
         if (error.kind === 'fatal') {
           trip(connectionId, error.message)
@@ -178,9 +187,7 @@ export function createOutbound(options: OutboundOptions): Outbound {
           if ((error as { local?: boolean }).local === true) await sleep(Math.ceil(ms))
           continue
         }
-        const n = (failures.get(connectionId) ?? 0) + 1
-        failures.set(connectionId, n)
-        if (n >= limits.breakerFailures) trip(connectionId, error.message)
+        countFailure(error.message)
         if (attempt >= limits.maxAttempts) throw error
         await sleep(Math.min(250 * 2 ** (attempt - 1), 5000))
       }

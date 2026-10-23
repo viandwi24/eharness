@@ -434,6 +434,11 @@ export interface ChannelAdapter {
    */
   openDirect?(identityNativeId: string): NodeInfo
   /**
+   * Whether a message to this identity can be sent at all right now (a user account never starts a
+   * conversation: it only writes where one exists). Absent = assume yes. A `false` is certain.
+   */
+  canDirectMessage?(identityNativeId: string): Promise<boolean>
+  /**
    * The native id of a child of `parent` named by a short key (a topic number). Lets a tool say
    * "this chat, topic 6" without knowing how ids are composed.
    */

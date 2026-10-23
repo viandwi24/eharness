@@ -32,6 +32,7 @@ import type {
   TgUser,
   TgUserClient,
 } from './client.ts'
+import { rpcText } from './errors.ts'
 
 const userOf = (u: User): TgUser => ({
   id: String(u.id),
@@ -295,6 +296,73 @@ function adminEventOf(e: ChatEvent): TgAdminEvent {
 export interface MtcuteOptions {
   /** Device name Telegram shows in the account's active sessions (so staff recognise it). */
   deviceModel?: string
+}
+
+/** Image types Telegram accepts as a photo. Everything else (gif, svg, bmp, tiff, heic, ...) goes as a document. */
+const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+/** A rejection of the image as a photo: the same bytes are accepted as a document. */
+const isPhotoRejection = (error: unknown): boolean =>
+  /^(?:PHOTO_|IMAGE_PROCESS_FAILED)/.test(rpcText(error).toUpperCase())
+
+/** The two send calls `sendFilesWith` needs (a fake in tests). */
+export interface MediaSender {
+  sendMedia(chatId: number, media: never, params?: never): Promise<{ id: number }>
+  sendMediaGroup(chatId: number, media: never, params?: never): Promise<Array<{ id: number }>>
+}
+
+/**
+ * Send files as photos (jpeg, png, webp) or documents (all else). If Telegram refuses a photo
+ * (`PHOTO_EXT_INVALID`, `PHOTO_INVALID_DIMENSIONS`, `IMAGE_PROCESS_FAILED`), the send is retried
+ * once with every file as a document.
+ */
+export async function sendFilesWith(
+  tg: MediaSender,
+  chatId: string,
+  files: ReadonlyArray<{ name: string; mediaType: string; bytes: Uint8Array }>,
+  caption: string | undefined,
+  o: { replyTo?: number; topicId?: number; silent?: boolean; key?: string } | undefined,
+  randomIdOf: (key: string) => unknown,
+): Promise<{ id: number }> {
+  const common = {
+    ...(o?.replyTo === undefined ? {} : { replyTo: o.replyTo }),
+    ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
+    ...(o?.silent === true ? { silent: true } : {}),
+  }
+  const build = (asPhoto: boolean) =>
+    files.map((f) => ({
+      type: asPhoto && PHOTO_TYPES.has(f.mediaType) ? ('photo' as const) : ('document' as const),
+      file: f.bytes,
+      fileName: f.name,
+      fileMime: f.mediaType,
+    }))
+  const attempt = async (media: ReturnType<typeof build>): Promise<{ id: number }> => {
+    if (media.length === 1) {
+      const m = await tg.sendMedia(
+        Number(chatId),
+        { ...(media[0] as (typeof media)[0]), caption } as never,
+        {
+          ...common,
+          ...(o?.key === undefined ? {} : { randomId: randomIdOf(o.key) }),
+        } as never,
+      )
+      return { id: m.id }
+    }
+    const first = { ...(media[0] as (typeof media)[0]), caption }
+    const list = await tg.sendMediaGroup(
+      Number(chatId),
+      [first, ...media.slice(1)] as never,
+      common as never,
+    )
+    return { id: (list[0] as { id: number }).id }
+  }
+  const media = build(true)
+  try {
+    return await attempt(media)
+  } catch (error) {
+    if (!media.some((m) => m.type === 'photo') || !isPhotoRejection(error)) throw error
+    return attempt(build(false))
+  }
 }
 
 export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
@@ -679,31 +747,7 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         return { id: m.id }
       },
       async sendFiles(chatId, files, caption, o) {
-        const common = {
-          ...(o?.replyTo === undefined ? {} : { replyTo: o.replyTo }),
-          ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
-          ...(o?.silent === true ? { silent: true } : {}),
-        }
-        const media = files.map((f) => ({
-          type: f.mediaType.startsWith('image/') ? ('photo' as const) : ('document' as const),
-          file: f.bytes,
-          fileName: f.name,
-          fileMime: f.mediaType,
-        }))
-        if (media.length === 1) {
-          const m = await tg.sendMedia(
-            Number(chatId),
-            { ...(media[0] as (typeof media)[0]), caption },
-            {
-              ...common,
-              ...(o?.key === undefined ? {} : { randomId: randomIdOf(o.key) }),
-            },
-          )
-          return { id: m.id }
-        }
-        const first = { ...(media[0] as (typeof media)[0]), caption }
-        const list = await tg.sendMediaGroup(Number(chatId), [first, ...media.slice(1)], common)
-        return { id: (list[0] as Message).id }
+        return sendFilesWith(tg, chatId, files, caption, o, randomIdOf)
       },
       async editText(chatId, id, text, html) {
         await tg.editMessage({
