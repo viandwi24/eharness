@@ -1,6 +1,7 @@
 /** Workspace settings use cases. */
 
 import { invalid } from '../domain/errors.ts'
+import { checkCompanyRoot } from '../domain/library-structure.ts'
 import { normalizeSelection } from '../domain/providers.ts'
 import {
   checkSettingsPatch,
@@ -8,7 +9,6 @@ import {
   toSettingsMode,
   type WorkspaceSettings,
 } from '../domain/settings.ts'
-import { checkCompanyRoot } from '../domain/library-structure.ts'
 import { checkWorksRoot } from '../domain/works-journal.ts'
 import { syncDigestRoutine } from './heartbeat.ts'
 import type { Deps } from './ports.ts'

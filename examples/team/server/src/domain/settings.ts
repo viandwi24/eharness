@@ -2,8 +2,8 @@
 import { PERMISSION_MODES, type PermissionMode, TOOL_ACCESS, type ToolAccess } from './agents.ts'
 import { checkBackupPatch } from './backups.ts'
 import { invalid } from './errors.ts'
-import { EH_MODE, type TeamMode, teamModeOf } from './modes.ts'
 import { checkCompanyRoot } from './library-structure.ts'
+import { EH_MODE, type TeamMode, teamModeOf } from './modes.ts'
 import { checkWorksRoot, WORKS_ROOT_DEFAULT } from './works-journal.ts'
 
 /**

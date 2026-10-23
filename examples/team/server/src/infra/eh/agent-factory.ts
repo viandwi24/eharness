@@ -112,6 +112,7 @@ import {
   type ArtifactService,
   createArtifactsHook,
 } from '../artifacts/index.ts'
+import { createShareLinkFixer, shareLinks } from '../artifacts/share-links.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
 import {
   CHANNEL_TOOLS,
@@ -137,7 +138,6 @@ import { createProgramGate } from './gates/program-gate.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { memoryDiscipline } from './memory-discipline-plugin.ts'
-import { createShareLinkFixer, shareLinks } from '../artifacts/share-links.ts'
 import { movedPaths } from './moved-paths-plugin.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import { type PersonaIntake, persona } from './persona-plugin.ts'

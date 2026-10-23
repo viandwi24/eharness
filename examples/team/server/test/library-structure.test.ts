@@ -4,7 +4,6 @@
  * with no loss, backup first and abort on failure, undo) and the memory discipline guard.
  */
 
-import { checkSettingsPatch } from '../src/domain/settings.ts'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -31,9 +30,8 @@ import { applyImport, listRestorePoints, previewUndo } from '../src/app/workspac
 import {
   buildReorgPlan,
   checkCompanyRoot,
-  libraryFolders,
-  teamMemoryProtocol,
   isDatedReportName,
+  libraryFolders,
   memoryReportRefusal,
   notesFromFile,
   notesToFile,
@@ -41,8 +39,10 @@ import {
   type ReorgRow,
   type ReorgSourceFile,
   slugify,
+  teamMemoryProtocol,
 } from '../src/domain/library-structure.ts'
 import { programRules, programRunPrompt } from '../src/domain/programs.ts'
+import { checkSettingsPatch } from '../src/domain/settings.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
