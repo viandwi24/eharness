@@ -166,6 +166,10 @@ interface Conn {
   client: McpClient | undefined
   connecting: Promise<McpClient> | undefined
   closed: boolean
+  /** Tool calls currently running on this connection's client(s). */
+  active: number
+  /** Dropped clients that could not close yet because a call was still running on them. */
+  lingering: Set<McpClient>
   /** The resolved transport is a remote (`http` / `sse`) config. */
   remote?: boolean
 }
@@ -256,6 +260,14 @@ function validate(opts: McpServerSourceOptions): void {
 
 const RISKS: ReadonlySet<unknown> = new Set(['read', 'write', 'destructive', 'external'])
 
+/** `@ai-sdk/mcp` rejects with this when the request was never sent: the client (or transport) is closed. */
+function isClosedClientError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return /Attempted to send a request from a closed client|MCP SSE Transport Error: Not connected/.test(
+    error.message,
+  )
+}
+
 const internalsOf = new WeakMap<ToolSource, McpSourceInternals>()
 
 /** Internals of a source created by `mcpServerSource()` (`undefined` for other sources). */
@@ -316,10 +328,15 @@ export function createMcpServer(
       await conn.connecting?.catch(() => undefined)
       const client = conn.client
       conn.client = undefined
-      try {
-        await client?.close()
-      } catch (error) {
-        conn.ctx.log.warn(`eharness: closing MCP client '${name}' failed`, { error })
+      const all = [...conn.lingering]
+      conn.lingering.clear()
+      if (client !== undefined) all.push(client)
+      for (const c of all) {
+        try {
+          await c.close()
+        } catch (error) {
+          conn.ctx.log.warn(`eharness: closing MCP client '${name}' failed`, { error })
+        }
       }
     })()
     closings.add(closing)
@@ -334,6 +351,8 @@ export function createMcpServer(
       client: undefined,
       connecting: undefined,
       closed: false,
+      active: 0,
+      lingering: new Set(),
     }
     agentIds.add(ctx.agent.id)
     for (const other of conns.values()) {
@@ -388,8 +407,17 @@ export function createMcpServer(
     return connecting
   }
 
-  async function serverTools(conn: Conn): Promise<ToolSet> {
-    const client = await connect(conn)
+  /**
+   * Drop a broken client: the next connect makes a new one. A client that still has a call running
+   * is closed only when the last call ends (closing it would reject that call mid-request).
+   */
+  function dropClient(conn: Conn, client: McpClient): void {
+    if (conn.client === client) conn.client = undefined
+    if (conn.active > 0 && !conn.closed) conn.lingering.add(client)
+    else void client.close().catch(() => undefined)
+  }
+
+  async function listClientTools(conn: Conn, client: McpClient): Promise<ToolSet> {
     try {
       // `@ai-sdk/mcp` types its tools with its own `inputSchema` generics; at runtime they are AI SDK
       // tools, so the plugin treats them as a `ToolSet`
@@ -400,10 +428,14 @@ export function createMcpServer(
       )) as unknown as ToolSet
     } catch (error) {
       // a broken connection: drop the client so the next turn reconnects
-      if (conn.client === client) conn.client = undefined
-      await client.close().catch(() => undefined)
+      dropClient(conn, client)
       throw error
     }
+  }
+
+  async function serverTools(conn: Conn): Promise<{ client: McpClient; tools: ToolSet }> {
+    const client = await connect(conn)
+    return { client, tools: await listClientTools(conn, client) }
   }
 
   async function pinned(ctx: HarnessContext, tools: ToolSet): Promise<Set<string>> {
@@ -441,6 +473,74 @@ export function createMcpServer(
       )
     }
     return undefined
+  }
+
+  /**
+   * Make a tool call survive a client that our own code closed while the turn was running (session
+   * rebuilt, failed listing elsewhere): a call that fails with the closed-client error never reached
+   * the server, so it is retried once on a reopened client. Any other error (including a
+   * `Connection closed` that rejected an in-flight request) is returned as is, so a write that may
+   * have reached the server is never executed twice. A closed or aborted session keeps the error.
+   */
+  function reconnecting(conn: Conn, client: McpClient, serverName: string, tool: Tool): Tool {
+    const first = tool.execute
+    if (first === undefined) return tool
+    type Execute = NonNullable<Tool['execute']>
+    let current: { client: McpClient; execute: Execute } = { client, execute: first }
+    return withToolExecute(tool, async (...args: Parameters<Execute>) => {
+      const [, options] = args
+      conn.active++
+      try {
+        const used = current
+        try {
+          return await used.execute(...args)
+        } catch (error) {
+          const aborted = conn.closed || conn.ctx.signal.aborted || options?.abortSignal?.aborted
+          if (aborted === true || !isClosedClientError(error)) throw error
+          if (current === used) {
+            // still the broken client: drop it and reconnect (concurrent calls share one connect)
+            dropClient(conn, used.client)
+            conn.ctx.log.warn(
+              `eharness: MCP client '${name}' was closed during a turn; reopening it and retrying '${serverName}' once`,
+              { error },
+            )
+          }
+          let next: { client: McpClient; execute: Execute }
+          try {
+            if (current !== used) next = current
+            else {
+              const reopened = await connect(conn)
+              const tools = await listClientTools(conn, reopened)
+              const fresh = tools[serverName]
+              if (fresh?.execute === undefined) {
+                throw new Error(`the tool '${serverName}' is no longer offered by the server`)
+              }
+              if (
+                (opts.pinDefinitions ?? conn.remote === true) &&
+                (await pinned(conn.ctx, tools)).has(serverName)
+              ) {
+                throw new Error(`the definition of '${serverName}' changed since it was pinned`)
+              }
+              next = { client: reopened, execute: fresh.execute }
+              current = next
+            }
+          } catch (reopenError) {
+            // plain-error: reaches the model as a tool error (framed by the caller)
+            throw new Error(
+              `MCP server '${name}': the connection was lost and could not be reopened (${errorText(reopenError)}).`,
+              { cause: reopenError },
+            )
+          }
+          return await next.execute(...args)
+        }
+      } finally {
+        conn.active--
+        if (conn.active === 0 && conn.lingering.size > 0) {
+          for (const c of conn.lingering) void c.close().catch(() => undefined)
+          conn.lingering.clear()
+        }
+      }
+    })
   }
 
   /** Wrap the text parts of the tool's model output in an untrusted-content frame. */
@@ -530,7 +630,7 @@ export function createMcpServer(
     },
     async list(ctx) {
       const conn = register(ctx)
-      const all = await serverTools(conn)
+      const { client, tools: all } = await serverTools(conn)
       const pin = opts.pinDefinitions ?? conn.remote === true
       const blocked = pin ? await pinned(ctx, all) : new Set<string>()
       const exposed: Array<[string, Tool]> = []
@@ -555,7 +655,7 @@ export function createMcpServer(
       const out: ToolSet = {}
       for (const [serverName, original] of exposed) {
         const risk = riskFor(ctx, serverName, original)
-        let tool = original
+        let tool = reconnecting(conn, client, serverName, original)
         if (risk !== undefined) {
           const metadata = (original as { metadata?: Record<string, unknown> }).metadata
           tool = withToolFields(tool, { metadata: { ...metadata, risk } })

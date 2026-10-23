@@ -166,6 +166,18 @@ Lifecycle:
   `error-text`, is wrapped in the same frame (aborts are not). The stored UI tool output stays the raw MCP
   result; only the model-visible projection is framed. `mcpServerSource` exposes tool calls only (no
   resource reads).
+- Closed client during a turn: the tools of a turn are bound to the session's MCP client. If that
+  client is closed by our own code while the turn runs (agent rebuilt, a failed listing elsewhere)
+  a call fails with `Attempted to send a request from a closed client` (or the SSE transport's
+  `Not connected`); the request was never sent, so the tool wrapper drops that client, reconnects
+  (sharing the in-flight connect, within `timeoutMs`), lists the tools again, re-checks the pin of
+  that tool and retries the call **once** with the same input and options, logging one
+  `ctx.log.warn`. Later calls of the turn use the reopened client. No other error is retried: a
+  `Connection closed` that rejected an in-flight request may have reached the server, so a write is
+  never executed twice. When the session is closed or the call aborted, the error is kept; when
+  reconnecting fails the tool error says the connection was lost and could not be reopened. A
+  client dropped after a failed listing is not closed while a call is still running on it (it is
+  closed when the last call ends or with the session).
 - Connection failures and timeouts (`timeoutMs`, `EH_MCP_TIMEOUT`; a client that connects too late
   is closed) → `W_TOOL_SOURCE_FAILED`, zero tools, retried after the source backoff (spec 02 §3.2)
   regardless of `refresh`.

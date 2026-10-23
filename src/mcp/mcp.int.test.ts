@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import * as aiSdkMcp from '@ai-sdk/mcp'
+import { tool } from 'ai'
+import { z } from 'zod/v4'
 import {
   defineHarnessAgent,
   definePlugin,
@@ -788,6 +790,87 @@ describe('mcpServerSource: annotations and risk (spec 11 §3.2)', () => {
     ])
     expect(warned.some((m) => m.includes("risk function failed for 'wipe'"))).toBe(true)
     expect(warned.some((m) => m.includes("invalid risk for 'both'"))).toBe(true)
+    await agent.close()
+  })
+})
+
+describe('mcpServerSource: a client closed during a turn', () => {
+  const kill = (run: () => void | Promise<void>) =>
+    tool({
+      description: 'Close.',
+      inputSchema: z.object({}),
+      execute: async () => {
+        await run()
+        return 'ok'
+      },
+    })
+
+  test('a call on a closed client reconnects and retries once; the server runs it once', async () => {
+    const server = fakeMcpServer(tools())
+    const { agent, model } = setup(
+      [
+        { toolCalls: [{ toolName: 'gh_search_issues', input: { q: 'one' } }] },
+        { toolCalls: [{ toolName: 'kill', input: {} }] },
+        { toolCalls: [{ toolName: 'gh_search_issues', input: { q: 'two' } }] },
+        { toolCalls: [{ toolName: 'gh_search_issues', input: { q: 'three' } }] },
+        { text: 'done' },
+      ],
+      {
+        mcp: [gh(server)],
+        tools: { kill: kill(() => server.transports[0]?.close()) },
+      },
+    )
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('complete')
+    expect(server.calls).toEqual(['search_issues', 'search_issues', 'search_issues'])
+    expect(server.transports.length).toBe(2)
+    const prompt = JSON.stringify(model.prompts.at(-1))
+    expect(prompt).toContain('found: two')
+    expect(prompt).toContain('found: three')
+    expect(prompt).toContain('<untrusted-content')
+    expect(prompt).not.toContain('closed client')
+    await agent.close()
+  })
+
+  test('a mid-request Connection closed is not retried', async () => {
+    const server = fakeMcpServer([
+      {
+        name: 'write',
+        call: async () => {
+          await server.transports[0]?.close()
+          return 'never delivered'
+        },
+      },
+    ])
+    const { agent, model } = setup(
+      [{ toolCalls: [{ toolName: 'gh_write', input: {} }] }, { text: 'done' }],
+      { mcp: [gh(server)] },
+    )
+    await agent.session('s1').send('go').result
+    expect(server.calls).toEqual(['write'])
+    expect(server.transports.length).toBe(1)
+    expect(JSON.stringify(model.prompts[1])).toContain('Connection closed')
+    await agent.close()
+  })
+
+  test('a closed session does not reconnect', async () => {
+    const server = fakeMcpServer(tools())
+    const source = gh(server)
+    const { agent } = setup([{ text: 'a' }], { mcp: [source] })
+    await agent.session('s1').send('x').result
+    const ctx = mcpSourceInternals(source)?.contexts('s1')[0]
+    expect(ctx).toBeDefined()
+    const listed = await source.list?.(ctx as never)
+    const gone = listed?.gh_search_issues as unknown as {
+      execute: (i: unknown, o: unknown) => Promise<unknown>
+    }
+    const execute = gone.execute
+    await agent.closeSession('s1')
+    await expect(execute({ q: 'x' }, { toolCallId: 't', messages: [] })).rejects.toThrow(
+      /closed client|Not connected|closed/,
+    )
+    expect(server.transports.length).toBe(1)
+    expect(server.calls).toEqual([])
     await agent.close()
   })
 })
