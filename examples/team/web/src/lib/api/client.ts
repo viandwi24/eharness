@@ -194,3 +194,4 @@ export type ModelCallStatus = ModelCallSummary['status'];
 
 export type Thread = components['schemas']['Thread'];
 export type Notification = components['schemas']['Notification'];
+export type WorkspacePause = components['schemas']['WorkspacePause'];

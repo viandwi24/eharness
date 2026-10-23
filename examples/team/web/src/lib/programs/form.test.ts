@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	authoritySummary,
+	lastStatusText,
 	bodyFromForm,
 	checkFromForm,
 	parseOutputCap,
@@ -153,5 +154,13 @@ describe('program form', () => {
 		];
 		expect(warningsOf(warnings, 'authority.tools').map((w) => w.code)).toEqual(['tool-unavailable']);
 		expect(warningsOf(warnings, 'budget.perRunUsd', 'budget.perDayUsd').map((w) => w.code)).toEqual(['budget-below-minimum']);
+	});
+});
+
+describe('lastStatusText', () => {
+	test('a slot skipped by Pause all reads as workspace paused, other statuses are unchanged', () => {
+		expect(lastStatusText('skipped: paused')).toBe('skipped: workspace paused');
+		expect(lastStatusText('needs_action')).toBe('needs action');
+		expect(lastStatusText('succeeded')).toBe('succeeded');
 	});
 });

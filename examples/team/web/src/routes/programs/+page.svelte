@@ -20,7 +20,7 @@
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
-	import { authoritySummary, budgetSummary, programBadge, type Program } from '#lib/programs/form.js';
+	import { authoritySummary, budgetSummary, lastStatusText, programBadge, type Program } from '#lib/programs/form.js';
 	import { programAction } from '#lib/programs/actions.js';
 	import { describeSpec, relativeTime } from '#lib/routines/schedule.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -143,7 +143,7 @@
 									<Table.Cell class="hidden text-muted-foreground md:table-cell">
 										{#if p.trigger.kind === 'schedule'}
 											<div>{describeSpec(p.trigger.spec)}</div>
-											{@const when = `${p.status === 'active' && p.triggerState?.status === 'active' ? `next ${relativeTime(p.triggerState.nextFireAt)}` : 'not scheduled'}${p.triggerState?.lastFireAt ? `, last ${relativeTime(p.triggerState.lastFireAt)}${p.triggerState.lastStatus ? ` (${p.triggerState.lastStatus.replace('_', ' ')})` : ''}` : ''}`}
+											{@const when = `${p.status === 'active' && p.triggerState?.status === 'active' ? `next ${relativeTime(p.triggerState.nextFireAt)}` : 'not scheduled'}${p.triggerState?.lastFireAt ? `, last ${relativeTime(p.triggerState.lastFireAt)}${p.triggerState.lastStatus ? ` (${lastStatusText(p.triggerState.lastStatus)})` : ''}` : ''}`}
 											<div class="max-w-56 truncate text-xs" title={when}>{when}</div>
 										{:else}
 											When I run it

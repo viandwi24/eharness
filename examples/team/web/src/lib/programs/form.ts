@@ -264,6 +264,12 @@ export function checkFromForm(f: ProgramForm, agentId: string): ProgramCheck | u
 	return { agentId, brief: f.brief, authority, budget };
 }
 
+/** `lastStatus` of a schedule as a person reads it: a slot skipped by Pause all says so. */
+export function lastStatusText(status: string): string {
+	if (status === 'skipped: paused') return 'skipped: workspace paused';
+	return status.replace('_', ' ');
+}
+
 /** The warnings of one form field (`authority.tools`, `budget.perRunUsd`, ...). */
 export const warningsOf = (warnings: readonly ProgramWarning[], ...fields: string[]): ProgramWarning[] => warnings.filter((w) => fields.includes(w.field));
 

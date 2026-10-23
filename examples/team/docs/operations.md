@@ -62,6 +62,32 @@ What you gain: `LISTEN/NOTIFY` can replace polling for the inbox, the events fee
 Failover time of a killed instance is roughly `max(lock lease, staleMs)` for a turn that was
 streaming; parked delegations and pending approvals do not wait for anything.
 
+## Pause all
+
+One button (the pause icon of the rail, or Settings > General > Workspace activity) holds everything
+automatic, for a deploy or to watch without agents acting. It is a single gate stored in the
+database (the `workspace-pause` row of `settings`), read on every tick and decision by every
+instance, so it survives restarts and deploys. Nothing changes status: Resume restores exactly what
+was active, and anything paused one by one stays paused.
+
+- Held: scheduled slots of routines, programs, the heartbeat, the digest and reminders (recorded as
+  skipped with reason `paused`, never replayed), queued tasks (they stay queued and start on
+  Resume), automatic retries, a lost long-run continuation found by the reconcile pass, early
+  heartbeat wakes, and, with `holdChannels`, chat wakes (messages are received and kept as context,
+  not answered later).
+- Not held: the owner's web chat, "Run now", approvals and decisions answered by the owner,
+  backups, alarms, health and disk checks, pruning.
+- Running work finishes unless `stopRunning` is set, which aborts the running task sessions like the
+  Stop button.
+- A one-shot schedule (a reminder or routine that fires once) whose slot falls inside the pause is
+  not claimed or recorded while paused: it fires once, late, on the first tick after Resume (the
+  window of the last pause is kept so it is not skipped as missed). Recurring schedules skip their
+  slots as `paused` and do not replay.
+- The export never carries the paused state, so an imported workspace does not arrive paused.
+
+`GET /workspace/pause` (state and what is held), `POST /workspace/pause` (`note`, `holdChannels`
+default true, `stopRunning` default false; idempotent), `POST /workspace/resume`.
+
 ## Limits and cost
 
 Set `TEAM_BUDGET_USD` (or Settings): one ledger row shared by all instances. Delegations in flight

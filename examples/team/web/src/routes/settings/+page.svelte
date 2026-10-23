@@ -22,6 +22,7 @@
 	import ModelPicker from '#lib/components/app/ModelPicker.svelte';
 	import BackupsSettings from '#lib/components/app/BackupsSettings.svelte';
 	import StorageSettings from '#lib/components/app/StorageSettings.svelte';
+	import PauseSettings from '#lib/components/app/PauseSettings.svelte';
 	import ProvidersSettings from '#lib/components/app/ProvidersSettings.svelte';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
@@ -311,6 +312,7 @@
 				{#if section === 'providers'}
 					<ProvidersSettings />
 				{:else if section === 'general' || section === 'models' || section === 'limits' || section === 'data'}
+					{#if section === 'general'}<div class="mb-4"><PauseSettings /></div>{/if}
 					<form id="general" onsubmit={save} class="flex flex-col gap-4">
 						{#if section === 'general'}
 						<Card.Root>

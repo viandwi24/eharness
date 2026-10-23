@@ -74,7 +74,7 @@ export const DATASETS: readonly DatasetSpec[] = [
     section: 'settings',
     key: ['key'],
     where:
-      "key NOT IN ('workspace', 'digest:config', 'events-pruned-through') AND key NOT LIKE 'heartbeat:%:config'",
+      "key NOT IN ('workspace', 'digest:config', 'events-pruned-through', 'workspace-pause', 'workspace-pause-window') AND key NOT LIKE 'heartbeat:%:config'",
     order: 'key',
     label: ['key'],
   }),

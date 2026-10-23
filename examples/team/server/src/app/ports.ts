@@ -98,6 +98,7 @@ import type {
   ModelCallStats,
 } from '../domain/model-calls.ts'
 import type { AgentModeChoice, ModeSource, TeamMode } from '../domain/modes.ts'
+import type { WorkspacePause } from '../domain/pause.ts'
 import type { PersonaProposal, PersonaVersion, ProposalStatus } from '../domain/persona.ts'
 import type {
   AuthorityInspection,
@@ -937,6 +938,16 @@ export interface SettingsStore {
   patch(patch: SettingsPatch, now: number): WorkspaceSettings & { updatedAt: number }
 }
 
+/** The workspace pause gate (`infra/db/pause-repo.ts`, `domain/pause.ts`). */
+export interface PauseStore {
+  get(): WorkspacePause
+  set(state: WorkspacePause, now: number): void
+  /** Resume; remembers the window `[pausedAt, now]` for `lastWindow`. */
+  clear(now: number): void
+  /** The most recent finished pause: one-shot slots due inside it fire once after Resume. */
+  lastWindow(): { pausedAt: number; resumedAt: number } | null
+}
+
 export interface NewRoutine {
   id: string
   agentId: string
@@ -986,6 +997,10 @@ export interface RoutineStore {
   delete(id: string): boolean
   runs(routineId: string, limit: number): RoutineRun[]
   getRun(id: string): RoutineRun | undefined
+  /** Keys (`sys:...`) of the active system routines: heartbeats, the digest, reminders, order wakes. */
+  activeSystemKeys(): string[]
+  /** Runs recorded as skipped with this reason since `since` (ms). */
+  countSkipped(reason: string, since: number): number
 }
 
 /** Cron / interval maths (`infra/schedule.ts`, croner); pure functions of the clock they are given. */
@@ -1022,6 +1037,8 @@ export interface RoutineEngine {
   clearQueue(routine: Routine): Promise<number>
   /** Fire `routine` now (a manual run); it respects `overlap: 'skip'`. */
   runNow(routine: Routine): Promise<RoutineRun>
+  /** Run the scheduler once now (resume after Pause all). Absent on engines without a ticker. */
+  tick?(): Promise<unknown>
 }
 
 /**
@@ -1506,6 +1523,8 @@ export interface Deps {
   library: LibraryStore
   artifacts: ArtifactsPort
   settings: SettingsStore
+  /** Pause all: while paused nothing automatic starts (read per decision). */
+  pause: PauseStore
   providers: ProvidersPort
   connectors: ConnectorsPort
   channels: ChannelsPort

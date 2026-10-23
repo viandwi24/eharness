@@ -33,6 +33,7 @@ import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
 import { notificationRoutes } from './routes/notifications.ts'
+import { pauseRoutes } from './routes/pause.ts'
 import { peopleRoutes } from './routes/people.ts'
 import { personaRoutes } from './routes/persona.ts'
 import { programRoutes } from './routes/programs.ts'
@@ -419,6 +420,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', libraryRoutes(options.deps))
   app.route('/', artifactRoutes(options.deps))
   app.route('/', settingsRoutes(options.deps))
+  app.route('/', pauseRoutes(options.deps))
   app.route('/', backupRoutes(options.deps))
   app.route('/', storageRoutes(options.deps))
   app.route('/', usageRoutes(options.deps))

@@ -5823,6 +5823,165 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspace/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pause all: state
+         * @description Whether the workspace is paused and what a pause holds right now (active programs, routines, reminders, the heartbeat, the digest, queued tasks, running turns).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The state of the workspace pause */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspacePause"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Pause everything automatic
+         * @description One durable gate: scheduled slots are skipped (reason `paused`, never replayed), queued tasks stay queued, retries and early heartbeat wakes wait, and with `holdChannels` chat messages are kept without waking an agent. Nothing changes status, and the owner's chat, "Run now" and approvals keep working. Idempotent: pausing again updates the note and keeps `pausedAt`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkspacePauseRequest"];
+                };
+            };
+            responses: {
+                /** @description The state of the workspace pause */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspacePause"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume after Pause all
+         * @description Opens the gate: programs, routines, reminders and the heartbeat continue from their next slot (skipped slots are not replayed) and queued tasks start now.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The state of the workspace pause */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspacePause"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/backups": {
         parameters: {
             query?: never;
@@ -19654,6 +19813,34 @@ export interface components {
             backupTime?: string;
             backupKeepDaily?: number;
             backupKeepWeekly?: number;
+        };
+        WorkspacePause: {
+            paused: boolean;
+            /** @description When the pause began (ms); null = running. */
+            pausedAt: number | null;
+            pausedBy: string | null;
+            note: string | null;
+            /** @description Inbound chat messages are kept but do not wake an agent (they are not answered after Resume). */
+            holdChannels: boolean;
+            /** @description What is active now and would fire if the workspace ran. */
+            held: {
+                programs: number;
+                routines: number;
+                reminders: number;
+                heartbeat: boolean;
+                digest: boolean;
+                queuedTasks: number;
+                runningTurns: number;
+            };
+            /** @description Runs skipped with reason 'paused' since `pausedAt` (0 when not paused). */
+            skippedWhilePaused: number;
+        };
+        WorkspacePauseRequest: {
+            note?: string;
+            /** @description Default true. */
+            holdChannels?: boolean;
+            /** @description Stop agent runs that are running now (default false: they finish). */
+            stopRunning?: boolean;
         };
         BackupList: {
             /** @description `TEAM_BACKUP_DIR`, else a folder in the OS temporary directory (cleared on a container restart). */

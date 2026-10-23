@@ -204,6 +204,7 @@ import { sqliteHeartbeatStore } from './infra/db/heartbeat-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { sqliteNotificationStore } from './infra/db/notifications-repo.ts'
+import { sqlitePauseStore } from './infra/db/pause-repo.ts'
 import { sqlitePersonaStore } from './infra/db/persona-repo.ts'
 import { sqliteProgramMemory } from './infra/db/program-memory-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
@@ -496,6 +497,9 @@ export function compose(config: ServerConfig): Server {
   installJsonSchemaValidator()
   const conn = openDatabase(config.dbFile)
   const agents = drizzleAgentRepo(conn.db)
+  // Pause all: one durable gate, read from the database by everything that starts work on its own
+  const pauseStore = sqlitePauseStore(conn.sqlite)
+  const isPaused = (): boolean => pauseStore.get().pausedAt !== null
   // Workspace settings: every product knob lives here (Settings page), never in the environment.
   // The environment (read once, here) only supplies the INITIAL value: saved setting > env > built-in.
   const envOf = config.env ?? process.env
@@ -911,6 +915,7 @@ export function compose(config: ServerConfig): Server {
     ...(config.instanceId === undefined ? {} : { instanceId: config.instanceId }),
   })
   const team = createTeamService(factory, {
+    paused: isPaused,
     agents,
     tasks,
     threads: threadStore,
@@ -936,6 +941,7 @@ export function compose(config: ServerConfig): Server {
     else await programRunner.verifyResumed(sessionId)
   }
   turnRetries = createTurnRetryService(factory, {
+    paused: isPaused,
     store: sqliteTurnRetryStore(conn.sqlite),
     agents,
     tasks,
@@ -1013,6 +1019,8 @@ export function compose(config: ServerConfig): Server {
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   routines = createRoutineService(factory, {
+    paused: isPaused,
+    pausedWindow: () => pauseStore.lastWindow(),
     sqlite: conn.sqlite,
     agents,
     queue: sqliteSessionQueue(conn.sqlite),
@@ -1141,6 +1149,7 @@ export function compose(config: ServerConfig): Server {
     library: sqliteLibraryStore(conn.sqlite, { onChange: onFileChange }),
     artifacts,
     settings,
+    pause: pauseStore,
     providers,
     connectors,
     channels: lazyChannelsPort(() => channelsPort),
@@ -1431,6 +1440,11 @@ export function compose(config: ServerConfig): Server {
   // channels: chat platforms as sessions of an agent (docs/plans/P41-team-channels.md)
   const channelFiles = libraryFs(conn.sqlite)
   channelGateway = createChannelGateway({
+    // Pause all with the channel hold: messages are kept, no agent is woken
+    held: () => {
+      const pause = pauseStore.get()
+      return pause.pausedAt !== null && pause.holdChannels
+    },
     sqlite: conn.sqlite,
     // new messages in watched chats may start an early heartbeat (debounced in the service)
     onObserved: (event) => void heartbeats.activity(event),

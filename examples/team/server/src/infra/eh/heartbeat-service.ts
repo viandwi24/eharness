@@ -174,12 +174,16 @@ export function createHeartbeatService(
     },
   }
 
+  /** Pause all: early wakes (activity, deadline retries) start nothing while the workspace is paused. */
+  const held = (): boolean => options.deps().pause.get().pausedAt !== null
+
   const RETRY_MS = 90_000
   const MAX_RETRIES = 6
   const retryDeadline = (agentId: string, orderId: string, tries: number): void => {
     if (tries >= MAX_RETRIES) return
     const timer = setTimeout(() => {
       wakes.delete(`${agentId}:${orderId}`)
+      if (held()) return
       service
         .heartbeat(agentId, { slot: Date.now(), trigger: 'deadline', orderId })
         .then((out) => {
@@ -198,12 +202,14 @@ export function createHeartbeatService(
 
     async activity(event) {
       try {
+        if (held()) return
         const plan = await planActivityWake(options.deps(), event)
         if (plan === undefined || wakes.has(plan.agentId)) return
         const settle = options.activitySettleMs ?? 30_000
         const delay = Math.max(plan.notBefore - Date.now(), 0) + settle
         const timer = setTimeout(() => {
           wakes.delete(plan.agentId)
+          if (held()) return
           const at = Date.now()
           service.heartbeat(plan.agentId, { slot: at, trigger: 'activity' }).catch((error) => {
             log.warn(`early heartbeat of ${plan.agentId} failed: ${errorText(error)}`)

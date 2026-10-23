@@ -42,6 +42,7 @@ import type {
 import { conflict, notFound } from '../../domain/errors.ts'
 import type { EventType } from '../../domain/events.ts'
 import { parseSystemKey } from '../../domain/heartbeat.ts'
+import { PAUSED_SKIP_REASON } from '../../domain/pause.ts'
 import { parseProgramSession } from '../../domain/programs.ts'
 import {
   fireId,
@@ -143,6 +144,13 @@ export interface RoutineServiceDeps {
   /** The inbox of sessions: shows and clears what keeps a routine from firing. */
   queue?: SessionQueue
   config?: RoutineEngineConfig
+  /**
+   * Pause all (`domain/pause.ts`): read from the database on every slot. While true no slot
+   * fires: each is recorded as skipped with reason `paused`, so nothing replays after Resume.
+   */
+  paused?: () => boolean
+  /** The last finished pause: a one-shot slot due inside it is late because of the pause, not missed. */
+  pausedWindow?: () => { pausedAt: number; resumedAt: number } | null
   now?: () => number
   log?: { warn(message: string): void }
 }
@@ -179,6 +187,7 @@ export function createRoutineService(
   const owner = uuidv7()
   const scheduleStore = sqliteScheduleStore(deps.sqlite, {
     lookaheadMs,
+    holdOnce: () => deps.paused?.() === true,
     onPaused: (routineId, reason) => {
       const routine = store.get(routineId)
       if (routine !== undefined) {
@@ -487,8 +496,29 @@ export function createRoutineService(
       }
       return
     }
+    // one-shot slots are never claimed while paused (the store hides them): they fire after Resume
+    if (deps.paused?.() === true && row.schedule.kind !== 'at') {
+      // the schedule advances (the slot is recorded), the work does not run, nothing replays later
+      const { run, created } = store.openSlot({
+        routineId: row.id,
+        scheduledAt,
+        fire: false,
+        status: 'skipped',
+        reason: PAUSED_SKIP_REASON,
+        sessionId: sessionOf(row, scheduledAt),
+        now,
+      })
+      if (created && parseSystemKey(row.programId) === undefined) {
+        report.skipped.push({ routineId: row.id, scheduledAt, reason: PAUSED_SKIP_REASON })
+        emitRun(row, run, now)
+      }
+      return
+    }
     const expected = ctx.schedule.nextFireAt as number
-    if (now - expected > graceMs) {
+    const window = row.schedule.kind === 'at' ? deps.pausedWindow?.() : null
+    const heldByPause =
+      window != null && expected >= window.pausedAt && expected <= window.resumedAt
+    if (now - expected > graceMs && !heldByPause) {
       // downtime: never replay every missed slot; only the latest one inside the catch-up window
       const latest =
         row.catchUpWindowMs === null
@@ -546,6 +576,12 @@ export function createRoutineService(
     for (const run of store.staleClaims(now - recoverAfterMs)) {
       const routine = store.get(run.routineId)
       if (routine === undefined) continue
+      if (deps.paused?.() === true) {
+        if (routine.schedule.kind === 'at') continue // a one-shot waits for Resume
+        // a fire that died before it enqueued is not started while paused, nor after Resume
+        store.markSkipped(run.id, PAUSED_SKIP_REASON, now)
+        continue
+      }
       const done = await dispatch(routine, run, now, { checkOverlap: false })
       if (done.status === 'enqueued') report.fired.push(done)
       report.recovered++
@@ -554,6 +590,7 @@ export function createRoutineService(
 
   /** Open the sessions that have claimable inbox items nobody holds: opening drains them. */
   async function sweep(): Promise<number> {
+    if (deps.paused?.() === true) return 0
     const ids = (await factory.storage.inbox.pending?.({ limit: 50 })) ?? []
     let opened = 0
     for (const sessionId of ids) {

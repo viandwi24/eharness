@@ -137,6 +137,11 @@ export interface GatewayDeps {
     ): Promise<void>
   }
   /**
+   * Pause all with `holdChannels`: while true an inbound message is stored as context but does not
+   * wake an agent (and is not answered after Resume). Read per message.
+   */
+  held?: () => boolean
+  /**
    * Stops the session of a delegated agent (a child of a channel session): the requester's new
    * message cancels a foreground delegation instead of waiting for it. Absent = never interrupted.
    */

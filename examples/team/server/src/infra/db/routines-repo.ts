@@ -199,6 +199,25 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
         .map(toRoutine)
     },
 
+    activeSystemKeys() {
+      return sqlite
+        .query<{ program_id: string }, []>(
+          "SELECT program_id FROM routines WHERE status = 'active' AND program_id LIKE 'sys:%'",
+        )
+        .all()
+        .map((r) => r.program_id)
+    },
+
+    countSkipped(reason, since) {
+      return (
+        sqlite
+          .query<{ n: number }, [string, number]>(
+            "SELECT COUNT(*) AS n FROM routine_runs WHERE status = 'skipped' AND reason = ? AND claimed_at >= ?",
+          )
+          .get(reason, since)?.n ?? 0
+      )
+    },
+
     getByProgram(programId) {
       const row = sqlite
         .query<RoutineRow, [string]>('SELECT * FROM routines WHERE program_id = ? LIMIT 1')

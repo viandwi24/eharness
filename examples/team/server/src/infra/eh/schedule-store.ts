@@ -82,6 +82,8 @@ export interface ScheduleStoreOptions {
    * Default 0.
    */
   lookaheadMs?: number
+  /** Pause all: while true one-shot (`at`) schedules are not claimed, so their slot stays pending. */
+  holdOnce?: () => boolean
   /** A routine paused itself on completion (`ended`, `max-fires`, `completed`). */
   onPaused?: (routineId: string, reason: PausedReason) => void
 }
@@ -211,11 +213,12 @@ export function sqliteScheduleStore(
     },
 
     async due(now, limit) {
+      const hold = options.holdOnce?.() === true ? " AND json_extract(spec, '$.kind') != 'at'" : ''
       return sqlite
         .query<Row, [number, number, number, number]>(
           `SELECT * FROM routines WHERE status = 'active' AND next_fire_at IS NOT NULL
              AND (claimed_by IS NULL OR claimed_until IS NULL OR claimed_until <= ?)
-             AND next_fire_at <= CASE WHEN program_id IS NULL THEN ? ELSE ? END
+             AND next_fire_at <= CASE WHEN program_id IS NULL THEN ? ELSE ? END${hold}
              ORDER BY next_fire_at, id LIMIT ?`,
         )
         .all(now, now, now - lookahead, limit)

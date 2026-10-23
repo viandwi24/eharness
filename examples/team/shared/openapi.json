@@ -5969,6 +5969,103 @@
           }
         }
       },
+      "WorkspacePause": {
+        "type": "object",
+        "properties": {
+          "paused": {
+            "type": "boolean"
+          },
+          "pausedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "When the pause began (ms); null = running."
+          },
+          "pausedBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "holdChannels": {
+            "type": "boolean",
+            "description": "Inbound chat messages are kept but do not wake an agent (they are not answered after Resume)."
+          },
+          "held": {
+            "type": "object",
+            "properties": {
+              "programs": {
+                "type": "integer"
+              },
+              "routines": {
+                "type": "integer"
+              },
+              "reminders": {
+                "type": "integer"
+              },
+              "heartbeat": {
+                "type": "boolean"
+              },
+              "digest": {
+                "type": "boolean"
+              },
+              "queuedTasks": {
+                "type": "integer"
+              },
+              "runningTurns": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "programs",
+              "routines",
+              "reminders",
+              "heartbeat",
+              "digest",
+              "queuedTasks",
+              "runningTurns"
+            ],
+            "description": "What is active now and would fire if the workspace ran."
+          },
+          "skippedWhilePaused": {
+            "type": "integer",
+            "description": "Runs skipped with reason 'paused' since `pausedAt` (0 when not paused)."
+          }
+        },
+        "required": [
+          "paused",
+          "pausedAt",
+          "pausedBy",
+          "note",
+          "holdChannels",
+          "held",
+          "skippedWhilePaused"
+        ]
+      },
+      "WorkspacePauseRequest": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "holdChannels": {
+            "type": "boolean",
+            "description": "Default true."
+          },
+          "stopRunning": {
+            "type": "boolean",
+            "description": "Stop agent runs that are running now (default false: they finish)."
+          }
+        }
+      },
       "BackupList": {
         "type": "object",
         "properties": {
@@ -26374,6 +26471,152 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BrowserInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspace/pause": {
+      "get": {
+        "tags": [
+          "workspace"
+        ],
+        "summary": "Pause all: state",
+        "description": "Whether the workspace is paused and what a pause holds right now (active programs, routines, reminders, the heartbeat, the digest, queued tasks, running turns).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The state of the workspace pause",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspacePause"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "workspace"
+        ],
+        "summary": "Pause everything automatic",
+        "description": "One durable gate: scheduled slots are skipped (reason `paused`, never replayed), queued tasks stay queued, retries and early heartbeat wakes wait, and with `holdChannels` chat messages are kept without waking an agent. Nothing changes status, and the owner's chat, \"Run now\" and approvals keep working. Idempotent: pausing again updates the note and keeps `pausedAt`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspacePauseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The state of the workspace pause",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspacePause"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspace/resume": {
+      "post": {
+        "tags": [
+          "workspace"
+        ],
+        "summary": "Resume after Pause all",
+        "description": "Opens the gate: programs, routines, reminders and the heartbeat continue from their next slot (skipped slots are not replayed) and queued tasks start now.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The state of the workspace pause",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspacePause"
                 }
               }
             }

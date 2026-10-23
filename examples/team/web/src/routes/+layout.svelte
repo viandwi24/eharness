@@ -11,10 +11,12 @@
 	import AppRail from '#lib/components/app/AppRail.svelte';
 	import WorkNavPanel from '#lib/components/app/WorkNavPanel.svelte';
 	import { subSidebarOf } from '#lib/nav/sections.js';
+	import PauseBanner from '#lib/components/app/PauseBanner.svelte';
 	import ProgramDialog from '#lib/components/app/ProgramDialog.svelte';
 	import ReconnectingBar from '#lib/components/app/ReconnectingBar.svelte';
 	import TaskDrawer from '#lib/components/app/TaskDrawer.svelte';
-	import { startLive } from '#lib/stores/live.svelte.js';
+	import { live, startLive } from '#lib/stores/live.svelte.js';
+	import { loadPause, trackPause } from '#lib/stores/pause.svelte.js';
 	import { checkSession } from '#lib/stores/auth.svelte.js';
 	import { loadTeamZone, teamClock } from '#lib/stores/team-zone.svelte.js';
 	import { goToLogin } from '#lib/api/auth-fetch.js';
@@ -36,6 +38,7 @@
 		document.getElementById('boot')?.remove(); // the static "Loading…" of app.html
 		if (isLoginPath(location.pathname) || isSharePath(location.pathname)) return;
 		let stop: (() => void) | undefined;
+		let stopPause: (() => void) | undefined;
 		let gone = false;
 		// with a login, ask the server first: a signed-out browser goes to /login instead of opening streams
 		void checkSession().then((s) => {
@@ -43,14 +46,24 @@
 			if (mustSignIn(s)) goToLogin();
 			else {
 				stop = startLive();
+				stopPause = trackPause();
 				// every time on screen is in the team timezone (Settings)
 				void loadTeamZone();
+				signedIn = true;
 			}
 		});
 		return () => {
 			gone = true;
 			stop?.();
+			stopPause?.();
 		};
+	});
+
+	// Pause all: read at start and again whenever settings change (any tab or instance); `trackPause` adds a slow timer
+	let signedIn = $state(false);
+	$effect(() => {
+		void live.state.revs.settings;
+		if (signedIn) void loadPause();
 	});
 
 	// Mobile: list -> chat -> panel sheet. The list is the home screen; other routes replace it.
@@ -71,7 +84,10 @@
 	{@render children()}
 	<Toaster />
 {:else}
-	<Sidebar.Provider bind:open={sidebarOpen} class="h-svh min-h-0 flex-col bg-background text-foreground md:flex-row md:bg-sidebar">
+	<!-- the pause banner sits above everything and is never dismissed; the shell fills the rest -->
+	<div class="flex h-svh flex-col bg-background md:bg-sidebar">
+	<PauseBanner />
+	<Sidebar.Provider bind:open={sidebarOpen} class="min-h-0 flex-1 flex-col bg-background text-foreground md:flex-row md:bg-sidebar">
 		<div class="hidden md:flex"><AppRail /></div>
 		<div class="flex min-h-0 min-w-0 flex-1">
 			<!-- the agent list sits on the shell background next to the rail (no card); only the page is a panel -->
@@ -104,6 +120,7 @@
 		</div>
 		{#if barShown}<div class="md:hidden"><AppRail bar /></div>{/if}
 	</Sidebar.Provider>
+	</div>
 	<ReconnectingBar />
 	<TaskDrawer />
 	<AgentDialog />

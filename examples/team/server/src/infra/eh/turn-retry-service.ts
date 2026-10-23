@@ -94,6 +94,11 @@ export interface TurnRetryDeps {
   onAbandon?: (sessionId: string, why: string) => void
   /** Called after a retry turn ended (the deliverable re-check of a resumed run). */
   afterRun?: (sessionId: string) => Promise<void>
+  /**
+   * Pause all: while true no waiting retry starts (they stay pending and continue after Resume).
+   * A person's retry button is not held.
+   */
+  paused?: () => boolean
   /** Timer interval; 0 = no timer (tests call `tick`). Default 5 000. */
   tickMs?: number
   /** Lease of a started retry; a `running` row older than this and whose session is idle is retried again. */
@@ -347,7 +352,7 @@ export function createTurnRetryService(
     },
 
     async tick(now = clock()) {
-      if (stopped) return 0
+      if (stopped || deps.paused?.() === true) return 0
       // a retry whose instance died before its turn started: its lease ran out and nothing runs
       for (const row of store.waiting()) {
         if (row.state !== 'running' || row.claimedUntil === null || row.claimedUntil > now) continue

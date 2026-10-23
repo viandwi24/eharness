@@ -11,6 +11,7 @@
 	import { live } from '#lib/stores/live.svelte.js';
 	import { cn } from '#lib/utils.js';
 	import ApprovalsPopover from './ApprovalsPopover.svelte';
+	import PauseButton from './PauseButton.svelte';
 	import ThemeToggle from './ThemeToggle.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { auth, signOut } from '#lib/stores/auth.svelte.js';
@@ -85,6 +86,7 @@
 	<div class="relative shrink-0 border-t border-border bg-sidebar">
 		<nav bind:this={strip} onscroll={measure} class="flex items-center gap-1 overflow-x-auto px-2 py-1.5" aria-label="Main">
 			{#each [...main, settings] as s (s.id)}{@render item(s)}{/each}
+			<PauseButton bar />
 		</nav>
 		{#if fades.left}<div class="pointer-events-none absolute inset-y-0 left-0 w-8 bg-linear-to-r from-sidebar to-transparent" data-testid="bar-fade-left"></div>{/if}
 		{#if fades.right}<div class="pointer-events-none absolute inset-y-0 right-0 w-8 bg-linear-to-l from-sidebar to-transparent" data-testid="bar-fade-right"></div>{/if}
@@ -94,6 +96,7 @@
 		<a href="/" class="mb-2 flex size-9 items-center justify-center rounded-xl bg-foreground font-brand text-sm text-background" aria-label="Team home">T</a>
 		{#each main as s (s.id)}{@render item(s)}{/each}
 		<div class="mt-auto flex flex-col items-center gap-1">
+			<PauseButton />
 			<ThemeToggle />
 			{#if auth.required}
 				<Button variant="ghost" size="icon-sm" aria-label="Log out" title="Log out" onclick={() => void signOut()}><SignOutIcon class="size-4" /></Button>

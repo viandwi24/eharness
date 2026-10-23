@@ -91,6 +91,8 @@ export interface TeamServiceDeps {
   events: EventAppender
   /** The shared feed. */
   activity: ActivityStore
+  /** Pause all: while true a lost long-run continuation is not resumed (the next pass after Resume does). */
+  paused?: () => boolean
   now?: () => number
   log?: { warn(message: string, data?: Record<string, unknown>): void }
 }
@@ -229,6 +231,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
    */
   async function reconcileLongRun(): Promise<ReconcileReport['longRun']> {
     const out: ReconcileReport['longRun'] = []
+    if (deps.paused?.() === true) return out
     for (const task of deps.tasks.active()) {
       if (!isWorkerSession(task.sessionId)) continue
       try {

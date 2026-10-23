@@ -200,9 +200,11 @@ export function createTask(deps: Deps, draft: TaskDraft & { createdBy?: string }
  * while the agent works on fewer than its concurrency and the team on fewer than the spawn cap.
  * An agent with an active worker program is left to that program. Safe to call at any time (task
  * created, released, sent back, one ended, the periodic pass): it only claims what has a free slot.
- * Returns how many tasks it started.
+ * Returns how many tasks it started (none while the workspace is paused).
  */
 export function dispatchQueue(deps: Deps, only?: string): number {
+  // Pause all: queued tasks stay queued and start after Resume (never failed or dropped)
+  if (deps.pause.get().pausedAt !== null) return 0
   const queued = deps.tasks.list({ status: 'queued', limit: 500 })
   const agentIds = [...new Set(queued.map((t) => t.agentId))].filter(
     (id) => only === undefined || id === only,

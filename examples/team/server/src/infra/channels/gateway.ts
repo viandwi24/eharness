@@ -3803,6 +3803,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       return decision
     }
 
+    // Pause all: the message is kept as context, the agent is not woken (and does not answer it later)
+    if (deps.held?.() === true) {
+      log.demote(node.id, nativeId)
+      return { action: 'observe', reason: 'the workspace is paused' }
+    }
+
     const session = ensureSession(config, scope, node, adapter)
     const loaded =
       event.type === 'message.created'
