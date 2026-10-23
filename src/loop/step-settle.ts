@@ -4,7 +4,7 @@
 import type { FinishReason, LanguageModelUsage, StepResult, ToolSet } from 'ai'
 import { hookFailed } from '../internal/hook-run.ts'
 import { describeModel } from '../internal/model.ts'
-import { costOf } from '../models/cost.ts'
+import { settledCostOf } from '../models/cost.ts'
 import { noSuchToolText } from '../registry/tool-search.ts'
 import type { LoopResult, StepRequest, StepRun, StepsCtx } from './step-ctx.ts'
 import { collectDiscovered, guarded, rewriteUnavailable, stepEndEvent } from './step-events.ts'
@@ -49,7 +49,12 @@ export async function recordStep(
   const step = response === undefined ? undefined : await guarded(result.finalStep)
   let stepCost: number | undefined
   if (stepUsage !== undefined) {
-    const cost = costOf(st.input.models, stepModel, stepUsage)
+    const cost = settledCostOf(
+      st.input.models,
+      stepModel,
+      stepUsage,
+      step?.providerMetadata,
+    )?.costUsd
     stepCost = cost
     if (cost === undefined && st.input.budget !== undefined) {
       st.rt.warn(

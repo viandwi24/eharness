@@ -57,6 +57,8 @@ export interface ScriptedStep {
   requestBody?: unknown
   /** Reported as `response.headers` of the call. */
   responseHeaders?: Record<string, string>
+  /** Reported as the call's `providerMetadata` (e.g. a billed cost or an upstream provider). */
+  providerMetadata?: Record<string, Record<string, unknown>>
   /** Delay before every stream part, in ms (for abort and timeout tests). */
   delayMs?: number
   /** Raw stream parts; replaces everything above except `throws` and `delayMs`. */
@@ -128,6 +130,9 @@ function buildParts(step: ScriptedStep, callIndex: number): ScriptedStreamPart[]
       },
       outputTokens: { total: output, text: output, reasoning: undefined },
     },
+    ...(step.providerMetadata === undefined
+      ? {}
+      : { providerMetadata: step.providerMetadata as never }),
   })
   return parts
 }
@@ -173,7 +178,15 @@ function generateResult(parts: ScriptedStreamPart[]): GenerateResult {
     }
   }
   if (finish === undefined) throw new Error('scriptedModel: a scripted step has no finish part')
-  return { content, finishReason: finish.finishReason, usage: finish.usage, warnings: [] }
+  return {
+    content,
+    finishReason: finish.finishReason,
+    usage: finish.usage,
+    warnings: [],
+    ...((finish as { providerMetadata?: never }).providerMetadata === undefined
+      ? {}
+      : { providerMetadata: (finish as { providerMetadata?: never }).providerMetadata }),
+  }
 }
 
 /** Resolves after `ms`, or rejects with the abort reason when `signal` aborts first. */

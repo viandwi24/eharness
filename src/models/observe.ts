@@ -62,6 +62,8 @@ export interface ModelCallRecord {
   /** The assembled output of the call. */
   output: { text: string; reasoning: string; toolCalls: ModelCallToolCall[] }
   providerMetadata?: Record<string, unknown>
+  /** The upstream provider that served the call, when the provider reports it (OpenRouter). */
+  upstreamProvider?: string
   error?: { name: string; message: string }
 }
 
@@ -80,6 +82,8 @@ export interface ModelCallEvent extends ModelCallRecord {
   messageId?: string
   /** USD cost from the agent's `models` catalog; unset when the model has no pricing. */
   costUsd?: number
+  /** `provider`: billed cost reported by the provider; `estimate`: computed from the catalog. */
+  costSource?: 'provider' | 'estimate'
 }
 
 const EMPTY_USAGE: LanguageModelUsage = {
@@ -227,6 +231,14 @@ interface Draft {
   aborted: boolean
 }
 
+/** The upstream provider name a response reports (`providerMetadata.openrouter.provider`). */
+export function upstreamProviderOf(providerMetadata: unknown): string | undefined {
+  const entry = (providerMetadata as { openrouter?: { provider?: unknown } } | undefined)
+    ?.openrouter
+  const name = entry?.provider
+  return typeof name === 'string' && name !== '' ? name : undefined
+}
+
 function finalize(draft: Draft): ModelCallRecord {
   const signal = draft.params.abortSignal as AbortSignal | undefined
   const aborted = draft.aborted || (draft.error !== undefined && signal?.aborted === true)
@@ -249,6 +261,8 @@ function finalize(draft: Draft): ModelCallRecord {
   if (draft.providerMetadata !== undefined) {
     record.providerMetadata = jsonSafe(draft.providerMetadata) as Record<string, unknown>
   }
+  const upstream = upstreamProviderOf(record.providerMetadata)
+  if (upstream !== undefined) record.upstreamProvider = upstream
   if (draft.error !== undefined && !aborted) record.error = errorOf(draft.error)
   return record
 }

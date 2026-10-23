@@ -4,7 +4,7 @@
  *
  * @see docs/specs/23-providers.md#6-built-in-definitions
  */
-import type { LanguageModel } from 'ai'
+import { type LanguageModel, type LanguageModelMiddleware, wrapLanguageModel } from 'ai'
 import { z } from 'zod/v4'
 import { HarnessError } from '../index.ts'
 import { parseOpenRouterModels } from './catalog-loader.ts'
@@ -130,20 +130,170 @@ const openRouterSettings = z.object({
   apiKey: apiKeyField(true, 'OPENROUTER_API_KEY', 'sk-or-...'),
   baseURL: baseURLField('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1'),
   headers: headersField,
+  providerOrder: z
+    .string()
+    .optional()
+    .meta({
+      title: 'Preferred upstream providers (in order)',
+      description:
+        'Comma-separated OpenRouter provider slugs tried in this order, e.g. "anthropic, amazon-bedrock". Empty: OpenRouter chooses (and may switch provider between calls, which breaks the prompt cache).',
+      ...ehMeta({ group: 'advanced', placeholder: 'anthropic, amazon-bedrock' }),
+    }),
+  allowFallbacks: z
+    .boolean()
+    .optional()
+    .meta({
+      title: 'Allow fallback to other providers',
+      description:
+        'When off, a call fails instead of going to a provider outside the preferred list. Default: on.',
+      default: true,
+      ...ehMeta({ group: 'advanced' }),
+    }),
+  stickyProvider: z
+    .boolean()
+    .optional()
+    .meta({
+      title: 'Prefer the same provider within a session',
+      description:
+        'Tries the provider that served the previous call of the same conversation first, so the prompt cache stays warm. Default: off.',
+      default: false,
+      ...ehMeta({ group: 'advanced' }),
+    }),
 })
+
+type OpenRouterModelSettings = Record<string, unknown>
 
 /** Options of {@link openRouterProvider}. */
 export interface OpenRouterProviderOptions {
   /** `createOpenRouter` of `@openrouter/ai-sdk-provider`. */
-  createOpenRouter: ProviderFactory<{
+  createOpenRouter: (settings: {
     apiKey?: string
     baseURL?: string
     headers?: Record<string, string>
-  }>
+  }) =>
+    | ((modelId: string, settings?: OpenRouterModelSettings) => unknown)
+    | { languageModel(modelId: string, settings?: OpenRouterModelSettings): unknown }
   /** Also list models live from `<baseURL>/models` (needs the network on every refresh). Default: the cached public list. */
   live?: boolean
   id?: string
   label?: string
+}
+
+/** Slugs of a comma-separated list. */
+function slugList(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part !== '')
+}
+
+/** OpenRouter reports the provider display name (`Amazon Bedrock`); routing wants the slug. */
+const slugOf = (name: string): string => name.trim().toLowerCase().replace(/\s+/g, '-')
+
+/** A stable key of a conversation: the text of its first two prompt messages. */
+function conversationKey(modelId: string, prompt: unknown): string {
+  const parts: string[] = [modelId]
+  for (const message of Array.isArray(prompt) ? prompt.slice(0, 2) : []) {
+    const m = message as { role?: unknown; content?: unknown }
+    parts.push(String(m.role))
+    if (typeof m.content === 'string') parts.push(m.content)
+    else if (Array.isArray(m.content)) {
+      for (const part of m.content) {
+        const text = (part as { text?: unknown } | null)?.text
+        if (typeof text === 'string') parts.push(text)
+      }
+    }
+  }
+  const text = parts.join('\u0000')
+  let hash = 5381
+  for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0
+  return `${hash}:${text.length}`
+}
+
+const upstreamOf = (metadata: unknown): string | undefined => {
+  const name = (metadata as { openrouter?: { provider?: unknown } } | null | undefined)?.openrouter
+    ?.provider
+  return typeof name === 'string' && name !== '' ? name : undefined
+}
+
+/**
+ * App-side sticky routing: remembers which upstream provider served the previous call of a
+ * conversation and sends it first in `provider.order` of the next one (OpenRouter's prompt cache
+ * only works within one provider). The conversation is told apart by its first two prompt messages.
+ */
+function stickyRouting(
+  model: LanguageModel,
+  learned: Map<string, string>,
+  base: { order?: string[]; allow_fallbacks?: boolean } | undefined,
+): LanguageModel {
+  if (typeof model === 'string' || typeof model !== 'object' || model === null) return model
+  const m = model as unknown as {
+    modelId: string
+    doGenerate(p: Record<string, unknown>): Promise<Record<string, unknown>>
+    doStream(p: Record<string, unknown>): Promise<Record<string, unknown>>
+  }
+  const withOrder = (
+    params: Record<string, unknown>,
+  ): { params: Record<string, unknown>; key: string } => {
+    const key = conversationKey(m.modelId, params.prompt)
+    const sticky = learned.get(key)
+    if (sticky === undefined) return { params, key }
+    const providerOptions = (params.providerOptions ?? {}) as Record<
+      string,
+      Record<string, unknown>
+    >
+    const own = (providerOptions.openrouter?.provider ?? {}) as Record<string, unknown>
+    const configured = (own.order ?? base?.order ?? []) as string[]
+    const order = [sticky, ...configured.filter((slug) => slug !== sticky)]
+    return {
+      key,
+      params: {
+        ...params,
+        providerOptions: {
+          ...providerOptions,
+          openrouter: {
+            ...providerOptions.openrouter,
+            provider: { ...base, ...own, order },
+          },
+        },
+      },
+    }
+  }
+  const learn = (key: string, metadata: unknown): void => {
+    const name = upstreamOf(metadata)
+    if (name === undefined) return
+    learned.delete(key)
+    learned.set(key, slugOf(name))
+    if (learned.size > 500) learned.delete(learned.keys().next().value as string)
+  }
+  const middleware: LanguageModelMiddleware = {
+    specificationVersion: 'v4',
+    wrapGenerate: async ({ params }: { params: unknown }) => {
+      const next = withOrder(params as Record<string, unknown>)
+      const result = await m.doGenerate(next.params)
+      learn(next.key, result.providerMetadata)
+      return result
+    },
+    wrapStream: async ({ params }: { params: unknown }) => {
+      const next = withOrder(params as Record<string, unknown>)
+      const result = await m.doStream(next.params)
+      const stream = (
+        result.stream as ReadableStream<{ type: string; providerMetadata?: unknown }>
+      ).pipeThrough(
+        new TransformStream({
+          transform(part, controller) {
+            if (part.type === 'finish') learn(next.key, part.providerMetadata)
+            controller.enqueue(part)
+          },
+        }),
+      )
+      return { ...result, stream }
+    },
+  } as unknown as LanguageModelMiddleware
+  return wrapLanguageModel({
+    model: model as Parameters<typeof wrapLanguageModel>[0]['model'],
+    middleware,
+  }) as LanguageModel
 }
 
 /**
@@ -161,14 +311,37 @@ export function openRouterProvider(options: OpenRouterProviderOptions): Provider
     envMap: { apiKey: 'OPENROUTER_API_KEY', baseURL: 'OPENROUTER_BASE_URL' },
     defaultModel: DEFAULT_GATEWAY_MODEL,
     catalog: { kind: 'openrouter' },
-    create: (s) =>
-      instanceOf(
-        options.createOpenRouter({
-          apiKey: s.apiKey,
-          ...(s.baseURL ? { baseURL: s.baseURL } : {}),
-          ...(s.headers ? { headers: s.headers } : {}),
-        }),
-      ),
+    create: (s) => {
+      const provider = options.createOpenRouter({
+        apiKey: s.apiKey,
+        ...(s.baseURL ? { baseURL: s.baseURL } : {}),
+        ...(s.headers ? { headers: s.headers } : {}),
+      })
+      const order = slugList(s.providerOrder)
+      const routing: { order?: string[]; allow_fallbacks?: boolean } = {
+        ...(order.length > 0 ? { order } : {}),
+        ...(s.allowFallbacks === false ? { allow_fallbacks: false } : {}),
+      }
+      const hasRouting = Object.keys(routing).length > 0
+      // usage accounting: the response carries the billed cost (providerMetadata.openrouter.usage.cost)
+      const modelSettings: OpenRouterModelSettings = {
+        usage: { include: true },
+        ...(hasRouting ? { provider: routing } : {}),
+      }
+      const learned = new Map<string, string>()
+      return {
+        languageModel: (id) => {
+          const model = (
+            typeof provider === 'function'
+              ? provider(id, modelSettings)
+              : provider.languageModel(id, modelSettings)
+          ) as LanguageModel
+          return s.stickyProvider === true
+            ? stickyRouting(model, learned, hasRouting ? routing : undefined)
+            : model
+        },
+      }
+    },
     ...(options.live
       ? {
           listModels: async (s: z.output<typeof openRouterSettings>, ctx: ProviderContext) =>

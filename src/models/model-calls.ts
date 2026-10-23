@@ -7,7 +7,7 @@
 import type { LanguageModel } from 'ai'
 import { hookFailed, hookTimeoutOf, runHook } from '../internal/hook-run.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
-import { costOf } from './cost.ts'
+import { settledCostOf } from './cost.ts'
 import {
   type ModelCallEvent,
   type ModelCallKind,
@@ -40,8 +40,16 @@ export function observeForSession(
     if (turnId !== undefined) event.turnId = turnId
     if (scope.stepIndex !== undefined) event.stepIndex = scope.stepIndex
     if (scope.messageId !== undefined) event.messageId = scope.messageId
-    const cost = costOf(rt.agent.config.models, model, record.usage)
-    if (cost !== undefined) event.costUsd = cost
+    const settled = settledCostOf(
+      rt.agent.config.models,
+      model,
+      record.usage,
+      record.providerMetadata,
+    )
+    if (settled !== undefined) {
+      event.costUsd = settled.costUsd
+      event.costSource = settled.source
+    }
     for (const hook of hooks.list('model.call')) {
       try {
         await runHook(() => hook.fn(rt.contextOf(hook.owner), structuredClone(event)), {

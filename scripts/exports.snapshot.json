@@ -63,6 +63,8 @@
     "observeModel",
     "openRouterCatalog",
     "parseSkillMarkdown",
+    "providerReportedCost",
+    "settledCostOf",
     "statelessPattern",
     "stripLeakedToolMarkup",
     "toolTraits",

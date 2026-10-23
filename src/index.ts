@@ -214,7 +214,13 @@ export type {
   WarningPartData,
 } from './messages/types.ts'
 export { lookupModel, modelsDevCatalog, openRouterCatalog } from './models/catalog.ts'
-export { computeCost, estimateStepCostUsd } from './models/cost.ts'
+export type { CostSource } from './models/cost.ts'
+export {
+  computeCost,
+  estimateStepCostUsd,
+  providerReportedCost,
+  settledCostOf,
+} from './models/cost.ts'
 export type {
   ModelCallEvent,
   ModelCallKind,

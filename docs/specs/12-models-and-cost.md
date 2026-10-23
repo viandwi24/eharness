@@ -115,6 +115,14 @@ discount is assumed). `undefined` when the model has no pricing.
   `output` (AI SDK includes reasoning in `outputTokens`; it is never added twice);
 - missing, negative or NaN counts are 0.
 
+**Provider-reported cost.** When the step's `providerMetadata` carries the cost the provider billed
+(`<provider>.usage.cost`, OpenRouter with usage accounting; `<provider>.cost`, AI Gateway; number or
+numeric string), that figure is the step's cost and the catalog estimate is only the fallback.
+`providerReportedCost(providerMetadata)` reads it and `settledCostOf(models, model, usage,
+providerMetadata)` returns `{ costUsd, source: 'provider' | 'estimate' }`. The budget ledger
+reservation (§4.1) stays the worst-case catalog estimate; only the settled cost (`afterCall`)
+uses the real figure. The built-in OpenRouter provider (spec 23 §6) turns usage accounting on.
+
 Per step the core prices the usage with the **step model** (models may change per step). A step
 without pricing is *unpriced* (it adds no cost). `ctx.turn.addUsage(usage, options)` adds nested
 usage: `options.costUsd` (known cost, e.g. from a gateway) wins, else `options.model` is priced
@@ -273,6 +281,7 @@ interface ModelCallRecord {
   response: { id?: string; modelId?: string; timestamp?: string; headers?: Record<string, string>; body?: unknown }
   output: { text: string; reasoning: string; toolCalls: { toolCallId: string; toolName: string; input: unknown }[] }
   providerMetadata?: Record<string, unknown>
+  upstreamProvider?: string         // provider.openrouter.provider: who served the call (OpenRouter)
   error?: { name: string; message: string }
 }
 
@@ -282,7 +291,8 @@ interface ModelCallEvent extends ModelCallRecord {
   turnId?: string
   stepIndex?: number                // kind 'step'
   messageId?: string                // kind 'step': the assistant message
-  costUsd?: number                  // §3, from `models`; absent without pricing
+  costUsd?: number                  // §3: provider-reported, else from `models`; absent when unknown
+  costSource?: 'provider' | 'estimate'
 }
 
 observeModel(model: LanguageModel, report: (record: ModelCallRecord) => void | Promise<void>): LanguageModel

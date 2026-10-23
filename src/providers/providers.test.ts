@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { generateText } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent, isHarnessError, lookupModel } from '../index.ts'
 import { profileStoreConformance } from '../testing/profile-store.conformance.ts'
@@ -839,5 +840,73 @@ describe('built-in definitions', () => {
       base: 'http://h/v1/',
       id: 'llama3',
     })
+  })
+})
+
+describe('openRouterProvider routing and usage accounting', () => {
+  const setupRouting = (settings: Record<string, unknown>) => {
+    const seen: Array<{ id: string; settings: unknown }> = []
+    const model = scriptedModel(
+      [
+        { text: 'a', providerMetadata: { openrouter: { provider: 'Amazon Bedrock' } } },
+        { text: 'b', providerMetadata: { openrouter: { provider: 'Amazon Bedrock' } } },
+        { text: 'c' },
+      ],
+      { provider: 'openrouter.chat', modelId: 'm' },
+    )
+    const def = openRouterProvider({
+      createOpenRouter: () => (id: string, modelSettings?: Record<string, unknown>) => {
+        seen.push({ id, settings: modelSettings })
+        return model
+      },
+    })
+    const instance = def.create(validateSettings(def.settings, { apiKey: KEY, ...settings }))
+    return { seen, model, instance }
+  }
+
+  test('usage accounting is always on; no routing keys by default', () => {
+    const { seen, instance } = setupRouting({})
+    instance.languageModel('m')
+    expect(seen[0]?.settings).toEqual({ usage: { include: true } })
+  })
+
+  test('preferred order and no-fallback reach the model settings', () => {
+    const { seen, instance } = setupRouting({
+      providerOrder: ' Anthropic, amazon-bedrock ,',
+      allowFallbacks: false,
+    })
+    instance.languageModel('m')
+    expect(seen[0]?.settings).toEqual({
+      usage: { include: true },
+      provider: { order: ['anthropic', 'amazon-bedrock'], allow_fallbacks: false },
+    })
+  })
+
+  test('the form describes the routing fields with their defaults', () => {
+    const def = openRouterProvider({ createOpenRouter: () => () => 'x' })
+    const fields = formSpec(def.settings as never).fields
+    const byPath = Object.fromEntries(fields.map((f) => [f.path, f]))
+    expect(byPath.providerOrder?.group).toBe('advanced')
+    expect(byPath.allowFallbacks).toMatchObject({ kind: 'boolean', default: true })
+    expect(byPath.stickyProvider).toMatchObject({ kind: 'boolean', default: false })
+  })
+
+  test('sticky provider: the upstream of the previous call leads the next order', async () => {
+    const { instance, model } = setupRouting({ stickyProvider: true, providerOrder: 'anthropic' })
+    const wrapped = instance.languageModel('m')
+    const call = (text: string) =>
+      generateText({ model: wrapped, messages: [{ role: 'user', content: text }] })
+    await call('hello')
+    await call('hello')
+    await call('another conversation')
+    const providerOf = (i: number): unknown =>
+      (
+        model.doGenerateCalls[i]?.providerOptions as
+          | { openrouter?: { provider?: unknown } }
+          | undefined
+      )?.openrouter?.provider
+    expect(providerOf(0)).toBeUndefined()
+    expect(providerOf(1)).toEqual({ order: ['amazon-bedrock', 'anthropic'] })
+    expect(providerOf(2)).toBeUndefined()
   })
 })

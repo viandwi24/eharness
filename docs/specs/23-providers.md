@@ -179,6 +179,22 @@ Each takes the provider package factory and optional `id` / `label`; settings fi
 | `openAIProvider` | `createOpenAI` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` | models.dev `openai` + live `GET /models` (embedding/audio/image ids dropped) |
 | `anthropicProvider` | `createAnthropic` | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | models.dev `anthropic` + live `GET /v1/models` |
 
+`openRouterProvider` also has three optional `advanced` settings and always turns usage accounting
+on (`usage: { include: true }` on the model, so the response carries the billed cost,
+`providerMetadata.openrouter.usage.cost`, which the core settles instead of the catalog estimate,
+spec 12 §3):
+
+- `providerOrder`: comma-separated OpenRouter provider slugs, sent as `provider.order`;
+- `allowFallbacks` (default on): `false` sends `provider.allow_fallbacks: false`;
+- `stickyProvider` (default off): app-side stickiness. OpenRouter's prompt cache only works within
+  one upstream provider, so the provider that served the previous call of a conversation
+  (`providerMetadata.openrouter.provider`, lowercased and dashed to a slug) is sent first in
+  `provider.order` of the next call. A conversation is told apart by its first two prompt messages;
+  the memory is per provider instance (bounded). A wrong slug is only skipped by OpenRouter while
+  fallbacks are allowed.
+
+With none of them set, no `provider` key is sent: behaviour is unchanged.
+
 `eharness/testing` adds `scriptedProvider({ id?, models: { id: steps }, info? })`
 and `profileStoreConformance`.
 

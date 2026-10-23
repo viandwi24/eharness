@@ -62,6 +62,55 @@ export function costOf(
   return pricing === undefined ? undefined : computeCost(usage, pricing)
 }
 
+/** Where a settled cost came from. */
+export type CostSource = 'provider' | 'estimate'
+
+const asCost = (value: unknown): number | undefined => {
+  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : undefined
+}
+
+/**
+ * The USD cost a provider billed for one call, read from `providerMetadata`: `<provider>.usage.cost`
+ * (OpenRouter usage accounting) or `<provider>.cost` (AI Gateway, a number or a numeric string).
+ * `undefined` when no provider reports one.
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
+ */
+export function providerReportedCost(providerMetadata: unknown): number | undefined {
+  if (typeof providerMetadata !== 'object' || providerMetadata === null) return undefined
+  for (const entry of Object.values(providerMetadata)) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const record = entry as { usage?: unknown; cost?: unknown }
+    const usage = record.usage
+    const nested =
+      typeof usage === 'object' && usage !== null
+        ? asCost((usage as { cost?: unknown }).cost)
+        : undefined
+    const cost = nested ?? asCost(record.cost)
+    if (cost !== undefined) return cost
+  }
+  return undefined
+}
+
+/**
+ * The cost to settle for a call: the provider-reported cost when `providerMetadata` carries one,
+ * else the catalog estimate ({@link costOf}); `undefined` when neither is known.
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
+ */
+export function settledCostOf(
+  catalog: ModelCatalog | undefined,
+  model: LanguageModel,
+  usage: LanguageModelUsage,
+  providerMetadata?: unknown,
+): { costUsd: number; source: CostSource } | undefined {
+  const reported = providerReportedCost(providerMetadata)
+  if (reported !== undefined) return { costUsd: reported, source: 'provider' }
+  const estimate = costOf(catalog, model, usage)
+  return estimate === undefined ? undefined : { costUsd: estimate, source: 'estimate' }
+}
+
 /** Output tokens assumed by {@link estimateStepCostUsd} when the step sets no `maxOutputTokens`. */
 export const DEFAULT_ESTIMATE_OUTPUT_TOKENS = 4_096
 
