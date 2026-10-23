@@ -286,3 +286,26 @@ describe('models report', () => {
     expect(r.workspaceDefault).toBeNull()
   })
 })
+
+describe('company folder setting', () => {
+  test('round-trips through the HTTP API, normalized, and null clears it', async () => {
+    const server = await boot()
+    const patch = async (body: unknown): Promise<Response> =>
+      await server.app.request('/settings', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const read = async (): Promise<Record<string, unknown>> =>
+      (await (await server.app.request('/settings')).json()) as Record<string, unknown>
+    expect((await read()).companyRoot).toBeNull()
+    expect((await patch({ companyRoot: '/library/acme/' })).status).toBe(200)
+    expect((await read()).companyRoot).toBe('/library/acme')
+    expect(server.deps.settings.get().companyRoot).toBe('/library/acme')
+    expect((await patch({ companyRoot: '/library/programs' })).status).toBe(400)
+    expect((await patch({ companyRoot: '/elsewhere' })).status).toBe(400)
+    expect((await read()).companyRoot).toBe('/library/acme')
+    expect((await patch({ companyRoot: null })).status).toBe(200)
+    expect((await read()).companyRoot).toBeNull()
+  })
+})

@@ -20,7 +20,9 @@ import {
   buildReorgPlan,
   HEARTBEAT_FILE,
   INDEX_FILE,
-  LIBRARY_FOLDERS,
+  type LibraryFolders,
+  libraryFolderList,
+  libraryFolders,
   parseProposal,
   REORG_ACTIONS,
   type ReorgPlan,
@@ -72,28 +74,31 @@ async function planOf(
     files,
     rows,
     libraryPaths: libraryPaths(deps),
+    folders: foldersOf(deps),
   })
   return { plan, files }
 }
 
-const SYSTEM = [
-  'You help reorganize the memory of an AI agent in a small company. The library is the source of',
-  'truth for facts; memory keeps only short rules and an index that points into the library.',
-  '',
-  'Library folders:',
-  ...LIBRARY_FOLDERS.map((f) => `- ${f.path}: ${f.holds}`),
-  '- /library/data/: trackers, ledgers, sheets',
-  '',
-  'For every memory file choose exactly one action:',
-  '- "keep-as-rule": a short standing rule or preference the agent must always follow (merged into rules.md).',
-  '- "move": facts, procedures, people, knowledge, data. Give "target": an absolute path under /library/ in the folders above (English folder and file names).',
-  '- "merge-into": the file repeats another file of the list. Give "target": that other file path exactly as listed.',
-  '- "archive": stale, finished or obsolete. Nothing is deleted: it is kept in an archive folder.',
-  'Dated reports go to /library/reports/. Never choose a path outside /library/.',
-  '',
-  'Answer with ONLY a JSON array, one object per file:',
-  '[{"file":"<path as listed>","action":"keep-as-rule|move|merge-into|archive","target":"<path or null>","reason":"<one short line>"}]',
-].join('\n')
+const foldersOf = (deps: Deps): LibraryFolders => libraryFolders(deps.settings.get().companyRoot)
+
+const systemOf = (f: LibraryFolders): string =>
+  [
+    'You help reorganize the memory of an AI agent in a small company. The library is the source of',
+    'truth for facts; memory keeps only short rules and an index that points into the library.',
+    '',
+    'Library folders:',
+    ...libraryFolderList(f).map((x) => `- ${x.path}: ${x.holds}`),
+    '',
+    'For every memory file choose exactly one action:',
+    '- "keep-as-rule": a short standing rule or preference the agent must always follow (merged into rules.md).',
+    '- "move": facts, procedures, people, knowledge, data. Give "target": an absolute path under /library/ in the folders above (English folder and file names).',
+    '- "merge-into": the file repeats another file of the list. Give "target": that other file path exactly as listed.',
+    '- "archive": stale, finished or obsolete. Nothing is deleted: it is kept in an archive folder.',
+    `Dated reports go to ${f.reports}/. Never choose a path outside /library/.`,
+    '',
+    'Answer with ONLY a JSON array, one object per file:',
+    '[{"file":"<path as listed>","action":"keep-as-rule|move|merge-into|archive","target":"<path or null>","reason":"<one short line>"}]',
+  ].join('\n')
 
 function batches(files: readonly ReorgSourceFile[]): ReorgSourceFile[][] {
   const out: ReorgSourceFile[][] = []
@@ -150,7 +155,7 @@ export async function proposeReorg(deps: Deps, agentRef: string): Promise<ReorgP
     modelCalls++
     try {
       const answer = await deps.completion(agent.id, {
-        system: SYSTEM,
+        system: systemOf(foldersOf(deps)),
         prompt: `Memory files of the agent "${agent.name}":\n\n${promptOf(batch)}`,
         maxOutputTokens: 4_000,
       })
@@ -158,6 +163,7 @@ export async function proposeReorg(deps: Deps, agentRef: string): Promise<ReorgP
         ...parseProposal(
           answer,
           batch.map((f) => f.path),
+          foldersOf(deps).knowledge,
         ),
       )
     } catch (error) {
@@ -169,6 +175,7 @@ export async function proposeReorg(deps: Deps, agentRef: string): Promise<ReorgP
         ...parseProposal(
           '',
           batch.map((f) => f.path),
+          foldersOf(deps).knowledge,
         ),
       )
     }

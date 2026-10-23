@@ -360,6 +360,19 @@ full report. The root is the setting `worksRoot` (default `/library/works`; `PAT
 `{ "worksRoot": "/library/<company>/works" }`). The memory protocol every agent gets names the
 folder, so a changed root reaches new sessions.
 
+### Company folder
+
+A workspace that keeps its company material under one folder (for example `/library/acme/` with
+`profile.md`, `organization.md`, `knowledge/`, `reports/`, `data/`, `kpi/`, `attendance/`) sets the
+`companyRoot` setting (Settings > General > Company folder; `PATCH /settings`
+`{ "companyRoot": "/library/acme" }`, `null` = the built-in `/library/company`, `/library/knowledge`,
+`/library/reports`, `/library/data`). The memory protocol every agent gets, the memory-discipline
+refusal text and the memory reorganization (dated reports, fallback knowledge folder) then use that
+folder. It must start with `/library/`, have no wildcard or `..`, and not be `/library`, the
+archive or `/library/programs` (programs always stay in `/library/programs/<program>/`; the works
+journal keeps following `worksRoot`). Changing it moves no file: only the instructions change; use
+Backups > Import to reorganize existing files. Run `tools/reorganize` and then set the folder.
+
 ## Storage
 
 Settings > Storage (and `GET /storage`) shows where everything lives and how big it is: the disk (total, used, free), the database by feature and by table, the library by folder, the backups and the scratch folders, with warnings. A low disk (under 10% or 2 GB free) also raises one alarm per day. Maintenance actions, each with a confirmation and the size before and after: compact the database (VACUUM; needs free disk about the size of the database and is refused without it), checkpoint the WAL, apply retention now, clear tool media older than N days.

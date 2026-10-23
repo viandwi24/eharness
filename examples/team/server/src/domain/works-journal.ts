@@ -98,5 +98,5 @@ export function appendJournal(
 }
 
 /** The instruction every agent gets about the journal (static per root: prompt-cache prefix). */
-export const journalProtocol = (root: string): string =>
-  `- Daily journal: append today's follow-ups, cache and working notes as one bullet each to ${root}/YYYY/MM/DD.md (today's date in the team timezone; create the file with a "# Works YYYY-MM-DD" heading when it is missing, never rewrite earlier lines). Keep a bullet to one line; put long reports in ${LIBRARY_ROOT}/reports/ and link them from the bullet.`
+export const journalProtocol = (root: string, reportsDir = `${LIBRARY_ROOT}/reports`): string =>
+  `- Daily journal: append today's follow-ups, cache and working notes as one bullet each to ${root}/YYYY/MM/DD.md (today's date in the team timezone; create the file with a "# Works YYYY-MM-DD" heading when it is missing, never rewrite earlier lines). Keep a bullet to one line; put long reports in ${reportsDir}/ and link them from the bullet.`

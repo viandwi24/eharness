@@ -116,6 +116,7 @@ export interface ConnectorsOptions {
   code?: CodeRuntime
   /** Folder of the daily works journal (Settings). */
   worksRoot?: () => string
+  companyRoot?: () => string | null
   /** Resolves a host name to its addresses (custom connector SSRF guard; default: system DNS). */
   resolveHost?: (host: string) => Promise<string[]>
   /** The OAuth callback URL of this server. */
@@ -225,6 +226,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     hooks,
     ...(options.code === undefined ? {} : { code: options.code }),
     ...(options.worksRoot === undefined ? {} : { worksRoot: options.worksRoot }),
+    ...(options.companyRoot === undefined ? {} : { companyRoot: options.companyRoot }),
     ...(env.TEAM_TELEGRAM_API_ROOT === undefined
       ? {}
       : { telegramApiRoot: env.TEAM_TELEGRAM_API_ROOT }),

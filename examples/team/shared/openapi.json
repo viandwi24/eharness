@@ -5303,6 +5303,13 @@
             "type": "string",
             "description": "Library folder of the daily works journal: agents append follow-ups and notes to `<folder>/YYYY/MM/DD.md` (team timezone). Default `/library/works`."
           },
+          "companyRoot": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Library folder that holds the company files (for example `/library/acme`): agents are told to keep company facts, knowledge, reports and ledgers under it (`knowledge/`, `reports/`, `data/`, `kpi/`, `attendance/`). null = the built-in folders (`/library/company`, `/library/knowledge`, `/library/reports`, `/library/data`). Changing it moves no file."
+          },
           "eventsRetentionHours": {
             "type": "integer",
             "minimum": 0,
@@ -5397,6 +5404,7 @@
           "maxRepeatingReminders",
           "teamName",
           "worksRoot",
+          "companyRoot",
           "eventsRetentionHours",
           "eventsMaxRows",
           "logMaxRows",
@@ -5904,6 +5912,14 @@
           },
           "worksRoot": {
             "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "companyRoot": {
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1,
             "maxLength": 200
           },

@@ -6,10 +6,12 @@
  * same rule in chat sessions; this covers everything else. Hook only: no tools, no instructions.
  */
 import { definePlugin, type HarnessPlugin } from 'eharness'
-import { memoryReportRefusal } from '../../domain/library-structure.ts'
+import { libraryFolders, memoryReportRefusal } from '../../domain/library-structure.ts'
 import { memoryWriteRefusal } from '../channels/medium.ts'
 
-export function memoryDiscipline(): HarnessPlugin<'memory-discipline'> {
+export function memoryDiscipline(
+  companyRoot: () => string | null = () => null,
+): HarnessPlugin<'memory-discipline'> {
   return definePlugin({
     name: 'memory-discipline',
     setup: () => ({
@@ -20,7 +22,8 @@ export function memoryDiscipline(): HarnessPlugin<'memory-discipline'> {
         ): { type: 'denied'; reason: string } | undefined => {
           // long reports and dated files belong in the library (P57), then system state and style
           const refusal =
-            memoryReportRefusal(e.toolName, e.input) ?? memoryWriteRefusal(e.toolName, e.input)
+            memoryReportRefusal(e.toolName, e.input, libraryFolders(companyRoot())) ??
+            memoryWriteRefusal(e.toolName, e.input)
           return refusal === undefined ? undefined : { type: 'denied', reason: refusal }
         },
       },

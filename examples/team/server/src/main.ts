@@ -782,6 +782,7 @@ export function compose(config: ServerConfig): Server {
     },
     code: codeRuntime,
     worksRoot: () => settings.get().worksRoot,
+    companyRoot: () => settings.get().companyRoot,
     sqlite: conn.sqlite,
     profiles: profileStore,
     vault,

@@ -149,6 +149,8 @@ export interface CatalogOptions {
   code?: CodeRuntime
   /** Folder of the daily works journal (Settings); default `/library/works`. */
   worksRoot?: () => string
+  /** The company folder setting (null = built-in folders), read when a memory plugin is built. */
+  companyRoot?: () => string | null
 }
 
 /** Connection label of the two memory scopes, as people and the model read them. */
@@ -542,7 +544,10 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
             roots
               .filter((r) => r.path !== WORKSPACE_MEMORY)
               .flatMap((r) => [`${r.path}/rules.md`, `${r.path}/index.md`, `${r.path}/profile.md`]),
-          protocol: teamMemoryProtocol(options.worksRoot?.() ?? WORKS_ROOT_DEFAULT),
+          protocol: teamMemoryProtocol(
+            options.worksRoot?.() ?? WORKS_ROOT_DEFAULT,
+            options.companyRoot?.() ?? null,
+          ),
           flushOnCompaction: true,
         }),
     },

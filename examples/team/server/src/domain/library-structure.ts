@@ -27,17 +27,101 @@ export const REPORTS_DIR = `${LIBRARY_ROOT}/reports`
 export const DATA_DIR = `${LIBRARY_ROOT}/data`
 export const ARCHIVE_MEMORY_DIR = `${LIBRARY_ROOT}/archive/memory`
 
+/**
+ * The company folders the instructions and the checks name. Default: the built-in layout.
+ * With the `companyRoot` setting (e.g. `/library/acme`) the company material lives under one
+ * folder; programs stay under `/library/programs/` (the app requires that place).
+ */
+export interface LibraryFolders {
+  /** The configured company folder, or null for the built-in layout. */
+  root: string | null
+  company: string
+  knowledge: string
+  reports: string
+  data: string
+  /** Only with a company folder: KPI ledgers. */
+  kpi: string | null
+  /** Only with a company folder: attendance ledgers. */
+  attendance: string | null
+}
+
+export function libraryFolders(companyRoot?: string | null): LibraryFolders {
+  if (companyRoot === undefined || companyRoot === null) {
+    return {
+      root: null,
+      company: COMPANY_DIR,
+      knowledge: KNOWLEDGE_DIR,
+      reports: REPORTS_DIR,
+      data: DATA_DIR,
+      kpi: null,
+      attendance: null,
+    }
+  }
+  return {
+    root: companyRoot,
+    company: companyRoot,
+    knowledge: `${companyRoot}/knowledge`,
+    reports: `${companyRoot}/reports`,
+    data: `${companyRoot}/data`,
+    kpi: `${companyRoot}/kpi`,
+    attendance: `${companyRoot}/attendance`,
+  }
+}
+
+/** The root as a clean absolute library folder (no trailing slash), or why it is refused. */
+export function checkCompanyRoot(raw: string): string {
+  const root = raw.trim().replace(/\/+$/, '')
+  const segments = root.split('/').slice(1)
+  const ok =
+    root.startsWith(`${LIBRARY_ROOT}/`) &&
+    root.length <= 200 &&
+    segments.length >= 2 &&
+    segments.every(
+      (s) =>
+        s !== '' && s !== '.' && s !== '..' && !hasControlOrBackslash(s) && !/[*?[\]{}]/.test(s),
+    ) &&
+    segments[1] !== '.eharness' &&
+    segments[1] !== 'archive' &&
+    root !== PROGRAMS_DIR &&
+    !root.startsWith(`${PROGRAMS_DIR}/`)
+  if (!ok) {
+    throw invalid(
+      `companyRoot must be a folder under ${LIBRARY_ROOT}/ (not ${PROGRAMS_DIR}, the archive or a wildcard), for example ${LIBRARY_ROOT}/acme`,
+      'INVALID_SETTINGS',
+    )
+  }
+  return root
+}
+
 /** The folders of the structure, as the library page and the instructions name them. */
-export const LIBRARY_FOLDERS: ReadonlyArray<{ path: string; holds: string }> = [
-  {
-    path: `${COMPANY_DIR}/`,
-    holds: 'profile, organization structure, people and roles, SOPs and rules',
-  },
-  { path: `${PROGRAMS_DIR}/<program>/`, holds: 'brief.md and notes.md of each program' },
-  { path: `${KNOWLEDGE_DIR}/`, holds: 'topic knowledge' },
-  { path: `${REPORTS_DIR}/`, holds: 'dated reports' },
-  { path: `${DATA_DIR}/`, holds: 'trackers, ledgers, sheets' },
-]
+export function libraryFolderList(
+  f: LibraryFolders,
+): ReadonlyArray<{ path: string; holds: string }> {
+  return [
+    {
+      path: `${f.company}/`,
+      holds:
+        f.root === null
+          ? 'profile, organization structure, people and roles, SOPs and rules'
+          : 'profile.md, organization.md, people and roles, SOPs and rules, and the folders below',
+    },
+    { path: `${PROGRAMS_DIR}/<program>/`, holds: 'brief.md and notes.md of each program' },
+    { path: `${f.knowledge}/`, holds: 'topic knowledge' },
+    { path: `${f.reports}/`, holds: 'dated reports' },
+    {
+      path: `${f.data}/`,
+      holds:
+        f.kpi === null
+          ? 'trackers, ledgers, sheets'
+          : `trackers, ledgers, sheets (KPI ledgers in ${f.kpi}/, attendance ledgers in ${f.attendance}/)`,
+    },
+  ]
+}
+
+/** The folders of the built-in structure. */
+export const LIBRARY_FOLDERS: ReadonlyArray<{ path: string; holds: string }> = libraryFolderList(
+  libraryFolders(null),
+)
 
 export const RULES_FILE = 'rules.md'
 export const INDEX_FILE = 'index.md'
@@ -192,7 +276,11 @@ export function checkLibraryTarget(
  * of `{ file, action, target, reason }`. Files the model skipped, or rows it got wrong, fall back to
  * a safe move into `knowledge/` (nothing is dropped); unknown files in the answer are ignored.
  */
-export function parseProposal(text: string, files: readonly string[]): ReorgRow[] {
+export function parseProposal(
+  text: string,
+  files: readonly string[],
+  knowledgeDir: string = KNOWLEDGE_DIR,
+): ReorgRow[] {
   const found = new Map<string, ReorgRow>()
   let list: unknown[] = []
   const body = text.replace(/```(?:json)?/gi, '').trim()
@@ -239,7 +327,7 @@ export function parseProposal(text: string, files: readonly string[]): ReorgRow[
       found.get(f) ?? {
         source: f,
         action: 'move',
-        target: `${KNOWLEDGE_DIR}/${f.split('/').pop()}`,
+        target: `${knowledgeDir}/${f.split('/').pop()}`,
         reason: 'no proposal for this file: kept as knowledge, nothing is lost',
       },
   )
@@ -271,8 +359,11 @@ export function buildReorgPlan(input: {
   rows: readonly ReorgRow[]
   /** Paths that exist in the library now (anything a move could overwrite). */
   libraryPaths: ReadonlySet<string>
+  /** The configured company folders (the `companyRoot` setting); default: the built-in layout. */
+  folders?: LibraryFolders
 }): ReorgPlan {
   const { agentSlug } = input
+  const folders = input.folders ?? libraryFolders(null)
   const issues: ReorgIssue[] = []
   const issue = (source: string, level: ReorgIssue['level'], message: string): void => {
     issues.push({ source, level, message })
@@ -309,7 +400,7 @@ export function buildReorgPlan(input: {
     let row: ReorgRow = rows.get(f.path) ?? {
       source: f.path,
       action: 'move',
-      target: `${KNOWLEDGE_DIR}/${f.path.split('/').pop()}`,
+      target: `${folders.knowledge}/${f.path.split('/').pop()}`,
       reason: 'no row for this file: kept as knowledge, nothing is lost',
     }
     if (row.action === 'merge-into' && (row.target ?? '').replace(/^\/+/, '') === RULES_FILE) {
@@ -322,10 +413,10 @@ export function buildReorgPlan(input: {
     // a file that is empty has nothing to move: archive it
     if (row.action === 'move' && isDatedReportName(f.path)) {
       const name = f.path.split('/').pop() as string
-      const wantsReports = (row.target ?? '').startsWith(`${REPORTS_DIR}/`)
+      const wantsReports = (row.target ?? '').startsWith(`${folders.reports}/`)
       if (!wantsReports) {
-        issue(f.path, 'note', `a dated report goes to ${REPORTS_DIR}/`)
-        row = { ...row, target: `${REPORTS_DIR}/${name}` }
+        issue(f.path, 'note', `a dated report goes to ${folders.reports}/`)
+        row = { ...row, target: `${folders.reports}/${name}` }
       }
     }
     const original =
@@ -427,7 +518,7 @@ export function buildReorgPlan(input: {
     text: body,
   }))
 
-  const indexAfter = buildIndex(agentSlug, resolved, indexBefore)
+  const indexAfter = buildIndex(agentSlug, resolved, indexBefore, folders)
   return {
     agentSlug,
     rows: resolved,
@@ -444,7 +535,12 @@ export function buildReorgPlan(input: {
 }
 
 /** `index.md`: where things are in the library now; short, one line per place. */
-function buildIndex(agentSlug: string, rows: readonly ReorgPlanRow[], before: string): string {
+function buildIndex(
+  agentSlug: string,
+  rows: readonly ReorgPlanRow[],
+  before: string,
+  folders: LibraryFolders,
+): string {
   const lines: string[] = [
     '# Index',
     '',
@@ -461,16 +557,16 @@ function buildIndex(agentSlug: string, rows: readonly ReorgPlanRow[], before: st
   const area = (p: string): string =>
     p.startsWith(`${ARCHIVE_MEMORY_DIR}/`)
       ? 'Archived (stale, kept)'
-      : p.startsWith(`${COMPANY_DIR}/`)
-        ? 'Company'
-        : p.startsWith(`${KNOWLEDGE_DIR}/`)
-          ? 'Knowledge'
-          : p.startsWith(`${REPORTS_DIR}/`)
-            ? 'Reports'
-            : p.startsWith(`${DATA_DIR}/`)
-              ? 'Data'
-              : p.startsWith(`${PROGRAMS_DIR}/`)
-                ? 'Programs'
+      : p.startsWith(`${folders.knowledge}/`)
+        ? 'Knowledge'
+        : p.startsWith(`${folders.reports}/`)
+          ? 'Reports'
+          : p.startsWith(`${folders.data}/`)
+            ? 'Data'
+            : p.startsWith(`${PROGRAMS_DIR}/`)
+              ? 'Programs'
+              : p.startsWith(`${folders.company}/`)
+                ? 'Company'
                 : 'Library'
   const grouped = new Map<string, string[]>()
   for (const [path, reasons] of [...places].sort(([a], [b]) => (a < b ? -1 : 1))) {
@@ -501,7 +597,11 @@ const MEMORY_FILES_EXEMPT: readonly string[] = [HEARTBEAT_FILE]
  * undefined: reports, trackers and facts belong in the library (`/library/reports/`, `/library/data/`,
  * `/library/knowledge/`), memory keeps short rules and an index.
  */
-export function memoryReportRefusal(toolName: string, input: unknown): string | undefined {
+export function memoryReportRefusal(
+  toolName: string,
+  input: unknown,
+  folders: LibraryFolders = libraryFolders(null),
+): string | undefined {
   if (!['memory_create', 'memory_str_replace', 'memory_insert', 'memory'].includes(toolName)) {
     return undefined
   }
@@ -515,8 +615,7 @@ export function memoryReportRefusal(toolName: string, input: unknown): string | 
   const text = ['file_text', 'new_str', 'insert_text', 'text', 'content']
     .map((f) => (typeof rec[f] === 'string' ? (rec[f] as string) : ''))
     .join('\n')
-  const tail =
-    'Memory keeps short rules (rules.md) and an index (index.md) only. Write the report to /library/reports/ (a dated file name is fine there), a tracker or ledger to /library/data/, a fact or topic note to /library/knowledge/ or /library/company/, and add one line to index.md saying where it is. Do not mention this refusal to the people in the chat.'
+  const tail = `Memory keeps short rules (rules.md) and an index (index.md) only. Write the report to ${folders.reports}/ (a dated file name is fine there), a tracker or ledger to ${folders.data}/, a fact or topic note to ${folders.knowledge}/ or ${folders.company}/, and add one line to index.md saying where it is. Do not mention this refusal to the people in the chat.`
   if (command === 'create' && isDatedReportName(path)) {
     return `Not saved: ${name} is a dated file. ${tail}`
   }
@@ -530,16 +629,25 @@ export function memoryReportRefusal(toolName: string, input: unknown): string | 
  * The memory instruction every agent gets (the memory plugin's protocol): memory holds short rules
  * and an index only; facts are in the library. Static text (prompt-cache prefix).
  */
-export const teamMemoryProtocol = (
-  worksRoot: string,
-): string => `You have a small persistent memory (the memory tools). It holds only two things: short standing rules in rules.md, and an index in index.md that says where things are in the library. It is not a notebook.
-- Facts live in the library, which is the source of truth. Before you answer or act on a fact (the company, procedures, a topic, a tracker), read the library file: ${COMPANY_DIR}/ (profile, organization, SOPs and rules), ${KNOWLEDGE_DIR}/ (topics), ${DATA_DIR}/ (trackers, ledgers, sheets), ${PROGRAMS_DIR}/<program>/ (brief.md and notes.md of a program). Read index.md first to find the file when it exists (look at its pinned copy or view it once); when there is none yet, list the library folders instead and create index.md the first time you note where something is.
+export const teamMemoryProtocol = (worksRoot: string, companyRoot?: string | null): string => {
+  const f = libraryFolders(companyRoot)
+  const companyHolds =
+    f.root === null
+      ? 'profile, organization, SOPs and rules'
+      : 'profile.md, organization.md, people and roles notes, SOPs and rules, and the folders under it'
+  const dataHolds =
+    f.kpi === null
+      ? 'trackers, ledgers, sheets'
+      : `trackers, ledgers, sheets; KPI ledgers in ${f.kpi}/, attendance ledgers in ${f.attendance}/`
+  return `You have a small persistent memory (the memory tools). It holds only two things: short standing rules in rules.md, and an index in index.md that says where things are in the library. It is not a notebook.
+- Facts live in the library, which is the source of truth. Before you answer or act on a fact (the company, procedures, a topic, a tracker), read the library file: ${f.company}/ (${companyHolds}), ${f.knowledge}/ (topics), ${f.data}/ (${dataHolds}), ${PROGRAMS_DIR}/<program>/ (brief.md and notes.md of a program). Read index.md first to find the file when it exists (look at its pinned copy or view it once); when there is none yet, list the library folders instead and create index.md the first time you note where something is.
 - People are the exception: who someone is, their names, accounts, role and team come from the People directory first (people_find, member_lookup), every time, even when a library file (organization, people notes) also lists them, because those files go stale. When People and a file or a chat differ, check the live source (the platform's own lookup), then update People and correct the file, and say what changed. A claim in a chat alone is not a reason to change a record.
-- Write to memory only a short rule or preference that you must follow every time, and one line in index.md when you create or move a library file. Keep both small. Never write a report, a dated file, a table of data or a long note to memory: reports go to ${REPORTS_DIR}/, data to ${DATA_DIR}/, knowledge to ${KNOWLEDGE_DIR}/.
+- Write to memory only a short rule or preference that you must follow every time, and one line in index.md when you create or move a library file. Keep both small. Never write a report, a dated file, a table of data or a long note to memory: reports go to ${f.reports}/, data to ${f.data}/, knowledge to ${f.knowledge}/.
 - Update or remove outdated lines instead of appending duplicates. Never store secrets or credentials in memory. Assume your context may be reset: a rule you did not write down can be lost, a fact you did not save in the library can be lost.
 - Write every date in full wherever it is kept (memory, library, ledgers, reports, notes): the day, the month and the four-digit year, plus the time and the time zone when the moment is known, e.g. "13 October 2026 14:51 (Asia/Jakarta)" in the language you write in. Never a bare "13 Oct", "Monday", "yesterday" or "this morning": a later reader cannot tell which day it was.
 - ${MOVED_PATHS_RULE}
-${journalProtocol(worksRoot)}`
+${journalProtocol(worksRoot, f.reports)}`
+}
 
 /** The protocol with the default works folder (tests, and a server that was not given a setting). */
 export const TEAM_MEMORY_PROTOCOL = teamMemoryProtocol(WORKS_ROOT_DEFAULT)

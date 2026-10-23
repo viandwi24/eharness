@@ -236,7 +236,8 @@ export interface AgentFactoryDeps {
     | 'longRunMaxCostUsd'
     | 'longRunMaxHours'
     | 'longRunChunkSteps'
-  > & { rev: number }
+  > &
+    Partial<Pick<WorkspaceSettings, 'companyRoot'>> & { rev: number }
   /** Modes people picked per session (`domain/modes.ts`); absent = nobody can pick one. */
   sessionModes?: Pick<SessionModeStore, 'get'>
   /** Connections people switched off per chat (the composer tools menu); absent = none. */
@@ -1203,7 +1204,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         description: TEAM_DATETIME_DESCRIPTION,
       }),
       // memory holds durable facts only: no system state, no style notes (hook only)
-      memoryDiscipline(),
+      memoryDiscipline(() => currentSettings().companyRoot ?? null),
       // a path of a reorganized library that moved: the result tells the model the new path
       movedPaths(sqlite),
       // long turns: the base step budget grows while the turn makes progress (hook only)

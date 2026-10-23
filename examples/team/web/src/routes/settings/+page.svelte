@@ -77,6 +77,7 @@
 	let profile = $state<string | null>(null);
 	let teamName = $state('');
 	let worksRoot = $state('/library/works');
+	let companyRoot = $state('');
 	let classifierProfile = $state<string | null>(null);
 	let classifierModel = $state<string | null>(null);
 	let searchProfile = $state<string | null>(null);
@@ -98,6 +99,7 @@
 			(knobsDirty ||
 				teamName.trim() !== (settings.teamName ?? '') ||
 				worksRoot.trim() !== (settings.worksRoot ?? '/library/works') ||
+				companyRoot.trim() !== (settings.companyRoot ?? '') ||
 				classifierProfile !== settings.classifierProfile ||
 				classifierModel !== settings.classifierModel ||
 				searchProfile !== settings.searchProfile ||
@@ -122,6 +124,7 @@
 		profile = s.defaultProfile;
 		teamName = s.teamName ?? '';
 		worksRoot = s.worksRoot ?? '/library/works';
+		companyRoot = s.companyRoot ?? '';
 		classifierProfile = s.classifierProfile;
 		classifierModel = s.classifierModel;
 		searchProfile = s.searchProfile;
@@ -203,6 +206,7 @@
 			const extra: Record<string, unknown> = { ...kp.patch };
 			if (settings && teamName.trim() !== (settings.teamName ?? '')) extra.teamName = teamName.trim() || null;
 			if (settings && worksRoot.trim() !== (settings.worksRoot ?? '/library/works')) extra.worksRoot = worksRoot.trim() || '/library/works';
+			if (settings && companyRoot.trim() !== (settings.companyRoot ?? '')) extra.companyRoot = companyRoot.trim() || null;
 			if (settings && (classifierModel !== settings.classifierModel || classifierProfile !== settings.classifierProfile)) {
 				extra.classifierModel = classifierModel || null;
 				extra.classifierProfile = classifierProfile || null;
@@ -382,6 +386,11 @@
 										<Field.Label for="s-works-root">Daily journal folder</Field.Label>
 										<Input id="s-works-root" bind:value={worksRoot} placeholder="/library/works" maxlength={200} disabled={!settings} class="max-w-sm font-mono text-xs" />
 										<Field.Description>Agents keep the day's follow-ups and notes in <span class="font-mono">{worksRoot || '/library/works'}/YYYY/MM/DD.md</span>, and program runs and heartbeat findings add a line with a link to their report.</Field.Description>
+									</Field.Field>
+									<Field.Field>
+										<Field.Label for="s-company-root">Company folder</Field.Label>
+										<Input id="s-company-root" bind:value={companyRoot} placeholder="/library/company (built-in layout)" maxlength={200} disabled={!settings} class="max-w-sm font-mono text-xs" />
+										<Field.Description>Agents are told to keep company files, knowledge, reports and ledgers under this folder. Changing it moves nothing; use Backups &gt; Import to reorganize existing files. Empty keeps the built-in folders (<span class="font-mono">/library/company</span>, <span class="font-mono">/library/knowledge</span>, <span class="font-mono">/library/reports</span>, <span class="font-mono">/library/data</span>).</Field.Description>
 									</Field.Field>
 									<Field.Field data-invalid={!!errors.timezone}>
 										<Field.Label for="s-tz">Team timezone</Field.Label>

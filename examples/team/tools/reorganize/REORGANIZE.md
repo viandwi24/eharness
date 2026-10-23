@@ -133,6 +133,11 @@ to `/library/<company>/works` (no trailing slash) and move any existing journal 
 (recorded in `moves.json`). Otherwise leave it at `/library/works`. This is the only edit you make
 to `settings.json`.
 
+After the import, tell the owner to set **Settings > General > Company folder** to `/library/<company>`
+(the folder from section 2; not part of `settings.json`). That setting only changes the instructions
+agents get (company files, knowledge, reports, data, KPI and attendance ledgers under that folder);
+it moves no file. The `worksRoot` journal folder stays separate.
+
 ## 6. Memory: rules and an index only
 
 Each agent's memory (`agents/<slug>/memory/`) ends with exactly:

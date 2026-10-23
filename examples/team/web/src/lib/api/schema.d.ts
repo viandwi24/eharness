@@ -19642,6 +19642,8 @@ export interface components {
             teamName: string | null;
             /** @description Library folder of the daily works journal: agents append follow-ups and notes to `<folder>/YYYY/MM/DD.md` (team timezone). Default `/library/works`. */
             worksRoot: string;
+            /** @description Library folder that holds the company files (for example `/library/acme`): agents are told to keep company facts, knowledge, reports and ledgers under it (`knowledge/`, `reports/`, `data/`, `kpi/`, `attendance/`). null = the built-in folders (`/library/company`, `/library/knowledge`, `/library/reports`, `/library/data`). Changing it moves no file. */
+            companyRoot: string | null;
             /** @description Events feed: hours kept; 0 = by count only. Default 72. */
             eventsRetentionHours: number;
             /** @description Events feed: rows kept. Default 100000. */
@@ -19800,6 +19802,7 @@ export interface components {
             maxRepeatingReminders?: number;
             teamName?: string | null;
             worksRoot?: string;
+            companyRoot?: string | null;
             eventsRetentionHours?: number;
             eventsMaxRows?: number;
             logMaxRows?: number;

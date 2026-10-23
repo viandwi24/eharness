@@ -4,6 +4,7 @@
  * with no loss, backup first and abort on failure, undo) and the memory discipline guard.
  */
 
+import { checkSettingsPatch } from '../src/domain/settings.ts'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,6 +30,9 @@ import {
 import { applyImport, listRestorePoints, previewUndo } from '../src/app/workspace-import.ts'
 import {
   buildReorgPlan,
+  checkCompanyRoot,
+  libraryFolders,
+  teamMemoryProtocol,
   isDatedReportName,
   memoryReportRefusal,
   notesFromFile,
@@ -821,5 +825,82 @@ describe('pinned memory', () => {
       new URL('../src/infra/eh/connector-catalog.ts', import.meta.url),
     ).text()
     expect(src).toContain('/rules.md`, `${r.path}/index.md`, `${r.path}/profile.md`')
+  })
+})
+
+describe('company folder (companyRoot)', () => {
+  test('null keeps the built-in protocol text', () => {
+    const base = teamMemoryProtocol('/library/works')
+    expect(teamMemoryProtocol('/library/works', null)).toBe(base)
+    expect(base).toContain('/library/company/ (profile, organization, SOPs and rules)')
+    expect(base).toContain('/library/data/ (trackers, ledgers, sheets)')
+    expect(base).toContain('reports go to /library/reports/, data to /library/data/')
+  })
+
+  test('a company folder moves the protocol paths and keeps programs and the journal', () => {
+    const text = teamMemoryProtocol('/library/works', '/library/acme')
+    expect(text).toContain('/library/acme/ (profile.md, organization.md')
+    expect(text).toContain('/library/acme/knowledge/ (topics)')
+    expect(text).toContain(
+      'KPI ledgers in /library/acme/kpi/, attendance ledgers in /library/acme/attendance/',
+    )
+    expect(text).toContain(
+      'reports go to /library/acme/reports/, data to /library/acme/data/, knowledge to /library/acme/knowledge/',
+    )
+    expect(text).toContain('/library/programs/<program>/')
+    expect(text).toContain('/library/works/YYYY/MM/DD.md')
+    expect(text).not.toContain('/library/reports/')
+    expect(text).not.toContain('/library/company/')
+  })
+
+  test('the root is normalized and checked', () => {
+    expect(checkCompanyRoot(' /library/acme/ ')).toBe('/library/acme')
+    for (const bad of [
+      '/library',
+      '/library/',
+      '/etc/acme',
+      '/library/../x',
+      '/library/acme/..',
+      '/library/ac*me',
+      '/library/programs',
+      '/library/programs/x',
+      '/library/archive',
+      '/library/a\\b',
+    ]) {
+      expect(() => checkCompanyRoot(bad)).toThrow('companyRoot must be a folder under /library/')
+    }
+    expect(() => checkSettingsPatch({ companyRoot: '/nope' })).toThrow('companyRoot')
+    expect(() => checkSettingsPatch({ companyRoot: null })).not.toThrow()
+    expect(() => checkSettingsPatch({ companyRoot: '/library/acme' })).not.toThrow()
+  })
+
+  test('the refusal text names the configured folders', () => {
+    const input = {
+      command: 'create',
+      path: '/memories/agents/x/2026-10-03-ads.md',
+      file_text: 'x',
+    }
+    expect(memoryReportRefusal('memory_create', input)).toContain('/library/reports/')
+    const set = memoryReportRefusal('memory_create', input, libraryFolders('/library/acme'))
+    expect(set).toContain('Write the report to /library/acme/reports/')
+    expect(set).toContain('a tracker or ledger to /library/acme/data/')
+    expect(set).toContain('/library/acme/knowledge/ or /library/acme/')
+    expect(set).not.toContain('/library/reports/')
+  })
+
+  test('a dated report and the fallback go to the configured folders', () => {
+    const p = buildReorgPlan({
+      agentSlug: 'lead',
+      agentId: 'id1',
+      files: [file('2026-10-03-ads.md', 'a'), file('misc.md', 'b')],
+      rows: [row('2026-10-03-ads.md', 'move', '/library/acme/data/ads.md')],
+      libraryPaths: new Set(),
+      folders: libraryFolders('/library/acme'),
+    })
+    const finals = Object.fromEntries(p.rows.map((r) => [r.source, r.finalTarget]))
+    expect(finals['2026-10-03-ads.md']).toBe('/library/acme/reports/2026-10-03-ads.md')
+    expect(finals['misc.md']).toBe('/library/acme/knowledge/misc.md')
+    expect(p.index.after).toContain('## Reports')
+    expect(p.index.after).toContain('## Knowledge')
   })
 })

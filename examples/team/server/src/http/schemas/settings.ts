@@ -86,6 +86,10 @@ export const SettingsSchema = z
       description:
         'Library folder of the daily works journal: agents append follow-ups and notes to `<folder>/YYYY/MM/DD.md` (team timezone). Default `/library/works`.',
     }),
+    companyRoot: z.string().nullable().openapi({
+      description:
+        'Library folder that holds the company files (for example `/library/acme`): agents are told to keep company facts, knowledge, reports and ledgers under it (`knowledge/`, `reports/`, `data/`, `kpi/`, `attendance/`). null = the built-in folders (`/library/company`, `/library/knowledge`, `/library/reports`, `/library/data`). Changing it moves no file.',
+    }),
     eventsRetentionHours: z.number().int().min(0).openapi({
       description: 'Events feed: hours kept; 0 = by count only. Default 72.',
     }),
@@ -164,6 +168,7 @@ export const SettingsPatchSchema = z
     maxRepeatingReminders: z.number().int().min(0).max(1000).optional(),
     teamName: z.string().min(1).max(100).nullable().optional(),
     worksRoot: z.string().min(1).max(200).optional(),
+    companyRoot: z.string().min(1).max(200).nullable().optional(),
     eventsRetentionHours: z.number().int().min(0).max(87600).optional(),
     eventsMaxRows: z.number().int().min(1000).optional(),
     logMaxRows: z.number().int().min(100).optional(),
