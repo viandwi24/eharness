@@ -204,6 +204,8 @@ export interface ArtifactService extends ArtifactsPort {
   ): Artifact
   /** The in-app page of an artifact. */
   appUrl(id: string): string
+  /** Every live public share (public, not deleted): what `fixShareLinks` compares a typed link with. */
+  liveShares(): Array<{ token: string; artifactId: string; title: string }>
   /** Content of a version of an artifact: `path` empty = the entry. */
   contentOfVersion(id: string, version: number, path: string): ContentResult
   /** Content of the shared version, by share token. */
@@ -1046,6 +1048,13 @@ export function createArtifactService(options: ArtifactServiceOptions): Artifact
     snapshot,
     setVisibility,
     appUrl: (id) => `${web}/artifacts/${id}`,
+    liveShares: () =>
+      sqlite
+        .query<{ id: string; title: string; share_token: string }, []>(
+          "SELECT id, title, share_token FROM artifacts WHERE visibility = 'public' AND share_token IS NOT NULL AND deleted_at IS NULL",
+        )
+        .all()
+        .map((r) => ({ token: r.share_token, artifactId: r.id, title: r.title })),
     contentOfVersion,
     contentOfShare,
     verifyView: (id, version, token) => signer.verify(`v|${id}|${version}`, token, options.now()),

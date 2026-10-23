@@ -183,6 +183,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const now = deps.now ?? (() => Date.now())
   const warn = (m: string): void =>
     (deps.log ?? { warn: (x) => console.warn(`team: ${x}`) }).warn(m)
+  const fixLinks = (text: string, where: string): string =>
+    deps.fixLinks === undefined ? text : deps.fixLinks(text, where)
   // the old tables of L1-L4 become nodes, identities, sessions and events (structure now, in one
   // transaction, before anything reads the configuration; the sealed messages in the background,
   // and everything that reads messages waits for `migrated`)
@@ -4533,7 +4535,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       )
     }
     // only the mention parameter pings: free text is neutralized, tokens are built here
-    const options: PostOptions = { ...raw, text: withMentions(raw.text, mentionIds) }
+    // a mistyped or dead public share link is repaired or marked before it is sent
+    const options: PostOptions = {
+      ...raw,
+      text: withMentions(fixLinks(raw.text, `a post to ${node.id}`), mentionIds),
+    }
     if (files.length > 0 && !caps.upload) {
       throw new ChannelUserError(`${adapter.platform} cannot upload files here.`)
     }
@@ -5054,7 +5060,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           : (failure as string)
     if (rawText === '') return
     // a model cannot ping anybody by typing a handle: only the mention parameter of a tool can
-    const text = modelText ? neutralizeHandles(rawText) : rawText
+    // and a share link it typed wrongly is repaired, or marked when that artifact is not public any more
+    const text = modelText
+      ? neutralizeHandles(fixLinks(rawText, `the reply of ${end.sessionId}`))
+      : rawText
     if (!modelText && scope.wake === 'always') return // never noise in an always-on room
     if (scope.wake === 'always' && rawText === NO_REPLY) return
     try {

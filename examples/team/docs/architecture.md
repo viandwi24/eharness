@@ -170,6 +170,20 @@ inbox dedupe key make a fire idempotent. Overlap is skipped by default, missed s
 (or the latest is fired within a catch-up window), and consecutive failures pause the routine.
 Unattended runs never auto-approve: a fire that needs approval becomes a task in the inbox.
 
+**Artifact share links.** Agents retype long random share tokens and sometimes get a few characters
+wrong, or keep pasting the link of an artifact that is no longer public. `domain/share-links.ts`
+(`fixShareLinks`, pure) finds every `/s/<token>` and `/art/s/<token>/...` in a text: a token that is
+one to three edits away from exactly one live share is repaired, any other unknown token is marked
+with ` (link no longer available)` (once; running it again changes nothing). It runs where agent text
+leaves the app, over the live shares (`ArtifactService.liveShares()`, public and not deleted):
+the `shareLinks` plugin (`message.beforeSave`) fixes the stored assistant message, so a reload of
+the web chat shows the working link (text streamed live is not rewritten, chunk order is public API;
+the stored message replaces it when the turn ends), and the channels gateway fixes the final text
+of a turn and every `channel_send` post before they are queued (`GatewayDeps.fixLinks`). A repair or
+a dead link is logged as a server warning, never an alarm. Tool results put the share URL alone on
+its own line with "Copy this link exactly; do not retype it.", and the artifact card in the web
+chat shows the public link with a Copy link button.
+
 **Library and memory.** One `library_files` table implements `FileSystem` (list, read, grep, glob,
 move, bytes, versions). `/library/**` is the artifact space, `/uploads` holds attachments (kept as
 `library://` references in messages, resolved to bytes only when the model request is built),

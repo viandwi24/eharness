@@ -244,6 +244,11 @@ export interface GatewayDeps {
   /** Keep the platform payload of every event, sealed, so events can be re-normalized (default off). */
   keepRaw?: boolean
   log?: { warn(message: string): void }
+  /**
+   * Repairs or marks the public share links in a text the agent wrote, before it is sent (the final
+   * text of a turn and `channel_send`). `where` names the place for the log. Absent = text as is.
+   */
+  fixLinks?: (text: string, where: string) => string
 }
 
 export type HandleResult =

@@ -137,6 +137,7 @@ import { createProgramGate } from './gates/program-gate.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { memoryDiscipline } from './memory-discipline-plugin.ts'
+import { createShareLinkFixer, shareLinks } from '../artifacts/share-links.ts'
 import { movedPaths } from './moved-paths-plugin.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import { type PersonaIntake, persona } from './persona-plugin.ts'
@@ -1207,6 +1208,14 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       memoryDiscipline(() => currentSettings().companyRoot ?? null),
       // a path of a reorganized library that moved: the result tells the model the new path
       movedPaths(sqlite),
+      // a mistyped or dead public share link in the reply is repaired or marked before it is stored
+      ...(deps.artifacts === undefined
+        ? []
+        : [
+            shareLinks(
+              createShareLinkFixer(deps.artifacts.service, (m) => console.warn(`team: ${m}`)),
+            ),
+          ]),
       // long turns: the base step budget grows while the turn makes progress (hook only)
       // a turn that reaches its cap hands the rest of the job to the background worker
       stepBudget({

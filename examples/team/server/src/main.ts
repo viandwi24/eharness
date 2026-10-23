@@ -165,6 +165,7 @@ import {
   createArtifactService,
 } from './infra/artifacts/index.ts'
 import { KEEP_PRIVATE_OPTION, PUBLISH_OPTION } from './infra/artifacts/plugin.ts'
+import { createShareLinkFixer } from './infra/artifacts/share-links.ts'
 import { appVersion } from './infra/backup/app-version.ts'
 import { createBackupService } from './infra/backup/backup-service.ts'
 import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
@@ -1598,6 +1599,7 @@ export function compose(config: ServerConfig): Server {
       return thread === undefined ? undefined : `/a/${agentId}?t=${encodeURIComponent(thread.id)}`
     },
     log: { warn: (message) => console.warn(`team: ${message}`) },
+    fixLinks: createShareLinkFixer(artifacts, (message) => console.warn(`team: ${message}`)),
   })
   const channels = channelGateway
   // the Telegram bot transport: one poller per connected, bound connection (`infra/telegram`)

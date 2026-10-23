@@ -148,6 +148,9 @@ export const ARTIFACT_INSTRUCTIONS = [
   'Visibility: an artifact is private (only people signed in to the app) until artifact_visibility says otherwise. Make it public only when the person asked for a public link, and never claim a link is public unless artifact_visibility said so. In a chat channel reply with a one-line summary and the link.',
 ].join('\n')
 
+/** After a share URL in a tool result: models retype long tokens wrongly. */
+const SHARE_COPY_NOTE = 'Copy this link exactly; do not retype it.'
+
 const text = (error: unknown): string =>
   error instanceof DomainError ? error.message : errorText(error)
 
@@ -315,7 +318,11 @@ export function artifacts(options: ArtifactsPluginOptions): HarnessPlugin<'artif
                       sessionId,
                       ...(input.pinVersion === undefined ? {} : { shareVersion: input.pinVersion }),
                     })
-                    return `"${row.title}" is public after the owner approved it: ${view.shareUrl}`
+                    return [
+                      `"${row.title}" is public after the owner approved it. The link:`,
+                      view.shareUrl,
+                      SHARE_COPY_NOTE,
+                    ].join('\n')
                   }
                   const { id } = decisions.request({
                     agentId: agent.id,
@@ -334,7 +341,9 @@ export function artifacts(options: ArtifactsPluginOptions): HarnessPlugin<'artif
                 ...(input.pinVersion === undefined ? {} : { shareVersion: input.pinVersion }),
               })
               return [
-                `"${row.title}" is now public. Anyone with this link can open it, no sign-in: ${view.shareUrl}`,
+                `"${row.title}" is now public. Anyone with this link can open it, no sign-in:`,
+                view.shareUrl,
+                SHARE_COPY_NOTE,
                 view.shareVersion === null
                   ? 'The link follows the latest version.'
                   : `The link is pinned to version ${view.shareVersion}.`,
