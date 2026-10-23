@@ -7,7 +7,9 @@
  *   so the live stream and the backfill never overlap; both write idempotently (the log keeps
  *   one row per message id).
  * - **Gap fill**: after the client was down, messages of the chosen chats newer than the highest
- *   id stored are read once (newest first, bounded). They are stored, never answered.
+ *   id stored are read once (newest first, bounded). They are handed to `ingestGap` oldest first
+ *   (the service lets the gateway answer the recent ones that addressed the agent, when the
+ *   connection is set to), or only stored through `ingest` when that is not given.
  * - A FLOOD_WAIT parks that chat (resume at now + X + jitter) and the other chats continue. A
  *   storm of floods pauses the whole job runner and raises an alert.
  *
@@ -34,6 +36,11 @@ export interface BackfillOptions {
   chats: ChatStore
   /** Store one history message; false when it was already stored or not wanted. Never wakes an agent. */
   ingest(message: TgMessage): Promise<boolean>
+  /**
+   * The messages of one chat found in a gap, oldest first. The cursor moves only after this
+   * returned, so a crash inside it reads the gap again (the gateway never answers one twice).
+   */
+  ingestGap?(chatId: string, messages: TgMessage[]): Promise<void>
   /** Is the chat in the gateway allowlist (a chat that is not is never read). */
   allowed(chatId: string): boolean
   hooks: JobHooks
@@ -190,6 +197,7 @@ export function createBackfill(options: BackfillOptions): Backfill {
     if (chat === undefined || high === undefined) return
     const cutoff = now() - gapWindow
     let offsetId: number | undefined
+    const found: TgMessage[] = []
     for (let page = 0; page < gapMaxPages; page++) {
       let list: TgMessage[]
       try {
@@ -209,12 +217,28 @@ export function createBackfill(options: BackfillOptions): Backfill {
           break
         }
         if (m.service) continue
-        await options.ingest(m)
-        chats.noteMessage(connectionId, chatId, m.id, false)
+        found.push(m)
       }
-      if (stop) return
+      if (stop) break
       offsetId = list.at(-1)?.id
       await sleep(pause())
+    }
+    // oldest first: the cursor (highest id) only moves past a message once it was handled
+    found.sort((a, b) => a.id - b.id)
+    if (options.ingestGap !== undefined) {
+      try {
+        await options.ingestGap(chatId, found)
+      } catch (error) {
+        warn(`telegram-user: gap of ${connectionId}/${chatId} not handled: ${String(error)}`)
+        gaps.add(chatId)
+        return
+      }
+      for (const m of found) chats.noteMessage(connectionId, chatId, m.id, false)
+      return
+    }
+    for (const m of found) {
+      await options.ingest(m)
+      chats.noteMessage(connectionId, chatId, m.id, false)
     }
   }
 

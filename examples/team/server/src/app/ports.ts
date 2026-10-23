@@ -1516,6 +1516,14 @@ export interface Deps {
   alarmPush?: AlarmPush
   /** Interrupts a stuck run (the same abort as the Stop button). */
   interruptRun?: RunInterrupter
+  /**
+   * Resume after Pause all, for the chat messages the hold kept: answer them (once per
+   * conversation) or drop them. Absent without channels.
+   */
+  channelsResume?: (options: {
+    answer: boolean
+    maxAgeMs: number
+  }) => Promise<{ conversations: number; messages: number }>
   uploads: UploadStore
   tasks: TaskStore
   turnRetry: TurnRetryPort

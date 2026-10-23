@@ -10,6 +10,7 @@
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
 	let holdChannels = $state(true);
+	let answerHeldOnResume = $state(false);
 	let stopRunning = $state(false);
 	let note = $state('');
 
@@ -17,6 +18,7 @@
 	$effect(() => {
 		if (open) {
 			holdChannels = true;
+			answerHeldOnResume = false;
 			stopRunning = false;
 			note = '';
 			pauseStore.error = null;
@@ -27,7 +29,7 @@
 	const held = $derived(pauseStore.view?.held);
 
 	async function pause(): Promise<void> {
-		if (await pauseWorkspace({ note, holdChannels, stopRunning })) {
+		if (await pauseWorkspace({ note, holdChannels, answerHeldOnResume, stopRunning })) {
 			open = false;
 			toast.success('Everything automatic is paused');
 		}
@@ -52,9 +54,24 @@
 				<Checkbox class="mt-0.5" bind:checked={holdChannels} aria-label="Also stop answering chat channels" />
 				<span>
 					Also stop answering chat channels
-					<span class="block text-xs text-muted-foreground">Messages are still received and kept; they are not answered later.</span>
+					<span class="block text-xs text-muted-foreground">
+						{#if holdChannels && answerHeldOnResume}
+							Messages are still received and kept. After Resume, each conversation gets one answer to the ones that addressed the agent.
+						{:else}
+							Messages are still received and kept; they are not answered later.
+						{/if}
+					</span>
 				</span>
 			</label>
+			{#if holdChannels}
+				<label class="ml-6 flex items-start gap-2">
+					<Checkbox class="mt-0.5" bind:checked={answerHeldOnResume} aria-label="Answer them after Resume" data-testid="pause-answer-held" />
+					<span>
+						Answer them after Resume
+						<span class="block text-xs text-muted-foreground">Messages that addressed the agent, up to 12 hours old, are answered once per conversation, oldest first.</span>
+					</span>
+				</label>
+			{/if}
 			<label class="flex items-start gap-2">
 				<Checkbox class="mt-0.5" bind:checked={stopRunning} aria-label="Stop work that is running now" />
 				<span>

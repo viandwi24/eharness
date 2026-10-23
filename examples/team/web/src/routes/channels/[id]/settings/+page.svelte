@@ -36,6 +36,9 @@
 	let retention = $state<string | number | null>(untrack(() => (cs.conn?.binding?.defaults.retentionDays === undefined ? '' : String(cs.conn.binding.defaults.retentionDays))));
 	let observe = $state(untrack(() => (cs.conn?.binding?.defaults.observe === undefined ? '' : cs.conn.binding.defaults.observe ? 'on' : 'off')));
 	const retentionProblem = $derived(retentionError(retention));
+	// minutes a missed message may be old and still be answered (account only)
+	let missedMinutes = $state<string | number | null>(untrack(() => String(cs.conn?.binding?.missedWindowMinutes ?? 30)));
+	const missedProblem = $derived(Number.isInteger(Number(missedMinutes)) && Number(missedMinutes) >= 1 && Number(missedMinutes) <= 720 ? undefined : 'Whole minutes, 1 to 720');
 	const ttlProblem = $derived(ttl.trim() === '' || !(Number(ttl) >= 0.02 && Number(ttl) <= 720) ? 'Hours, 0.02 to 720' : undefined);
 
 	onMount(() => {
@@ -133,6 +136,24 @@
 					</div>
 					<Switch checked={binding.allowBots} onCheckedChange={(v) => void rebind({ allowBots: v }, 'Saved')} disabled={busy} aria-label="Listen to other bots" />
 				</div>
+				{#if account}
+					<div class="flex flex-col gap-3" data-testid="reply-missed-section">
+						<div class="flex items-center justify-between gap-3">
+							<div class="min-w-0">
+								<div class="text-sm font-medium">Reply to messages missed while the server was down</div>
+								<p class="text-xs text-muted-foreground">On (default): after a restart, messages in the chats you let the agent answer that addressed it (a mention, a reply to it, a command) are answered once per chat, with a note that they arrived late. Off: they are only stored.</p>
+							</div>
+							<Switch checked={binding.replyMissed} onCheckedChange={(v) => void rebind({ replyMissed: v }, v ? 'Missed messages are answered' : 'Missed messages are only stored')} disabled={busy} aria-label="Reply to messages missed while the server was down" data-testid="reply-missed" />
+						</div>
+						{#if binding.replyMissed}
+							<label class="flex w-64 flex-col gap-1">
+								<span class="text-xs font-medium">Only if they are at most this many minutes old</span>
+								<Input type="number" min="1" max="720" bind:value={missedMinutes} aria-label="Missed message window in minutes" aria-invalid={!!missedProblem} onchange={() => { if (!missedProblem) void rebind({ missedWindowMinutes: Number(missedMinutes) }, 'Saved'); }} disabled={busy} data-testid="missed-window" />
+								{#if missedProblem}<span class="text-xs text-destructive-text">{missedProblem}</span>{/if}
+							</label>
+						{/if}
+					</div>
+				{/if}
 			</section>
 
 			<section class="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-label="People defaults" data-testid="settings-people">

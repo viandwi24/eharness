@@ -185,7 +185,8 @@ export function standingOrders(
 
       /** Who is asking: the web owner, or the requester of the chat turn (undefined: nobody to attribute). */
       const askerOf = async (): Promise<Asker | undefined> => {
-        if (!inChannel) return { by: WEB_OWNER, name: 'the owner', role: 'owner' }
+        if (!inChannel || gw.webTurn(sessionId))
+          return { by: WEB_OWNER, name: 'the owner', role: 'owner' }
         const r = await gw.requesterOf(sessionId)
         if (r === undefined) return undefined
         const node = gw.nodes.get(r.nodeId)

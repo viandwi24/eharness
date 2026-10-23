@@ -138,7 +138,8 @@ export interface GatewayDeps {
   }
   /**
    * Pause all with `holdChannels`: while true an inbound message is stored as context but does not
-   * wake an agent (and is not answered after Resume). Read per message.
+   * wake an agent. It is remembered, and `resumeHeld` answers it after Resume when the owner asked
+   * for that. Read per message.
    */
   held?: () => boolean
   /**
@@ -740,6 +741,8 @@ export interface ChannelGateway {
    * when several people triggered it); undefined for a turn no chat message started.
    */
   requesterOf(sessionId: string): Promise<Requester | undefined>
+  /** The current turn of the session was started by the signed-in owner in the web app (never a chat message). */
+  webTurn(sessionId: string): boolean
   /**
    * True when a chat message woke the turn but its sender could not be resolved (row purged,
    * identity unset): such a turn is treated as a guest, never as unrestricted. Turns no chat
@@ -907,6 +910,26 @@ export interface ChannelGateway {
    * or is not wanted.
    */
   ingest(connectionId: string, event: EventOf<'message.created'>): Promise<boolean>
+  /**
+   * Messages found in a gap after the transport was down (oldest first), of one chat. When the
+   * connection answers missed messages (`replyMissed`) and a message is within the window, it goes
+   * through the same inbound path as a live one (policy, people, pause) and the agent is woken once
+   * for the chat with a note that the messages arrived while it was offline. Every other message
+   * is only stored, like `ingest`. A message answered once is never answered again.
+   */
+  catchUp(
+    connectionId: string,
+    events: ReadonlyArray<EventOf<'message.created'>>,
+  ): Promise<{ stored: number; woke: number }>
+  /**
+   * Resume after Pause all: the messages the hold kept from waking an agent. With `answer`, each
+   * conversation wakes once with the ones younger than `maxAgeMs`; without, they are dropped.
+   * Held messages are settled either way, so none is ever answered at a later resume.
+   */
+  resumeHeld(options: {
+    answer: boolean
+    maxAgeMs: number
+  }): Promise<{ conversations: number; messages: number }>
   /** Resolves when the boot-time data migration of the old tables has finished. */
   ready(): Promise<void>
   stop(): Promise<void>

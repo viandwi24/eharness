@@ -1127,6 +1127,9 @@ export function compose(config: ServerConfig): Server {
     alarmPush: {
       push: async (text) => (await channelGateway?.notifyOwners(text)) ?? 'unavailable',
     },
+    // Resume after Pause all: the chat messages the hold kept are answered (or let go)
+    channelsResume: async (options) =>
+      (await channelGateway?.resumeHeld(options)) ?? { conversations: 0, messages: 0 },
     // a stuck run is stopped the way the Stop button stops it
     interruptRun: async (task, reason) => {
       const def = agents.get(task.agentId)

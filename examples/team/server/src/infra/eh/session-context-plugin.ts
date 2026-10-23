@@ -273,7 +273,8 @@ export function sessionContextTools(
     const gw = options.gateway?.()
     const conversation = gw?.conversationOf(sid)
     const requester = await gw?.requesterOf(sid).catch(() => undefined)
-    if (conversation === undefined && requester === undefined) {
+    // the owner typed it in the web app, also into a chat thread: the web owner's full scope
+    if ((conversation === undefined && requester === undefined) || gw?.webTurn(sid) === true) {
       return { scope: { kind: 'full', crossAgent: true }, ownerAsking: true }
     }
     if (requester !== undefined && (requester.role === 'owner' || requester.role === 'admin')) {

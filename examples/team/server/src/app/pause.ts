@@ -6,6 +6,7 @@
 import { parseSystemKey } from '../domain/heartbeat.ts'
 import {
   checkPauseRequest,
+  HELD_ANSWER_MAX_AGE_MS,
   isPaused,
   PAUSED_SKIP_REASON,
   type PauseRequest,
@@ -87,6 +88,9 @@ export async function pauseWorkspace(
       pausedBy: current.pausedAt === null ? by : current.pausedBy,
       note: note === '' ? null : note,
       holdChannels: request.holdChannels ?? true,
+      answerHeldOnResume:
+        request.answerHeldOnResume ??
+        (current.pausedAt === null ? false : current.answerHeldOnResume),
     },
     now,
   )
@@ -125,5 +129,14 @@ export function resumeWorkspace(deps: Deps): PauseView {
     console.warn(`team: dispatch after resume failed: ${reason(error)}`)
   }
   void deps.routineEngine?.tick?.()
+  // the chat messages the hold kept: answered once (folded per conversation) or let go
+  if (was.pausedAt !== null && deps.channelsResume !== undefined) {
+    deps
+      .channelsResume({
+        answer: was.holdChannels && was.answerHeldOnResume,
+        maxAgeMs: HELD_ANSWER_MAX_AGE_MS,
+      })
+      .catch((error) => console.warn(`team: held chat messages after resume: ${reason(error)}`))
+  }
   return pauseView(deps)
 }

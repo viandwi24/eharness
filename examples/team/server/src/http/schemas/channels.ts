@@ -81,6 +81,13 @@ export const ChannelBindingSchema = z
       description:
         'Answer a direct message from somebody who is not linked with one short neutral line. Off (default): strangers get silence.',
     }),
+    replyMissed: z.boolean().openapi({
+      description:
+        'Answer messages that addressed the agent while the server was down (a Telegram user account reads them after a restart). Default on.',
+    }),
+    missedWindowMinutes: z.number().int().openapi({
+      description: 'A missed message older than this many minutes (1 to 720) is only stored.',
+    }),
     admins: z.array(z.string()),
     historyLimit: z.number().int(),
     defaults: z.object({
@@ -293,6 +300,8 @@ export const ChannelBindBodySchema = z
     dm: z.enum(['pairing', 'disabled']).optional(),
     allowBots: z.boolean().optional(),
     replyToUnknown: z.boolean().optional(),
+    replyMissed: z.boolean().optional(),
+    missedWindowMinutes: z.number().int().min(1).max(720).optional(),
     admins: z.array(z.string().min(1)).optional(),
     historyLimit: z.number().int().min(1).max(200).optional(),
     defaults: z

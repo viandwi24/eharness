@@ -11,6 +11,8 @@ import { invalid } from './errors.ts'
 /** Reason of a slot the schedule recorded as skipped while the workspace was paused. */
 export const PAUSED_SKIP_REASON = 'paused'
 export const MAX_PAUSE_NOTE_CHARS = 500
+/** With `answerHeldOnResume`, a held chat message older than this is not answered at Resume. */
+export const HELD_ANSWER_MAX_AGE_MS = 12 * 3_600_000
 
 export interface WorkspacePause {
   /** When the workspace was paused (ms); null = not paused. */
@@ -19,6 +21,11 @@ export interface WorkspacePause {
   note: string | null
   /** Inbound chat messages are kept but do not wake an agent. */
   holdChannels: boolean
+  /**
+   * Resume answers the held chat messages that addressed the agent (at most 12 hours old), once
+   * per conversation. Off: they stay context and are never answered.
+   */
+  answerHeldOnResume: boolean
 }
 
 export const NOT_PAUSED: WorkspacePause = {
@@ -26,12 +33,15 @@ export const NOT_PAUSED: WorkspacePause = {
   pausedBy: null,
   note: null,
   holdChannels: false,
+  answerHeldOnResume: false,
 }
 
 export interface PauseRequest {
   note?: string | undefined
   /** Default true. */
   holdChannels?: boolean | undefined
+  /** Answer the held chat messages after Resume (default false; kept when pausing again). */
+  answerHeldOnResume?: boolean | undefined
   /** Stop agent turns that run now (default: they finish). */
   stopRunning?: boolean | undefined
 }

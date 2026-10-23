@@ -23,6 +23,7 @@ export async function loadPause(): Promise<void> {
 export interface PauseChoice {
 	note: string;
 	holdChannels: boolean;
+	answerHeldOnResume: boolean;
 	stopRunning: boolean;
 }
 
@@ -43,7 +44,7 @@ async function change(run: () => Promise<WorkspacePause>): Promise<boolean> {
 export const pauseWorkspace = (c: PauseChoice): Promise<boolean> =>
 	change(() =>
 		api.post('/workspace/pause', {
-			body: { ...(c.note.trim() === '' ? {} : { note: c.note.trim() }), holdChannels: c.holdChannels, stopRunning: c.stopRunning }
+			body: { ...(c.note.trim() === '' ? {} : { note: c.note.trim() }), holdChannels: c.holdChannels, answerHeldOnResume: c.holdChannels && c.answerHeldOnResume, stopRunning: c.stopRunning }
 		})
 	);
 

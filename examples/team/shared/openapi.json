@@ -6012,7 +6012,11 @@
           },
           "holdChannels": {
             "type": "boolean",
-            "description": "Inbound chat messages are kept but do not wake an agent (they are not answered after Resume)."
+            "description": "Inbound chat messages are kept but do not wake an agent (answered after Resume only with `answerHeldOnResume`)."
+          },
+          "answerHeldOnResume": {
+            "type": "boolean",
+            "description": "Resume answers the held chat messages that addressed the agent (at most 12 hours old), once per conversation."
           },
           "held": {
             "type": "object",
@@ -6061,6 +6065,7 @@
           "pausedBy",
           "note",
           "holdChannels",
+          "answerHeldOnResume",
           "held",
           "skippedWhilePaused"
         ]
@@ -6075,6 +6080,10 @@
           "holdChannels": {
             "type": "boolean",
             "description": "Default true."
+          },
+          "answerHeldOnResume": {
+            "type": "boolean",
+            "description": "Answer the held chat messages after Resume (default false; pausing again keeps the choice)."
           },
           "stopRunning": {
             "type": "boolean",
@@ -16741,6 +16750,14 @@
             "type": "boolean",
             "description": "Answer a direct message from somebody who is not linked with one short neutral line. Off (default): strangers get silence."
           },
+          "replyMissed": {
+            "type": "boolean",
+            "description": "Answer messages that addressed the agent while the server was down (a Telegram user account reads them after a restart). Default on."
+          },
+          "missedWindowMinutes": {
+            "type": "integer",
+            "description": "A missed message older than this many minutes (1 to 720) is only stored."
+          },
           "admins": {
             "type": "array",
             "items": {
@@ -16793,6 +16810,8 @@
           "dm",
           "allowBots",
           "replyToUnknown",
+          "replyMissed",
+          "missedWindowMinutes",
           "admins",
           "historyLimit",
           "defaults"
@@ -16885,6 +16904,14 @@
           },
           "replyToUnknown": {
             "type": "boolean"
+          },
+          "replyMissed": {
+            "type": "boolean"
+          },
+          "missedWindowMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 720
           },
           "admins": {
             "type": "array",
@@ -26564,7 +26591,7 @@
           "workspace"
         ],
         "summary": "Pause everything automatic",
-        "description": "One durable gate: scheduled slots are skipped (reason `paused`, never replayed), queued tasks stay queued, retries and early heartbeat wakes wait, and with `holdChannels` chat messages are kept without waking an agent. Nothing changes status, and the owner's chat, \"Run now\" and approvals keep working. Idempotent: pausing again updates the note and keeps `pausedAt`.",
+        "description": "One durable gate: scheduled slots are skipped (reason `paused`, never replayed), queued tasks stay queued, retries and early heartbeat wakes wait, and with `holdChannels` chat messages are kept without waking an agent (with `answerHeldOnResume`, Resume answers the ones that addressed the agent, up to 12 hours old). Nothing changes status, and the owner's chat, \"Run now\" and approvals keep working. Idempotent: pausing again updates the note and keeps `pausedAt`.",
         "security": [
           {
             "Bearer": []

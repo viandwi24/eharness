@@ -188,6 +188,8 @@ export function artifacts(options: ArtifactsPluginOptions): HarnessPlugin<'artif
       > {
         const gw = options.channels()
         if (gw !== undefined) {
+          // the owner typed it in the web app, also into a chat thread: the web user, not the chat
+          if (gw.webTurn(sessionId)) return { kind: 'web' }
           const r = await gw.requesterOf(sessionId).catch(() => undefined)
           if (r !== undefined)
             return { kind: 'chat', role: r.role, name: r.name ?? r.username ?? r.nativeId }

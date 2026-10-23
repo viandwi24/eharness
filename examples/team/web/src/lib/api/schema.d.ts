@@ -5875,7 +5875,7 @@ export interface paths {
         put?: never;
         /**
          * Pause everything automatic
-         * @description One durable gate: scheduled slots are skipped (reason `paused`, never replayed), queued tasks stay queued, retries and early heartbeat wakes wait, and with `holdChannels` chat messages are kept without waking an agent. Nothing changes status, and the owner's chat, "Run now" and approvals keep working. Idempotent: pausing again updates the note and keeps `pausedAt`.
+         * @description One durable gate: scheduled slots are skipped (reason `paused`, never replayed), queued tasks stay queued, retries and early heartbeat wakes wait, and with `holdChannels` chat messages are kept without waking an agent (with `answerHeldOnResume`, Resume answers the ones that addressed the agent, up to 12 hours old). Nothing changes status, and the owner's chat, "Run now" and approvals keep working. Idempotent: pausing again updates the note and keeps `pausedAt`.
          */
         post: {
             parameters: {
@@ -19823,8 +19823,10 @@ export interface components {
             pausedAt: number | null;
             pausedBy: string | null;
             note: string | null;
-            /** @description Inbound chat messages are kept but do not wake an agent (they are not answered after Resume). */
+            /** @description Inbound chat messages are kept but do not wake an agent (answered after Resume only with `answerHeldOnResume`). */
             holdChannels: boolean;
+            /** @description Resume answers the held chat messages that addressed the agent (at most 12 hours old), once per conversation. */
+            answerHeldOnResume: boolean;
             /** @description What is active now and would fire if the workspace ran. */
             held: {
                 programs: number;
@@ -19842,6 +19844,8 @@ export interface components {
             note?: string;
             /** @description Default true. */
             holdChannels?: boolean;
+            /** @description Answer the held chat messages after Resume (default false; pausing again keeps the choice). */
+            answerHeldOnResume?: boolean;
             /** @description Stop agent runs that are running now (default false: they finish). */
             stopRunning?: boolean;
         };
@@ -22718,6 +22722,10 @@ export interface components {
             allowBots: boolean;
             /** @description Answer a direct message from somebody who is not linked with one short neutral line. Off (default): strangers get silence. */
             replyToUnknown: boolean;
+            /** @description Answer messages that addressed the agent while the server was down (a Telegram user account reads them after a restart). Default on. */
+            replyMissed: boolean;
+            /** @description A missed message older than this many minutes (1 to 720) is only stored. */
+            missedWindowMinutes: number;
             admins: string[];
             historyLimit: number;
             defaults: {
@@ -22756,6 +22764,8 @@ export interface components {
             dm?: "pairing" | "disabled";
             allowBots?: boolean;
             replyToUnknown?: boolean;
+            replyMissed?: boolean;
+            missedWindowMinutes?: number;
             admins?: string[];
             historyLimit?: number;
             defaults?: {

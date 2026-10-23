@@ -31,7 +31,7 @@ const pauseRoute = createRoute({
   tags: ['workspace'],
   summary: 'Pause everything automatic',
   description:
-    'One durable gate: scheduled slots are skipped (reason `paused`, never replayed), queued tasks stay queued, retries and early heartbeat wakes wait, and with `holdChannels` chat messages are kept without waking an agent. Nothing changes status, and the owner\'s chat, "Run now" and approvals keep working. Idempotent: pausing again updates the note and keeps `pausedAt`.',
+    'One durable gate: scheduled slots are skipped (reason `paused`, never replayed), queued tasks stay queued, retries and early heartbeat wakes wait, and with `holdChannels` chat messages are kept without waking an agent (with `answerHeldOnResume`, Resume answers the ones that addressed the agent, up to 12 hours old). Nothing changes status, and the owner\'s chat, "Run now" and approvals keep working. Idempotent: pausing again updates the note and keeps `pausedAt`.',
   security,
   request: {
     body: { required: true, content: { 'application/json': { schema: PauseRequestSchema } } },

@@ -161,6 +161,12 @@ export const ConnectionConfigSchema = z.object({
    * default: strangers get silence (they are only recorded under "Not linked yet").
    */
   replyToUnknown: z.boolean().default(false),
+  /**
+   * Messages that addressed the agent while the server was down (found by the start-up gap fill of
+   * a user account) are answered when they are at most `missedWindowMinutes` old. Default on.
+   */
+  replyMissed: z.boolean().default(true),
+  missedWindowMinutes: z.number().int().min(1).max(720).default(30),
   botLoopGuard: z
     .object({
       maxEvents: z.number().int().min(1).default(20),

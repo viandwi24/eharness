@@ -255,6 +255,27 @@ streaming turn is only recovered after its heartbeat is older than `recovery.sta
 the lock lease (30 s) expired; the scripts shorten both with SQL, `--wait-stale` waits honestly.
 A boot and periodic `reconcile()` re-reads waits and task rows that never reached a terminal state.
 
+## The owner writing from the web app into a chat session
+
+A chat conversation (`channel:<connection>:<node>`) is also a thread in the web app, and the owner
+can type into it. Such a turn (`send`, `edit` or `regenerate` with no inbox items) is marked in the
+gateway (`webTurns`, `ChannelGateway.webTurn(sessionId)`) when the turn starts, from the server's
+own turn state and never from client metadata. For that turn:
+
+- The model gets a `<message-meta>` header in the turn reminder: `from ... the app owner, writing
+  from the web app, not posted in the chat · role owner`, followed by the web-turn note. The channel
+  system prompt says that such a message is the owner speaking privately: follow them as the owner.
+- Every "who asked" check resolves `{ kind: 'web' }` / owner instead of the last chat requester
+  (artifact visibility, persona, standing orders, session reading). Chat-only tools see no chat
+  requester and keep their existing "no chat trigger" behaviour.
+- Nothing is posted in the chat: delivery of a final text needs a chat trigger message
+  (`turnEnded` returns when there is none), so the answer stays in the web thread. The owner can ask
+  the agent to post something; it then uses `channel_send`.
+- Chat messages arrive through the inbox (`collect`), so they never merge into the owner's turn: the
+  chat message starts its own turn, which replaces the mark and is answered for its own sender.
+  A web message steered into a chat turn that is already running joins as context without the
+  header and the turn keeps its chat requester (the more restrictive side).
+
 ## Known limits
 
 - One workspace and one user (`actor` is `owner`); a single bearer token.

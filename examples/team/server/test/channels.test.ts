@@ -2460,3 +2460,103 @@ describe('L5: settings inherit down the tree, the log is full, sessions follow n
     expect(i.gw.log.reactions(message?.id as string)[0]?.removedAt).toBeNumber()
   })
 })
+
+describe('the owner writing from the web app into a chat session', () => {
+  const carol = { id: 'u-carol', name: 'Carol' }
+  const page = { id: '' }
+  /** A step that asks for the public link of the page (its id is known only after setup). */
+  const publish = (toolCallId: string): ScriptedStepInput =>
+    (() => ({
+      toolCalls: [
+        {
+          toolName: 'artifact_visibility',
+          input: { id: page.id, visibility: 'public' },
+          toolCallId,
+        },
+      ],
+    })) as never
+  const setup = async (script: ScriptedStepInput[]) => {
+    const i = instance({ lead: script })
+    const mock = await connect(i, {
+      groups: { room: { label: 'Ops', ack: false } },
+      config: { ...NO_WAIT, people: { defaultRole: 'guest', policy: {} } },
+    })
+    // write tools run without a card here: the checks under test are the code ones
+    const lead = i.server.deps.agents.getBySlug('lead')
+    if (lead === undefined) throw new Error('seed missing')
+    i.server.deps.modes.set(lead, channelSessionId('c1', nid(i, 'room')), 'bypass', Date.now())
+    i.gw.pairing.link('c1', ana.id, 'ana-member', ana.name)
+    i.gw.people.setRole('c1', ana.id, { role: 'admin' }, 'test')
+    i.gw.pairing.link('c1', carol.id, 'carol-member', carol.name)
+    mock.sent.length = 0
+    const made = await i.server.artifacts.create({
+      kind: 'html',
+      title: 'Offer',
+      files: [{ path: 'index.html', content: '<html><body>offer</body></html>' }],
+    } as never)
+    page.id = (made as unknown as { id: string }).id
+    return { i, mock }
+  }
+  const fromWeb = async (i: Instance, text: string) => {
+    const res = await i.server.app.request(`/sessions/${sid(i, 'room')}/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: sid(i, 'room'),
+        messages: [{ id: `u-${text.length}`, role: 'user', parts: [{ type: 'text', text }] }],
+      }),
+    })
+    expect(res.status).toBe(200)
+    await res.text()
+  }
+  const visibility = (i: Instance) => i.server.artifacts.get(page.id)?.visibility
+
+  test('the model sees the web header, the owner may publish, and nothing is posted in the chat', async () => {
+    const { i, mock } = await setup([textStep('hello'), publish('p1'), textStep('Done: public.')])
+    await mock.say({ from: ana, text: '@team_bot hi', id: 'w1', mentionSelf: true })
+    await until('first reply', () => mock.sent.some((s) => s.message.text === 'hello'))
+    const before = mock.sent.length
+    await fromWeb(i, 'make the artifact public')
+    await sleep(150)
+    expect(visibility(i)).toBe('public')
+    const prompt = wire(i.models.lead as ScriptedModel)
+    expect(prompt).toContain('the app owner')
+    expect(prompt).toContain('writing from the web app, not posted in the chat')
+    expect(prompt).toContain('role owner')
+    expect(mock.sent.length).toBe(before) // the answer stays in the web thread
+    expect(i.gw.webTurn(sid(i, 'room'))).toBe(false) // the turn is over
+  })
+
+  test('a chat member in the same session still cannot publish, a chat admin can; each turn has its own requester', async () => {
+    const { i, mock } = await setup([
+      publish('p1'),
+      textStep('That is not something I can do for you.'),
+      publish('p2'),
+      textStep('Public.'),
+    ])
+    await mock.say({ from: carol, text: '@team_bot make it public', id: 'w1', mentionSelf: true })
+    await until('the refusal', () => mock.sent.length === 1)
+    expect(visibility(i)).toBe('private')
+    expect(i.gw.webTurn(sid(i, 'room'))).toBe(false)
+    await mock.say({ from: ana, text: '@team_bot make it public', id: 'w2', mentionSelf: true })
+    await until('the admin is answered', () => mock.sent.length === 2)
+    expect(visibility(i)).toBe('public')
+  })
+
+  test('a chat message after the web turn is answered for the chat person, not the owner', async () => {
+    const { i, mock } = await setup([
+      textStep('hi Ana'),
+      textStep('ok web'),
+      publish('p1'),
+      textStep('That is not something I can do for you.'),
+    ])
+    await mock.say({ from: ana, text: '@team_bot hi', id: 'w0', mentionSelf: true })
+    await until('the session opens', () => mock.sent.length === 1)
+    await fromWeb(i, 'hello from the app')
+    await sleep(150)
+    expect(mock.sent.length).toBe(1)
+    await mock.say({ from: carol, text: '@team_bot make it public', id: 'w1', mentionSelf: true })
+    await until('answered', () => mock.sent.length === 2)
+    expect(visibility(i)).toBe('private') // the web turn left no owner rights behind
+  })
+})

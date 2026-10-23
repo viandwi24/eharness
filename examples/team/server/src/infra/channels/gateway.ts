@@ -97,7 +97,7 @@ import {
   governorLimitsOf,
 } from './governor.ts'
 import { type MessageMeta, renderLinePrefix } from './header.ts'
-import { sqliteIdentityStore } from './identities.ts'
+import { identityDtoOf, sqliteIdentityStore } from './identities.ts'
 import { migrateLegacyMessages, migrateLegacyStructure } from './legacy-migration.ts'
 import { isMentionOnly, isSmallTalk, mediumContext } from './medium.ts'
 import {
@@ -178,6 +178,24 @@ import {
   turnText,
   withWebTurnNote,
 } from './gateway/prompts.ts'
+
+/** A wake that was prepared but not queued yet: the caller folds the ones of one session into a single turn. */
+interface WakeEntry {
+  node: NodeRow
+  session: NodeSessionRow
+  input: WakeInput
+  loggedId: string
+  nativeId: string
+  /** Platform time of the message. */
+  at: number
+  reason: string
+  sender: Identity
+}
+type WakeBatch = WakeEntry[]
+
+/** `2026-05-01 09:30 UTC`, the time form of the offline notes. */
+const utcMinute = (at: number): string =>
+  `${new Date(at).toISOString().slice(0, 16).replace('T', ' ')} UTC`
 
 export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const now = deps.now ?? (() => Date.now())
@@ -1084,6 +1102,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   const requesters = new Map<string, Requester>()
+  /**
+   * Sessions whose current turn the signed-in owner started from the web app (a `send`, `edit` or
+   * `regenerate` with no inbox items): the requester of that turn is the web owner, not the last
+   * person who wrote in the chat. A turn that a chat message starts (or wakes) replaces it.
+   */
+  const webTurns = new Set<string>()
   /** Trigger messages whose turn ended at its step cap and got its one hand-over wake. */
   const handedOver = new Set<string>()
   /** The chat message a parked turn works for, kept for its continuation (which carries no trigger of its own). */
@@ -1160,9 +1184,18 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const reportKey = turn?.kind === 'wake' ? `${REPORT_PREFIX}${turn.id}` : undefined
     if (reportKey !== undefined) wakeTurns.set(sessionId, reportKey)
     else if (turn !== undefined && turn.kind !== 'respond') wakeTurns.delete(sessionId)
+    // a turn of the web app: no inbox item at all (a hand-over or a reminder has keys of its own)
+    const fromWeb =
+      keys === undefined &&
+      turn !== undefined &&
+      (turn.kind === 'send' || turn.kind === 'edit' || turn.kind === 'regenerate')
+    if (fromWeb) webTurns.add(sessionId)
+    else if (turn === undefined || turn.kind !== 'respond') webTurns.delete(sessionId)
     if (evKeys.length > 0) {
       chatTriggered = true
       r = await requesterFromKeys(row, evKeys)
+    } else if (webTurns.has(sessionId) && reportKey === undefined) {
+      // the owner in the web app: no chat requester (never the last person who wrote in the chat)
     } else {
       // a continuation of a parked turn (an approval answered): still the person who asked
       const parked = approvals.activeTrigger(sessionId)
@@ -3682,6 +3715,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     scope: ResolvedScope,
     sender: IdentityRow,
     senderDto: Identity,
+    batch?: WakeBatch,
   ): Promise<HandleResult> {
     const isDm = node.kind === 'direct'
     const nativeId =
@@ -3819,9 +3853,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       return decision
     }
 
-    // Pause all: the message is kept as context, the agent is not woken (and does not answer it later)
+    // Pause all: the message is kept as context and the agent is not woken. The wake it would have
+    // been is remembered, so Resume can answer it when the owner chose that (`resumeHeld`)
     if (deps.held?.() === true) {
       log.demote(node.id, nativeId)
+      if (event.type === 'message.created') {
+        log.markHeld(node.id, nativeId, { at: now(), reason: decision.reason })
+      }
       return { action: 'observe', reason: 'the workspace is paused' }
     }
 
@@ -3906,6 +3944,20 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         log.markHandled(node.id, nativeId)
         return { action: 'approval', reason: 'answered with a reply in the chat' }
       }
+    }
+    // a message found after a restart: the caller wakes the chat once for all of them
+    if (batch !== undefined) {
+      batch.push({
+        node,
+        session,
+        input,
+        loggedId: logged.id,
+        nativeId,
+        at: event.at,
+        reason: decision.reason,
+        sender: senderDto,
+      })
+      return decision
     }
     // a foreground delegation blocks the turn: the person who asked (or an admin) writing again
     // stops the agent so this message is read now, not when the agent is done
@@ -4021,7 +4073,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return log.recordDeleted(node.id, ids, at, { redact: scope?.redactOnDelete === true })
   }
 
-  async function handleEvent(connectionId: string, event: RemoteEvent): Promise<HandleResult> {
+  async function handleEvent(
+    connectionId: string,
+    event: RemoteEvent,
+    batch?: WakeBatch,
+  ): Promise<HandleResult> {
     await migrated
     const config = cache.get(connectionId)
     const adapter = adapters.get(connectionId)
@@ -4341,6 +4397,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       scope,
       sender,
       senderDto,
+      batch,
     )
   }
 
@@ -4994,6 +5051,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         delegations.set(end.sessionId, trigger.id)
     }
     if (end.stop !== 'tool-pending') requesters.delete(end.sessionId)
+    if (end.stop !== 'tool-pending') webTurns.delete(end.sessionId)
     if (end.stop !== 'tool-pending') unresolvedTurns.delete(end.sessionId)
     if (end.stop !== 'tool-pending') parkedUnannounced.delete(end.sessionId)
     if (end.stop === 'tool-pending') {
@@ -5343,6 +5401,210 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return r.inserted
   }
 
+  // --- messages that arrived while nobody was listening ---------------------------------------
+
+  /** The note a folded wake starts with: why these messages are old, and from when to when. */
+  function lateNote(kind: 'restart' | 'pause', entries: readonly WakeEntry[]): string {
+    const first = Math.min(...entries.map((e) => e.at))
+    const last = Math.max(...entries.map((e) => e.at))
+    const where =
+      kind === 'restart'
+        ? 'while you were offline (the server was down or restarting)'
+        : 'while the workspace was paused'
+    const what =
+      entries.length === 1
+        ? 'The message below arrived'
+        : `The ${entries.length} messages below arrived`
+    const span =
+      entries.length === 1
+        ? `at ${utcMinute(first)}`
+        : `between ${utcMinute(first)} and ${utcMinute(last)}`
+    return `[Late messages: ${what} ${where}, ${span}; it is ${utcMinute(now())} now. Answer them together in this one turn. If the delay matters, acknowledge it briefly and naturally, without a long apology.]`
+  }
+
+  /**
+   * Queue the prepared wakes: one group per session, oldest first, so the collect window folds a
+   * conversation's late messages into one turn. The message is settled before it is queued: a
+   * crash in between loses one answer, it never repeats one.
+   */
+  async function flushWakes(batch: WakeBatch, kind: 'restart' | 'pause'): Promise<number> {
+    const groups = new Map<string, WakeEntry[]>()
+    for (const e of batch) {
+      const key = e.session.sessionId
+      groups.set(key, [...(groups.get(key) ?? []), e])
+    }
+    let woke = 0
+    for (const entries of groups.values()) {
+      entries.sort((a, b) => a.at - b.at)
+      const note = lateNote(kind, entries)
+      let first = true
+      for (const e of entries) {
+        if (kind === 'restart') log.markHandled(e.node.id, e.nativeId)
+        else log.settleHeld(e.node.id, e.nativeId)
+        const input: WakeInput = first ? { ...e.input, text: `${note}\n${e.input.text}` } : e.input
+        try {
+          await deps.sessions.enqueue(e.session.agentId, e.session.sessionId, input, {
+            mode: 'collect',
+            id: `${EVENT_PREFIX}${e.loggedId}`,
+            collect,
+          })
+        } catch (error) {
+          if (kind === 'restart') log.markHandled(e.node.id, e.nativeId, false)
+          warn(`channels: a late message could not be queued: ${errorText(error)}`)
+          continue
+        }
+        first = false
+        woke++
+        activity({
+          connectionId: e.node.connectionId,
+          type: 'woke',
+          reason: `${kind === 'restart' ? 'woke after restart' : 'woke after pause'} (${e.reason})`,
+          conversationId: e.node.id,
+          peerId: e.sender.id,
+          ...(e.sender.name === undefined && e.sender.username === undefined
+            ? {}
+            : { peerName: e.sender.name ?? `@${e.sender.username}` }),
+          ...(e.nativeId === '' ? {} : { platformId: e.nativeId }),
+          detail: { late: kind },
+          at: e.at,
+        })
+      }
+    }
+    return woke
+  }
+
+  async function catchUp(
+    connectionId: string,
+    messages: ReadonlyArray<EventOf<'message.created'>>,
+  ): Promise<{ stored: number; woke: number }> {
+    await migrated
+    const out = { stored: 0, woke: 0 }
+    const config = cache.get(connectionId)
+    const adapter = adapters.get(connectionId)
+    const windowMs = (config?.missedWindowMinutes ?? 30) * 60_000
+    const ordered = [...messages].sort((a, b) => a.at - b.at)
+    const batch: WakeBatch = []
+    for (const event of ordered) {
+      const self = adapter?.self()
+      const mine = event.message.sender.isSelf === true || event.message.sender.id === self?.id
+      const eligible =
+        config !== undefined &&
+        adapter !== undefined &&
+        config.replyMissed &&
+        !mine &&
+        now() - event.at <= windowMs &&
+        event.node !== null
+      if (!eligible) {
+        if (await ingest(connectionId, event)) out.stored++
+        continue
+      }
+      // history does not say whose message a reply points at: our own log does
+      let signals = event.signals
+      const replied = event.message.replyTo
+      if (!signals.replyToSelf && replied !== undefined && event.node !== null) {
+        const room = nodes.byNative(connectionId, event.node.nativeId)
+        if (room !== undefined && log.isOwn(room.id, replied.messageId)) {
+          signals = { ...signals, replyToSelf: true }
+        }
+      }
+      try {
+        const result = await handleEvent(connectionId, { ...event, signals }, batch)
+        if (result.action !== 'wake') out.stored++
+      } catch (error) {
+        warn(`channels: a missed message could not be handled: ${errorText(error)}`)
+        // keep it in the log at least, so nothing is lost silently
+        if (await ingest(connectionId, event).catch(() => false)) out.stored++
+      }
+    }
+    out.woke = await flushWakes(batch, 'restart')
+    return out
+  }
+
+  async function resumeHeld(options: {
+    answer: boolean
+    maxAgeMs: number
+  }): Promise<{ conversations: number; messages: number }> {
+    await migrated
+    const result = { conversations: 0, messages: 0 }
+    const held = log.heldWakes()
+    if (!options.answer) {
+      for (const h of held) log.settleHeld(h.nodeId, h.nativeId)
+      return result
+    }
+    const cutoff = now() - options.maxAgeMs
+    const batch: WakeBatch = []
+    const seen = new Set<string>()
+    for (const h of held) {
+      if (h.sentAt < cutoff) {
+        log.settleHeld(h.nodeId, h.nativeId)
+        continue
+      }
+      const config = cache.get(h.connectionId)
+      const adapter = adapters.get(h.connectionId)
+      const node = nodes.get(h.nodeId)
+      // a connection this process does not run stays held (another instance, or not connected yet)
+      if (config === undefined || adapter === undefined || node === undefined) continue
+      const scope = scopeOf(node)
+      const message = await log.find(h.nodeId, h.nativeId)
+      const row =
+        message?.senderIdentityId === undefined
+          ? undefined
+          : identities.get(message.senderIdentityId)
+      if (
+        scope === undefined ||
+        !scope.allowed ||
+        !live(scope.agentId) ||
+        message === undefined ||
+        message.deletedAt !== undefined ||
+        row === undefined
+      ) {
+        log.settleHeld(h.nodeId, h.nativeId)
+        continue
+      }
+      // the workspace was paused again meanwhile: they stay held for that resume
+      if (deps.held?.() === true) continue
+      const dto = identityDtoOf(row)
+      const meta = metaOf({
+        sender: row,
+        node,
+        nativeId: h.nativeId,
+        at: message.at,
+        ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
+      })
+      const input: WakeInput = {
+        text: turnText(
+          {
+            type: 'message',
+            sender: dto,
+            text: message.text,
+            ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
+          },
+          row.personId ?? undefined,
+          message.attachments.length === 0
+            ? []
+            : [
+                `(${message.attachments.length} attachment(s) were sent with it; they are not loaded here)`,
+              ],
+          meta,
+        ),
+      }
+      batch.push({
+        node,
+        session: ensureSession(config, scope, node, adapter),
+        input,
+        loggedId: message.id,
+        nativeId: h.nativeId,
+        at: message.at,
+        reason: h.reason,
+        sender: dto,
+      })
+      seen.add(node.id)
+    }
+    result.messages = await flushWakes(batch, 'pause')
+    result.conversations = seen.size
+    return result
+  }
+
   // --- retention and unresolved events --------------------------------------------------------
 
   function purge(): number {
@@ -5571,6 +5833,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     proactive: proactiveApi,
     timezone: zoneNow,
     requesterOf,
+    webTurn: (sessionId) => webTurns.has(sessionId),
     roleOfIdentity: (identityId) => {
       const id = identities.get(identityId)
       return id === undefined ? undefined : resolveIdentityRole(id.connectionId, id).role
@@ -5723,6 +5986,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     purge,
     resolveUnresolved,
     ingest,
+    catchUp,
+    resumeHeld,
     ready: () => migrated,
     async stop() {
       // what was sent is in the log before the process lets go of the database

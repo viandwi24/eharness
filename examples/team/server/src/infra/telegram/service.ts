@@ -328,6 +328,8 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
               dm: config.dm,
               allowBots: config.allowBots,
               replyToUnknown: config.replyToUnknown,
+              replyMissed: config.replyMissed,
+              missedWindowMinutes: config.missedWindowMinutes,
               admins: config.admins,
               historyLimit: config.historyLimit,
               defaults: defaultsView(config),
@@ -435,6 +437,10 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
         ...(input.dm === undefined ? {} : { dm: input.dm }),
         ...(input.allowBots === undefined ? {} : { allowBots: input.allowBots }),
         ...(input.replyToUnknown === undefined ? {} : { replyToUnknown: input.replyToUnknown }),
+        ...(input.replyMissed === undefined ? {} : { replyMissed: input.replyMissed }),
+        ...(input.missedWindowMinutes === undefined
+          ? {}
+          : { missedWindowMinutes: input.missedWindowMinutes }),
         ...(input.admins === undefined ? {} : { admins: input.admins }),
         ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
         ...(input.defaults === undefined

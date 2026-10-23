@@ -105,6 +105,19 @@ export interface NewLogMessage {
   forwardOf?: Record<string, unknown> | undefined
 }
 
+/** A message the Pause all hold kept from waking the agent. */
+export interface HeldWake {
+  connectionId: string
+  nodeId: string
+  nativeId: string
+  /** Platform time of the message (ms). */
+  sentAt: number
+  /** When it was held (ms). */
+  heldAt: number
+  /** What the wake policy decided ("mentioned", "reply to the agent", ...). */
+  reason: string
+}
+
 export interface InsertResult {
   inserted: boolean
   /** The row existed and the gateway had finished acting on it. */
@@ -122,7 +135,18 @@ export interface ChannelLog {
     message: NewLogMessage,
     options: { pending: boolean; handled?: boolean; disposition?: 'woke' | 'observed' },
   ): Promise<InsertResult>
-  markHandled(nodeId: string, nativeId: string): void
+  /** `handled = false` hands a row back (a wake that could not be queued must be retried). */
+  markHandled(nodeId: string, nativeId: string, handled?: boolean): void
+  /**
+   * Pause all with the channel hold: remember that this message would have woken the agent (it
+   * stays context for the log). Durable (inside `meta`), so a restart between pause and resume
+   * loses nothing.
+   */
+  markHeld(nodeId: string, nativeId: string, held: { at: number; reason: string }): void
+  /** Held wake messages not settled yet, oldest first (per node, in time order). */
+  heldWakes(options?: { connectionId?: string }): HeldWake[]
+  /** The held message was answered or dropped: it never comes back (and is not context twice). */
+  settleHeld(nodeId: string, nativeId: string): void
   /** A message that was going to wake the agent becomes context for the next wake (observed, shown once). */
   demote(nodeId: string, nativeId: string): void
   find(nodeId: string, nativeId: string): Promise<LogMessage | undefined>
@@ -425,9 +449,56 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
         )
         .run(nodeId, nativeId)
     },
-    markHandled(nodeId, nativeId) {
+    markHandled(nodeId, nativeId, handled = true) {
       sqlite
-        .query('UPDATE ch_messages SET handled = 1 WHERE node_id = ? AND native_id = ?')
+        .query('UPDATE ch_messages SET handled = ? WHERE node_id = ? AND native_id = ?')
+        .run(handled ? 1 : 0, nodeId, nativeId)
+    },
+    markHeld(nodeId, nativeId, held) {
+      sqlite
+        .query(
+          "UPDATE ch_messages SET meta = json_set(meta, '$.heldWake', json(?)) WHERE node_id = ? AND native_id = ?",
+        )
+        .run(JSON.stringify(held), nodeId, nativeId)
+    },
+    heldWakes(options) {
+      const rows = sqlite
+        .query<
+          {
+            connection_id: string
+            node_id: string
+            native_id: string
+            sent_at: number
+            held_at: number
+            reason: string
+          },
+          [string | null, string | null]
+        >(
+          `SELECT connection_id, node_id, native_id, sent_at,
+                  json_extract(meta, '$.heldWake.at') AS held_at,
+                  json_extract(meta, '$.heldWake.reason') AS reason
+             FROM ch_messages
+            WHERE json_extract(meta, '$.heldWake') IS NOT NULL
+              AND json_extract(meta, '$.heldDone') IS NULL
+              AND direction = 'in' AND deleted_at IS NULL
+              AND (? IS NULL OR connection_id = ?)
+            ORDER BY node_id, sent_at, sort_key, id`,
+        )
+        .all(options?.connectionId ?? null, options?.connectionId ?? null)
+      return rows.map((r) => ({
+        connectionId: r.connection_id,
+        nodeId: r.node_id,
+        nativeId: r.native_id,
+        sentAt: r.sent_at,
+        heldAt: r.held_at,
+        reason: r.reason ?? '',
+      }))
+    },
+    settleHeld(nodeId, nativeId) {
+      sqlite
+        .query(
+          "UPDATE ch_messages SET pending = 0, meta = json_set(meta, '$.heldDone', 1) WHERE node_id = ? AND native_id = ?",
+        )
         .run(nodeId, nativeId)
     },
     async find(nodeId, nativeId) {

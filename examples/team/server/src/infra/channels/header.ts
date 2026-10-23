@@ -169,6 +169,16 @@ export function renderHeader(m: MessageMeta): string {
   ].join('\n')
 }
 
+/**
+ * The header of a message the signed-in owner typed in the web app into a chat session. Not from
+ * the chat: the role is the owner's by the app's sign-in, and nothing of it is posted in the chat.
+ */
+export const WEB_OWNER_HEADER = [
+  '<message-meta>',
+  'from (the person you are answering): the app owner · writing from the web app, not posted in the chat · role owner (signed in to the web app)',
+  '</message-meta>',
+].join('\n')
+
 /** The compact line prefix of an observed message in the turn reminder (the same data, shorter). */
 export function renderLinePrefix(m: {
   at: number

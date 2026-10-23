@@ -28,7 +28,13 @@
 			<p>
 				Paused since {formatDateTime(view.pausedAt)}{#if view.pausedBy} by {view.pausedBy}{/if}{#if view.note} · {view.note}{/if}.
 				{view.skippedWhilePaused} scheduled {view.skippedWhilePaused === 1 ? 'run' : 'runs'} skipped so far; they are not replayed.
-				{view.holdChannels ? 'Chat channels keep messages but do not answer them.' : 'Chat channels still answer.'}
+				{#if !view.holdChannels}
+					Chat channels still answer.
+				{:else if view.answerHeldOnResume}
+					Chat channels keep messages and answer the ones that addressed the agent (up to 12 hours old) after Resume.
+				{:else}
+					Chat channels keep messages but do not answer them, not even after Resume.
+				{/if}
 			</p>
 			<div><Button onclick={() => (resumeOpen = true)}>Resume</Button></div>
 		{:else}

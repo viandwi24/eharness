@@ -241,6 +241,19 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     return gateway.ingest(id, normalizeMessage(m, { selfId, fetch: noFetch }))
   }
 
+  /**
+   * The messages a gap fill found, oldest first. The gateway answers the recent ones that
+   * addressed the account when the connection is set to (history carries no files: attachments are
+   * not downloaded), and only stores the rest.
+   */
+  async function ingestGap(id: string, messages: TgMessage[]): Promise<void> {
+    const selfId = entries.get(id)?.me?.id ?? ''
+    const events = messages.map((m) => normalizeMessage(m, { selfId, fetch: noFetch }))
+    const { woke } = await gateway.catchUp(id, events)
+    if (woke > 0)
+      warn(`telegram-user: ${id} woke ${woke} time(s) for messages missed while it was down`)
+  }
+
   async function recordAdminEvent(id: string, chatId: string, ev: TgAdminEvent): Promise<boolean> {
     const known = chats.get(id, chatId)
     const chain = chainOfMessage({
@@ -548,6 +561,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         client: jobClient,
         chats,
         ingest: (m) => ingestHistory(id, m),
+        ingestGap: (_chatId, messages) => ingestGap(id, messages),
         allowed: (chatId) => allowedChat(id, chatId),
         hooks: jobHooks,
         ...(options.now === undefined ? {} : { now: options.now }),
@@ -820,6 +834,8 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
               dm: config.dm,
               allowBots: config.allowBots,
               replyToUnknown: config.replyToUnknown,
+              replyMissed: config.replyMissed,
+              missedWindowMinutes: config.missedWindowMinutes,
               admins: config.admins,
               historyLimit: config.historyLimit,
               defaults: defaultsView(config),
@@ -946,6 +962,10 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         ...(input.dm === undefined ? {} : { dm: input.dm }),
         ...(input.allowBots === undefined ? {} : { allowBots: input.allowBots }),
         ...(input.replyToUnknown === undefined ? {} : { replyToUnknown: input.replyToUnknown }),
+        ...(input.replyMissed === undefined ? {} : { replyMissed: input.replyMissed }),
+        ...(input.missedWindowMinutes === undefined
+          ? {}
+          : { missedWindowMinutes: input.missedWindowMinutes }),
         ...(input.admins === undefined ? {} : { admins: input.admins }),
         ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
         ...(input.defaults === undefined

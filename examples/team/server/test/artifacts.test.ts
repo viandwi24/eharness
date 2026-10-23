@@ -572,10 +572,11 @@ describe('agent tools', () => {
     })
     return { tools: out.tools, data }
   }
-  const gateway = (role: string | undefined, conversation = true) => ({
+  const gateway = (role: string | undefined, conversation = true, web = false) => ({
     requesterOf: async () => (role === undefined ? undefined : { role, name: 'Rina' }),
     conversationOf: () => (conversation ? {} : undefined),
     unresolvedChatTurn: () => false,
+    webTurn: () => web,
   })
   const call = (t: Tool | undefined, input: unknown): Promise<string> =>
     Promise.resolve(t?.execute(input, { toolCallId: 'c', messages: [] }) ?? 'missing tool')
@@ -655,6 +656,35 @@ describe('agent tools', () => {
       .all(page.id)
       .map((e) => e.action)
     expect(events).toEqual(['create', 'version', 'visibility', 'visibility', 'visibility'])
+  })
+
+  test('a turn the owner started in the web app inside a chat session publishes; a chat member in it still may not', async () => {
+    const server = boot()
+    const page = await create(server, {
+      kind: 'html',
+      title: 'Offer',
+      files: [{ path: 'index.html', content: '<html><body>offer</body></html>' }],
+    })
+    const sid = 'channel:c1:n1'
+    // the owner's web turn: no chat requester at all, but a chat conversation
+    const web = toolsOf(server, { sessionId: sid, gateway: gateway(undefined, true, true) })
+    // a stale chat requester never wins over the web turn
+    const webStale = toolsOf(server, { sessionId: sid, gateway: gateway('member', true, true) })
+    // the same session, the next turn asked by a chat member / a chat admin
+    const member = toolsOf(server, { sessionId: sid, gateway: gateway('member') })
+    const admin = toolsOf(server, { sessionId: sid, gateway: gateway('admin') })
+    // a chat turn nobody could identify stays unknown
+    const nobody = toolsOf(server, { sessionId: sid, gateway: gateway(undefined, true, false) })
+    const ask = { id: page.id, visibility: 'public' }
+    expect(await call(member.tools.artifact_visibility, ask)).toContain('Not allowed')
+    expect(await call(nobody.tools.artifact_visibility, ask)).toContain('Not allowed')
+    expect(server.artifacts.get(page.id)?.visibility).toBe('private')
+    expect(await call(web.tools.artifact_visibility, ask)).toContain('now public')
+    expect(server.artifacts.get(page.id)?.visibility).toBe('public')
+    await call(member.tools.artifact_visibility, { id: page.id, visibility: 'private' })
+    expect(await call(webStale.tools.artifact_visibility, ask)).toContain('now public')
+    await call(member.tools.artifact_visibility, { id: page.id, visibility: 'private' })
+    expect(await call(admin.tools.artifact_visibility, ask)).toContain('/s/')
   })
 
   test('an autonomous run opens a decision instead of publishing; approved, it does', async () => {

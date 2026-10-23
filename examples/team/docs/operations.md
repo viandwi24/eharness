@@ -73,8 +73,8 @@ was active, and anything paused one by one stays paused.
 - Held: scheduled slots of routines, programs, the heartbeat, the digest and reminders (recorded as
   skipped with reason `paused`, never replayed), queued tasks (they stay queued and start on
   Resume), automatic retries, a lost long-run continuation found by the reconcile pass, early
-  heartbeat wakes, and, with `holdChannels`, chat wakes (messages are received and kept as context,
-  not answered later).
+  heartbeat wakes, and, with `holdChannels`, chat wakes (messages are received and kept as context;
+  whether they are answered after Resume is a choice, below).
 - Not held: the owner's web chat, "Run now", approvals and decisions answered by the owner,
   backups, alarms, health and disk checks, pruning.
 - Running work finishes unless `stopRunning` is set, which aborts the running task sessions like the
@@ -85,8 +85,25 @@ was active, and anything paused one by one stays paused.
   slots as `paused` and do not replay.
 - The export never carries the paused state, so an imported workspace does not arrive paused.
 
+Held chat messages. With `holdChannels` a message that would have woken the agent (mention, reply to
+it, command, alias, own topic, a DM from a person it answers) is kept as context and remembered in
+its row (`meta.heldWake` of `ch_messages`, no extra table, so it survives a restart between pause
+and resume). `answerHeldOnResume` (the checkbox under "Also stop answering chat channels", default
+off; shown in Settings > General > Workspace activity while paused) decides what Resume does with
+them:
+
+- On: each conversation wakes once, with the held messages younger than 12 hours folded together
+  oldest first, and a note that they arrived while the workspace was paused. The same inbound path
+  applies as for a live message when the agent answers (rate limits, governor, breaker, people).
+  The reason shows on the Activity page as `woke after pause (...)`.
+- Off: they stay context and are never answered.
+- Either way every held message is settled at Resume (`meta.heldDone`), so a later pause and resume
+  never answers an old one twice. A connection this process does not run keeps its held messages
+  until it does or they are older than 12 hours.
+
 `GET /workspace/pause` (state and what is held), `POST /workspace/pause` (`note`, `holdChannels`
-default true, `stopRunning` default false; idempotent), `POST /workspace/resume`.
+default true, `answerHeldOnResume` default false and kept when pausing again, `stopRunning` default
+false; idempotent), `POST /workspace/resume`.
 
 ## Limits and cost
 
@@ -127,3 +144,31 @@ System alarms go to every owner by direct message. A user account never starts a
 an owner it has no chat with is skipped (nothing is queued that will certainly fail) and the bell
 shows once per day: "Alarms cannot reach <name> on <connection>: ask them to send one message to
 the account first."
+
+### Messages that arrived while the server was down
+
+A Telegram user account reads updates with in-memory state, so after a restart or a deploy the
+update stream knows nothing about what it missed. The start-up gap fill of every chosen chat
+(messages newer than the highest id stored, at most 7 days and 20 pages) finds them. Each message
+found goes oldest first to the gateway (`catchUp`):
+
+- Setting, per connection, on the connection's Settings page (account only): "Reply to messages
+  missed while the server was down" (`replyMissed`, default on) and "only if they are at most N
+  minutes old" (`missedWindowMinutes`, default 30, 1 to 720). Stored in the connection config with
+  the rest of the binding (`PUT /channels/connections/{id}/binding`).
+- A message inside the window, not sent by the account itself, goes through the same inbound path as
+  a live one: the chat's wake policy (a chat set to never wake stays silent), allow and deny rules,
+  bot senders, the others-mentioned rule, people and identity, pause, and later the same outbound
+  rate limits, governor and breaker. A reply to one of the account's own messages is recognized from
+  the log. Older messages, other messages, and everything when the setting is off are only stored,
+  as before.
+- The messages of one chat that would wake the agent are queued together, oldest first, into one
+  turn with a note that they arrived while the assistant was offline and when. The Activity page
+  shows `woke after restart (...)`.
+- Never twice: the cursor (highest id) moves only after the gateway handled the batch, a message is
+  marked handled before it is queued, and a message already handled is dropped as a duplicate. A
+  crash between marking and queueing loses that one answer rather than repeating it.
+- Pause all still applies: a missed message found while paused is held and follows the pause choice.
+- Not covered: direct messages (the gap fill reads only the chosen group chats; a DM missed while
+  down is not found), and a reconnect of the live connection after a network drop, which mtcute's
+  own catch-up covers while the process runs (the gap fill runs once per start).

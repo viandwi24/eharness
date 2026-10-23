@@ -241,6 +241,8 @@ export function persona(options: PersonaPluginOptions): HarnessPlugin<'persona'>
       async function actorOf(): Promise<PersonaActor | undefined> {
         const gw = options.channels()
         if (gw?.conversationOf(sessionId) !== undefined) {
+          // the owner typed it in the web app, also into a chat thread
+          if (gw.webTurn(sessionId)) return { kind: 'web', name: 'the web app' }
           const r = await gw.requesterOf(sessionId)
           if (r === undefined) return undefined
           return {

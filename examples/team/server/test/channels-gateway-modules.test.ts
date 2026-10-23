@@ -96,6 +96,9 @@ describe('notices and prompts', () => {
   test('the web-app note is added only to a web turn', () => {
     expect(withWebTurnNote('base')).toBe('base')
     expect(withWebTurnNote('base', { kind: 'send', keys: [] })).toContain('web app')
+    expect(withWebTurnNote('base', { kind: 'send', keys: [] })).toContain('<message-meta>')
+    // a hand-over or a reminder (inbox keys that are no chat message) is not the owner
+    expect(withWebTurnNote('base', { kind: 'send', keys: ['handover:x'] })).toBe('base')
     expect(withWebTurnNote('base', { kind: 'send', keys: ['ev:1'] })).toBe('base')
     expect(withWebTurnNote('base', { kind: 'wake', keys: [] })).toBe('base')
   })

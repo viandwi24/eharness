@@ -183,7 +183,7 @@ describe('delivery text', () => {
 	});
 	test('agents and connections lists', () => {
 		expect(agentChoices([{ id: '1', name: 'a' }, { id: '2', name: 'b', archivedAt: 5 }]).map((a) => a.id)).toEqual(['1']);
-		const running = conn({ id: 'r', label: 'B', runtime: { state: 'running', since: 1 }, binding: { agentId: 'x', groupPolicy: 'allowlist', dm: 'pairing', allowBots: false, replyToUnknown: false, admins: [], historyLimit: 50, defaults: {} } });
+		const running = conn({ id: 'r', label: 'B', runtime: { state: 'running', since: 1 }, binding: { agentId: 'x', groupPolicy: 'allowlist', dm: 'pairing', allowBots: false, replyToUnknown: false, replyMissed: true, missedWindowMinutes: 30, admins: [], historyLimit: 50, defaults: {} } });
 		const loose = conn({ id: 'l', label: 'A', runtime: { state: 'unbound', since: 1 } });
 		expect(sortConnections([loose, running]).map((c) => c.id)).toEqual(['r', 'l']);
 	});

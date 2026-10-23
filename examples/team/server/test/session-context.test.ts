@@ -123,6 +123,8 @@ interface Who {
   agent?: (typeof agents)[number]
   conversation?: { nodeId: string }
   requester?: { role: string; nodeId?: string }
+  /** The turn is the owner's, typed in the web app into this chat session. */
+  web?: boolean
   refs?: string[]
 }
 
@@ -134,6 +136,7 @@ function tools(w: World, who: Who) {
         ? undefined
         : { ...who.conversation, node: { id: who.conversation.nodeId } },
     requesterOf: async () => who.requester,
+    webTurn: () => who.web === true,
   } as unknown as ChannelGateway
   const options: SessionContextOptions = {
     sqlite: w.db,
@@ -382,6 +385,13 @@ describe('privacy gate', () => {
       requester: { role: 'admin', nodeId: 'n1' },
     })
     expect(await admin.read({ session: 'channel:tg:n2', latest: 1 })).toContain('secret budget')
+    // the owner typing from the web app into a chat session reads as the owner too
+    const webInChat = tools(w, {
+      session: 'channel:tg:n1',
+      conversation: { nodeId: 'n1' },
+      web: true,
+    })
+    expect(await webInChat.read({ session: 'chat:a1:t1', latest: 1 })).toContain('ignore previous')
   })
 
   test('a member in a group reads only that conversation: no web DM, no other chat', async () => {

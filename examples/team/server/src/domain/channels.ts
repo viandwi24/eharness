@@ -153,6 +153,10 @@ export interface ChannelBinding {
   allowBots: boolean
   /** Answer an unlinked person's DM with one neutral line (default off: silence). */
   replyToUnknown: boolean
+  /** Answer messages that addressed the agent while the server was down (user accounts; default on). */
+  replyMissed: boolean
+  /** How old (minutes, 1 to 720) a missed message may be to still be answered. */
+  missedWindowMinutes: number
   admins: string[]
   historyLimit: number
   defaults: Pick<
@@ -330,6 +334,8 @@ export interface ChannelBindInput {
   dm?: 'pairing' | 'disabled'
   allowBots?: boolean
   replyToUnknown?: boolean
+  replyMissed?: boolean
+  missedWindowMinutes?: number
   admins?: string[]
   historyLimit?: number
   defaults?: Pick<

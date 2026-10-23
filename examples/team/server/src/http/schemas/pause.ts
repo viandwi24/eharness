@@ -12,7 +12,11 @@ export const PauseViewSchema = z
     note: z.string().nullable(),
     holdChannels: z.boolean().openapi({
       description:
-        'Inbound chat messages are kept but do not wake an agent (they are not answered after Resume).',
+        'Inbound chat messages are kept but do not wake an agent (answered after Resume only with `answerHeldOnResume`).',
+    }),
+    answerHeldOnResume: z.boolean().openapi({
+      description:
+        'Resume answers the held chat messages that addressed the agent (at most 12 hours old), once per conversation.',
     }),
     held: z
       .object({
@@ -35,6 +39,10 @@ export const PauseRequestSchema = z
   .object({
     note: z.string().max(MAX_PAUSE_NOTE_CHARS).optional(),
     holdChannels: z.boolean().optional().openapi({ description: 'Default true.' }),
+    answerHeldOnResume: z.boolean().optional().openapi({
+      description:
+        'Answer the held chat messages after Resume (default false; pausing again keeps the choice).',
+    }),
     stopRunning: z.boolean().optional().openapi({
       description: 'Stop agent runs that are running now (default false: they finish).',
     }),
