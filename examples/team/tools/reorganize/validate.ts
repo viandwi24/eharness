@@ -81,6 +81,9 @@ export function entryOf(path: string): string | undefined {
   return p.startsWith('library/') || p.startsWith('uploads/') ? p : undefined
 }
 
+/** A memory file of an agent in `migrations/moves.json`: `/memories/agents/<slug or id>/<file>`. */
+const MEMORY_MOVE = /^\/memories\/agents\/([^/]+)\/([^/].*[^/]|[^/])$/
+
 /** Library paths named in free text (a trailing punctuation mark is not part of the path). */
 export function libraryPathsIn(text: string): string[] {
   const out = new Set<string>()
@@ -199,8 +202,17 @@ export function validateWorkspace(dir: string): Report {
           add('error', where, 'needs string "from" and "to"')
           return
         }
-        if (!o.from.startsWith('/library/') || !o.to.startsWith('/library/')) {
-          add('error', where, '"from" and "to" must start with /library/')
+        // a memory file may move into the library (the importer accepts both; memory → memory
+        // and library → memory are not reorganizations this tool supports)
+        if (
+          !(o.from.startsWith('/library/') || MEMORY_MOVE.test(o.from)) ||
+          !o.to.startsWith('/library/')
+        ) {
+          add(
+            'error',
+            where,
+            '"from" must start with /library/ or /memories/agents/<agent>/, "to" with /library/',
+          )
           return
         }
         if (o.from.endsWith('/') !== o.to.endsWith('/')) {
@@ -218,7 +230,21 @@ export function validateWorkspace(dir: string): Report {
     add('info', MOVES_FILE, 'no moves recorded (fine when nothing in library/ was moved)')
   }
   const hasPrefix = (prefix: string): boolean => files.some((f) => f.startsWith(prefix))
+  // an agent of a memory path is named by its slug (the folder) or its id (agent.json)
+  const slugOfAgent = new Map<string, string>()
+  for (const slug of slugs) {
+    slugOfAgent.set(slug, slug)
+    const id = fileSet.has(`agents/${slug}/agent.json`)
+      ? obj(json(`agents/${slug}/agent.json`)).id
+      : undefined
+    if (typeof id === 'string') slugOfAgent.set(id, slug)
+  }
   const exists = (path: string): boolean => {
+    const memory = MEMORY_MOVE.exec(path)
+    if (memory !== null) {
+      const slug = slugOfAgent.get(memory[1] as string)
+      return slug !== undefined && fileSet.has(`agents/${slug}/memory/${memory[2]}`)
+    }
     const entry = entryOf(path)
     if (entry === undefined) return false
     return path.endsWith('/') ? hasPrefix(entry) : fileSet.has(entry) || hasPrefix(`${entry}/`)

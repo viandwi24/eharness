@@ -85,7 +85,10 @@ Create or extend `migrations/moves.json` (a JSON array, create the folder if nee
 - A file you split into several: record it as a move of the original into
   `/library/<company>/archive/` and note the new files in `note`.
 - Paths are absolute library paths starting with `/library/`, never zip paths.
-- Memory files are not recorded here; they are handled by section 6.
+- A memory file moved into the library is recorded too, with `from` =
+  `/memories/agents/<agent slug or id>/<file>` and `to` = its new `/library/...` file. Without the
+  entry the import guesses moves by identical bytes, and a file whose paths you fixed no longer
+  matches (it would be paired with an untouched copy, such as one kept in `archive/`).
 
 ## 4. Every reference is updated
 
@@ -141,7 +144,7 @@ Each agent's memory (`agents/<slug>/memory/`) ends with exactly:
 - `HEARTBEAT.md`: the standing orders, kept (section 4.2), never reordered or deleted.
 
 Every other memory file: move its content into the right library file (section 2), then **remove
-the memory file** and record the move in your notes for the owner. Facts go to `knowledge/`,
+the memory file** and record the move in `migrations/moves.json` (section 3). Facts go to `knowledge/`,
 company facts to `profile.md` or `organization.md`, dated material to the dated folders.
 Add each new library file to `index.md`. Memory pointing into the library is the whole idea: memory
 says where, the library holds what.

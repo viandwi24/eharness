@@ -118,6 +118,27 @@ describe('validate', () => {
     expect(e).toContain('trailing slash')
   })
 
+  test('moves: a memory file may move into the library, by agent slug or id', () => {
+    const root = fixture()
+    put(root, 'agents/lead/agent.json', {
+      id: 'ag-1',
+      slug: 'lead',
+      rules: { allow: [], ask: [], deny: [] },
+    })
+    put(root, 'agents/lead/memory/old-note.md', 'still here')
+    put(root, 'migrations/moves.json', [
+      { from: '/memories/agents/lead/company.md', to: '/library/acme/profile.md' },
+      { from: '/memories/agents/ag-1/team.md', to: '/library/acme/organization.md' },
+      { from: '/memories/agents/ag-1/old-note.md', to: '/library/acme/profile.md' },
+      { from: '/library/acme/profile.md', to: '/memories/agents/lead/x.md' },
+    ])
+    const e = errors(root).join('\n')
+    expect(e).not.toContain('company.md')
+    expect(e).not.toContain('team.md')
+    expect(e).toContain('"from" still exists: /memories/agents/ag-1/old-note.md')
+    expect(e).toContain('moves.json[3]')
+  })
+
   test('stale references are errors and name where the path moved', () => {
     const root = fixture()
     put(root, 'migrations/moves.json', [
