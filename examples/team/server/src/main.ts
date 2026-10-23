@@ -275,6 +275,7 @@ import {
   type TeamService,
 } from './infra/eh/team-service.ts'
 import { withThreadActivity } from './infra/eh/thread-activity.ts'
+import { sqliteToolUsage, warmTools } from './infra/eh/tool-usage.ts'
 import { createTurnRetryService, type TurnRetryService } from './infra/eh/turn-retry-service.ts'
 import { sqliteUploadStore } from './infra/eh/upload-store.ts'
 import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
@@ -776,7 +777,9 @@ export function compose(config: ServerConfig): Server {
     ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
+  const toolUsageStore = sqliteToolUsage(conn.sqlite)
   const connectors = createConnectors({
+    warm: warmTools({ store: toolUsageStore, days: () => settings.get().toolWarmDays }),
     health: () => {
       const s = settings.get()
       return { ttlMs: s.connectorHealthTtlMs, retryMs: s.connectorProbeRetryMs }
@@ -896,6 +899,7 @@ export function compose(config: ServerConfig): Server {
       }),
     taskStore: tasks,
     activityLog,
+    toolUsage: toolUsageStore,
     activityStore,
     events,
     settings: () => {

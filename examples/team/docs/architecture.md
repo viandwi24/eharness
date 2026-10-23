@@ -225,6 +225,21 @@ the API except `{ set, hint }`. Several instances: a change of a connection or a
 appends `connectors-changed` (like `providers-changed`) and the others rebuild their agents; token
 refreshes take a lease in `eh_locks` so two instances never refresh one single-use token at once.
 
+**Tool access and warm tools.** Settings > General > Tool access (`toolAccess`, an agent can
+override it) decides how the tools of third-party connectors reach the model: `auto` loads them up
+front until an agent has many, `on-demand` always defers them (`tool_search`). A discovery changes
+the provider-visible tool list and resets the whole prompt cache (spec 02 §3.3, §6), which in a
+long chat is a full-price re-read of the history per discovery. So the app adds a **warm tools**
+rule (`infra/eh/tool-usage.ts`): the `toolUsage` plugin records every settled tool call in
+`tool_usage` (agent, final tool name, last use, count; migration 0044), and the MCP sources of an
+agent are wrapped so that a tool called in the last `toolWarmDays` days (Settings > General, "Load
+tools used recently up front", default 7, 0 = off) is not deferred. The warm set of a chat is read
+when its first turn lists the tools and then stays fixed: a tool used or found later in that chat
+changes nothing until the next chat (keeps the prefix stable). Tools found with `tool_search` stay
+loaded across turns through the library (the next turn scans the stored `tool_search` results);
+only a discovery that was compacted away is searched again. A `W_CACHE_BUST` warning is appended
+to the feed as a `cache-reset` event (agent, step, reason; at most one a minute per agent).
+
 **Migration.** Agents from before connectors (`agents.connectors_migrated = 0`) are migrated at boot
 (`infra/eh/connectors-migration.ts`): the tool checklist becomes enablement that reproduces it
 exactly (`domain/connectors.ts` `enablementFromTools`: library_read/write -> Files read / edit +

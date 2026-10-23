@@ -393,6 +393,7 @@ describe('migration of the single DM', () => {
       'api_requests',
       'api_calls',
       'library_moves',
+      'tool_usage',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(

@@ -28,6 +28,10 @@ export interface ModelCallSummary {
   reasoningTokens: number | null
   cachedTokens: number | null
   costUsd: number | null
+  /** `provider`: the billed cost the provider reported; `estimate`: catalog prices; null: unknown. */
+  costSource: 'provider' | 'estimate' | null
+  /** The upstream provider that served the call (OpenRouter reports it); null when unreported. */
+  upstreamProvider: string | null
   /** Start of the provider call (ms). */
   startedAt: number
   firstChunkMs: number | null
@@ -55,7 +59,10 @@ export interface ModelCallDetail extends ModelCallSummary {
 }
 
 /** What the writer inserts: a summary without bookkeeping, plus the JSON columns. */
-export interface NewModelCall extends Omit<ModelCallSummary, 'truncated'> {
+export interface NewModelCall
+  extends Omit<ModelCallSummary, 'truncated' | 'costSource' | 'upstreamProvider'> {
+  costSource?: ModelCallSummary['costSource']
+  upstreamProvider?: ModelCallSummary['upstreamProvider']
   requestOptions: JsonValue
   requestBody: JsonValue
   response: JsonValue

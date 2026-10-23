@@ -271,6 +271,7 @@
 								<Table.Head>Agent</Table.Head>
 								<Table.Head>Model</Table.Head>
 								<Table.Head>Provider</Table.Head>
+								<Table.Head>Upstream</Table.Head>
 								<Table.Head>Kind</Table.Head>
 								<Table.Head class="text-right">Input</Table.Head>
 								<Table.Head class="text-right">Output</Table.Head>
@@ -304,10 +305,11 @@
 									</Table.Cell>
 									<Table.Cell class="max-w-56 truncate font-mono text-xs" title={c.modelId}>{c.modelId}</Table.Cell>
 									<Table.Cell class="text-xs whitespace-nowrap text-muted-foreground">{c.provider}</Table.Cell>
+									<Table.Cell class="text-xs whitespace-nowrap text-muted-foreground">{c.upstreamProvider ?? '—'}</Table.Cell>
 									<Table.Cell><Badge variant="outline">{kindLabel(c.kind)}</Badge></Table.Cell>
 									<Table.Cell class="text-right font-mono text-xs tabular-nums">{c.inputTokens === null ? '—' : formatTokens(c.inputTokens)}</Table.Cell>
 									<Table.Cell class="text-right font-mono text-xs tabular-nums">{c.outputTokens === null ? '—' : formatTokens(c.outputTokens)}</Table.Cell>
-									<Table.Cell class="text-right font-mono text-xs tabular-nums">{c.costUsd === null ? '—' : formatUsd(c.costUsd)}</Table.Cell>
+									<Table.Cell class="text-right font-mono text-xs tabular-nums" title={c.costSource === 'provider' ? 'Billed cost reported by the provider' : c.costSource === 'estimate' ? 'Estimated from catalog prices' : undefined}>{c.costUsd === null ? '—' : formatUsd(c.costUsd)}</Table.Cell>
 									<Table.Cell class="text-right font-mono text-xs whitespace-nowrap tabular-nums text-muted-foreground">{formatSpeed(tokensPerSecond(c))}</Table.Cell>
 									<Table.Cell class="text-right font-mono text-xs whitespace-nowrap tabular-nums text-muted-foreground">
 										{c.firstChunkMs === null ? '' : `${formatDuration(c.firstChunkMs)} / `}{formatDuration(c.durationMs)}

@@ -156,6 +156,7 @@ import {
 } from './storage.ts'
 import { sqliteStreamLog } from './stream-log.ts'
 import { taskIndex } from './task-index.ts'
+import { type ToolUsageStore, toolUsage } from './tool-usage.ts'
 import { turnRetry } from './turn-retry-plugin.ts'
 import type { TurnRetryHooks } from './turn-retry-service.ts'
 import { WORK_QUEUE_TOOLS, type WorkQueueIntake, workQueue } from './work-queue-plugin.ts'
@@ -211,6 +212,8 @@ export interface AgentFactoryDeps {
   taskStore?: TaskWriter
   /** Model call log (the `model.call` hook and the Auto classifier calls); absent = not logged. */
   activityLog?: ActivityLog
+  /** Records which tools each agent calls (the `toolUsage` plugin, warm tools); absent = none. */
+  toolUsage?: ToolUsageStore
   /** The shared feed; absent = no session events. */
   activityStore?: ActivityStore
   /** App events (the `taskIndex` plugin's `message-added`, `task-changed`). */
@@ -1360,6 +1363,15 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               ...(deps.turnRetry === undefined ? {} : { retry: deps.turnRetry }),
             }),
           ]),
+      ...(deps.toolUsage === undefined
+        ? []
+        : [
+            toolUsage({
+              store: deps.toolUsage,
+              agentOf: (slug) => deps.agentBySlug?.(slug),
+              log: (message) => console.warn(`team: ${message}`),
+            }),
+          ]),
       ...(deps.taskStore === undefined || deps.events === undefined
         ? []
         : [
@@ -1512,6 +1524,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       toolOutput: { maxChars: 30_000, strategy: 'evict', keepImages: 3 },
       onWarning: (w: HarnessWarning) => {
         noteDrift(w)
+        noteCacheBust(def, w)
         deps.onWarning?.(w)
       },
     })
@@ -1787,6 +1800,30 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
   /** Sessions whose pinned remote MCP tools drifted (`W_MCP_DRIFT`): session id to server to note. */
   const drifted = new Map<string, Map<string, DriftNote>>()
+  /**
+   * `W_CACHE_BUST` (the provider-visible prefix changed: instructions or the tool list, for
+   * example a `tool_search` discovery) is a full prompt-cache miss: it goes on the feed as
+   * `cache-reset` so it can be seen next to the model calls (a rate limit of one per agent a minute).
+   */
+  const lastBust = new Map<string, number>()
+  const noteCacheBust = (def: AgentDef, w: HarnessWarning): void => {
+    if (w.code !== 'W_CACHE_BUST' || deps.events === undefined) return
+    const at = Date.now()
+    if (at - (lastBust.get(def.id) ?? 0) < 60_000) return
+    lastBust.set(def.id, at)
+    const d = w.details ?? {}
+    deps.events.append({
+      type: 'cache-reset',
+      agentId: def.id,
+      payload: {
+        reason: typeof d.reason === 'string' ? d.reason : 'tool list or instructions changed',
+        ...(typeof d.stepIndex === 'number' ? { stepIndex: d.stepIndex } : {}),
+        message: w.message,
+      },
+      at,
+    })
+  }
+
   const noteDrift = (w: HarnessWarning): void => {
     if (w.code !== 'W_MCP_DRIFT') return
     const d = w.details ?? {}

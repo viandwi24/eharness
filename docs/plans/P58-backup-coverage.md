@@ -15,10 +15,10 @@ through the real app, exports, imports into a fresh instance and compares entity
 | Class | Meaning | Tables |
 |---|---|---|
 | (a) `zip` | Restorable through the workspace zip import (an entity document, rows in `data/<table>/`, the encrypted secrets file, or library files). The database snapshot has it too. | 51 |
-| (b) `snapshot` | Covered only by the database snapshot: restore it with "Restore whole database". | 16 |
+| (b) `snapshot` | Covered only by the database snapshot: restore it with "Restore whole database". | 17 |
 | (c) `derived` | Derived, cache or ephemeral: nothing to back up (the reason is in the table below). | 20 |
 
-Total: 87 tables (the 85 drizzle tables plus two SQLite
+Total: 88 tables (the 86 drizzle tables plus two SQLite
 bookkeeping tables).
 
 ## The coverage map
@@ -100,6 +100,7 @@ bookkeeping tables).
 | `library_moves` | Moves applied by an import (old path to new path, for the redirects) | a record of what an import renamed; the files themselves travel in the zip at their new paths |
 | `model_calls` | Model call log (Logs page) | large diagnostic log with requests and responses, pruned by count and age |
 | `routine_runs` | Fired schedule slots | a log of fired slots bound to routine ids; the schedules themselves are restorable |
+| `tool_usage` | Tools each agent used recently | usage counters that decide which tools load up front; they refill as agents work |
 
 ### (c) Derived, cache or ephemeral
 

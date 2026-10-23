@@ -77,6 +77,13 @@ const SummaryShape = {
     .number()
     .nullable()
     .openapi({ description: 'Null when the model has no price in the catalog.' }),
+  costSource: z.enum(['provider', 'estimate']).nullable().openapi({
+    description:
+      '`provider`: the billed cost the provider reported; `estimate`: computed from catalog prices.',
+  }),
+  upstreamProvider: z.string().nullable().openapi({
+    description: 'The upstream provider that served the call, when the gateway reports it.',
+  }),
   startedAt: z.number().int().openapi({ description: 'Start of the provider call (epoch ms).' }),
   firstChunkMs: z
     .number()

@@ -124,7 +124,7 @@
 					<div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
 						{@render tile('Latency', formatDuration(detail.firstChunkMs ?? detail.durationMs), detail.firstChunkMs === null ? 'whole call' : 'to first token')}
 						{@render tile('Throughput', formatSpeed(speed))}
-						{@render tile('Cost', detail.costUsd === null ? '—' : formatUsd(detail.costUsd), detail.costUsd === null ? 'not priced' : undefined)}
+						{@render tile('Cost', detail.costUsd === null ? '—' : formatUsd(detail.costUsd), detail.costUsd === null ? 'not priced' : detail.costSource === 'provider' ? 'billed (reported by the provider)' : 'estimated from catalog prices')}
 						{@render tile(
 							'Tokens',
 							`${detail.inputTokens === null ? '—' : formatTokens(detail.inputTokens)} → ${detail.outputTokens === null ? '—' : formatTokens(detail.outputTokens)}`,
@@ -141,6 +141,8 @@
 							<dd class="font-mono text-xs break-all">{detail.modelId}</dd>
 							<dt class="text-muted-foreground">Provider</dt>
 							<dd class="font-mono text-xs break-all">{detail.provider}</dd>
+							<dt class="text-muted-foreground">Upstream</dt>
+							<dd class="font-mono text-xs break-all">{detail.upstreamProvider ?? '—'}</dd>
 							<dt class="text-muted-foreground">Agent</dt>
 							<dd class="flex min-w-0 items-center gap-2">
 								{#if detail.agentId}

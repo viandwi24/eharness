@@ -18975,7 +18975,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "decision-changed" | "heartbeat-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "thread-changed" | "notification-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
+            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "decision-changed" | "heartbeat-changed" | "settings-changed" | "mode-changed" | "model-call" | "cache-reset" | "providers-changed" | "connectors-changed" | "thread-changed" | "notification-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -19602,6 +19602,8 @@ export interface components {
              * @enum {string}
              */
             toolAccess: "auto" | "on-demand";
+            /** @description Tools an agent called in the last this many days load up front instead of being found with `tool_search` (a discovery resets the prompt cache). 0 = off. Default 7. */
+            toolWarmDays: number;
             /** @description Monthly USD limit of the workspace budget ledger; null = tracked, not limited. */
             budgetUsd: number | null;
             /** @description Children the lead runs at once (`subagents` `maxConcurrent`). */
@@ -19780,6 +19782,7 @@ export interface components {
             defaultPermissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             /** @enum {string} */
             toolAccess?: "auto" | "on-demand";
+            toolWarmDays?: number;
             budgetUsd?: number | null;
             spawnCap?: number;
             /** @description A model id, or the legacy `profile:model` (split when the prefix names a profile). */
@@ -23123,6 +23126,13 @@ export interface components {
             cachedTokens: number | null;
             /** @description Null when the model has no price in the catalog. */
             costUsd: number | null;
+            /**
+             * @description `provider`: the billed cost the provider reported; `estimate`: computed from catalog prices.
+             * @enum {string|null}
+             */
+            costSource: "provider" | "estimate" | null;
+            /** @description The upstream provider that served the call, when the gateway reports it. */
+            upstreamProvider: string | null;
             /** @description Start of the provider call (epoch ms). */
             startedAt: number;
             /** @description Time to the first streamed content; null for non-streaming calls. */
@@ -23251,6 +23261,13 @@ export interface components {
             cachedTokens: number | null;
             /** @description Null when the model has no price in the catalog. */
             costUsd: number | null;
+            /**
+             * @description `provider`: the billed cost the provider reported; `estimate`: computed from catalog prices.
+             * @enum {string|null}
+             */
+            costSource: "provider" | "estimate" | null;
+            /** @description The upstream provider that served the call, when the gateway reports it. */
+            upstreamProvider: string | null;
             /** @description Start of the provider call (epoch ms). */
             startedAt: number;
             /** @description Time to the first streamed content; null for non-streaming calls. */

@@ -20,6 +20,7 @@ export const APP_EVENT_TYPES = [
   'settings-changed',
   'mode-changed',
   'model-call',
+  'cache-reset',
   'providers-changed',
   'connectors-changed',
   'thread-changed',

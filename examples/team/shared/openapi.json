@@ -2727,6 +2727,7 @@
               "settings-changed",
               "mode-changed",
               "model-call",
+              "cache-reset",
               "providers-changed",
               "connectors-changed",
               "thread-changed",
@@ -5176,6 +5177,12 @@
             ],
             "description": "Tool access of agents without their own setting: `auto` or `on-demand` (third-party connector tools found with `tool_search`)."
           },
+          "toolWarmDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 365,
+            "description": "Tools an agent called in the last this many days load up front instead of being found with `tool_search` (a discovery resets the prompt cache). 0 = off. Default 7."
+          },
           "budgetUsd": {
             "type": [
               "number",
@@ -5384,6 +5391,7 @@
         "required": [
           "defaultPermissionMode",
           "toolAccess",
+          "toolWarmDays",
           "budgetUsd",
           "spawnCap",
           "defaultModel",
@@ -5784,6 +5792,11 @@
               "auto",
               "on-demand"
             ]
+          },
+          "toolWarmDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 365
           },
           "budgetUsd": {
             "type": [
@@ -18304,6 +18317,25 @@
             ],
             "description": "Null when the model has no price in the catalog."
           },
+          "costSource": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "provider",
+              "estimate",
+              null
+            ],
+            "description": "`provider`: the billed cost the provider reported; `estimate`: computed from catalog prices."
+          },
+          "upstreamProvider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The upstream provider that served the call, when the gateway reports it."
+          },
           "startedAt": {
             "type": "integer",
             "description": "Start of the provider call (epoch ms)."
@@ -18354,6 +18386,8 @@
           "reasoningTokens",
           "cachedTokens",
           "costUsd",
+          "costSource",
+          "upstreamProvider",
           "startedAt",
           "firstChunkMs",
           "durationMs",
@@ -18773,6 +18807,25 @@
             ],
             "description": "Null when the model has no price in the catalog."
           },
+          "costSource": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "provider",
+              "estimate",
+              null
+            ],
+            "description": "`provider`: the billed cost the provider reported; `estimate`: computed from catalog prices."
+          },
+          "upstreamProvider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The upstream provider that served the call, when the gateway reports it."
+          },
           "startedAt": {
             "type": "integer",
             "description": "Start of the provider call (epoch ms)."
@@ -18853,6 +18906,8 @@
           "reasoningTokens",
           "cachedTokens",
           "costUsd",
+          "costSource",
+          "upstreamProvider",
           "startedAt",
           "firstChunkMs",
           "durationMs",

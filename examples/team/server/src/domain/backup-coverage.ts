@@ -282,6 +282,11 @@ export const COVERAGE: readonly TableEntry[] = [
     'large diagnostic log with requests and responses, pruned by count and age',
   ),
   snapshot(
+    'tool_usage',
+    'Tools each agent used recently',
+    'usage counters that decide which tools load up front; they refill as agents work',
+  ),
+  snapshot(
     'eh_budget_scope',
     'Spend counters of budgets',
     'counters of the running period; the budget limits live in the settings and programs',

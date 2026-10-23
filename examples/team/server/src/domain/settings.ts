@@ -21,6 +21,11 @@ export const settingsTeamMode = (stored: string | null | undefined): TeamMode =>
 export interface WorkspaceSettings {
   /** Tool access of agents that have no setting of their own. */
   toolAccess: ToolAccess
+  /**
+   * Tools an agent called in the last this many days load up front instead of being found with
+   * `tool_search` (a discovery changes the tool list and resets the prompt cache). 0 = off.
+   */
+  toolWarmDays: number
   /** Mode of chats and agents that have no mode of their own (Manual, Auto or Bypass). */
   defaultPermissionMode: SettingsMode
   /** Monthly USD limit of the workspace budget ledger; null = tracked, not limited. */
@@ -106,6 +111,7 @@ export interface WorkspaceSettings {
 
 /** Built-in values of the knobs that have a fixed default (current behaviour). */
 export const SETTINGS_BUILTIN = {
+  toolWarmDays: 7,
   spawnCap: 4,
   stuckRunMinutes: 45,
   classifierModel: null,
@@ -338,6 +344,7 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
       throw invalid(`${name} must be a number from ${min} to ${max}`, 'INVALID_SETTINGS')
     }
   }
+  intIn('toolWarmDays', patch.toolWarmDays, 0, 365)
   intIn('contextCap', patch.contextCap, CONTEXT_CAP_MIN, 10_000_000, true)
   intIn('heartbeatContextWindow', patch.heartbeatContextWindow, CONTEXT_CAP_MIN, 10_000_000)
   intIn('connectorHealthTtlMs', patch.connectorHealthTtlMs, 0, HEALTH_TTL_MAX_MS, true)

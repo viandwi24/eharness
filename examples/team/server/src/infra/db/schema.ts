@@ -229,6 +229,22 @@ export const chatToolOverrides = sqliteTable('chat_tool_overrides', {
 })
 
 /**
+ * Which tools an agent actually calls: one row per agent and final tool name, written when a tool
+ * call settles (`infra/eh/tool-usage.ts`). The "warm tools" rule reads it: a tool used in the last
+ * N days loads up front instead of being found with `tool_search` (spec 02 §3.3, §6).
+ */
+export const toolUsage = sqliteTable(
+  'tool_usage',
+  {
+    agentId: text('agent_id').notNull(),
+    tool: text('tool').notNull(),
+    lastUsedAt: integer('last_used_at').notNull(),
+    calls: integer('calls').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.tool] }), index('tool_usage_last').on(t.lastUsedAt)],
+)
+
+/**
  * Index derived from sessions (request R1); the session stays the truth. One row per task session
  * (a child of the lead, later a routine run): written by the `taskIndex` plugin on whichever
  * instance runs the turn, repaired by the boot / periodic drift pass (`infra/eh/team-service.ts`).
@@ -337,6 +353,10 @@ export const modelCalls = sqliteTable(
     reasoningTokens: integer('reasoning_tokens'),
     cachedTokens: integer('cached_tokens'),
     costUsd: real('cost_usd'),
+    /** `provider` (billed cost reported by the provider) or `estimate` (catalog prices). */
+    costSource: text('cost_source'),
+    /** Upstream provider that served the call, when the gateway reports it (OpenRouter). */
+    upstreamProvider: text('upstream_provider'),
     startedAt: integer('started_at').notNull(),
     firstChunkMs: integer('first_chunk_ms'),
     durationMs: integer('duration_ms').notNull(),

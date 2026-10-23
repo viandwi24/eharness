@@ -33,7 +33,7 @@
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
 	import { monthText, percentOf, sinceText, sourceLabel } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
-	import { ALL_KNOBS, KNOB_GROUPS, knobPatch, knobText } from '#lib/settings/knobs.js';
+	import { ALL_KNOBS, GENERAL_KNOBS, KNOB_GROUPS, knobPatch, knobText } from '#lib/settings/knobs.js';
 	import WarningIcon from 'phosphor-svelte/lib/Warning';
 	import TimerIcon from 'phosphor-svelte/lib/Timer';
 	import DatabaseIcon from 'phosphor-svelte/lib/Database';
@@ -365,6 +365,14 @@
 										{/if}
 										<Field.Description>How the tools of connected apps reach the model. Auto loads them up front, and switches to on demand at {AUTO_THRESHOLD} or more tools. On demand lets the model search for them: fewer tokens with many connectors. Agents can override this; built-in connectors always load.</Field.Description>
 									</Field.Field>
+									{#each GENERAL_KNOBS as k (k.key)}
+										<Field.Field data-invalid={!!errors[k.key]}>
+											<Field.Label for={`s-${k.key}`}>{k.label}{k.unit ? ` (${k.unit})` : ''}</Field.Label>
+											<Input id={`s-${k.key}`} type="number" min={k.min} max={k.max} step="1" inputmode="numeric" bind:value={knobTexts[k.key]} disabled={!settings} aria-invalid={!!errors[k.key]} class="max-w-32" />
+											<Field.Description>{k.description}</Field.Description>
+											{#if errors[k.key]}<Field.Error>{errors[k.key]}</Field.Error>{/if}
+										</Field.Field>
+									{/each}
 									<Field.Field data-invalid={!!errors.budgetUsd}>
 										<Field.Label for="s-budget">Monthly budget (USD)</Field.Label>
 										<Input id="s-budget" type="number" min="0" step="0.01" inputmode="decimal" bind:value={budget} placeholder="No limit" disabled={!settings} aria-invalid={!!errors.budgetUsd} class="max-w-sm" />

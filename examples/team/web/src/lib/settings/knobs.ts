@@ -2,6 +2,7 @@
 // them from this table and the same table parses and validates what was typed. The ranges mirror
 // the server's `checkSettingsPatch`. Pure, unit-tested.
 export type KnobKey =
+	| 'toolWarmDays'
 	| 'stuckRunMinutes'
 	| 'connectorHealthTtlMs'
 	| 'connectorProbeRetryMs'
@@ -80,7 +81,12 @@ export const KNOB_GROUPS: KnobGroup[] = [
 	}
 ];
 
-export const ALL_KNOBS: Knob[] = KNOB_GROUPS.flatMap((g) => g.knobs);
+/** Knobs the General section shows next to their related field (not in a group). */
+export const GENERAL_KNOBS: Knob[] = [
+	{ key: 'toolWarmDays', label: 'Load tools used recently up front', unit: 'days', min: 0, max: 365, integer: true, description: 'A tool an agent called in the last few days is in its tool list from the start of a chat, instead of being found with tool search. Finding a tool changes the tool list and makes the model re-read the whole chat at full price. 0 turns this off.' }
+];
+
+export const ALL_KNOBS: Knob[] = [...GENERAL_KNOBS, ...KNOB_GROUPS.flatMap((g) => g.knobs)];
 
 /** The text a field shows for a stored value. */
 export function knobText(k: Knob, value: number | null): string {

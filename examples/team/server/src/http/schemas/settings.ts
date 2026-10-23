@@ -11,6 +11,10 @@ export const SettingsSchema = z
       description:
         'Tool access of agents without their own setting: `auto` or `on-demand` (third-party connector tools found with `tool_search`).',
     }),
+    toolWarmDays: z.number().int().min(0).max(365).openapi({
+      description:
+        'Tools an agent called in the last this many days load up front instead of being found with `tool_search` (a discovery resets the prompt cache). 0 = off. Default 7.',
+    }),
     budgetUsd: z.number().positive().nullable().openapi({
       description: 'Monthly USD limit of the workspace budget ledger; null = tracked, not limited.',
     }),
@@ -145,6 +149,7 @@ export const SettingsPatchSchema = z
         'Legacy values (`acceptEdits`, `plan`, `dontAsk`, `manual`) are stored as `default` (Manual).',
     }),
     toolAccess: z.enum(TOOL_ACCESS).optional(),
+    toolWarmDays: z.number().int().min(0).max(365).optional(),
     budgetUsd: z.number().positive().nullable().optional(),
     spawnCap: z.number().int().min(1).max(32).optional(),
     defaultModel: z.string().min(1).max(200).nullable().optional().openapi({

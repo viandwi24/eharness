@@ -111,6 +111,8 @@ export function createActivityLog(options: ActivityLogOptions): ActivityLog {
         reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? null,
         cachedTokens: usage.inputTokenDetails?.cacheReadTokens ?? null,
         costUsd: info.costUsd ?? null,
+        costSource: info.costUsd === undefined ? null : (info.costSource ?? null),
+        upstreamProvider: call.upstreamProvider ?? null,
         startedAt: Number.isFinite(started) ? started : at,
         firstChunkMs: call.firstChunkMs ?? null,
         durationMs: call.durationMs,

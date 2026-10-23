@@ -75,6 +75,7 @@ import {
 import { sqliteEnablementStore, sqliteFlowStore, sqliteRefreshLock } from './connector-stores.ts'
 import type { LibraryChange } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
+import type { WarmTools } from './tool-usage.ts'
 
 /** Connect and listing limit of every remote MCP server (library default 15 s, set explicitly). */
 const MCP_TIMEOUT_MS = 15_000
@@ -124,6 +125,11 @@ export interface ConnectorsOptions {
   events?: { append(event: NewEvent): void }
   /** Workspace default tool access (settings); default `auto`. Read on every `prepare`. */
   toolAccess?: () => ToolAccess
+  /**
+   * Warm tools (`tool-usage.ts`): the deferred tools of an agent's MCP sources that the agent used
+   * recently load up front. Absent = every deferred tool stays deferred.
+   */
+  warm?: WarmTools
   /** Other instances' changes (`connectors-changed`) bump the revision. */
   changes?: ChangeFeed
   /** Id of this instance (its own events are ignored). */
@@ -643,7 +649,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         })
         remoteRunNow = pre.plugins.length > 0
       }
-      const out = await activateConnectors({
+      const activated = await activateConnectors({
         definitions,
         connections: records,
         enablement: await enablement.get(d.id),
@@ -658,6 +664,11 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         // the app's own rules merge with the connector rules (most restrictive wins)
         appRules: appRulesOf(d),
       })
+      const warm = options.warm
+      const out: ActivatedConnectors =
+        warm === undefined || activated.mcpSources.length === 0
+          ? activated
+          : { ...activated, mcpSources: activated.mcpSources.map((src) => warm.wrap(d.id, src)) }
       for (const w of out.warnings) {
         // a connection that still needs sign in is a normal state the UI shows, not a server problem
         if (w.code !== 'connection-unavailable') warn(`connectors (${d.slug}): ${w.message}`)

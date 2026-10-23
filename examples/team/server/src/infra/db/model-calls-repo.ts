@@ -40,6 +40,8 @@ interface Row {
   reasoning_tokens: number | null
   cached_tokens: number | null
   cost_usd: number | null
+  cost_source: string | null
+  upstream_provider: string | null
   started_at: number
   first_chunk_ms: number | null
   duration_ms: number
@@ -58,7 +60,7 @@ interface DetailRow extends Row {
 }
 
 const SUMMARY_COLUMNS =
-  'id, created_at, kind, agent_id, session_id, turn_id, step_index, message_id, task_id, provider, model_id, status, finish_reason, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cost_usd, started_at, first_chunk_ms, duration_ms, error_name, error_message, truncated'
+  'id, created_at, kind, agent_id, session_id, turn_id, step_index, message_id, task_id, provider, model_id, status, finish_reason, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cost_usd, cost_source, upstream_provider, started_at, first_chunk_ms, duration_ms, error_name, error_message, truncated'
 
 const toSummary = (r: Row): ModelCallSummary => ({
   id: r.id,
@@ -79,6 +81,8 @@ const toSummary = (r: Row): ModelCallSummary => ({
   reasoningTokens: r.reasoning_tokens,
   cachedTokens: r.cached_tokens,
   costUsd: r.cost_usd,
+  costSource: r.cost_source === 'provider' || r.cost_source === 'estimate' ? r.cost_source : null,
+  upstreamProvider: r.upstream_provider,
   startedAt: r.started_at,
   firstChunkMs: r.first_chunk_ms,
   durationMs: r.duration_ms,
@@ -157,10 +161,10 @@ function conditions(f: ModelCallFilter): { where: string[]; params: Param[] } {
   }
   if (f.q !== undefined && f.q !== '') {
     where.push(
-      "(model_id LIKE ? ESCAPE '\\' OR provider LIKE ? ESCAPE '\\' OR agent_id IN (SELECT id FROM agents WHERE name LIKE ? ESCAPE '\\' OR slug LIKE ? ESCAPE '\\'))",
+      "(model_id LIKE ? ESCAPE '\\' OR provider LIKE ? ESCAPE '\\' OR upstream_provider LIKE ? ESCAPE '\\' OR agent_id IN (SELECT id FROM agents WHERE name LIKE ? ESCAPE '\\' OR slug LIKE ? ESCAPE '\\'))",
     )
     const p = like(f.q)
-    params.push(p, p, p, p)
+    params.push(p, p, p, p, p)
   }
   return { where, params }
 }
@@ -213,8 +217,8 @@ export function sqliteModelCallStore(
       const truncated = columns.some((c) => c.truncated) ? 1 : 0
       sqlite
         .query(
-          `INSERT OR IGNORE INTO model_calls (id, created_at, kind, agent_id, session_id, turn_id, step_index, message_id, task_id, provider, model_id, status, finish_reason, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cost_usd, started_at, first_chunk_ms, duration_ms, error_name, error_message, request_options, request_body, response, output, provider_metadata, usage_raw, truncated)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO model_calls (id, created_at, kind, agent_id, session_id, turn_id, step_index, message_id, task_id, provider, model_id, status, finish_reason, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cost_usd, cost_source, upstream_provider, started_at, first_chunk_ms, duration_ms, error_name, error_message, request_options, request_body, response, output, provider_metadata, usage_raw, truncated)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           call.id,
@@ -235,6 +239,8 @@ export function sqliteModelCallStore(
           call.reasoningTokens,
           call.cachedTokens,
           call.costUsd,
+          call.costSource ?? null,
+          call.upstreamProvider ?? null,
           call.startedAt,
           call.firstChunkMs,
           call.durationMs,
