@@ -513,12 +513,14 @@ export function createMcpServer(
               const tools = await listClientTools(conn, reopened)
               const fresh = tools[serverName]
               if (fresh?.execute === undefined) {
+                // plain-error: caught below and rethrown as the tool error
                 throw new Error(`the tool '${serverName}' is no longer offered by the server`)
               }
               if (
                 (opts.pinDefinitions ?? conn.remote === true) &&
                 (await pinned(conn.ctx, tools)).has(serverName)
               ) {
+                // plain-error: caught below and rethrown as the tool error
                 throw new Error(`the definition of '${serverName}' changed since it was pinned`)
               }
               next = { client: reopened, execute: fresh.execute }
