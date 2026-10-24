@@ -5,6 +5,8 @@
  */
 import type { ChannelInboxPort } from '../../app/ports.ts'
 import type {
+  ChannelAuditResult,
+  ChannelAuditRow,
   ChannelPersonView,
   ChannelReminderView,
   ChannelRoleSuggestion,
@@ -46,7 +48,15 @@ export interface ChannelInboxOptions {
   gateway: ChannelGateway
   /** Resolves when the connection exists (a channel connection), rejects with not-found otherwise. */
   connection(id: string): Promise<unknown>
+  /** Every connection with its label and kind (the Audit rows and its connector filter). */
+  connections?: () => Promise<
+    Array<{ id: string; label: string; platform: string; transport?: 'bot' | 'user' }>
+  >
+  /** The display name of an agent (the Audit rows). */
+  agentName?: (agentId: string) => string | undefined
 }
+
+const RESULTS: readonly string[] = ['ok', 'error', 'refused', 'rate_limited']
 
 const clean = (value: string, what: string): string => {
   const v = value.trim()
@@ -185,6 +195,77 @@ export function createChannelInboxPort(options: ChannelInboxOptions): ChannelInb
     async activityActions(id) {
       await known(id)
       return gateway.activity.actions(id)
+    },
+    async audit(q) {
+      const conns = (await options.connections?.()) ?? []
+      const byId = new Map(conns.map((c) => [c.id, c]))
+      const kindIds =
+        q.platform === undefined && q.transport === undefined
+          ? undefined
+          : conns
+              .filter(
+                (c) =>
+                  (q.platform === undefined || c.platform === q.platform) &&
+                  (q.transport === undefined || (c.transport ?? 'bot') === q.transport),
+              )
+              .map((c) => c.id)
+      const page = gateway.activity.audit({
+        ...(kindIds === undefined ? {} : { connectionIds: kindIds }),
+        ...(q.connectionId === undefined ? {} : { connectionId: q.connectionId }),
+        ...(q.kind === undefined ? {} : { kind: q.kind }),
+        ...(q.action === undefined ? {} : { action: q.action }),
+        ...(q.chat === undefined ? {} : { chat: q.chat }),
+        ...(q.requester === undefined ? {} : { requester: q.requester }),
+        ...(q.agentId === undefined ? {} : { agentId: q.agentId }),
+        ...(q.result === undefined ? {} : { result: q.result }),
+        ...(q.from === undefined ? {} : { from: q.from }),
+        ...(q.to === undefined ? {} : { to: q.to }),
+        ...(q.cursor === undefined ? {} : { before: q.cursor }),
+        limit: q.limit,
+      })
+      const items = page.items.map((e): ChannelAuditRow => {
+        const d = e.detail ?? {}
+        const text = (key: string): string | undefined => {
+          const v = d[key]
+          return v === undefined || v === '' ? undefined : String(v)
+        }
+        const conn = byId.get(e.connectionId)
+        const agentId = text('agent')
+        const agentName = agentId === undefined ? undefined : options.agentName?.(agentId)
+        const result = text('result')
+        const chat = e.conversationTitle ?? text('targetChat')
+        const ms = d.ms
+        return {
+          id: e.id,
+          at: e.at,
+          connectionId: e.connectionId,
+          connectionLabel: conn?.label ?? e.connectionId,
+          platform: conn?.platform ?? 'unknown',
+          ...(conn?.transport === undefined ? {} : { transport: conn.transport }),
+          kind: e.type === 'read' ? 'read' : 'action',
+          action: e.action ?? '',
+          target: {
+            ...(chat === undefined ? {} : { chat }),
+            ...(e.conversationId === undefined ? {} : { chatId: e.conversationId }),
+            ...(text('targetUser') === undefined ? {} : { user: text('targetUser') as string }),
+            ...(text('targetLink') === undefined ? {} : { link: text('targetLink') as string }),
+          },
+          ...(e.peerName === undefined ? {} : { requester: e.peerName }),
+          ...(text('role') === undefined ? {} : { role: text('role') as string }),
+          ...(text('member') === undefined ? {} : { member: text('member') as string }),
+          ...(text('origin') === undefined ? {} : { origin: text('origin') as string }),
+          ...(agentId === undefined ? {} : { agentId }),
+          ...(agentName === undefined ? {} : { agentName }),
+          ...(text('session') === undefined ? {} : { sessionId: text('session') as string }),
+          ...(text('summary') === undefined ? {} : { summary: text('summary') as string }),
+          result: (result !== undefined && RESULTS.includes(result)
+            ? result
+            : 'ok') as ChannelAuditResult,
+          ...(e.reason === undefined ? {} : { note: e.reason }),
+          ...(typeof ms === 'number' ? { durationMs: ms } : {}),
+        }
+      })
+      return { items, ...(page.next === undefined ? {} : { next: page.next }) }
     },
     async activityTable(id, query) {
       await known(id)

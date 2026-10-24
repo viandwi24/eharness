@@ -1668,6 +1668,14 @@ export function compose(config: ServerConfig): Server {
   channelInboxPort = createChannelInboxPort({
     gateway: channels,
     connection: async (id) => (await channelsPort?.connection(id)) as unknown,
+    connections: async () =>
+      ((await channelsPort?.connections()) ?? []).map((c) => ({
+        id: c.id,
+        label: c.label,
+        platform: c.platform,
+        ...(c.transport === undefined ? {} : { transport: c.transport }),
+      })),
+    agentName: (agentId) => deps.agents.get(agentId)?.name,
   })
   peoplePort = createPeoplePort({ gateway: channels, now: () => Date.now() })
   const purgeChannels = (): void => {

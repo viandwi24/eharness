@@ -6,6 +6,7 @@ import type { EventAppender, NewRoutine, RoutinePatch, ThreadStore } from '../..
 import type { Routine, RoutineSpec } from '../../../domain/routines.ts'
 import type { ApprovalStore, OutboxRow, OutboxStore } from '../delivery-store.ts'
 import type {
+  AuditQuery,
   ChannelEvent,
   ChannelEventType,
   EventPage,
@@ -709,6 +710,8 @@ export interface ChannelGateway {
     table(connectionId: string, query: EventTableQuery): { items: ActivityItem[]; total: number }
     /** The action and read names recorded so far. */
     actions(connectionId: string): string[]
+    /** Platform actions and reads of every connection, newest first, cursor paged (the audit). */
+    audit(query: AuditQuery): Omit<EventPage, 'items'> & { items: ActivityItem[] }
     /** Delete events past the events retention (age and count). */
     prune(options: { olderThan?: number; keepLast?: number }): number
   }

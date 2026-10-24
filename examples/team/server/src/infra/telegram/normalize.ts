@@ -678,6 +678,24 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
       ],
     }
   }
+  const join = update.chat_join_request
+  if (join !== undefined) {
+    // somebody asks to join: a chat event with the person as actor (the agent reads the details with
+    // `telegram_join_requests list` and answers with approve / decline)
+    const room = chatNode(join.chat)
+    return {
+      events: [
+        {
+          type: 'node.updated',
+          dedupeKey: key(update),
+          at: join.date * 1000,
+          node: { nativeId: room.nativeId, chain: [room] },
+          actor: identityOfUser(join.from, ctx.botId),
+          raw: update,
+        },
+      ],
+    }
+  }
   const other = update.chat_member
   if (other !== undefined) {
     const status = other.new_chat_member.status

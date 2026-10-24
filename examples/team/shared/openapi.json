@@ -18919,6 +18919,132 @@
         ],
         "description": "One call with every JSON column."
       },
+      "AuditPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditRow"
+            },
+            "description": "Newest first."
+          },
+          "next": {
+            "type": "string",
+            "description": "Pass as `cursor` for older rows."
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "AuditRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "at": {
+            "type": "integer",
+            "description": "Epoch ms."
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "connectionLabel": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string",
+            "enum": [
+              "bot",
+              "user"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "action",
+              "read"
+            ]
+          },
+          "action": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "chat": {
+                "type": "string"
+              },
+              "chatId": {
+                "type": "string",
+                "description": "Internal id of the chat."
+              },
+              "user": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string"
+              }
+            }
+          },
+          "requester": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "agentName": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string",
+            "description": "`key=value` preview of the parameters; message text appears only as `text=<N chars>`."
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error",
+              "refused",
+              "rate_limited"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "durationMs": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "connectionId",
+          "connectionLabel",
+          "platform",
+          "kind",
+          "action",
+          "target",
+          "result"
+        ]
+      },
       "HealthFindingList": {
         "type": "object",
         "properties": {
@@ -39023,6 +39149,402 @@
           },
           "404": {
             "description": "Unknown call (it may have been pruned)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/audit/actions": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Audit of platform actions across all connections",
+        "description": "What the agents did on chat platforms (moderation, pins, admin rights, lookups): one row per call with the connection, the chat, the person who asked (`web owner`, a team member, `autonomous <origin>`), the agent, the session, the result (`ok`, `error`, `refused`, `rate_limited`) and the duration. Newest first, cursor paged. Never a message body.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only this connection."
+            },
+            "required": false,
+            "description": "Only this connection.",
+            "name": "connectionId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The platform, `telegram`."
+            },
+            "required": false,
+            "description": "The platform, `telegram`.",
+            "name": "platform",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "bot",
+                "user"
+              ],
+              "description": "The connector kind: `bot` (Bot API) or `user` (a user account)."
+            },
+            "required": false,
+            "description": "The connector kind: `bot` (Bot API) or `user` (a user account).",
+            "name": "transport",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "action",
+                "read"
+              ],
+              "description": "`action` = writes and moderation, `read` = lookups. Both when omitted."
+            },
+            "required": false,
+            "description": "`action` = writes and moderation, `read` = lookups. Both when omitted.",
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "description": "The tool or sub-action name (`promote_member`, `telegram_user_manage`, ...)."
+            },
+            "required": false,
+            "description": "The tool or sub-action name (`promote_member`, `telegram_user_manage`, ...).",
+            "name": "action",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "A chat: its internal id, or part of its title or of the target the call named."
+            },
+            "required": false,
+            "description": "A chat: its internal id, or part of its title or of the target the call named.",
+            "name": "chat",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Part of the name of the person who asked (`web owner`, `autonomous routine`)."
+            },
+            "required": false,
+            "description": "Part of the name of the person who asked (`web owner`, `autonomous routine`).",
+            "name": "requester",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The agent that made the call."
+            },
+            "required": false,
+            "description": "The agent that made the call.",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "error",
+                "refused",
+                "rate_limited"
+              ]
+            },
+            "required": false,
+            "name": "result",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "At or after this time (epoch ms)."
+            },
+            "required": false,
+            "description": "At or after this time (epoch ms).",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "At or before this time (epoch ms)."
+            },
+            "required": false,
+            "description": "At or before this time (epoch ms).",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "`next` of the previous page."
+            },
+            "required": false,
+            "description": "`next` of the previous page.",
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/audit/actions.csv": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "The audit as CSV",
+        "description": "The same filters as `GET /audit/actions`, no paging: up to 10 000 rows, newest first. Fields are quoted and escaped; text that a spreadsheet would run as a formula starts with `'`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only this connection."
+            },
+            "required": false,
+            "description": "Only this connection.",
+            "name": "connectionId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The platform, `telegram`."
+            },
+            "required": false,
+            "description": "The platform, `telegram`.",
+            "name": "platform",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "bot",
+                "user"
+              ],
+              "description": "The connector kind: `bot` (Bot API) or `user` (a user account)."
+            },
+            "required": false,
+            "description": "The connector kind: `bot` (Bot API) or `user` (a user account).",
+            "name": "transport",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "action",
+                "read"
+              ],
+              "description": "`action` = writes and moderation, `read` = lookups. Both when omitted."
+            },
+            "required": false,
+            "description": "`action` = writes and moderation, `read` = lookups. Both when omitted.",
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "description": "The tool or sub-action name (`promote_member`, `telegram_user_manage`, ...)."
+            },
+            "required": false,
+            "description": "The tool or sub-action name (`promote_member`, `telegram_user_manage`, ...).",
+            "name": "action",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "A chat: its internal id, or part of its title or of the target the call named."
+            },
+            "required": false,
+            "description": "A chat: its internal id, or part of its title or of the target the call named.",
+            "name": "chat",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Part of the name of the person who asked (`web owner`, `autonomous routine`)."
+            },
+            "required": false,
+            "description": "Part of the name of the person who asked (`web owner`, `autonomous routine`).",
+            "name": "requester",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The agent that made the call."
+            },
+            "required": false,
+            "description": "The agent that made the call.",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "error",
+                "refused",
+                "rate_limited"
+              ]
+            },
+            "required": false,
+            "name": "result",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "At or after this time (epoch ms)."
+            },
+            "required": false,
+            "description": "At or after this time (epoch ms).",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "At or before this time (epoch ms)."
+            },
+            "required": false,
+            "description": "At or before this time (epoch ms).",
+            "name": "to",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
             "content": {
               "application/json": {
                 "schema": {

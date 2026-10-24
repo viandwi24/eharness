@@ -16716,6 +16716,167 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit of platform actions across all connections
+         * @description What the agents did on chat platforms (moderation, pins, admin rights, lookups): one row per call with the connection, the chat, the person who asked (`web owner`, a team member, `autonomous <origin>`), the agent, the session, the result (`ok`, `error`, `refused`, `rate_limited`) and the duration. Newest first, cursor paged. Never a message body.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Only this connection. */
+                    connectionId?: string;
+                    /** @description The platform, `telegram`. */
+                    platform?: string;
+                    /** @description The connector kind: `bot` (Bot API) or `user` (a user account). */
+                    transport?: "bot" | "user";
+                    /** @description `action` = writes and moderation, `read` = lookups. Both when omitted. */
+                    kind?: "action" | "read";
+                    /** @description The tool or sub-action name (`promote_member`, `telegram_user_manage`, ...). */
+                    action?: string;
+                    /** @description A chat: its internal id, or part of its title or of the target the call named. */
+                    chat?: string;
+                    /** @description Part of the name of the person who asked (`web owner`, `autonomous routine`). */
+                    requester?: string;
+                    /** @description The agent that made the call. */
+                    agentId?: string;
+                    result?: "ok" | "error" | "refused" | "rate_limited";
+                    /** @description At or after this time (epoch ms). */
+                    from?: number | null;
+                    /** @description At or before this time (epoch ms). */
+                    to?: number | null;
+                    /** @description `next` of the previous page. */
+                    cursor?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of rows */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuditPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit/actions.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The audit as CSV
+         * @description The same filters as `GET /audit/actions`, no paging: up to 10 000 rows, newest first. Fields are quoted and escaped; text that a spreadsheet would run as a formula starts with `'`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Only this connection. */
+                    connectionId?: string;
+                    /** @description The platform, `telegram`. */
+                    platform?: string;
+                    /** @description The connector kind: `bot` (Bot API) or `user` (a user account). */
+                    transport?: "bot" | "user";
+                    /** @description `action` = writes and moderation, `read` = lookups. Both when omitted. */
+                    kind?: "action" | "read";
+                    /** @description The tool or sub-action name (`promote_member`, `telegram_user_manage`, ...). */
+                    action?: string;
+                    /** @description A chat: its internal id, or part of its title or of the target the call named. */
+                    chat?: string;
+                    /** @description Part of the name of the person who asked (`web owner`, `autonomous routine`). */
+                    requester?: string;
+                    /** @description The agent that made the call. */
+                    agentId?: string;
+                    result?: "ok" | "error" | "refused" | "rate_limited";
+                    /** @description At or after this time (epoch ms). */
+                    from?: number | null;
+                    /** @description At or before this time (epoch ms). */
+                    to?: number | null;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description CSV */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/csv": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agent-health/findings": {
         parameters: {
             query?: never;
@@ -23292,6 +23453,45 @@ export interface components {
             prevId: string | null;
             /** @description The row below in the list (older) under the same filters. */
             nextId: string | null;
+        };
+        AuditPage: {
+            /** @description Newest first. */
+            items: components["schemas"]["AuditRow"][];
+            /** @description Pass as `cursor` for older rows. */
+            next?: string;
+        };
+        AuditRow: {
+            id: string;
+            /** @description Epoch ms. */
+            at: number;
+            connectionId: string;
+            connectionLabel: string;
+            platform: string;
+            /** @enum {string} */
+            transport?: "bot" | "user";
+            /** @enum {string} */
+            kind: "action" | "read";
+            action: string;
+            target: {
+                chat?: string;
+                /** @description Internal id of the chat. */
+                chatId?: string;
+                user?: string;
+                link?: string;
+            };
+            requester?: string;
+            role?: string;
+            member?: string;
+            origin?: string;
+            agentId?: string;
+            agentName?: string;
+            sessionId?: string;
+            /** @description `key=value` preview of the parameters; message text appears only as `text=<N chars>`. */
+            summary?: string;
+            /** @enum {string} */
+            result: "ok" | "error" | "refused" | "rate_limited";
+            note?: string;
+            durationMs?: number;
         };
         HealthFindingList: {
             findings: components["schemas"]["HealthFinding"][];

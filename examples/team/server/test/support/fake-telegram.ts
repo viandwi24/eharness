@@ -28,6 +28,8 @@ export interface FakeTelegram {
   push(update: Json): number
   /** The next `times` calls of `method` fail with this error. */
   fail(method: string, failure: FakeFailure, times?: number): void
+  /** Answer `method` with this result instead of `true` (a getChat or getChatMember body). */
+  reply(method: string, result: unknown): void
   /** The token stops working (every method answers 401). */
   revoke(): void
   setWebhook(url: string | undefined): void
@@ -47,6 +49,7 @@ export function fakeTelegram(
   const queue: Json[] = []
   const waiters: Array<() => void> = []
   const failures = new Map<string, FakeFailure[]>()
+  const replies = new Map<string, unknown>()
   const files = new Map<string, { bytes: Uint8Array; path: string; size?: number }>()
   let revoked = false
   let webhook: string | undefined
@@ -111,6 +114,7 @@ export function fakeTelegram(
       if (tok !== token || revoked) return err({ error_code: 401, description: 'Unauthorized' })
       const queued = failures.get(method)
       if (queued !== undefined && queued.length > 0) return err(queued.shift() as FakeFailure)
+      if (replies.has(method)) return ok(replies.get(method))
       switch (method) {
         case 'getMe':
           return ok(bot)
@@ -198,6 +202,9 @@ export function fakeTelegram(
       const list = failures.get(method) ?? []
       for (let i = 0; i < times; i++) list.push(failure)
       failures.set(method, list)
+    },
+    reply(method, result) {
+      replies.set(method, result)
     },
     revoke() {
       revoked = true

@@ -512,6 +512,68 @@ export interface ChannelActivityQuery {
   limit: number
 }
 
+/** The audit of platform actions across connections (`GET /audit/actions`). */
+export type ChannelAuditResult = 'ok' | 'error' | 'refused' | 'rate_limited'
+
+export interface ChannelAuditQuery {
+  /** Only this connection. */
+  connectionId?: string
+  /** `telegram`. */
+  platform?: string
+  /** `bot` (Bot API) or `user` (a user account). */
+  transport?: 'bot' | 'user'
+  /** `action` (writes, default in the UI) or `read`; both when omitted. */
+  kind?: 'action' | 'read'
+  /** The name of the tool or the sub-action. */
+  action?: string
+  /** A chat: its internal id, or part of its title or of the target the call named. */
+  chat?: string
+  /** Part of the name of the person who asked. */
+  requester?: string
+  agentId?: string
+  result?: ChannelAuditResult
+  from?: number
+  to?: number
+  cursor?: string
+  limit: number
+}
+
+export interface ChannelAuditRow {
+  id: string
+  at: number
+  connectionId: string
+  connectionLabel: string
+  platform: string
+  transport?: 'bot' | 'user'
+  kind: 'action' | 'read'
+  /** The tool or sub-action (`promote_member`, `telegram_user_manage`, ...). */
+  action: string
+  target: {
+    /** The chat's title when known, else what the call named. */
+    chat?: string
+    chatId?: string
+    user?: string
+    link?: string
+  }
+  requester?: string
+  role?: string
+  member?: string
+  origin?: string
+  agentId?: string
+  agentName?: string
+  sessionId?: string
+  /** `key=value` preview of the parameters; text bodies appear only as a length. */
+  summary?: string
+  result: ChannelAuditResult
+  note?: string
+  durationMs?: number
+}
+
+export interface ChannelAuditPage {
+  items: ChannelAuditRow[]
+  next?: string
+}
+
 // --- server-side tables (P40 channels UI) -----------------------------------------------------------
 
 /** What every table endpoint takes: a search text, a sort, a page. */

@@ -27,6 +27,7 @@ import { neutralizeHandles } from '../channels/mentions.ts'
 import type { NativeAction } from '../channels/types.ts'
 import { ADMIN_EVENT_KINDS, type AdminLogQuery } from './adminlog.ts'
 import type { TgAdminRights, TgChat, TgMessage, TgTopic, TgUserClient } from './client.ts'
+import { ADMIN_RIGHTS, manageActions } from './manage.ts'
 import type { AccountSettings, ChatStore, CounterStore } from './store.ts'
 
 export interface AccountActionDeps {
@@ -47,6 +48,10 @@ export interface AccountActionDeps {
   /** The team timezone, for times shown to the model. */
   timezone(): string
   now(): number
+  /** Pause between two spaced calls (adding people); default a real timer. */
+  sleep?(ms: number): Promise<void>
+  /** A library file (image for a chat photo, album files); undefined = no such file. */
+  readFile?(path: string): Promise<{ bytes: Uint8Array; mediaType: string } | undefined>
   hooks: {
     dialogsSeen?(list: TgChat[]): void
     chooseChat?(chatId: string, days: number): Promise<string>
@@ -54,6 +59,8 @@ export interface AccountActionDeps {
     adminLogRead?(chatId: string, query: AdminLogQuery): Promise<string>
     /** A chat was joined or left by an action: refresh what the Channels page lists. */
     chatsChanged?(): void
+    /** A chat was created by an action: choose it so the app reads it and answers when mentioned. */
+    chatCreated?(chat: TgChat): Promise<void>
   }
 }
 
@@ -61,16 +68,8 @@ export interface AccountActionDeps {
 export const DELETED_HINT =
   'If it may have been deleted: admin_log of that chat shows deleted messages with their text (Telegram keeps them about 48 hours).'
 
-/** The admin rights `promote_member` may hand out (never add_admins, never anonymous). */
-export const PROMOTE_RIGHTS = [
-  'change_info',
-  'delete_messages',
-  'ban_users',
-  'invite_users',
-  'pin_messages',
-  'manage_topics',
-  'manage_video_chats',
-] as const
+/** The admin rights `promote_member` may hand out: everything Telegram offers (the owner decides, approval asks). */
+export const PROMOTE_RIGHTS = ADMIN_RIGHTS
 
 const RESOLVE_PER_MINUTE = 5
 const RESOLVE_PER_DAY = 30
@@ -241,7 +240,16 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
 
   const unavailable = (what: string): string => `ERROR: ${what} is not available for this account.`
 
-  return [
+  /** Spend one username lookup (the same cap as get_user), or a sentence saying why not. */
+  function spendResolve(): string | undefined {
+    const refusal = canResolve()
+    if (refusal !== undefined) return refusal
+    resolveTimes.push(d.now())
+    counters.add(connectionId, 'resolve', d.now())
+    return undefined
+  }
+
+  const base: NativeAction[] = [
     // --- discover --------------------------------------------------------------------------------
     {
       name: 'list_dialogs',
@@ -399,7 +407,7 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
           `${type} members of "${c.title}": ${r.members.length} shown of ${r.total}.`,
           ...r.members.map(
             (m) =>
-              `- ${m.user.name} (id ${m.user.id}${m.user.username === undefined ? '' : `, @${m.user.username}`})${m.user.isBot ? ' bot' : ''}: ${m.status}${m.title === undefined ? '' : ` "${m.title}"`}`,
+              `- ${m.user.name} (id ${m.user.id}${m.user.username === undefined ? '' : `, @${m.user.username}`})${m.user.isBot ? ' bot' : ''}: ${m.status}${m.title === undefined ? '' : ` "${m.title}"`}${m.rights === undefined ? '' : ` [rights: ${m.rights.join(', ') || 'none'}${m.canEdit === false ? '; not editable by this account' : ''}]`}${m.forbidden === undefined || m.forbidden.length === 0 ? '' : ` [may not: ${m.forbidden.join(', ')}]`}`,
           ),
           'A Telegram admin badge is not a team role: roles come from the team directory.',
         ].join('\n')
@@ -955,8 +963,7 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
       name: 'promote_member',
       risk: 'destructive',
       ownerOnly: true,
-      summary:
-        'Make a person an admin of a chosen supergroup or channel with exactly the rights you list (change_info, delete_messages, ban_users, invite_users, pin_messages, manage_topics, manage_video_chats) and an optional title. Adding other admins and anonymous admins are never allowed. Owner only; always asks for approval; the account must be an admin holding those rights.',
+      summary: `Make a person an admin of a chosen supergroup or channel, or CHANGE an existing admin's rights (the rights you list replace the old ones; use member_info or list_members type admins to see the current rights first). Rights: ${PROMOTE_RIGHTS.join(', ')} (post_messages and edit_messages are channel rights; manage_topics is for forums; add_admins lets them appoint other admins; anonymous hides their name), plus an optional title. Owner only; always asks for approval; the account must be an admin holding those rights, and add_admins itself to appoint admins. Only the creator or the admin who promoted someone can change them.`,
       schema: z.object({
         chat: chatField,
         user: z
@@ -966,7 +973,7 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
         rights: z
           .array(z.string().max(40))
           .min(1)
-          .max(12)
+          .max(PROMOTE_RIGHTS.length)
           .describe(
             `The rights to give, from: ${PROMOTE_RIGHTS.join(', ')}. List only what is needed.`,
           ),
@@ -979,20 +986,27 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
       }),
       run: async (input) => {
         if (client.promoteMember === undefined) return unavailable('promote_member')
-        const asked = ((input.rights as string[]) ?? []).map((r) => r.trim().toLowerCase())
+        const asked = [
+          ...new Set(((input.rights as string[]) ?? []).map((r) => r.trim().toLowerCase())),
+        ]
         const allowed = new Set<string>(PROMOTE_RIGHTS)
         const bad = asked.filter((r) => !allowed.has(r))
         if (bad.length > 0) {
-          return `ERROR: ${bad.join(', ')} cannot be given. The allowed rights are: ${PROMOTE_RIGHTS.join(', ')}. Adding admins and anonymous admins are never granted by this account.`
+          return `ERROR: ${bad.join(', ')} is not an admin right. The rights are: ${PROMOTE_RIGHTS.join(', ')}.`
         }
+        const has = (r: string): boolean => asked.includes(r)
         const rights: TgAdminRights = {
-          ...(asked.includes('change_info') ? { changeInfo: true } : {}),
-          ...(asked.includes('delete_messages') ? { deleteMessages: true } : {}),
-          ...(asked.includes('ban_users') ? { banUsers: true } : {}),
-          ...(asked.includes('invite_users') ? { inviteUsers: true } : {}),
-          ...(asked.includes('pin_messages') ? { pinMessages: true } : {}),
-          ...(asked.includes('manage_topics') ? { manageTopics: true } : {}),
-          ...(asked.includes('manage_video_chats') ? { manageCall: true } : {}),
+          ...(has('change_info') ? { changeInfo: true } : {}),
+          ...(has('delete_messages') ? { deleteMessages: true } : {}),
+          ...(has('ban_users') ? { banUsers: true } : {}),
+          ...(has('invite_users') ? { inviteUsers: true } : {}),
+          ...(has('pin_messages') ? { pinMessages: true } : {}),
+          ...(has('manage_topics') ? { manageTopics: true } : {}),
+          ...(has('manage_video_chats') ? { manageCall: true } : {}),
+          ...(has('add_admins') ? { addAdmins: true } : {}),
+          ...(has('anonymous') ? { anonymous: true } : {}),
+          ...(has('post_messages') ? { postMessages: true } : {}),
+          ...(has('edit_messages') ? { editMessages: true } : {}),
         }
         if (Object.keys(rights).length === 0) return 'ERROR: list at least one right to give.'
         if (typeof input.title === 'string' && /\p{Extended_Pictographic}/u.test(input.title)) {
@@ -1005,6 +1019,10 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
         if (notAdmin !== undefined) return notAdmin
         const user = String(input.user)
         if (user === d.selfId) return 'ERROR: the account cannot change its own admin rights.'
+        const notes: string[] = []
+        if ((has('post_messages') || has('edit_messages')) && c.kind !== 'channel')
+          notes.push('post_messages and edit_messages only matter in channels')
+        if (has('manage_topics') && !c.forum) notes.push('manage_topics only matters in forums')
         const title = typeof input.title === 'string' ? input.title.trim() : undefined
         await d.call(c.id, () =>
           (client.promoteMember as NonNullable<TgUserClient['promoteMember']>)(
@@ -1014,7 +1032,7 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
             title === '' ? undefined : title,
           ),
         )
-        return `Made user ${user} an admin of "${c.title}" with: ${asked.join(', ')}${title === undefined || title === '' ? '' : ` (title "${title}")`}. Only the creator, or this account (who promoted them), can change or remove them later.`
+        return `Made user ${user} an admin of "${c.title}" with: ${asked.join(', ')}${title === undefined || title === '' ? '' : ` (title "${title}")`}. These rights replace any they had. Only the creator, or this account (who promoted them), can change or remove them later.${notes.length > 0 ? ` Note: ${notes.join('; ')}.` : ''}`
       },
     },
     {
@@ -1140,6 +1158,7 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
         expires_days: z.number().int().min(1).max(365).optional(),
         usage_limit: z.number().int().min(1).max(99_999).optional(),
         with_approval: z.boolean().optional().describe('Joins wait for an admin to approve them.'),
+        title: z.string().max(32).optional().describe('A note only admins see.'),
       }),
       run: async (input) => {
         if (client.createInviteLink === undefined) return unavailable('create_invite_link')
@@ -1154,6 +1173,9 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
               : {}),
             ...(typeof input.usage_limit === 'number' ? { usageLimit: input.usage_limit } : {}),
             ...(input.with_approval === true ? { withApproval: true } : {}),
+            ...(typeof input.title === 'string' && input.title.trim() !== ''
+              ? { title: input.title.trim() }
+              : {}),
           }),
         )
         return `Invite link for "${c.title}": ${l.link}. Share it only with the person who asked, never in a group chat.`
@@ -1204,6 +1226,11 @@ export function accountActions(d: AccountActionDeps): NativeAction[] {
         return `Left "${c.title}" (${c.id}); it is no longer ingested.`
       },
     },
+  ]
+  // managing chats: create, add people, settings, invite links, join requests, contacts, ...
+  return [
+    ...base,
+    ...manageActions(d, { findChat, chosenChat, ownerAdmin, when, postRefusal, spendResolve }),
   ]
 }
 

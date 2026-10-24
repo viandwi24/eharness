@@ -31,6 +31,7 @@ import {
   type ResolvedTarget,
   type TargetInput,
 } from './gateway.ts'
+import { auditSummary, auditTarget } from './governor.ts'
 import { MEMORY_READ_TOOLS, memoryWriteRefusal, SMALL_TALK_MEMORY_REFUSAL } from './medium.ts'
 import type { NodeRow } from './model.ts'
 import { nativeToolName, senderLabel } from './policy.ts'
@@ -250,12 +251,18 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       const guard = async (fn: () => Promise<string>): Promise<string> => {
         try {
           const requester = await gw.requesterOf(sessionId).catch(() => undefined)
-          const name = requester?.name ?? requester?.username
+          const web = requester === undefined && gw.webTurn(sessionId)
+          const name =
+            requester?.name ??
+            requester?.username ??
+            (web ? 'web owner' : origin === 'dm' ? undefined : `autonomous ${origin}`)
+          const role = requester?.role ?? (web ? 'owner' : undefined)
           return await gw.governor.within(
             {
               sessionId,
               agentId,
               origin,
+              ...(role === undefined ? {} : { role }),
               ...(name === undefined ? {} : { requester: name }),
               ...(requester?.memberId === undefined ? {} : { memberId: requester.memberId }),
             },
@@ -766,6 +773,30 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         return `${ofPlatform[0]?.platform} has no action of that name.${close.length > 0 ? ` Actions it offers: ${close.slice(0, 8).join(', ')}.` : ''}`
       }
 
+      /** A refused native action stays on the audit trail (who asked, what, why). */
+      const refused = (
+        pick: { connectionId: string; action: { name: string; risk: string } },
+        input: unknown,
+        note: string,
+      ): void => {
+        try {
+          gw.governor.record(
+            {
+              connectionId: pick.connectionId,
+              action: pick.action.name,
+              kind: pick.action.risk === 'read' ? 'read' : 'action',
+              args: input as Record<string, unknown>,
+              target: auditTarget(input),
+              summary: auditSummary(input),
+            },
+            'refused',
+            { note },
+          )
+        } catch {
+          // the audit never blocks the refusal
+        }
+      }
+
       const nativeTool = (
         name: string,
         first: {
@@ -808,15 +839,76 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
                 // decided on the current requester, never on what the message says
                 const requester = await gw.requesterOf(sessionId)
                 if (requester !== undefined && requester.role !== 'owner') {
+                  refused(pick, rest, `needs an owner, asked by a ${requester.role}`)
                   return `Not allowed: only an owner of the team can ask for ${name}. ${requester.name ?? requester.username ?? requester.nativeId} has the role "${requester.role}". Tell them in one plain sentence to ask an owner; do not retry or look for a way around it.`
                 }
                 if (requester === undefined && gw.unresolvedChatTurn(sessionId)) {
+                  refused(pick, rest, 'needs an owner, sender not identified')
                   return `Not allowed: ${name} needs an owner, and the sender of this chat message could not be identified.`
                 }
               }
               return pick.action.run(rest)
             }),
         })
+      }
+
+      const approveTool = async (
+        _hookCtx: HarnessContext,
+        e: { toolName: string; risk?: string; input?: unknown },
+      ): Promise<{ type: 'denied'; reason: string } | undefined> => {
+        // memory discipline in a chat session (medium.ts): no system or state facts in memory,
+        // no memory lookups for a greeting
+        if (inChannel) {
+          const refusal = memoryWriteRefusal(e.toolName, e.input)
+          if (refusal !== undefined) return { type: 'denied', reason: refusal }
+        }
+        const requester = await gw.requesterOf(sessionId)
+        if (inChannel && requester?.smallTalk === true && MEMORY_READ_TOOLS.includes(e.toolName))
+          return { type: 'denied', reason: SMALL_TALK_MEMORY_REFUSAL }
+        // no chat trigger (web, program, routine): unrestricted by design. A chat message woke the
+        // turn but nobody could be resolved from it: a guest, never unrestricted.
+        if (requester === undefined) {
+          if (!gw.unresolvedChatTurn(sessionId)) return undefined
+          const guest = decideTool('guest', e.toolName, e.risk, undefined, 'an unidentified sender')
+          return guest.allowed
+            ? undefined
+            : { type: 'denied', reason: guest.reason ?? 'Not allowed.' }
+        }
+        const config = gw.config(requester.connectionId)
+        // the agent's own background worker acts with the asker's scope: a member may start it
+        if (
+          e.toolName === 'agent' &&
+          !isStaff(requester.role) &&
+          requester.role !== 'guest' &&
+          (e.input as { subagent_type?: unknown } | undefined)?.subagent_type === MEMBER_WORKER_TYPE
+        ) {
+          return undefined
+        }
+        // the people directory: pairing is for anybody, edits for staff, owner decisions for the owner;
+        // denied here so a request that would be refused never reaches an approval card
+        if (e.toolName === PEOPLE_TOOL || e.toolName === PEOPLE_ADMIN_TOOL) {
+          const action = (e.input as { action?: unknown } | undefined)?.action
+          const needsOwner = e.toolName === PEOPLE_ADMIN_TOOL
+          const needsStaff = needsOwner || action !== 'pair'
+          if (
+            (needsOwner && requester.role !== 'owner') ||
+            (needsStaff && !isStaff(requester.role))
+          )
+            return {
+              type: 'denied',
+              reason: `Not allowed: only ${needsOwner ? 'the owner' : 'an owner or an admin'} can do that. Say so in one plain sentence.`,
+            }
+        }
+        const decision = decideTool(
+          requester.role,
+          e.toolName,
+          e.risk,
+          config?.people.policy,
+          requester.name ?? requester.username ?? requester.nativeId,
+        )
+        return decision.allowed
+          ? undefined
+          : { type: 'denied', reason: decision.reason ?? 'Not allowed.' }
       }
 
       return {
@@ -870,73 +962,35 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           },
           // authorization by code on the current requester: deny wins, nothing a message says changes it
           'tool.approve': async (
-            _hookCtx: HarnessContext,
+            hookCtx: HarnessContext,
             e: { toolName: string; risk?: string; input?: unknown },
           ): Promise<{ type: 'denied'; reason: string } | undefined> => {
-            // memory discipline in a chat session (medium.ts): no system or state facts in memory,
-            // no memory lookups for a greeting
-            if (inChannel) {
-              const refusal = memoryWriteRefusal(e.toolName, e.input)
-              if (refusal !== undefined) return { type: 'denied', reason: refusal }
-            }
-            const requester = await gw.requesterOf(sessionId)
-            if (
-              inChannel &&
-              requester?.smallTalk === true &&
-              MEMORY_READ_TOOLS.includes(e.toolName)
-            )
-              return { type: 'denied', reason: SMALL_TALK_MEMORY_REFUSAL }
-            // no chat trigger (web, program, routine): unrestricted by design. A chat message woke the
-            // turn but nobody could be resolved from it: a guest, never unrestricted.
-            if (requester === undefined) {
-              if (!gw.unresolvedChatTurn(sessionId)) return undefined
-              const guest = decideTool(
-                'guest',
-                e.toolName,
-                e.risk,
-                undefined,
-                'an unidentified sender',
-              )
-              return guest.allowed
-                ? undefined
-                : { type: 'denied', reason: guest.reason ?? 'Not allowed.' }
-            }
-            const config = gw.config(requester.connectionId)
-            // the agent's own background worker acts with the asker's scope: a member may start it
-            if (
-              e.toolName === 'agent' &&
-              !isStaff(requester.role) &&
-              requester.role !== 'guest' &&
-              (e.input as { subagent_type?: unknown } | undefined)?.subagent_type ===
-                MEMBER_WORKER_TYPE
-            ) {
-              return undefined
-            }
-            // the people directory: pairing is for anybody, edits for staff, owner decisions for the owner;
-            // denied here so a request that would be refused never reaches an approval card
-            if (e.toolName === PEOPLE_TOOL || e.toolName === PEOPLE_ADMIN_TOOL) {
-              const action = (e.input as { action?: unknown } | undefined)?.action
-              const needsOwner = e.toolName === PEOPLE_ADMIN_TOOL
-              const needsStaff = needsOwner || action !== 'pair'
-              if (
-                (needsOwner && requester.role !== 'owner') ||
-                (needsStaff && !isStaff(requester.role))
-              )
-                return {
-                  type: 'denied',
-                  reason: `Not allowed: only ${needsOwner ? 'the owner' : 'an owner or an admin'} can do that. Say so in one plain sentence.`,
+            const result = await approveTool(hookCtx, e)
+            if (result?.type === 'denied') {
+              // a native platform action that was refused for the requester: on the audit trail
+              const entries = nativeActions().get(e.toolName)
+              const ctxOf = await gw.requesterOf(sessionId).catch(() => undefined)
+              for (const n of entries ?? []) {
+                try {
+                  gw.governor.within(
+                    {
+                      sessionId,
+                      agentId,
+                      origin,
+                      ...(ctxOf === undefined ? {} : { role: ctxOf.role }),
+                      ...(ctxOf?.name === undefined && ctxOf?.username === undefined
+                        ? {}
+                        : { requester: (ctxOf.name ?? ctxOf.username) as string }),
+                    },
+                    () =>
+                      refused(n, e.input, `denied by role policy: ${result.reason.slice(0, 100)}`),
+                  )
+                } catch {
+                  // never blocks the refusal
                 }
+              }
             }
-            const decision = decideTool(
-              requester.role,
-              e.toolName,
-              e.risk,
-              config?.people.policy,
-              requester.name ?? requester.username ?? requester.nativeId,
-            )
-            return decision.allowed
-              ? undefined
-              : { type: 'denied', reason: decision.reason ?? 'Not allowed.' }
+            return result
           },
           'turn.end': async (
             hookCtx: HarnessContext,

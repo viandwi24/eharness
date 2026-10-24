@@ -338,7 +338,7 @@ export function sqliteLeaseStore(sqlite: Database): LeaseStore {
 // --- counters ------------------------------------------------------------------------------------
 
 /** Daily counters: direct messages, all posts, joins and username lookups (platform actions). */
-export type CounterKey = 'dm' | 'all' | 'join' | 'resolve'
+export type CounterKey = 'dm' | 'all' | 'join' | 'resolve' | 'invite' | 'create'
 
 export interface CounterStore {
   get(connectionId: string, key: CounterKey, now: number): number

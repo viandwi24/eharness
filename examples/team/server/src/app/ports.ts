@@ -26,6 +26,8 @@ import type {
   ChannelActivityPage,
   ChannelActivityQuery,
   ChannelActivityTableQuery,
+  ChannelAuditPage,
+  ChannelAuditQuery,
   ChannelBindInput,
   ChannelBulkRoleInput,
   ChannelBulkRoleResult,
@@ -1257,6 +1259,8 @@ export interface ChannelInboxPort {
   dismissOutbox(id: string, rowId: string): Promise<void>
   /** The action and read names recorded in the activity (the Activity filter). */
   activityActions(id: string): Promise<string[]>
+  /** Platform actions of every connection, newest first, cursor paged (the Audit page and export). */
+  audit(query: ChannelAuditQuery): Promise<ChannelAuditPage>
   /** One page of activity: SQL filter and count, newest first by default. */
   activityTable(
     id: string,

@@ -75,6 +75,49 @@ export interface TgChatInfo extends TgChat {
   linkedChatId?: string
   /** The account can list the members (hidden members groups say no). */
   canListMembers?: boolean
+  /** Joining needs an admin's approval. */
+  joinRequests?: boolean
+  /** A channel signs its posts with the author's name. */
+  signatures?: boolean
+}
+
+/** What members may do by default: `true` allows, `false` forbids, absent keeps the current value. */
+export interface TgPermissionChange {
+  sendMessages?: boolean
+  sendMedia?: boolean
+  sendStickers?: boolean
+  sendPolls?: boolean
+  embedLinks?: boolean
+  inviteUsers?: boolean
+  pinMessages?: boolean
+  changeInfo?: boolean
+  manageTopics?: boolean
+}
+
+/** An invite link as `getInviteLinks` reads it. */
+export interface TgInviteLink {
+  link: string
+  title?: string
+  primary: boolean
+  revoked: boolean
+  /** Epoch ms. */
+  expiresAt?: number
+  usageLimit?: number
+  usage: number
+  withApproval: boolean
+  pendingRequests: number
+}
+
+/** Somebody waiting for an admin to let them in. */
+export interface TgJoinRequest {
+  user: TgUser
+  at: number
+  bio?: string
+}
+
+export interface TgContact extends TgUser {
+  /** The person has the account in their contacts too (mutual). */
+  mutual?: boolean
 }
 
 export type TgMemberStatus = 'creator' | 'admin' | 'member' | 'restricted' | 'banned' | 'left'
@@ -85,6 +128,60 @@ export interface TgMember {
   /** The admin title, when it has one. */
   title?: string
   joinedAt?: number
+  /** Admins: the exact rights they hold (snake_case names, e.g. `change_info`). */
+  rights?: string[]
+  /** Restricted or banned members: what they may NOT do (snake_case names). */
+  forbidden?: string[]
+  /** Who promoted an admin. */
+  promotedBy?: { id: string; name: string }
+  /** The account may edit this admin's rights. */
+  canEdit?: boolean
+}
+
+export interface TgPoll {
+  question: string
+  closed: boolean
+  quiz: boolean
+  multiple: boolean
+  /** Voters are visible to admins and the creator of the poll. */
+  public: boolean
+  totalVoters: number
+  options: Array<{
+    text: string
+    voters: number
+    correct?: boolean
+    recentVoters: Array<{ id: string; name: string }>
+  }>
+}
+
+export interface TgMessageStat {
+  id: number
+  views?: number
+  forwards?: number
+  replies?: number
+  hasComments?: boolean
+  reactions: Array<{ emoji: string; count: number }>
+}
+
+/** What a public username or a t.me link resolves to (nothing is joined). */
+export interface TgChatPreview {
+  id?: string
+  kind: TgChatKind | 'user'
+  title: string
+  username?: string
+  members?: number
+  description?: string
+  /** Joining needs approval (invite links). */
+  withApproval?: boolean
+  /** The account is in it already. */
+  joined?: boolean
+}
+
+/** Statistics as readable lines: label and the current and the previous period. */
+export interface TgStats {
+  kind: 'channel' | 'group'
+  periodDays?: number
+  lines: string[]
 }
 
 /** A scheduled message of the account (Telegram sends it at `at`, even when we are offline). */
@@ -121,6 +218,7 @@ export interface TgRestrictions {
   inviteUsers?: boolean
   pinMessages?: boolean
   changeInfo?: boolean
+  manageTopics?: boolean
 }
 
 export interface TgDelete {
@@ -137,6 +235,14 @@ export interface TgAdminRights {
   pinMessages?: boolean
   manageTopics?: boolean
   manageCall?: boolean
+  /** Add new admins (the receiving admin may promote others with rights up to its own). */
+  addAdmins?: boolean
+  /** The admin acts anonymously (their name is hidden behind the chat). */
+  anonymous?: boolean
+  /** Channels only: publish posts. */
+  postMessages?: boolean
+  /** Channels only: edit the posts of others. */
+  editMessages?: boolean
 }
 
 export interface TgAdminEvent {
@@ -302,8 +408,111 @@ export interface TgUserClient {
   deleteMemberMessages?(chatId: string, userId: string): Promise<void>
   createInviteLink?(
     chatId: string,
-    options: { expiresAt?: number; usageLimit?: number; withApproval?: boolean },
+    options: { expiresAt?: number; usageLimit?: number; withApproval?: boolean; title?: string },
   ): Promise<{ link: string }>
+  /** The primary invite link of the account in a chat (created by Telegram when it has none). */
+  primaryInviteLink?(chatId: string): Promise<{ link: string }>
+  listInviteLinks?(
+    chatId: string,
+    options: { revoked: boolean; limit: number },
+  ): Promise<TgInviteLink[]>
+  /** `expiresAt: 0` removes the expiry, `usageLimit: 0` the limit. */
+  editInviteLink?(
+    chatId: string,
+    link: string,
+    options: { expiresAt?: number; usageLimit?: number; withApproval?: boolean; title?: string },
+  ): Promise<TgInviteLink>
+  revokeInviteLink?(chatId: string, link: string): Promise<void>
+  listJoinRequests?(
+    chatId: string,
+    options: { limit: number; link?: string },
+  ): Promise<TgJoinRequest[]>
+  /** One person (`userId`) or everybody waiting (`all`, optionally of one `link`). */
+  answerJoinRequests?(
+    chatId: string,
+    options: { action: 'approve' | 'decline'; userId?: string; all?: boolean; link?: string },
+  ): Promise<void>
+  // --- creating and managing chats ----------------------------------------------------------
+  createSupergroup?(options: {
+    title: string
+    description?: string
+    forum?: boolean
+  }): Promise<TgChat>
+  createChannel?(options: { title: string; description?: string }): Promise<TgChat>
+  /**
+   * Add one person to a group or channel. `added: false` = Telegram skipped them without failing
+   * (their privacy settings); other refusals throw an RPC error (`USER_NOT_MUTUAL_CONTACT`, ...).
+   */
+  addMember?(chatId: string, userRef: string): Promise<{ added: boolean }>
+  setChatTitle?(chatId: string, title: string): Promise<void>
+  setChatDescription?(chatId: string, description: string): Promise<void>
+  setChatPhoto?(chatId: string, file: TgFile): Promise<void>
+  /** `null` removes the public username (the chat becomes private). */
+  setChatUsername?(chatId: string, username: string | null): Promise<void>
+  setJoinRequests?(chatId: string, enabled: boolean): Promise<void>
+  setDefaultPermissions?(chatId: string, change: TgPermissionChange): Promise<void>
+  /** Seconds between messages of one person: 0 (off), 10, 30, 60, 300, 900 or 3600. */
+  setSlowMode?(chatId: string, seconds: number): Promise<void>
+  setForum?(chatId: string, enabled: boolean): Promise<void>
+  /** Delete a group or channel for everybody (the account must be the creator). */
+  deleteChat?(chatId: string): Promise<void>
+  setChannelSignatures?(chatId: string, enabled: boolean): Promise<void>
+  /** Link a supergroup as the discussion group of a channel; `groupId: null` unlinks. */
+  linkDiscussionGroup?(channelId: string, groupId: string | null): Promise<void>
+  // --- members, settings, topics -----------------------------------------------------------
+  getMember?(chatId: string, userId: string): Promise<TgMember | null>
+  /** Remove a person now; they may join again (ban and unban in one). */
+  kickMember?(chatId: string, userId: string): Promise<void>
+  /** Auto-delete timer of new messages: 0 off, else seconds (86400, 604800, 2678400 ...). */
+  setChatTtl?(chatId: string, seconds: number): Promise<void>
+  setContentProtection?(chatId: string, enabled: boolean): Promise<void>
+  /** Supergroups: hide the member list from ordinary members. */
+  setMembersHidden?(chatId: string, hidden: boolean): Promise<void>
+  /** Supergroups: new members see the history from before they joined. */
+  setHistoryVisible?(chatId: string, visible: boolean): Promise<void>
+  setReactions?(
+    chatId: string,
+    options: { mode: 'all' | 'none' | 'some'; emojis?: string[] },
+  ): Promise<void>
+  /** Default identity (a channel the account administers) to send as in a chat. */
+  setDefaultSendAs?(chatId: string, asChatId: string): Promise<void>
+  setTopicPinned?(chatId: string, topicId: number, pinned: boolean): Promise<void>
+  deleteTopic?(chatId: string, topicId: number): Promise<void>
+  setGeneralHidden?(chatId: string, hidden: boolean): Promise<void>
+  // --- messages -------------------------------------------------------------------------------
+  markRead?(chatId: string): Promise<void>
+  /** `clear` = for the account only, `revoke` = for everybody where Telegram allows. */
+  clearHistory?(chatId: string, mode: 'clear' | 'revoke'): Promise<void>
+  pinWithOptions?(chatId: string, id: number, options: { notify: boolean }): Promise<void>
+  unpinAll?(chatId: string, topicId?: number): Promise<void>
+  getPoll?(chatId: string, id: number): Promise<TgPoll>
+  stopPoll?(chatId: string, id: number): Promise<void>
+  copyMessage?(
+    fromChatId: string,
+    id: number,
+    toChatId: string,
+    options?: { topicId?: number; silent?: boolean },
+  ): Promise<{ id: number }>
+  messageStats?(chatId: string, ids: number[]): Promise<TgMessageStat[]>
+  /** A comment under a channel post (in the discussion group), or a reply when it is no post. */
+  commentOnPost?(chatId: string, postId: number, text: string): Promise<{ id: number }>
+  // --- discovery and the chat list ------------------------------------------------------------
+  resolveChat?(ref: string): Promise<TgChatPreview>
+  checkInviteLink?(link: string): Promise<TgChatPreview>
+  chatStats?(chatId: string): Promise<TgStats>
+  /** `untilMs` = until then; `null` = unmute; `Infinity` = for good. */
+  muteChat?(chatId: string, untilMs: number | null): Promise<void>
+  archiveChat?(chatId: string, archived: boolean): Promise<void>
+  pinDialog?(chatId: string, pinned: boolean): Promise<void>
+  // --- contacts -------------------------------------------------------------------------------
+  addContact?(options: {
+    user: string
+    firstName: string
+    lastName?: string
+    phone?: string
+    sharePhone: boolean
+  }): Promise<TgUser>
+  listContacts?(): Promise<TgContact[]>
   /** Join by invite link, `@username` or t.me link. */
   joinChat?(ref: string): Promise<{ status: 'joined'; chat: TgChat } | { status: 'requested' }>
   leaveChat?(chatId: string): Promise<void>

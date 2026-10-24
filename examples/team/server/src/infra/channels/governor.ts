@@ -108,9 +108,18 @@ export interface CallContext {
   /** The person whose request it is (team member or platform name). */
   requester?: string
   memberId?: string
+  /** The role of the requester in the team directory (`owner` for the signed-in web owner). */
+  role?: string
 }
 
-export type AuditResult = 'ok' | 'error' | 'rate_limited'
+export type AuditResult = 'ok' | 'error' | 'rate_limited' | 'refused'
+
+/** What a platform action is about, for the audit row (ids and links, never text). */
+export interface AuditTarget {
+  chat?: string
+  user?: string
+  link?: string
+}
 
 export interface AuditRecord {
   connectionId: string
@@ -120,6 +129,10 @@ export interface AuditRecord {
   /** Internal id of the node the call is about. */
   nodeId?: string
   args: Record<string, string | number | boolean>
+  /** The chat, person and link the call is about. */
+  target?: AuditTarget
+  /** A short preview of the parameters (long values clipped, secrets left out). */
+  summary?: string
   context?: CallContext
   result: AuditResult
   durationMs: number
@@ -135,6 +148,10 @@ export interface CallMeta {
   /** Chat scope of a park (`connection\nnode`), as the outbox keys it. */
   chatKey?: string
   args?: Record<string, unknown>
+  /** The chat, person and link the call is about (audit only). */
+  target?: AuditTarget
+  /** A short preview of the parameters (audit only). */
+  summary?: string
   /** Record an audit row (default true). */
   audit?: boolean
   /** Charge the buckets but never wait for them (a send: the outbox waits; internal lookups). */
@@ -197,6 +214,18 @@ export interface Governor {
   state(connectionId: string): GovernorState
   /** One readable sentence about the current limits and park, for the model. */
   describe(connectionId: string): string
+  /**
+   * Record an audit row for something that did not go through `call`: a refusal (role, owner,
+   * confirmation) or a local answer. `context` defaults to the one of the running tool call.
+   */
+  record(
+    meta: Pick<
+      CallMeta,
+      'connectionId' | 'action' | 'nodeId' | 'args' | 'kind' | 'target' | 'summary'
+    >,
+    result: AuditResult,
+    options?: { note?: string; durationMs?: number; context?: CallContext; at?: number },
+  ): void
   /** Run `fn` with the person and session the calls inside it are for. */
   within<T>(context: CallContext, fn: () => T): T
   context(): CallContext | undefined
@@ -223,7 +252,72 @@ export function auditArgs(input: unknown): Record<string, string | number | bool
   return out
 }
 
-const store = new AsyncLocalStorage<{ context?: CallContext; failed?: string }>()
+const store = new AsyncLocalStorage<{
+  context?: CallContext
+  failed?: string
+  refused?: string
+}>()
+
+const SECRET_KEY = /pass|token|secret|session|hash|key|code/i
+/** Free text people wrote: the audit keeps its length, never the words. */
+const BODY_KEY = /^(text|message|body|caption|content|reply|comment|note|prompt)$/i
+const clipText = (text: string, max: number): string =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text
+
+/** `key=value` pairs of the parameters of an action, values clipped, secrets left out (audit). */
+export function auditSummary(input: unknown, maxTotal = 240): string {
+  if (input === null || typeof input !== 'object') return ''
+  const parts: string[] = []
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (SECRET_KEY.test(key) || value === undefined || value === null) continue
+    if (BODY_KEY.test(key) && typeof value === 'string') {
+      if (value.trim() !== '') parts.push(`${key}=<${value.length} chars>`)
+      continue
+    }
+    const text =
+      typeof value === 'string'
+        ? value.replace(/\s+/g, ' ').trim()
+        : typeof value === 'number' || typeof value === 'boolean'
+          ? String(value)
+          : Array.isArray(value)
+            ? `[${value.length}]${clipText(value.map((v) => (typeof v === 'object' ? '…' : String(v))).join(','), 40)}`
+            : '{…}'
+    if (text === '') continue
+    parts.push(`${key}=${clipText(text, 40)}`)
+  }
+  return clipText(parts.join(' '), maxTotal)
+}
+
+/** The chat, person and link an action's input names. */
+export function auditTarget(input: unknown): AuditTarget {
+  const out: AuditTarget = {}
+  if (input === null || typeof input !== 'object') return out
+  const o = input as Record<string, unknown>
+  const str = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() !== ''
+      ? clipText(v.trim(), 80)
+      : typeof v === 'number'
+        ? String(v)
+        : undefined
+  const chat = str(o.chat) ?? str(o.from_chat) ?? str(o.channel)
+  const to = str(o.to_chat)
+  if (chat !== undefined) out.chat = to === undefined ? chat : `${chat} -> ${to}`
+  else if (to !== undefined) out.chat = to
+  const user = str(o.user) ?? (Array.isArray(o.users) ? str(o.users.join(',')) : undefined)
+  if (user !== undefined) out.user = user
+  const link = str(o.link)
+  if (link !== undefined) out.link = link
+  return out
+}
+
+/**
+ * Called by a native action that refuses a request on purpose (a missing right, an unconfirmed
+ * destructive call, a cap): the governed call is audited as `refused`. No-op outside a governed call.
+ */
+export function reportRefusal(text: string): void {
+  const s = store.getStore()
+  if (s !== undefined) s.refused = text.slice(0, 160)
+}
 
 /**
  * Called by a native action that answers a failure as text (so the model reads it): the governed
@@ -318,6 +412,7 @@ export function createGovernor(options: GovernorOptions): Governor {
     result: AuditResult,
     startedAt: number,
     note?: string,
+    durationMs?: number,
   ): void => {
     if (meta.audit === false || options.audit === undefined) return
     try {
@@ -328,9 +423,11 @@ export function createGovernor(options: GovernorOptions): Governor {
         action: meta.action,
         ...(meta.nodeId === undefined ? {} : { nodeId: meta.nodeId }),
         args: auditArgs(meta.args),
+        ...(meta.target === undefined ? {} : { target: meta.target }),
+        ...(meta.summary === undefined || meta.summary === '' ? {} : { summary: meta.summary }),
         ...(context === undefined ? {} : { context }),
         result,
-        durationMs: Math.max(0, now() - startedAt),
+        durationMs: durationMs ?? Math.max(0, now() - startedAt),
         ...(note === undefined ? {} : { note: note.slice(0, 160) }),
       })
     } catch {
@@ -394,11 +491,17 @@ export function createGovernor(options: GovernorOptions): Governor {
       }
       parks.charge('global', meta.connectionId)
       if (own !== undefined) parks.charge(own, meta.connectionId)
-      const slot: { context?: CallContext; failed?: string } =
+      const slot: { context?: CallContext; failed?: string; refused?: string } =
         context === undefined ? {} : { context }
       try {
         const result = await store.run(slot, op)
-        audit(meta, context, slot.failed === undefined ? 'ok' : 'error', startedAt, slot.failed)
+        audit(
+          meta,
+          context,
+          slot.refused !== undefined ? 'refused' : slot.failed === undefined ? 'ok' : 'error',
+          startedAt,
+          slot.refused ?? slot.failed,
+        )
         return result
       } catch (error) {
         const rl = rateLimitOf(error, meta.classify)
@@ -467,6 +570,18 @@ export function createGovernor(options: GovernorOptions): Governor {
       if (s.floods > 0)
         parts.push(`${s.floods} rate limit${s.floods === 1 ? '' : 's'} seen recently`)
       return `${parts.join('. ')}.`
+    },
+    record(meta, result, o) {
+      const at = o?.at ?? now()
+      const context = o?.context ?? store.getStore()?.context
+      audit(
+        { ...meta, cls: meta.kind === 'read' ? 'read' : 'admin' },
+        context,
+        result,
+        at,
+        o?.note,
+        o?.durationMs,
+      )
     },
     within(context, fn) {
       return store.run({ context }, fn)
@@ -568,35 +683,86 @@ export function governAdapter<A extends ChannelAdapter>(
     op: () => Promise<T>,
   ): Promise<T> => onNode('edit', action, node, args, op)
 
-  const governedActions = adapter.actions?.map(
-    (a): NativeAction =>
-      a.local === true
-        ? a
-        : {
-            ...a,
-            run: async (input) => {
-              const chat = typeof input.chat === 'string' ? input.chat : undefined
-              const nodeId = chat === undefined ? undefined : options.nodeIdOf?.(id, chat)
-              try {
-                return await run(
-                  {
-                    cls: CLASS_OF_RISK[a.risk],
-                    action: a.name,
-                    args: input,
-                    kind: a.risk === 'read' ? 'read' : 'action',
-                    ...(nodeId === undefined ? {} : { nodeId }),
-                  },
-                  () => a.run(input),
-                )
-              } catch (error) {
-                // held back (or the platform asked to slow down): the model reads why
-                if (error instanceof ChannelError && error.kind === 'rate_limit')
-                  return limitedText(error)
-                throw error
-              }
+  /** A text answer that says it failed or refused: audited as such (the model still reads it). */
+  const outcomeOf = (text: string): { result: 'ok' | 'error'; note?: string } =>
+    /^ERROR\b/.test(text) ? { result: 'error', note: text.slice(0, 160) } : { result: 'ok' }
+
+  const governedActions = adapter.actions?.map((a): NativeAction => {
+    const kind = a.risk === 'read' ? ('read' as const) : ('action' as const)
+    return {
+      ...a,
+      run: async (input) => {
+        const chat = typeof input.chat === 'string' ? input.chat : undefined
+        const nodeId = chat === undefined ? undefined : options.nodeIdOf?.(id, chat)
+        const detail = {
+          args: input,
+          target: auditTarget(input),
+          summary: auditSummary(input),
+        }
+        // answers from stored data never call the platform: no buckets, but still on the audit trail
+        if (a.local === true) {
+          const startedAt = Date.now()
+          try {
+            const text = await a.run(input)
+            const o = outcomeOf(text)
+            governor.record(
+              {
+                connectionId: id,
+                action: a.name,
+                kind,
+                ...detail,
+                ...(nodeId === undefined ? {} : { nodeId }),
+              },
+              o.result,
+              {
+                ...(o.note === undefined ? {} : { note: o.note }),
+                durationMs: Date.now() - startedAt,
+              },
+            )
+            return text
+          } catch (error) {
+            governor.record(
+              {
+                connectionId: id,
+                action: a.name,
+                kind,
+                ...detail,
+                ...(nodeId === undefined ? {} : { nodeId }),
+              },
+              'error',
+              {
+                note: error instanceof Error ? error.message : String(error),
+                durationMs: Date.now() - startedAt,
+              },
+            )
+            throw error
+          }
+        }
+        try {
+          return await run(
+            {
+              cls: CLASS_OF_RISK[a.risk],
+              action: a.name,
+              ...detail,
+              kind,
+              ...(nodeId === undefined ? {} : { nodeId }),
             },
-          },
-  )
+            async () => {
+              const text = await a.run(input)
+              // a refusal or failure answered as text is audited as one (the model still reads it)
+              if (/^ERROR\b/.test(text)) reportFailure(text)
+              return text
+            },
+          )
+        } catch (error) {
+          // held back (or the platform asked to slow down): the model reads why
+          if (error instanceof ChannelError && error.kind === 'rate_limit')
+            return limitedText(error)
+          throw error
+        }
+      },
+    }
+  })
 
   return new Proxy(adapter, {
     get(target, prop) {

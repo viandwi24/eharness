@@ -376,26 +376,36 @@ describe('platform actions', () => {
       ])
     })
 
-    test('add_admins, anonymous and unknown rights are refused before any call', async () => {
+    test('every Telegram admin right can be given; an unknown right is refused before any call', async () => {
+      let got: TgAdminRights | undefined
       let calls = 0
       const { by } = build({
-        promoteMember: async () => {
+        promoteMember: async (_c: string, _u: string, r: TgAdminRights) => {
           calls++
+          got = r
         },
       })
-      for (const right of ['add_admins', 'anonymous', 'post_stories']) {
-        const out = await by('promote_member').run({ chat: GROUP, user: '42', rights: [right] })
-        expect(out).toContain('ERROR')
-        expect(out).toContain('cannot be given')
-      }
-      expect(
-        await by('promote_member').run({
-          chat: GROUP,
-          user: '42',
-          rights: ['delete_messages', 'add_admins'],
-        }),
-      ).toContain('add_admins')
+      const bad = await by('promote_member').run({
+        chat: GROUP,
+        user: '42',
+        rights: ['post_stories'],
+      })
+      expect(bad).toContain('ERROR')
+      expect(bad).toContain('not an admin right')
       expect(calls).toBe(0)
+      const ok = await by('promote_member').run({
+        chat: GROUP,
+        user: '42',
+        rights: ['delete_messages', 'add_admins', 'anonymous', 'post_messages', 'edit_messages'],
+      })
+      expect(ok).toContain('add_admins')
+      expect(got).toMatchObject({
+        deleteMessages: true,
+        addAdmins: true,
+        anonymous: true,
+        postMessages: true,
+        editMessages: true,
+      })
     })
 
     test('the account must be an admin, and cannot change itself', async () => {

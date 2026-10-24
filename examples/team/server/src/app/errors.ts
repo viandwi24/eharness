@@ -1,1 +1,1 @@
-export { DomainError, type DomainErrorKind, notFound } from '../domain/errors.ts'
+export { DomainError, type DomainErrorKind, invalid, notFound } from '../domain/errors.ts'

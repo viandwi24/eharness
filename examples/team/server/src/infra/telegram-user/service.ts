@@ -476,6 +476,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         topicClient: governJobClient(client, gateway.governor, id),
         // times the platform actions show: the team clock
         timezone: () => gateway.timezone(),
+        readFile: (path) => gateway.files.read(path),
         me,
         chats,
         counters,
@@ -503,6 +504,13 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
               })
               // best effort: the chat list is refreshed again at the next change or sync
               .catch(() => undefined)
+          },
+          chatCreated: async (chat) => {
+            // a chat the account just made: chosen, and the agent answers when mentioned
+            chats.upsertDialog(id, chat, now())
+            chats.setSelected(id, chat.id, true, now())
+            const room = gateway.nodes.byNative(id, chat.id)
+            if (room !== undefined) gateway.nodes.setSettings(room.id, { wake: 'mention' })
           },
           chooseChat: async (chatId, days) => {
             const d = (await adapter.dialogs(true)).find((x) => x.id === chatId)

@@ -225,6 +225,29 @@ export interface EventTableQuery {
   limit: number
 }
 
+/** The audit of platform actions across connections (`GET /audit/actions`): newest first, cursor paging. */
+export interface AuditQuery {
+  /** Only these connections (a scope the caller was granted, or a connector kind resolved to ids). */
+  connectionIds?: readonly string[] | undefined
+  connectionId?: string | undefined
+  /** `action` (writes) or `read`; default both. */
+  kind?: 'action' | 'read' | undefined
+  /** The name of the tool or the sub-action. */
+  action?: string | undefined
+  /** A chat: its internal node id, or part of its title or of the target the call named. */
+  chat?: string | undefined
+  /** Part of the name of the person who asked (or `web owner`, `autonomous <origin>`). */
+  requester?: string | undefined
+  /** The id of the agent that made the call. */
+  agentId?: string | undefined
+  result?: 'ok' | 'error' | 'refused' | 'rate_limited' | undefined
+  from?: number | undefined
+  to?: number | undefined
+  /** Page back from this event id (exclusive). */
+  before?: string | undefined
+  limit: number
+}
+
 export interface EventPage {
   items: ChannelEvent[]
   /** Pass as `before` for the next (older) page; undefined at the end. */
@@ -242,6 +265,8 @@ export interface EventStore {
   table(connectionId: string, query: EventTableQuery): { items: ChannelEvent[]; total: number }
   /** The action and read names recorded so far (the Activity filter). */
   actions(connectionId: string): string[]
+  /** Platform actions and reads of all connections, newest first (the Audit page, the audit tool). */
+  audit(query: AuditQuery): EventPage
   /** Delete events older than `olderThan` (when set) and keep at most `keepLast` rows. */
   prune(options: { olderThan?: number; keepLast?: number }): number
   /** Events that name no node yet (oldest first). */
@@ -406,6 +431,68 @@ export function sqliteEventStore(sqlite: Database): EventStore {
         items: rows.map(toActivity).filter((e): e is ChannelEvent => e !== undefined),
         total,
       }
+    },
+    audit(query) {
+      const types = (query.kind === undefined ? ['action', 'read'] : [query.kind]).map((t) =>
+        gatewayType(t as ChannelEventType),
+      )
+      const where = [`e.type IN (${types.map(() => '?').join(',')})`]
+      const args: Array<string | number> = [...types]
+      if (query.connectionIds !== undefined) {
+        if (query.connectionIds.length === 0) return { items: [] }
+        where.push(`e.connection_id IN (${query.connectionIds.map(() => '?').join(',')})`)
+        args.push(...query.connectionIds)
+      }
+      if (query.connectionId !== undefined) {
+        where.push('e.connection_id = ?')
+        args.push(query.connectionId)
+      }
+      if (query.action !== undefined) {
+        where.push("json_extract(e.payload, '$.action') = ?")
+        args.push(query.action)
+      }
+      if (query.result !== undefined) {
+        where.push("json_extract(e.payload, '$.detail.result') = ?")
+        args.push(query.result)
+      }
+      if (query.agentId !== undefined) {
+        where.push("json_extract(e.payload, '$.detail.agent') = ?")
+        args.push(query.agentId)
+      }
+      if (query.requester !== undefined && query.requester.trim() !== '') {
+        where.push("json_extract(e.payload, '$.peerName') LIKE ? ESCAPE '\\'")
+        args.push(likePattern(query.requester.trim()))
+      }
+      if (query.chat !== undefined && query.chat.trim() !== '') {
+        const like = likePattern(query.chat.trim())
+        where.push(
+          `(e.node_id = ? OR json_extract(e.payload, '$.detail.targetChat') LIKE ? ESCAPE '\\'
+             OR e.node_id IN (SELECT id FROM ch_nodes WHERE connection_id = e.connection_id AND title LIKE ? ESCAPE '\\'))`,
+        )
+        args.push(query.chat.trim(), like, like)
+      }
+      if (query.from !== undefined) {
+        where.push('e.at >= ?')
+        args.push(query.from)
+      }
+      if (query.to !== undefined) {
+        where.push('e.at <= ?')
+        args.push(query.to)
+      }
+      if (query.before !== undefined) {
+        where.push('e.id < ?')
+        args.push(query.before)
+      }
+      const rows = sqlite
+        .query<EventDb, Array<string | number>>(
+          `SELECT e.* FROM ch_events e WHERE ${where.join(' AND ')} ORDER BY e.id DESC LIMIT ?`,
+        )
+        .all(...args, query.limit + 1)
+      const more = rows.length > query.limit
+      const page = rows.slice(0, query.limit)
+      const items = page.map(toActivity).filter((e): e is ChannelEvent => e !== undefined)
+      const last = page.at(-1)
+      return { items, ...(more && last !== undefined ? { next: last.id } : {}) }
     },
     actions(connectionId) {
       return sqlite

@@ -18,6 +18,7 @@ import { agentHealthRoutes } from './routes/agent-health.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { alarmRoutes } from './routes/alarms.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
+import { auditRoutes } from './routes/audit.ts'
 import { authRoutes } from './routes/auth.ts'
 import { backupRoutes } from './routes/backups.ts'
 import { browserRoutes } from './routes/browser.ts'
@@ -434,6 +435,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', channelRoutes(options.deps))
   app.route('/', peopleRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
+  app.route('/', auditRoutes(options.deps))
   app.route('/', agentHealthRoutes(options.deps))
   if (options.developer !== undefined) {
     app.route('/', developerRoutes(options.developer))

@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto'
 import {
   type Chat,
   type ChatEvent,
+  type ChatMember,
   type DeleteMessageUpdate,
   Long,
   MemoryStorage,
@@ -27,12 +28,14 @@ import type {
   TgChat,
   TgChatKind,
   TgClientFactory,
+  TgInviteLink,
+  TgMember,
   TgMention,
   TgMessage,
   TgUser,
   TgUserClient,
 } from './client.ts'
-import { rpcText } from './errors.ts'
+import { rpcText, TgRpcError } from './errors.ts'
 
 const userOf = (u: User): TgUser => ({
   id: String(u.id),
@@ -59,6 +62,63 @@ const chatOf = (p: Peer): TgChat => ({
   admin: p.type === 'chat' && (p.isAdmin || p.isCreator),
   ...(p.type === 'chat' && p.membersCount !== null ? { members: p.membersCount } : {}),
 })
+
+const snake = (k: string): string => k.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)
+/** The rights set to true in a raw rights object, as snake_case names. */
+const trueKeys = (raw: object | null | undefined): string[] =>
+  raw === null || raw === undefined
+    ? []
+    : Object.entries(raw)
+        .filter(([k, v]) => v === true && k !== '_')
+        .map(([k]) => snake(k))
+
+/** A member with the exact rights (admins) or limits (restricted, banned) Telegram reports. */
+function memberOf(m: ChatMember): TgMember {
+  const rights = m.status === 'admin' ? trueKeys(m.permissions) : undefined
+  const forbidden =
+    m.status === 'restricted' || m.status === 'banned' ? trueKeys(m.restrictions?.raw) : undefined
+  const by = m.status === 'admin' ? m.promotedBy : null
+  const canEdit = (m.raw as { canEdit?: boolean }).canEdit
+  return {
+    user: userOf(m.user),
+    status: m.status,
+    ...(m.title === null ? {} : { title: m.title }),
+    ...(m.joinedDate === null ? {} : { joinedAt: m.joinedDate.getTime() }),
+    ...(rights === undefined ? {} : { rights }),
+    ...(forbidden === undefined ? {} : { forbidden }),
+    ...(by === null || by === undefined
+      ? {}
+      : { promotedBy: { id: String(by.id), name: by.displayName } }),
+    ...(canEdit === undefined ? {} : { canEdit }),
+  }
+}
+
+/** An invite link as the plain client types say it (from the raw `chatInviteExported`). */
+function inviteOf(raw: {
+  link: string
+  revoked?: boolean
+  permanent?: boolean
+  requestNeeded?: boolean
+  expireDate?: number
+  usageLimit?: number
+  usage?: number
+  requested?: number
+  title?: string
+}): TgInviteLink {
+  return {
+    link: raw.link,
+    ...(raw.title === undefined || raw.title === '' ? {} : { title: raw.title }),
+    primary: raw.permanent === true,
+    revoked: raw.revoked === true,
+    ...(raw.expireDate === undefined || raw.expireDate === 0
+      ? {}
+      : { expiresAt: raw.expireDate * 1000 }),
+    ...(raw.usageLimit === undefined || raw.usageLimit === 0 ? {} : { usageLimit: raw.usageLimit }),
+    usage: raw.usage ?? 0,
+    withApproval: raw.requestNeeded === true,
+    pendingRequests: raw.requested ?? 0,
+  }
+}
 
 /**
  * A text with its mentions as Telegram entities: an `@handle` is a mention entity (Telegram pings by
@@ -558,12 +618,7 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         })
         return {
           total: list.total,
-          members: list.map((m) => ({
-            user: userOf(m.user),
-            status: m.status,
-            ...(m.title === null ? {} : { title: m.title }),
-            ...(m.joinedDate === null ? {} : { joinedAt: m.joinedDate.getTime() }),
-          })),
+          members: list.map(memberOf),
         }
       },
       async searchMessages(chatId, o) {
@@ -679,6 +734,10 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
             ...(r.pinMessages === true ? { pinMessages: true } : {}),
             ...(r.manageTopics === true ? { manageTopics: true } : {}),
             ...(r.manageCall === true ? { manageCall: true } : {}),
+            ...(r.addAdmins === true ? { addAdmins: true } : {}),
+            ...(r.anonymous === true ? { anonymous: true } : {}),
+            ...(r.postMessages === true ? { postMessages: true } : {}),
+            ...(r.editMessages === true ? { editMessages: true } : {}),
           },
           ...(title === undefined ? {} : { rank: title }),
         })
@@ -703,6 +762,7 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
             ...(r.inviteUsers === true ? { inviteUsers: true } : {}),
             ...(r.pinMessages === true ? { pinMessages: true } : {}),
             ...(r.changeInfo === true ? { changeInfo: true } : {}),
+            ...(r.manageTopics === true ? { manageTopics: true } : {}),
           },
           ...(untilMs === undefined ? {} : { until: untilMs }),
         })
@@ -713,12 +773,209 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
       },
       async createInviteLink(chatId, o) {
         await ready()
+        // a title (a note only admins see) needs the raw call: the high-level one has no such field
+        if (o.title !== undefined) {
+          const res = await tg.call({
+            _: 'messages.exportChatInvite',
+            peer: await tg.resolvePeer(Number(chatId)),
+            ...(o.expiresAt === undefined ? {} : { expireDate: Math.floor(o.expiresAt / 1000) }),
+            ...(o.usageLimit === undefined ? {} : { usageLimit: o.usageLimit }),
+            ...(o.withApproval === true ? { requestNeeded: true } : {}),
+            title: o.title,
+          })
+          if (res._ !== 'chatInviteExported')
+            throw new Error('Telegram did not return an invite link')
+          return { link: res.link }
+        }
         const l = await tg.createInviteLink(Number(chatId), {
           ...(o.expiresAt === undefined ? {} : { expires: o.expiresAt }),
           ...(o.usageLimit === undefined ? {} : { usageLimit: o.usageLimit }),
           ...(o.withApproval === true ? { withApproval: true } : {}),
         })
         return { link: l.link }
+      },
+      async primaryInviteLink(chatId) {
+        await ready()
+        return { link: (await tg.getPrimaryInviteLink(Number(chatId))).link }
+      },
+      async listInviteLinks(chatId, o) {
+        await ready()
+        const list = await tg.getInviteLinks(Number(chatId), { revoked: o.revoked, limit: o.limit })
+        return list.map((l) => inviteOf(l.raw))
+      },
+      async editInviteLink(chatId, link, o) {
+        await ready()
+        const res = await tg.call({
+          _: 'messages.editExportedChatInvite',
+          peer: await tg.resolvePeer(Number(chatId)),
+          link,
+          // 0 clears an expiry or a limit
+          ...(o.expiresAt === undefined
+            ? {}
+            : { expireDate: o.expiresAt === 0 ? 0 : Math.floor(o.expiresAt / 1000) }),
+          ...(o.usageLimit === undefined ? {} : { usageLimit: o.usageLimit }),
+          ...(o.withApproval === undefined ? {} : { requestNeeded: o.withApproval }),
+          ...(o.title === undefined ? {} : { title: o.title }),
+        })
+        if (res._ === 'messages.exportedChatInviteReplaced') return inviteOf(res.newInvite as never)
+        return inviteOf(res.invite as never)
+      },
+      async revokeInviteLink(chatId, link) {
+        await ready()
+        await tg.revokeInviteLink(Number(chatId), link)
+      },
+      async listJoinRequests(chatId, o) {
+        await ready()
+        const list = await tg.getInviteLinkMembers(Number(chatId), {
+          requested: true,
+          limit: o.limit,
+          ...(o.link === undefined ? {} : { link: o.link }),
+        })
+        return list.map((m) => ({
+          user: userOf(m.user),
+          at: m.date.getTime(),
+          ...(m.bio === null || m.bio === '' ? {} : { bio: m.bio }),
+        }))
+      },
+      async answerJoinRequests(chatId, o) {
+        await ready()
+        if (o.all === true) {
+          await tg.hideAllJoinRequests({
+            chatId: Number(chatId),
+            action: o.action,
+            ...(o.link === undefined ? {} : { link: o.link }),
+          })
+          return
+        }
+        await tg.hideJoinRequest({
+          chatId: Number(chatId),
+          user: peerRef(o.userId as string),
+          action: o.action,
+        })
+      },
+      async createSupergroup(o) {
+        await ready()
+        const c = await tg.createSupergroup({
+          title: o.title,
+          ...(o.description === undefined ? {} : { description: o.description }),
+          ...(o.forum === true ? { forum: true } : {}),
+        })
+        return { ...chatOf(c), admin: true }
+      },
+      async createChannel(o) {
+        await ready()
+        const c = await tg.createChannel({
+          title: o.title,
+          ...(o.description === undefined ? {} : { description: o.description }),
+        })
+        return { ...chatOf(c), admin: true }
+      },
+      async addMember(chatId, userRef) {
+        await ready()
+        // `missing` lists people Telegram skipped without failing (privacy settings)
+        const missing = await tg.addChatMembers(Number(chatId), peerRef(userRef), {
+          forwardCount: 0,
+        })
+        return { added: missing.length === 0 }
+      },
+      async setChatTitle(chatId, title) {
+        await ready()
+        await tg.setChatTitle(Number(chatId), title)
+      },
+      async setChatDescription(chatId, description) {
+        await ready()
+        await tg.setChatDescription(Number(chatId), description)
+      },
+      async setChatPhoto(chatId, file) {
+        await ready()
+        await tg.setChatPhoto({ chatId: Number(chatId), type: 'photo', media: file.bytes })
+      },
+      async setChatUsername(chatId, username) {
+        await ready()
+        await tg.setChatUsername(Number(chatId), username)
+      },
+      async setJoinRequests(chatId, enabled) {
+        await ready()
+        await tg.toggleJoinRequests(Number(chatId), enabled)
+      },
+      async setDefaultPermissions(chatId, change) {
+        await ready()
+        const chat = await tg.getChat(Number(chatId))
+        const perms = chat.defaultPermissions
+        if (perms === null) throw new Error('this chat has no member permissions to set')
+        // start from what is forbidden now, then apply the change (true allows, false forbids)
+        const { _, untilDate, ...current } = perms.raw
+        void _
+        void untilDate
+        const next: Record<string, boolean | undefined> = { ...current }
+        const set = (keys: string[], allowed: boolean | undefined): void => {
+          if (allowed === undefined) return
+          for (const k of keys) next[k] = allowed ? undefined : true
+        }
+        set(['sendMessages'], change.sendMessages)
+        set(['sendMedia'], change.sendMedia)
+        set(['sendStickers', 'sendGifs', 'sendGames', 'sendInline'], change.sendStickers)
+        set(['sendPolls'], change.sendPolls)
+        set(['embedLinks'], change.embedLinks)
+        set(['inviteUsers'], change.inviteUsers)
+        set(['pinMessages'], change.pinMessages)
+        set(['changeInfo'], change.changeInfo)
+        set(['manageTopics'], change.manageTopics)
+        const restrictions = Object.fromEntries(
+          Object.entries(next).filter(([, v]) => v === true),
+        ) as Parameters<typeof tg.setChatDefaultPermissions>[1]
+        await tg.setChatDefaultPermissions(Number(chatId), restrictions)
+      },
+      async setSlowMode(chatId, seconds) {
+        await ready()
+        await tg.setSlowMode(Number(chatId), seconds)
+      },
+      async setForum(chatId, enabled) {
+        await ready()
+        await tg.updateForumSettings(
+          Number(chatId),
+          enabled ? { isForum: true, threadsMode: 'list' } : null,
+        )
+      },
+      async deleteChat(chatId) {
+        await ready()
+        const chat = await tg.getChat(Number(chatId))
+        if (chat.chatType === 'group') await tg.deleteGroup(Number(chatId))
+        else await tg.deleteChannel(Number(chatId))
+      },
+      async setChannelSignatures(chatId, enabled) {
+        await ready()
+        await tg.call({
+          _: 'channels.toggleSignatures',
+          channel: await tg.resolveChannel(Number(chatId)),
+          ...(enabled ? { signaturesEnabled: true } : {}),
+        })
+      },
+      async linkDiscussionGroup(channelId, groupId) {
+        await ready()
+        await tg.call({
+          _: 'channels.setDiscussionGroup',
+          broadcast: await tg.resolveChannel(Number(channelId)),
+          group:
+            groupId === null
+              ? { _: 'inputChannelEmpty' }
+              : await tg.resolveChannel(Number(groupId)),
+        })
+      },
+      async addContact(o) {
+        await ready()
+        const u = await tg.addContact({
+          userId: peerRef(o.user),
+          firstName: o.firstName,
+          ...(o.lastName === undefined ? {} : { lastName: o.lastName }),
+          ...(o.phone === undefined ? {} : { phone: o.phone }),
+          sharePhone: o.sharePhone,
+        })
+        return userOf(u)
+      },
+      async listContacts() {
+        await ready()
+        return (await tg.getContacts()).map((u) => ({ ...userOf(u), mutual: u.isMutualContact }))
       },
       async joinChat(ref) {
         await ready()
@@ -729,6 +986,282 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
       async leaveChat(chatId) {
         await ready()
         await tg.leaveChat(Number(chatId))
+      },
+      async getMember(chatId, userId) {
+        await ready()
+        const m = await tg.getChatMember({ chatId: Number(chatId), userId: peerRef(userId) })
+        return m === null ? null : memberOf(m)
+      },
+      async kickMember(chatId, userId) {
+        await ready()
+        await tg.kickChatMember({ chatId: Number(chatId), userId: peerRef(userId) })
+      },
+      async setChatTtl(chatId, seconds) {
+        await ready()
+        await tg.setChatTtl(Number(chatId), seconds)
+      },
+      async setContentProtection(chatId, enabled) {
+        await ready()
+        await tg.toggleContentProtection(Number(chatId), enabled)
+      },
+      async setMembersHidden(chatId, hidden) {
+        await ready()
+        await tg.call({
+          _: 'channels.toggleParticipantsHidden',
+          channel: await tg.resolveChannel(Number(chatId)),
+          enabled: hidden,
+        })
+      },
+      async setHistoryVisible(chatId, visible) {
+        await ready()
+        await tg.call({
+          _: 'channels.togglePreHistoryHidden',
+          channel: await tg.resolveChannel(Number(chatId)),
+          enabled: !visible,
+        })
+      },
+      async setReactions(chatId, o) {
+        await ready()
+        await tg.call({
+          _: 'messages.setChatAvailableReactions',
+          peer: await tg.resolvePeer(Number(chatId)),
+          availableReactions:
+            o.mode === 'all'
+              ? { _: 'chatReactionsAll' }
+              : o.mode === 'none'
+                ? { _: 'chatReactionsNone' }
+                : {
+                    _: 'chatReactionsSome',
+                    reactions: (o.emojis ?? []).map((emoticon) => ({
+                      _: 'reactionEmoji' as const,
+                      emoticon,
+                    })),
+                  },
+        })
+      },
+      async setDefaultSendAs(chatId, asChatId) {
+        await ready()
+        await tg.call({
+          _: 'messages.saveDefaultSendAs',
+          peer: await tg.resolvePeer(Number(chatId)),
+          sendAs: await tg.resolvePeer(Number(asChatId)),
+        })
+      },
+      async setTopicPinned(chatId, topicId, pinned) {
+        await ready()
+        await tg.toggleForumTopicPinned({ chatId: Number(chatId), topicId, pinned })
+      },
+      async deleteTopic(chatId, topicId) {
+        await ready()
+        await tg.deleteForumTopicHistory(Number(chatId), topicId)
+      },
+      async setGeneralHidden(chatId, hidden) {
+        await ready()
+        await tg.toggleGeneralTopicHidden({ chatId: Number(chatId), hidden })
+      },
+      async markRead(chatId) {
+        await ready()
+        await tg.readHistory(Number(chatId))
+      },
+      async clearHistory(chatId, mode) {
+        await ready()
+        const chat = await tg.getChat(Number(chatId))
+        // supergroups and channels have their own call (deleteHistory covers private chats and basic groups)
+        if (chat.chatType !== 'group') {
+          await tg.call({
+            _: 'channels.deleteHistory',
+            channel: await tg.resolveChannel(Number(chatId)),
+            maxId: 0,
+            ...(mode === 'revoke' ? { forEveryone: true } : {}),
+          })
+          return
+        }
+        await tg.deleteHistory(Number(chatId), { mode })
+      },
+      async pinWithOptions(chatId, id, o) {
+        await ready()
+        await tg.pinMessage({ chatId: Number(chatId), message: id, notify: o.notify })
+      },
+      async unpinAll(chatId, topicId) {
+        await ready()
+        await tg.unpinAllMessages(Number(chatId), topicId === undefined ? {} : { topicId })
+      },
+      async getPoll(chatId, id) {
+        await ready()
+        const poll = await tg.getPollResults({ chatId: Number(chatId), message: id })
+        return {
+          question: poll.question,
+          closed: poll.isClosed,
+          quiz: poll.isQuiz,
+          multiple: poll.isMultiple,
+          public: poll.isPublic,
+          totalVoters: poll.voters,
+          options: poll.answers.map((a) => ({
+            text: a.text,
+            voters: a.voters,
+            ...(poll.isQuiz ? { correct: a.correct } : {}),
+            recentVoters: a.recentVoters.map((v) => ({ id: String(v.id), name: peerName(v) })),
+          })),
+        }
+      },
+      async stopPoll(chatId, id) {
+        await ready()
+        await tg.closePoll({ chatId: Number(chatId), message: id })
+      },
+      async copyMessage(fromChatId, id, toChatId, o) {
+        await ready()
+        const m = await tg.sendCopy({
+          fromChatId: Number(fromChatId),
+          message: id,
+          toChatId: Number(toChatId),
+          ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
+          ...(o?.silent === true ? { silent: true } : {}),
+        })
+        return { id: m.id }
+      },
+      async messageStats(chatId, ids) {
+        await ready()
+        const list = await tg.getMessages(Number(chatId), ids)
+        return list.flatMap((m) =>
+          m === null
+            ? []
+            : [
+                {
+                  id: m.id,
+                  ...(m.views === null ? {} : { views: m.views }),
+                  ...(m.forwards === null ? {} : { forwards: m.forwards }),
+                  ...(m.replies === null ? {} : { replies: m.replies.count }),
+                  ...(m.replies === null ? {} : { hasComments: m.replies.hasComments }),
+                  reactions: (m.reactions?.reactions ?? []).map((r) => ({
+                    emoji: String(r.emoji),
+                    count: r.count,
+                  })),
+                },
+              ],
+        )
+      },
+      async commentOnPost(chatId, postId, text) {
+        await ready()
+        const [post] = await tg.getMessages(Number(chatId), [postId])
+        if (post === null || post === undefined) throw new TgRpcError('MSG_ID_INVALID')
+        const m = await tg.commentText(post, text, { disableWebPreview: true })
+        return { id: m.id }
+      },
+      async resolveChat(ref) {
+        await ready()
+        const t = ref
+          .trim()
+          .replace(/^https?:\/\//i, '')
+          .replace(/^(?:www\.)?(?:t|telegram)\.me\//i, '')
+          .replace(/^@/, '')
+        const username = /^[A-Za-z][A-Za-z0-9_]{3,31}$/.exec(t.split(/[/?]/)[0] ?? '')?.[0]
+        if (username === undefined)
+          throw new TgRpcError('USERNAME_INVALID', 'not a public username or t.me link')
+        const peer = await tg.getPeer(username)
+        if (peer.type === 'user') {
+          return {
+            id: String(peer.id),
+            kind: 'user' as const,
+            title: peer.displayName,
+            ...(peer.username === null ? {} : { username: peer.username }),
+          }
+        }
+        let description: string | undefined
+        try {
+          const full = await tg.getFullChat(peer.id)
+          if (full.bio !== '') description = full.bio
+        } catch {
+          // the preview works without the description
+        }
+        return {
+          id: String(peer.id),
+          kind: chatKindOf(peer),
+          title: peer.title,
+          ...(peer.username === null ? {} : { username: peer.username }),
+          ...(peer.membersCount === null ? {} : { members: peer.membersCount }),
+          ...(description === undefined ? {} : { description }),
+          joined: peer.isMember,
+        }
+      },
+      async checkInviteLink(link) {
+        await ready()
+        try {
+          const p = await tg.getChatPreview(link)
+          return {
+            kind: p.type === 'channel' ? ('channel' as const) : ('group' as const),
+            title: p.title,
+            members: p.memberCount,
+            withApproval: p.withApproval,
+            joined: false,
+          }
+        } catch (error) {
+          // already a member: mtcute asks to read the chat itself
+          if (
+            /already|MtPeerNotFound/i.test(
+              error instanceof Error ? `${error.name} ${error.message}` : '',
+            )
+          ) {
+            return { kind: 'group' as const, title: '(a chat the account is in)', joined: true }
+          }
+          throw error
+        }
+      },
+      async chatStats(chatId) {
+        await ready()
+        const chat = await tg.getChat(Number(chatId))
+        const channel = await tg.resolveChannel(Number(chatId))
+        const pair = (label: string, v: { current: number; previous: number }): string =>
+          `${label}: ${v.current} (before: ${v.previous})`
+        if (chat.chatType === 'channel') {
+          const st = await tg.call({ _: 'stats.getBroadcastStats', channel })
+          return {
+            kind: 'channel' as const,
+            lines: [
+              pair('Followers', st.followers),
+              pair('Views per post', st.viewsPerPost),
+              pair('Shares per post', st.sharesPerPost),
+              pair('Reactions per post', st.reactionsPerPost),
+              `Notifications on: ${Math.round((st.enabledNotifications.part / Math.max(1, st.enabledNotifications.total)) * 100)}%`,
+            ],
+          }
+        }
+        const st = await tg.call({ _: 'stats.getMegagroupStats', channel })
+        return {
+          kind: 'group' as const,
+          lines: [
+            pair('Members', st.members),
+            pair('Messages', st.messages),
+            pair('Active viewers', st.viewers),
+            pair('Active posters', st.posters),
+          ],
+        }
+      },
+      async muteChat(chatId, untilMs) {
+        await ready()
+        const seconds =
+          untilMs === null
+            ? 0
+            : !Number.isFinite(untilMs)
+              ? 2_147_483_647
+              : Math.min(2_147_483_647, Math.floor(untilMs / 1000))
+        await tg.call({
+          _: 'account.updateNotifySettings',
+          peer: { _: 'inputNotifyPeer', peer: await tg.resolvePeer(Number(chatId)) },
+          settings: { _: 'inputPeerNotifySettings', muteUntil: seconds },
+        })
+      },
+      async archiveChat(chatId, archived) {
+        await ready()
+        if (archived) await tg.archiveChats(Number(chatId))
+        else await tg.unarchiveChats(Number(chatId))
+      },
+      async pinDialog(chatId, pinned) {
+        await ready()
+        await tg.call({
+          _: 'messages.toggleDialogPin',
+          peer: { _: 'inputDialogPeer', peer: await tg.resolvePeer(Number(chatId)) },
+          pinned,
+        })
       },
       async members(chatId, limit) {
         const list = await tg.getChatMembers(Number(chatId), { limit, type: 'recent' })
@@ -807,6 +1340,48 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
       'restrictMember',
       'deleteMemberMessages',
       'createInviteLink',
+      'primaryInviteLink',
+      'listInviteLinks',
+      'editInviteLink',
+      'revokeInviteLink',
+      'listJoinRequests',
+      'answerJoinRequests',
+      'addMember',
+      'setChatTitle',
+      'setChatDescription',
+      'setChatPhoto',
+      'setChatUsername',
+      'setJoinRequests',
+      'setDefaultPermissions',
+      'setSlowMode',
+      'setForum',
+      'deleteChat',
+      'setChannelSignatures',
+      'linkDiscussionGroup',
+      'getMember',
+      'kickMember',
+      'setChatTtl',
+      'setContentProtection',
+      'setMembersHidden',
+      'setHistoryVisible',
+      'setReactions',
+      'setDefaultSendAs',
+      'setTopicPinned',
+      'deleteTopic',
+      'setGeneralHidden',
+      'markRead',
+      'clearHistory',
+      'pinWithOptions',
+      'unpinAll',
+      'getPoll',
+      'stopPoll',
+      'copyMessage',
+      'messageStats',
+      'commentOnPost',
+      'chatStats',
+      'muteChat',
+      'archiveChat',
+      'pinDialog',
       'leaveChat',
       'sendText',
       'sendFiles',

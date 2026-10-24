@@ -4,6 +4,7 @@ import CodeIcon from 'phosphor-svelte/lib/Code';
 import GlobeIcon from 'phosphor-svelte/lib/Globe';
 import ChatCircleDotsIcon from 'phosphor-svelte/lib/ChatCircleDots';
 import ChatsCircleIcon from 'phosphor-svelte/lib/ChatsCircle';
+import ClipboardTextIcon from 'phosphor-svelte/lib/ClipboardText';
 import ClockIcon from 'phosphor-svelte/lib/Clock';
 import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
 import GavelIcon from 'phosphor-svelte/lib/Gavel';
@@ -33,6 +34,7 @@ export const NAV_ICONS: Record<SectionId | RailId, Component> = {
 	browser: GlobeIcon,
 	developers: CodeIcon,
 	logs: PulseIcon,
+	audit: ClipboardTextIcon,
 	attention: HeartbeatIcon,
 	settings: GearIcon
 };

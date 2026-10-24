@@ -95,6 +95,8 @@ export interface UserAdapterHooks {
   backfill?(chatId: string, days: number): Promise<string>
   /** A chat was joined or left by a platform action. */
   chatsChanged?(): void
+  /** A chat was created by a platform action: the service chooses it (wake on mention). */
+  chatCreated?(chat: TgChat): Promise<void>
   warn?(message: string): void
 }
 
@@ -123,6 +125,10 @@ export interface UserAdapterOptions {
   topicTtlMs?: number
   /** The team timezone (times the platform actions show). Default UTC. */
   timezone?: () => string
+  /** Reads a library file (a chat photo, album files). */
+  readFile?: (path: string) => Promise<{ bytes: Uint8Array; mediaType: string } | undefined>
+  /** Pause between spaced calls (tests). */
+  sleep?: (ms: number) => Promise<void>
 }
 
 export interface TelegramUserAdapter extends ChannelAdapter {
@@ -622,6 +628,8 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     learnTopics: (chat, list) => learnTopics(chat, list),
     timezone: () => options.timezone?.() ?? 'UTC',
     now,
+    ...(options.readFile === undefined ? {} : { readFile: options.readFile }),
+    ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
     hooks,
   })
 

@@ -27,6 +27,7 @@ import {
   type OutboundMessage,
   type SentMessage,
 } from '../channels/types.ts'
+import { botActions, createJoinRequestStore, type JoinRequestStore } from './actions.ts'
 import { htmlChunks, toTelegramHtml } from './format.ts'
 import {
   chatNode,
@@ -46,6 +47,7 @@ export const ALLOWED_UPDATES = [
   'my_chat_member',
   'chat_member',
   'message_reaction',
+  'chat_join_request',
 ] as const
 
 /** The documented native id formats (see `normalize.ts`). */
@@ -213,6 +215,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
   )
   const doFetch = options.fetch ?? fetch
   let botInfo: TelegramBotInfo | undefined
+  const joinRequests = createJoinRequestStore()
   let handle: ReturnType<typeof run> | undefined
   let stopping = false
   const sent = new Map<string, SentMessage>()
@@ -508,6 +511,23 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
       await bot.init()
       bot.use(sequentialize((ctx) => String(ctx.chat?.id ?? ctx.from?.id ?? 'none')))
       bot.use(async (ctx) => {
+        const join = (ctx.update as Update).chat_join_request
+        if (join !== undefined) {
+          // held for the agent (`telegram_join_requests`), and seen by the gateway as a chat event
+          joinRequests.note({
+            chatId: String(join.chat.id),
+            chatTitle:
+              'title' in join.chat && join.chat.title !== undefined
+                ? join.chat.title
+                : String(join.chat.id),
+            userId: String(join.from.id),
+            name: [join.from.first_name, join.from.last_name].filter(Boolean).join(' '),
+            ...(join.from.username === undefined ? {} : { username: join.from.username }),
+            ...(join.bio === undefined || join.bio === '' ? {} : { bio: join.bio }),
+            ...(join.invite_link === undefined ? {} : { link: join.invite_link.invite_link }),
+            at: join.date * 1000,
+          })
+        }
         const normalized = normalizeUpdate(ctx.update as Update, normalizeContext())
         if (normalized.callbackId !== undefined) {
           // stop the spinner on the button at once; the answer to the person is a message
@@ -637,241 +657,21 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
       meta: { chatId: identityNativeId },
     }),
     childNativeId: (parent, key) => `${parent.nativeId}/${key}`,
-    actions: nativeActions(bot, token),
+    actions: nativeActions(bot, token, joinRequests),
   }
   return adapter
 }
 
 // --- native actions ------------------------------------------------------------------------------
 
-const chat = z.string().min(1).describe('Chat id (e.g. -1001234567890) or @channelusername')
-const intId = z.coerce.number().int()
-
 /**
- * Telegram operations beyond the common surface. Each is a deferred tool with a static risk:
- * `read` is allowed without asking, `write` and `external` ask, `destructive` always asks.
+ * Telegram operations beyond the common surface: a few tools with an `action` enum (see
+ * `actions.ts`). Each tool has a static risk; owner-only ones are refused in code for anybody else.
  */
-export function nativeActions(bot: Bot, token: string): NativeAction[] {
-  /**
-   * A refusal is answered as text for the model (and reported to the governor's audit); a rate
-   * limit is thrown so the API governor parks the connection and tells the model when to retry.
-   */
-  const refused = (error: unknown): string => {
-    const mapped = mapTelegramError(error, token)
-    if (mapped.kind === 'rate_limit') throw mapped
-    const text = `Telegram refused: ${mapped.message}`
-    reportFailure(text)
-    return text
-  }
-  const run = (fn: () => Promise<unknown>, done: string): Promise<string> =>
-    fn().then(() => done, refused)
-  const text = (value: unknown): string => JSON.stringify(value, null, 1).slice(0, 4000)
-  const act = (
-    name: string,
-    risk: NativeAction['risk'],
-    summary: string,
-    shape: z.ZodRawShape,
-    exec: (input: Record<string, never>) => Promise<unknown>,
-    done?: string,
-  ): NativeAction => ({
-    name,
-    risk,
-    summary,
-    schema: z.object(shape),
-    run: (input) =>
-      done === undefined
-        ? exec(input as Record<string, never>).then((v) => text(v), refused)
-        : run(() => exec(input as Record<string, never>), done),
-  })
-  const c = (i: Record<string, unknown>): number | string => chatArg(String(i.chat))
-  return [
-    act(
-      'get_chat',
-      'read',
-      'Describe a chat: title, type, description, pinned message, permissions.',
-      { chat },
-      async (i) => {
-        const r = await bot.api.getChat(c(i))
-        return {
-          id: r.id,
-          type: r.type,
-          title: 'title' in r ? r.title : undefined,
-          username: 'username' in r ? r.username : undefined,
-          description: 'description' in r ? r.description : undefined,
-        }
-      },
-    ),
-    act('get_member_count', 'read', 'Number of members of a chat.', { chat }, async (i) => ({
-      members: await bot.api.getChatMemberCount(c(i)),
-    })),
-    act(
-      'list_admins',
-      'read',
-      'Administrators of a chat (the Bot API cannot list all members).',
-      { chat },
-      async (i) =>
-        (await bot.api.getChatAdministrators(c(i))).map((a) => ({
-          id: a.user.id,
-          name: a.user.first_name,
-          username: a.user.username,
-          status: a.status,
-        })),
-    ),
-    act(
-      'get_member',
-      'read',
-      'Status of one member of a chat (needs admin rights for others).',
-      { chat, user: intId },
-      async (i) => {
-        const m = await bot.api.getChatMember(c(i), Number((i as Record<string, unknown>).user))
-        return { id: m.user.id, name: m.user.first_name, status: m.status }
-      },
-    ),
-    act(
-      'send_poll',
-      'external',
-      'Post a poll in a chat.',
-      {
-        chat,
-        topic: intId.optional().describe('Forum topic id'),
-        question: z.string().min(1).max(300),
-        options: z.array(z.string().min(1).max(100)).min(2).max(10),
-        anonymous: z.boolean().default(true),
-      },
-      async (i) => {
-        const r = i as Record<string, unknown>
-        return bot.api.sendPoll(
-          c(i),
-          String(r.question),
-          (r.options as string[]).map((t) => ({ text: t })),
-          {
-            is_anonymous: r.anonymous !== false,
-            ...(r.topic === undefined ? {} : { message_thread_id: Number(r.topic) }),
-          },
-        )
-      },
-      'The poll was posted.',
-    ),
-    act(
-      'pin_message',
-      'write',
-      'Pin a message (without notifying members).',
-      { chat, message: intId },
-      (i) =>
-        bot.api.pinChatMessage(c(i), Number((i as Record<string, unknown>).message), {
-          disable_notification: true,
-        }),
-      'The message was pinned.',
-    ),
-    act(
-      'unpin_message',
-      'write',
-      'Unpin a message.',
-      { chat, message: intId },
-      (i) => bot.api.unpinChatMessage(c(i), Number((i as Record<string, unknown>).message)),
-      'The message was unpinned.',
-    ),
-    act(
-      'create_forum_topic',
-      'write',
-      'Create a topic in a forum group.',
-      { chat, name: z.string().min(1).max(128) },
-      (i) => bot.api.createForumTopic(c(i), String((i as Record<string, unknown>).name)),
-      'The topic was created.',
-    ),
-    act(
-      'edit_forum_topic',
-      'write',
-      'Rename a forum topic.',
-      { chat, topic: intId, name: z.string().min(1).max(128) },
-      (i) => {
-        const r = i as Record<string, unknown>
-        return bot.api.editForumTopic(c(i), Number(r.topic), { name: String(r.name) })
-      },
-      'The topic was renamed.',
-    ),
-    act(
-      'close_forum_topic',
-      'write',
-      'Close a forum topic.',
-      { chat, topic: intId },
-      (i) => bot.api.closeForumTopic(c(i), Number((i as Record<string, unknown>).topic)),
-      'The topic was closed.',
-    ),
-    act(
-      'reopen_forum_topic',
-      'write',
-      'Reopen a closed forum topic.',
-      { chat, topic: intId },
-      (i) => bot.api.reopenForumTopic(c(i), Number((i as Record<string, unknown>).topic)),
-      'The topic was reopened.',
-    ),
-    act(
-      'delete_forum_topic',
-      'destructive',
-      'Delete a forum topic with all its messages.',
-      { chat, topic: intId },
-      (i) => bot.api.deleteForumTopic(c(i), Number((i as Record<string, unknown>).topic)),
-      'The topic was deleted.',
-    ),
-    act(
-      'set_chat_title',
-      'write',
-      'Change the title of a group or channel.',
-      { chat, title: z.string().min(1).max(128) },
-      (i) => bot.api.setChatTitle(c(i), String((i as Record<string, unknown>).title)),
-      'The title was changed.',
-    ),
-    act(
-      'create_invite_link',
-      'external',
-      'Create an invite link for a chat.',
-      { chat, name: z.string().max(32).optional() },
-      async (i) => {
-        const r = i as Record<string, unknown>
-        return bot.api.createChatInviteLink(
-          c(i),
-          r.name === undefined ? {} : { name: String(r.name) },
-        )
-      },
-    ),
-    act(
-      'ban_member',
-      'destructive',
-      'Remove a member from a chat and ban them.',
-      { chat, user: intId },
-      (i) => bot.api.banChatMember(c(i), Number((i as Record<string, unknown>).user)),
-      'The member was banned.',
-    ),
-    act(
-      'unban_member',
-      'write',
-      'Lift the ban of a member (they may join again).',
-      { chat, user: intId },
-      (i) =>
-        bot.api.unbanChatMember(c(i), Number((i as Record<string, unknown>).user), {
-          only_if_banned: true,
-        }),
-      'The member was unbanned.',
-    ),
-    act(
-      'restrict_member',
-      'destructive',
-      'Stop a member from sending messages.',
-      { chat, user: intId },
-      (i) =>
-        bot.api.restrictChatMember(c(i), Number((i as Record<string, unknown>).user), {
-          can_send_messages: false,
-        }),
-      'The member was restricted.',
-    ),
-    act(
-      'leave_chat',
-      'destructive',
-      'Make the bot leave a chat.',
-      { chat },
-      (i) => bot.api.leaveChat(c(i)),
-      'The bot left the chat.',
-    ),
-  ]
+export function nativeActions(
+  bot: Bot,
+  token: string,
+  joinRequests: JoinRequestStore = createJoinRequestStore(),
+): NativeAction[] {
+  return botActions({ bot, token, joinRequests })
 }

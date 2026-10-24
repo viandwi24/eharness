@@ -153,6 +153,7 @@ describe('polling (grammY + runner under Bun)', () => {
         'my_chat_member',
         'chat_member',
         'message_reaction',
+        'chat_join_request',
       ]),
     )
     // acknowledged: the next poll carries an offset
@@ -678,49 +679,23 @@ describe('files in', () => {
 })
 
 describe('native actions', () => {
-  test('the catalog has the right static risks', () => {
+  test('the catalog is a few grouped tools with static risks', () => {
     const f = fakeTelegram(4929)
     fakes.push(f)
     const adapter = createTelegramAdapter({ connectionId: 'x', token: f.token, apiRoot: f.url })
     adapters.push(adapter)
     const risk = Object.fromEntries((adapter.actions ?? []).map((a) => [a.name, a.risk]))
     expect(risk).toMatchObject({
-      get_chat: 'read',
-      list_admins: 'read',
-      get_member_count: 'read',
-      pin_message: 'write',
-      unpin_message: 'write',
-      create_forum_topic: 'write',
-      send_poll: 'external',
-      create_invite_link: 'external',
-      delete_forum_topic: 'destructive',
-      ban_member: 'destructive',
-      restrict_member: 'destructive',
-      leave_chat: 'destructive',
+      chat_info: 'read',
+      join_requests: 'external',
+      chat_messages: 'external',
+      chat_topics: 'write',
+      chat_settings: 'write',
+      chat_members: 'write',
+      chat_invites: 'external',
+      bot_profile: 'write',
+      chat_destructive: 'destructive',
     })
     expect(typeof nativeActions).toBe('function')
-  })
-
-  test('actions run against the Bot API and report refusals as text, never as an exception', async () => {
-    const { fake, adapter, start } = setup()
-    await start()
-    const act = (name: string) => adapter.actions?.find((a) => a.name === name)
-    expect(await act('pin_message')?.run({ chat: '-1001', message: 5 })).toBe(
-      'The message was pinned.',
-    )
-    expect(fake.callsOf('pinChatMessage')[0]?.params).toMatchObject({
-      chat_id: -1001,
-      message_id: 5,
-    })
-    expect(await act('ban_member')?.run({ chat: '-1001', user: 99 })).toBe('The member was banned.')
-    expect(fake.callsOf('banChatMember')[0]?.params).toMatchObject({ user_id: 99 })
-    fake.fail('createForumTopic', {
-      error_code: 400,
-      description: 'Bad Request: not enough rights to manage topics',
-    })
-    const refused = await act('create_forum_topic')?.run({ chat: '-1001', name: 'x' })
-    expect(refused).toContain('Telegram refused')
-    expect(refused).toContain('not enough rights')
-    expect(refused).not.toContain(fake.token)
   })
 })

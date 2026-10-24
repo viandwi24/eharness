@@ -386,6 +386,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         result: r.result,
         ms: r.durationMs,
         ...(args === '' ? {} : { args: clip(args, 200) }),
+        ...(r.summary === undefined ? {} : { summary: clip(r.summary, 240) }),
+        ...(r.target?.chat === undefined ? {} : { targetChat: r.target.chat }),
+        ...(r.target?.user === undefined ? {} : { targetUser: r.target.user }),
+        ...(r.target?.link === undefined ? {} : { targetLink: r.target.link }),
+        ...(c?.role === undefined ? {} : { role: c.role }),
         ...(c?.memberId === undefined ? {} : { member: c.memberId }),
         ...(c?.sessionId === undefined ? {} : { session: c.sessionId }),
         ...(c?.agentId === undefined ? {} : { agent: c.agentId }),
@@ -5787,6 +5792,24 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     activity: {
       record: activity,
       actions: (connectionId) => events.actions(connectionId),
+      audit(query) {
+        const page = events.audit(query)
+        const titles = new Map<string, string | undefined>()
+        const title = (nodeId: string): string | undefined => {
+          if (!titles.has(nodeId)) {
+            const n = nodes.get(nodeId)
+            titles.set(nodeId, n === undefined ? undefined : labelOf(n, undefined))
+          }
+          return titles.get(nodeId)
+        }
+        return {
+          ...page,
+          items: page.items.map((e) => {
+            const t = e.conversationId === undefined ? undefined : title(e.conversationId)
+            return t === undefined ? e : { ...e, conversationTitle: t }
+          }),
+        }
+      },
       list(connectionId, query) {
         const page = events.list(connectionId, query)
         const titles = new Map<string, string | undefined>()
