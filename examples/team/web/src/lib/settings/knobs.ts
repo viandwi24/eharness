@@ -20,7 +20,9 @@ export type KnobKey =
 	| 'mediaRetentionDays'
 	| 'routineRunsRetentionDays'
 	| 'tasksRetentionDays'
-	| 'libraryHistoryRetentionDays';
+	| 'libraryHistoryRetentionDays'
+	| 'triggersMaxPerHour'
+	| 'triggerLogRetentionDays';
 
 export type Knob = {
 	key: KnobKey;
@@ -59,6 +61,7 @@ export const KNOB_GROUPS: KnobGroup[] = [
 			{ key: 'longRunMaxHours', label: 'Background job time limit', unit: 'hours', min: 0, max: 8760, integer: false, description: 'A background worker job stops this long after it started. 0 means no limit.' },
 			{ key: 'longRunChunkSteps', label: 'Steps per background chunk', min: 10, max: 500, integer: true, description: 'A background job runs in chunks of this many steps, checking its limits between them.' },
 			{ key: 'maxRepeatingReminders', label: 'Repeating reminders per person', min: 0, max: 1000, integer: true, description: 'Most active repeating reminders one person may have in a chat. 0 means no limit.' },
+			{ key: 'triggersMaxPerHour', label: 'Trigger firings per hour', min: 0, max: 100000, integer: true, description: 'Most trigger firings in one hour across all triggers; more are skipped. 0 means no cap.' },
 			{ key: 'heartbeatContextWindow', label: 'Heartbeat context window', unit: 'tokens', min: 16000, max: 10000000, integer: true, description: "The working window of every heartbeat session, separate from the chat window and never above the model's. Beats summarize early so each one starts small and cheap." },
 			{ key: 'contextCap', label: 'Context window ceiling (deprecated)', unit: 'tokens', min: 16000, max: 10000000, integer: true, nullable: true, placeholder: 'None', description: "A global ceiling on every agent's context window. Leave empty: the window follows each agent's model, and an agent can set its own smaller limit." }
 		]
@@ -76,7 +79,8 @@ export const KNOB_GROUPS: KnobGroup[] = [
 			{ key: 'mediaRetentionDays', label: 'Screenshots and tool media', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them. A chat that still shows a removed one shows "expired".' },
 			{ key: 'routineRunsRetentionDays', label: 'Finished routine runs', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them.' },
 			{ key: 'tasksRetentionDays', label: 'Finished tasks', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them.' },
-			{ key: 'libraryHistoryRetentionDays', label: 'Library history', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps it.' }
+			{ key: 'libraryHistoryRetentionDays', label: 'Library history', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps it.' },
+			{ key: 'triggerLogRetentionDays', label: 'Trigger firing log', unit: 'days', min: 0, max: 36500, integer: true, description: 'How long the log of what each trigger did is kept. 0 keeps it.' }
 		]
 	}
 ];

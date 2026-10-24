@@ -25,6 +25,8 @@ export const APP_EVENT_TYPES = [
   'connectors-changed',
   'thread-changed',
   'notification-changed',
+  /** An alarm was raised (a failed run, a broken connection, ...): payload kind, subject, text. */
+  'alarm-raised',
 ] as const
 
 /**

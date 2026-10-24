@@ -27,6 +27,7 @@ import { chatRoutes } from './routes/chat.ts'
 import { connectorRoutes } from './routes/connectors.ts'
 import { decisionRoutes } from './routes/decisions.ts'
 import { developerRoutes } from './routes/developer.ts'
+import { eventRoutes } from './routes/events.ts'
 import { type HarnessFetch, harnessRoutes } from './routes/harness.ts'
 import { healthRoutes } from './routes/health.ts'
 import { heartbeatRoutes } from './routes/heartbeat.ts'
@@ -45,6 +46,7 @@ import { settingsRoutes } from './routes/settings.ts'
 import { storageRoutes } from './routes/storage.ts'
 import { taskRoutes } from './routes/tasks.ts'
 import { threadRoutes } from './routes/threads.ts'
+import { triggerRoutes } from './routes/triggers.ts'
 import { uploadRoutes } from './routes/uploads.ts'
 import { usageRoutes } from './routes/usage.ts'
 import { v1Routes } from './routes/v1.ts'
@@ -436,6 +438,8 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', peopleRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
   app.route('/', auditRoutes(options.deps))
+  app.route('/', eventRoutes(options.deps))
+  app.route('/', triggerRoutes(options.deps))
   app.route('/', agentHealthRoutes(options.deps))
   if (options.developer !== undefined) {
     app.route('/', developerRoutes(options.developer))

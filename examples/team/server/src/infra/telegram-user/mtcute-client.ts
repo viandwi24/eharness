@@ -12,7 +12,9 @@ import { createHash } from 'node:crypto'
 import {
   type Chat,
   type ChatEvent,
+  type ChatJoinRequestUpdate,
   type ChatMember,
+  type ChatMemberUpdate,
   type DeleteMessageUpdate,
   Long,
   MemoryStorage,
@@ -30,6 +32,7 @@ import type {
   TgClientFactory,
   TgInviteLink,
   TgMember,
+  TgMemberUpdate,
   TgMention,
   TgMessage,
   TgUser,
@@ -48,6 +51,33 @@ const userOf = (u: User): TgUser => ({
 const chatKindOf = (peer: Peer): TgChatKind => {
   if (peer.type === 'user') return 'dm'
   return peer.chatType === 'channel' || peer.chatType === 'monoforum' ? 'channel' : 'group'
+}
+
+/** mtcute's member update kinds, folded into the ones the adapter reports. */
+const memberUpdateType = (t: ChatMemberUpdate['type']): TgMemberUpdate['type'] => {
+  switch (t) {
+    case 'joined':
+    case 'added':
+    case 'left':
+    case 'kicked':
+    case 'unkicked':
+    case 'restricted':
+    case 'unrestricted':
+      return t
+    case 'promoted':
+    case 'unrestricted_promoted':
+      return 'promoted'
+    case 'demoted':
+    case 'demoted_restricted':
+      return 'demoted'
+    case 'demoted_kicked':
+      return 'kicked'
+    case 'old_owner':
+    case 'new_owner':
+      return 'owner_changed'
+    default:
+      return 'other'
+  }
 }
 
 const peerName = (p: Peer): string => (p.type === 'user' ? p.displayName : p.title)
@@ -540,6 +570,56 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
             ...(d.channelId === null ? {} : { chatId: String(d.channelId) }),
           }),
         )
+        if (h.member !== undefined) {
+          const onMember = h.member
+          tg.onChatMemberUpdate.add((u: ChatMemberUpdate) => {
+            const c = u.chat
+            const status = u.newMember?.status
+            onMember({
+              chat: {
+                id: String(c.id),
+                kind: chatKindOf(c),
+                title: peerName(c),
+                forum: c.type === 'chat' && c.isForum,
+                ...(c.username == null ? {} : { username: c.username }),
+              },
+              user: userOf(u.user),
+              ...(u.isSelfMade ? {} : { actor: userOf(u.actor) }),
+              type: memberUpdateType(u.type),
+              status:
+                status === 'creator'
+                  ? 'creator'
+                  : status === 'admin'
+                    ? 'admin'
+                    : status === 'restricted'
+                      ? 'restricted'
+                      : status === 'banned'
+                        ? 'banned'
+                        : status === 'left' || u.newMember === null
+                          ? 'left'
+                          : 'member',
+              ...(u.inviteLink === null ? {} : { link: u.inviteLink.link }),
+              at: u.date.getTime(),
+            })
+          })
+        }
+        if (h.joinRequests !== undefined) {
+          const onRequests = h.joinRequests
+          tg.onChatJoinRequest.add((u: ChatJoinRequestUpdate) => {
+            // the update names the chat by id only: the adapter fills the title from its dialogs
+            onRequests({
+              chat: {
+                id: String(u.chatId),
+                kind: u.chatId < -1_000_000_000_000 ? 'channel' : 'group',
+                title: '',
+                forum: false,
+              },
+              users: u.recentRequesters.map(userOf),
+              total: u.totalPending,
+              at: Date.now(),
+            })
+          })
+        }
         tg.onError.add((e: unknown) => h.error(e))
         await tg.startUpdatesLoop()
       },

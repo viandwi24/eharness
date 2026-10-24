@@ -63,6 +63,23 @@ export function raiseAlarm(deps: Deps, input: NewAlarm): Alarm | undefined {
   })
   if (alarm === undefined) return undefined
   changed(deps, { added: alarm.id })
+  try {
+    deps.events.append({
+      type: 'alarm-raised',
+      ...(alarm.agentId === null ? {} : { agentId: alarm.agentId }),
+      payload: {
+        alarmId: alarm.id,
+        kind: alarm.kind,
+        subject: alarm.subject,
+        text: bellTitle(alarm),
+        ...(alarm.subject.startsWith('program:')
+          ? { program: deps.programs.get(alarm.subject.slice('program:'.length))?.name }
+          : {}),
+      },
+    })
+  } catch (error) {
+    warn(`could not tell the feed about the alarm: ${String(error)}`)
+  }
   void deliverAlarms(deps).catch((error) => warn(`delivery failed: ${String(error)}`))
   return alarm
 }

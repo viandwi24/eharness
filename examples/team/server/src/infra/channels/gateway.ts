@@ -4024,7 +4024,37 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       case 'member.joined':
       case 'member.left':
       case 'member.updated':
-        return event.role === undefined ? {} : { role: event.role }
+        return {
+          ...(event.role === undefined ? {} : { role: event.role }),
+          userId: event.actor?.id,
+          ...(event.actor?.name === undefined ? {} : { name: event.actor.name }),
+          ...(event.actor?.username === undefined ? {} : { username: event.actor.username }),
+          ...(event.by === undefined
+            ? {}
+            : {
+                byId: event.by.id,
+                ...(event.by.name === undefined ? {} : { byName: event.by.name }),
+                ...(event.by.isSelf === true ? { bySelf: true } : {}),
+              }),
+        }
+      case 'member.join_requested':
+        // the applicant's profile text (bio) lives in the join request store, never in the log
+        return {
+          userId: event.actor?.id,
+          ...(event.actor?.name === undefined ? {} : { name: event.actor.name }),
+          ...(event.actor?.username === undefined ? {} : { username: event.actor.username }),
+          ...(event.request.link === undefined ? {} : { link: event.request.link }),
+          ...(event.request.hasBio === true ? { hasBio: true } : {}),
+          ...(event.request.pending === undefined ? {} : { pending: event.request.pending }),
+        }
+      case 'member.join_request_resolved':
+        return {
+          userId: event.actor?.id,
+          ...(event.actor?.name === undefined ? {} : { name: event.actor.name }),
+          ...(event.actor?.username === undefined ? {} : { username: event.actor.username }),
+          resolution: event.resolution,
+          bySelf: event.bySelf,
+        }
       case 'action':
         return {
           name: event.name,
@@ -4145,6 +4175,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           : null,
     })
     const replay = !stored.inserted
+    appended.set(event, {
+      id: stored.event.id,
+      inserted: stored.inserted,
+      nodeId: leaf?.id ?? null,
+    })
     if (leaf !== undefined && event.type !== 'message.created') nodes.touch(leaf.id, event.at)
 
     // 3. structure: nodes, membership, migration of an id (a replay changes nothing)
@@ -4156,7 +4191,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         event.type === 'node.migrated' ||
         event.type === 'member.joined' ||
         event.type === 'member.left' ||
-        event.type === 'member.updated')
+        event.type === 'member.updated' ||
+        event.type === 'member.join_requested' ||
+        event.type === 'member.join_request_resolved')
     ) {
       return { action: 'record', reason: 'replay' }
     }
@@ -4195,6 +4232,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           )
         }
         return { action: 'record', reason: 'migrated' }
+      }
+      case 'member.join_requested':
+      case 'member.join_request_resolved': {
+        // the applicant becomes a known person (People shows them with their role); no membership
+        if (event.actor !== undefined && leaf !== undefined)
+          identityOfSender(connectionId, event.actor, leaf, adapter)
+        return { action: 'record', reason: event.type }
       }
       case 'member.joined':
       case 'member.left':
@@ -4447,12 +4491,27 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     })
   }
 
+  /** What `handleEvent` stored for a live event (read by `handle`, which tells the event listeners). */
+  const appended = new WeakMap<
+    RemoteEvent,
+    { id: string; inserted: boolean; nodeId: string | null }
+  >()
+
   async function handle(connectionId: string, event: RemoteEvent): Promise<HandleResult> {
     const result = await handleEvent(connectionId, event)
     try {
       observeResult(connectionId, event, result)
     } catch (error) {
       if (!stopped) warn(`channels: could not record an event: ${errorText(error)}`)
+    }
+    // a platform event that was new (not a replay) goes to the listeners (triggers): never awaited
+    const stored = appended.get(event)
+    if (stored?.inserted === true && deps.onEvent !== undefined) {
+      try {
+        deps.onEvent({ connectionId, event, eventId: stored.id, nodeId: stored.nodeId, result })
+      } catch (error) {
+        if (!stopped) warn(`channels: an event listener failed: ${errorText(error)}`)
+      }
     }
     return result
   }

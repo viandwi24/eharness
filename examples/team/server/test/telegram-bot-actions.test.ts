@@ -421,7 +421,11 @@ describe('telegram bot tools: join requests', () => {
       },
     })
     await until('event', () => events.length === 1)
-    expect(events[0]).toMatchObject({ type: 'node.updated', actor: { id: '55', name: 'Zed' } })
+    expect(events[0]).toMatchObject({
+      type: 'member.join_requested',
+      actor: { id: '55', name: 'Zed' },
+      request: { link: 'https://t.me/+xyz', hasBio: true },
+    })
     const list = await tool('join_requests')({ action: 'list' })
     expect(list).toContain('Zed (id 55, @zed)')
     expect(list).toContain('"Ops"')

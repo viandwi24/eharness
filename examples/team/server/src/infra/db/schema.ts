@@ -1969,3 +1969,86 @@ export const apiCalls = sqliteTable(
   },
   (t) => [index('api_calls_key').on(t.keyId, t.at)],
 )
+
+// --- Event stream and triggers (examples/team/docs/events-and-triggers.md) ---
+
+/**
+ * Join requests of a chat that needs approval (the bot's `chat_join_request` update, the user
+ * account's pending-requests update). One row per (connection, chat, person): the latest request;
+ * `status` is `pending` until somebody answers it. Held in the database so a restart loses nothing
+ * and `join_requests` / `list_join_requests` read the same list the `member.join_requested`
+ * events announced. `bio` is what the platform showed with the request (the applicant's own public
+ * profile text), never a message.
+ */
+export const chJoinRequests = sqliteTable(
+  'ch_join_requests',
+  {
+    connectionId: text('connection_id').notNull(),
+    chatId: text('chat_id').notNull(),
+    userId: text('user_id').notNull(),
+    chatTitle: text('chat_title').notNull().default(''),
+    name: text('name').notNull().default(''),
+    username: text('username'),
+    bio: text('bio'),
+    link: text('link'),
+    requestedAt: integer('requested_at').notNull(),
+    /** `pending` | `approved` | `declined` | `expired` */
+    status: text('status').notNull().default('pending'),
+    resolvedAt: integer('resolved_at'),
+    resolvedBy: text('resolved_by'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.connectionId, t.chatId, t.userId] }),
+    index('ch_join_requests_status').on(t.connectionId, t.status, t.requestedAt),
+  ],
+)
+
+/**
+ * Triggers: event listeners that wake an agent, run a program, notify the owner or call a webhook.
+ * `event_types`, `scope`, `filters` and `action` are JSON validated by `domain/triggers.ts`; the
+ * webhook secret is sealed with the server's secret vault and never returned.
+ */
+export const triggers = sqliteTable(
+  'triggers',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    eventTypes: json<string[]>('event_types').notNull(),
+    scope: json<Record<string, unknown>>('scope').notNull(),
+    filters: json<Record<string, unknown>>('filters').notNull(),
+    action: json<Record<string, unknown>>('action').notNull(),
+    webhookSecret: text('webhook_secret'),
+    cooldownSec: integer('cooldown_sec').notNull().default(0),
+    allowSelf: integer('allow_self', { mode: 'boolean' }).notNull().default(false),
+    createdBy: text('created_by').notNull(),
+    notes: text('notes'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    lastFiredAt: integer('last_fired_at'),
+    fireCount: integer('fire_count').notNull().default(0),
+    errorCount: integer('error_count').notNull().default(0),
+  },
+  (t) => [index('triggers_enabled').on(t.enabled)],
+)
+
+/** Every firing of a trigger: the event, the action, the result and how long it took. */
+export const triggerFires = sqliteTable(
+  'trigger_fires',
+  {
+    id: text('id').primaryKey(),
+    triggerId: text('trigger_id').notNull(),
+    eventId: text('event_id').notNull(),
+    eventType: text('event_type').notNull(),
+    at: integer('at').notNull(),
+    /** `ok` | `skipped` | `error` */
+    result: text('result').notNull(),
+    /** For `skipped`: `cooldown` | `paused` | `filtered` | `loop` | `cap`; for `error`: a short code. */
+    reason: text('reason'),
+    actionKind: text('action_kind').notNull(),
+    durationMs: integer('duration_ms').notNull().default(0),
+    /** Facts of the outcome: session, task, webhook status, error text (never a message body). */
+    detail: json<Record<string, unknown>>('detail').notNull(),
+  },
+  (t) => [index('trigger_fires_trigger').on(t.triggerId, t.id), index('trigger_fires_at').on(t.at)],
+)

@@ -959,7 +959,35 @@ export function manageActions(d: AccountActionDeps, h: ManageHelpers): NativeAct
             ...(typeof input.link === 'string' ? { link: input.link } : {}),
           }),
         )
-        if (!r.ok) return r.text
+        if (!r.ok) {
+          // Telegram could not be asked: the requests the events announced are still saved
+          const saved = d.joinRequests?.list(c.id) ?? []
+          if (saved.length === 0) return r.text
+          return [
+            `${r.text}`,
+            `${saved.length} waiting to join "${c.title}" according to the saved list (Telegram was not asked, so this may be out of date):`,
+            ...saved
+              .slice(0, 30)
+              .map(
+                (q) =>
+                  `- ${nameOf({ id: q.userId, name: q.name, ...(q.username === undefined ? {} : { username: q.username }) })} asked ${h.when(q.at)}${q.bio === undefined ? '' : `, bio: ${clip(flat(q.bio), 120)}`}`,
+              ),
+            ...(saved.length > 30 ? [`...and ${saved.length - 30} more.`] : []),
+          ].join('\n')
+        }
+        // what Telegram says now is the truth: keep the saved list in step with it
+        for (const q of r.value) {
+          if (typeof input.link === 'string') break
+          d.joinRequests?.note({
+            chatId: c.id,
+            chatTitle: c.title,
+            userId: q.user.id,
+            name: q.user.name,
+            ...(q.user.username === undefined ? {} : { username: q.user.username }),
+            ...(q.bio === undefined ? {} : { bio: q.bio }),
+            at: q.at,
+          })
+        }
         if (r.value.length === 0) return `Nobody is waiting to join "${c.title}".`
         return [
           `${r.value.length} waiting to join "${c.title}":`,
@@ -1002,6 +1030,12 @@ export function manageActions(d: AccountActionDeps, h: ManageHelpers): NativeAct
           }),
         )
         if (!r.ok) return r.text
+        d.joinAnswered?.({
+          chatId: c.id,
+          resolution: action === 'approve' ? 'approved' : 'declined',
+          ...(all ? {} : { users: [String(input.user)] }),
+          ...(typeof input.link === 'string' ? { link: input.link } : {}),
+        })
         return `${action === 'approve' ? 'Approved' : 'Declined'} ${all ? 'all waiting requests' : `the request of user ${input.user}`} for "${c.title}".`
       },
     },

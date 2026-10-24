@@ -28,62 +28,17 @@ import type { Bot } from 'grammy'
 import { GrammyError } from 'grammy'
 import { z } from 'zod'
 import { reportFailure, reportRefusal } from '../channels/governor.ts'
+import type { JoinRequest, JoinRequestStore, JoinResolution } from '../channels/join-requests.ts'
 import type { NativeAction } from '../channels/types.ts'
 import { scrubToken } from './adapter.ts'
 
 // --- join requests held for the agent ----------------------------------------------------------
 
-export interface JoinRequest {
-  chatId: string
-  chatTitle: string
-  userId: string
-  name: string
-  username?: string
-  bio?: string
-  /** The invite link the person used, when there was one. */
-  link?: string
-  at: number
-}
-
-export interface JoinRequestStore {
-  note(request: JoinRequest): void
-  list(chatId?: string): JoinRequest[]
-  take(chatId: string, userId: string): JoinRequest | undefined
-}
-
-const MAX_PENDING = 200
-const PENDING_TTL_MS = 7 * 86_400_000
-
-/** Pending `chat_join_request` updates of one bot (memory only: Telegram keeps the real list). */
-export function createJoinRequestStore(now: () => number = Date.now): JoinRequestStore {
-  const map = new Map<string, JoinRequest>()
-  const key = (c: string, u: string): string => `${c}\n${u}`
-  const prune = (): void => {
-    for (const [k, v] of map) if (now() - v.at > PENDING_TTL_MS) map.delete(k)
-    while (map.size > MAX_PENDING) {
-      const first = map.keys().next().value
-      if (first === undefined) break
-      map.delete(first)
-    }
-  }
-  return {
-    note(r) {
-      map.delete(key(r.chatId, r.userId))
-      map.set(key(r.chatId, r.userId), r)
-      prune()
-    },
-    list(chatId) {
-      prune()
-      return [...map.values()].filter((r) => chatId === undefined || r.chatId === chatId)
-    },
-    take(chatId, userId) {
-      const k = key(chatId, userId)
-      const r = map.get(k)
-      map.delete(k)
-      return r
-    },
-  }
-}
+export {
+  createJoinRequestStore,
+  type JoinRequest,
+  type JoinRequestStore,
+} from '../channels/join-requests.ts'
 
 // --- rights and fields ---------------------------------------------------------------------------
 
@@ -274,6 +229,8 @@ export interface BotActionDeps {
   bot: Bot
   token: string
   joinRequests: JoinRequestStore
+  /** A pending request was answered by this bot's tool: the adapter tells the gateway (`member.join_request_resolved`). */
+  resolved?: (request: JoinRequest, resolution: JoinResolution) => void
   now?: () => number
 }
 
@@ -487,6 +444,10 @@ export function botActions(d: BotActionDeps): NativeAction[] {
   )
 
   // --- join requests -----------------------------------------------------------------------------
+  const answered = (chatId: string, userId: string, resolution: JoinResolution): void => {
+    const r = d.joinRequests.resolve(chatId, userId, resolution, 'this bot')
+    if (r !== undefined) d.resolved?.(r, resolution)
+  }
   const joins = dispatch(
     'join_requests',
     {
@@ -495,13 +456,18 @@ export function botActions(d: BotActionDeps): NativeAction[] {
           const chatId = typeof _i.chat === 'string' ? String(chatArg(_i.chat)) : undefined
           const list = d.joinRequests.list(chatId)
           if (list.length === 0)
-            return 'No pending join requests seen by this bot (requests made before it started, or handled in the app, are not listed).'
+            return 'No pending join requests seen by this bot (requests made before it was connected, or answered elsewhere, are not listed).'
           return [
             `${list.length} pending join request(s):`,
-            ...list.map(
-              (r) =>
-                `- ${r.name} (id ${r.userId}${r.username === undefined ? '' : `, @${r.username}`}) wants into "${r.chatTitle}" (${r.chatId}) ${ago(r.at, now())}${r.link === undefined ? '' : ` via ${r.link}`}${r.bio === undefined ? '' : `; bio: ${clip(r.bio, 120)}`}`,
-            ),
+            ...list
+              .slice(0, 30)
+              .map(
+                (r) =>
+                  `- ${r.name} (id ${r.userId}${r.username === undefined ? '' : `, @${r.username}`}) wants into "${r.chatTitle}" (${r.chatId}) ${ago(r.at, now())}${r.link === undefined ? '' : ` via ${r.link}`}${r.bio === undefined ? '' : `; bio: ${clip(r.bio, 120)}`}`,
+              ),
+            ...(list.length > 30
+              ? [`...and ${list.length - 30} more (name a chat to narrow the list).`]
+              : []),
           ].join('\n')
         },
       },
@@ -510,7 +476,7 @@ export function botActions(d: BotActionDeps): NativeAction[] {
         right: 'can_invite_users',
         run: async (i, chat) => {
           await bot.api.approveChatJoinRequest(chat, n(i.user))
-          d.joinRequests.take(String(chat), s(i.user))
+          answered(String(chat), s(i.user), 'approved')
           return `Join request of ${s(i.user)} approved: they are in the chat now.`
         },
       },
@@ -519,7 +485,7 @@ export function botActions(d: BotActionDeps): NativeAction[] {
         right: 'can_invite_users',
         run: async (i, chat) => {
           await bot.api.declineChatJoinRequest(chat, n(i.user))
-          d.joinRequests.take(String(chat), s(i.user))
+          answered(String(chat), s(i.user), 'declined')
           return `Join request of ${s(i.user)} declined.`
         },
       },

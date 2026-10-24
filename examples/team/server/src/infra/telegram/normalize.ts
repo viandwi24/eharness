@@ -672,6 +672,7 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
           at: mine.date * 1000,
           node,
           actor: { ...identityOfUser(mine.new_chat_member.user, ctx.botId), isSelf: true },
+          by: identityOfUser(mine.from, ctx.botId),
           role,
           raw: update,
         },
@@ -680,17 +681,21 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
   }
   const join = update.chat_join_request
   if (join !== undefined) {
-    // somebody asks to join: a chat event with the person as actor (the agent reads the details with
-    // `telegram_join_requests list` and answers with approve / decline)
+    // somebody asks to join: `member.join_requested` with the applicant as actor (the request itself
+    // is held by the join request store; the agent reads it with `join_requests` and answers)
     const room = chatNode(join.chat)
     return {
       events: [
         {
-          type: 'node.updated',
+          type: 'member.join_requested',
           dedupeKey: key(update),
           at: join.date * 1000,
           node: { nativeId: room.nativeId, chain: [room] },
           actor: identityOfUser(join.from, ctx.botId),
+          request: {
+            ...(join.invite_link === undefined ? {} : { link: join.invite_link.invite_link }),
+            ...(join.bio === undefined || join.bio === '' ? {} : { hasBio: true }),
+          },
           raw: update,
         },
       ],
@@ -714,6 +719,7 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
             identityOfUser(other.new_chat_member.user, ctx.botId),
             other.new_chat_member,
           ),
+          by: identityOfUser(other.from, ctx.botId),
           role,
           raw: update,
         },

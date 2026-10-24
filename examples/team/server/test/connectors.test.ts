@@ -255,6 +255,9 @@ describe('migration of the tool checklist and MCP servers', () => {
         'persona',
         'reminder',
         'standing_order',
+        // the event stream and the event triggers (always there; owner/admin only at call time)
+        'events_recent',
+        'triggers',
         // the read-only tools over the agent's other sessions and runs (always there)
         ...SESSION_CONTEXT_TOOLS,
         // the clock and the agent's own background worker (always there)

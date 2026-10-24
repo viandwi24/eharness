@@ -12,6 +12,11 @@
  * never types, never touches presence.
  */
 
+import {
+  createJoinRequestStore,
+  type JoinRequestStore,
+  type JoinResolution,
+} from '../channels/join-requests.ts'
 import { parseMentions, plainMentions } from '../channels/mentions.ts'
 import {
   type AdapterHost,
@@ -32,7 +37,16 @@ import {
 import { toTelegramHtml } from '../telegram/format.ts'
 import { accountActions, DELETED_HINT } from './actions.ts'
 import type { AdminLogQuery } from './adminlog.ts'
-import type { TgChat, TgDelete, TgMessage, TgTopic, TgUser, TgUserClient } from './client.ts'
+import type {
+  TgChat,
+  TgDelete,
+  TgJoinRequestsUpdate,
+  TgMemberUpdate,
+  TgMessage,
+  TgTopic,
+  TgUser,
+  TgUserClient,
+} from './client.ts'
 import { classifyError, describeError, type TgErrorKind } from './errors.ts'
 import {
   chatNode,
@@ -107,6 +121,8 @@ export interface UserAdapterOptions {
   chats: ChatStore
   counters: CounterStore
   settings: () => AccountSettings
+  /** Where pending join requests are kept (default: memory). The app passes the durable store. */
+  joinRequests?: JoinRequestStore
   hooks: UserAdapterHooks
   /** A reason to refuse every send (the account was flagged: PEER_FLOOD, a flood storm); undefined = fine. */
   blocked?: () => string | undefined
@@ -158,6 +174,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     isSelf: true,
   }
 
+  const joinRequests = options.joinRequests ?? createJoinRequestStore(now)
   let sink: EventSink | undefined
   let host: AdapterHost | undefined
   let stopped = false
@@ -300,6 +317,131 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
       if (m.chat.kind !== 'dm') chats.noteMessage(connectionId, m.chat.id, m.id, true)
       await deliver(normalizeMessage(titled, nopts))
     })
+  }
+
+  // --- members and join requests --------------------------------------------------------------
+  // Telegram tells the administrators of a chat who joined, left or was promoted, and which join
+  // requests are pending. Reactions of other people are not delivered to a user account.
+
+  const identityOfTg = (u: TgUser): Identity => ({
+    id: u.id,
+    name: u.name,
+    ...(u.username === undefined ? {} : { username: u.username }),
+    ...(u.isBot ? { isBot: true, kind: 'bot' as const } : {}),
+    ...(u.id === selfId ? { isSelf: true } : {}),
+  })
+
+  /** The chat as the node of an event: what the dialogs know, else what the id says. */
+  const roomOf = (chat: { id: string; title?: string; kind?: TgChat['kind']; forum?: boolean }) => {
+    const known = chats.get(connectionId, chat.id)
+    return chatNode({
+      id: chat.id,
+      kind: known?.kind ?? chat.kind ?? kindOfChatId(chat.id),
+      title: known?.title ?? (chat.title === '' ? undefined : chat.title),
+      forum: known?.forum ?? chat.forum ?? false,
+      admin: known?.admin ?? true,
+    })
+  }
+
+  function onMember(u: TgMemberUpdate): void {
+    if (!accepts({ chat: u.chat })) return
+    const type =
+      u.type === 'joined' || u.type === 'added'
+        ? 'member.joined'
+        : u.type === 'left' || u.type === 'kicked'
+          ? 'member.left'
+          : u.type === 'unkicked'
+            ? undefined
+            : 'member.updated'
+    if (type === undefined) return
+    const role =
+      u.status === 'creator'
+        ? ('owner' as const)
+        : u.status === 'admin'
+          ? ('admin' as const)
+          : u.status === 'left' || u.status === 'banned'
+            ? ('none' as const)
+            : ('member' as const)
+    if (!remember(`cm:${u.chat.id}:${u.user.id}:${u.type}:${u.at}`)) return
+    inLane(u.chat.id, async () => {
+      const room = roomOf(u.chat)
+      await deliver({
+        type,
+        dedupeKey: `tgu:cm:${u.chat.id}:${u.user.id}:${u.type}:${u.at}`,
+        at: u.at,
+        node: { nativeId: room.nativeId, chain: [room] },
+        actor: identityOfTg(u.user),
+        ...(u.actor === undefined ? {} : { by: identityOfTg(u.actor) }),
+        role,
+      })
+    })
+  }
+
+  function onJoinRequests(u: TgJoinRequestsUpdate): void {
+    const known = chats.get(connectionId, u.chat.id)
+    const title = known?.title ?? u.chat.title
+    // every requester is saved (the tools list them); the ones that are new announce themselves
+    const fresh: TgUser[] = []
+    for (const user of u.users) {
+      const isNew = joinRequests.note({
+        chatId: u.chat.id,
+        chatTitle: title,
+        userId: user.id,
+        name: user.name,
+        ...(user.username === undefined ? {} : { username: user.username }),
+        at: u.at,
+      })
+      if (isNew) fresh.push(user)
+    }
+    if (fresh.length === 0 || !accepts({ chat: u.chat })) return
+    inLane(u.chat.id, async () => {
+      const room = roomOf({ ...u.chat, title })
+      for (const user of fresh) {
+        await deliver({
+          type: 'member.join_requested',
+          dedupeKey: `tgu:jr:${u.chat.id}:${user.id}:${u.at}`,
+          at: u.at,
+          node: { nativeId: room.nativeId, chain: [room] },
+          actor: identityOfTg(user),
+          request: { pending: u.total },
+        })
+      }
+    })
+  }
+
+  /** Requests answered by a tool: resolve the saved ones and tell the gateway. */
+  function joinAnswered(a: {
+    chatId: string
+    resolution: JoinResolution
+    users?: string[]
+    link?: string
+  }): void {
+    const pending = joinRequests
+      .list(a.chatId)
+      .filter(
+        (r) =>
+          (a.users === undefined || a.users.includes(r.userId)) &&
+          (a.link === undefined || r.link === a.link),
+      )
+    for (const r of pending) {
+      joinRequests.resolve(r.chatId, r.userId, a.resolution, 'this account')
+      inLane(a.chatId, async () => {
+        const room = roomOf({ id: a.chatId, title: r.chatTitle })
+        await deliver({
+          type: 'member.join_request_resolved',
+          dedupeKey: `tgu:jr-resolved:${r.chatId}:${r.userId}:${r.at}:${a.resolution}`,
+          at: now(),
+          node: { nativeId: room.nativeId, chain: [room] },
+          actor: {
+            id: r.userId,
+            name: r.name,
+            ...(r.username === undefined ? {} : { username: r.username }),
+          },
+          resolution: a.resolution,
+          bySelf: true,
+        })
+      })
+    }
   }
 
   function onEdit(m: TgMessage): void {
@@ -630,6 +772,8 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     now,
     ...(options.readFile === undefined ? {} : { readFile: options.readFile }),
     ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
+    joinRequests,
+    joinAnswered: (a) => joinAnswered(a),
     hooks,
   })
 
@@ -662,6 +806,8 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
           message: onMessage,
           edit: onEdit,
           delete: onDelete,
+          member: onMember,
+          joinRequests: onJoinRequests,
           error: (error) => {
             const k = classifyError(error)
             if (k.kind === 'auth-lost' || k.kind === 'duplicated') {

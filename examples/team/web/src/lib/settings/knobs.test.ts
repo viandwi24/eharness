@@ -34,3 +34,14 @@ test('knobPatch holds only what changed and reports every error', () => {
 	expect(bad.ok).toBe(false);
 	if (!bad.ok) expect(Object.keys(bad.errors).sort()).toEqual(['connectorHealthTtlMs', 'stuckRunMinutes']);
 });
+
+test('the trigger knobs: cap and log retention accept 0 and stay in range', () => {
+	expect(parseKnob(knob('triggersMaxPerHour'), '0')).toEqual({ ok: true, value: 0 });
+	expect(parseKnob(knob('triggersMaxPerHour'), '100000')).toEqual({ ok: true, value: 100000 });
+	expect(parseKnob(knob('triggersMaxPerHour'), '100001').ok).toBe(false);
+	expect(parseKnob(knob('triggersMaxPerHour'), '1.5').ok).toBe(false);
+	expect(parseKnob(knob('triggersMaxPerHour'), '').ok).toBe(false);
+	expect(parseKnob(knob('triggerLogRetentionDays'), '36500')).toEqual({ ok: true, value: 36500 });
+	expect(parseKnob(knob('triggerLogRetentionDays'), '36501').ok).toBe(false);
+	expect(parseKnob(knob('triggerLogRetentionDays'), '-1').ok).toBe(false);
+});

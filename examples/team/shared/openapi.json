@@ -2732,6 +2732,7 @@
               "connectors-changed",
               "thread-changed",
               "notification-changed",
+              "alarm-raised",
               "turn-started",
               "pending-changed",
               "approval-decided",
@@ -5317,6 +5318,18 @@
             ],
             "description": "Library folder that holds the company files (for example `/library/acme`): agents are told to keep company facts, knowledge, reports and ledgers under it (`knowledge/`, `reports/`, `data/`, `kpi/`, `attendance/`). null = the built-in folders (`/library/company`, `/library/knowledge`, `/library/reports`, `/library/data`). Changing it moves no file."
           },
+          "triggersMaxPerHour": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Most trigger firings (actions that ran, across all triggers) in one hour; more are skipped with the reason `cap`. 0 = no cap. Default 60."
+          },
+          "triggerLogRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500,
+            "description": "Days the firing log of the triggers is kept; 0 = keep. Default 30."
+          },
           "eventsRetentionHours": {
             "type": "integer",
             "minimum": 0,
@@ -5413,6 +5426,8 @@
           "teamName",
           "worksRoot",
           "companyRoot",
+          "triggersMaxPerHour",
+          "triggerLogRetentionDays",
           "eventsRetentionHours",
           "eventsMaxRows",
           "logMaxRows",
@@ -5958,6 +5973,16 @@
             "type": "number",
             "minimum": 0,
             "maximum": 8760
+          },
+          "triggersMaxPerHour": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "triggerLogRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500
           },
           "mediaRetentionDays": {
             "type": "integer",
@@ -19043,6 +19068,1043 @@
           "action",
           "target",
           "result"
+        ]
+      },
+      "EventPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StreamEvent"
+            },
+            "description": "Newest first."
+          },
+          "next": {
+            "type": "string",
+            "description": "Pass as `cursor` for older events."
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "StreamEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "`ch:<id>` (a chat event) or `app:<seq>`; sorts by time."
+          },
+          "at": {
+            "type": "integer",
+            "description": "Epoch ms."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "channel",
+              "app"
+            ]
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "sourceLabel": {
+            "type": "string",
+            "description": "The connection label, or `app`."
+          },
+          "type": {
+            "$ref": "#/components/schemas/StreamEventType"
+          },
+          "chat": {
+            "type": "object",
+            "properties": {
+              "nodeId": {
+                "type": "string"
+              },
+              "roomId": {
+                "type": "string"
+              },
+              "nativeId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "nodeId",
+              "nativeId",
+              "title"
+            ]
+          },
+          "actor": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "self": {
+                "type": "boolean"
+              }
+            }
+          },
+          "summary": {
+            "type": "string",
+            "description": "Who did what where. Never a message body."
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Flat facts the trigger filters read (`emoji`, `link`, `program`, `kind`, ...)."
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An app page about the event."
+          },
+          "agentCaused": {
+            "type": "boolean",
+            "description": "The agent itself caused it (its own message or admin action, a run a trigger started)."
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "source",
+          "sourceLabel",
+          "type",
+          "summary",
+          "fields",
+          "link",
+          "agentCaused"
+        ]
+      },
+      "StreamEventType": {
+        "type": "string",
+        "enum": [
+          "message.created",
+          "message.edited",
+          "message.deleted",
+          "reaction.added",
+          "reaction.removed",
+          "member.joined",
+          "member.left",
+          "member.updated",
+          "member.join_requested",
+          "member.join_request_resolved",
+          "node.created",
+          "node.updated",
+          "node.state_changed",
+          "node.migrated",
+          "action",
+          "alarm.raised",
+          "task.changed",
+          "program.changed",
+          "routine.fired",
+          "routine.changed",
+          "decision.changed",
+          "settings.changed",
+          "mode.changed",
+          "cache.reset",
+          "providers.changed",
+          "connectors.changed",
+          "agent.changed",
+          "heartbeat.changed"
+        ]
+      },
+      "EventCatalog": {
+        "type": "object",
+        "properties": {
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventTypeInfo"
+            }
+          },
+          "connections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "platform": {
+                  "type": "string"
+                },
+                "transport": {
+                  "type": "string",
+                  "enum": [
+                    "bot",
+                    "user"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "platform"
+              ]
+            }
+          }
+        },
+        "required": [
+          "types",
+          "connections"
+        ]
+      },
+      "EventTypeInfo": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/StreamEventType"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "channel",
+              "app"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "delivery": {
+            "type": "object",
+            "properties": {
+              "bot": {
+                "type": "string"
+              },
+              "account": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot",
+              "account"
+            ],
+            "description": "What a bot and a user account deliver of this type."
+          }
+        },
+        "required": [
+          "type",
+          "source",
+          "label",
+          "fields"
+        ]
+      },
+      "TriggerList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Trigger"
+            }
+          },
+          "executedLastHour": {
+            "type": "integer"
+          },
+          "hourlyCap": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "executedLastHour",
+          "hourlyCap"
+        ]
+      },
+      "Trigger": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StreamEventType"
+            }
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TriggerScope"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/TriggerFilters"
+          },
+          "action": {
+            "$ref": "#/components/schemas/TriggerAction"
+          },
+          "hasSecret": {
+            "type": "boolean",
+            "description": "A webhook secret is stored (it is never returned)."
+          },
+          "cooldownSec": {
+            "type": "integer"
+          },
+          "allowSelf": {
+            "type": "boolean"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "lastFiredAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fireCount": {
+            "type": "integer"
+          },
+          "errorCount": {
+            "type": "integer"
+          },
+          "filteredCount": {
+            "type": "integer",
+            "description": "Messages and reactions that did not match the filters since the server started (counted, not logged)."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "eventTypes",
+          "scope",
+          "filters",
+          "action",
+          "hasSecret",
+          "cooldownSec",
+          "allowSelf",
+          "createdBy",
+          "notes",
+          "createdAt",
+          "updatedAt",
+          "lastFiredAt",
+          "fireCount",
+          "errorCount",
+          "filteredCount"
+        ]
+      },
+      "TriggerScope": {
+        "type": "object",
+        "properties": {
+          "connectionIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "maxItems": 50,
+            "default": [],
+            "description": "Only these chat connections; empty = any. Applies to chat events only."
+          },
+          "chatIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "maxItems": 50,
+            "default": [],
+            "description": "Only these chats (internal node ids; a chat includes its topics); empty = any."
+          }
+        }
+      },
+      "TriggerFilters": {
+        "type": "object",
+        "properties": {
+          "actorRoles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "owner",
+                "admin",
+                "member",
+                "guest"
+              ]
+            },
+            "maxItems": 4,
+            "default": [],
+            "description": "The directory role of the person behind a chat event."
+          },
+          "actors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "maxItems": 50,
+            "default": [],
+            "description": "The person: a platform user id, `@username` or exact name."
+          },
+          "textContains": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "maxItems": 10,
+            "default": [],
+            "description": "Message events: the text has any of these words (ignoring case)."
+          },
+          "textRegex": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Message events: the text matches this expression (case-insensitive, at most 200 characters, no back references or nested repeats; the text is cut to 2000 characters)."
+          },
+          "emoji": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20
+            },
+            "maxItems": 20,
+            "default": [],
+            "description": "Reaction events: the emoji is one of these."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TriggerFieldFilter"
+            },
+            "maxItems": 10,
+            "default": [],
+            "description": "Facts of the event; all must match."
+          }
+        }
+      },
+      "TriggerFieldFilter": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "A fact of the event (`program`, `kind`, `link`, `state`, ...)."
+          },
+          "equals": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Exact match, ignoring case."
+          },
+          "contains": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Substring, ignoring case."
+          }
+        },
+        "required": [
+          "field"
+        ]
+      },
+      "TriggerAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "wake"
+                ]
+              },
+              "agentId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The agent to wake (id)."
+              },
+              "target": {
+                "type": "string",
+                "enum": [
+                  "chat",
+                  "thread",
+                  "triggers"
+                ],
+                "default": "triggers",
+                "description": "`chat`: the session of the chat the event happened in. `thread`: the agent's newest web chat. `triggers`: a web thread named \"Triggers\"."
+              },
+              "instruction": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "description": "What the agent should do about the event."
+              },
+              "includeText": {
+                "type": "boolean",
+                "description": "Give the agent a short preview of the message text (untrusted data). Default off."
+              }
+            },
+            "required": [
+              "kind",
+              "agentId",
+              "instruction"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "program"
+                ]
+              },
+              "programId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "programId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "notify"
+                ]
+              },
+              "dm": {
+                "type": "boolean",
+                "description": "Also message the owner in their direct chat."
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 120
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "webhook"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "description": "An https URL on a public host."
+              }
+            },
+            "required": [
+              "kind",
+              "url"
+            ]
+          }
+        ],
+        "description": "One of wake, program, notify, webhook."
+      },
+      "TriggerCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StreamEventType"
+            },
+            "minItems": 1,
+            "maxItems": 40
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "connectionIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "maxItems": 50,
+                "default": [],
+                "description": "Only these chat connections; empty = any. Applies to chat events only."
+              },
+              "chatIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "maxItems": 50,
+                "default": [],
+                "description": "Only these chats (internal node ids; a chat includes its topics); empty = any."
+              }
+            }
+          },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "actorRoles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "owner",
+                    "admin",
+                    "member",
+                    "guest"
+                  ]
+                },
+                "maxItems": 4,
+                "default": [],
+                "description": "The directory role of the person behind a chat event."
+              },
+              "actors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "maxItems": 50,
+                "default": [],
+                "description": "The person: a platform user id, `@username` or exact name."
+              },
+              "textContains": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "maxItems": 10,
+                "default": [],
+                "description": "Message events: the text has any of these words (ignoring case)."
+              },
+              "textRegex": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Message events: the text matches this expression (case-insensitive, at most 200 characters, no back references or nested repeats; the text is cut to 2000 characters)."
+              },
+              "emoji": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20
+                },
+                "maxItems": 20,
+                "default": [],
+                "description": "Reaction events: the emoji is one of these."
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TriggerFieldFilter"
+                },
+                "maxItems": 10,
+                "default": [],
+                "description": "Facts of the event; all must match."
+              }
+            }
+          },
+          "action": {
+            "$ref": "#/components/schemas/TriggerAction"
+          },
+          "webhookSecret": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 200,
+            "description": "Webhook only, write-only: signs each call (HMAC-SHA256). At least 16 characters."
+          },
+          "cooldownSec": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 604800,
+            "description": "After a firing the trigger waits this long before it can fire again. 0 = none."
+          },
+          "allowSelf": {
+            "type": "boolean",
+            "description": "Also fire on events the agent itself caused (default no: avoids loops)."
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "name",
+          "eventTypes",
+          "action"
+        ]
+      },
+      "TriggerPatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StreamEventType"
+            },
+            "minItems": 1,
+            "maxItems": 40
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "connectionIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "maxItems": 50,
+                "default": [],
+                "description": "Only these chat connections; empty = any. Applies to chat events only."
+              },
+              "chatIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "maxItems": 50,
+                "default": [],
+                "description": "Only these chats (internal node ids; a chat includes its topics); empty = any."
+              }
+            }
+          },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "actorRoles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "owner",
+                    "admin",
+                    "member",
+                    "guest"
+                  ]
+                },
+                "maxItems": 4,
+                "default": [],
+                "description": "The directory role of the person behind a chat event."
+              },
+              "actors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "maxItems": 50,
+                "default": [],
+                "description": "The person: a platform user id, `@username` or exact name."
+              },
+              "textContains": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "maxItems": 10,
+                "default": [],
+                "description": "Message events: the text has any of these words (ignoring case)."
+              },
+              "textRegex": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Message events: the text matches this expression (case-insensitive, at most 200 characters, no back references or nested repeats; the text is cut to 2000 characters)."
+              },
+              "emoji": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20
+                },
+                "maxItems": 20,
+                "default": [],
+                "description": "Reaction events: the emoji is one of these."
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TriggerFieldFilter"
+                },
+                "maxItems": 10,
+                "default": [],
+                "description": "Facts of the event; all must match."
+              }
+            }
+          },
+          "action": {
+            "$ref": "#/components/schemas/TriggerAction"
+          },
+          "webhookSecret": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 200,
+            "description": "Webhook only, write-only: signs each call (HMAC-SHA256). At least 16 characters."
+          },
+          "cooldownSec": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 604800,
+            "description": "After a firing the trigger waits this long before it can fire again. 0 = none."
+          },
+          "allowSelf": {
+            "type": "boolean",
+            "description": "Also fire on events the agent itself caused (default no: avoids loops)."
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        }
+      },
+      "TriggerFirePage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TriggerFire"
+            }
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "TriggerFire": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "triggerId": {
+            "type": "string"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "at": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "skipped",
+              "error"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `skipped`: cooldown, paused, filtered, loop, cap, busy, disabled. For `error`: a short code."
+          },
+          "actionKind": {
+            "type": "string",
+            "enum": [
+              "wake",
+              "program",
+              "notify",
+              "webhook"
+            ]
+          },
+          "durationMs": {
+            "type": "integer"
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Facts of the outcome: session, task, webhook status, the error. Never a message body."
+          }
+        },
+        "required": [
+          "id",
+          "triggerId",
+          "eventId",
+          "eventType",
+          "at",
+          "result",
+          "reason",
+          "actionKind",
+          "durationMs",
+          "detail"
+        ]
+      },
+      "TriggerDryRun": {
+        "type": "object",
+        "properties": {
+          "trigger": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          },
+          "event": {
+            "$ref": "#/components/schemas/StreamEvent"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "fire",
+              "skip",
+              "nomatch"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "wouldDo": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "trigger",
+          "event",
+          "verdict",
+          "summary",
+          "notes",
+          "problems",
+          "wouldDo"
+        ],
+        "description": "What the trigger would do with the event, without doing it. Nothing was sent, woken or run."
+      },
+      "TriggerTest": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A past event (`GET /events`)."
+          }
+        },
+        "required": [
+          "eventId"
         ]
       },
       "HealthFindingList": {
@@ -39545,6 +40607,841 @@
           },
           "401": {
             "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "The event stream",
+        "description": "One view over what happens: the events of the chat connections (messages, reactions, members, join requests, chat changes) and of the app (alarms, programs, tasks, settings). Newest first, cursor paged. Message bodies are never in it.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "channel",
+                "app"
+              ],
+              "description": "`channel` (chat platforms) or `app`."
+            },
+            "required": false,
+            "description": "`channel` (chat platforms) or `app`.",
+            "name": "source",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only this chat connection."
+            },
+            "required": false,
+            "description": "Only this chat connection.",
+            "name": "connectionId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000,
+              "description": "One or more event types, comma separated (`member.join_requested,member.joined`)."
+            },
+            "required": false,
+            "description": "One or more event types, comma separated (`member.join_requested,member.joined`).",
+            "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "A chat: its internal id, or part of its title."
+            },
+            "required": false,
+            "description": "A chat: its internal id, or part of its title.",
+            "name": "chat",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "A person: their platform user id, or part of a name or username."
+            },
+            "required": false,
+            "description": "A person: their platform user id, or part of a name or username.",
+            "name": "actor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "At or after this time (epoch ms)."
+            },
+            "required": false,
+            "description": "At or after this time (epoch ms).",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "At or before this time (epoch ms)."
+            },
+            "required": false,
+            "description": "At or before this time (epoch ms).",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "`next` of the previous page."
+            },
+            "required": false,
+            "description": "`next` of the previous page.",
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events/catalog": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Event types and what each platform delivers",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events/{id}": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "One event",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "ch:0198f0a2-0000-7000-8000-000000000000"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreamEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/triggers": {
+      "get": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "List triggers",
+        "description": "Event listeners: each one listens to event types in a scope with filters and does one thing (wake an agent, run a program, notify the owner, call a signed webhook).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Triggers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Create a trigger",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trigger"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Too many triggers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/triggers/{id}": {
+      "get": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "A trigger",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The trigger",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trigger"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown trigger",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Edit a trigger",
+        "description": "Any field; `webhookSecret` replaces the stored secret. Changing the action away from a webhook forgets the secret.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The trigger",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trigger"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown trigger",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Delete a trigger and its firing log",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown trigger",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/triggers/{id}/fires": {
+      "get": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "The firing log of a trigger",
+        "description": "Every firing: the event, the action, the result (`ok`, `skipped` with a reason, `error`), how long it took and the facts of the outcome.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "skipped",
+                "error"
+              ]
+            },
+            "required": false,
+            "name": "result",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Firings, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerFirePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown trigger",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trigger-fires": {
+      "get": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "The firing log of every trigger",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "skipped",
+                "error"
+              ]
+            },
+            "required": false,
+            "name": "result",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Firings, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerFirePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/triggers/{id}/test": {
+      "post": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Dry run against a past event",
+        "description": "Shows what the trigger would do with the event (the match, the gates as they are now, the text or body it would send) and does nothing: no agent is woken, no program runs, no request is sent.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerTest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The dry run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerDryRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown trigger or event",
             "content": {
               "application/json": {
                 "schema": {

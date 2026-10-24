@@ -239,6 +239,19 @@ export interface GatewayDeps {
    * heartbeat may beat early because of it (debounced there). Never awaited, errors are ignored.
    */
   onObserved?: (event: { connectionId: string; nodeId: string; at: number }) => void
+  /**
+   * A platform event that was new (not a replay of one stored before) and was handled: the event
+   * as the adapter delivered it (message text is in memory only, the log never holds it), the id
+   * of its row in the log, and what the gateway did with it. The triggers listen here. Called
+   * synchronously, never awaited; a throw is logged and ignored.
+   */
+  onEvent?: (info: {
+    connectionId: string
+    event: RemoteEvent
+    eventId: string
+    nodeId: string | null
+    result: HandleResult
+  }) => void
   /** Where `chat_recap_save` writes its note (the library). Absent = the tool cannot save. */
   library?: { write(path: string, text: string): Promise<void> }
   /** Period of the maintenance pass: approvals that expired, proactive posts that are due (default 60 s; 0 = off, tests call the methods). */

@@ -84,3 +84,13 @@ Refusals that happen before the action runs (role policy, owner only) are record
    and for anybody but an owner; `transfer_ownership` explains the Telegram app steps.
 8. **Audit**: open the Activity page, filter Action, check the requester, role, target and result of
    what you just did.
+
+## Events the account delivers
+
+When the account administers a chat, Telegram tells it who joined, left or was promoted, and which join
+requests are pending. The adapter turns these into `member.joined` / `member.left` / `member.updated` (with who
+made the change) and `member.join_requested` events, and saves each request in `ch_join_requests`.
+`list_join_requests` reads Telegram first and keeps the saved list in step; when Telegram cannot be asked it
+answers from the saved list and says so. `answer_join_request` resolves the saved requests and emits
+`member.join_request_resolved`. Reactions of other people are not delivered to a user account. See
+[events-and-triggers.md](events-and-triggers.md).

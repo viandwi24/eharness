@@ -13,6 +13,12 @@ import { Bot, GrammyError, HttpError, InputFile } from 'grammy'
 import type { Update } from 'grammy/types'
 import { z } from 'zod'
 import { reportFailure } from '../channels/governor.ts'
+import {
+  createJoinRequestStore,
+  type JoinRequest,
+  type JoinRequestStore,
+  type JoinResolution,
+} from '../channels/join-requests.ts'
 import { plainMentions } from '../channels/mentions.ts'
 import {
   type ChannelAdapter,
@@ -27,7 +33,7 @@ import {
   type OutboundMessage,
   type SentMessage,
 } from '../channels/types.ts'
-import { botActions, createJoinRequestStore, type JoinRequestStore } from './actions.ts'
+import { botActions } from './actions.ts'
 import { htmlChunks, toTelegramHtml } from './format.ts'
 import {
   chatNode,
@@ -168,6 +174,11 @@ export interface TelegramAdapterOptions {
   pollTimeoutSec?: number
   /** Longest flood wait auto-retry waits for itself (seconds, default 5); longer ones go to the outbox. */
   maxRetryDelaySec?: number
+  /**
+   * Where pending join requests are kept (default: memory). The app passes the durable store, so a
+   * restart loses none and `join_requests` reads what the events announced.
+   */
+  joinRequests?: JoinRequestStore
   hooks?: {
     /** The runner stopped on its own (bad token, another poller, ...). */
     onFailure?(failure: TelegramFailure): void
@@ -215,7 +226,29 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
   )
   const doFetch = options.fetch ?? fetch
   let botInfo: TelegramBotInfo | undefined
-  const joinRequests = createJoinRequestStore()
+  const joinRequests = options.joinRequests ?? createJoinRequestStore()
+  let currentSink: EventSink | undefined
+  /** A join request this bot answered: the gateway hears it as `member.join_request_resolved`. */
+  const joinResolved = (r: JoinRequest, resolution: JoinResolution): void => {
+    const sinkNow = currentSink
+    if (sinkNow === undefined) return
+    const room = chatNode({ id: Number(r.chatId), type: 'supergroup', title: r.chatTitle })
+    void sinkNow({
+      type: 'member.join_request_resolved',
+      dedupeKey: `tg:jr-resolved:${r.chatId}:${r.userId}:${r.at}:${resolution}`,
+      at: Date.now(),
+      node: { nativeId: room.nativeId, chain: [room] },
+      actor: {
+        id: r.userId,
+        name: r.name,
+        ...(r.username === undefined ? {} : { username: r.username }),
+      },
+      resolution,
+      bySelf: true,
+    }).catch((error: unknown) =>
+      warn(`telegram ${options.connectionId}: join request event failed: ${String(error)}`),
+    )
+  }
   let handle: ReturnType<typeof run> | undefined
   let stopping = false
   const sent = new Map<string, SentMessage>()
@@ -495,6 +528,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
     },
     async start(sink: EventSink) {
       stopping = false
+      currentSink = sink
       const { bot: me, webhookUrl } = await probe()
       void me
       if (webhookUrl !== undefined) {
@@ -527,6 +561,42 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
             ...(join.invite_link === undefined ? {} : { link: join.invite_link.invite_link }),
             at: join.date * 1000,
           })
+        }
+        // somebody else approved the request in the app: the person is a member now
+        const member = (ctx.update as Update).chat_member
+        if (member !== undefined) {
+          const st = member.new_chat_member.status
+          const pending = joinRequests.get(
+            String(member.chat.id),
+            String(member.new_chat_member.user.id),
+          )
+          if (
+            pending !== undefined &&
+            (st === 'member' || st === 'administrator' || st === 'creator')
+          ) {
+            const r = joinRequests.resolve(
+              pending.chatId,
+              pending.userId,
+              'approved',
+              'another admin',
+            )
+            if (r !== undefined && currentSink !== undefined) {
+              const room = chatNode(member.chat)
+              await currentSink({
+                type: 'member.join_request_resolved',
+                dedupeKey: `tg:jr-resolved:${r.chatId}:${r.userId}:${r.at}:approved`,
+                at: member.date * 1000,
+                node: { nativeId: room.nativeId, chain: [room] },
+                actor: {
+                  id: r.userId,
+                  name: r.name,
+                  ...(r.username === undefined ? {} : { username: r.username }),
+                },
+                resolution: 'approved',
+                bySelf: false,
+              })
+            }
+          }
         }
         const normalized = normalizeUpdate(ctx.update as Update, normalizeContext())
         if (normalized.callbackId !== undefined) {
@@ -657,7 +727,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
       meta: { chatId: identityNativeId },
     }),
     childNativeId: (parent, key) => `${parent.nativeId}/${key}`,
-    actions: nativeActions(bot, token, joinRequests),
+    actions: nativeActions(bot, token, joinRequests, joinResolved),
   }
   return adapter
 }
@@ -672,6 +742,7 @@ export function nativeActions(
   bot: Bot,
   token: string,
   joinRequests: JoinRequestStore = createJoinRequestStore(),
+  resolved?: (request: JoinRequest, resolution: JoinResolution) => void,
 ): NativeAction[] {
-  return botActions({ bot, token, joinRequests })
+  return botActions({ bot, token, joinRequests, ...(resolved === undefined ? {} : { resolved }) })
 }

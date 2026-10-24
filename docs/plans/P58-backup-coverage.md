@@ -84,6 +84,9 @@ bookkeeping tables).
 | Table | Feature | Why |
 |---|---|---|
 | `ch_events` | Channel event log | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
+| `ch_join_requests` | Join requests of chats that need approval | a list of who asked to join and how it ended; the platform keeps the live pending list |
+| `triggers` | Triggers (event listeners) and their sealed webhook secrets | bound to connection, chat and program ids and sealed with TEAM_SECRET_KEY; restore with the whole database |
+| `trigger_fires` | Firing log of the triggers | a log of what each trigger did |
 | `ch_message_revisions` | Edits of channel messages | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
 | `ch_messages` | Channel message log | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
 | `ch_reactions` | Reactions in channels | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |

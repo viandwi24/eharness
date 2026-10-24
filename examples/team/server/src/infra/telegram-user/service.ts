@@ -28,6 +28,7 @@ import type { Collector } from '../../domain/collectors.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import { localTime } from '../channels/header.ts'
 import type { ChannelGateway } from '../channels/index.ts'
+import { sqliteJoinRequestStore } from '../channels/join-requests.ts'
 import { listNodeViews, nodeView, pageNodeViews, writePolicy } from '../channels/node-views.ts'
 import { type ConnectionConfig, RateLimitsSchema, type ScopePolicy } from '../channels/policy.ts'
 import { createTelegramUserAdapter, type TelegramUserAdapter, type UserFatal } from './adapter.ts'
@@ -481,6 +482,8 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         chats,
         counters,
         settings: () => settings.get(id),
+        // pending join requests survive a restart (`ch_join_requests`)
+        joinRequests: sqliteJoinRequestStore(options.sqlite, id),
         blocked: () => e.blocked,
         ...(options.now === undefined ? {} : { now: options.now }),
         ...(options.jobs?.random === undefined ? {} : { random: options.jobs.random }),

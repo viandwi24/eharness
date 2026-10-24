@@ -42,6 +42,7 @@ import { CODE_LIST_PATH, type CodeRuntime } from '../code/index.ts'
 import { remoteSandboxConnector } from '../code/remote.ts'
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
+import { EVENTS_RECENT_TOOL, TRIGGERS_TOOL } from '../triggers/plugin.ts'
 import { DECISION_TOOLS, PROGRAM_NOTE_TOOL } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs, TOOL_MEDIA_DIR } from './library-fs.ts'
 import { PERSONA_TOOLS } from './persona-plugin.ts'
@@ -100,6 +101,9 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       ...CHANNEL_OWN_WRITE_TOOLS,
       // an ongoing instruction kept as a line of the agent's own memory file; roles decide who (in code)
       STANDING_ORDER_TOOL,
+      // the event stream and the triggers: the role of the person who asked decides, in code (owner and admins)
+      EVENTS_RECENT_TOOL,
+      TRIGGERS_TOOL,
       // the persona tool decides in code who may do what; apply and revert always ask the person
       ...PERSONA_TOOLS,
     ],

@@ -20,6 +20,7 @@ import type {
 } from '../../domain/channels.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { ChannelGateway } from '../channels/index.ts'
+import { sqliteJoinRequestStore } from '../channels/join-requests.ts'
 import {
   countChats,
   listNodeViews,
@@ -208,6 +209,8 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       ...(options.pollTimeoutSec === undefined ? {} : { pollTimeoutSec: options.pollTimeoutSec }),
       onWebhook,
+      // pending join requests survive a restart (`ch_join_requests`)
+      joinRequests: sqliteJoinRequestStore(options.sqlite, id),
       hooks: {
         onFailure: (failure) =>
           void failed(id, failure).catch((error) => report('failure-handler', error)),

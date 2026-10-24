@@ -23,6 +23,7 @@
  */
 import { z } from 'zod'
 import { localTime } from '../channels/header.ts'
+import type { JoinRequestStore, JoinResolution } from '../channels/join-requests.ts'
 import { neutralizeHandles } from '../channels/mentions.ts'
 import type { NativeAction } from '../channels/types.ts'
 import { ADMIN_EVENT_KINDS, type AdminLogQuery } from './adminlog.ts'
@@ -52,6 +53,19 @@ export interface AccountActionDeps {
   sleep?(ms: number): Promise<void>
   /** A library file (image for a chat photo, album files); undefined = no such file. */
   readFile?(path: string): Promise<{ bytes: Uint8Array; mediaType: string } | undefined>
+  /** Pending join requests (durable); absent = only Telegram's own list is read. */
+  joinRequests?: JoinRequestStore
+  /**
+   * Join requests were answered by a tool: `users` names them (`undefined` = every pending request
+   * of the chat, narrowed to `link` when given). The adapter resolves the stored ones and tells
+   * the gateway (`member.join_request_resolved`).
+   */
+  joinAnswered?(answer: {
+    chatId: string
+    resolution: JoinResolution
+    users?: string[]
+    link?: string
+  }): void
   hooks: {
     dialogsSeen?(list: TgChat[]): void
     chooseChat?(chatId: string, days: number): Promise<string>

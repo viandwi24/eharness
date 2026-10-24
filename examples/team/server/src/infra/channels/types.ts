@@ -192,7 +192,28 @@ export type RemoteEvent =
   | (EventBase & { type: 'node.state_changed'; state: NodeState; reason?: string })
   /** The chat got a new id (a basic group became a supergroup): `node` is the new one. */
   | (EventBase & { type: 'node.migrated'; from: string })
-  | (EventBase & { type: 'member.joined' | 'member.left' | 'member.updated'; role?: MemberRole })
+  | (EventBase & {
+      type: 'member.joined' | 'member.left' | 'member.updated'
+      role?: MemberRole
+      /** Who made the change, when the platform says (an administrator, or the member themself). */
+      by?: Identity
+    })
+  /**
+   * Somebody asks to join a chat that needs approval; `actor` is the applicant. Facts only: the
+   * invite link used, whether the platform showed a bio (the text lives in the join request store),
+   * and how many requests the chat has pending when the platform says it.
+   */
+  | (EventBase & {
+      type: 'member.join_requested'
+      request: { link?: string; hasBio?: boolean; pending?: number }
+    })
+  /** A join request was answered (by this connection's own tool, or seen on the platform); `actor` is the applicant. */
+  | (EventBase & {
+      type: 'member.join_request_resolved'
+      resolution: 'approved' | 'declined'
+      /** The answer came from this connection (an agent's tool or the app), not from another admin. */
+      bySelf: boolean
+    })
   | (EventBase & {
       /** A button press or slash action: treated like an addressed message. */
       type: 'action'

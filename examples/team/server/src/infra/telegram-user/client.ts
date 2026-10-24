@@ -265,10 +265,51 @@ export interface TgSentCode {
   timeoutSec?: number
 }
 
+/** What happened to a member of a chat the account administers (Telegram tells administrators only). */
+export interface TgMemberUpdate {
+  chat: { id: string; kind: TgChatKind; title: string; forum: boolean; username?: string }
+  /** The member whose status changed. */
+  user: TgUser
+  /** Who did it (an administrator, or the member). */
+  actor?: TgUser
+  type:
+    | 'joined'
+    | 'added'
+    | 'left'
+    | 'kicked'
+    | 'unkicked'
+    | 'restricted'
+    | 'unrestricted'
+    | 'promoted'
+    | 'demoted'
+    | 'owner_changed'
+    | 'other'
+  /** The member's status after the change. */
+  status: TgMemberStatus
+  /** The invite link used to join, when there was one. */
+  link?: string
+  /** Epoch ms. */
+  at: number
+}
+
+/** The pending join requests of a chat the account administers changed (who recently asked, and the total). */
+export interface TgJoinRequestsUpdate {
+  chat: { id: string; kind: TgChatKind; title: string; forum: boolean; username?: string }
+  users: TgUser[]
+  /** Pending requests the chat has now. */
+  total: number
+  /** Epoch ms (the update carries no date: the time it arrived). */
+  at: number
+}
+
 export interface TgUpdateHandlers {
   message(message: TgMessage): void
   edit(message: TgMessage): void
   delete(deletion: TgDelete): void
+  /** Optional: a member joined, left, or was promoted, demoted, restricted (administrators only). */
+  member?(update: TgMemberUpdate): void
+  /** Optional: join requests are pending in a chat the account administers. */
+  joinRequests?(update: TgJoinRequestsUpdate): void
   /** The connection to Telegram failed in a way the client cannot recover from itself. */
   error(error: unknown): void
 }

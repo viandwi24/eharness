@@ -488,6 +488,7 @@ export function programRuns(deps: Deps, id: string, limit = 50): Task[] {
 export async function runProgramNow(
   deps: Deps,
   id: string,
+  options: { eventNote?: string } = {},
 ): Promise<{ sessionId: string | null; taskId: string | null; started: boolean; idle: boolean }> {
   const program = getProgram(deps, id)
   const agent = getAgent(deps, program.agentId)
@@ -500,7 +501,10 @@ export async function runProgramNow(
       sessionId: active.sessionId,
     })
   }
-  const started = await deps.programRunner.start(program, { runAt: deps.clock.now() })
+  const started = await deps.programRunner.start(program, {
+    runAt: deps.clock.now(),
+    ...(options.eventNote === undefined ? {} : { eventNote: options.eventNote }),
+  })
   if (started.idle === true) return { sessionId: null, taskId: null, started: false, idle: true }
   return {
     sessionId: started.sessionId,
