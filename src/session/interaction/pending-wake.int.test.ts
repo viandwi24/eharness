@@ -25,7 +25,7 @@ function shared() {
 }
 function instance(
   storage: ReturnType<typeof shared>,
-  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
 ) {
   return defineHarnessAgent({
     contextWindow: 100_000,

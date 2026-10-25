@@ -13,7 +13,9 @@ import { spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
-function setup(config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>) {
+function setup(
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
+) {
   const messages = spyMessages()
   const agent = defineHarnessAgent({
     contextWindow: 100_000,

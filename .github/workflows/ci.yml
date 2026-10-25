@@ -87,7 +87,9 @@ jobs:
         run: bun add --no-save ${{ matrix.packages }}
       # the library only: the examples pin their own versions (the team example uses zod 4 APIs)
       - run: bunx tsc --noEmit
-      - run: bun test src
+      # `./src`, not `src`: a bare word is a name filter and also picks examples/team/web/src tests,
+      # whose dependencies this job does not install
+      - run: bun test ./src
 
   # The team example's own checks that `bun test` at the root does not cover: the web tests run
   # standalone (as a developer runs them) and the two real-process scripts (SIGKILL / restart and

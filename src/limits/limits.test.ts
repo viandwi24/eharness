@@ -8,7 +8,9 @@ import { budgetNotice, defaultBudgetText, stepBudget, trackRefusals } from './in
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
-function agentWith(config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>) {
+function agentWith(
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
+) {
   return defineHarnessAgent({
     contextWindow: 100_000,
     storage: { messages: inMemoryMessages(), state: inMemoryState() },

@@ -34,7 +34,12 @@ export function emptyStreamResponse(): Response {
 }
 
 class HarnessChatTransport<UI extends UIMessage> extends DefaultChatTransport<UI> {
-  readonly resumeStreamIsReplay = true
+  constructor(options: ConstructorParameters<typeof DefaultChatTransport<UI>>[0]) {
+    super(options)
+    // Set after `super`, not as a field: newer `ai` versions declare this member on the base class
+    // (a field here would need `override` there and is not allowed with older versions).
+    Object.defineProperty(this, 'resumeStreamIsReplay', { value: true, enumerable: true })
+  }
 }
 
 /**

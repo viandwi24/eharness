@@ -28,7 +28,7 @@ const storage = (): Shared => ({ messages: spyMessages(), state: spyState() })
 
 function instance(
   shared: Shared,
-  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
 ) {
   const warnings: HarnessWarning[] = []
   const agent = defineHarnessAgent({

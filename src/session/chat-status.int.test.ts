@@ -15,7 +15,7 @@ function shared() {
 
 function agentOn(
   storage: ReturnType<typeof shared>,
-  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
 ) {
   return defineHarnessAgent({ contextWindow: 100_000, storage, logger: silent, ...config })
 }

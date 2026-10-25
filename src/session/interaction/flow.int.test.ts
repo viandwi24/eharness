@@ -18,7 +18,7 @@ const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 function setup(
-  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
   storage: { messages?: ReturnType<typeof spyMessages>; state?: StateAdapter } = {},
 ) {
   const messages = storage.messages ?? spyMessages()

@@ -54,7 +54,9 @@ class TestChat extends AbstractChat<UIMessage> {
   }
 }
 
-function setup(config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>) {
+function setup(
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
+) {
   const messages = spyMessages()
   const state = spyState()
   const agent = defineHarnessAgent({

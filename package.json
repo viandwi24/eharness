@@ -43,7 +43,7 @@
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p examples && tsc --noEmit -p examples/coder && tsc --noEmit -p examples/team/server && tsc --noEmit -p examples/sandbox-server && bun run --cwd examples/team/web check",
     "test": "bun test",
-    "test:fast": "bun test src --path-ignore-patterns '**/*.int.test.ts' --path-ignore-patterns 'src/shell/**'",
+    "test:fast": "bun test ./src --path-ignore-patterns '**/*.int.test.ts' --path-ignore-patterns 'src/shell/**'",
     "test:int": "bun test .int.test.ts --path-ignore-patterns 'examples/**'",
     "build": "tsdown",
     "check:package": "bun scripts/check-client-bundle.ts && bun scripts/exports-snapshot.ts --dist && publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz",

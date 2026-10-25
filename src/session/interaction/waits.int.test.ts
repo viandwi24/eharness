@@ -37,7 +37,7 @@ function storage(options: { inbox?: boolean } = {}): Storage {
 /** One agent instance on shared storage. */
 function instance(
   shared: Storage,
-  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
 ) {
   const warnings: HarnessWarning[] = []
   const agent = defineHarnessAgent({

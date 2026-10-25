@@ -22,6 +22,8 @@ type Json = Record<string, any>
 const hasPython = Bun.which('python3') !== null
 const TOKEN = 'remote-sandbox-token-1'
 let sandbox: RunningServer
+/** Whether the sandbox separates sessions (an OS sandbox or per-session users): the host decides. */
+let isolated = false
 const dirs: string[] = []
 const servers: Server[] = []
 
@@ -36,6 +38,11 @@ beforeAll(async () => {
       // `ulimit -u` counts every process of the user: on macOS the default is exceeded at once
       limits: { processes: 1_000_000 },
     })
+    // a Linux runner without working bubblewrap (user namespaces off) reports `isolated: false`
+    const info = (await (
+      await fetch(`${sandbox.url}/v1/info`, { headers: { authorization: `Bearer ${TOKEN}` } })
+    ).json()) as { isolation?: { isolated?: boolean } }
+    isolated = info.isolation?.isolated === true
   }
 })
 afterAll(async () => {
@@ -157,9 +164,15 @@ describe.skipIf(!hasPython)('Remote sandbox connector', () => {
     expect(res.status).toBe(200)
     await res.text()
 
-    expect(ranText).toContain('Exit code 0')
     const fs = libraryFs(server.conn.sqlite)
-    expect((await fs.read('/library/work/remote.md'))?.content).toBe('ran remotely')
+    if (isolated) {
+      expect(ranText).toContain('Exit code 0')
+      expect((await fs.read('/library/work/remote.md'))?.content).toBe('ran remotely')
+    } else {
+      // the team requires isolation: a sandbox that does not separate sessions runs nothing
+      expect(ranText).toContain('running code needs an isolated sandbox')
+      expect((await fs.read('/library/work/remote.md'))?.content).toBeUndefined()
+    }
     // one run_python although both Files & Sandbox `run` and Remote sandbox `run` are on
     expect(toolCounts[0]).toBe(1)
     // it ran on the sandbox server: the local scratch directory was never created

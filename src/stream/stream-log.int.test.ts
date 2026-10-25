@@ -29,7 +29,9 @@ function world(streams: StreamLogAdapter = inMemoryStreamLog()) {
   const messages = defaultMemoryMessages()
   const state = defaultMemoryState()
   const warnings: HarnessWarning[] = []
-  const make = (config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>) =>
+  const make = (
+    config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
+  ) =>
     defineHarnessAgent({
       contextWindow: 100_000,
       storage: { messages, state, streams },

@@ -55,7 +55,7 @@ type Storage = ReturnType<typeof sharedStorage>
 
 function instance(
   storage: Storage,
-  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
 ) {
   const warnings: HarnessWarning[] = []
   const agent = defineHarnessAgent({

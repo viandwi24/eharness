@@ -37,7 +37,7 @@ function summarizer(text: string) {
 }
 
 function setup(
-  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
   storage: NonNullable<HarnessAgentConfig['storage']> = {
     messages: inMemoryMessages(),
     state: inMemoryState(),

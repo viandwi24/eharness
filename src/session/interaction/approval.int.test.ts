@@ -40,7 +40,7 @@ function payTool(log: string[] = [], delayMs = 0) {
 }
 
 function setup(
-  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  config: Omit<Partial<HarnessAgentConfig>, 'model'> & Pick<HarnessAgentConfig, 'model'>,
   storage: { messages?: ReturnType<typeof spyMessages>; state?: StateAdapter } = {},
 ) {
   const messages = storage.messages ?? spyMessages()
