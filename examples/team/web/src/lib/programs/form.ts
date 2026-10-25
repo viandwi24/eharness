@@ -290,6 +290,17 @@ export function programBadge(p: Pick<Program, 'status' | 'triggerState'>): Progr
 	return { label: 'active', variant: 'success' };
 }
 
+/**
+ * Whether the program offers Resume rather than Pause: it is paused itself, or its schedule paused
+ * itself (too many failed runs, a run that could not start). Resume starts the schedule again from
+ * now; a finished one-shot schedule is not resumed.
+ */
+export function offersResume(p: Pick<Program, 'status' | 'triggerState'>): boolean {
+	if (p.status === 'paused') return true;
+	const t = p.triggerState;
+	return t?.status === 'paused' && (t.pausedReason === 'max-failures' || t.pausedReason === 'unrunnable');
+}
+
 /** What a run's report says in one word, for the run history. */
 export const REPORT_LABELS: Record<NonNullable<components['schemas']['Task']['report']>['status'], { label: string; variant: 'success' | 'warning' | 'destructive' | 'info' }> = {
 	done: { label: 'done', variant: 'success' },

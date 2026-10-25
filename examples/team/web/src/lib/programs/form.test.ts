@@ -10,6 +10,7 @@ import {
 	emptyProgramForm,
 	formFromProgram,
 	parseUsd,
+	offersResume,
 	programBadge,
 	splitLines,
 	deliverableFromRow,
@@ -121,6 +122,16 @@ describe('program form', () => {
 		const stopped = { ...program, triggerState: { ...program.triggerState!, status: 'paused' as const, pausedReason: 'max-failures' as const } };
 		expect(programBadge(stopped)).toEqual({ label: 'paused: too many failures', variant: 'destructive' });
 		expect(programBadge({ ...program, triggerState: null }).label).toBe('active');
+	});
+
+	test('Resume is offered when the program or its schedule stopped itself, not for a finished schedule', () => {
+		const paused = (pausedReason: 'max-failures' | 'unrunnable' | 'ended') => ({ ...program, triggerState: { ...program.triggerState!, status: 'paused' as const, pausedReason } });
+		expect(offersResume(program)).toBe(false);
+		expect(offersResume({ ...program, status: 'paused' })).toBe(true);
+		expect(offersResume(paused('max-failures'))).toBe(true);
+		expect(offersResume(paused('unrunnable'))).toBe(true);
+		expect(offersResume(paused('ended'))).toBe(false);
+		expect(offersResume({ ...program, triggerState: null })).toBe(false);
 	});
 
 	test('summaries', () => {

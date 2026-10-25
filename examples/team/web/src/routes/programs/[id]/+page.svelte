@@ -15,7 +15,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
-	import { authoritySummary, budgetSummary, programBadge, type Program } from '#lib/programs/form.js';
+	import { authoritySummary, budgetSummary, offersResume, programBadge, type Program } from '#lib/programs/form.js';
 	import { programAction } from '#lib/programs/actions.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openEditProgram } from '#lib/stores/dialogs.svelte.js';
@@ -73,10 +73,10 @@
 					{#if badge}<Badge variant={badge.variant}>{badge.label}</Badge>{/if}
 					<span class="text-muted-foreground">{agent?.name ?? 'Unknown agent'}</span>
 					<span class="flex-1"></span>
-					{#if program.status === 'active'}
-						<Button size="sm" variant="ghost" onclick={() => program && void programAction(program, 'pause')}><PauseIcon class="size-4" /> Pause</Button>
+					{#if offersResume(program)}
+						<Button size="sm" variant="ghost" onclick={() => program && void programAction(program, 'resume')}><PlayIcon class="size-4" /> Resume</Button>
 					{:else}
-						<Button size="sm" variant="ghost" onclick={() => program && void programAction(program, 'resume')}><PlayIcon class="size-4" /> Activate</Button>
+						<Button size="sm" variant="ghost" onclick={() => program && void programAction(program, 'pause')}><PauseIcon class="size-4" /> Pause</Button>
 					{/if}
 				</div>
 				<p class="line-clamp-3 whitespace-pre-wrap">{program.brief}</p>

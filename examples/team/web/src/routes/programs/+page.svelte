@@ -20,7 +20,7 @@
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
-	import { authoritySummary, budgetSummary, lastStatusText, programBadge, type Program } from '#lib/programs/form.js';
+	import { authoritySummary, budgetSummary, lastStatusText, offersResume, programBadge, type Program } from '#lib/programs/form.js';
 	import { programAction } from '#lib/programs/actions.js';
 	import { describeSpec, relativeTime } from '#lib/routines/schedule.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -155,10 +155,10 @@
 									<Table.Cell>
 										<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 										<div class="flex flex-wrap items-center justify-end gap-x-0.5 gap-y-1 max-sm:max-w-28" onclick={(e) => e.stopPropagation()}>
-											{#if p.status === 'active'}
-												{@render iconAction('Pause', busy === p.id, () => void act(p, 'pause'), PauseIcon)}
-											{:else}
+											{#if offersResume(p)}
 												{@render iconAction('Resume', busy === p.id, () => void act(p, 'resume'), PlayIcon)}
+											{:else}
+												{@render iconAction('Pause', busy === p.id, () => void act(p, 'pause'), PauseIcon)}
 											{/if}
 											{@render iconAction('Run now', busy === p.id, () => void act(p, 'run'), LightningIcon)}
 											<Button size="xs" variant="ghost" onclick={() => openEditProgram(p.id)}>Edit</Button>
