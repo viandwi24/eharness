@@ -49,8 +49,8 @@ A group or channel invite link created with `requires_approval` makes people ask
 `chat_join_request` (in `ALLOWED_UPDATES`), saves the request in `ch_join_requests` (so a restart loses nothing;
 7 days, 500 at most) and sends the gateway a **`member.join_requested`** event with the applicant as actor (the
 invite link used and whether a bio was shown; the bio text stays in the saved request, never in the event log).
-The gateway does not wake the agent for it by itself: a [trigger](events-and-triggers.md) can (wake an agent, run
-a program, notify the owner, call a webhook), or the agent (or an owner asking it) reads
+The gateway does not wake the agent for it by itself: the request shows on the channel's
+[Events](events.md) page, and the agent (or an owner asking it) reads
 `telegram_join_requests list` and answers `approve` or `decline` per the owner's rules. An answer made with the
 tool becomes `member.join_request_resolved`; an approval by another admin in the Telegram app is seen as the
 person joining and resolves the saved request too. Requests made while the bot was not connected are not listed;

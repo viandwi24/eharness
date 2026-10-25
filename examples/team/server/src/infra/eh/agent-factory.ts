@@ -126,7 +126,7 @@ import { nativeToolName } from '../channels/policy.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
-import { eventsTriggers } from '../triggers/plugin.ts'
+import { eventsRecent } from '../events/plugin.ts'
 import type { ActivityLog } from './activity-log.ts'
 import { capText } from './budget-cap-text.ts'
 import { chatTools } from './chat-tools-plugin.ts'
@@ -291,7 +291,7 @@ export interface AgentFactoryDeps {
    * with `sessions_search` / `session_read`, `canReadForHeartbeat`). Absent = none.
    */
   sessionRefs?: (agentId: string) => readonly string[]
-  /** The app deps (late-bound): the `events_recent` and `triggers` tools read and change the app through them. */
+  /** The app deps (late-bound): the `events_recent` tool reads the event stream through them. */
   app?: () => Deps | undefined
   /** The work queue intake (`work-queue-plugin.ts`): `create_task`, `list_tasks`, `update_task`, `complete_task`. */
   workQueue?: () => WorkQueueIntake | undefined
@@ -1268,11 +1268,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               now: () => Date.now(),
             }),
           ]),
-      // `events_recent` and `triggers` of a person's own chat (owner and admins only, checked in code)
+      // `events_recent` of a person's own chat (owner and admins only, checked in code)
       ...(deps.channels === undefined || deps.app === undefined
         ? []
         : [
-            eventsTriggers({
+            eventsRecent({
               gateway: deps.channels,
               agentOf: (slug) => deps.agentBySlug?.(slug),
               app: deps.app,

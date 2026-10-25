@@ -93,4 +93,4 @@ made the change) and `member.join_requested` events, and saves each request in `
 `list_join_requests` reads Telegram first and keeps the saved list in step; when Telegram cannot be asked it
 answers from the saved list and says so. `answer_join_request` resolves the saved requests and emits
 `member.join_request_resolved`. Reactions of other people are not delivered to a user account. See
-[events-and-triggers.md](events-and-triggers.md).
+[events.md](events.md).

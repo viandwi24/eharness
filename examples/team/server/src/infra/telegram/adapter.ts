@@ -34,6 +34,7 @@ import {
   type SentMessage,
 } from '../channels/types.ts'
 import { botActions } from './actions.ts'
+import { TELEGRAM_BOT_EVENTS } from './events.ts'
 import { htmlChunks, toTelegramHtml } from './format.ts'
 import {
   chatNode,
@@ -728,6 +729,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
     }),
     childNativeId: (parent, key) => `${parent.nativeId}/${key}`,
     actions: nativeActions(bot, token, joinRequests, joinResolved),
+    events: TELEGRAM_BOT_EVENTS,
   }
   return adapter
 }

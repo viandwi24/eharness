@@ -81,10 +81,6 @@ export interface WorkspaceSettings {
    * `/library/knowledge`, ...). Changing it moves no file.
    */
   companyRoot: string | null
-  /** Most trigger firings (actions that ran) in one hour across all triggers; 0 = no cap. */
-  triggersMaxPerHour: number
-  /** Days the firing log of the triggers is kept; 0 = keep. */
-  triggerLogRetentionDays: number
   /** Events feed: hours kept (0 = by count only). */
   eventsRetentionHours: number
   /** Events feed: rows kept. */
@@ -133,8 +129,6 @@ export const SETTINGS_BUILTIN = {
   teamName: null,
   worksRoot: WORKS_ROOT_DEFAULT,
   companyRoot: null,
-  triggersMaxPerHour: 60,
-  triggerLogRetentionDays: 30,
   eventsRetentionHours: 72,
   eventsMaxRows: 100_000,
   logMaxRows: 5000,
@@ -226,6 +220,12 @@ export function settingsFromEnv(env: Env): Partial<WorkspaceSettings> {
   set('libraryHistoryRetentionDays', atLeast(num('TEAM_LIBRARY_HISTORY_RETENTION_DAYS'), 0))
   return out
 }
+
+/**
+ * Settings that no longer exist (the triggers were removed): a stored row may still hold them, so
+ * they are dropped when read and gone after the next save.
+ */
+export const RETIRED_SETTINGS: readonly string[] = ['triggersMaxPerHour', 'triggerLogRetentionDays']
 
 /** The effective initial settings: built-in, then the environment, then explicit `overrides`. */
 export function settingsDefaults(
@@ -359,8 +359,6 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
   numIn('longRunMaxHours', patch.longRunMaxHours, 0, 24 * 365)
   intIn('longRunChunkSteps', patch.longRunChunkSteps, LONG_RUN_CHUNK_MIN, LONG_RUN_CHUNK_MAX)
   intIn('maxRepeatingReminders', patch.maxRepeatingReminders, 0, 1000)
-  intIn('triggersMaxPerHour', patch.triggersMaxPerHour, 0, 100_000)
-  intIn('triggerLogRetentionDays', patch.triggerLogRetentionDays, 0, 36_500)
   intIn('eventsRetentionHours', patch.eventsRetentionHours, 0, 24 * 3650)
   intIn('eventsMaxRows', patch.eventsMaxRows, 1000, 100_000_000)
   intIn('logMaxRows', patch.logMaxRows, 100, 10_000_000)

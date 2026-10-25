@@ -1,9 +1,9 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
-import { EVENT_CATALOG } from '../../app/catalog.ts'
 import { getEvent, listEvents } from '../../app/event-stream.ts'
 import type { Deps } from '../../app/ports.ts'
 import { errorResponses, jsonError } from '../schemas/common.ts'
 import {
+  EventCatalogQuery,
   EventCatalogSchema,
   EventIdParam,
   EventListQuery,
@@ -34,8 +34,9 @@ const catalogRoute = createRoute({
   method: 'get',
   path: '/events/catalog',
   tags,
-  summary: 'Event types and what each platform delivers',
+  summary: 'Event types, or the ones one connection delivers',
   security,
+  request: { query: EventCatalogQuery },
   responses: {
     200: { description: 'The catalog', content: json(EventCatalogSchema) },
     ...errorResponses,
@@ -80,10 +81,7 @@ export function eventRoutes(deps: Deps): OpenAPIHono {
       )
     })
     .openapi(catalogRoute, async (c) =>
-      c.json(
-        { types: [...EVENT_CATALOG], connections: await deps.eventStream.sources() } as never,
-        200,
-      ),
+      c.json((await deps.eventStream.catalog(c.req.valid('query').connectionId)) as never, 200),
     )
     .openapi(getRoute, async (c) =>
       c.json((await getEvent(deps, c.req.valid('param').id)) as never, 200),

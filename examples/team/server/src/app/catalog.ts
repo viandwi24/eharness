@@ -38,11 +38,5 @@ export {
 export { SETTINGS_MODES } from '../domain/settings.ts'
 export { STORAGE_ACTIONS, TABLE_GROUPS } from '../domain/storage.ts'
 export { BOARD_COLUMNS, TASK_PRIORITIES, TASK_STATUSES } from '../domain/tasks.ts'
-export {
-  FIRE_RESULTS,
-  SKIP_REASONS,
-  TRIGGER_ACTION_KINDS,
-  WAKE_TARGETS,
-} from '../domain/triggers.ts'
 export { MAX_TASK_CONCURRENCY, QUEUE_REASONS } from '../domain/work-queue.ts'
 export { IMPORT_LIMITS, SECTIONS as WORKSPACE_SECTIONS } from '../domain/workspace-export.ts'

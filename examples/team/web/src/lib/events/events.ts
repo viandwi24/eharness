@@ -154,3 +154,12 @@ export function mergeFresh<T extends { id: string; at: number }>(fresh: readonly
 	const floor = fresh.at(-1)?.at ?? 0;
 	return [...fresh, ...loaded.filter((r) => !seen.has(r.id) && r.at < floor)];
 }
+
+/**
+ * The page that shows one event: a chat event opens on the Events page of its channel, an app event
+ * goes to its own page. Mirrors `eventHref` of the server (`domain/event-stream.ts`).
+ */
+export function eventHref(e: Pick<StreamEvent, 'id' | 'source' | 'connectionId' | 'link'>): string {
+	if (e.source === 'channel' && e.connectionId) return `/channels/${encodeURIComponent(e.connectionId)}/events?e=${encodeURIComponent(e.id)}`;
+	return e.link ?? '/channels';
+}

@@ -470,4 +470,17 @@ export interface ChannelAdapter {
    */
   noResultHint?(nativeId: string): string | undefined
   readonly actions?: readonly NativeAction[]
+  /**
+   * The events this adapter delivers, each with what the platform really sends (the channel's
+   * Events page and the trigger form show these). A type it never sends is left out. Absent =
+   * every type, without notes.
+   */
+  readonly events?: readonly AdapterEventType[]
+}
+
+/** One kind of event an adapter delivers. */
+export interface AdapterEventType {
+  type: RemoteEventType
+  /** One or two sentences: when the platform sends it and what it leaves out. */
+  note: string
 }

@@ -19,6 +19,8 @@ import {
   type ChannelStreamType,
   channelEventId,
   decodeCursor,
+  EVENT_CATALOG,
+  type EventTypeInfo,
   encodeCursor,
   feedTypeOfStream,
   isAppType,
@@ -70,12 +72,7 @@ export interface EventStreamOptions {
 const str = (v: unknown): string | undefined =>
   typeof v === 'string' && v !== '' ? v : v === undefined || v === null ? undefined : String(v)
 
-export function createEventStream(options: EventStreamOptions): EventStreamPort & {
-  /** A channel row of the log as a stream event (the engine builds events it just stored). */
-  channelRow(id: string): Promise<StreamEvent | undefined>
-  /** Is this session one a trigger started (its events are the agent's own, never a trigger's cause)? */
-  isTriggerSession(sessionId: string): boolean
-} {
+export function createEventStream(options: EventStreamOptions): EventStreamPort {
   const { sqlite } = options
   let labels: Map<string, string> | undefined
   let labelsAt = 0
@@ -90,13 +87,6 @@ export function createEventStream(options: EventStreamOptions): EventStreamPort 
     }
     return labels.get(connectionId) ?? connectionId
   }
-
-  const isTriggerSession = (sessionId: string): boolean =>
-    sqlite
-      .query<{ n: number }, [string]>(
-        "SELECT 1 AS n FROM trigger_fires WHERE json_extract(detail, '$.sessionId') = ? LIMIT 1",
-      )
-      .get(sessionId) !== null
 
   async function channelEvent(r: ChRow): Promise<StreamEvent | undefined> {
     if (!isChannelType(r.type)) return undefined
@@ -229,18 +219,7 @@ export function createEventStream(options: EventStreamOptions): EventStreamPort 
     }
   }
 
-  /** Every session a trigger started (one scan per page, not one per event). */
-  const triggerSessions = (): Set<string> =>
-    new Set(
-      sqlite
-        .query<{ s: string }, []>(
-          "SELECT DISTINCT json_extract(detail, '$.sessionId') AS s FROM trigger_fires WHERE s IS NOT NULL",
-        )
-        .all()
-        .map((r) => r.s),
-    )
-
-  function appEvent(r: AppRow, started?: Set<string>): StreamEvent | undefined {
+  function appEvent(r: AppRow): StreamEvent | undefined {
     const type = streamTypeOfFeed(r.type)
     if (type === undefined) return undefined
     const payload = JSON.parse(r.payload) as Record<string, unknown>
@@ -272,10 +251,7 @@ export function createEventStream(options: EventStreamOptions): EventStreamPort 
       summary: summarizeApp(type, fields),
       fields,
       link: appLink(type, payload),
-      // a run a trigger started: what it does is the agent's work, never a cause for a trigger
-      agentCaused:
-        r.session_id !== null &&
-        (started === undefined ? isTriggerSession(r.session_id) : started.has(r.session_id)),
+      agentCaused: false,
       ...(r.agent_id === null ? {} : { agentId: r.agent_id }),
       ...(r.session_id === null ? {} : { sessionId: r.session_id }),
     }
@@ -377,7 +353,6 @@ export function createEventStream(options: EventStreamOptions): EventStreamPort 
   return {
     async list(q): Promise<StreamPage> {
       const cur = decodeCursor(q.cursor)
-      const started = triggerSessions()
       const ch = channelRows(q, cur.ch, q.limit + 1)
       const ap = appRows(q, cur.app, q.limit + 1)
       // a two-pointer merge on the heads: each source is returned in its own order
@@ -398,7 +373,7 @@ export function createEventStream(options: EventStreamOptions): EventStreamPort 
           if (e !== undefined) items.push(e)
         } else if (b !== undefined) {
           j++
-          const e = appEvent(b, started)
+          const e = appEvent(b)
           last = { ...last, app: b.seq }
           if (e !== undefined) items.push(e)
         }
@@ -432,11 +407,20 @@ export function createEventStream(options: EventStreamOptions): EventStreamPort 
       return options.connections()
     },
 
-    async channelRow(id) {
-      return this.get(channelEventId(id))
+    async catalog(connectionId) {
+      const connections = await options.connections()
+      if (connectionId === undefined) return { types: [...EVENT_CATALOG], connections }
+      // one connection: the types its adapter says it delivers, with its notes, in its order
+      const channel = EVENT_CATALOG.filter((t) => t.source === 'channel')
+      const declared = options.gateway()?.adapter(connectionId)?.events
+      if (declared === undefined) return { types: channel, connections }
+      const types: EventTypeInfo[] = []
+      for (const d of declared) {
+        const info = channel.find((t) => t.type === d.type)
+        if (info !== undefined) types.push({ ...info, note: d.note })
+      }
+      return { types, connections }
     },
-
-    isTriggerSession,
   }
 }
 

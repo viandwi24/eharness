@@ -2,6 +2,7 @@
 import type { Database } from 'bun:sqlite'
 import type { SettingsStore } from '../../app/ports.ts'
 import {
+  RETIRED_SETTINGS,
   type SettingsPatch,
   toSettingsMode,
   type WorkspaceSettings,
@@ -27,7 +28,9 @@ export function sqliteSettingsStore(
       )
       .get(KEY)
     if (row === null) return { overrides: {}, updatedAt: 0 }
-    return { overrides: JSON.parse(row.value) as SettingsPatch, updatedAt: row.updated_at }
+    const overrides = JSON.parse(row.value) as Record<string, unknown>
+    for (const k of RETIRED_SETTINGS) delete overrides[k]
+    return { overrides: overrides as SettingsPatch, updatedAt: row.updated_at }
   }
   const merged = (): WorkspaceSettings & { updatedAt: number } => {
     const { overrides, updatedAt } = read()

@@ -894,7 +894,7 @@ export const personName = (p: ChannelPerson): string => p.name ?? (p.username ? 
 
 // ---- navigation of the Channels pages ----
 
-export type SectionId = 'overview' | 'chats' | 'people' | 'inbox' | 'activity' | 'reminders' | 'delivery' | 'history' | 'admin-log' | 'settings';
+export type SectionId = 'overview' | 'chats' | 'people' | 'inbox' | 'activity' | 'events' | 'reminders' | 'delivery' | 'history' | 'admin-log' | 'settings';
 
 export interface Section {
 	id: SectionId;
@@ -915,6 +915,7 @@ export function sectionsOf(c: Pick<ChannelConnection, 'binding' | 'transport'> |
 		bound && { id: 'people', label: 'People' },
 		bound && { id: 'inbox', label: 'Inbox' },
 		bound && { id: 'activity', label: 'Activity' },
+		bound && { id: 'events', label: 'Events' },
 		bound && !account && { id: 'reminders', label: 'Reminders' },
 		bound && { id: 'delivery', label: account ? 'Send limits' : 'Delivery' },
 		bound && account && { id: 'history', label: 'History' },
@@ -930,6 +931,7 @@ export const SECTION_TITLE: Record<SectionId, string> = {
 	people: 'People',
 	inbox: 'Inbox',
 	activity: 'Activity',
+	events: 'Events',
 	reminders: 'Reminders',
 	delivery: 'Delivery',
 	history: 'History',

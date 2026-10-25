@@ -79,7 +79,7 @@ import type {
   DecisionStatus,
 } from '../domain/decisions.ts'
 import type { DeliverableResult } from '../domain/deliverables.ts'
-import type { StreamEvent, StreamPage, StreamQuery } from '../domain/event-stream.ts'
+import type { EventTypeInfo, StreamEvent, StreamPage, StreamQuery } from '../domain/event-stream.ts'
 import type { NewEvent } from '../domain/events.ts'
 import type { DriftFact, ToolEvent } from '../domain/health.ts'
 import type {
@@ -130,13 +130,6 @@ import type {
 } from '../domain/storage.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
 import type { Thread, ThreadSeed, ThreadSource } from '../domain/threads.ts'
-import type {
-  Trigger,
-  TriggerAction,
-  TriggerFilters,
-  TriggerFire,
-  TriggerScope,
-} from '../domain/triggers.ts'
 import type { PendingRetry } from '../domain/turn-retry.ts'
 import type { DataRow } from '../domain/workspace-data.ts'
 import type {
@@ -507,8 +500,6 @@ export interface ProgramRunner {
     options: {
       runAt: number /** A fire of the program's schedule (nobody waits for the answer). */
       scheduled?: boolean
-      /** What started this run (a trigger's event): appended to the run prompt as context. */
-      eventNote?: string
     },
   ): Promise<{ sessionId: string; started: boolean; idle?: boolean }>
   /**
@@ -959,61 +950,14 @@ export interface EventStreamPort {
   sources(): Promise<
     Array<{ id: string; label: string; platform: string; transport?: 'bot' | 'user' }>
   >
-}
-
-/** A trigger row to store; the webhook secret arrives sealed. */
-export interface NewTriggerRow {
-  id: string
-  name: string
-  enabled: boolean
-  eventTypes: string[]
-  scope: TriggerScope
-  filters: TriggerFilters
-  action: TriggerAction
-  sealedSecret: string | null
-  cooldownSec: number
-  allowSelf: boolean
-  createdBy: string
-  notes: string | null
-  now: number
-}
-
-export type TriggerPatchRow = Partial<
-  Omit<NewTriggerRow, 'id' | 'createdBy' | 'now' | 'sealedSecret'>
-> & { sealedSecret?: string | null }
-
-export interface TriggerStore {
-  list(): Trigger[]
-  get(id: string): Trigger | undefined
-  insert(row: NewTriggerRow): Trigger
-  update(id: string, patch: TriggerPatchRow, now: number): Trigger | undefined
-  delete(id: string): boolean
-  /** Newest first, cursor paged (`before` = a fire id). */
-  fires(query: {
-    triggerId?: string | undefined
-    result?: string | undefined
-    before?: string | undefined
-    limit: number
-  }): { items: TriggerFire[]; next?: string }
-  /** Firings whose action ran (result ok or error) since `since`: what the hourly cap counts. */
-  executedSince(since: number): number
-}
-
-/** Seals a webhook secret with the server's secret vault; the plain value is never stored or returned. */
-export interface TriggerSecrets {
-  seal(triggerId: string, secret: string): Promise<string>
-}
-
-/** What the engine knows that a dry run needs. */
-export interface TriggerEnginePort {
-  /** Problems the action would run into now (agent gone, no program, chat has no session, webhook host private); empty = fine. */
-  preflight(trigger: Trigger, event: StreamEvent): Promise<string[]>
-  /** Are webhooks to plain http and local hosts allowed (development)? */
-  allowPrivateWebhooks: boolean
-  /** Why a webhook URL may not be called (a private, local or internal host), or undefined. */
-  webhookBlocked(url: string): Promise<string | undefined>
-  /** Firings the engine skipped without a stored row, per trigger (since the server started). */
-  filteredCount(triggerId: string): number
+  /**
+   * The event types and the connections. With a connection: only the channel types its adapter
+   * delivers, each with the adapter's note (`ChannelAdapter.events`).
+   */
+  catalog(connectionId?: string): Promise<{
+    types: EventTypeInfo[]
+    connections: Array<{ id: string; label: string; platform: string; transport?: 'bot' | 'user' }>
+  }>
 }
 
 export interface PauseStore {
@@ -1614,10 +1558,6 @@ export interface Deps {
   pause: PauseStore
   /** The unified event stream (channel events and app events). */
   eventStream: EventStreamPort
-  /** Triggers: event listeners with an action (`infra/triggers`). */
-  triggers: TriggerStore
-  triggerSecrets: TriggerSecrets
-  triggerEngine: TriggerEnginePort
   providers: ProvidersPort
   connectors: ConnectorsPort
   channels: ChannelsPort

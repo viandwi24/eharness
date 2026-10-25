@@ -95,8 +95,7 @@ A **session id** is `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` is acce
 | `GET /attention` | the library queue (`listAttention`, no app fields) |
 | `POST /attention/{id}/answer` | answer an approval or a question: `{ sessionId, answer }`; `answer` is `{ kind: 'approval', approved, reason?, note?, remember? }` or `{ kind: 'question', answers }`. `200 { status: 'recorded' \| 'resumed' \| 'already-answered', remaining? }`; `404` item gone; `409` a turn of the session runs |
 | `GET /activity/stream?after=` | SSE feed of changes (`message-added`, `task-changed`, `pending-changed`, `approval-decided`, `routine-fired`, `file-changed`, ...; session events come from `eharness/activity`) with `seq` as the event id; JSON variant `GET /activity?after=&limit=` |
-| `GET /events`, `GET /events/{id}`, `GET /events/catalog` | the unified event stream (chat and app events, filters, cursor paging); see [events-and-triggers.md](events-and-triggers.md) |
-| `GET/POST /triggers`, `GET/PATCH/DELETE /triggers/{id}`, `GET /triggers/{id}/fires`, `GET /trigger-fires`, `POST /triggers/{id}/test` | triggers (event listeners), their firing log and the dry run |
+| `GET /events`, `GET /events/{id}`, `GET /events/catalog` | the unified event stream (chat and app events, filters, cursor paging); see [events.md](events.md) |
 
 Chat on a task session is `409 TASK_SESSION` (a person talks to a task through `POST
 /tasks/{id}/messages`, the durable inbox); an archived agent's DM is `409 AGENT_ARCHIVED` for chat

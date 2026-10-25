@@ -4504,7 +4504,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     } catch (error) {
       if (!stopped) warn(`channels: could not record an event: ${errorText(error)}`)
     }
-    // a platform event that was new (not a replay) goes to the listeners (triggers): never awaited
+    // a platform event that was new (not a replay) goes to the listeners (`onEvent`): never awaited
     const stored = appended.get(event)
     if (stored?.inserted === true && deps.onEvent !== undefined) {
       try {

@@ -94,13 +94,6 @@ export const SettingsSchema = z
       description:
         'Library folder that holds the company files (for example `/library/acme`): agents are told to keep company facts, knowledge, reports and ledgers under it (`knowledge/`, `reports/`, `data/`, `kpi/`, `attendance/`). null = the built-in folders (`/library/company`, `/library/knowledge`, `/library/reports`, `/library/data`). Changing it moves no file.',
     }),
-    triggersMaxPerHour: z.number().int().min(0).max(100000).openapi({
-      description:
-        'Most trigger firings (actions that ran, across all triggers) in one hour; more are skipped with the reason `cap`. 0 = no cap. Default 60.',
-    }),
-    triggerLogRetentionDays: z.number().int().min(0).max(36500).openapi({
-      description: 'Days the firing log of the triggers is kept; 0 = keep. Default 30.',
-    }),
     eventsRetentionHours: z.number().int().min(0).openapi({
       description: 'Events feed: hours kept; 0 = by count only. Default 72.',
     }),
@@ -186,8 +179,6 @@ export const SettingsPatchSchema = z
     logMaxRows: z.number().int().min(100).optional(),
     logRetentionDays: z.number().min(1).max(3650).optional(),
     logBodyHours: z.number().min(0).max(8760).optional(),
-    triggersMaxPerHour: z.number().int().min(0).max(100000).optional(),
-    triggerLogRetentionDays: z.number().int().min(0).max(36500).optional(),
     mediaRetentionDays: z.number().int().min(0).max(36500).optional(),
     routineRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
     tasksRetentionDays: z.number().int().min(0).max(36500).optional(),

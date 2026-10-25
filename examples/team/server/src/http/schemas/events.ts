@@ -58,12 +58,11 @@ export const StreamEventSchema = z
       .optional(),
     summary: z.string().openapi({ description: 'Who did what where. Never a message body.' }),
     fields: z.record(z.string(), z.string()).openapi({
-      description: 'Flat facts the trigger filters read (`emoji`, `link`, `program`, `kind`, ...).',
+      description: 'Flat facts of the event (`emoji`, `link`, `program`, `kind`, ...).',
     }),
     link: z.string().nullable().openapi({ description: 'An app page about the event.' }),
     agentCaused: z.boolean().openapi({
-      description:
-        'The agent itself caused it (its own message or admin action, a run a trigger started).',
+      description: 'The agent itself caused it (its own message or admin action).',
     }),
     agentId: z.string().optional(),
     sessionId: z.string().optional(),
@@ -93,12 +92,19 @@ export const EventTypeInfoSchema = z
     source: z.enum(STREAM_SOURCES),
     label: z.string(),
     fields: z.array(z.string()),
-    delivery: z
-      .object({ bot: z.string(), account: z.string() })
-      .optional()
-      .openapi({ description: 'What a bot and a user account deliver of this type.' }),
+    note: z.string().optional().openapi({
+      description:
+        "What the connection's adapter delivers of this type (only in the catalog of one connection).",
+    }),
   })
   .openapi('EventTypeInfo')
+
+export const EventCatalogQuery = z.object({
+  connectionId: z.string().min(1).optional().openapi({
+    description:
+      'One connection: only the chat event types its adapter delivers, each with its note.',
+  }),
+})
 
 export const EventCatalogSchema = z
   .object({

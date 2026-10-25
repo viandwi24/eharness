@@ -1,9 +1,7 @@
 <script lang="ts">
 	import Surface from '#lib/components/app/Surface.svelte';
-	import { goto } from '$app/navigation';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeft';
 	import ArrowRightIcon from 'phosphor-svelte/lib/ArrowRight';
-	import BellRingingIcon from 'phosphor-svelte/lib/BellRinging';
 	import XIcon from 'phosphor-svelte/lib/X';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -38,10 +36,6 @@
 		}
 	}
 
-	function createTrigger(): void {
-		if (!event) return;
-		void goto(`/triggers?new=1&event=${encodeURIComponent(event.id)}`);
-	}
 </script>
 
 <svelte:window onkeydowncapture={onKeydown} />
@@ -67,7 +61,6 @@
 					<p class="text-sm break-words">{event.summary}</p>
 
 					<div class="flex flex-wrap gap-2">
-						<Button size="sm" onclick={createTrigger}><BellRingingIcon class="size-4" />Create trigger from this event</Button>
 						{#if event.link}<Button size="sm" variant="outline" href={event.link}>Open</Button>{/if}
 					</div>
 
@@ -115,21 +108,16 @@
 									{/each}
 								</dl>
 							</Surface>
-							<p class="mt-1.5 text-xs text-muted-foreground">These are the facts a trigger can filter on. Message text is never part of an event.</p>
+							<p class="mt-1.5 text-xs text-muted-foreground">Message text is never part of an event.</p>
 						{:else}
 							<p class="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">This event has no extra facts.</p>
 						{/if}
 					</section>
 
-					{#if info?.delivery}
+					{#if info?.note}
 						<section>
-							<h3 class="mb-2 text-xs font-semibold text-muted-foreground">What each platform delivers</h3>
-							<dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px]">
-								<dt class="text-muted-foreground">Bots</dt>
-								<dd class="min-w-0 break-words">{info.delivery.bot}</dd>
-								<dt class="text-muted-foreground">Accounts</dt>
-								<dd class="min-w-0 break-words">{info.delivery.account}</dd>
-							</dl>
+							<h3 class="mb-2 text-xs font-semibold text-muted-foreground">What this channel delivers</h3>
+							<p class="text-[13px] break-words">{info.note}</p>
 						</section>
 					{/if}
 				</div>

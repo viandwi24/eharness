@@ -48,6 +48,7 @@ import type {
   TgUserClient,
 } from './client.ts'
 import { classifyError, describeError, type TgErrorKind } from './errors.ts'
+import { TELEGRAM_ACCOUNT_EVENTS } from './events.ts'
 import {
   chatNode,
   historyEntryOf,
@@ -784,6 +785,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     idFormats: USER_ID_FORMATS,
     self: () => self,
     actions,
+    events: TELEGRAM_ACCOUNT_EVENTS,
     noResultHint: (nativeId) => {
       const c = chats.get(connectionId, splitNativeId(nativeId).chatId)
       return c?.admin && c.kind !== 'dm' ? DELETED_HINT : undefined

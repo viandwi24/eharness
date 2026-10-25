@@ -91,12 +91,10 @@ which has no `session.start` hooks and resumes nothing
 `GET /activity` is `readActivityPage`; both are the `activity` option of `eharness/http` (store =
 this SQLite store, `bootId` = `http/boot.ts`, filter `'all'`: one owner). It is pruned by age and count (`TEAM_EVENTS_RETENTION_HOURS`, `TEAM_EVENTS_MAX_ROWS`; the head and the latest message of each agent stay). The high-water mark of pruned `seq` lives in the `settings` row `events-pruned-through`: a client whose cursor is below it receives `event: resync` (SSE) or `resync: true` (`GET /activity`) and refetches its state.
 
-**Event stream and triggers.** `infra/events/stream.ts` is one query over the feed above (app events) and the
-platform events of `ch_events` (what chats said: messages, reactions, members, join requests), merged newest
-first; there is no third copy. `infra/triggers/engine.ts` listens to both (the gateway's `onEvent`, a tap on the
-activity store), matches the enabled triggers (`domain/triggers.ts`), applies the gates (the agent's own doing,
-Pause all, cooldown, the hourly cap) and runs the action: wake an agent, run a program, notify the owner or call a
-signed webhook. Every firing is logged. See [events-and-triggers.md](events-and-triggers.md).
+**Event stream.** `infra/events/stream.ts` is one query over the feed above (app events) and the platform events of
+`ch_events` (what chats said: messages, reactions, members, join requests), merged newest first; there is no third
+copy. Each channel adapter declares the event types it delivers (`ChannelAdapter.events`); the Events page of a
+channel shows its own events. See [events.md](events.md).
 
 **Attention queue.** `GET /approvals` is `listAttention` (the DM session of every agent that can hold
 something, the lead's children through the child index, the task rows still `needs_action` as a

@@ -9,7 +9,7 @@
 		hints = false,
 		id = 'event-types',
 		onchange
-	}: { types: EventTypeInfo[]; selected?: string[]; onchange?: (types: string[]) => void; /** Show what bots and accounts deliver under each chat type. */ hints?: boolean; id?: string } = $props();
+	}: { types: EventTypeInfo[]; selected?: string[]; onchange?: (types: string[]) => void; /** Show the adapter's note under each type (the catalog of one connection has them). */ hints?: boolean; id?: string } = $props();
 
 	const groups = $derived(groupCatalog(types));
 </script>
@@ -27,8 +27,8 @@
 						}} aria-label={t.label} data-testid="{id}-{t.type}" />
 						<span class="min-w-0 text-[13px] leading-5">
 							<span>{t.label}</span> <span class="font-mono text-[11px] text-muted-foreground">{t.type}</span>
-							{#if hints && t.delivery}
-								<span class="block text-xs text-muted-foreground">Bots: {t.delivery.bot} Accounts: {t.delivery.account}</span>
+							{#if hints && t.note}
+								<span class="block text-xs text-muted-foreground">{t.note}</span>
 							{/if}
 						</span>
 					</label>

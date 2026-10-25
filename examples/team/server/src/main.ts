@@ -220,7 +220,6 @@ import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
 import { sqliteThreadStore } from './infra/db/threads-repo.ts'
-import { sqliteTriggerStore } from './infra/db/triggers-repo.ts'
 import { sqliteTurnRetryStore } from './infra/db/turn-retries-repo.ts'
 import { type ActivityLog, createActivityLog } from './infra/eh/activity-log.ts'
 import { createAgentCompletion } from './infra/eh/agent-completion.ts'
@@ -300,8 +299,6 @@ import {
   lazyAccountsPort,
   type TelegramUserChannels,
 } from './infra/telegram-user/service.ts'
-import { createTriggerEngine, type TriggerEngine, tapAppend } from './infra/triggers/engine.ts'
-import { createWebhookSender, type WebhookOptions } from './infra/triggers/webhook.ts'
 import { resolveWebUrl, upgradeEnv, webStatic } from './infra/web-static.ts'
 
 export interface ServerConfig {
@@ -384,8 +381,6 @@ export interface ServerConfig {
   retention?: TableRetention
   /** Agent health scan (anomaly findings, bell notice for new high ones): every `everyMs` (default 10 min; 0 = never; off when `reconcile.everyMs` is 0). */
   health?: { everyMs?: number }
-  /** Triggers (`infra/triggers`): the webhook sender (tests inject a fetch, a resolver and short back-offs). */
-  triggers?: { webhook?: WebhookOptions }
   /** Alarm sweep (failed and stuck runs, broken connections, delivery): every `everyMs` (default 1 min; 0 = never; off when `reconcile.everyMs` is 0). Tests call `sweepAlarms`. */
   alarms?: { everyMs?: number }
   /** Automatic retry of transient turn failures: timer interval (0 = none) and the delay per attempt (tests shorten it). */
@@ -455,8 +450,6 @@ export interface Server {
   factory: AgentFactory
   team: TeamService
   routines: RoutineService
-  /** Event listeners of the triggers; tests await it and prune its log (`infra/triggers/engine.ts`). */
-  triggerEngine: TriggerEngine
   /** Program runs (`infra/eh/program-service.ts`). */
   programs: ProgramService
   /** Resumes the sessions parked on a decision (`infra/eh/decision-service.ts`). */
@@ -563,11 +556,8 @@ export function compose(config: ServerConfig): Server {
   // routes that read it are the `activity` option of eharness/http (below)
   // the channels gateway is built later; it hears about pending items of channel sessions through the feed
   let channelGateway: ChannelGateway | undefined
-  // the trigger engine listens to what is appended to the feed (app events): late-bound
-  let triggerEngine: TriggerEngine | undefined
-  const activityStore = tapAppend(
-    watchPendingChanges(sqliteActivityStore(conn.sqlite), (e) => channelGateway?.pendingChanged(e)),
-    (records) => triggerEngine?.onAppRecords(records),
+  const activityStore = watchPendingChanges(sqliteActivityStore(conn.sqlite), (e) =>
+    channelGateway?.pendingChanged(e),
   )
   const threadStore = sqliteThreadStore(conn.sqlite)
   const events = withThreadActivity(createEventAppender(activityStore), threadStore)
@@ -867,7 +857,7 @@ export function compose(config: ServerConfig): Server {
     lead: () => agents.list().find((a) => a.role === 'lead'),
     agentBySlug: (slug) => agents.getBySlug(slug),
     agentById: (id) => agents.get(id),
-    // the `events_recent` and `triggers` tools reach the app through its deps (built later)
+    // the `events_recent` tool reaches the app through its deps (built later)
     app: () => alarmDeps,
     ...(config.classifier === undefined ? {} : { classifier: config.classifier }),
     sessionModes,
@@ -1102,7 +1092,7 @@ export function compose(config: ServerConfig): Server {
           // one folder per database, so two servers (or tests) never share their backups
           `team-backups-${new Bun.CryptoHasher('sha256').update(resolve(config.dbFile)).digest('hex').slice(0, 12)}`,
         ))
-  // the event stream (channel events + app events) and the triggers that listen to it
+  // the event stream (channel events + app events)
   const eventStream = createEventStream({
     sqlite: conn.sqlite,
     gateway: () => channelGateway,
@@ -1114,29 +1104,6 @@ export function compose(config: ServerConfig): Server {
         ...(c.transport === undefined ? {} : { transport: c.transport }),
       })),
     programName: (id) => programStore.get(id)?.name,
-  })
-  const triggerStore = sqliteTriggerStore(conn.sqlite)
-  const webhookSender = createWebhookSender({
-    allowPrivate: envOf.TEAM_ALLOW_PRIVATE_WEBHOOKS === '1',
-    ...config.triggers?.webhook,
-  })
-  triggerEngine = createTriggerEngine({
-    store: triggerStore,
-    stream: eventStream,
-    app: () => alarmDeps,
-    gateway: () => channelGateway,
-    wake: async ({ agentId, sessionId, text, id }) => {
-      const def = agents.get(agentId)
-      if (def === undefined) throw new Error(`no such agent: ${agentId}`)
-      await factory.prepare(def)
-      await factory
-        .openSession(def, sessionId)
-        .enqueue(text, { mode: 'queue', id, metadata: INSTRUCTION_METADATA })
-    },
-    vault,
-    webhook: webhookSender,
-    time: (at) => timeLine(at, settings.get().timezone),
-    log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const storage =
     config.dbFile === ':memory:'
@@ -1211,9 +1178,6 @@ export function compose(config: ServerConfig): Server {
     settings,
     pause: pauseStore,
     eventStream,
-    triggers: triggerStore,
-    triggerSecrets: { seal: (id, secret) => vault.seal(secret, `trigger:${id}`) },
-    triggerEngine,
     providers,
     connectors,
     channels: lazyChannelsPort(() => channelsPort),
@@ -1512,8 +1476,6 @@ export function compose(config: ServerConfig): Server {
     sqlite: conn.sqlite,
     // new messages in watched chats may start an early heartbeat (debounced in the service)
     onObserved: (event) => void heartbeats.activity(event),
-    // every new platform event is offered to the triggers
-    onEvent: (info) => triggerEngine?.onChannelEvent(info),
     // a Decision Center question answered in a chat, by a named owner or admin
     // an approval nobody answered was declined: the owner hears about it (alarm)
     onApprovalExpired: (info) =>
@@ -1746,8 +1708,6 @@ export function compose(config: ServerConfig): Server {
           : {}),
         keepLast: eventsMaxRows,
       })
-      // the firing log of the triggers follows its own retention (Settings)
-      triggerEngine?.prune()
     } catch (error) {
       console.warn(`team: purging the channel log failed: ${String(error)}`)
     }
@@ -2013,7 +1973,6 @@ export function compose(config: ServerConfig): Server {
     reconcile,
     healthScan,
     turnRetry: turnRetries,
-    triggerEngine,
     async close() {
       if (timer !== undefined) clearInterval(timer)
       if (healthTimer !== undefined) clearInterval(healthTimer)
@@ -2031,7 +1990,6 @@ export function compose(config: ServerConfig): Server {
       await telegram?.stop()
       await telegramUser?.stop()
       await channels.stop()
-      await triggerEngine?.idle()
       await routines?.stop()
       await turnRetries?.stop()
       await ready

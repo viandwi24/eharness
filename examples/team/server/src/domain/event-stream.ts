@@ -75,22 +75,6 @@ export function streamTypeOfFeed(feedType: string): AppStreamType | undefined {
 /** The feed type of a stream type (`alarm.raised` -> `alarm-raised`). */
 export const feedTypeOfStream = (t: AppStreamType): string => t.replace('.', '-')
 
-/** Types that arrive by the hundred: their non-matching filters are counted, not logged. */
-export const HIGH_VOLUME_TYPES: readonly StreamEventType[] = [
-  'message.created',
-  'message.edited',
-  'message.deleted',
-  'reaction.added',
-  'reaction.removed',
-]
-
-/** How old an event may be and still fire a trigger (a catch-up after a restart replays old ones). */
-export const FRESH_MS = 15 * 60_000
-/** Join requests are slower to be noticed (a bot polls what Telegram queued while it was away). */
-export const FRESH_JOIN_MS = 24 * 3_600_000
-export const freshMs = (t: StreamEventType): number =>
-  t === 'member.join_requested' ? FRESH_JOIN_MS : FRESH_MS
-
 // --- the catalog -------------------------------------------------------------------------------
 
 export interface EventTypeInfo {
@@ -100,11 +84,12 @@ export interface EventTypeInfo {
   label: string
   /** Filter fields the type offers (`StreamEvent.fields`). */
   fields: readonly string[]
-  /** What each kind of connection delivers; absent for app events. */
-  delivery?: { bot: string; account: string }
+  /**
+   * What this connection's adapter says about the type (`ChannelAdapter.events`): only in the
+   * catalog of one connection.
+   */
+  note?: string
 }
-
-const D = (bot: string, account: string): { bot: string; account: string } => ({ bot, account })
 
 export const EVENT_CATALOG: readonly EventTypeInfo[] = [
   {
@@ -112,129 +97,90 @@ export const EVENT_CATALOG: readonly EventTypeInfo[] = [
     source: 'channel',
     label: 'A message was posted',
     fields: ['sender', 'attachments'],
-    delivery: D(
-      'Yes: every message the bot receives (in a group with privacy mode on: mentions, replies and commands, or everything when the bot is an admin).',
-      'Yes: chats chosen for ingest and direct chats.',
-    ),
   },
   {
     type: 'message.edited',
     source: 'channel',
     label: 'A message was edited',
     fields: ['sender'],
-    delivery: D('Yes.', 'Yes.'),
   },
   {
     type: 'message.deleted',
     source: 'channel',
     label: 'Messages were deleted',
     fields: ['count'],
-    delivery: D(
-      'No: the Bot API does not report deletions.',
-      'Yes, as ids only (no text, no person). A deletion in a channel or supergroup names the chat; one in a private chat or basic group is matched through the stored log.',
-    ),
   },
   {
     type: 'reaction.added',
     source: 'channel',
     label: 'Somebody reacted to a message',
     fields: ['emoji', 'sender'],
-    delivery: D(
-      'Yes, in chats where the bot is an administrator and in direct chats.',
-      'No: Telegram sends reactions of other people to a user account only as counts, which the app does not follow.',
-    ),
   },
   {
     type: 'reaction.removed',
     source: 'channel',
     label: 'A reaction was removed',
     fields: ['emoji', 'sender'],
-    delivery: D('Yes, like reactions added.', 'No.'),
   },
   {
     type: 'member.joined',
     source: 'channel',
     label: 'Somebody joined a chat',
     fields: ['user', 'role', 'by'],
-    delivery: D(
-      'Yes, when the bot is an administrator of the chat.',
-      'Yes, when the account is an administrator of the chat.',
-    ),
   },
   {
     type: 'member.left',
     source: 'channel',
     label: 'Somebody left or was removed',
     fields: ['user', 'role', 'by'],
-    delivery: D(
-      'Yes, when the bot is an administrator of the chat.',
-      'Yes, when the account is an administrator of the chat.',
-    ),
   },
   {
     type: 'member.updated',
     source: 'channel',
     label: 'A member was promoted, demoted or restricted',
     fields: ['user', 'role', 'by'],
-    delivery: D(
-      'Yes, when the bot is an administrator of the chat.',
-      'Yes, when the account is an administrator of the chat.',
-    ),
   },
   {
     type: 'member.join_requested',
     source: 'channel',
     label: 'Somebody asked to join a chat that needs approval',
     fields: ['user', 'username', 'link', 'pending'],
-    delivery: D(
-      'Yes, when the bot is an administrator with the "invite users" right. The request is saved and answered with join_requests.',
-      'Yes, when the account is an administrator of the chat and the chat is chosen. The request is saved and answered with answer_join_request.',
-    ),
   },
   {
     type: 'member.join_request_resolved',
     source: 'channel',
     label: 'A join request was approved or declined',
     fields: ['user', 'resolution', 'bySelf'],
-    delivery: D(
-      'Yes: answered with the bot tool, or approved by another admin (seen as the person joining). A decline by another admin is not reported by the Bot API.',
-      'Yes: answered with the account tool. An answer given by another admin or in the Telegram app is not reported.',
-    ),
   },
   {
     type: 'node.created',
     source: 'channel',
     label: 'A chat or topic appeared',
     fields: [],
-    delivery: D('Yes.', 'Yes (topics of a forum and chats seen in the dialog list).'),
   },
   {
     type: 'node.updated',
     source: 'channel',
     label: 'A chat or topic changed (title, settings)',
     fields: [],
-    delivery: D('Yes.', 'Yes (topic titles).'),
   },
   {
     type: 'node.state_changed',
     source: 'channel',
     label: 'A chat became active, left or archived',
     fields: ['state'],
-    delivery: D('Yes (the bot was added, removed or blocked).', 'Yes.'),
   },
   {
     type: 'node.migrated',
     source: 'channel',
     label: 'A group became a supergroup (new chat id)',
     fields: ['from'],
-    delivery: D('Yes.', 'Yes.'),
   },
   {
     type: 'action',
     source: 'channel',
     label: 'A button was pressed',
     fields: ['name'],
-    delivery: D('Yes (inline buttons).', 'No.'),
   },
   {
     type: 'alarm.raised',
@@ -341,11 +287,11 @@ export interface StreamEvent {
   actor?: StreamActor
   /** One readable sentence: who did what where. Never a message body. */
   summary: string
-  /** Flat facts the filters of a trigger and the detail sheet read. */
+  /** Flat facts the filters and the detail sheet read. */
   fields: Record<string, string>
   /** The app page of the detail (a chat, a program, the health page), when there is one. */
   link: string | null
-  /** The agent itself caused it (its own message, its own admin action, a run a trigger started). */
+  /** The agent itself caused it (its own message, its own admin action). */
   agentCaused: boolean
   /** The agent of an app event. */
   agentId?: string

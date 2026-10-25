@@ -105,21 +105,6 @@ them:
 default true, `answerHeldOnResume` default false and kept when pausing again, `stopRunning` default
 false; idempotent), `POST /workspace/resume`.
 
-## Triggers
-
-Triggers listen to the event stream and act ([events-and-triggers.md](events-and-triggers.md)). Operations notes:
-
-- A trigger fires on the instance that observed the event (the one that runs the chat transport, or that
-  appended the app event); two instances never fire one event twice, but an event seen by an instance that is down is
-  not replayed (events older than 15 minutes, 24 hours for join requests, are ignored on purpose).
-- Pause all holds triggers: each skipped firing is logged as `skipped: paused` and is not replayed after Resume.
-- Settings > Limits: "Trigger firings per hour" (default 60, 0 = no cap, across all triggers). Settings > Data
-  retention: "Trigger firing log" (days, default 30, 0 = keep). The event rows themselves follow the events
-  retention (`ch_events` by age, the app feed by age and count).
-- Webhooks call public https hosts only. `TEAM_ALLOW_PRIVATE_WEBHOOKS=1` allows plain http and private or local
-  hosts for development; it is a security override, not a product setting. The secret of each webhook is sealed with
-  `TEAM_SECRET_KEY` (a changed key makes the webhook fail with "the secret could not be opened": set it again).
-
 ## Limits and cost
 
 Set `TEAM_BUDGET_USD` (or Settings): one ledger row shared by all instances. Delegations in flight

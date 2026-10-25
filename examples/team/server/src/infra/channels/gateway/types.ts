@@ -242,7 +242,7 @@ export interface GatewayDeps {
   /**
    * A platform event that was new (not a replay of one stored before) and was handled: the event
    * as the adapter delivered it (message text is in memory only, the log never holds it), the id
-   * of its row in the log, and what the gateway did with it. The triggers listen here. Called
+   * of its row in the log, and what the gateway did with it (for a listener of the app). Called
    * synchronously, never awaited; a throw is logged and ignored.
    */
   onEvent?: (info: {

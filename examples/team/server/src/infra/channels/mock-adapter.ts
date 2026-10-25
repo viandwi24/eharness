@@ -7,6 +7,7 @@
  */
 import { readableMentions } from './mentions.ts'
 import {
+  type AdapterEventType,
   type AdapterHost,
   type ChannelAdapter,
   type ChannelCapabilities,
@@ -144,6 +145,8 @@ export interface MockOptions {
   /** Capabilities that depend on the node (overrides `capabilities` for what it returns). */
   capabilitiesOf?: (node: ChannelNode) => Partial<ChannelCapabilities>
   actions?: NativeAction[]
+  /** The events the mock says it delivers (`ChannelAdapter.events`). */
+  events?: AdapterEventType[]
   /** What `listMembers` returns (default: the mock's own identity). */
   members?: MemberInfo[]
   /** What `status` returns, for `channel_status`. */
@@ -225,6 +228,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     typings: [],
     onSend: [],
     ...(options.actions === undefined ? {} : { actions: options.actions }),
+    ...(options.events === undefined ? {} : { events: options.events }),
     self: () => selfIdentity,
     async start(s, host) {
       sink = s

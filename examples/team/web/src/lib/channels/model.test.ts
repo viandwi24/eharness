@@ -390,8 +390,8 @@ describe('navigation of a connection', () => {
 		expect(sectionsOf(null).map((s) => s.id)).toEqual(['overview', 'settings']);
 	});
 	test('a bot has reminders and delivery, an account has history and the admin log', () => {
-		expect(sectionsOf(conn({})).map((s) => s.id)).toEqual(['overview', 'chats', 'people', 'inbox', 'activity', 'reminders', 'delivery', 'settings']);
-		expect(sectionsOf(conn({ transport: 'user' })).map((s) => s.id)).toEqual(['overview', 'chats', 'people', 'inbox', 'activity', 'delivery', 'history', 'admin-log', 'settings']);
+		expect(sectionsOf(conn({})).map((s) => s.id)).toEqual(['overview', 'chats', 'people', 'inbox', 'activity', 'events', 'reminders', 'delivery', 'settings']);
+		expect(sectionsOf(conn({ transport: 'user' })).map((s) => s.id)).toEqual(['overview', 'chats', 'people', 'inbox', 'activity', 'events', 'delivery', 'history', 'admin-log', 'settings']);
 	});
 	test('paths and sections', () => {
 		expect(channelHref('c 1', 'chats', 'n/1')).toBe('/channels/c%201/chats/n%2F1');
