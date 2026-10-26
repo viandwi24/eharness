@@ -14064,6 +14064,86 @@
           }
         }
       },
+      "ScriptCheckResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "warnings": {
+            "type": "integer"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line": {
+                  "type": "integer"
+                },
+                "column": {
+                  "type": "integer"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "error",
+                    "warning"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "line",
+                "column",
+                "message",
+                "severity",
+                "code"
+              ]
+            }
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ok",
+          "errors",
+          "warnings",
+          "problems",
+          "durationMs"
+        ]
+      },
+      "ScriptCheck": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 200000,
+            "description": "A draft to check instead of a saved version."
+          },
+          "manifest": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The draft manifest (default the latest saved)."
+          }
+        }
+      },
       "ScriptRunNow": {
         "type": "object",
         "properties": {
@@ -36593,6 +36673,83 @@
           },
           "409": {
             "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/check": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Check code without running it: type errors, lint rules, ctx calls the manifest does not grant",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptCheck"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Problems",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptCheckResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
             "content": {
               "application/json": {
                 "schema": {

@@ -48,6 +48,7 @@ import type { TableRowsChange } from '../../domain/tables.ts'
 import type { HandleResult } from '../channels/gateway/types.ts'
 import { type ChannelGateway, OWN_TYPED } from '../channels/gateway.ts'
 import type { RemoteEvent } from '../channels/types.ts'
+import { checkScript } from './check.ts'
 import { runScript } from './executor.ts'
 import { buildHost, HOST_METHODS, type HostContext, SIDE_EFFECTS } from './host.ts'
 import { prepareScript } from './prepare.ts'
@@ -419,6 +420,13 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
             text?: string
             sender?: { id: string; name?: string; username?: string; isSelf?: boolean }
             replyTo?: { messageId: string; senderId?: string; senderName?: string }
+            attachments?: Array<{
+              id: string
+              kind: string
+              name?: string
+              mediaType?: string
+              size?: number
+            }>
           })
         : undefined
     const actor = e.actor ?? msg?.sender
@@ -454,6 +462,17 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
             },
           }),
       ...(msg?.text === undefined ? {} : { text: msg.text }),
+      ...(msg?.attachments === undefined || msg.attachments.length === 0
+        ? {}
+        : {
+            attachments: msg.attachments.map((a) => ({
+              id: a.id,
+              kind: a.kind,
+              ...(a.name === undefined ? {} : { name: a.name }),
+              ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
+              ...(a.size === undefined ? {} : { size: a.size }),
+            })),
+          }),
       ...(msg?.replyTo === undefined
         ? {}
         : {
@@ -488,6 +507,8 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
       return p.ok ? undefined : p.error
     },
     types: () => scriptTypes(HOST_METHODS),
+    checkCode: (source, manifest) =>
+      checkScript({ source, manifest, types: scriptTypes(HOST_METHODS) }),
     methods: (): readonly HostMethodDoc[] => HOST_METHODS,
 
     onChannelEvent(info) {

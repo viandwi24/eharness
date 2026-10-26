@@ -8,6 +8,7 @@
 	import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheck';
 	import WarningIcon from 'phosphor-svelte/lib/Warning';
 	import BookOpenIcon from 'phosphor-svelte/lib/BookOpen';
+	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
 	import { api, ApiError } from '#lib/api/index.js';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
@@ -115,6 +116,32 @@
 	}
 
 	let panelRev = $state(0);
+
+	// Check: type errors, lint rules, ctx calls the manifest does not grant (server side)
+	type CheckResult = { ok: boolean; errors: number; warnings: number; problems: { line: number; column: number; message: string; severity: 'error' | 'warning'; code: string }[]; version?: number };
+	let check = $state<(CheckResult & { draft: boolean }) | null>(null);
+	let checking = $state(false);
+	let checked = $state<'ok' | 'failed' | 'none'>('none');
+	async function runCheck(draft: boolean): Promise<void> {
+		if (!detail || checking) return;
+		checking = true;
+		try {
+			const body = draft
+				? { source, ...(manifestCheck.ok ? { manifest: manifestCheck.manifest } : {}) }
+				: {};
+			const r = await api.post('/scripts/{script}/check', { params: { script: detail.script.id }, body });
+			check = { ...r, draft };
+			if (!draft) checked = r.ok ? 'ok' : 'failed';
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'The check failed');
+		} finally {
+			checking = false;
+		}
+	}
+	function checkNow(): void {
+		part = 'code';
+		void runCheck(dirty);
+	}
 	let webhookUrl = $state('');
 	async function loadWebhook(id: string): Promise<void> {
 		try {
@@ -146,6 +173,7 @@
 			notFound = false;
 			if (first || force || !dirty) takeLatest(d);
 			void loadTested();
+			if (first || force) void runCheck(false);
 			if (first) void loadWebhook(d.script.id);
 		} catch (e) {
 			if (mine !== seq) return;
@@ -203,7 +231,7 @@
 				params: { script: detail.script.id },
 				body: { source, manifest: m.manifest, ...(note.trim() ? { note: note.trim() } : {}) }
 			});
-			toast.success(r.version ? `Saved v${r.version}. Test it on the right.` : 'Nothing changed');
+			toast.success(r.version ? `Saved v${r.version}. Checking it…` : 'Nothing changed');
 			detail = { ...detail, script: r.script };
 			panelRev++;
 			await load(true);
@@ -304,7 +332,9 @@
 				{detail}
 				{dirty}
 				{tested}
+				{checked}
 				onSave={() => void save()}
+				onCheck={checkNow}
 				onTest={focusTest}
 				onChanged={changed}
 				onViewVersion={viewCode}
@@ -352,6 +382,9 @@
 								{:else if problems.length}
 									<span class="text-xs text-warning-text">{problems.length} warning{problems.length === 1 ? '' : 's'}</span>
 								{/if}
+								<Button size="sm" variant="outline" onclick={checkNow} disabled={checking} title="Check without running: type errors, lint, missing permissions">
+									{#if checking}<Spinner class="size-4" />{:else}<CheckCircleIcon class="size-4" />{/if} Check
+								</Button>
 								<Button size="sm" variant="ghost" onclick={() => (showRef = true)}><BookOpenIcon class="size-4" /> ctx reference</Button>
 							{/if}
 							<span class="font-mono text-xs text-muted-foreground">v{base?.version ?? detail.latest.version}{dirty ? ' · edited' : ''}</span>
@@ -368,7 +401,31 @@
 								onProblems={(p) => (problems = p)}
 								onReady={(a) => (editorApi = a)}
 							/>
-							{#if problems.length}
+							{#if check}
+								<div class="border-t border-border text-xs">
+									<div class="flex items-center gap-2 px-3 py-1.5">
+										<span class={check.ok ? 'text-success-text' : 'text-destructive-text'}>{check.ok ? '✓' : '✕'}</span>
+										<span class="font-medium">Check{check.draft ? ' (unsaved draft)' : check.version ? ` of v${check.version}` : ''}:</span>
+										<span class="text-muted-foreground">{check.ok ? 'no errors' : `${check.errors} error${check.errors === 1 ? '' : 's'}`}, {check.warnings} warning{check.warnings === 1 ? '' : 's'}</span>
+										<span class="flex-1"></span>
+										<button type="button" class="text-muted-foreground hover:text-foreground" aria-label="Hide check" onclick={() => (check = null)}>×</button>
+									</div>
+									{#if check.problems.length}
+										<ul class="max-h-40 overflow-auto">
+											{#each check.problems as p, i (i)}
+												<li>
+													<button type="button" class="flex w-full gap-2 px-3 py-1 text-left hover:bg-accent/50" onclick={() => editorApi?.reveal(p.line, p.column)}>
+														<span class={p.severity === 'error' ? 'text-destructive-text' : 'text-warning-text'}>{p.severity === 'error' ? '●' : '▲'}</span>
+														<span class="font-mono text-muted-foreground">{p.line}:{p.column}</span>
+														<span class="min-w-0 flex-1">{p.message}</span>
+														<span class="font-mono text-muted-foreground">{p.code}</span>
+													</button>
+												</li>
+											{/each}
+										</ul>
+									{/if}
+								</div>
+							{:else if problems.length}
 								<ul class="max-h-32 overflow-auto border-t border-border text-xs">
 									{#each problems.slice(0, 50) as p, i (i)}
 										<li>

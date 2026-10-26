@@ -141,6 +141,15 @@ export interface ScriptGrants {
    * `* /tables/orders/**`; `*` is one path segment). Some routes are never callable (`API_DENIED`).
    */
   api: string[]
+  /**
+   * Chats whose messages, members and files the script may read (`ctx.channels.history`, `message`,
+   * `members`, `download`); `chat: "*"` = every chat of that connection. Chats in `send` are readable.
+   */
+  read: ChatGrant[]
+  /** Native actions of a connection `ctx.channels.action` may run (`create_channel`, `ban`…; `*` = any). */
+  actions: Array<{ connection: string; name: string }>
+  /** `ctx.notify` may put a notification in the owner's bell. */
+  notify: boolean
 }
 
 export interface ScriptManifest {
@@ -171,6 +180,9 @@ export const emptyGrants = (): ScriptGrants => ({
   wake: [],
   programs: [],
   api: [],
+  read: [],
+  actions: [],
+  notify: false,
 })
 
 /** The most a script may ask for. */
@@ -320,12 +332,14 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
     string,
     unknown
   >
-  const send: ChatGrant[] = []
-  const rawSend = g.send ?? []
-  if (!Array.isArray(rawSend))
-    errors.push('grants.send must be a list of { connection, chat, topic? }')
-  else
-    for (const [i, s] of rawSend.entries()) {
+  const chatList = (key: 'send' | 'read'): ChatGrant[] => {
+    const out: ChatGrant[] = []
+    const raw = g[key] ?? []
+    if (!Array.isArray(raw)) {
+      errors.push(`grants.${key} must be a list of { connection, chat, topic? }`)
+      return out
+    }
+    for (const [i, s] of raw.entries()) {
       const r = (s ?? {}) as Record<string, unknown>
       if (
         typeof r.connection !== 'string' ||
@@ -333,15 +347,34 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
         typeof r.chat !== 'string' ||
         r.chat === ''
       ) {
-        errors.push(`grants.send ${i + 1}: { connection, chat } are needed`)
+        errors.push(`grants.${key} ${i + 1}: { connection, chat } are needed`)
         continue
       }
-      send.push({
+      out.push({
         connection: r.connection,
         chat: r.chat,
         ...(typeof r.topic === 'string' && r.topic !== '' ? { topic: r.topic } : {}),
       })
     }
+    return out
+  }
+  const actions: Array<{ connection: string; name: string }> = []
+  const rawActions = g.actions ?? []
+  if (!Array.isArray(rawActions))
+    errors.push('grants.actions must be a list of { connection, name }')
+  else
+    for (const [i, a] of rawActions.entries()) {
+      const r = (a ?? {}) as Record<string, unknown>
+      if (
+        typeof r.connection !== 'string' ||
+        r.connection === '' ||
+        typeof r.name !== 'string' ||
+        r.name === ''
+      )
+        errors.push(`grants.actions ${i + 1}: { connection, name } are needed`)
+      else actions.push({ connection: r.connection, name: r.name })
+    }
+  const send = chatList('send')
   const paths = (v: unknown, what: string): string[] => {
     const list = strings(v, what, errors)
     for (const p of list)
@@ -360,6 +393,9 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
     wake: strings(g.wake, 'grants.wake', errors),
     programs: strings(g.programs, 'grants.programs', errors),
     api: strings(g.api, 'grants.api', errors).map((x) => x.replace(/\s+/g, ' ')),
+    read: chatList('read'),
+    actions,
+    notify: g.notify === true,
   }
   for (const a of grants.api) {
     const bad = apiGrantProblem(a)
@@ -545,6 +581,13 @@ export function grantWidening(before: ScriptGrants | undefined, after: ScriptGra
   newer(after.wake, b.wake, 'wake agent')
   newer(after.programs, b.programs, 'run program')
   newer(after.api, b.api, 'call the API')
+  for (const r of after.read)
+    if (!b.read.some((x) => sameChat(x, r)) && !b.send.some((x) => sameChat(x, r)))
+      out.push(`read ${r.chat}${r.topic ? ` / ${r.topic}` : ''} on ${r.connection}`)
+  for (const a of after.actions)
+    if (!b.actions.some((x) => x.connection === a.connection && x.name === a.name))
+      out.push(`run ${a.name} on ${a.connection}`)
+  if (after.notify && !b.notify) out.push('send notifications')
   return out
 }
 
@@ -590,6 +633,14 @@ export interface ScriptChannelEvent {
   messageId?: string
   /** A reply: the platform id of the message it answers (and, when the platform says, its sender). */
   replyTo?: { messageId: string; senderId?: string; senderName?: string }
+  /** Files of the message (fetch one with `ctx.channels.download`). */
+  attachments?: Array<{
+    id: string
+    kind: string
+    name?: string
+    mediaType?: string
+    size?: number
+  }>
   emoji?: string
 }
 
@@ -864,6 +915,38 @@ export function manifestJsonSchema(): Record<string, unknown> {
           ),
           wake: list(text, 'Agents (slug or name) ctx.agent.wake may wake (a paid model turn).'),
           programs: list(text, 'Programs (name or id) ctx.programs.run may start.'),
+          read: list(
+            {
+              type: 'object',
+              properties: {
+                connection: text,
+                chat: {
+                  ...text,
+                  description: 'Title, platform id or node id; "*" = every chat of the connection.',
+                },
+                topic: text,
+              },
+              required: ['connection', 'chat'],
+              additionalProperties: false,
+            },
+            'Chats whose messages, members and files ctx.channels.history / message / members / download may read (chats in send are readable).',
+          ),
+          actions: list(
+            {
+              type: 'object',
+              properties: {
+                connection: text,
+                name: { ...text, description: 'Native action name (create_channel…) or "*".' },
+              },
+              required: ['connection', 'name'],
+              additionalProperties: false,
+            },
+            'Native actions ctx.channels.action may run.',
+          ),
+          notify: {
+            type: 'boolean',
+            description: "ctx.notify may put a notification in the owner's bell.",
+          },
           api: list(
             { type: 'string', pattern: '^(\\*|GET|POST|PUT|PATCH|DELETE) /' },
             'Team API routes ctx.api may call: "GET /tasks/**", "POST /tables/orders/rows". Scripts, secrets, sign-in and backups are never callable.',

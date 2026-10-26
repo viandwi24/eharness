@@ -13698,6 +13698,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scripts/{script}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check code without running it: type errors, lint rules, ctx calls the manifest does not grant */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Script id or name. */
+                    script: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ScriptCheck"];
+                };
+            };
+            responses: {
+                /** @description Problems */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScriptCheckResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown script */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scripts/{script}/run": {
         parameters: {
             query?: never;
@@ -24632,6 +24702,30 @@ export interface components {
             text?: string;
             /** @description A synthetic event instead of a recorded one. */
             event?: unknown;
+        };
+        ScriptCheckResult: {
+            ok: boolean;
+            errors: number;
+            warnings: number;
+            problems: {
+                line: number;
+                column: number;
+                message: string;
+                /** @enum {string} */
+                severity: "error" | "warning";
+                code: string;
+            }[];
+            durationMs: number;
+            version?: number;
+        };
+        ScriptCheck: {
+            version?: number;
+            /** @description A draft to check instead of a saved version. */
+            source?: string;
+            /** @description The draft manifest (default the latest saved). */
+            manifest?: {
+                [key: string]: unknown;
+            };
         };
         ScriptRunNow: {
             event?: unknown;

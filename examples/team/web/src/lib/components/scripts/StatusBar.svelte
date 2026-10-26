@@ -35,7 +35,9 @@
 		onDeleted,
 		dirty = false,
 		tested = 'none',
+		checked = 'none',
 		onSave,
+		onCheck,
 		onTest
 	}: {
 		detail: ScriptDetail;
@@ -43,7 +45,10 @@
 		dirty?: boolean;
 		/** The newest test of the latest version. */
 		tested?: 'ok' | 'failed' | 'none';
+		/** The check of the latest saved version (type errors, lint, grants). */
+		checked?: 'ok' | 'failed' | 'none';
 		onSave?: () => void;
+		onCheck?: () => void;
 		onTest?: () => void;
 		onChanged: (s: Script) => void;
 		onViewVersion: (version: number) => void;
@@ -63,6 +68,7 @@
 	/** The guided path: save → test → turn on. */
 	const steps = $derived([
 		{ label: dirty ? 'Unsaved changes' : `Saved v${s.latestVersion}`, state: dirty ? 'todo' : 'done' },
+		{ label: checked === 'ok' ? 'Checked' : checked === 'failed' ? 'Check found errors' : 'Not checked yet', state: checked === 'ok' ? 'done' : checked === 'failed' ? 'bad' : 'todo' },
 		{ label: tested === 'ok' ? `Tested v${s.latestVersion}` : tested === 'failed' ? 'Last test failed' : 'Not tested yet', state: tested === 'ok' ? 'done' : tested === 'failed' ? 'bad' : 'todo' },
 		{
 			label: live ? 'Live' : s.approval.state === 'pending' ? 'Waits for approval' : s.status === 'active' ? `Live on v${s.activeVersion}` : s.status === 'disabled' ? 'Switched off' : 'Not live',
@@ -70,7 +76,9 @@
 		}
 	] as const);
 	const activatable = $derived(canActivate(s) && s.approval.state !== 'pending');
-	const primary = $derived<'save' | 'test' | 'activate' | null>(dirty && onSave ? 'save' : tested !== 'ok' && onTest && !live ? 'test' : activatable ? 'activate' : null);
+	const primary = $derived<'save' | 'check' | 'test' | 'activate' | null>(
+		dirty && onSave ? 'save' : checked !== 'ok' && onCheck && !live ? 'check' : tested !== 'ok' && onTest && !live ? 'test' : activatable ? 'activate' : null
+	);
 	const versionsDesc = $derived(Array.from({ length: s.latestVersion }, (_, i) => s.latestVersion - i));
 
 	let busy = $state(false);
@@ -221,6 +229,8 @@
 		<div class="flex flex-wrap items-center gap-1">
 			{#if primary === 'save'}
 				<Button size="sm" disabled={busy} onclick={onSave}>Save</Button>
+			{:else if primary === 'check'}
+				<Button size="sm" disabled={busy} onclick={onCheck}><CheckIcon class="size-4" /> Check it</Button>
 			{:else if primary === 'test'}
 				<Button size="sm" disabled={busy} onclick={onTest}><PlayIcon class="size-4" /> Test it</Button>
 			{/if}

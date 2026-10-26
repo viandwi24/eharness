@@ -18,6 +18,7 @@ import { z } from 'zod'
 import type { Deps } from '../../app/ports.ts'
 import {
   activateScript,
+  checkScriptCode,
   createScript,
   deleteScript,
   disableScript,
@@ -60,9 +61,14 @@ const manifestField = z
   )
 
 const readSchema = z.object({
-  action: z.enum(['list', 'view', 'versions', 'types', 'runs', 'run']),
+  action: z.enum(['list', 'view', 'versions', 'types', 'check', 'runs', 'run']),
   script: z.string().optional().describe('Script name or id (view, versions, runs, run).'),
-  version: z.number().int().min(1).optional().describe('view: a version (default the latest).'),
+  version: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe('view, check: a version (default the latest).'),
   runId: z.string().optional().describe('run: the run id from runs.'),
   limit: z.number().int().min(1).max(50).optional().describe('runs: how many (default 10).'),
   dryRun: z.boolean().optional().describe('runs: only dry runs (true) or only real runs (false).'),
@@ -153,6 +159,24 @@ const callLine = (c: HostCallRecord): string =>
   c.dryRun
     ? `- would ${c.method} ${json(c.args)}`
     : `- ${c.method} ${json(c.args, 200)} → ${c.ok ? json(c.result, 200) : `error: ${c.error ?? '?'}`}`
+
+/** A check as lines the model reads. */
+export function checkText(r: {
+  ok: boolean
+  errors: number
+  warnings: number
+  problems: Array<{ line: number; column: number; message: string; severity: string; code: string }>
+  version?: number
+}): string {
+  const head = `Check${r.version === undefined ? '' : ` of v${r.version}`}: ${r.ok ? 'no errors' : `${r.errors} error(s)`}, ${r.warnings} warning(s).`
+  if (r.problems.length === 0) return head
+  return [
+    head,
+    ...r.problems
+      .slice(0, 40)
+      .map((p) => `- line ${p.line}:${p.column} ${p.severity} (${p.code}): ${p.message}`),
+  ].join('\n')
+}
 
 export function runText(r: ScriptRun, full = false): string {
   const head = `Run ${r.id} (${r.dryRun ? 'dry run' : 'real'}, v${r.version}, ${r.trigger}, ${when(r.startedAt)}): ${r.outcome}${r.reason ? ` (${r.reason})` : ''}${r.error ? ` — ${r.error}` : ''}, ${Math.round(r.durationMs)} ms`
@@ -260,6 +284,10 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
               'Scripts run sandboxed TypeScript: `export default async function (event, ctx) { ... }`. No imports, no timers, no network except ctx.http. Every ctx call is checked against the manifest grants (default: nothing). Return JSON; ctx.log(...) lines show in the trace.',
               scriptTypesText(d).types,
             ].join('\n\n')
+          case 'check':
+            return checkText(
+              await checkScriptCode(d, need(a.script, 'script'), { version: a.version }),
+            )
           case 'runs': {
             const runs = listRuns(d, need(a.script, 'script'), {
               limit: a.limit ?? 10,
@@ -285,7 +313,8 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
               manifest: a.manifest ?? {},
               note: a.note,
             })
-            return `Created ${s.name} v1 (draft). Next: dry_run it with an event, then request_activation (it runs at once when the owner or an admin asked for it in this chat; otherwise it waits for approval on the Scripts page).`
+            const checked = checkText(await checkScriptCode(d, s.id, {}))
+            return `Created ${s.name} v1 (draft).\n${checked}\nNext: fix any errors, dry_run it with an event, then request_activation (it runs at once when the owner or an admin asked for it in this chat; otherwise it waits for approval on the Scripts page).`
           }
           case 'update': {
             const r = await updateScript(d, actor, a.script, {
@@ -294,9 +323,13 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
               note: a.note,
               description: a.description,
             })
+            const checked =
+              r.version === undefined
+                ? ''
+                : `\n${checkText(await checkScriptCode(d, r.script.id, { version: r.version }))}`
             return r.version === undefined
               ? `Updated ${r.script.name} (no code or manifest change, no new version).`
-              : `Saved ${r.script.name} v${r.version}. ${r.script.status === 'active' ? `v${r.script.activeVersion} keeps running until v${r.version} is activated (request_activation).` : 'Dry-run it, then request_activation.'}`
+              : `Saved ${r.script.name} v${r.version}. ${r.script.status === 'active' ? `v${r.script.activeVersion} keeps running until v${r.version} is activated (request_activation).` : 'Dry-run it, then request_activation.'}${checked}`
           }
           case 'dry_run': {
             const r = await dryRunScript(d, actor, a.script, {
@@ -352,7 +385,7 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
         tools: {
           [SCRIPTS_READ_TOOL]: tool({
             description:
-              "Read the team's scripts: small sandboxed TypeScript programs that run without a model when a chat event, a schedule or a table change happens (forwarding, counting, logging to tables or the library). Actions: list, view (code + manifest), versions, types (the ctx API and manifest format — read before writing), runs, run (one trace).",
+              "Read the team's scripts: small sandboxed TypeScript programs that run without a model when a chat event, a schedule or a table change happens (forwarding, counting, logging to tables or the library). Actions: list, view (code + manifest), versions, types (the ctx API and manifest format — read before writing), check (type errors, lint, missing grants, without running), runs, run (one trace).",
             inputSchema: readSchema,
             metadata: { risk: 'read', idempotent: true },
             execute: (input): Promise<string> => guard(() => read(input)),

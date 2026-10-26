@@ -158,6 +158,8 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
     '  messageId?: string',
     '  /** A reply: the message it answers (its platform id, and its sender when the platform says). */',
     '  replyTo?: { messageId: string; senderId?: string; senderName?: string }',
+    '  /** Message events: its files (save one with ctx.channels.download, then post it with channels.send files). */',
+    '  attachments?: Array<{ id: string; kind: string; name?: string; mediaType?: string; size?: number }>',
     '  /** Reaction events. */',
     '  emoji?: string',
     '  /** Table events: the table, the changed row ids, the rows after the change (up to 20; none for deletions) and who changed them. */',

@@ -28,6 +28,7 @@
     "grammy": "1.46.0",
     "hono": "4.13.13",
     "quickjs-emscripten-core": "0.32.0",
+    "typescript5": "npm:typescript@5.9.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {

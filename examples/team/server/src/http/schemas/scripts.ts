@@ -228,3 +228,37 @@ export const ScriptWebhookSchema = z
     live: z.boolean().openapi({ description: 'The active version has a webhook trigger.' }),
   })
   .openapi('ScriptWebhook')
+
+export const CheckSchema = z
+  .object({
+    version: z.number().int().min(1).optional(),
+    source: z
+      .string()
+      .max(200_000)
+      .optional()
+      .openapi({ description: 'A draft to check instead of a saved version.' }),
+    manifest: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .openapi({ description: 'The draft manifest (default the latest saved).' }),
+  })
+  .openapi('ScriptCheck')
+
+export const CheckResultSchema = z
+  .object({
+    ok: z.boolean(),
+    errors: z.number().int(),
+    warnings: z.number().int(),
+    problems: z.array(
+      z.object({
+        line: z.number().int(),
+        column: z.number().int(),
+        message: z.string(),
+        severity: z.enum(['error', 'warning']),
+        code: z.string(),
+      }),
+    ),
+    durationMs: z.number(),
+    version: z.number().int().optional(),
+  })
+  .openapi('ScriptCheckResult')

@@ -120,6 +120,7 @@ import type {
   TestResultView,
 } from '../domain/providers.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
+import type { ScriptManifest } from '../domain/script-manifest.ts'
 import type {
   ApprovalState,
   AuthorKind,
@@ -488,6 +489,21 @@ export type ProgramPatch = Partial<
   Omit<Program, 'id' | 'agentId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'version'>
 >
 
+/** The answer of a script check (`infra/scripts/check.ts`). */
+export interface ScriptCheckResult {
+  ok: boolean
+  errors: number
+  warnings: number
+  problems: Array<{
+    line: number
+    column: number
+    message: string
+    severity: 'error' | 'warning'
+    code: string
+  }>
+  durationMs: number
+}
+
 /** Runs scripts (`infra/scripts/engine.ts`, P59 W4): the app's way to the executor. */
 export interface ScriptRunnerPort {
   run(input: {
@@ -504,6 +520,8 @@ export interface ScriptRunnerPort {
   types(): string
   /** The `ctx` methods with their docs. */
   methods(): readonly HostMethodDoc[]
+  /** Check code without running it: type errors, lint rules, ctx calls the manifest does not grant. */
+  checkCode(source: string, manifest: ScriptManifest): Promise<ScriptCheckResult>
   /** The secret webhook path of a script (`/hooks/scripts/<id>/<token>`). */
   webhookPath(scriptId: string): Promise<string>
   /** A POST to a webhook path: checks the token, then runs the script (404 for a wrong token). */

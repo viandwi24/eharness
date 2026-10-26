@@ -22,6 +22,7 @@ import { createThread, listThreads } from '../../app/threads.ts'
 import {
   apiDenied,
   apiPath,
+  type ChatGrant,
   canCallApi,
   canFetchHost,
   canReadPath,
@@ -32,7 +33,9 @@ import {
   type ScriptManifest,
 } from '../../domain/script-manifest.ts'
 import { type HostMethodDoc, KV_LIMITS, type Script } from '../../domain/scripts.ts'
-import type { ChannelGateway } from '../channels/gateway.ts'
+import type { ChannelGateway, ResolvedTarget } from '../channels/gateway.ts'
+import type { LogMessage } from '../channels/messages.ts'
+import { nativeToolName } from '../channels/policy.ts'
 import type { HostHandler } from './executor.ts'
 
 const ROW = '{ id: string; version: number; data: Record<string, unknown> }'
@@ -42,16 +45,88 @@ const FILTER = 'Record<string, unknown>'
 export const HOST_METHODS: readonly HostMethodDoc[] = [
   {
     name: 'channels.send',
-    args: '{ connection: string; chat: string; topic?: string; text: string }',
+    args: '{ connection: string; chat: string; topic?: string; text?: string; replyTo?: string; files?: string[]; mentions?: string[] }',
     returns: '{ messageIds: string[] }',
-    doc: 'Post a message to a chat listed in grants.send.',
+    doc: 'Post to a chat listed in grants.send: text, a reply to a message (replyTo = its id), library files (paths), mentions of team members.',
     sideEffect: true,
   },
   {
     name: 'channels.reply',
-    args: '{ text: string }',
+    args: '{ text?: string; files?: string[]; quote?: boolean }',
     returns: '{ messageIds: string[] }',
-    doc: 'Reply in the chat of the channel event that started this run (grants.reply).',
+    doc: 'Answer in the chat of the event that started this run, as a reply to that message (quote: false = a plain message); grants.reply.',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.react',
+    args: '{ connection: string; chat: string; topic?: string; messageId: string; emoji: string }',
+    returns: '{ ok: true }',
+    doc: 'Put an emoji reaction on a message in a chat listed in grants.send.',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.edit',
+    args: '{ connection: string; chat: string; topic?: string; messageId: string; text: string }',
+    returns: '{ ok: true }',
+    doc: 'Edit a message the connection sent, in a chat listed in grants.send.',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.delete',
+    args: '{ connection: string; chat: string; topic?: string; messageId: string }',
+    returns: '{ ok: true }',
+    doc: 'Delete a message in a chat listed in grants.send.',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.pin',
+    args: '{ connection: string; chat: string; topic?: string; messageId: string; pin?: boolean }',
+    returns: '{ ok: true }',
+    doc: 'Pin (or, with pin: false, unpin) a message in a chat listed in grants.send.',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.history',
+    args: '{ connection: string; chat: string; topic?: string; limit?: number; before?: string }',
+    returns: `{ messages: Array<${'{ id: string; at: number; self: boolean; from?: { id: string; name?: string; username?: string }; text: string; replyTo?: { messageId: string }; attachments: Array<{ id: string; kind?: string; name?: string; mediaType?: string; size?: number }>; editedAt?: number; deleted?: true }'}> }`,
+    doc: 'Stored messages of a chat in grants.read or grants.send, oldest first (limit default 20, at most 200; before = an older page).',
+    sideEffect: false,
+  },
+  {
+    name: 'channels.message',
+    args: '{ connection: string; chat: string; topic?: string; messageId: string }',
+    returns:
+      '{ id: string; at: number; self: boolean; from?: { id: string; name?: string; username?: string }; text: string; replyTo?: { messageId: string }; attachments: Array<{ id: string; name?: string; mediaType?: string }> } | null',
+    doc: 'One stored message by its id (e.g. the message a reply answers), or null.',
+    sideEffect: false,
+  },
+  {
+    name: 'channels.members',
+    args: '{ connection: string; chat: string; limit?: number }',
+    returns:
+      "{ scope: 'full' | 'admins' | 'partial'; members: Array<{ id: string; name?: string; username?: string; role?: string }> }",
+    doc: 'Members of a chat in grants.read or grants.send (what the platform shows).',
+    sideEffect: false,
+  },
+  {
+    name: 'channels.download',
+    args: '{ connection: string; chat: string; topic?: string; messageId: string; attachment?: string }',
+    returns: '{ path: string; name: string; mediaType: string; size: number }',
+    doc: 'Save a file of a message (default its first attachment) to the library; pass the path to channels.send files to post it elsewhere.',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.chats',
+    args: '{ connection: string }',
+    returns: '{ chats: Array<{ id: string; title: string; kind: string }> }',
+    doc: 'The chats of a connection this script may use (grants.send / grants.read).',
+    sideEffect: false,
+  },
+  {
+    name: 'channels.action',
+    args: '{ connection: string; name: string; input?: Record<string, unknown> }',
+    returns: '{ result: string }',
+    doc: 'Run a native action of a connection (create_channel, ban, invite link…) listed in grants.actions; the Channels page lists them.',
     sideEffect: true,
   },
   {
@@ -73,6 +148,27 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
     args: '{ path: string; content: string }',
     returns: '{ path: string }',
     doc: 'Write a library text file (grants.libraryWrite).',
+    sideEffect: true,
+  },
+  {
+    name: 'library.delete',
+    args: '{ path: string }',
+    returns: '{ deleted: boolean }',
+    doc: 'Delete a library file (grants.libraryWrite).',
+    sideEffect: true,
+  },
+  {
+    name: 'library.move',
+    args: '{ from: string; to: string }',
+    returns: '{ path: string }',
+    doc: 'Move or rename a library file (both paths in grants.libraryWrite).',
+    sideEffect: true,
+  },
+  {
+    name: 'notify',
+    args: '{ title: string; body?: string; link?: string }',
+    returns: '{ ok: true }',
+    doc: "Put a notification in the owner's bell (grants.notify).",
     sideEffect: true,
   },
   {
@@ -227,6 +323,7 @@ export interface HostContext {
 const FETCH_TIMEOUT_MS = 10_000
 const FETCH_BODY_CHARS = 1_000_000
 const MAX_TEXT = 4_000
+const MAX_FILE_BYTES = 20 * 1024 * 1024
 const MAX_INSTRUCTION = 2_000
 
 class ScriptCallError extends Error {}
@@ -341,57 +438,347 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       refuse(`this script may not change table ${t}: add it to grants.tablesWrite`)
   }
 
+  // --- chats ---------------------------------------------------------------------------------
+  type Place = { connection: string; chat: string; topic?: string }
+  const chatArg = (o: Record<string, unknown>, label: string): Place => {
+    const topic = optStr(o, 'topic')
+    return {
+      connection: str(o, 'connection', label, 200),
+      chat: str(o, 'chat', label, 200),
+      ...(topic === undefined ? {} : { topic }),
+    }
+  }
+  const placeText = (p: Place): string =>
+    `${p.chat}${p.topic ? ` / ${p.topic}` : ''} on ${p.connection}`
+  const inList = (list: readonly ChatGrant[], p: Place): boolean =>
+    list.some(
+      (x) =>
+        x.connection === p.connection &&
+        (x.chat === '*' || x.chat.toLowerCase() === p.chat.toLowerCase()) &&
+        (x.chat === '*' || (x.topic ?? '').toLowerCase() === (p.topic ?? '').toLowerCase()),
+    )
+  const mayWrite = (p: Place): boolean => inList(g.send, p)
+  const mayRead = (p: Place): boolean => inList(g.send, p) || inList(g.read, p)
+  const sameName = (
+    want: string,
+    n: { nativeId: string; title?: string | null; id: string },
+  ): boolean =>
+    [n.nativeId, n.title ?? '', n.id].some((x) => x.toLowerCase() === want.toLowerCase())
+  const targetOf = (p: Place): ResolvedTarget =>
+    gw().resolveTarget(
+      agentOfConnection(p.connection),
+      undefined,
+      {
+        connection: p.connection,
+        conversation: p.chat,
+        ...(p.topic === undefined ? {} : { topic: p.topic }),
+      },
+      { trusted: true },
+    )
+  const laneOf = (t: ResolvedTarget) => ({
+    connectionId: t.config.connectionId,
+    conversationId: t.node.id,
+    kind: t.node.kind === 'direct' ? ('dm' as const) : ('group' as const),
+  })
+  /** Files from library paths: readable by the grants, or downloaded by this run. */
+  const downloaded = new Map<string, string>()
+  const filesArg = async (
+    o: Record<string, unknown>,
+    label: string,
+  ): Promise<Array<{ name: string; mediaType: string; bytes: Uint8Array }>> => {
+    if (o.files === undefined) return []
+    if (!Array.isArray(o.files) || o.files.length > 10)
+      return refuse(`ctx.${label}: files is a list of at most 10 library paths`)
+    const out: Array<{ name: string; mediaType: string; bytes: Uint8Array }> = []
+    for (const p of o.files) {
+      if (typeof p !== 'string' || p === '') return refuse(`ctx.${label}: files are library paths`)
+      if (!downloaded.has(p) && !canReadPath(g, p))
+        return refuse(`this script may not read ${p}: add it to grants.libraryRead`)
+      const f = (await gw().files.read(p)) ?? refuse(`ctx.${label}: no such file ${p}`)
+      if (f.bytes.byteLength > MAX_FILE_BYTES)
+        return refuse(`ctx.${label}: ${p} is larger than ${MAX_FILE_BYTES} bytes`)
+      out.push({
+        name: downloaded.get(p) ?? p.split('/').pop() ?? 'file',
+        mediaType: f.mediaType,
+        bytes: f.bytes,
+      })
+    }
+    return out
+  }
+  const mentionsArg = (o: Record<string, unknown>, connection: string): string[] => {
+    if (o.mentions === undefined) return []
+    if (!Array.isArray(o.mentions) || o.mentions.some((m) => typeof m !== 'string'))
+      return refuse('ctx.channels.send: mentions is a list of team member names or @usernames')
+    const r = gw().resolveMentions(connection, o.mentions as string[])
+    return 'error' in r ? refuse(`ctx.channels.send: ${r.error}`) : r.ids
+  }
+  const messageOut = (m: LogMessage) => ({
+    id: m.nativeId,
+    at: m.at,
+    self: m.self,
+    ...(m.sender === undefined
+      ? {}
+      : {
+          from: {
+            id: m.sender.id,
+            ...(m.sender.name === undefined ? {} : { name: m.sender.name }),
+            ...(m.sender.username === undefined ? {} : { username: m.sender.username }),
+          },
+        }),
+    text: m.text,
+    ...(m.replyTo === undefined ? {} : { replyTo: { messageId: m.replyTo.messageId } }),
+    attachments: m.attachments.map((a) => ({
+      id: a.id,
+      ...(a.kind === undefined ? {} : { kind: a.kind }),
+      ...(a.name === undefined ? {} : { name: a.name }),
+      ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
+      ...(a.size === undefined ? {} : { size: a.size }),
+    })),
+    ...(m.editedAt === undefined ? {} : { editedAt: m.editedAt }),
+    ...(m.deletedAt === undefined ? {} : { deleted: true }),
+  })
+
   return {
     'channels.send': async (args) => {
       const o = obj(args, 'channels.send')
-      const connection = str(o, 'connection', 'channels.send', 200)
-      const chat = str(o, 'chat', 'channels.send', 200)
-      const topic = optStr(o, 'topic')
-      const text = str(o, 'text', 'channels.send', MAX_TEXT)
-      const granted = g.send.some(
-        (s) =>
-          s.connection === connection &&
-          s.chat.toLowerCase() === chat.toLowerCase() &&
-          (s.topic ?? '').toLowerCase() === (topic ?? '').toLowerCase(),
-      )
-      if (!granted)
-        return refuse(
-          `this script may not post to ${chat}${topic ? ` / ${topic}` : ''} on ${connection}: add it to grants.send`,
-        )
-      const target = gw().resolveTarget(
-        agentOfConnection(connection),
-        undefined,
-        {
-          connection,
-          conversation: chat,
-          ...(topic === undefined ? {} : { topic }),
-        },
-        { trusted: true },
-      )
-      return { messageIds: await gw().post(target, { text }) }
+      const place = chatArg(o, 'channels.send')
+      if (!mayWrite(place))
+        return refuse(`this script may not post to ${placeText(place)}: add it to grants.send`)
+      const text = typeof o.text === 'string' ? o.text : ''
+      if (text.length > MAX_TEXT)
+        return refuse(`ctx.channels.send: text is longer than ${MAX_TEXT} characters`)
+      const files = await filesArg(o, 'channels.send')
+      if (text.trim() === '' && files.length === 0)
+        return refuse('ctx.channels.send: text or files is needed')
+      const t = targetOf(place)
+      const replyTo = optStr(o, 'replyTo')
+      const mentions = mentionsArg(o, place.connection)
+      return {
+        messageIds: await gw().post(t, {
+          text,
+          ...(mentions.length ? { mentions } : {}),
+          ...(replyTo === undefined ? {} : { replyTo }),
+          ...(files.length ? { files } : {}),
+        }),
+      }
     },
     'channels.reply': async (args) => {
       const o = obj(args, 'channels.reply')
-      const text = str(o, 'text', 'channels.reply', MAX_TEXT)
+      const text = typeof o.text === 'string' ? o.text : ''
+      if (text.length > MAX_TEXT)
+        return refuse(`ctx.channels.reply: text is longer than ${MAX_TEXT} characters`)
       if (!g.reply) return refuse('this script may not reply in chats: turn on grants.reply')
       const e = c.channelEvent
       if (e?.chat === undefined)
         return refuse('ctx.channels.reply works only in a run started by a chat event')
-      const target = gw().resolveTarget(
+      const files = await filesArg(o, 'channels.reply')
+      if (text.trim() === '' && files.length === 0)
+        return refuse('ctx.channels.reply: text or files is needed')
+      const t = gw().resolveTarget(
         agentOfConnection(e.connectionId),
         undefined,
-        {
-          connection: e.connectionId,
-          conversation: e.chat.nodeId,
-        },
+        { connection: e.connectionId, conversation: e.chat.nodeId },
         { trusted: true },
       )
+      const quote = o.quote !== false
       return {
-        messageIds: await gw().post(target, {
+        messageIds: await gw().post(t, {
           text,
-          ...(e.messageId === undefined ? {} : { replyTo: e.messageId }),
+          ...(quote && e.messageId !== undefined ? { replyTo: e.messageId } : {}),
+          ...(files.length ? { files } : {}),
         }),
       }
+    },
+    'channels.react': async (args) => {
+      const o = obj(args, 'channels.react')
+      const place = chatArg(o, 'channels.react')
+      if (!mayWrite(place))
+        return refuse(`this script may not react in ${placeText(place)}: add it to grants.send`)
+      const messageId = str(o, 'messageId', 'channels.react', 100)
+      const emoji = str(o, 'emoji', 'channels.react', 20)
+      const t = targetOf(place)
+      const caps = gw().capabilities(t.config.connectionId, t.node)
+      if (caps?.reactions !== true || t.adapter.react === undefined)
+        return refuse(`${t.adapter.platform} cannot react here`)
+      const react = t.adapter.react
+      await gw().outbound.run(laneOf(t), () => react.call(t.adapter, t.view, messageId, emoji))
+      return { ok: true }
+    },
+    'channels.edit': async (args) => {
+      const o = obj(args, 'channels.edit')
+      const place = chatArg(o, 'channels.edit')
+      if (!mayWrite(place))
+        return refuse(`this script may not edit in ${placeText(place)}: add it to grants.send`)
+      const messageId = str(o, 'messageId', 'channels.edit', 100)
+      const text = str(o, 'text', 'channels.edit', MAX_TEXT)
+      const t = targetOf(place)
+      const caps = gw().capabilities(t.config.connectionId, t.node)
+      if (caps?.edit !== true || t.adapter.edit === undefined)
+        return refuse(`${t.adapter.platform} cannot edit messages here`)
+      const edit = t.adapter.edit
+      await gw().outbound.run(laneOf(t), () => edit.call(t.adapter, t.view, messageId, text))
+      await gw().log.recordEdit(t.node.id, messageId, { text }, Date.now())
+      return { ok: true }
+    },
+    'channels.delete': async (args) => {
+      const o = obj(args, 'channels.delete')
+      const place = chatArg(o, 'channels.delete')
+      if (!mayWrite(place))
+        return refuse(`this script may not delete in ${placeText(place)}: add it to grants.send`)
+      const messageId = str(o, 'messageId', 'channels.delete', 100)
+      const t = targetOf(place)
+      const caps = gw().capabilities(t.config.connectionId, t.node)
+      if (caps?.delete !== true || t.adapter.delete === undefined)
+        return refuse(`${t.adapter.platform} cannot delete messages here`)
+      const del = t.adapter.delete
+      await gw().outbound.run(laneOf(t), () => del.call(t.adapter, t.view, messageId))
+      gw().log.recordDeleted(t.node.id, [messageId], Date.now(), { redact: t.scope.redactOnDelete })
+      return { ok: true }
+    },
+    'channels.pin': async (args) => {
+      const o = obj(args, 'channels.pin')
+      const place = chatArg(o, 'channels.pin')
+      if (!mayWrite(place))
+        return refuse(`this script may not pin in ${placeText(place)}: add it to grants.send`)
+      const messageId = str(o, 'messageId', 'channels.pin', 100)
+      const t = targetOf(place)
+      const caps = gw().capabilities(t.config.connectionId, t.node)
+      if (caps?.pin !== true || t.adapter.pin === undefined)
+        return refuse(`${t.adapter.platform} cannot pin messages here`)
+      const pin = t.adapter.pin
+      await gw().outbound.run(laneOf(t), () =>
+        pin.call(t.adapter, t.view, messageId, o.pin !== false),
+      )
+      return { ok: true }
+    },
+    'channels.history': async (args) => {
+      const o = obj(args, 'channels.history')
+      const place = chatArg(o, 'channels.history')
+      if (!mayRead(place))
+        return refuse(`this script may not read ${placeText(place)}: add it to grants.read`)
+      const limit = Math.min(
+        Math.max(typeof o.limit === 'number' ? Math.trunc(o.limit) : 20, 1),
+        200,
+      )
+      const before = optStr(o, 'before')
+      const t = targetOf(place)
+      const rows = await gw().log.recent(t.node.id, {
+        limit,
+        ...(before === undefined ? {} : { before }),
+      })
+      return { messages: rows.filter((m) => m.kind === 'message').map(messageOut) }
+    },
+    'channels.message': async (args) => {
+      const o = obj(args, 'channels.message')
+      const place = chatArg(o, 'channels.message')
+      if (!mayRead(place))
+        return refuse(`this script may not read ${placeText(place)}: add it to grants.read`)
+      const messageId = str(o, 'messageId', 'channels.message', 100)
+      const t = targetOf(place)
+      const m = await gw().log.find(t.node.id, messageId)
+      return m === undefined ? null : messageOut(m)
+    },
+    'channels.members': async (args) => {
+      const o = obj(args, 'channels.members')
+      const place = chatArg(o, 'channels.members')
+      if (!mayRead(place))
+        return refuse(`this script may not read ${placeText(place)}: add it to grants.read`)
+      const t = targetOf(place)
+      if (t.adapter.listMembers === undefined)
+        return refuse(`${t.adapter.platform} cannot list members here`)
+      const limit = Math.min(
+        Math.max(typeof o.limit === 'number' ? Math.trunc(o.limit) : 50, 1),
+        200,
+      )
+      const got = await t.adapter.listMembers(t.view, { limit })
+      return {
+        scope: got.scope,
+        members: got.members.map((m) => ({
+          id: m.id,
+          ...(m.name === undefined ? {} : { name: m.name }),
+          ...(m.username === undefined ? {} : { username: m.username }),
+          ...(m.role === undefined ? {} : { role: m.role }),
+        })),
+      }
+    },
+    'channels.download': async (args) => {
+      const o = obj(args, 'channels.download')
+      const place = chatArg(o, 'channels.download')
+      if (!mayRead(place))
+        return refuse(`this script may not read ${placeText(place)}: add it to grants.read`)
+      const messageId = str(o, 'messageId', 'channels.download', 100)
+      const t = targetOf(place)
+      const row = await gw().log.find(t.node.id, messageId)
+      if (row === undefined)
+        return refuse(
+          `ctx.channels.download: no stored message ${messageId} in ${placeText(place)}`,
+        )
+      const wanted = optStr(o, 'attachment')
+      const meta =
+        wanted === undefined
+          ? row.attachments[0]
+          : row.attachments.find((a) => a.id === wanted || a.name === wanted)
+      if (meta === undefined)
+        return refuse(
+          `ctx.channels.download: message ${messageId} has no attachment${wanted ? ` "${wanted}"` : ''}`,
+        )
+      if (t.adapter.fetchAttachment === undefined)
+        return refuse(`${t.adapter.platform} cannot download files`)
+      const got = await t.adapter.fetchAttachment(t.view, row.nativeId, meta.id)
+      const name = got.name ?? meta.name ?? meta.id
+      const mediaType = (
+        got.mediaType ??
+        meta.mediaType ??
+        'application/octet-stream'
+      ).toLowerCase()
+      if (got.bytes.byteLength > MAX_FILE_BYTES)
+        return refuse(`ctx.channels.download: the file is larger than ${MAX_FILE_BYTES} bytes`)
+      const stored = await gw().attachments.store({ name, mediaType, bytes: got.bytes })
+      downloaded.set(stored.path, name)
+      return { path: stored.path, name, mediaType, size: got.bytes.byteLength }
+    },
+    'channels.chats': async (args) => {
+      const o = obj(args ?? {}, 'channels.chats')
+      const connection = str(o, 'connection', 'channels.chats', 200)
+      const granted = [...g.send, ...g.read].filter((x) => x.connection === connection)
+      if (granted.length === 0)
+        return refuse(`this script has no chat of ${connection} in grants.send or grants.read`)
+      const all = granted.some((x) => x.chat === '*')
+      const nodes = gw()
+        .nodes.list(connection)
+        .filter((n) => n.state === 'active')
+      return {
+        chats: nodes
+          .filter((n) => all || granted.some((x) => sameName(x.chat, n)))
+          .map((n) => ({ id: n.nativeId, title: n.title ?? n.nativeId, kind: n.kind })),
+      }
+    },
+    'channels.action': async (args) => {
+      const o = obj(args, 'channels.action')
+      const connection = str(o, 'connection', 'channels.action', 200)
+      const name = str(o, 'name', 'channels.action', 100)
+      if (
+        !g.actions.some((a) => a.connection === connection && (a.name === name || a.name === '*'))
+      )
+        return refuse(
+          `this script may not run ${name} on ${connection}: add { connection, name } to grants.actions`,
+        )
+      const adapter =
+        gw().adapter(connection) ?? refuse(`the connection "${connection}" is not running`)
+      const action =
+        adapter.actions?.find(
+          (a) => a.name === name || nativeToolName(adapter.platform, a.name) === name,
+        ) ??
+        refuse(
+          `${connection} has no action ${name} (${(adapter.actions ?? []).map((a) => a.name).join(', ') || 'none'})`,
+        )
+      const input = o.input === undefined ? {} : obj(o.input, 'channels.action')
+      const parsed = action.schema.safeParse(input)
+      if (!parsed.success)
+        return refuse(
+          `ctx.channels.action ${name}: ${parsed.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`,
+        )
+      return { result: await action.run(parsed.data as Record<string, unknown>) }
     },
     'library.read': async (args) => {
       const o = obj(args, 'library.read')
@@ -430,6 +817,48 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
         return refuse(`this script may not write ${path}: add it to grants.libraryWrite`)
       await c.deps.library.writeText(path, content)
       return { path }
+    },
+    'library.delete': async (args) => {
+      const path = str(obj(args, 'library.delete'), 'path', 'library.delete', 500)
+      if (!canWritePath(g, path))
+        return refuse(`this script may not delete ${path}: add it to grants.libraryWrite`)
+      const r = await c.deps.library.delete(path)
+      return { deleted: r.ok }
+    },
+    'library.move': async (args) => {
+      const o = obj(args, 'library.move')
+      const from = str(o, 'from', 'library.move', 500)
+      const to = str(o, 'to', 'library.move', 500)
+      if (!canWritePath(g, from) || !canWritePath(g, to))
+        return refuse(
+          `this script may not move ${from} to ${to}: both must be in grants.libraryWrite`,
+        )
+      const r = await c.deps.library.move(from, to)
+      if (!r.ok)
+        return refuse(
+          `ctx.library.move: ${r.reason === 'missing' ? `${from} does not exist` : r.reason === 'exists' ? `${to} exists already` : 'the file changed meanwhile'}`,
+        )
+      return { path: to }
+    },
+    notify: async (args) => {
+      const o = obj(args, 'notify')
+      if (!g.notify) return refuse('this script may not send notifications: turn on grants.notify')
+      const title = str(o, 'title', 'notify', 160)
+      const body = typeof o.body === 'string' ? o.body.slice(0, 600) : ''
+      const link = optStr(o, 'link')
+      const n = c.deps.notifications.insert({
+        id: c.deps.ids.next(),
+        kind: 'alert',
+        key: `script:${c.script.id}:${c.runId}:${title}`,
+        title,
+        body,
+        link: link !== undefined && link.startsWith('/') ? link : `/scripts/${c.script.name}`,
+        agentId: c.script.agentId,
+        createdAt: c.deps.clock.now(),
+      })
+      if (n !== undefined)
+        c.deps.events.append({ type: 'notification-changed', payload: { kind: 'alert', added: 1 } })
+      return { ok: true }
     },
     'tables.query': async (args) => {
       const o = obj(args, 'tables.query')

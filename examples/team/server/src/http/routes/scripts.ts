@@ -2,6 +2,7 @@ import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import {
   activateScript,
+  checkScriptCode,
   createScript,
   decideApproval,
   deleteScript,
@@ -25,6 +26,8 @@ import {
 import { errorResponses, jsonError } from '../schemas/common.ts'
 import {
   ActivateSchema,
+  CheckResultSchema,
+  CheckSchema,
   DecisionSchema,
   DryRunResultSchema,
   DryRunSchema,
@@ -205,6 +208,21 @@ const dryRunRoute = createRoute({
   },
 })
 
+const checkRoute = createRoute({
+  method: 'post',
+  path: '/scripts/{script}/check',
+  tags,
+  summary:
+    'Check code without running it: type errors, lint rules, ctx calls the manifest does not grant',
+  security,
+  request: { params: ScriptParam, body: { required: true, content: json(CheckSchema) } },
+  responses: {
+    200: { description: 'Problems', content: json(CheckResultSchema) },
+    404: unknownScript,
+    ...errorResponses,
+  },
+})
+
 const runRoute = createRoute({
   method: 'post',
   path: '/scripts/{script}/run',
@@ -377,6 +395,12 @@ export function scriptRoutes(deps: Deps): OpenAPIHono {
           c.req.valid('param').script,
           c.req.valid('json'),
         )) as never,
+        200,
+      ),
+    )
+    .openapi(checkRoute, async (c) =>
+      c.json(
+        (await checkScriptCode(deps, c.req.valid('param').script, c.req.valid('json'))) as never,
         200,
       ),
     )

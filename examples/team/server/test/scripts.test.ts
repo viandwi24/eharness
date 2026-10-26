@@ -633,6 +633,211 @@ describe('messages of the connected account itself', () => {
   })
 })
 
+describe('checking a script without running it', () => {
+  test('a saved version and a draft: type errors, lint, missing grants', async () => {
+    const r = rig()
+    rigs.push(r)
+    await r.api('POST', '/scripts', { name: 'halo', source: HALO, manifest: haloManifest })
+    const saved = await r.api('POST', '/scripts/halo/check', {})
+    expect(saved.json).toMatchObject({ ok: true, errors: 0, version: 1 })
+    const draft = await r.api('POST', '/scripts/halo/check', {
+      source: `export default async function (event: ScriptEvent, ctx: ScriptContext) {
+  ctx.channels.send({ connection: 'c1', chat: 'Other', text: event.text })
+  await ctx.tables.insert({ table: 'x', rows: [] })
+  await ctx.channels.sned({})
+  fetch('x')
+}`,
+    })
+    const problems = draft.json.problems as Array<{ line: number; code: string; severity: string }>
+    expect(draft.json.ok).toBe(false)
+    expect(problems.map((p) => [p.line, p.code])).toEqual(
+      expect.arrayContaining([
+        [2, 'grant'],
+        [2, 'no-floating'],
+        [3, 'grant'],
+        [4, 'ts2339'],
+        [5, 'no-global'],
+      ]),
+    )
+    const none = await r.api('POST', '/scripts/halo/check', { source: 'const x = 1' })
+    expect((none.json.problems as Array<{ code: string }>).map((p) => p.code)).toContain(
+      'default-export',
+    )
+  })
+})
+
+describe('the full channel API', () => {
+  test('a balancer: signals from #1 alternate between two chats, replies follow as replies, photos are copied', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    const gw = r.server.channels
+    const desk = gw.settings.ensureNode('c1', { nativeId: '-3003', kind: 'room', title: 'Desk' })
+    gw.settings.set(desk.id, { enabled: true, label: 'Desk', ack: false } as never)
+    await r.api('POST', '/tables', { name: 'routes' })
+    const src = `export default async function (event, ctx) {
+  const c = event.connectionId
+  if (event.replyTo) {
+    const found = await ctx.tables.query({ table: 'routes', filter: { source: event.replyTo.messageId }, limit: 1 })
+    const route = found.rows[0]
+    if (!route) return { skipped: 'not a reply to a signal' }
+    const sent = await ctx.channels.send({ connection: c, chat: route.data.chat, text: event.text, replyTo: route.data.target })
+    await ctx.tables.insert({ table: 'routes', rows: [{ source: event.messageId, chat: route.data.chat, target: sent.messageIds[0] }] })
+    return { followed: route.data.chat }
+  }
+  if (!/\\b(buy|sell)\\b/i.test(event.text ?? '')) return { skipped: 'no signal' }
+  const n = ((await ctx.kv.get({ key: 'n' })).value ?? 0) + 1
+  await ctx.kv.set({ key: 'n', value: n })
+  const chat = n % 2 === 1 ? 'VIP' : 'Desk'
+  const files = []
+  for (const a of event.attachments ?? []) {
+    const f = await ctx.channels.download({ connection: c, chat: event.chat.nativeId, messageId: event.messageId, attachment: a.id })
+    files.push(f.path)
+  }
+  const sent = await ctx.channels.send({ connection: c, chat, text: event.text, files })
+  await ctx.tables.insert({ table: 'routes', rows: [{ source: event.messageId, chat, target: sent.messageIds[0] }] })
+  const recent = await ctx.channels.history({ connection: c, chat: event.chat.nativeId, limit: 5 })
+  await ctx.notify({ title: 'Signal ' + n + ' to ' + chat })
+  return { chat, seen: recent.messages.length }
+}`
+    const manifest = {
+      triggers: [{ kind: 'channel', events: ['message.created'], chats: [CHAT] }],
+      grants: {
+        send: [
+          { connection: 'c1', chat: 'VIP' },
+          { connection: 'c1', chat: 'Desk' },
+        ],
+        read: [{ connection: 'c1', chat: CHAT }],
+        tablesWrite: ['routes'],
+        notify: true,
+      },
+    }
+    expect(
+      (await r.api('POST', '/scripts', { name: 'balancer', source: src, manifest })).status,
+    ).toBe(201)
+    await r.api('POST', '/scripts/balancer/activate', {})
+    const who = { id: '9', name: 'Zed' }
+    const png = new Uint8Array([137, 80, 78, 71])
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: 's1',
+      text: 'buy BTC',
+      attachments: [{ name: 'chart.png', mediaType: 'image/png', bytes: png }],
+    })
+    await until('first routed', () => mock.sent.length === 1)
+    await mock.say({ chat: CHAT, kind: 'group', from: who, id: 's2', text: 'sell ETH' })
+    await until('second routed', () => mock.sent.length === 2)
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: 's3',
+      text: 'TP hit',
+      replyTo: { messageId: 's1' },
+    })
+    await until('reply followed', () => mock.sent.length === 3)
+    await mock.say({ chat: CHAT, kind: 'group', from: who, id: 's4', text: 'just chatting' })
+    await sleep(200)
+    expect(mock.sent.map((x) => [x.conversationId, x.message.text])).toEqual([
+      ['-2002', 'buy BTC'],
+      ['-3003', 'sell ETH'],
+      ['-2002', 'TP hit'],
+    ])
+    // the photo of signal 1 went along; the follow-up is a reply to the copy of signal 1
+    expect(mock.sent[0]?.message.files?.[0]?.name).toBe('chart.png')
+    expect(mock.sent[2]?.message.replyTo).toBe(mock.sent[0]?.messageId)
+    expect(r.server.deps.notifications.list({ open: true, limit: 20 }).map((n) => n.title)).toEqual(
+      expect.arrayContaining(['Signal 1 to VIP', 'Signal 2 to Desk']),
+    )
+  })
+
+  test('grants hold for every channel method; edit, react, delete, pin, members and actions work when granted', async () => {
+    const r = rig()
+    rigs.push(r)
+    const ran: Array<Record<string, unknown>> = []
+    const mock = await (async () => {
+      const gw = r.server.channels
+      gw.configure({
+        connectionId: 'c1',
+        agentId: r.ids.lead,
+        rate: { chatMinIntervalMs: 0 },
+        people: { defaultRole: 'guest', policy: {} },
+      })
+      const node = gw.settings.ensureNode('c1', { nativeId: CHAT, kind: 'room', title: 'Ops' })
+      gw.settings.set(node.id, { enabled: true, label: 'Ops', ack: false } as never)
+      const { z } = await import('zod')
+      const m = (await import('../src/infra/channels/index.ts')).createMockAdapter({
+        connectionId: 'c1',
+        actions: [
+          {
+            name: 'create_channel',
+            risk: 'write',
+            summary: 'Create a channel',
+            schema: z.object({ title: z.string() }),
+            run: async (input) => {
+              ran.push(input)
+              return `Created ${String(input.title)}`
+            },
+          },
+        ],
+      })
+      await gw.register(m)
+      return m
+    })()
+    const src = `export default async function (event, ctx) {
+  const c = 'c1'
+  const out = {}
+  const s = await ctx.channels.send({ connection: c, chat: 'Ops', text: 'hello' })
+  const id = s.messageIds[0]
+  await ctx.channels.edit({ connection: c, chat: 'Ops', messageId: id, text: 'hello again' })
+  await ctx.channels.react({ connection: c, chat: 'Ops', messageId: id, emoji: '👍' })
+  await ctx.channels.pin({ connection: c, chat: 'Ops', messageId: id })
+  out.message = (await ctx.channels.message({ connection: c, chat: 'Ops', messageId: id })).text
+  out.members = (await ctx.channels.members({ connection: c, chat: 'Ops' })).members.length
+  out.chats = (await ctx.channels.chats({ connection: c })).chats.map((x) => x.title)
+  out.action = (await ctx.channels.action({ connection: c, name: 'create_channel', input: { title: 'New' } })).result
+  await ctx.channels.delete({ connection: c, chat: 'Ops', messageId: id })
+  for (const call of [
+    () => ctx.channels.send({ connection: c, chat: 'Elsewhere', text: 'x' }),
+    () => ctx.channels.history({ connection: c, chat: 'Elsewhere' }),
+    () => ctx.channels.action({ connection: c, name: 'ban', input: {} }),
+    () => ctx.notify({ title: 'x' }),
+    () => ctx.library.delete({ path: '/library/x.md' }),
+  ]) {
+    try { await call(); out.leak = true } catch (e) { (out.refused ??= []).push(e.message) }
+  }
+  return out
+}`
+    await r.api('POST', '/scripts', {
+      name: 'all-ops',
+      source: src,
+      manifest: {
+        grants: {
+          send: [{ connection: 'c1', chat: 'Ops' }],
+          actions: [{ connection: 'c1', name: 'create_channel' }],
+        },
+      },
+    })
+    await r.api('POST', '/scripts/all-ops/activate', {})
+    const run = await r.api('POST', '/scripts/all-ops/run', {})
+    expect(run.json.error).toBeNull()
+    const res = run.json.result as Record<string, unknown>
+    expect(res).toMatchObject({ message: 'hello again', chats: ['Ops'], action: 'Created New' })
+    expect(res.leak).toBeUndefined()
+    expect((res.refused as string[]).length).toBe(5)
+    expect(String(res.refused)).toContain('add it to grants.send')
+    expect(String(res.refused)).toContain('add it to grants.read')
+    expect(String(res.refused)).toContain('grants.actions')
+    expect(String(res.refused)).toContain('grants.notify')
+    expect(ran).toEqual([{ title: 'New' }])
+    expect(mock.edits).toHaveLength(1)
+    expect(mock.reactions).toHaveLength(1)
+    expect(mock.deletes).toHaveLength(1)
+  })
+})
+
 describe('more inputs and the team API', () => {
   test('an app event starts a script; ctx.api reads and changes through the API; its own events do not loop', async () => {
     const r = rig()

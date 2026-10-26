@@ -36,7 +36,7 @@ import {
   type ScriptVersion,
   scriptNameProblem,
 } from '../domain/scripts.ts'
-import type { Deps, ScriptRunnerPort } from './ports.ts'
+import type { Deps, ScriptCheckResult, ScriptRunnerPort } from './ports.ts'
 
 /** Who acts: a person (the web owner) or an agent (its tool). */
 export type ScriptActor =
@@ -834,4 +834,27 @@ export function webhookEvent(input: {
     }
   } else body = null
   return { type: 'webhook', at: input.at, method: input.method, query: input.query, headers, body }
+}
+
+/**
+ * Check a script without running it: a saved version (default the latest) or a draft (`source` and
+ * `manifest` as the editor holds them).
+ */
+export async function checkScriptCode(
+  deps: Deps,
+  ref: string,
+  input: { version?: number | undefined; source?: string | undefined; manifest?: unknown },
+): Promise<ScriptCheckResult & { version?: number }> {
+  const s = getScript(deps, ref)
+  if (input.source !== undefined) {
+    if (input.source.length > MAX_SOURCE_CHARS)
+      throw invalid(`The source is longer than ${MAX_SOURCE_CHARS} characters`, 'INVALID_SOURCE')
+    const manifest =
+      input.manifest === undefined
+        ? versionManifest(getVersion(deps, s.id))
+        : manifestOf(input.manifest)
+    return runner(deps).checkCode(input.source, manifest)
+  }
+  const v = getVersion(deps, s.id, input.version)
+  return { ...(await runner(deps).checkCode(v.source, versionManifest(v))), version: v.version }
 }
