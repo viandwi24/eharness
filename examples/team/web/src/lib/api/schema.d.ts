@@ -22226,6 +22226,12 @@ export interface components {
             mediaRetentionDays: number;
             /** @description Finished routine runs kept this many days; 0 = keep. Default 30. */
             routineRunsRetentionDays: number;
+            /** @description Script run traces kept this many days; 0 = keep (the per-script cap still applies). Default 30. */
+            scriptRunsRetentionDays: number;
+            /** @description Script runs at once across all scripts. Default 4. */
+            scriptConcurrency: number;
+            /** @description Run traces kept per script (the newest). Default 500. */
+            scriptRunsPerScript: number;
             /** @description Finished tasks kept this many days; 0 = keep. Default 90. */
             tasksRetentionDays: number;
             /** @description Library history kept this many days; 0 = keep. Default 180. */
@@ -22381,6 +22387,9 @@ export interface components {
             logBodyHours?: number;
             mediaRetentionDays?: number;
             routineRunsRetentionDays?: number;
+            scriptRunsRetentionDays?: number;
+            scriptConcurrency?: number;
+            scriptRunsPerScript?: number;
             tasksRetentionDays?: number;
             libraryHistoryRetentionDays?: number;
             backupEnabled?: boolean;
@@ -22407,6 +22416,7 @@ export interface components {
                 digest: boolean;
                 queuedTasks: number;
                 runningTurns: number;
+                scripts: number;
             };
             /** @description Runs skipped with reason 'paused' since `pausedAt` (0 when not paused). */
             skippedWhilePaused: number;

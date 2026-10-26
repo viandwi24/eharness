@@ -29,6 +29,8 @@ export interface PauseHeld {
   digest: boolean
   queuedTasks: number
   runningTurns: number
+  /** Active scripts (their triggers hold while paused). */
+  scripts: number
 }
 
 export interface PauseView extends WorkspacePause {
@@ -51,6 +53,7 @@ export function heldCounts(deps: Deps): PauseHeld {
     digest: systemKeys.some((k) => k.kind === 'digest'),
     queuedTasks: deps.tasks.list({ status: 'queued', limit: 500 }).length,
     runningTurns: deps.tasks.list({ status: 'running', limit: 500 }).length,
+    scripts: deps.scripts.list().filter((s) => s.status === 'active').length,
   }
 }
 

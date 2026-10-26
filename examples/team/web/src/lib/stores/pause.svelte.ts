@@ -66,6 +66,7 @@ export function heldText(held: WorkspacePause['held']): string {
 		n(held.programs, 'program'),
 		n(held.routines, 'routine'),
 		n(held.reminders, 'reminder'),
+		n(held.scripts ?? 0, 'script'),
 		held.heartbeat ? 'heartbeat' : null,
 		held.digest ? 'daily digest' : null,
 		n(held.queuedTasks, 'queued task')

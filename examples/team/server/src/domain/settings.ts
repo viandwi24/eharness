@@ -75,6 +75,10 @@ export interface WorkspaceSettings {
   tableMaxRows: number
   /** Tables: most megabytes of row data across every table. */
   tablesMaxMb: number
+  /** Scripts: runs at once across all scripts. */
+  scriptConcurrency: number
+  /** Scripts: run traces kept per script (newest). */
+  scriptRunsPerScript: number
   /** The team's name, given to agents in chats ("You are <agent>, the assistant of <team>"); null = none. */
   teamName: string | null
   /** Folder of the daily works journal (`<root>/YYYY/MM/DD.md`); default `/library/works`. */
@@ -99,6 +103,8 @@ export interface WorkspaceSettings {
   mediaRetentionDays: number
   /** Finished routine runs kept this many days (0 = keep). */
   routineRunsRetentionDays: number
+  /** Script run traces kept this many days (0 = keep; the per-script cap still applies). */
+  scriptRunsRetentionDays: number
   /** Finished tasks kept this many days (0 = keep). */
   tasksRetentionDays: number
   /** Library history kept this many days (0 = keep). */
@@ -132,6 +138,8 @@ export const SETTINGS_BUILTIN = {
   maxRepeatingReminders: 10,
   tableMaxRows: 1_000_000,
   tablesMaxMb: 1024,
+  scriptConcurrency: 4,
+  scriptRunsPerScript: 500,
   teamName: null,
   worksRoot: WORKS_ROOT_DEFAULT,
   companyRoot: null,
@@ -143,6 +151,7 @@ export const SETTINGS_BUILTIN = {
   logBodyHours: 24,
   mediaRetentionDays: 3,
   routineRunsRetentionDays: 30,
+  scriptRunsRetentionDays: 30,
   tasksRetentionDays: 90,
   libraryHistoryRetentionDays: 180,
   backupEnabled: true,
@@ -374,6 +383,8 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
   intIn('maxRepeatingReminders', patch.maxRepeatingReminders, 0, 1000)
   intIn('tableMaxRows', patch.tableMaxRows, 100, 50_000_000)
   intIn('tablesMaxMb', patch.tablesMaxMb, 1, 1_000_000)
+  intIn('scriptConcurrency', patch.scriptConcurrency, 1, 32)
+  intIn('scriptRunsPerScript', patch.scriptRunsPerScript, 10, 100_000)
   intIn('eventsRetentionHours', patch.eventsRetentionHours, 0, 24 * 3650)
   intIn('eventsMaxRows', patch.eventsMaxRows, 1000, 100_000_000)
   intIn('logMaxRows', patch.logMaxRows, 100, 10_000_000)
@@ -382,6 +393,7 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
   for (const key of [
     'mediaRetentionDays',
     'routineRunsRetentionDays',
+    'scriptRunsRetentionDays',
     'tasksRetentionDays',
     'libraryHistoryRetentionDays',
   ] as const) {

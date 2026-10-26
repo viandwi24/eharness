@@ -97,6 +97,7 @@ A **session id** is `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` is acce
 | `GET /activity/stream?after=` | SSE feed of changes (`message-added`, `task-changed`, `pending-changed`, `approval-decided`, `routine-fired`, `file-changed`, ...; session events come from `eharness/activity`) with `seq` as the event id; JSON variant `GET /activity?after=&limit=` |
 | `GET /events`, `GET /events/{id}`, `GET /events/catalog` | the unified event stream (chat and app events, filters, cursor paging); see [events.md](events.md) |
 | `GET/POST /tables`, `GET/PATCH/DELETE /tables/{table}`, `/tables/{table}/rows[/{rowId}]`, `/query`, `/aggregate`, `/update`, `/delete`, `/import`, `/export` | document tables (schemas, queries, aggregates, library import/export); see [tables.md](tables.md) |
+| `GET/POST /scripts`, `GET/PATCH/DELETE /scripts/{script}`, `/versions[/{n}]`, `/activate`, `/approve`, `/reject`, `/disable`, `/enable`, `/dry-run`, `/run`, `/runs[/{id}]`, `/kv`, `GET /scripts-types` | scripts (versions, dry runs, approval, run traces); see [scripts.md](scripts.md) |
 
 Chat on a task session is `409 TASK_SESSION` (a person talks to a task through `POST
 /tasks/{id}/messages`, the durable inbox); an archived agent's DM is `409 AGENT_ARCHIVED` for chat

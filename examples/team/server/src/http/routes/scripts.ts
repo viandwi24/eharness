@@ -282,7 +282,15 @@ export function scriptRoutes(deps: Deps): OpenAPIHono {
         s.approval.state === 'pending' && s.approval.version !== null
           ? getVersion(deps, s.id, s.approval.version)
           : latest
-      const widening = s.activeVersion === pending.version ? [] : wideningOf(deps, s, pending)
+      // what activating (or approving) would add compared with what runs now
+      const widening =
+        s.status !== 'active'
+          ? s.approval.state === 'pending'
+            ? ['a new script: it has not run before']
+            : []
+          : s.activeVersion === pending.version
+            ? []
+            : wideningOf(deps, s, pending)
       return c.json({ script: s, latest, widening } as never, 200)
     })
     .openapi(patchRoute, async (c) =>

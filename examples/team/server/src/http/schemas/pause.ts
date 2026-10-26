@@ -27,6 +27,7 @@ export const PauseViewSchema = z
         digest: z.boolean(),
         queuedTasks: z.number().int(),
         runningTurns: z.number().int(),
+        scripts: z.number().int(),
       })
       .openapi({ description: 'What is active now and would fire if the workspace ran.' }),
     skippedWhilePaused: z.number().int().openapi({

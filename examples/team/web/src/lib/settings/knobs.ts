@@ -14,6 +14,9 @@ export type KnobKey =
 	| 'maxRepeatingReminders'
 	| 'tableMaxRows'
 	| 'tablesMaxMb'
+	| 'scriptConcurrency'
+	| 'scriptRunsPerScript'
+	| 'scriptRunsRetentionDays'
 	| 'eventsRetentionHours'
 	| 'eventsMaxRows'
 	| 'logMaxRows'
@@ -63,6 +66,7 @@ export const KNOB_GROUPS: KnobGroup[] = [
 			{ key: 'maxRepeatingReminders', label: 'Repeating reminders per person', min: 0, max: 1000, integer: true, description: 'Most active repeating reminders one person may have in a chat. 0 means no limit.' },
 			{ key: 'tableMaxRows', label: 'Rows per table', min: 100, max: 50000000, integer: true, description: 'Most rows one table may hold; a write past it is refused with a message.' },
 			{ key: 'tablesMaxMb', label: 'Size of all tables', unit: 'MB', min: 1, max: 1000000, integer: true, description: 'Most row data across every table; a write past it is refused with a message.' },
+			{ key: 'scriptConcurrency', label: 'Scripts running at once', min: 1, max: 32, integer: true, description: 'Most script runs at the same time across all scripts; more wait their turn.' },
 			{ key: 'heartbeatContextWindow', label: 'Heartbeat context window', unit: 'tokens', min: 16000, max: 10000000, integer: true, description: "The working window of every heartbeat session, separate from the chat window and never above the model's. Beats summarize early so each one starts small and cheap." },
 			{ key: 'contextCap', label: 'Context window ceiling (deprecated)', unit: 'tokens', min: 16000, max: 10000000, integer: true, nullable: true, placeholder: 'None', description: "A global ceiling on every agent's context window. Leave empty: the window follows each agent's model, and an agent can set its own smaller limit." }
 		]
@@ -79,6 +83,8 @@ export const KNOB_GROUPS: KnobGroup[] = [
 			{ key: 'logBodyHours', label: 'Full prompts kept', unit: 'hours', min: 0, max: 8760, integer: false, description: 'The whole request and response of a model call (about 0.5 MB each) are kept this long for debugging; older calls keep tokens, cost and timing only.' },
 			{ key: 'mediaRetentionDays', label: 'Screenshots and tool media', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them. A chat that still shows a removed one shows "expired".' },
 			{ key: 'routineRunsRetentionDays', label: 'Finished routine runs', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them.' },
+			{ key: 'scriptRunsRetentionDays', label: 'Script run traces', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them (up to the per-script count).' },
+			{ key: 'scriptRunsPerScript', label: 'Script run traces per script', min: 10, max: 100000, integer: true, description: 'The newest traces kept for each script.' },
 			{ key: 'tasksRetentionDays', label: 'Finished tasks', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them.' },
 			{ key: 'libraryHistoryRetentionDays', label: 'Library history', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps it.' }
 		]

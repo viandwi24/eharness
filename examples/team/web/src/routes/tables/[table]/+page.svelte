@@ -13,6 +13,7 @@
 	import UploadSimpleIcon from 'phosphor-svelte/lib/UploadSimple';
 	import XIcon from 'phosphor-svelte/lib/X';
 	import { api, ApiError } from '#lib/api/index.js';
+	import { live } from '#lib/stores/live.svelte.js';
 	import ConfirmDialog from '#lib/components/app/ConfirmDialog.svelte';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
@@ -154,6 +155,18 @@
 			editing = null;
 			void loadTable();
 			void load();
+		});
+	});
+
+	// an agent, a script or another tab changed a table: refetch, unless a cell is being edited
+	let seenRev = live.state.revs.tables;
+	$effect(() => {
+		const rev = live.state.revs.tables;
+		const busy = editing !== null || savingCell; // tracked: a skipped refetch runs when the edit ends
+		untrack(() => {
+			if (rev === seenRev || busy) return;
+			seenRev = rev;
+			refresh();
 		});
 	});
 

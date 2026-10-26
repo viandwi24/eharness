@@ -325,7 +325,7 @@ describe('scripts over HTTP', () => {
     await r.api('POST', '/tables', { name: 'audit' })
     const src = `export default async function (event, ctx) {
   for (const row of event.rows) await ctx.tables.insert({ table: 'audit', rows: [{ order: row.id, total: row.data.total }] })
-  await ctx.tables.update({ table: 'orders', filter: {}, change: { set: { seen: true } } })
+  await ctx.tables.update({ table: 'orders', filter: {}, set: { seen: true } })
   return event.rows.length
 }`
     await r.api('POST', '/scripts', {
@@ -348,9 +348,17 @@ describe('scripts over HTTP', () => {
     const runs = (await r.api('GET', '/scripts/auditor/runs')).json.runs as Array<{
       trigger: string
       outcome: string
+      reason: string | null
+      error: string | null
     }>
-    expect(runs.filter((x) => x.outcome !== 'skipped')).toHaveLength(1)
-    expect(runs[runs.length - 1]?.trigger).toBe('table')
+    const real = runs.filter((x) => x.outcome !== 'skipped')
+    expect(real.map((x) => [x.trigger, x.outcome, x.error])).toEqual([['table', 'ok', null]])
+    // its own update of orders came back as row.updated and was skipped by the loop guard
+    expect(runs.filter((x) => x.outcome === 'skipped').map((x) => x.reason)).toEqual(['loop'])
+    const orders = (await r.api('POST', '/tables/orders/query', {})).json.rows as Array<{
+      data: { seen?: boolean }
+    }>
+    expect(orders.every((o) => o.data.seen === true)).toBe(true)
     const audit = (await r.api('POST', '/tables/audit/query', { sort: { total: 1 } })).json
       .rows as Array<{ data: { total: number }; createdBy: string }>
     expect(audit.map((x) => x.data.total)).toEqual([5, 7])

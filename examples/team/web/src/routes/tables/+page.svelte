@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import TableIcon from 'phosphor-svelte/lib/Table';
 	import { api } from '#lib/api/index.js';
+	import { live } from '#lib/stores/live.svelte.js';
 	import PageBody from '#lib/components/app/PageBody.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
 	import Surface from '#lib/components/app/Surface.svelte';
@@ -45,7 +46,11 @@
 		}
 	}
 
-	onMount(() => void load());
+	// first load, and a refetch when an agent, a script or another tab changes a table
+	$effect(() => {
+		void live.state.revs.tables;
+		untrack(() => void load());
+	});
 
 	function openCreate(): void {
 		name = '';

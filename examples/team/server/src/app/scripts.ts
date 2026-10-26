@@ -47,9 +47,6 @@ export const WEB_OWNER: ScriptActor = { kind: 'person', name: 'web owner' }
 export const MAX_SOURCE_CHARS = 200_000
 const MAX_DESCRIPTION = 500
 const MAX_NOTE = 500
-/** Runs kept per script, and the age after which runs go (retention). */
-export const RUNS_KEEP_PER_SCRIPT = 500
-export const RUNS_KEEP_DAYS = 30
 
 const APPROVAL_KEY = 'script-approval:'
 
@@ -784,12 +781,4 @@ export async function runScriptNow(
     dryRun: false,
     startedBy: actor.name,
   })
-}
-
-/** Retention: old runs go (the maintenance pass). */
-export function pruneScriptRuns(deps: Deps): number {
-  return deps.scripts.pruneRuns(
-    deps.clock.now() - RUNS_KEEP_DAYS * 86_400_000,
-    RUNS_KEEP_PER_SCRIPT,
-  )
 }

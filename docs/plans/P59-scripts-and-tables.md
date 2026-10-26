@@ -1,6 +1,6 @@
 # P59 — Team example: scripts and tables
 
-Status: in progress · Owner: agent · Branch: `main` (direct commits, one gate per step)
+Status: done · Owner: agent · Branch: `main` (direct commits, one gate per step)
 
 ## Goal
 
@@ -68,10 +68,11 @@ they show.
 
 ### W2 — Tables surfaces
 
-- [ ] Agent tool `tables` (owner/admin in code): list, describe, create, alter, drop (owner only),
-      insert, update, delete, query, aggregate, import, export; answers as readable lines.
-- [ ] Tables page: list, grid with sort/filter/edit cell/add row, schema editor, import/export.
-- [ ] Activity feed entries for table changes.
+- [x] Agent tools `tables_read` / `tables_write` (`infra/tables/plugin.ts`; the web owner, an
+      owner or admin in a chat, unattended runs): list, describe, query, aggregate; create, alter,
+      insert, update, delete, import, export, drop (needs `confirm: true`); answers as readable lines.
+- [x] Tables page: list, grid with sort/filter/edit cell/add row, schema editor, import/export.
+- [x] Activity feed entries for table changes (`tables-changed`).
 
 ### W3 — Script engine
 
@@ -97,56 +98,66 @@ they show.
 
 ### W4 — Scripts: storage, API, dry run, manual runs
 
-- [ ] Migration: `scripts` (id, name, status draft/active/disabled, current version, author kind
-      agent/person, approval), `script_versions` (immutable code + manifest + hash), `script_runs`
-      (trace: trigger, event id, host calls, logs, duration, result, error) with retention.
-- [ ] Capability API v1: `channels.send/reply`, `library.read/write/list`, `tables.*`, `kv`,
-      `log`, `agent.wake`; grants modelled on `ProgramAuthority`.
-- [ ] Dry run on a recorded event (by event id from a channel's Events page) or a synthetic one;
-      returns "would …" lines, logs and the result.
-- [ ] Manual run (real side effects) for an active script.
+- [x] Migration `0048_scripts`: `scripts` (id, name, status draft/active/disabled, latest and
+      active version, author kind agent/person, approval), `script_versions` (immutable code +
+      manifest + hash), `script_runs` (trace: trigger, event without text, host calls, logs,
+      duration, result, error; kept 30 days, 500 per script), `script_kv` (state between runs).
+- [x] Capability API v1 (`infra/scripts/host.ts`): `channels.send/reply`, `library.read/list/write`,
+      `tables.*`, `kv.*`, `http.get/request` (https, granted hosts, private addresses refused),
+      `agent.wake`, `programs.list/run`, `log`; default-deny grants in the manifest
+      (`domain/script-manifest.ts`).
+- [x] Dry run on a recorded event (by event id, with the message text typed in) or a synthetic one;
+      returns "would …" calls, logs, the result and per channel trigger "match" or why not.
+- [x] Manual run (real side effects) for an active script; use cases in `app/scripts.ts`, routes
+      `/scripts/**`, docs `examples/team/docs/scripts.md`.
 
 ### W5 — Triggers and safety
 
-- [ ] Channel trigger: subscribe on the gateway's `onEvent`; filters (connection, chat incl.
-      topics, event type from the adapter's `events`, actor role/id, text substring or bounded
-      regex) — port the filter code from the removed triggers (branch
-      `backup/events-root-2026-10-25`, `domain/triggers.ts`).
-- [ ] Schedule trigger: a routine kind dispatched by `dispatchSystem` (no model).
-- [ ] Gates: disabled, loop guard (events a script caused), Pause all, cooldown, hourly cap,
-      freshness window; one claim per run across instances; skip reasons logged once a minute.
-- [ ] Alarms: a script failing repeatedly raises one alarm and is paused like a routine.
+- [x] Channel trigger (`infra/scripts/engine.ts`): the gateway's `onEvent`; filters (connection,
+      chat incl. topics, event type, actor role/id, text substring or bounded regex).
+- [x] Schedule trigger: the system routine `sys:script:<id>` dispatched by `dispatchSystem` (no
+      model), kept in step with the script (`syncSchedule`).
+- [x] Gates: Pause all, loop guard (the agent's own events, the script's own table writes),
+      freshness window (15 min), cooldown, hourly cap; one queue per script, 4 runs at once; each
+      event reaches only the instance that saw it; skip reasons logged once a minute.
+- [x] Alarms: 5 failed runs in a row switch the script off and raise one alarm.
 
 ### W6 — Scripts surfaces and approval
 
-- [ ] Agent tool `scripts` (owner/admin in code): list, view, create, update (new draft version),
-      dry run, request activation, disable, delete, runs; the agent reads type errors and dry-run
-      output as text.
-- [ ] Approval: an agent-authored script or a grant widening becomes a Decision Center question
-      for an owner/admin; activation only after a yes; the web owner may activate directly.
-- [ ] Scripts page: list with status, editor with the API types, event picker for dry runs,
+- [x] Agent tools `scripts_read` / `scripts_write` (`infra/scripts/plugin.ts`, same rule as the
+      table tools): list, view, versions, types, runs, run; create, update (new version), dry run,
+      request activation, run now, disable, delete (confirm); answers as text.
+- [x] Approval: an agent-authored version, or one that widens grants, triggers, caps or limits of
+      the approved one, waits for the owner: a bell notification links to the script, the owner
+      approves or rejects **on the Scripts page** (not a Decision Center question: the approval
+      needs the code and grants in view, and the agent must never answer it from a chat). The web
+      owner activates directly; a non-widening new version the agent may switch to itself.
+- [x] Scripts page: list with status, editor with the API types, event picker for dry runs,
       versions with diff and restore, run traces, enable/disable.
-- [ ] Docs `scripts.md` with worked examples (the "halo" forwarder, a nightly table summary into
+- [x] Docs `scripts.md` with worked examples (the "halo" forwarder, a nightly table summary into
       a library report, a join-request counter).
 
 ### W7 — Optional: table events as triggers
 
-- [ ] `table.row_created/updated/deleted` as a script trigger kind, with the same loop guard.
+- [x] `row.created/updated/deleted` as a script trigger kind (`{ kind: "table", table, events }`),
+      with the loop guard (the script's own writes do not start it).
 
 ## Acceptance criteria
 
-- [ ] The "halo" example works end to end with a fake channel: the agent writes it through the
+- [x] The "halo" example works end to end with a fake channel: the agent writes it through the
       `scripts` tool, the dry run shows "would send …", the owner approves, a real message in
       chat A posts to group B, the run trace shows the call, and no model call happens per event.
-- [ ] A script cannot reach anything outside its grants; an infinite loop, a memory bomb and a
+- [x] A script cannot reach anything outside its grants; an infinite loop, a memory bomb and a
       thrown error each end as a failed run with a readable reason; the server keeps serving.
-- [ ] Tables: create with a schema, bulk import 100 000 rows from CSV, query with filters and an
+- [x] (Measured on the dev machine: import of 100 000 CSV rows 0.6 s, filtered sorted query 5 ms,
+      grouped aggregate 76 ms.) Tables: create with a schema, bulk import 100 000 rows from CSV, query with filters and an
       aggregate under a second on the dev machine, export back to the library; caps refuse with
       a readable message.
-- [ ] Pause all holds scripts; several instances never run one event twice.
-- [ ] Upgrade test: a database at the previous migration keeps every row and gains the new tables.
-- [ ] `bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports` green
-- [ ] No library change, so no changeset unless `src/` changes; team docs updated.
+- [x] Pause all holds scripts; several instances never run one event twice (each event reaches only
+      the instance that received it; schedules go through the routine claim).
+- [x] Upgrade test: a database at the previous migration keeps every row and gains the new tables.
+- [x] `bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports` green
+- [x] No library change, so no changeset unless `src/` changes; team docs updated.
 
 ## Open questions
 

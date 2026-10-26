@@ -126,10 +126,6 @@ import {
 } from './app/persona.ts'
 import type { ChannelInboxPort, ChannelsPort, Deps, Lifecycle, PeoplePort } from './app/ports.ts'
 import { programNoteChecked, repairProgramAuthorities } from './app/programs.ts'
-import {
-  RUNS_KEEP_DAYS as SCRIPT_RUNS_KEEP_DAYS,
-  RUNS_KEEP_PER_SCRIPT as SCRIPT_RUNS_KEEP_PER_SCRIPT,
-} from './app/scripts.ts'
 import { seedAgents } from './app/seed.ts'
 import {
   addOrder,
@@ -665,11 +661,12 @@ export function compose(config: ServerConfig): Server {
   })
   activityLog.prune()
   const scriptStore = sqliteScriptStore(conn.sqlite)
-  const pruneScriptRuns = (): number =>
-    scriptStore.pruneRuns(
-      Date.now() - SCRIPT_RUNS_KEEP_DAYS * 86_400_000,
-      SCRIPT_RUNS_KEEP_PER_SCRIPT,
-    )
+  const pruneScriptRuns = (): number => {
+    const st = settings.get()
+    const olderThan =
+      st.scriptRunsRetentionDays > 0 ? Date.now() - st.scriptRunsRetentionDays * 86_400_000 : 0
+    return scriptStore.pruneRuns(olderThan, st.scriptRunsPerScript)
+  }
   const pruneEvents = (): void => {
     const { eventsRetentionHours, eventsMaxRows } = settings.get()
     const eventsRetentionMs = eventsRetentionHours * 3_600_000
@@ -1661,6 +1658,7 @@ export function compose(config: ServerConfig): Server {
     app: () => deps,
     gateway: () => channelGateway,
     paused: isPaused,
+    concurrency: () => settings.get().scriptConcurrency,
     // ctx.agent.wake: an instruction in the agent's "Scripts" chat (a paid model turn)
     wake: async ({ agentId, sessionId, text, id }) => {
       const def = agents.get(agentId)

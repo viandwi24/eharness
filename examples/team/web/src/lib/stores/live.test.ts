@@ -84,7 +84,7 @@ describe('live store', () => {
 		expect(answers[1]?.answer).toEqual({ kind: 'question', answers: [{ selected: ['A'] }] });
 	});
 
-	test('file, routine and settings events bump their revision counters', () => {
+	test('file, routine, settings, table and script events bump their revision counters', () => {
 		const { live } = setup();
 		live.handleEvent(ev('file-changed', 'lead-id', { path: '/library/a.md' }));
 		live.handleEvent(ev('routine-changed', 'lead-id'));
@@ -95,7 +95,9 @@ describe('live store', () => {
 		live.handleEvent(ev('mode-changed', 'lead-id', { mode: 'auto' }));
 		live.handleEvent(ev('providers-changed', 'lead-id', { profileId: 'openrouter', action: 'put' }));
 		live.handleEvent(ev('connectors-changed', 'lead-id', { instance: 'x' }));
-		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, heartbeat: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1, threads: 0 });
+		live.handleEvent(ev('tables-changed', 'lead-id', { table: 'members', tableId: 't1', change: 'rows', by: 'Ana', count: 2 }));
+		live.handleEvent(ev('scripts-changed', 'lead-id', { script: 'halo', scriptId: 's1', change: 'version' }));
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, heartbeat: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1, threads: 0, tables: 1, scripts: 1 });
 		// a stored message moves the context size of the open chat
 		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant' }));
 		expect(live.state.revs.chat).toBe(1);

@@ -124,6 +124,16 @@ export const SettingsSchema = z
     routineRunsRetentionDays: z.number().int().min(0).openapi({
       description: 'Finished routine runs kept this many days; 0 = keep. Default 30.',
     }),
+    scriptRunsRetentionDays: z.number().int().min(0).openapi({
+      description:
+        'Script run traces kept this many days; 0 = keep (the per-script cap still applies). Default 30.',
+    }),
+    scriptConcurrency: z.number().int().min(1).max(32).openapi({
+      description: 'Script runs at once across all scripts. Default 4.',
+    }),
+    scriptRunsPerScript: z.number().int().min(10).max(100000).openapi({
+      description: 'Run traces kept per script (the newest). Default 500.',
+    }),
     tasksRetentionDays: z.number().int().min(0).openapi({
       description: 'Finished tasks kept this many days; 0 = keep. Default 90.',
     }),
@@ -191,6 +201,9 @@ export const SettingsPatchSchema = z
     logBodyHours: z.number().min(0).max(8760).optional(),
     mediaRetentionDays: z.number().int().min(0).max(36500).optional(),
     routineRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
+    scriptRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
+    scriptConcurrency: z.number().int().min(1).max(32).optional(),
+    scriptRunsPerScript: z.number().int().min(10).max(100000).optional(),
     tasksRetentionDays: z.number().int().min(0).max(36500).optional(),
     libraryHistoryRetentionDays: z.number().int().min(0).max(36500).optional(),
     backupEnabled: z.boolean().optional(),

@@ -5367,6 +5367,23 @@
             "minimum": 0,
             "description": "Finished routine runs kept this many days; 0 = keep. Default 30."
           },
+          "scriptRunsRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Script run traces kept this many days; 0 = keep (the per-script cap still applies). Default 30."
+          },
+          "scriptConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32,
+            "description": "Script runs at once across all scripts. Default 4."
+          },
+          "scriptRunsPerScript": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 100000,
+            "description": "Run traces kept per script (the newest). Default 500."
+          },
           "tasksRetentionDays": {
             "type": "integer",
             "minimum": 0,
@@ -5437,6 +5454,9 @@
           "logBodyHours",
           "mediaRetentionDays",
           "routineRunsRetentionDays",
+          "scriptRunsRetentionDays",
+          "scriptConcurrency",
+          "scriptRunsPerScript",
           "tasksRetentionDays",
           "libraryHistoryRetentionDays",
           "backupEnabled",
@@ -5996,6 +6016,21 @@
             "minimum": 0,
             "maximum": 36500
           },
+          "scriptRunsRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500
+          },
+          "scriptConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32
+          },
+          "scriptRunsPerScript": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 100000
+          },
           "tasksRetentionDays": {
             "type": "integer",
             "minimum": 0,
@@ -6081,6 +6116,9 @@
               },
               "runningTurns": {
                 "type": "integer"
+              },
+              "scripts": {
+                "type": "integer"
               }
             },
             "required": [
@@ -6090,7 +6128,8 @@
               "heartbeat",
               "digest",
               "queuedTasks",
-              "runningTurns"
+              "runningTurns",
+              "scripts"
             ],
             "description": "What is active now and would fire if the workspace ran."
           },

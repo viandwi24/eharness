@@ -58,8 +58,8 @@ export interface ScriptEngineOptions {
   allowPrivateFetch?: boolean
   fetch?: typeof fetch
   resolveHost?: (host: string) => Promise<string[]>
-  /** Runs at once across scripts. Default 4. */
-  concurrency?: number
+  /** Runs at once across scripts (read for every run, so Settings apply at once). Default 4. */
+  concurrency?: () => number
   log?: { warn(message: string): void }
 }
 
@@ -103,19 +103,22 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
   let running = 0
   let stopped = false
   const slots: Array<() => void> = []
-  const limit = Math.max(1, o.concurrency ?? 4)
+  const limit = (): number => Math.max(1, o.concurrency?.() ?? 4)
 
   const acquire = async (): Promise<void> => {
-    if (running < limit) {
+    if (running < limit()) {
       running++
       return
     }
+    // release() counts the run before it wakes the waiter
     await new Promise<void>((resolve) => slots.push(resolve))
-    running++
   }
   const release = (): void => {
     running--
-    slots.shift()?.()
+    while (running < limit() && slots.length > 0) {
+      running++
+      slots.shift()?.()
+    }
   }
   const track = <T>(p: Promise<T>): Promise<T> => {
     all.add(p)

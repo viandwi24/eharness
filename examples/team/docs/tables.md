@@ -1,10 +1,11 @@
 # Tables
 
-Document tables the owner, the agents and (soon) scripts keep structured data in: lists, counters,
-ledgers, imported records. A table has a name, an optional schema and rows; each row is a JSON
-document. Queries use MongoDB-like filters; there is no raw SQL. Decision: [ADR-0065](../../../docs/decisions/0065-scripts-and-tables.md),
-plan: [P59](../../../docs/plans/P59-scripts-and-tables.md) (W1 is the core described here; the agent
-tool and the Tables page are W2).
+Document tables the owner, the agents and [scripts](scripts.md) keep structured data in: lists,
+counters, ledgers, imported records. A table has a name, an optional schema and rows; each row is a
+JSON document. Queries use MongoDB-like filters; there is no raw SQL. Agents use the `tables_read`
+and `tables_write` tools; people use the Tables page. Decision:
+[ADR-0065](../../../docs/decisions/0065-scripts-and-tables.md), plan:
+[P59](../../../docs/plans/P59-scripts-and-tables.md).
 
 - [Tables and schemas](#tables-and-schemas)
 - [Rows](#rows)
