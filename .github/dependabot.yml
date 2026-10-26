@@ -12,9 +12,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # one PR a week for every minor and patch update (dependencies and dev dependencies alike),
+    # instead of one PR per package; a major bump of another package still gets its own PR
     groups:
-      dev-dependencies:
-        dependency-type: development
+      dependencies:
+        patterns: ['*']
         update-types: [minor, patch]
     # ai / zod / @ai-sdk/mcp are peer dependencies: major bumps are deliberate releases
     # (docs/engineering/api-stability.md), so let humans handle them.
