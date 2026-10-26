@@ -41,6 +41,7 @@ import { personaRoutes } from './routes/persona.ts'
 import { programRoutes } from './routes/programs.ts'
 import { providerRoutes } from './routes/providers.ts'
 import { routineRoutes } from './routes/routines.ts'
+import { scriptRoutes } from './routes/scripts.ts'
 import { sessionToolsRoutes } from './routes/session-tools.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { storageRoutes } from './routes/storage.ts'
@@ -433,6 +434,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', routineRoutes(options.deps))
   app.route('/', programRoutes(options.deps))
   app.route('/', tableRoutes(options.deps))
+  app.route('/', scriptRoutes(options.deps))
   app.route('/', decisionRoutes(options.deps))
   app.route('/', heartbeatRoutes(options.deps))
   app.route('/', channelRoutes(options.deps))

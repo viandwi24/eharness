@@ -19,6 +19,7 @@ import {
   parseSchema,
   SYSTEM_FIELDS,
   type TableRecord,
+  type TableRowsChange,
   type TableSchema,
   tableNameProblem,
 } from '../domain/tables.ts'
@@ -58,6 +59,37 @@ export function getTable(deps: Deps, ref: string): DataTable {
   return t
 }
 
+/** The activity feed entry of a change, and the row hook scripts listen on. */
+function tableChanged(
+  deps: Deps,
+  t: DataTable,
+  change: string,
+  by: TableActor,
+  count?: number,
+): void {
+  deps.events.append({
+    type: 'tables-changed',
+    payload: {
+      table: t.name,
+      tableId: t.id,
+      change,
+      by,
+      ...(count === undefined ? {} : { count }),
+    },
+  })
+}
+function rowsChanged(
+  deps: Deps,
+  t: DataTable,
+  kind: TableRowsChange['kind'],
+  rowIds: readonly string[],
+  by: TableActor,
+): void {
+  if (rowIds.length === 0) return
+  tableChanged(deps, t, kind, by, rowIds.length)
+  deps.onTableRows?.({ tableId: t.id, table: t.name, kind, rowIds: [...rowIds], by })
+}
+
 function schemaOf(input: unknown): TableSchema {
   const parsed = parseSchema(input)
   if (!parsed.ok) throw invalid(parsed.errors.join('; '), 'INVALID_SCHEMA')
@@ -79,7 +111,7 @@ export function createTable(
     throw conflict(`a table named "${input.name}" exists already`, 'TABLE_EXISTS')
   const schema = schemaOf(input.schema)
   indexColumns(deps, schema)
-  return deps.tables.create({
+  const t = deps.tables.create({
     id: deps.ids.next(),
     name: input.name,
     description: (input.description ?? '').slice(0, 2000),
@@ -87,6 +119,8 @@ export function createTable(
     createdBy: by,
     now: deps.clock.now(),
   })
+  tableChanged(deps, t, 'created', by)
+  return t
 }
 
 /**
@@ -95,6 +129,7 @@ export function createTable(
  */
 export function updateTable(
   deps: Deps,
+  by: TableActor,
   ref: string,
   patch: { name?: string | undefined; description?: string | undefined; schema?: unknown },
 ): DataTable {
@@ -107,7 +142,7 @@ export function updateTable(
   }
   const schema = patch.schema === undefined ? undefined : schemaOf(patch.schema)
   if (schema !== undefined) indexColumns(deps, schema)
-  return deps.tables.update(
+  const next = deps.tables.update(
     t.id,
     {
       ...(patch.name === undefined ? {} : { name: patch.name }),
@@ -116,11 +151,14 @@ export function updateTable(
     },
     deps.clock.now(),
   ) as DataTable
+  tableChanged(deps, next, 'altered', by)
+  return next
 }
 
-export function dropTable(deps: Deps, ref: string): DataTable {
+export function dropTable(deps: Deps, by: TableActor, ref: string): DataTable {
   const t = getTable(deps, ref)
   deps.tables.drop(t.id)
+  tableChanged(deps, t, 'dropped', by, t.rowCount)
   return t
 }
 
@@ -169,7 +207,9 @@ export function insertRows(
   checkCaps(deps, t, docs.length, bytes)
   const writes = docs.map((data) => ({ id: deps.ids.next(), data }))
   deps.tables.insert(t.id, writes, by, deps.clock.now())
-  return { inserted: writes.map((w) => w.id) }
+  const inserted = writes.map((w) => w.id)
+  rowsChanged(deps, t, 'row.created', inserted, by)
+  return { inserted }
 }
 
 export function getRow(deps: Deps, ref: string, rowId: string): TableRecord {
@@ -211,13 +251,20 @@ export function updateRow(
   )
   if (res.conflicts.length > 0)
     throw conflict(`row ${rowId} changed meanwhile: read it again`, 'STALE_ROW')
+  rowsChanged(deps, t, 'row.updated', [rowId], by)
   return getRow(deps, ref, rowId)
 }
 
-export function deleteRow(deps: Deps, ref: string, rowId: string): { deleted: number } {
+export function deleteRow(
+  deps: Deps,
+  by: TableActor,
+  ref: string,
+  rowId: string,
+): { deleted: number } {
   const t = getTable(deps, ref)
   const n = deps.tables.delete(t.id, [rowId])
   if (n === 0) throw notFound(`Row of table ${t.name}`, rowId)
+  rowsChanged(deps, t, 'row.deleted', [rowId], by)
   return { deleted: n }
 }
 
@@ -337,10 +384,16 @@ export function updateRows(
   if (errors.length > 0) throw invalid(errors.slice(0, 20).join(' | '), 'INVALID_ROW')
   if (grow > 0) checkCaps(deps, t, 0, grow)
   const res = deps.tables.replace(t.id, writes, by, deps.clock.now())
+  rowsChanged(deps, t, 'row.updated', res.written, by)
   return { matched, updated: res.written.length, conflicts: res.conflicts.length }
 }
 
-export function deleteRows(deps: Deps, ref: string, filter: unknown): { deleted: number } {
+export function deleteRows(
+  deps: Deps,
+  by: TableActor,
+  ref: string,
+  filter: unknown,
+): { deleted: number } {
   const t = getTable(deps, ref)
   if (
     filter === undefined ||
@@ -361,7 +414,9 @@ export function deleteRows(deps: Deps, ref: string, filter: unknown): { deleted:
   const ids = deps.tables
     .query(t.id, { where, orderBy: 'id ASC', limit: LIMITS.bulkChange })
     .map((r) => r.id)
-  return { deleted: deps.tables.delete(t.id, ids) }
+  const deleted = deps.tables.delete(t.id, ids)
+  rowsChanged(deps, t, 'row.deleted', ids, by)
+  return { deleted }
 }
 
 // --- import / export ---------------------------------------------------------------------------
@@ -436,15 +491,17 @@ export async function importRows(
   const bytes = inserts.reduce((n, d) => n + encoder.encode(JSON.stringify(d)).length, 0)
   checkCaps(deps, t, inserts.length, bytes)
   const now = deps.clock.now()
+  const insertedIds: string[] = []
   for (let i = 0; i < inserts.length; i += LIMITS.insertBatch) {
-    deps.tables.insert(
-      t.id,
-      inserts.slice(i, i + LIMITS.insertBatch).map((data) => ({ id: deps.ids.next(), data })),
-      by,
-      now,
-    )
+    const batch = inserts
+      .slice(i, i + LIMITS.insertBatch)
+      .map((data) => ({ id: deps.ids.next(), data }))
+    deps.tables.insert(t.id, batch, by, now)
+    insertedIds.push(...batch.map((b) => b.id))
   }
   const res = replaces.length > 0 ? deps.tables.replace(t.id, replaces, by, now) : { written: [] }
+  rowsChanged(deps, t, 'row.created', insertedIds, by)
+  rowsChanged(deps, t, 'row.updated', res.written, by)
   const skipped = parsed.records.length - inserts.length - replaces.length
   return { inserted: inserts.length, updated: res.written.length, skipped, errors }
 }

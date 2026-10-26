@@ -12,6 +12,8 @@ describe('sections', () => {
 		expect(sectionOf('/programs')).toBe('programs');
 		expect(sectionOf('/artifacts')).toBe('artifacts');
 		expect(sectionOf('/artifacts/abc')).toBe('artifacts');
+		expect(sectionOf('/tables')).toBe('tables');
+		expect(sectionOf('/tables/members')).toBe('tables');
 		expect(sectionOf('/channels')).toBe('channels');
 		expect(sectionOf('/people')).toBe('people');
 		expect(sectionOf('/people/abc')).toBe('people');
@@ -32,7 +34,7 @@ describe('sections', () => {
 		expect(hasSubSidebar('/files')).toBe(false);
 	});
 	test('the work sections are one rail item', () => {
-		expect(RAIL.map((s) => s.id)).toEqual(['agents', 'work', 'files', 'artifacts', 'channels', 'people', 'connectors', 'browser', 'developers', 'logs', 'audit', 'attention', 'settings']);
+		expect(RAIL.map((s) => s.id)).toEqual(['agents', 'work', 'files', 'artifacts', 'tables', 'channels', 'people', 'connectors', 'browser', 'developers', 'logs', 'audit', 'attention', 'settings']);
 		for (const p of ['/tasks', '/decisions/x', '/programs', '/routines']) expect(railOf(p)).toBe('work');
 		expect(railOf('/people')).toBe('people');
 		expect(railOf('/')).toBe('agents');

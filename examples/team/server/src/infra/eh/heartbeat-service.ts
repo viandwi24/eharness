@@ -88,6 +88,8 @@ export interface SystemRunner {
   digest(input: { slot: number }): Promise<DigestOutcome>
   /** Post a reminder created from a chat (no model call). `skipped` says why nothing was posted. */
   reminder?(id: string, input: { slot: number }): Promise<{ posted: boolean; reason?: string }>
+  /** Run a script's schedule trigger (no model call); `ran: false` says why it was skipped. */
+  script?(id: string, input: { slot: number }): Promise<{ ran: boolean; reason?: string }>
 }
 
 export interface HeartbeatServiceDeps {

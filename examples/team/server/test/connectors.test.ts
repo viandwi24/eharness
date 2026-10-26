@@ -257,6 +257,11 @@ describe('migration of the tool checklist and MCP servers', () => {
         'standing_order',
         // the event stream (always there; owner/admin only at call time)
         'events_recent',
+        // the document tables (always there; owner/admin only at call time)
+        'tables_read',
+        'tables_write',
+        'scripts_read',
+        'scripts_write',
         // the read-only tools over the agent's other sessions and runs (always there)
         ...SESSION_CONTEXT_TOOLS,
         // the clock and the agent's own background worker (always there)

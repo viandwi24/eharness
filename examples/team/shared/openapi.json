@@ -2730,6 +2730,8 @@
               "cache-reset",
               "providers-changed",
               "connectors-changed",
+              "tables-changed",
+              "scripts-changed",
               "thread-changed",
               "notification-changed",
               "alarm-raised",
@@ -13405,6 +13407,652 @@
         },
         "required": [
           "path"
+        ]
+      },
+      "ScriptList": {
+        "type": "object",
+        "properties": {
+          "scripts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Script"
+            }
+          }
+        },
+        "required": [
+          "scripts"
+        ]
+      },
+      "Script": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active",
+              "disabled"
+            ]
+          },
+          "latestVersion": {
+            "type": "integer"
+          },
+          "activeVersion": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "authorKind": {
+            "type": "string",
+            "enum": [
+              "person",
+              "agent"
+            ]
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "approval": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "pending",
+                  "approved",
+                  "rejected"
+                ]
+              },
+              "version": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "by": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "at": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "state",
+              "version",
+              "by",
+              "at",
+              "note"
+            ]
+          },
+          "routineId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastRunAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "runCount": {
+            "type": "integer"
+          },
+          "errorCount": {
+            "type": "integer"
+          },
+          "consecutiveFailures": {
+            "type": "integer"
+          },
+          "disabledReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "agentId",
+          "status",
+          "latestVersion",
+          "activeVersion",
+          "authorKind",
+          "createdBy",
+          "approval",
+          "routineId",
+          "lastRunAt",
+          "runCount",
+          "errorCount",
+          "consecutiveFailures",
+          "disabledReason",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "ScriptTypes": {
+        "type": "object",
+        "properties": {
+          "types": {
+            "type": "string",
+            "description": "The `scripts.d.ts` scripts are written against."
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "string"
+                },
+                "returns": {
+                  "type": "string"
+                },
+                "doc": {
+                  "type": "string"
+                },
+                "sideEffect": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "args",
+                "returns",
+                "doc",
+                "sideEffect"
+              ]
+            }
+          }
+        },
+        "required": [
+          "types",
+          "methods"
+        ]
+      },
+      "ScriptCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Lowercase letters, digits and -, starting with a letter."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "agent": {
+            "type": "string",
+            "description": "Agent id or slug the script belongs to (default: the first agent)."
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200000
+          },
+          "manifest": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Triggers, grants, cooldownSec, maxRunsPerHour and limits (examples/team/docs/scripts.md). Grants are default-deny."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "name",
+          "source",
+          "manifest"
+        ]
+      },
+      "ScriptDetail": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "$ref": "#/components/schemas/Script"
+          },
+          "latest": {
+            "$ref": "#/components/schemas/ScriptVersion"
+          },
+          "widening": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "script",
+          "latest",
+          "widening"
+        ]
+      },
+      "ScriptVersion": {
+        "type": "object",
+        "properties": {
+          "scriptId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          },
+          "manifest": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Triggers, grants, cooldownSec, maxRunsPerHour and limits (examples/team/docs/scripts.md). Grants are default-deny."
+          },
+          "hash": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "authorKind": {
+            "type": "string",
+            "enum": [
+              "person",
+              "agent"
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scriptId",
+          "version",
+          "source",
+          "manifest",
+          "hash",
+          "note",
+          "createdBy",
+          "authorKind",
+          "createdAt"
+        ]
+      },
+      "ScriptUpdated": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "$ref": "#/components/schemas/Script"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "script"
+        ]
+      },
+      "ScriptPatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "agent": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200000
+          },
+          "manifest": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Triggers, grants, cooldownSec, maxRunsPerHour and limits (examples/team/docs/scripts.md). Grants are default-deny."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "ScriptDeleted": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "ScriptVersionList": {
+        "type": "object",
+        "properties": {
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "scriptId": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "integer"
+                },
+                "manifest": {
+                  "type": "object",
+                  "additionalProperties": {},
+                  "description": "Triggers, grants, cooldownSec, maxRunsPerHour and limits (examples/team/docs/scripts.md). Grants are default-deny."
+                },
+                "hash": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "createdBy": {
+                  "type": "string"
+                },
+                "authorKind": {
+                  "type": "string",
+                  "enum": [
+                    "person",
+                    "agent"
+                  ]
+                },
+                "createdAt": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "scriptId",
+                "version",
+                "manifest",
+                "hash",
+                "note",
+                "createdBy",
+                "authorKind",
+                "createdAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "versions"
+        ]
+      },
+      "ScriptActivate": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "ScriptDecision": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "ScriptDryRunResult": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/ScriptRun"
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Per channel trigger: `match` or why it would not start."
+          }
+        },
+        "required": [
+          "run",
+          "triggers"
+        ]
+      },
+      "ScriptRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scriptId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "channel",
+              "schedule",
+              "table",
+              "manual"
+            ]
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {},
+          "result": {},
+          "logs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "calls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptHostCall"
+            }
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "cpuMs": {
+            "type": "number"
+          },
+          "startedBy": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "scriptId",
+          "version",
+          "trigger",
+          "dryRun",
+          "outcome",
+          "reason",
+          "error",
+          "logs",
+          "calls",
+          "durationMs",
+          "cpuMs",
+          "startedBy",
+          "startedAt"
+        ]
+      },
+      "ScriptHostCall": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string"
+          },
+          "args": {},
+          "ok": {
+            "type": "boolean"
+          },
+          "result": {},
+          "error": {
+            "type": "string"
+          },
+          "ms": {
+            "type": "number"
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "method",
+          "ok",
+          "ms"
+        ],
+        "additionalProperties": {}
+      },
+      "ScriptDryRun": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "eventId": {
+            "type": "string",
+            "description": "A channel event of the Events page (`ch:<id>`)."
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 10000,
+            "description": "The message text of a recorded event (the log keeps none)."
+          },
+          "event": {
+            "description": "A synthetic event instead of a recorded one."
+          }
+        }
+      },
+      "ScriptRunNow": {
+        "type": "object",
+        "properties": {
+          "event": {}
+        }
+      },
+      "ScriptRunList": {
+        "type": "object",
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptRun"
+            }
+          }
+        },
+        "required": [
+          "runs"
+        ]
+      },
+      "ScriptKv": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "value"
+              ]
+            }
+          }
+        },
+        "required": [
+          "entries"
         ]
       },
       "DecisionList": {
@@ -34858,6 +35506,1351 @@
           },
           "404": {
             "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "List scripts",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scripts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Create a script (draft, version 1)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Script"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A script with that name exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts-types": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "The scripts.d.ts and the ctx methods",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptTypes"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "A script with its latest version",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Update a script; new code or manifest adds a version (the running one stays)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The script and the new version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptUpdated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Delete a script with its versions, runs and state",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/versions": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Versions, newest first (without source)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptVersionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/versions/{version}": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "One version with its source",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "required": true,
+            "name": "version",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptVersion"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/activate": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Run a version (default the latest); the owner activates directly",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptActivate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Script"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/approve": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Approve the version an agent asked to run",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Script"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/reject": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Reject the version an agent asked to run",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Script"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/disable": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Switch the script off",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Script"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/enable": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Switch the script on again with the version it ran",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Script"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/dry-run": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Run a version with side effects recorded, not done",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptDryRun"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The run and the trigger matches",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDryRunResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/run": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Run the active version now, for real",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptRunNow"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/runs": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Run traces, newest first",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A run id: older runs only."
+            },
+            "required": false,
+            "description": "A run id: older runs only.",
+            "name": "before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Only dry runs (true) or only real runs (false)."
+            },
+            "required": false,
+            "description": "Only dry runs (true) or only real runs (false).",
+            "name": "dryRun",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRunList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/runs/{runId}": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "One run trace",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/kv": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "The key-value state of the script",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptKv"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
             "content": {
               "application/json": {
                 "schema": {

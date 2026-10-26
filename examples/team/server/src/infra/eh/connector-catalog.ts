@@ -41,6 +41,8 @@ import { CHANNEL_OWN_WRITE_TOOLS, CHANNEL_READ_TOOLS } from '../channels/index.t
 import { CODE_LIST_PATH, type CodeRuntime } from '../code/index.ts'
 import { remoteSandboxConnector } from '../code/remote.ts'
 import { EVENTS_RECENT_TOOL } from '../events/plugin.ts'
+import { SCRIPTS_READ_TOOL, SCRIPTS_WRITE_TOOL } from '../scripts/plugin.ts'
+import { TABLES_READ_TOOL, TABLES_WRITE_TOOL } from '../tables/plugin.ts'
 import { telegramConnector } from '../telegram/connector.ts'
 import { telegramUserConnector, type UserConnectorOptions } from '../telegram-user/connector.ts'
 import { DECISION_TOOLS, PROGRAM_NOTE_TOOL } from './decisions-plugin.ts'
@@ -103,6 +105,12 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       STANDING_ORDER_TOOL,
       // the event stream: the role of the person who asked decides, in code (owner and admins)
       EVENTS_RECENT_TOOL,
+      // the document tables: who may is decided in code (owner and admins in a chat); drop needs confirm
+      TABLES_READ_TOOL,
+      TABLES_WRITE_TOOL,
+      // scripts: same rule; activation of an agent's script waits for a person's approval
+      SCRIPTS_READ_TOOL,
+      SCRIPTS_WRITE_TOOL,
       // the persona tool decides in code who may do what; apply and revert always ask the person
       ...PERSONA_TOOLS,
     ],

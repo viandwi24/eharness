@@ -144,3 +144,81 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
     '',
   ].join('\n')
 }
+
+// --- stored scripts (W4) -----------------------------------------------------------------------
+
+export type ScriptStatus = 'draft' | 'active' | 'disabled'
+export type AuthorKind = 'person' | 'agent'
+export type ApprovalState = 'none' | 'pending' | 'approved' | 'rejected'
+export type RunTrigger = 'channel' | 'schedule' | 'table' | 'manual'
+export type RunOutcome = ScriptOutcome | 'skipped'
+
+export interface Script {
+  id: string
+  name: string
+  description: string
+  agentId: string
+  status: ScriptStatus
+  latestVersion: number
+  activeVersion: number | null
+  authorKind: AuthorKind
+  createdBy: string
+  approval: {
+    state: ApprovalState
+    version: number | null
+    by: string | null
+    at: number | null
+    note: string | null
+  }
+  routineId: string | null
+  lastRunAt: number | null
+  runCount: number
+  errorCount: number
+  consecutiveFailures: number
+  disabledReason: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ScriptVersion {
+  scriptId: string
+  version: number
+  source: string
+  /** The parsed manifest (`domain/script-manifest.ts`). */
+  manifest: Record<string, unknown>
+  hash: string
+  note: string
+  createdBy: string
+  authorKind: AuthorKind
+  createdAt: number
+}
+
+export interface ScriptRun {
+  id: string
+  scriptId: string
+  version: number
+  trigger: RunTrigger
+  dryRun: boolean
+  outcome: RunOutcome
+  reason: string | null
+  error: string | null
+  event: unknown
+  result: unknown
+  logs: string[]
+  calls: HostCallRecord[]
+  durationMs: number
+  cpuMs: number
+  startedBy: string
+  startedAt: number
+}
+
+const SCRIPT_NAME = /^[a-z][a-z0-9-]{0,62}$/
+
+/** Why a script name is not usable, or undefined. */
+export const scriptNameProblem = (name: string): string | undefined =>
+  SCRIPT_NAME.test(name)
+    ? undefined
+    : `"${name.slice(0, 80)}" is not a script name: use lowercase letters, digits and -, starting with a letter (at most 63 characters)`
+
+/** Key-value state of a script: key and value limits. */
+export const KV_LIMITS = { keyChars: 200, valueChars: 100_000, keys: 1_000 } as const

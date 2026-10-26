@@ -443,7 +443,16 @@ export function createRoutineService(
       return store.getRun(run.id) as RoutineRun
     }
     try {
-      if (key.kind === 'reminder') {
+      if (key.kind === 'script') {
+        const out = (await system.script?.(key.id, { slot: run.scheduledAt })) ?? {
+          ran: false,
+          reason: 'scripts are not set up',
+        }
+        if (!out.ran) {
+          store.markSkipped(run.id, out.reason ?? 'skipped', now)
+          return store.getRun(run.id) as RoutineRun
+        }
+      } else if (key.kind === 'reminder') {
         const out = (await system.reminder?.(key.id, { slot: run.scheduledAt })) ?? {
           posted: false,
           reason: 'reminders are not set up',

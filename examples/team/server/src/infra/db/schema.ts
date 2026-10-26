@@ -2094,3 +2094,98 @@ export const dataRows = sqliteTable(
     index('data_rows_updated').on(t.tableId, t.updatedAt),
   ],
 )
+
+/**
+ * Scripts (docs/plans/P59-scripts-and-tables.md, ADR-0065): TypeScript run in QuickJS without a
+ * model call. `active_version` is the version that runs; edits add versions (drafts) and an
+ * agent-written version runs only after an owner or an admin approves it (`approval_*`).
+ */
+export const scripts = sqliteTable('scripts', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  description: text('description').notNull().default(''),
+  /** The agent the script acts for (its schedule and its wakes), and whose chats it may post in. */
+  agentId: text('agent_id').notNull(),
+  /** `draft` | `active` | `disabled` */
+  status: text('status').notNull().default('draft'),
+  latestVersion: integer('latest_version').notNull().default(1),
+  activeVersion: integer('active_version'),
+  /** `person` | `agent`: who wrote the latest version. */
+  authorKind: text('author_kind').notNull(),
+  createdBy: text('created_by').notNull(),
+  /** `none` | `pending` | `approved` | `rejected` (of `approval_version`). */
+  approvalState: text('approval_state').notNull().default('none'),
+  approvalVersion: integer('approval_version'),
+  approvalBy: text('approval_by'),
+  approvalAt: integer('approval_at'),
+  approvalNote: text('approval_note'),
+  /** The routine of a schedule trigger (`sys:script:<id>`), or null. */
+  routineId: text('routine_id'),
+  lastRunAt: integer('last_run_at'),
+  runCount: integer('run_count').notNull().default(0),
+  errorCount: integer('error_count').notNull().default(0),
+  consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+  /** Why the script was switched off by the system (`failures`), or null. */
+  disabledReason: text('disabled_reason'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+/** Every saved version of a script: immutable source and manifest (triggers, grants, limits). */
+export const scriptVersions = sqliteTable(
+  'script_versions',
+  {
+    scriptId: text('script_id').notNull(),
+    version: integer('version').notNull(),
+    source: text('source').notNull(),
+    manifest: json<Record<string, unknown>>('manifest').notNull(),
+    hash: text('hash').notNull(),
+    note: text('note').notNull().default(''),
+    createdBy: text('created_by').notNull(),
+    authorKind: text('author_kind').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.scriptId, t.version] })],
+)
+
+/** The trace of a run: what started it, every ctx call, the logs, the outcome. Never a message body. */
+export const scriptRuns = sqliteTable(
+  'script_runs',
+  {
+    id: text('id').primaryKey(),
+    scriptId: text('script_id').notNull(),
+    version: integer('version').notNull(),
+    /** `channel` | `schedule` | `table` | `manual` */
+    trigger: text('trigger').notNull(),
+    dryRun: integer('dry_run', { mode: 'boolean' }).notNull().default(false),
+    /** `ok` | `error` | `cpu` | `memory` | `timeout` | `limit` | `skipped` */
+    outcome: text('outcome').notNull(),
+    /** For `skipped`: why (paused, cooldown, cap, loop, stale, disabled, busy). */
+    reason: text('reason'),
+    error: text('error'),
+    event: json<unknown>('event'),
+    result: json<unknown>('result'),
+    logs: json<string[]>('logs').notNull(),
+    calls: json<unknown[]>('calls').notNull(),
+    durationMs: integer('duration_ms').notNull().default(0),
+    cpuMs: integer('cpu_ms').notNull().default(0),
+    startedBy: text('started_by').notNull(),
+    startedAt: integer('started_at').notNull(),
+  },
+  (t) => [
+    index('script_runs_script').on(t.scriptId, t.id),
+    index('script_runs_started').on(t.startedAt),
+  ],
+)
+
+/** The small state a script keeps between runs (`ctx.kv`). */
+export const scriptKv = sqliteTable(
+  'script_kv',
+  {
+    scriptId: text('script_id').notNull(),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.scriptId, t.key] })],
+)

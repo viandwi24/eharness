@@ -51,6 +51,7 @@
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
  *   TEAM_MEDIA_RETENTION_DAYS   tool media and browser screenshots kept this long (default 3; 0 = keep); TEAM_DB_COMPACT=1 converts the DB to auto_vacuum=INCREMENTAL once
+ *   TEAM_SCRIPTS_ALLOW_PRIVATE_FETCH=1   development only: script ctx.http may call http:// and private hosts
  *   TEAM_EVENTS_RETENTION_HOURS / TEAM_EVENTS_MAX_ROWS   events feed retention (default 72 h, 100000 rows; 0 hours = by count only)
  *   TEAM_ROUTINE_RUNS_RETENTION_DAYS / TEAM_TASKS_RETENTION_DAYS / TEAM_LIBRARY_HISTORY_RETENTION_DAYS   finished routine runs, finished tasks, library history (default 30 / 90 / 180 days; 0 = keep)
  *
@@ -125,6 +126,10 @@ import {
 } from './app/persona.ts'
 import type { ChannelInboxPort, ChannelsPort, Deps, Lifecycle, PeoplePort } from './app/ports.ts'
 import { programNoteChecked, repairProgramAuthorities } from './app/programs.ts'
+import {
+  RUNS_KEEP_DAYS as SCRIPT_RUNS_KEEP_DAYS,
+  RUNS_KEEP_PER_SCRIPT as SCRIPT_RUNS_KEEP_PER_SCRIPT,
+} from './app/scripts.ts'
 import { seedAgents } from './app/seed.ts'
 import {
   addOrder,
@@ -216,6 +221,7 @@ import {
   type TableRetention,
 } from './infra/db/retention.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
+import { sqliteScriptStore } from './infra/db/scripts-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTableStore } from './infra/db/tables-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
@@ -245,6 +251,7 @@ import { createTeamHttp } from './infra/eh/harness-http.ts'
 import { heartbeatChannels } from './infra/eh/heartbeat-channels.ts'
 import type { HeartbeatIntake } from './infra/eh/heartbeat-plugin.ts'
 import { createHeartbeatService, type HeartbeatService } from './infra/eh/heartbeat-service.ts'
+import { INSTRUCTION_METADATA } from './infra/eh/instruction-marks.ts'
 import { type LibraryChange, libraryFs } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
@@ -284,6 +291,7 @@ import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
 import { createEventStream } from './infra/events/stream.ts'
 import { installJsonSchemaValidator } from './infra/json-schema.ts'
 import { croneSchedule } from './infra/schedule.ts'
+import { createScriptEngine, type ScriptEngine } from './infra/scripts/engine.ts'
 import { createStorageService } from './infra/storage/storage-service.ts'
 import {
   createTelegramChannels,
@@ -555,6 +563,8 @@ export function compose(config: ServerConfig): Server {
   // routes that read it are the `activity` option of eharness/http (below)
   // the channels gateway is built later; it hears about pending items of channel sessions through the feed
   let channelGateway: ChannelGateway | undefined
+  // scripts (P59): built after the gateway; the deps and the gateway reach it late-bound
+  let scriptEngine: ScriptEngine | undefined
   const activityStore = watchPendingChanges(sqliteActivityStore(conn.sqlite), (e) =>
     channelGateway?.pendingChanged(e),
   )
@@ -654,6 +664,12 @@ export function compose(config: ServerConfig): Server {
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   activityLog.prune()
+  const scriptStore = sqliteScriptStore(conn.sqlite)
+  const pruneScriptRuns = (): number =>
+    scriptStore.pruneRuns(
+      Date.now() - SCRIPT_RUNS_KEEP_DAYS * 86_400_000,
+      SCRIPT_RUNS_KEEP_PER_SCRIPT,
+    )
   const pruneEvents = (): void => {
     const { eventsRetentionHours, eventsMaxRows } = settings.get()
     const eventsRetentionMs = eventsRetentionHours * 3_600_000
@@ -675,6 +691,7 @@ export function compose(config: ServerConfig): Server {
         tasksDays: st.tasksRetentionDays,
         libraryHistoryDays: st.libraryHistoryRetentionDays,
       })
+      pruneScriptRuns()
       // deleted media (library files) are the bulk of the database: hand the pages back
       if (pruned.media > 0) reclaimSpace(conn.sqlite)
     } catch (error) {
@@ -697,7 +714,7 @@ export function compose(config: ServerConfig): Server {
       keepLast: st.eventsMaxRows,
       keepLatestOf: [{ type: 'message-added', by: 'agentId' }],
     })
-    return { ...pruned, modelCalls, events: events.deleted }
+    return { ...pruned, modelCalls, events: events.deleted, scriptRuns: pruneScriptRuns() }
   }
   if (config.dbCompact === true) {
     try {
@@ -1049,6 +1066,11 @@ export function compose(config: ServerConfig): Server {
           posted: false,
           reason: 'channels are not ready',
         },
+      script: async (id, input) =>
+        (await scriptEngine?.fireSchedule(id, input.slot)) ?? {
+          ran: false,
+          reason: 'the scripts engine is not running',
+        },
     }),
     app: () => deps,
     // a routine in `dm` mode fires into a live thread of the agent, never an archived one
@@ -1202,6 +1224,9 @@ export function compose(config: ServerConfig): Server {
     routineEngine: routines,
     programs: programStore,
     tables: tableStore,
+    scripts: scriptStore,
+    scriptRunner: () => scriptEngine,
+    onTableRows: (change) => scriptEngine?.onTableRows(change),
     programRunner,
     completion: createAgentCompletion({
       agent: (id) => agents.get(id),
@@ -1477,6 +1502,8 @@ export function compose(config: ServerConfig): Server {
     sqlite: conn.sqlite,
     // new messages in watched chats may start an early heartbeat (debounced in the service)
     onObserved: (event) => void heartbeats.activity(event),
+    // channel triggers of scripts (P59): never awaited, the engine queues its runs
+    onEvent: (info) => scriptEngine?.onChannelEvent(info),
     // a Decision Center question answered in a chat, by a named owner or admin
     // an approval nobody answered was declined: the owner hears about it (alarm)
     onApprovalExpired: (info) =>
@@ -1629,6 +1656,24 @@ export function compose(config: ServerConfig): Server {
     fixLinks: createShareLinkFixer(artifacts, (message) => console.warn(`team: ${message}`)),
   })
   const channels = channelGateway
+  // scripts (P59, ADR-0065): channel events, table changes and schedules run sandboxed code
+  scriptEngine = createScriptEngine({
+    app: () => deps,
+    gateway: () => channelGateway,
+    paused: isPaused,
+    // ctx.agent.wake: an instruction in the agent's "Scripts" chat (a paid model turn)
+    wake: async ({ agentId, sessionId, text, id }) => {
+      const def = agents.get(agentId)
+      if (def === undefined || def.archivedAt !== null) throw new Error('the agent is gone')
+      await factory.prepare(def)
+      await factory
+        .openSession(def, sessionId)
+        .enqueue(text, { mode: 'queue', id, metadata: INSTRUCTION_METADATA })
+    },
+    allowPrivateFetch: (config.env ?? process.env).TEAM_SCRIPTS_ALLOW_PRIVATE_FETCH === '1',
+    ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
   // the Telegram bot transport: one poller per connected, bound connection (`infra/telegram`)
   const telegramEnv = config.env ?? process.env
   telegram = createTelegramChannels({
@@ -1993,6 +2038,7 @@ export function compose(config: ServerConfig): Server {
       await channels.stop()
       await routines?.stop()
       await turnRetries?.stop()
+      await scriptEngine?.stop()
       await ready
       // shutdown: failures of these were alarmed when they happened; closing must not throw
       await repairing?.catch(() => undefined)

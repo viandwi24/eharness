@@ -283,7 +283,7 @@ describe('upgrading an older database', () => {
       entries: Array<{ idx: number; tag: string }>
       [k: string]: unknown
     }
-    expect(journal.entries.at(-1)?.tag).toBe('0047_data_tables')
+    expect(journal.entries.some((e) => e.tag === '0047_data_tables')).toBe(true)
     const before = journal.entries.filter((e) => e.idx <= 46)
     const tmp = mkdtempSync(join(tmpdir(), 'team-oldmig-'))
     dirs.push(tmp)

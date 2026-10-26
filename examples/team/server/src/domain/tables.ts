@@ -50,6 +50,16 @@ export interface TableRecord {
   updatedBy: string
 }
 
+/** Rows of a table changed (the in-process hook scripts listen on, W7). */
+export interface TableRowsChange {
+  tableId: string
+  table: string
+  kind: 'row.created' | 'row.updated' | 'row.deleted'
+  rowIds: string[]
+  /** Who changed them (an agent's or a script's name, `web owner`). */
+  by: string
+}
+
 // --- limits ------------------------------------------------------------------------------------
 
 export const LIMITS = {

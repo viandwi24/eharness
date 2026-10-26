@@ -14,6 +14,7 @@ import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
 import CubeIcon from 'phosphor-svelte/lib/Cube';
 import PulseIcon from 'phosphor-svelte/lib/Pulse';
+import TableIcon from 'phosphor-svelte/lib/Table';
 import StrategyIcon from 'phosphor-svelte/lib/Strategy';
 import UsersThreeIcon from 'phosphor-svelte/lib/UsersThree';
 import type { Component } from 'svelte';
@@ -28,6 +29,7 @@ export const NAV_ICONS: Record<SectionId | RailId, Component> = {
 	routines: ClockIcon,
 	files: FolderOpenIcon,
 	artifacts: CubeIcon,
+	tables: TableIcon,
 	channels: ChatCircleDotsIcon,
 	people: UsersThreeIcon,
 	connectors: PlugsConnectedIcon,

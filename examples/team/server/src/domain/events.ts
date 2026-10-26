@@ -23,6 +23,10 @@ export const APP_EVENT_TYPES = [
   'cache-reset',
   'providers-changed',
   'connectors-changed',
+  /** A table or its rows changed: payload table, tableId, change, count, by (P59). */
+  'tables-changed',
+  /** A script was created, changed, approved, switched or ran (P59). */
+  'scripts-changed',
   'thread-changed',
   'notification-changed',
   /** An alarm was raised (a failed run, a broken connection, ...): payload kind, subject, text. */

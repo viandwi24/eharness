@@ -270,9 +270,11 @@ export function tableRoutes(deps: Deps): OpenAPIHono {
     .openapi(getRoute, (c) => c.json(getTable(deps, c.req.valid('param').table) as never, 200))
     .openapi(patchRoute, (c) => {
       const body = c.req.valid('json')
-      return c.json(updateTable(deps, c.req.valid('param').table, body) as never, 200)
+      return c.json(updateTable(deps, OWNER, c.req.valid('param').table, body) as never, 200)
     })
-    .openapi(dropRoute, (c) => c.json(dropTable(deps, c.req.valid('param').table) as never, 200))
+    .openapi(dropRoute, (c) =>
+      c.json(dropTable(deps, OWNER, c.req.valid('param').table) as never, 200),
+    )
     .openapi(insertRoute, (c) => {
       const body = c.req.valid('json')
       return c.json(insertRows(deps, OWNER, c.req.valid('param').table, body.rows) as never, 201)
@@ -291,7 +293,7 @@ export function tableRoutes(deps: Deps): OpenAPIHono {
     })
     .openapi(deleteRowRoute, (c) => {
       const p = c.req.valid('param')
-      return c.json(deleteRow(deps, p.table, p.rowId) as never, 200)
+      return c.json(deleteRow(deps, OWNER, p.table, p.rowId) as never, 200)
     })
     .openapi(queryRoute, (c) => {
       const body = c.req.valid('json')
@@ -309,7 +311,7 @@ export function tableRoutes(deps: Deps): OpenAPIHono {
     })
     .openapi(deleteRoute, (c) => {
       const body = c.req.valid('json')
-      return c.json(deleteRows(deps, c.req.valid('param').table, body.filter) as never, 200)
+      return c.json(deleteRows(deps, OWNER, c.req.valid('param').table, body.filter) as never, 200)
     })
     .openapi(importRoute, async (c) => {
       const body = c.req.valid('json')

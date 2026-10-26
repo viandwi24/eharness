@@ -120,6 +120,16 @@ import type {
   TestResultView,
 } from '../domain/providers.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
+import type {
+  ApprovalState,
+  AuthorKind,
+  HostMethodDoc,
+  RunTrigger,
+  Script,
+  ScriptRun,
+  ScriptStatus,
+  ScriptVersion,
+} from '../domain/scripts.ts'
 import type { BlockedTool, ConfiguredGroup, LastCallTools } from '../domain/session-tools.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type {
@@ -132,6 +142,7 @@ import type {
   Compiled as CompiledSql,
   DataTable,
   TableRecord,
+  TableRowsChange,
   TableSchema,
 } from '../domain/tables.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
@@ -476,6 +487,93 @@ export type NewProgram = Omit<Program, 'createdAt' | 'updatedAt' | 'version'> & 
 export type ProgramPatch = Partial<
   Omit<Program, 'id' | 'agentId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'version'>
 >
+
+/** Runs scripts (`infra/scripts/engine.ts`, P59 W4): the app's way to the executor. */
+export interface ScriptRunnerPort {
+  run(input: {
+    script: Script
+    version: ScriptVersion
+    trigger: RunTrigger
+    event: unknown
+    dryRun: boolean
+    startedBy: string
+  }): Promise<ScriptRun>
+  /** Why a source cannot run (syntax, imports, no default export), or undefined. */
+  check(source: string): string | undefined
+  /** The `scripts.d.ts` authors write against. */
+  types(): string
+  /** The `ctx` methods with their docs. */
+  methods(): readonly HostMethodDoc[]
+}
+
+/** A script version to store (immutable). */
+export interface NewScriptVersion {
+  source: string
+  manifest: Record<string, unknown>
+  hash: string
+  note: string
+  createdBy: string
+  authorKind: AuthorKind
+}
+
+/** Scripts on SQLite (`infra/db/scripts-repo.ts`, P59 W4). */
+export interface ScriptStore {
+  list(): Script[]
+  /** By id or by name. */
+  get(ref: string): Script | undefined
+  insert(
+    s: {
+      id: string
+      name: string
+      description: string
+      agentId: string
+      authorKind: AuthorKind
+      createdBy: string
+      now: number
+    },
+    v: Omit<NewScriptVersion, 'createdBy' | 'authorKind'>,
+  ): Script
+  /** Adds the next version; returns its number. */
+  addVersion(scriptId: string, v: NewScriptVersion, now: number): number
+  update(
+    id: string,
+    patch: Partial<{
+      name: string
+      description: string
+      agentId: string
+      status: ScriptStatus
+      activeVersion: number | null
+      approvalState: ApprovalState
+      approvalVersion: number | null
+      approvalBy: string | null
+      approvalAt: number | null
+      approvalNote: string | null
+      routineId: string | null
+      disabledReason: string | null
+      consecutiveFailures: number
+    }>,
+    now: number,
+  ): Script | undefined
+  delete(id: string): boolean
+  version(scriptId: string, version: number): ScriptVersion | undefined
+  /** Newest first. */
+  versions(scriptId: string): ScriptVersion[]
+  /** Stores a run; a real (not dry, not skipped) run also updates the script's counters. */
+  recordRun(run: ScriptRun): void
+  runs(
+    scriptId: string,
+    q: { limit: number; before?: string | undefined; dryRun?: boolean | undefined },
+  ): ScriptRun[]
+  run(id: string): ScriptRun | undefined
+  /** Real runs started since `since` (the hourly cap). */
+  runsSince(scriptId: string, since: number): number
+  /** Removes runs older than `olderThan` and all but the newest `keepPerScript` of each script. */
+  pruneRuns(olderThan: number, keepPerScript: number): number
+  kvGet(scriptId: string, key: string): string | undefined
+  kvSet(scriptId: string, key: string, value: string, now: number): void
+  kvDelete(scriptId: string, key: string): boolean
+  kvKeys(scriptId: string, prefix: string): string[]
+}
 
 /** One row to write: a new document, or a replacement checked against `ifVersion`. */
 export interface TableRowWrite {
@@ -1638,6 +1736,12 @@ export interface Deps {
   programRunner: ProgramRunner
   /** Document tables (ADR-0065). */
   tables: TableStore
+  /** Scripts (ADR-0065). */
+  scripts: ScriptStore
+  /** Late-bound: the scripts engine (built after the deps). */
+  scriptRunner?: () => ScriptRunnerPort | undefined
+  /** Rows of a table changed (late-bound: the scripts engine listens, P59 W7). */
+  onTableRows?: (change: TableRowsChange) => void
   /** One plain model call with an agent's own model (P57: the memory reorganization proposal). */
   completion?: AgentCompletion
   programMemory: ProgramMemoryStore

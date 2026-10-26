@@ -1829,6 +1829,8 @@ export const heartbeatKey = (agentId: string): string => `sys:heartbeat:${agentI
 export const DIGEST_KEY = 'sys:digest'
 /** A reminder created from a chat (P41 L6): its schedule is a routine, its fire posts a fixed text. */
 export const reminderKey = (reminderId: string): string => `sys:reminder:${reminderId}`
+/** The routine of a script's schedule trigger (P59). */
+export const scriptKey = (scriptId: string): string => `sys:script:${scriptId}`
 
 /** The one-shot wake of a deadline order (P52): fires a beat for that order at its `due` time. */
 export const orderKey = (agentId: string, orderId: string): string =>
@@ -1839,12 +1841,15 @@ export type SystemRoutine =
   | { kind: 'heartbeat'; agentId: string }
   | { kind: 'digest' }
   | { kind: 'reminder'; id: string }
+  | { kind: 'script'; id: string }
 
 export function parseSystemKey(key: string | null | undefined): SystemRoutine | undefined {
   if (key === null || key === undefined || !key.startsWith('sys:')) return undefined
   if (key === DIGEST_KEY) return { kind: 'digest' }
   const o = /^sys:order:([^:]+):(.+)$/.exec(key)
   if (o !== null) return { kind: 'order', agentId: o[1] as string, orderId: o[2] as string }
+  const sc = /^sys:script:(.+)$/.exec(key)
+  if (sc !== null) return { kind: 'script', id: sc[1] as string }
   const r = /^sys:reminder:(.+)$/.exec(key)
   if (r !== null) return { kind: 'reminder', id: r[1] as string }
   const m = /^sys:heartbeat:(.+)$/.exec(key)

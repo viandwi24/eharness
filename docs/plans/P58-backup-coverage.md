@@ -15,10 +15,10 @@ through the real app, exports, imports into a fresh instance and compares entity
 | Class | Meaning | Tables |
 |---|---|---|
 | (a) `zip` | Restorable through the workspace zip import (an entity document, rows in `data/<table>/`, the encrypted secrets file, or library files). The database snapshot has it too. | 51 |
-| (b) `snapshot` | Covered only by the database snapshot: restore it with "Restore whole database". | 17 |
+| (b) `snapshot` | Covered only by the database snapshot: restore it with "Restore whole database". | 21 |
 | (c) `derived` | Derived, cache or ephemeral: nothing to back up (the reason is in the table below). | 20 |
 
-Total: 88 tables (the 86 drizzle tables plus two SQLite
+Total: 92 tables (the 90 drizzle tables plus two SQLite
 bookkeeping tables).
 
 ## The coverage map
@@ -89,6 +89,10 @@ bookkeeping tables).
 | `trigger_fires` | Firing log of the triggers | a log of what each trigger did |
 | `data_tables` | Tables (document tables of the owner, agents and scripts) | the definitions travel with their rows; export a table to the library to move it on its own |
 | `data_rows` | Rows of the tables | restore with the whole database, or export a table to a library file (CSV, JSON) and import it back |
+| `scripts` | Scripts (sandboxed code run by channel events, schedules and table changes) | bound to agent, routine and connection ids; restore with the whole database |
+| `script_versions` | Versions of the scripts (code and manifest) | immutable history of each script; travels with the scripts |
+| `script_runs` | Run traces of the scripts | a log of what each run did (kept 30 days, 500 per script) |
+| `script_kv` | Key-value state of the scripts | small state a script keeps between runs; travels with the scripts |
 | `ch_message_revisions` | Edits of channel messages | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
 | `ch_messages` | Channel message log | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
 | `ch_reactions` | Reactions in channels | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |

@@ -127,6 +127,8 @@ import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import { eventsRecent } from '../events/plugin.ts'
+import { scriptsTools } from '../scripts/plugin.ts'
+import { tablesTools } from '../tables/plugin.ts'
 import type { ActivityLog } from './activity-log.ts'
 import { capText } from './budget-cap-text.ts'
 import { chatTools } from './chat-tools-plugin.ts'
@@ -1277,6 +1279,28 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               agentOf: (slug) => deps.agentBySlug?.(slug),
               app: deps.app,
               zone: () => currentSettings().timezone,
+            }),
+          ]),
+      // `tables_read` / `tables_write` (owner and admins in a chat, checked in code; any unattended run)
+      ...(deps.app === undefined
+        ? []
+        : [
+            tablesTools({
+              app: deps.app,
+              gateway: () => deps.channels?.(),
+              agentOf: (slug) => {
+                const found = deps.agentBySlug?.(slug)
+                return found === undefined ? undefined : { id: found.id, name: found.name }
+              },
+            }),
+            // `scripts_read` / `scripts_write` (same rule); a person approves before a script runs
+            scriptsTools({
+              app: deps.app,
+              gateway: () => deps.channels?.(),
+              agentOf: (slug) => {
+                const found = deps.agentBySlug?.(slug)
+                return found === undefined ? undefined : { id: found.id, name: found.name }
+              },
             }),
           ]),
       // `person_note` of a person's own chat thread, and no communication style in memory

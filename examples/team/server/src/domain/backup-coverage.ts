@@ -235,6 +235,26 @@ export const COVERAGE: readonly TableEntry[] = [
     'Rows of the tables',
     'restore with the whole database, or export a table to a library file (CSV, JSON) and import it back',
   ),
+  snapshot(
+    'scripts',
+    'Scripts (sandboxed code run by channel events, schedules and table changes)',
+    'bound to agent, routine and connection ids; restore with the whole database',
+  ),
+  snapshot(
+    'script_versions',
+    'Versions of the scripts (code and manifest)',
+    'immutable history of each script; travels with the scripts',
+  ),
+  snapshot(
+    'script_runs',
+    'Run traces of the scripts',
+    'a log of what each run did (kept 30 days, 500 per script)',
+  ),
+  snapshot(
+    'script_kv',
+    'Key-value state of the scripts',
+    'small state a script keeps between runs; travels with the scripts',
+  ),
   derived('ch_meta', 'Channels migration markers', 'rewritten by the boot-time migration'),
   snapshot(
     'channel_approvals',
