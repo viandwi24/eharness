@@ -67,6 +67,7 @@ Update this table in the same commit that changes a phase's status.
 | P55 | [Consolidation](P55-consolidation.md) — remove what production did not use (work queue form, generic routines, rehearsals and program tests, workspace memory, Briefing page), one Needs attention page, tables kept | in progress | P54 | P54 |
 | P56 | [Developer API](P56-developer-api.md) — isolated API agents and keys for third-party developers: `/v1` one-shot runs and conversations (SSE), per-key limits, origins and usage, the Developers page | in progress | P55 | P55 |
 | P57 | [Library structure](P57-library-structure.md) — the library is the source of truth: fixed folders (company, programs, knowledge, reports, data), program briefs and notes as library files, one-time memory reorganization (rules + index only), memory discipline guard | in progress | P55 | P55 |
+| P59 | [Scripts and tables](P59-scripts-and-tables.md) — team example: TypeScript scripts in a QuickJS sandbox (channel-event, schedule and manual triggers, capability API with grants, dry runs, owner approval, versions, run traces) and document tables (schema, MongoDB-like queries and aggregates, spreadsheet page, import/export), so repetitive work runs without a model call (ADR-0065) | todo | P57 | — |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

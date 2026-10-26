@@ -69,3 +69,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0062](0062-platform-rings-and-rule-of-two.md) | Platform rings (core, official modules, adapters, products) and the rule of two: a capability moves into the library when two products need it |
 | [0063](0063-scheduler-module.md) | `eharness/scheduler`: schedule store port, multi-instance scheduler with deterministic fire ids, no cron dependency; amends 0040 |
 | [0064](0064-browser-module.md) | `eharness/browser` (proposed): adapters over an operation-level connection, own CDP client in core, manual and managed modes, no evasion features, Camoufox as a separate package |
+| [0065](0065-scripts-and-tables.md) | Scripts and tables in the team app (proposed): QuickJS-in-a-Worker sandbox with a grant-checked capability API, dry runs and owner approval; document tables with MongoDB-like queries, no raw SQL |
