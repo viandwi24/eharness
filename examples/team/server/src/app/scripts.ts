@@ -371,6 +371,7 @@ export function wideningOf(deps: Deps, s: Script, to: ScriptVersion): string[] {
   if (a.maxRunsPerHour !== 0 && (b.maxRunsPerHour === 0 || b.maxRunsPerHour > a.maxRunsPerHour))
     out.push('more runs per hour')
   if (JSON.stringify(a.limits) !== JSON.stringify(b.limits)) out.push('other limits')
+  if (a.loopGuard && !b.loopGuard) out.push('the loop guard is off')
   return out
 }
 

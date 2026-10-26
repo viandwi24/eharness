@@ -589,6 +589,47 @@ describe('messages of the connected account itself', () => {
       ).some((x) => x.reason === 'loop'),
     )
     expect(((await r.api('POST', '/tables/seen/query', {})).json.rows as unknown[]).length).toBe(1)
+
+    // a post in a broadcast channel of the account: the channel is the sender (marked self), typed
+    // by the person: it counts
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: { id: 'chan-1', name: 'TEST MARKETING #1', isSelf: true },
+      id: 'p60',
+      text: 'sell now',
+    })
+    await until(
+      'channel post logged',
+      async () =>
+        ((await r.api('POST', '/tables/seen/query', {})).json.rows as unknown[]).length === 2,
+    )
+
+    // loop guard off: what the app sent starts it too
+    const v = (await r.api('GET', '/scripts/log-all')).json.latest as {
+      manifest: Record<string, unknown>
+    }
+    await r.api('PATCH', '/scripts/log-all', { manifest: { ...v.manifest, loopGuard: false } })
+    await r.api('POST', '/scripts/log-all/activate', {})
+    const again = await r.server.channels.post(
+      r.server.channels.resolveTarget(r.ids.lead, undefined, {
+        connection: 'c1',
+        conversation: CHAT,
+      }),
+      { text: 'buy again from the app' },
+    )
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: me,
+      id: again[0] as string,
+      text: 'buy again from the app',
+    })
+    await until(
+      'app message logged',
+      async () =>
+        ((await r.api('POST', '/tables/seen/query', {})).json.rows as unknown[]).length === 3,
+    )
   })
 })
 

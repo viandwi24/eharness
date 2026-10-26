@@ -366,7 +366,7 @@
 		<button type="button" class="flex items-center gap-2 text-left" aria-expanded={showLimits} onclick={() => (showLimits = !showLimits)}>
 			<h3 id="mb-limits" class="text-sm font-semibold">Limits</h3>
 			<span class="text-xs text-muted-foreground">
-				{manifest.cooldownSec ? `wait ${manifest.cooldownSec}s between runs · ` : ''}{manifest.maxRunsPerHour ? `at most ${manifest.maxRunsPerHour} runs an hour` : 'no hourly cap'}
+				{manifest.cooldownSec ? `wait ${manifest.cooldownSec}s between runs · ` : ''}{manifest.maxRunsPerHour ? `at most ${manifest.maxRunsPerHour} runs an hour` : 'no hourly cap'}{manifest.loopGuard ? '' : ' · loop guard off'}
 			</span>
 			<CaretDownIcon class={cn('size-4 text-muted-foreground transition-transform', showLimits && 'rotate-180')} />
 		</button>
@@ -374,6 +374,13 @@
 			<div class="flex flex-wrap gap-4 rounded-lg border border-border bg-card p-3 text-sm">
 				<label class="flex flex-col gap-1 text-xs font-medium">Wait between runs (seconds)<Input type="number" min="0" bind:value={manifest.cooldownSec} class="w-36" /></label>
 				<label class="flex flex-col gap-1 text-xs font-medium">Most runs per hour (0 = no cap)<Input type="number" min="0" bind:value={manifest.maxRunsPerHour} class="w-36" /></label>
+				<label class="flex w-full items-start gap-3">
+					<Switch bind:checked={manifest.loopGuard} size="sm" class="mt-0.5" />
+					<span class="flex flex-col gap-0.5">
+						<span class="text-xs font-medium">Loop guard</span>
+						<span class="text-xs text-muted-foreground">On (recommended): messages the app itself sent, rows this script wrote and what its own API calls caused never start it again. Messages you type on a connected account always count. Off: everything starts it; the wait and the hourly cap above still stop a runaway loop.</span>
+					</span>
+				</label>
 				<p class="w-full text-xs text-muted-foreground">Memory, CPU and time limits have safe defaults; change them in JSON mode (<code class="font-mono">limits</code>).</p>
 			</div>
 		{/if}

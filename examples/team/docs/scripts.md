@@ -89,6 +89,7 @@ Rules for the source:
   "grants": {},
   "cooldownSec": 0,
   "maxRunsPerHour": 60,
+  "loopGuard": true,
   "limits": {}
 }
 ```
@@ -181,7 +182,9 @@ event given.
 Before an automatic run the engine checks, in order: **Pause all** (scripts hold too), the **loop
 guard** (messages the app itself sent through a connection, table changes the script itself made,
 and app events caused by its own `ctx.api` calls never start it; a message a person types on a
-connected Telegram account from their phone is an ordinary message and does), **freshness**
+connected Telegram account from their phone, or posts in a channel of that account, is an
+ordinary message and does; `"loopGuard": false` in the manifest, or the Loop guard switch in the
+editor, turns the guard off), **freshness**
 (events older than 15 minutes, e.g. a catch-up after a restart, are not run), the **cooldown** and
 the **hourly cap**. A skipped event is logged as a `skipped` run with
 the reason, at most once a minute per script and reason. Runs of one script go one after another

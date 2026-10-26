@@ -97,6 +97,8 @@ export type SimpleManifest = {
 	grants: Grants;
 	cooldownSec: number;
 	maxRunsPerHour: number;
+	/** Off: what the app sent, what the script wrote and what its own API calls caused start it too. */
+	loopGuard: boolean;
 	limits: Record<string, number>;
 };
 
@@ -220,6 +222,7 @@ export function fromManifest(input: unknown): SimpleManifest {
 		},
 		cooldownSec: int(raw.cooldownSec, 0),
 		maxRunsPerHour: int(raw.maxRunsPerHour, DEFAULT_RUNS_PER_HOUR),
+		loopGuard: raw.loopGuard !== false,
 		limits
 	};
 }
@@ -264,6 +267,7 @@ export function toManifest(m: SimpleManifest): Record<string, unknown> {
 	const out: Record<string, unknown> = { triggers, grants };
 	if (m.cooldownSec > 0) out.cooldownSec = m.cooldownSec;
 	if (m.maxRunsPerHour !== DEFAULT_RUNS_PER_HOUR) out.maxRunsPerHour = m.maxRunsPerHour;
+	if (!m.loopGuard) out.loopGuard = false;
 	if (Object.keys(m.limits).length) out.limits = { ...m.limits };
 	return out;
 }
@@ -274,7 +278,7 @@ export function simpleCanShow(input: unknown): boolean {
 	const norm = (v: unknown): string => JSON.stringify(toManifest(fromManifest(v)));
 	// a manifest with fields the simple model drops would lose them on a round trip
 	const raw = obj(input);
-	const knownTop = new Set(['triggers', 'grants', 'cooldownSec', 'maxRunsPerHour', 'limits']);
+	const knownTop = new Set(['triggers', 'grants', 'cooldownSec', 'maxRunsPerHour', 'loopGuard', 'limits']);
 	if (Object.keys(raw).some((k) => !knownTop.has(k))) return false;
 	return norm(input) === JSON.stringify(back);
 }

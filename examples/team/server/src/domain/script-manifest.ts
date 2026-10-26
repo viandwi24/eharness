@@ -150,6 +150,12 @@ export interface ScriptManifest {
   cooldownSec: number
   /** Most runs started in one hour (0 = no cap). */
   maxRunsPerHour: number
+  /**
+   * Loop guard (default on): what the app itself sent through a connection, what this script wrote
+   * to a table and what its own `ctx.api` calls caused never start it. Off: they do (cooldown and the
+   * hourly cap still limit a loop).
+   */
+  loopGuard: boolean
   /** Overrides of the default limits, bounded by `LIMIT_BOUNDS`. */
   limits: Partial<ScriptLimits>
 }
@@ -394,6 +400,7 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
     grants,
     cooldownSec: num(raw.cooldownSec, 'cooldownSec', 0, 7 * 86_400, 0),
     maxRunsPerHour: num(raw.maxRunsPerHour, 'maxRunsPerHour', 0, 10_000, 60),
+    loopGuard: raw.loopGuard !== false,
     limits,
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: manifest }
@@ -656,7 +663,7 @@ export interface GateState {
 /** Why an automatic run must not start, or undefined. Manual and dry runs skip the gates. */
 export function gateOf(m: ScriptManifest, s: GateState): SkipReason | undefined {
   if (s.paused) return 'paused'
-  if (s.selfCaused) return 'loop'
+  if (s.selfCaused && m.loopGuard) return 'loop'
   if (s.eventAt !== null && s.now - s.eventAt > FRESH_MS) return 'stale'
   if (m.cooldownSec > 0 && s.lastRunAt !== null && s.now - s.lastRunAt < m.cooldownSec * 1000)
     return 'cooldown'
@@ -874,6 +881,11 @@ export function manifestJsonSchema(): Record<string, unknown> {
         minimum: 0,
         maximum: 10_000,
         description: 'Most runs in one hour (default 60; 0 = no cap).',
+      },
+      loopGuard: {
+        type: 'boolean',
+        description:
+          'Default true: what the app itself sent, what this script wrote and what its own API calls caused never start it. false: they do (cooldown and the hourly cap still limit a loop).',
       },
       limits: {
         type: 'object',
