@@ -36,7 +36,6 @@ async function until(what: string, cond: () => boolean, ms = 5000) {
 /** What the gateway offers an adapter: everything allowed, nothing stored. */
 const host: AdapterHost = { isAllowed: () => true, locate: () => [], isOwn: () => false }
 
-let nextPort = 0
 const fakes: FakeTelegram[] = []
 const adapters: TelegramAdapter[] = []
 afterEach(async () => {
@@ -45,7 +44,7 @@ afterEach(async () => {
 })
 
 function setup(options: Partial<TelegramAdapterOptions> = {}) {
-  const fake = fakeTelegram(4921 + (nextPort++ % 8))
+  const fake = fakeTelegram()
   fakes.push(fake)
   const adapter = createTelegramAdapter({
     connectionId: 'tg1',
@@ -680,7 +679,7 @@ describe('files in', () => {
 
 describe('native actions', () => {
   test('the catalog is a few grouped tools with static risks', () => {
-    const f = fakeTelegram(4929)
+    const f = fakeTelegram()
     fakes.push(f)
     const adapter = createTelegramAdapter({ connectionId: 'x', token: f.token, apiRoot: f.url })
     adapters.push(adapter)

@@ -98,7 +98,8 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: bun install --frozen-lockfile
-      - run: bun test
+      # no `bun test` here: the version PR's CI already ran the full suite on this exact tree, and a
+      # second run only adds minutes and another chance of a flaky failure before publishing
       - run: bun run build
       - run: bun run check:package
       - uses: changesets/action/pack@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2

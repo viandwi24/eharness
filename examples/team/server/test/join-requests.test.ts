@@ -96,7 +96,7 @@ describe('the saved list', () => {
 
 describe('the bot', () => {
   function bot(file: string, name = 'tg1') {
-    const fake = fakeTelegram(4980 + Math.floor(Math.random() * 15))
+    const fake = fakeTelegram()
     const conn = openDatabase(file)
     const adapter: TelegramAdapter = createTelegramAdapter({
       connectionId: name,

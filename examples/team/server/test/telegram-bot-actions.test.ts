@@ -25,7 +25,6 @@ async function until(what: string, cond: () => boolean, ms = 5000) {
 }
 const host: AdapterHost = { isAllowed: () => true, locate: () => [], isOwn: () => false }
 
-let port = 0
 const fakes: FakeTelegram[] = []
 const adapters: TelegramAdapter[] = []
 afterEach(async () => {
@@ -34,7 +33,7 @@ afterEach(async () => {
 })
 
 function setup() {
-  const fake = fakeTelegram(4960 + (port++ % 8))
+  const fake = fakeTelegram()
   fakes.push(fake)
   const adapter = createTelegramAdapter({
     connectionId: 'tg1',

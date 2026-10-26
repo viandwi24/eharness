@@ -42,7 +42,8 @@ export interface FakeTelegram {
 }
 
 export function fakeTelegram(
-  port: number,
+  /** 0 (the default): the OS picks a free port, so test files never collide. */
+  port = 0,
   token = '123456:FAKE_TOKEN_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 ): FakeTelegram {
   const calls: FakeCall[] = []
@@ -188,7 +189,7 @@ export function fakeTelegram(
   })
 
   return {
-    url: `http://127.0.0.1:${port}`,
+    url: `http://127.0.0.1:${server.port}`,
     token,
     calls,
     callsOf: (method) => calls.filter((c) => c.method === method),

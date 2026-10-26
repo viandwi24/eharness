@@ -37,11 +37,10 @@ async function until(what: string, cond: () => boolean | Promise<boolean>, ms = 
   }
 }
 
-let portCounter = 0
 const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64')
 
 async function boot(script: ScriptedStepInput[], webEnv: Record<string, string> = {}) {
-  const fake = fakeTelegram(4921 + (portCounter++ % 8))
+  const fake = fakeTelegram()
   fakes.push(fake)
   const dir = mkdtempSync(join(tmpdir(), 'team-tg-'))
   dirs.push(dir)
