@@ -5300,6 +5300,18 @@
             "maximum": 1000,
             "description": "Most active repeating reminders one person may have; 0 = no limit. Default 10."
           },
+          "tableMaxRows": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 50000000,
+            "description": "Tables: most rows in one table. Default 1 000 000. Initial value: `TEAM_TABLE_MAX_ROWS`."
+          },
+          "tablesMaxMb": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "Tables: most megabytes of row data across every table. Default 1024. Initial value: `TEAM_TABLES_MAX_MB`."
+          },
           "teamName": {
             "type": [
               "string",
@@ -5411,6 +5423,8 @@
           "longRunMaxHours",
           "longRunChunkSteps",
           "maxRepeatingReminders",
+          "tableMaxRows",
+          "tablesMaxMb",
           "teamName",
           "worksRoot",
           "companyRoot",
@@ -5915,6 +5929,16 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 1000
+          },
+          "tableMaxRows": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 50000000
+          },
+          "tablesMaxMb": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
           },
           "teamName": {
             "type": [
@@ -12835,6 +12859,552 @@
         },
         "required": [
           "runs"
+        ]
+      },
+      "TableList": {
+        "type": "object",
+        "properties": {
+          "tables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DataTable"
+            }
+          }
+        },
+        "required": [
+          "tables"
+        ]
+      },
+      "DataTable": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/TableSchema"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "rowCount": {
+            "type": "integer"
+          },
+          "bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "schema",
+          "createdBy",
+          "createdAt",
+          "updatedAt",
+          "version",
+          "rowCount",
+          "bytes"
+        ]
+      },
+      "TableSchema": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TableColumn"
+            },
+            "maxItems": 200
+          },
+          "strict": {
+            "type": "boolean",
+            "description": "Refuse fields that are not columns."
+          }
+        },
+        "required": [
+          "columns"
+        ]
+      },
+      "TableColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Letters, digits and _, starting with a letter."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "boolean",
+              "date",
+              "json"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "default": {},
+          "indexed": {
+            "type": "boolean",
+            "description": "Queries on this column use an index."
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ]
+      },
+      "TableCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Lowercase letters, digits and _, starting with a letter."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "schema": {
+            "$ref": "#/components/schemas/TableSchema"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "TablePatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TableSchema"
+              },
+              {
+                "description": "Existing rows are not rewritten: a change applies to writes from now on."
+              }
+            ]
+          }
+        }
+      },
+      "TableRowsInserted": {
+        "type": "object",
+        "properties": {
+          "inserted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "inserted"
+        ]
+      },
+      "TableRowsInsert": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {}
+            },
+            "minItems": 1,
+            "maxItems": 1000
+          }
+        },
+        "required": [
+          "rows"
+        ]
+      },
+      "TableRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "version": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "updatedBy": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "data",
+          "version",
+          "createdAt",
+          "updatedAt",
+          "createdBy",
+          "updatedBy"
+        ]
+      },
+      "TableRowPatch": {
+        "type": "object",
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/TableRowChange"
+          },
+          "ifVersion": {
+            "type": "integer",
+            "description": "Compare-and-set: the version you read. A newer row answers 409 STALE_ROW."
+          }
+        },
+        "required": [
+          "change"
+        ]
+      },
+      "TableRowChange": {
+        "type": "object",
+        "properties": {
+          "set": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "unset": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inc": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "TableRowsDeleted": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "TableRowPage": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TableRecord"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "next",
+          "total"
+        ]
+      },
+      "TableRowQuery": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/TableFilter"
+          },
+          "sort": {
+            "description": "`{ field: 1 | -1 }` or `[{ field, dir }]`; without it rows come in creation order."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "cursor": {
+            "type": "string"
+          }
+        }
+      },
+      "TableFilter": {
+        "type": "object",
+        "additionalProperties": {},
+        "description": "MongoDB-like: `{ status: \"open\", price: { $gt: 10 }, $or: [ ... ] }`. Operators: $eq $ne $gt $gte $lt $lte $in $nin $contains $startsWith $exists $has $and $or $not. System fields: _id, _createdAt, _updatedAt, _version."
+      },
+      "TableAggregateResult": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "groups"
+        ]
+      },
+      "TableAggregate": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/TableFilter"
+          },
+          "groupBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "count",
+                    "sum",
+                    "avg",
+                    "min",
+                    "max"
+                  ]
+                },
+                "field": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op"
+              ]
+            }
+          },
+          "sort": {
+            "type": "object",
+            "properties": {
+              "by": {
+                "type": "string"
+              },
+              "dir": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "by"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "required": [
+          "metrics"
+        ]
+      },
+      "TableRowsUpdated": {
+        "type": "object",
+        "properties": {
+          "matched": {
+            "type": "integer"
+          },
+          "updated": {
+            "type": "integer"
+          },
+          "conflicts": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "matched",
+          "updated",
+          "conflicts"
+        ]
+      },
+      "TableRowsUpdate": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/TableFilter"
+          },
+          "change": {
+            "$ref": "#/components/schemas/TableRowChange"
+          }
+        },
+        "required": [
+          "filter",
+          "change"
+        ]
+      },
+      "TableRowsDelete": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/TableFilter"
+          }
+        },
+        "required": [
+          "filter"
+        ]
+      },
+      "TableImportResult": {
+        "type": "object",
+        "properties": {
+          "inserted": {
+            "type": "integer"
+          },
+          "updated": {
+            "type": "integer"
+          },
+          "skipped": {
+            "type": "integer"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "inserted",
+          "updated",
+          "skipped",
+          "errors"
+        ]
+      },
+      "TableImport": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A library file (`/library/data/members.csv`)."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "csv",
+              "json",
+              "ndjson"
+            ],
+            "description": "Default: from the file extension (.csv, .json, .ndjson / .jsonl)."
+          },
+          "upsertKey": {
+            "type": "string",
+            "description": "A column: a record whose value matches an existing row updates that row."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "TableExportResult": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "rows"
+        ]
+      },
+      "TableExport": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "csv",
+              "json",
+              "ndjson"
+            ],
+            "description": "Default: from the file extension (.csv, .json, .ndjson / .jsonl)."
+          },
+          "filter": {
+            "$ref": "#/components/schemas/TableFilter"
+          },
+          "sort": {}
+        },
+        "required": [
+          "path"
         ]
       },
       "DecisionList": {
@@ -33137,6 +33707,1157 @@
           },
           "404": {
             "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables": {
+      "get": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "List tables",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tables",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Create a table",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataTable"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A table with that name exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}": {
+      "get": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "A table",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataTable"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Rename, describe or change the schema",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TablePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataTable"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A table with that name exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Drop a table and its rows",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The dropped table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataTable"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/rows": {
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Insert rows (at most 1000)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableRowsInsert"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Ids of the new rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableRowsInserted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A size limit of Settings would be passed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/rows/{rowId}": {
+      "get": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "One row",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "rowId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Change one row",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "rowId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableRowPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The row changed since it was read (STALE_ROW) or a size limit would be passed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Delete one row",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "rowId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableRowsDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/query": {
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Query rows",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableRowQuery"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A page of rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableRowPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/aggregate": {
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Count, sum, average, min, max",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableAggregate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableAggregateResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/update": {
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Change rows matching a filter",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableRowsUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableRowsUpdated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A size limit of Settings would be passed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/delete": {
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Delete rows matching a filter",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableRowsDelete"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableRowsDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/import": {
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Import rows from a library file",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableImport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was imported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A size limit of Settings would be passed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/export": {
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Export rows to a library file",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableExport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Where the rows went",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableExportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
             "content": {
               "application/json": {
                 "schema": {

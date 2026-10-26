@@ -1,6 +1,6 @@
 # P59 — Team example: scripts and tables
 
-Status: todo · Owner: — · Branch: `main` (direct commits, one gate per step)
+Status: in progress · Owner: agent · Branch: `main` (direct commits, one gate per step)
 
 ## Goal
 
@@ -46,18 +46,25 @@ they show.
 
 ### W1 — Tables core
 
-- [ ] Migration: `data_tables` (id, name unique, schema JSON, caps, created/updated, author) and
-      `data_rows` (table id, row id UUIDv7, data JSON, version, created/updated, author); backup
-      coverage entries.
-- [ ] Schema: typed columns (`string number boolean date json`), required, default; validation on
-      write with readable errors (strings for the model, never throws for bad input).
-- [ ] Query compiler: filter operators of ADR-0065, projection, sort, limit, cursor; aggregates
-      with group-by; parameterised SQL only; expression indexes for declared columns.
-- [ ] Writes: insert, bulk insert, upsert by key, update/delete by id or filter with row-version
-      compare-and-set; caps per table and per workspace (settings, editable in Settings).
-- [ ] Import from CSV/JSON library files, export to the library.
-- [ ] HTTP routes and tests (conformance-style tests for the compiler: each operator, injection
-      attempts, paging stability, caps).
+- [x] Migration `0047_data_tables`: `data_tables` (id, name unique, schema JSON, running row and
+      byte counters, created/updated, author) and `data_rows` (table id, row id UUIDv7, data JSON,
+      version, created/updated, author); backup coverage entries (`snapshot`).
+- [x] Schema: typed columns (`string number boolean date json`), required, default, indexed,
+      strict; validation on write with readable errors.
+- [x] Query compiler: filter operators of ADR-0065 plus `$has` (a list contains a value),
+      projection, sort, limit, cursor (row id in creation order, offset with a sort); aggregates
+      with group-by; parameterised SQL with checked literal field paths; shared expression indexes
+      `data_rows_x_<column>` for declared columns (the query plan uses them).
+- [x] Writes: insert (all-or-nothing, 1000 per request), update/delete by id or filter (10 000 per
+      request) with row-version compare-and-set; caps per table and for all tables
+      (`tableMaxRows`, `tablesMaxMb`, Settings > Limits, `TEAM_TABLE_MAX_ROWS`, `TEAM_TABLES_MAX_MB`).
+- [x] Import from CSV/JSON/NDJSON library files (with `upsertKey`), export to the library (CSV
+      cells guarded against formulas; an export imports back).
+- [x] HTTP routes and tests (`test/tables-domain.test.ts`: every operator on SQLite, injection
+      attempts, counters, compare-and-set, CSV; `test/tables.test.ts`: API end to end, caps,
+      import/export, upgrade from migration 0046). Docs: `examples/team/docs/tables.md`.
+- Measured: 100 000 CSV rows import in about 0.3 s; a filtered, sorted query about 15 ms; a
+  grouped aggregate about 35 ms; an export about 0.2 s.
 
 ### W2 — Tables surfaces
 
@@ -135,6 +142,8 @@ they show.
 
 - Tables in the main database (chosen) or a separate SQLite file for user data, if backups grow
   too large? Revisit after W1 with real sizes.
+- Tables travel in the database snapshot only (`snapshot` class); a workspace-zip section for
+  tables is a later step. Meanwhile a table moves through export/import.
 - Should `http.fetch` be off until an owner turns it on per script (conservative default: yes)?
 - One Worker per run (chosen for isolation) or a warm pool per script? Measure in W3.
 - May an admin (not only an owner) approve an agent-authored script? Default: owner or admin, as

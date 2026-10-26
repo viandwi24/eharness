@@ -82,6 +82,14 @@ export const SettingsSchema = z
     maxRepeatingReminders: z.number().int().min(0).max(1000).openapi({
       description: 'Most active repeating reminders one person may have; 0 = no limit. Default 10.',
     }),
+    tableMaxRows: z.number().int().min(100).max(50000000).openapi({
+      description:
+        'Tables: most rows in one table. Default 1 000 000. Initial value: `TEAM_TABLE_MAX_ROWS`.',
+    }),
+    tablesMaxMb: z.number().int().min(1).max(1000000).openapi({
+      description:
+        'Tables: most megabytes of row data across every table. Default 1024. Initial value: `TEAM_TABLES_MAX_MB`.',
+    }),
     teamName: z.string().nullable().openapi({
       description:
         'The team name given to agents in chats; null = none. Initial value: `TEAM_NAME`.',
@@ -171,6 +179,8 @@ export const SettingsPatchSchema = z
     longRunMaxHours: z.number().min(0).max(8760).optional(),
     longRunChunkSteps: z.number().int().min(10).max(500).optional(),
     maxRepeatingReminders: z.number().int().min(0).max(1000).optional(),
+    tableMaxRows: z.number().int().min(100).max(50000000).optional(),
+    tablesMaxMb: z.number().int().min(1).max(1000000).optional(),
     teamName: z.string().min(1).max(100).nullable().optional(),
     worksRoot: z.string().min(1).max(200).optional(),
     companyRoot: z.string().min(1).max(200).nullable().optional(),

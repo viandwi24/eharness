@@ -2052,3 +2052,45 @@ export const triggerFires = sqliteTable(
   },
   (t) => [index('trigger_fires_trigger').on(t.triggerId, t.id), index('trigger_fires_at').on(t.at)],
 )
+
+/**
+ * Tables (docs/plans/P59-scripts-and-tables.md, ADR-0065): document tables the owner, the agents
+ * and scripts keep data in. `schema` is the optional column list validated by `domain/tables.ts`
+ * (typed columns, required, defaults, indexed). Rows live in `data_rows`.
+ */
+export const dataTables = sqliteTable('data_tables', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  description: text('description').notNull().default(''),
+  schema: json<Record<string, unknown>>('schema').notNull(),
+  createdBy: text('created_by').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  version: integer('version').notNull().default(1),
+  /** Kept in step with `data_rows` in the same transaction: the caps read these, never a scan. */
+  rowCount: integer('row_count').notNull().default(0),
+  bytes: integer('bytes').notNull().default(0),
+})
+
+/**
+ * Rows of the tables: one JSON document each. `id` is a UUIDv7, so the primary key also sorts a
+ * table by creation time. `version` is bumped on every change (compare-and-set updates). Declared
+ * indexed columns get partial expression indexes over `json_extract(data, ...)` at runtime.
+ */
+export const dataRows = sqliteTable(
+  'data_rows',
+  {
+    tableId: text('table_id').notNull(),
+    id: text('id').notNull(),
+    data: text('data').notNull(),
+    version: integer('version').notNull().default(1),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tableId, t.id] }),
+    index('data_rows_updated').on(t.tableId, t.updatedAt),
+  ],
+)

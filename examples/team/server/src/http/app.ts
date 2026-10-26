@@ -44,6 +44,7 @@ import { routineRoutes } from './routes/routines.ts'
 import { sessionToolsRoutes } from './routes/session-tools.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { storageRoutes } from './routes/storage.ts'
+import { tableRoutes } from './routes/tables.ts'
 import { taskRoutes } from './routes/tasks.ts'
 import { threadRoutes } from './routes/threads.ts'
 import { uploadRoutes } from './routes/uploads.ts'
@@ -431,6 +432,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', browserRoutes(options.deps, { allowedOrigins: options.allowedOrigins }))
   app.route('/', routineRoutes(options.deps))
   app.route('/', programRoutes(options.deps))
+  app.route('/', tableRoutes(options.deps))
   app.route('/', decisionRoutes(options.deps))
   app.route('/', heartbeatRoutes(options.deps))
   app.route('/', channelRoutes(options.deps))

@@ -128,6 +128,12 @@ import type {
   StorageReport,
   VolumeInfo,
 } from '../domain/storage.ts'
+import type {
+  Compiled as CompiledSql,
+  DataTable,
+  TableRecord,
+  TableSchema,
+} from '../domain/tables.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
 import type { Thread, ThreadSeed, ThreadSource } from '../domain/threads.ts'
 import type { PendingRetry } from '../domain/turn-retry.ts'
@@ -470,6 +476,60 @@ export type NewProgram = Omit<Program, 'createdAt' | 'updatedAt' | 'version'> & 
 export type ProgramPatch = Partial<
   Omit<Program, 'id' | 'agentId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'version'>
 >
+
+/** One row to write: a new document, or a replacement checked against `ifVersion`. */
+export interface TableRowWrite {
+  id: string
+  data: Record<string, unknown>
+  /** Replacements only: the version the caller read (compare-and-set); undefined = overwrite. */
+  ifVersion?: number | undefined
+}
+
+/** Document tables on SQLite (`infra/db/tables-repo.ts`, ADR-0065). */
+export interface TableStore {
+  list(): DataTable[]
+  /** By id or by name. */
+  get(ref: string): DataTable | undefined
+  create(t: {
+    id: string
+    name: string
+    description: string
+    schema: TableSchema
+    createdBy: string
+    now: number
+  }): DataTable
+  update(
+    id: string,
+    patch: { name?: string; description?: string; schema?: TableSchema },
+    now: number,
+  ): DataTable | undefined
+  /** Removes the table and its rows. */
+  drop(id: string): boolean
+  /** Rows and bytes of every table together (the workspace cap). */
+  totals(): { rows: number; bytes: number }
+  /** Adds rows in one transaction and keeps the counters in step. */
+  insert(tableId: string, rows: readonly TableRowWrite[], by: string, now: number): void
+  /** Replaces documents; a row whose version moved on is reported, not written. */
+  replace(
+    tableId: string,
+    rows: readonly TableRowWrite[],
+    by: string,
+    now: number,
+  ): { written: string[]; conflicts: string[] }
+  delete(tableId: string, ids: readonly string[]): number
+  getRow(tableId: string, rowId: string): TableRecord | undefined
+  query(
+    tableId: string,
+    q: { where: CompiledSql; orderBy: string; limit: number; offset?: number; afterId?: string },
+  ): TableRecord[]
+  count(tableId: string, where: CompiledSql): number
+  aggregate(
+    tableId: string,
+    q: { select: string; where: CompiledSql; groupBy: string; orderBy: string; limit: number },
+  ): Array<Record<string, unknown>>
+  /** Creates the shared expression index of an indexed column (idempotent). */
+  ensureIndex(column: string): void
+}
 
 export interface ProgramStore {
   list(query: { agentId?: string }): Program[]
@@ -1576,6 +1636,8 @@ export interface Deps {
   routineEngine: RoutineEngine
   programs: ProgramStore
   programRunner: ProgramRunner
+  /** Document tables (ADR-0065). */
+  tables: TableStore
   /** One plain model call with an agent's own model (P57: the memory reorganization proposal). */
   completion?: AgentCompletion
   programMemory: ProgramMemoryStore

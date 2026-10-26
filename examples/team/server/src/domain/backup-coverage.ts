@@ -225,6 +225,16 @@ export const COVERAGE: readonly TableEntry[] = [
     'bound to connection, chat and program ids and sealed with TEAM_SECRET_KEY; restore with the whole database',
   ),
   snapshot('trigger_fires', 'Firing log of the triggers', 'a log of what each trigger did'),
+  snapshot(
+    'data_tables',
+    'Tables (document tables of the owner, agents and scripts)',
+    'the definitions travel with their rows; export a table to the library to move it on its own',
+  ),
+  snapshot(
+    'data_rows',
+    'Rows of the tables',
+    'restore with the whole database, or export a table to a library file (CSV, JSON) and import it back',
+  ),
   derived('ch_meta', 'Channels migration markers', 'rewritten by the boot-time migration'),
   snapshot(
     'channel_approvals',

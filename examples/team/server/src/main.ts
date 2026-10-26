@@ -179,7 +179,6 @@ import {
 import { createBrowserPort } from './infra/browser/port.ts'
 import { createChannelInboxPort, lazyInboxPort } from './infra/channels/admin.ts'
 import { channelApprovalAnswerer, watchPendingChanges } from './infra/channels/attention.ts'
-import { timeLine } from './infra/channels/header.ts'
 import {
   type ChannelGateway,
   channelVaultFromEnv,
@@ -218,6 +217,7 @@ import {
 } from './infra/db/retention.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
+import { sqliteTableStore } from './infra/db/tables-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
 import { sqliteThreadStore } from './infra/db/threads-repo.ts'
 import { sqliteTurnRetryStore } from './infra/db/turn-retries-repo.ts'
@@ -245,7 +245,6 @@ import { createTeamHttp } from './infra/eh/harness-http.ts'
 import { heartbeatChannels } from './infra/eh/heartbeat-channels.ts'
 import type { HeartbeatIntake } from './infra/eh/heartbeat-plugin.ts'
 import { createHeartbeatService, type HeartbeatService } from './infra/eh/heartbeat-service.ts'
-import { INSTRUCTION_METADATA } from './infra/eh/instruction-marks.ts'
 import { type LibraryChange, libraryFs } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
@@ -821,6 +820,7 @@ export function compose(config: ServerConfig): Server {
   connectorsRef = connectors
   const routineStore = sqliteRoutineStore(conn.sqlite)
   const programStore = drizzleProgramStore(conn.db)
+  const tableStore = sqliteTableStore(conn.sqlite)
   const decisionStore = drizzleDecisionStore(conn.db)
   // the decision tools of the agents need the app deps, which are built after the factory
   let decisionIntake: DecisionIntake | undefined
@@ -1201,6 +1201,7 @@ export function compose(config: ServerConfig): Server {
     schedule,
     routineEngine: routines,
     programs: programStore,
+    tables: tableStore,
     programRunner,
     completion: createAgentCompletion({
       agent: (id) => agents.get(id),

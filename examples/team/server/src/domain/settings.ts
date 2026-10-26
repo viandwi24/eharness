@@ -71,6 +71,10 @@ export interface WorkspaceSettings {
   longRunChunkSteps: number
   /** Most active repeating reminders one person may have (chat platforms); 0 = no limit. */
   maxRepeatingReminders: number
+  /** Tables: most rows in one table. */
+  tableMaxRows: number
+  /** Tables: most megabytes of row data across every table. */
+  tablesMaxMb: number
   /** The team's name, given to agents in chats ("You are <agent>, the assistant of <team>"); null = none. */
   teamName: string | null
   /** Folder of the daily works journal (`<root>/YYYY/MM/DD.md`); default `/library/works`. */
@@ -126,6 +130,8 @@ export const SETTINGS_BUILTIN = {
   longRunMaxHours: 24,
   longRunChunkSteps: 80,
   maxRepeatingReminders: 10,
+  tableMaxRows: 1_000_000,
+  tablesMaxMb: 1024,
   teamName: null,
   worksRoot: WORKS_ROOT_DEFAULT,
   companyRoot: null,
@@ -206,6 +212,13 @@ export function settingsFromEnv(env: Env): Partial<WorkspaceSettings> {
       ? reminders
       : undefined,
   )
+  const tableRows = num('TEAM_TABLE_MAX_ROWS')
+  set(
+    'tableMaxRows',
+    tableRows !== undefined && tableRows >= 100 ? Math.floor(tableRows) : undefined,
+  )
+  const tablesMb = num('TEAM_TABLES_MAX_MB')
+  set('tablesMaxMb', tablesMb !== undefined && tablesMb >= 1 ? Math.floor(tablesMb) : undefined)
   set('teamName', text('TEAM_NAME'))
   set('eventsRetentionHours', atLeast(num('TEAM_EVENTS_RETENTION_HOURS'), 0))
   const rows = num('TEAM_EVENTS_MAX_ROWS')
@@ -359,6 +372,8 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
   numIn('longRunMaxHours', patch.longRunMaxHours, 0, 24 * 365)
   intIn('longRunChunkSteps', patch.longRunChunkSteps, LONG_RUN_CHUNK_MIN, LONG_RUN_CHUNK_MAX)
   intIn('maxRepeatingReminders', patch.maxRepeatingReminders, 0, 1000)
+  intIn('tableMaxRows', patch.tableMaxRows, 100, 50_000_000)
+  intIn('tablesMaxMb', patch.tablesMaxMb, 1, 1_000_000)
   intIn('eventsRetentionHours', patch.eventsRetentionHours, 0, 24 * 3650)
   intIn('eventsMaxRows', patch.eventsMaxRows, 1000, 100_000_000)
   intIn('logMaxRows', patch.logMaxRows, 100, 10_000_000)

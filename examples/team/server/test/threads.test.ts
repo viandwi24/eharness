@@ -397,6 +397,8 @@ describe('migration of the single DM', () => {
       'ch_join_requests',
       'triggers',
       'trigger_fires',
+      'data_tables',
+      'data_rows',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(
