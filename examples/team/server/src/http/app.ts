@@ -223,7 +223,8 @@ const EH_STATUS: Record<string, number> = {
 }
 
 /** Paths that need no token. */
-const PUBLIC = new Set(['/health', '/openapi.json', '/docs', '/oauth/callback'])
+// `/auth/session` only says whether a login is required (the web asks before it has any credential)
+const PUBLIC = new Set(['/health', '/openapi.json', '/docs', '/oauth/callback', '/auth/session'])
 
 /**
  * Open prefixes: artifact content (`/art/`: signed or share tokens, no cookie), the public share

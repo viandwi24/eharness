@@ -144,7 +144,14 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
     if (e?.adapter !== undefined) {
       delete e.adapter
       // teardown: the transport is being dropped anyway; nothing to alarm about
-      await gateway.unregister(id).catch(() => undefined)
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        gateway.unregister(id).catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, 5_000)
+        }),
+      ])
+      clearTimeout(timer)
     }
   }
 
@@ -220,7 +227,15 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
     e.adapter = adapter
     e.token = token
     try {
-      await gateway.register(adapter)
+      // a Telegram that never answers (no network, a blocked host, a dead API root) must not leave
+      // the connection "starting" for ever: give up after a while and retry later
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        gateway.register(adapter),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(START_TIMEOUT_TEXT)), START_TIMEOUT_MS)
+        }),
+      ]).finally(() => clearTimeout(timer))
       const info = adapter.info()
       if (info !== undefined) e.bot = info
       delete e.webhookUrl
@@ -420,12 +435,12 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
       for (const id of [...entries.keys()]) await halt(id)
     },
     async connections() {
-      if (options.connectors.rev() !== lastRev) await sync()
+      if (options.connectors.rev() !== lastRev) await settle(sync())
       const records = await listRecords()
       return Promise.all(records.map(viewOf))
     },
     async connection(id) {
-      if (options.connectors.rev() !== lastRev) await sync()
+      if (options.connectors.rev() !== lastRev) await settle(sync())
       return viewOf(await recordOf(id))
     },
     async bind(id, input: ChannelBindInput) {
@@ -532,3 +547,20 @@ export function lazyChannelsPort(get: () => ChannelsPort | undefined): ChannelsP
     },
   })
 }
+
+/** A view waits at most 2 seconds for a sync: a slow start shows as "starting", never as a hang. */
+async function settle(p: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    p.catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, 2_000)
+    }),
+  ])
+  clearTimeout(timer)
+}
+
+/** How long starting a bot may wait for Telegram before it counts as failed (then retried). */
+const START_TIMEOUT_MS = 20_000
+const START_TIMEOUT_TEXT =
+  'Telegram did not answer within 20 seconds (no network, Telegram blocked, or a wrong API address). Trying again shortly.'

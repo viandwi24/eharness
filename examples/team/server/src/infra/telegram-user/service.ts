@@ -347,7 +347,9 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       const orphan = e.adapter === undefined ? e.client : undefined
       delete e.adapter
       delete e.client
-      await orphan?.stop().catch(() => undefined)
+      // a client stuck connecting may never finish stopping: do not wait for it forever
+      if (orphan !== undefined)
+        await withTimeout(orphan.stop(), 5_000, 'stop').catch(() => undefined)
       await gateway.unregister(id).catch(() => undefined)
       leases.release(id, options.instanceId)
     }
@@ -445,7 +447,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
     const client = options.clientFactory({ apiId: app.apiId, apiHash: app.apiHash, session })
     e.client = client
     try {
-      const me = await client.getMe()
+      const me = await withTimeout(client.getMe(), START_TIMEOUT_MS, START_TIMEOUT_TEXT)
       e.me = {
         id: me.id,
         ...(me.username === undefined ? {} : { username: me.username }),
@@ -631,6 +633,12 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       }
       setState(e, 'running')
     } catch (error) {
+      if (error instanceof StartTimeout) {
+        await halt(id)
+        setState(e, 'error', error.message)
+        scheduleRetry(id)
+        return
+      }
       const k = classifyError(error)
       await halt(id)
       if (k.kind === 'auth-lost' || k.kind === 'duplicated') {
@@ -949,11 +957,11 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       await entries.get(id)?.backfill?.runUntilIdle()
     },
     async connections() {
-      if (options.connectors.rev() !== lastRev) await sync()
+      if (options.connectors.rev() !== lastRev) await settle(sync())
       return Promise.all((await listRecords()).map(viewOf))
     },
     async connection(id) {
-      if (options.connectors.rev() !== lastRev) await sync()
+      if (options.connectors.rev() !== lastRev) await settle(sync())
       return viewOf(await recordOf(id))
     },
     async bind(id, input: ChannelBindInput) {
@@ -1196,4 +1204,27 @@ export function lazyAccountsPort(get: () => ChannelAccountsPort | undefined): Ch
       return (target as unknown as Record<string | symbol, unknown>)[name]
     },
   })
+}
+
+/** How long starting an account may wait for Telegram's first answer before it counts as failed. */
+const START_TIMEOUT_MS = 20_000
+const START_TIMEOUT_TEXT =
+  'Telegram did not answer within 20 seconds (no network, or Telegram is blocked on this network). Trying again shortly.'
+
+class StartTimeout extends Error {}
+
+/** `promise`, or a `StartTimeout` after `ms`. */
+function withTimeout<T>(promise: Promise<T>, ms: number, text: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new StartTimeout(text)), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+/** A view waits at most 2 seconds for a sync: a slow start shows as "starting", never as a hang. */
+async function settle(p: Promise<void>): Promise<void> {
+  await withTimeout(p, 2_000, 'sync').catch(() => undefined)
 }
