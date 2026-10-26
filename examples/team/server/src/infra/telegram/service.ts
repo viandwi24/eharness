@@ -28,7 +28,7 @@ import {
   pageNodeViews,
   writePolicy,
 } from '../channels/node-views.ts'
-import type { ConnectionConfig, ScopePolicy } from '../channels/policy.ts'
+import { type ConnectionConfig, NO_OWNER, type ScopePolicy } from '../channels/policy.ts'
 import {
   createTelegramAdapter,
   type TelegramAdapter,
@@ -275,11 +275,8 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
         setState(e, 'needs-auth', record.statusMessage ?? 'Enter the bot token to connect.')
         continue
       }
-      if (!bound) {
-        await halt(id)
-        setState(e, 'unbound')
-        continue
-      }
+      // no owning agent: the bot still runs and records (observe-only); allowed agents use its tools
+      if (!bound) gateway.configure({ connectionId: id, agentId: NO_OWNER, replyToUnknown: false })
       if (e.adapter !== undefined && e.token === token) continue
       if (e.adapter !== undefined) await halt(id)
       // a pending retry (error, webhook) is handled here too: a sync is always a fresh try
@@ -338,7 +335,7 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
           }),
       ...(e.webhookUrl === undefined ? {} : { webhookUrl: e.webhookUrl }),
       binding:
-        config === undefined
+        config === undefined || config.agentId === NO_OWNER
           ? null
           : {
               agentId: config.agentId,
@@ -469,8 +466,11 @@ export function createTelegramChannels(options: TelegramChannelsOptions): Telegr
       return viewOf(record)
     },
     async unbind(id) {
+      // removing the owner keeps the connection running, observe-only, with its chats and people
       const record = await recordOf(id)
-      gateway.removeConnection(id)
+      const existing = gateway.config(id)
+      if (existing !== undefined)
+        gateway.configure({ ...existing, agentId: NO_OWNER, replyToUnknown: false })
       await sync()
       return viewOf(record)
     },

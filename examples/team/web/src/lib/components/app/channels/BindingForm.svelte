@@ -28,7 +28,7 @@
 		busy = true;
 		try {
 			await api.put('/channels/connections/{id}/binding', { params: { id: conn.id }, body: { agentId } });
-			toast.success(bound ? 'Agent changed' : account ? 'Account bound: starting' : 'Bound: polling started');
+			toast.success(bound ? 'Agent changed' : 'Agent set: it answers direct messages and mentions');
 			onChange();
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not bind');
@@ -40,11 +40,11 @@
 
 <div class="flex flex-wrap items-end gap-2" data-testid="binding">
 	<label class="flex min-w-48 flex-1 flex-col gap-1">
-		<span class="text-xs font-medium">{account ? 'Agent that owns this account' : 'Agent that answers on this bot'}</span>
+		<span class="text-xs font-medium">{account ? 'Agent that answers for this account (optional)' : 'Agent that answers on this bot (optional)'}</span>
 		<NativeSelect bind:value={agentId} aria-label="Agent" disabled={busy}>
 			<NativeSelectOption value="" disabled>Choose an agent…</NativeSelectOption>
 			{#each agents as a (a.id)}<NativeSelectOption value={a.id}>{a.name}</NativeSelectOption>{/each}
 		</NativeSelect>
 	</label>
-	<Button size="sm" onclick={() => void bind()} disabled={busy || agentId === '' || agentId === conn.binding?.agentId} data-testid="bind">{bound ? 'Change agent' : 'Bind and start'}</Button>
+	<Button size="sm" onclick={() => void bind()} disabled={busy || agentId === '' || agentId === conn.binding?.agentId} data-testid="bind">{bound ? 'Change agent' : 'Set agent'}</Button>
 </div>

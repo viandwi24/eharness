@@ -252,6 +252,11 @@ export interface GatewayDeps {
     nodeId: string | null
     result: HandleResult
   }) => void
+  /**
+   * Whether a connection is shared with an agent that does not own it (the Connectors page access:
+   * "all agents" or selected ones): it may use the connection's tools. Absent = owners only.
+   */
+  sharedWith?: (agentId: string, connectionId: string) => boolean
   /** Where `chat_recap_save` writes its note (the library). Absent = the tool cannot save. */
   library?: { write(path: string, text: string): Promise<void> }
   /** Period of the maintenance pass: approvals that expired, proactive posts that are due (default 60 s; 0 = off, tests call the methods). */
@@ -855,7 +860,13 @@ export interface ChannelGateway {
   nodeOf(connectionId: string, ref: string): NodeRow | undefined
   /** The node a channel session answers in (undefined for any other session). */
   conversationOf(sessionId: string): SessionTarget | undefined
-  resolveTarget(agentId: string, sessionId: string | undefined, input: TargetInput): ResolvedTarget
+  /** `trusted`: the caller checked access itself (a script's grants); the connection need not be the agent's. */
+  resolveTarget(
+    agentId: string,
+    sessionId: string | undefined,
+    input: TargetInput,
+    options?: { trusted?: boolean },
+  ): ResolvedTarget
   post(target: ResolvedTarget, options: PostOptions): Promise<string[]>
   /** What a node supports now (the adapter's answer for this node). */
   capabilities(connectionId: string, node: NodeRow): ChannelCapabilities | undefined

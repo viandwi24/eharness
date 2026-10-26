@@ -86,7 +86,7 @@
 	const savePeople = (patch: Partial<ChannelPeopleSettings>): Promise<boolean> => run('save', () => api.put('/channels/connections/{id}/people/settings', { params: { id }, body: patch }), 'Saved');
 	const restart = (): Promise<boolean> => run('restart', () => api.post('/channels/connections/{id}/restart', { params: { id } }), 'Restarted');
 	async function unbind(): Promise<void> {
-		if (await run('unbind', () => api.delete('/channels/connections/{id}/binding', { params: { id } }), account ? 'Account unbound' : 'Bot unbound')) void goto(`/channels/${encodeURIComponent(id)}/overview`);
+		if (await run('unbind', () => api.delete('/channels/connections/{id}/binding', { params: { id } }), 'Answering agent removed')) void goto(`/channels/${encodeURIComponent(id)}/overview`);
 	}
 </script>
 
@@ -97,7 +97,7 @@
 			<div>
 				<h2 class="text-sm font-medium">Agent</h2>
 				<p class="text-xs text-muted-foreground">
-					{#if binding}{agentName} {account ? 'owns this account. Chats you choose are stored and observe-only; the agent answers only where you change a chat to answer.' : 'answers here. Group chats must be allowed one by one on the Chats page.'} Direct messages only work for people you link on the People page.{:else}Choose the agent. {account ? 'The account starts as soon as you bind it.' : 'Polling starts as soon as you bind it.'}{/if}
+					{#if binding}{agentName} {account ? 'owns this account. Chats you choose are stored and observe-only; the agent answers only where you change a chat to answer.' : 'answers here. Group chats must be allowed one by one on the Chats page.'} Direct messages only work for people you link on the People page.{:else}No answering agent: the connection runs and records what it sees, and nobody answers on it. Agents allowed on the <a href="/connectors" class="underline underline-offset-4">Connectors</a> page use its tools (read chats, send messages). Choose an agent to answer direct messages and mentions.{/if}
 				</p>
 			</div>
 			<BindingForm {conn} onChange={() => void cs.load()} />
@@ -235,14 +235,14 @@
 		{#if binding}
 			<section class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 p-4" aria-label="Danger zone" data-testid="danger-zone">
 				<div class="min-w-0 flex-1">
-					<h2 class="text-sm font-medium text-destructive-text">Unbind</h2>
-					<p class="text-xs text-muted-foreground">{account ? 'The agent stops using the account and the session is closed.' : 'The agent stops answering and polling stops.'} Chats, linked accounts and stored messages stay.</p>
+					<h2 class="text-sm font-medium text-destructive-text">Remove the answering agent</h2>
+					<p class="text-xs text-muted-foreground">The agent stops answering here. The connection keeps running and recording; chats, linked accounts and stored messages stay, and agents allowed on the Connectors page keep using its tools.</p>
 				</div>
-				<Button size="sm" variant="destructive" onclick={() => (unbindOpen = true)} disabled={busy} data-testid="unbind">Unbind</Button>
+				<Button size="sm" variant="destructive" onclick={() => (unbindOpen = true)} disabled={busy} data-testid="unbind">Remove agent</Button>
 			</section>
 		{/if}
 	</PageBody>
 </div>
 
 <ConnectFlowDialog bind:open={reconnectOpen} connectionId={conn.id} label={conn.label} signIn={account} next={account ? 'The account starts again by itself.' : 'The bot starts again by itself.'} onDone={() => void cs.load()} />
-<ConfirmDialog bind:open={unbindOpen} title={account ? 'Unbind this account?' : 'Unbind this bot?'} description={account ? 'The agent stops using the account and the session is closed. Chosen chats and stored messages stay.' : 'The agent stops answering on this bot and polling stops. Chats, linked accounts and stored messages stay.'} confirmLabel="Unbind" onConfirm={unbind} />
+<ConfirmDialog bind:open={unbindOpen} title="Remove the answering agent?" description="Nobody answers direct messages or mentions here any more. The connection keeps running and recording, and agents allowed on the Connectors page keep using its tools." confirmLabel="Remove agent" onConfirm={unbind} />

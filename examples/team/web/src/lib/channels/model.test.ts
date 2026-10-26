@@ -98,7 +98,7 @@ describe('state', () => {
 		expect(stateTone('needs-auth')).toBe('destructive');
 		expect(stateTone('webhook')).toBe('warning');
 		expect(stateTone('unbound')).toBe('secondary');
-		expect(stateHint(conn({ runtime: { state: 'unbound', since: 1 } }))).toContain('Choose the agent');
+		expect(stateHint(conn({ runtime: { state: 'unbound', since: 1 } }))).toContain('No answering agent');
 		expect(stateHint(conn({ runtime: { state: 'webhook', since: 1 } }))).toContain('Remove the webhook');
 		expect(stateHint(conn({ runtime: { state: 'error', since: 1, message: 'boom' } }))).toBe('boom');
 		expect(stateHint(conn())).toBe('');
@@ -385,8 +385,8 @@ describe('chat row labels (U2, U3, U5)', () => {
 
 describe('navigation of a connection', () => {
 	const conn = (over: Record<string, unknown>) => ({ binding: { agentId: 'a' }, transport: 'bot', ...over }) as never;
-	test('an unbound connection has only the overview and the settings', () => {
-		expect(sectionsOf(conn({ binding: null })).map((s) => s.id)).toEqual(['overview', 'settings']);
+	test('a connection without an answering agent has every section; before it loads only overview and settings', () => {
+		expect(sectionsOf(conn({ binding: null })).map((s) => s.id)).toEqual(['overview', 'chats', 'people', 'inbox', 'activity', 'events', 'reminders', 'delivery', 'settings']);
 		expect(sectionsOf(null).map((s) => s.id)).toEqual(['overview', 'settings']);
 	});
 	test('a bot has reminders and delivery, an account has history and the admin log', () => {
@@ -416,7 +416,7 @@ describe('what needs attention', () => {
 		expect(list.join(' ')).toContain('1 message could not be sent');
 		expect(isHealthy(c as never)).toBe(false);
 	});
-	test('an unbound connection says so', () => {
-		expect(attentionOf({ ...base, binding: null, runtime: { state: 'unbound', since: 1 } } as never)).toEqual(['Not bound to an agent yet.']);
+	test('no answering agent is not a problem that needs attention', () => {
+		expect(attentionOf({ ...base, binding: null, runtime: { state: 'running', since: 1 } } as never)).toEqual([]);
 	});
 });

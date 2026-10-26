@@ -259,9 +259,11 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
   const g = c.manifest.grants
   const by = `script:${c.script.name}`
   const gw = (): ChannelGateway => c.gateway() ?? refuse('chat channels are not running')
+  // the owner posts; an owner-less connection posts as itself (the script's grants were checked)
   const agentOfConnection = (connection: string): string => {
     const config = gw().config(connection)
-    return config?.agentId ?? refuse(`the connection "${connection}" is not bound to an agent`)
+    if (config === undefined) return refuse(`the connection "${connection}" is not running`)
+    return config.agentId || c.script.agentId
   }
   let wakes = 0
 
@@ -356,11 +358,16 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
         return refuse(
           `this script may not post to ${chat}${topic ? ` / ${topic}` : ''} on ${connection}: add it to grants.send`,
         )
-      const target = gw().resolveTarget(agentOfConnection(connection), undefined, {
-        connection,
-        conversation: chat,
-        ...(topic === undefined ? {} : { topic }),
-      })
+      const target = gw().resolveTarget(
+        agentOfConnection(connection),
+        undefined,
+        {
+          connection,
+          conversation: chat,
+          ...(topic === undefined ? {} : { topic }),
+        },
+        { trusted: true },
+      )
       return { messageIds: await gw().post(target, { text }) }
     },
     'channels.reply': async (args) => {
@@ -370,10 +377,15 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       const e = c.channelEvent
       if (e?.chat === undefined)
         return refuse('ctx.channels.reply works only in a run started by a chat event')
-      const target = gw().resolveTarget(agentOfConnection(e.connectionId), undefined, {
-        connection: e.connectionId,
-        conversation: e.chat.nodeId,
-      })
+      const target = gw().resolveTarget(
+        agentOfConnection(e.connectionId),
+        undefined,
+        {
+          connection: e.connectionId,
+          conversation: e.chat.nodeId,
+        },
+        { trusted: true },
+      )
       return {
         messageIds: await gw().post(target, {
           text,

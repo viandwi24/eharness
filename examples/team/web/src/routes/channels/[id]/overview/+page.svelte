@@ -38,6 +38,21 @@
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { formatTime } from '#lib/format.js';
 
+	// which agents may use this connection's tools (its access on the Connectors page)
+	let toolAgents = $state<string | null>(null);
+	async function loadToolAgents(): Promise<void> {
+		try {
+			const r = await api.get('/connections');
+			const c = r.connections.find((x) => x.id === id);
+			if (!c?.access) return void (toolAgents = null);
+			const names = c.access.agentIds.map((a) => agentsStore.state.agents.find((x) => x.id === a)?.name ?? a);
+			toolAgents = c.access.mode === 'all' ? 'all agents' : names.length ? names.join(', ') : 'no agent yet';
+		} catch {
+			toolAgents = null;
+		}
+	}
+	onMount(() => void loadToolAgents());
+
 	const cs = useConnection();
 	const conn = $derived(cs.conn!);
 	const id = $derived(cs.id());
@@ -116,14 +131,21 @@
 		</section>
 
 		{#if !conn.binding}
-			<section class="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-label="Choose the agent" data-testid="overview-bind">
+			<section class="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-label="Answering agent" data-testid="overview-bind">
 				<div>
-					<h2 class="text-sm font-medium">Choose the agent</h2>
-					<p class="text-xs text-muted-foreground">{account ? 'The agent owns this account. Chats you choose to read stay observe-only until you change their settings.' : 'The agent answers on this bot. Polling starts as soon as you bind it. Group chats are allowed one by one afterwards.'}</p>
+					<h2 class="text-sm font-medium">No answering agent</h2>
+					<p class="text-xs text-muted-foreground">
+						This connection runs and records what it sees{account ? ' in the chats you choose' : ''}; nobody answers on it. Agents allowed on the <a href="/connectors" class="underline underline-offset-4">Connectors</a> page use its tools (read chats, send messages). Choose an agent below if it should answer direct messages and mentions.
+					</p>
 				</div>
 				<BindingForm {conn} onChange={() => void cs.load()} />
 			</section>
-		{:else}
+		{/if}
+		{#if toolAgents !== null}
+			<p class="text-xs text-muted-foreground" data-testid="tool-agents">
+				Agents that can use its tools: <span class="text-foreground">{toolAgents}</span>. <a href="/connectors" class="underline underline-offset-4">Change on Connectors</a>
+			</p>
+		{/if}
 			<section aria-label="Key numbers">
 				<ul class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" data-testid="overview-tiles">
 					{#each tiles as t (t.label)}
@@ -178,7 +200,6 @@
 					</ul>
 				{/if}
 			</section>
-		{/if}
 
 		{#if account}
 			<section class="flex flex-col gap-2 rounded-lg border border-border bg-warning-soft p-3 text-xs text-warning-text" role="note" data-testid="account-warning">

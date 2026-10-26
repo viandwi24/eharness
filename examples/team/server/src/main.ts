@@ -1514,7 +1514,35 @@ export function compose(config: ServerConfig): Server {
   }
   // channels: chat platforms as sessions of an agent (docs/plans/P41-team-channels.md)
   const channelFiles = libraryFs(conn.sqlite)
+  // which agents may use a chat connection's tools without owning it: the connection's access on the
+  // Connectors page ("all agents" or selected ones), cached and refreshed when connectors change
+  const channelShares = new Map<string, ReadonlySet<string>>()
+  let channelSharesRev = -1
+  let channelSharesAt = 0
+  const refreshChannelShares = async (): Promise<void> => {
+    const rev = connectors.rev()
+    if (rev === channelSharesRev && Date.now() - channelSharesAt < 30_000) return
+    channelSharesRev = rev
+    channelSharesAt = Date.now()
+    const views = await connectors.connections()
+    channelShares.clear()
+    for (const v of views)
+      if (v.definitionId.startsWith('telegram'))
+        channelShares.set(v.id, new Set(v.access?.agentIds ?? []))
+  }
+  void refreshChannelShares().catch((error) =>
+    console.warn(`team: channel access: ${String(error)}`),
+  )
+  const channelSharesTimer = setInterval(
+    () =>
+      void refreshChannelShares().catch((error) =>
+        console.warn(`team: channel access: ${String(error)}`),
+      ),
+    3_000,
+  )
+  channelSharesTimer.unref?.()
   channelGateway = createChannelGateway({
+    sharedWith: (agentId, connectionId) => channelShares.get(connectionId)?.has(agentId) === true,
     // Pause all with the channel hold: messages are kept, no agent is woken
     held: () => {
       const pause = pauseStore.get()
@@ -2071,6 +2099,7 @@ export function compose(config: ServerConfig): Server {
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
       if (developerTimer !== undefined) clearInterval(developerTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
+      clearInterval(channelSharesTimer)
       offBrowserEvents()
       heartbeats.close()
       // kills the engines this process started

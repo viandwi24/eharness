@@ -119,6 +119,7 @@ import {
   ConnectionConfigSchema,
   createLoopGuard,
   decideWake,
+  NO_OWNER,
   NO_REPLY,
   nativeToolName,
   neutralize,
@@ -453,11 +454,17 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return a !== undefined && a.archivedAt === null
   }
 
+  /**
+   * Whether an agent may use a connection's tools: its owner, the agent of one of its chats, or an
+   * agent the connection is shared with (Connectors page access), owned or not.
+   */
   const isBound = (agentId: string, connectionId: string): boolean => {
+    if (agentId === NO_OWNER) return false
     const c = cache.get(connectionId)
     if (c === undefined) return false
     if (c.agentId === agentId || c.defaults.agentId === agentId) return true
-    return nodes.agentIds(connectionId).has(agentId)
+    if (nodes.agentIds(connectionId).has(agentId)) return true
+    return deps.sharedWith?.(agentId, connectionId) === true
   }
 
   const infoOf = (config: ConnectionConfig): ConnectionInfo => ({
@@ -3761,7 +3768,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         adapter.self(),
       )
 
-    if (!live(scope.agentId)) return { action: 'drop', reason: 'agent-unavailable' }
+    // no owner: the connection only records (observe-only); an archived owner drops as before
+    const ownerless = scope.agentId === NO_OWNER
+    if (!ownerless && !live(scope.agentId)) return { action: 'drop', reason: 'agent-unavailable' }
+    if (ownerless) decision = { action: 'observe', reason: 'no owning agent' }
     // observe off: what does not address the agent is not stored at all
     if (decision.action === 'observe' && !scope.observe) {
       return { action: 'drop', reason: 'not-observed' }
@@ -3812,11 +3822,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           : {}),
       },
       {
-        pending: decision.action === 'observe' && scope.wake !== 'never',
+        pending: !ownerless && decision.action === 'observe' && scope.wake !== 'never',
         disposition: decision.action === 'observe' ? 'observed' : 'woke',
       },
     )
     if (!logged.inserted && logged.handled) return { action: 'drop', reason: 'duplicate' }
+    if (ownerless) return { action: 'observe', reason: 'no owning agent' }
 
     // somebody is waited for (a question, an approval, something only the web app can resolve): the
     // person who asked answers a question by writing; nobody's message may go unanswered without a word
@@ -4563,10 +4574,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     agentId: string,
     sessionId: string | undefined,
     input: TargetInput,
+    options: { trusted?: boolean } = {},
   ): ResolvedTarget {
+    const mayUse = (connectionId: string): boolean =>
+      options.trusted === true || isBound(agentId, connectionId)
     const bindingRow = sessionId === undefined ? undefined : sessions.bySession(sessionId)
     const current = bindingRow === undefined ? undefined : sessionTarget(bindingRow)
-    const bound = [...cache.values()].filter((c) => isBound(agentId, c.connectionId))
+    const bound = [...cache.values()].filter((c) => mayUse(c.connectionId))
     let connectionId = input.connection ?? current?.connectionId
     if (connectionId === undefined) {
       if (bound.length === 1) connectionId = (bound[0] as ConnectionConfig).connectionId
@@ -4579,7 +4593,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       }
     }
     const config = cache.get(connectionId)
-    if (config === undefined || !isBound(agentId, connectionId)) {
+    if (config === undefined || !mayUse(connectionId)) {
       throw new ChannelUserError(`The connection "${connectionId}" is not one of yours.`)
     }
     const adapter = adapters.get(connectionId)

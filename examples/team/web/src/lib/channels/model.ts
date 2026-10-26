@@ -45,7 +45,7 @@ export const stateTone = (s: RuntimeState): Tone =>
 export function stateHint(c: ChannelConnection): string {
 	switch (c.runtime.state) {
 		case 'unbound':
-			return 'Choose the agent that answers on this bot. Polling starts when you do.';
+			return 'No answering agent: the bot records what it sees. Choose an agent to answer direct messages and mentions.';
 		case 'disabled':
 			return 'The connection is switched off on the Connectors page.';
 		case 'needs-auth':
@@ -388,7 +388,7 @@ export function accountHint(c: ChannelConnection): string {
 		case 'error':
 			return c.runtime.message ?? 'The account could not start.';
 		case 'unbound':
-			return 'Choose the agent that owns this account. Chats you select stay observe-only until you change their policy.';
+			return 'No answering agent: the account records the chats you choose. Choose an agent to answer direct messages and mentions.';
 		default:
 			return '';
 	}
@@ -902,12 +902,12 @@ export interface Section {
 }
 
 /**
- * The sections of one connection, in menu order. A connection that is not bound to an agent has
- * only the overview and the settings (there is nothing else to look at yet); a user account adds
- * its history and admin log, a bot its reminders.
+ * The sections of one connection, in menu order. A connection runs with or without an answering
+ * agent (without one it records observe-only), so every section is there; a user account adds its
+ * history and admin log, a bot its reminders.
  */
 export function sectionsOf(c: Pick<ChannelConnection, 'binding' | 'transport'> | null): Section[] {
-	const bound = c?.binding != null;
+	const bound = c !== null;
 	const account = c?.transport === 'user';
 	const all: Array<Section | false> = [
 		{ id: 'overview', label: 'Overview' },
@@ -958,7 +958,7 @@ export function attentionOf(c: ChannelConnection): string[] {
 	const out: string[] = [];
 	const hint = isAccount(c) ? accountHint(c) : stateHint(c);
 	if (hint !== '' && c.runtime.state !== 'unbound') out.push(hint);
-	if (c.runtime.state === 'unbound') out.push('Not bound to an agent yet.');
+
 	if (c.counts.unlinked > 0) out.push(`${c.counts.unlinked} ${c.counts.unlinked === 1 ? 'person has' : 'people have'} written directly and ${c.counts.unlinked === 1 ? 'is' : 'are'} not linked.`);
 	if (c.counts.outboxFailed > 0) out.push(`${c.counts.outboxFailed} ${c.counts.outboxFailed === 1 ? 'message' : 'messages'} could not be sent.`);
 	if (c.breaker?.open) out.push('Sending is paused after errors.');

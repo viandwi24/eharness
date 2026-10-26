@@ -147,8 +147,12 @@ export type RateLimits = z.infer<typeof RateLimitsSchema>
 
 export const ConnectionConfigSchema = z.object({
   connectionId: z.string().min(1).max(80),
-  /** The agent this identity belongs to. */
-  agentId: z.string().min(1),
+  /**
+   * The agent that owns this identity: it answers DMs and mentions. Empty (`NO_OWNER`) = no owner:
+   * the connection still runs and stores what it sees (observe-only), and the agents allowed on the
+   * connection (Connectors page: "all agents" or selected ones) use its tools.
+   */
+  agentId: z.string(),
   /** `allowlist` (default): only nodes switched on (`enabled`). `open`: every group the identity is in. */
   groupPolicy: z.enum(['allowlist', 'open']).default('allowlist'),
   /** The connection's level of the inheritance: defaults of every node. */
@@ -550,3 +554,6 @@ export function summarizeToolInput(input: unknown, options: { maxFields?: number
   if (hidden > 0) lines.push(`(+${hidden} more field${hidden === 1 ? '' : 's'} not shown)`)
   return lines.join('\n')
 }
+
+/** `agentId` of a connection that runs without an owning agent. */
+export const NO_OWNER = ''

@@ -16,6 +16,7 @@ import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { resolveWebUrl } from '../src/infra/web-static.ts'
 import { compose, type Server } from '../src/main.ts'
 import { type FakeTelegram, fakeTelegram, tg } from './support/fake-telegram.ts'
+import { postAs, userMessage } from './support/http.ts'
 
 // biome-ignore lint/suspicious/noExplicitAny: loosely typed JSON of the API under test
 type Json = Record<string, any>
@@ -195,11 +196,15 @@ describe('connect, bind, discover, wake', () => {
     expect(bad.text).not.toContain('not-a-token-secret')
   })
 
-  test('unbound -> bound starts polling; chats are discovered; allowing one wakes the agent on a mention', async () => {
+  test('a bot runs without an answering agent; setting one keeps polling; chats are discovered; allowing one wakes the agent on a mention', async () => {
     const { server, fake, leadId, models } = await boot([{ text: 'Hello from the lead' }])
     const { id } = await connectBot(server, fake.token)
-    expect(await runningState(server, id)).toBe('unbound')
-    expect(fake.callsOf('getUpdates')).toHaveLength(0)
+    // no answering agent: the bot polls and records anyway (observe-only)
+    await until(
+      'polling without an agent',
+      async () => (await runningState(server, id)) === 'running',
+    )
+    expect((await call(server, 'GET', `/channels/connections/${id}`)).json.binding).toBeNull()
 
     const bound = await call(server, 'PUT', `/channels/connections/${id}/binding`, {
       agentId: leadId,
@@ -354,9 +359,10 @@ describe('connect, bind, discover, wake', () => {
     ).toBe(404)
   })
 
-  test('without a binding a policy change is a 409; unbind stops the transport', async () => {
+  test('chat settings work without an answering agent; removing the agent keeps the bot running', async () => {
     const { server, fake, leadId } = await boot([])
     const { id } = await connectBot(server, fake.token)
+    await until('running', async () => (await runningState(server, id)) === 'running')
     const x = know(server, id, '-5', 'X')
     expect(
       (
@@ -364,7 +370,7 @@ describe('connect, bind, discover, wake', () => {
           wake: 'always',
         })
       ).status,
-    ).toBe(409)
+    ).toBe(200)
     expect(
       (await call(server, 'PUT', `/channels/connections/${id}/binding`, { agentId: 'nope' }))
         .status,
@@ -372,9 +378,62 @@ describe('connect, bind, discover, wake', () => {
     await call(server, 'PUT', `/channels/connections/${id}/binding`, { agentId: leadId })
     expect(await runningState(server, id)).toBe('running')
     const off = await call(server, 'DELETE', `/channels/connections/${id}/binding`)
-    expect(off.json.runtime.state).toBe('unbound')
+    expect(off.json.runtime.state).toBe('running')
     expect(off.json.binding).toBeNull()
   })
+})
+
+describe('a connection without an answering agent', () => {
+  test('it records but wakes nobody; an agent allowed on the Connectors page reads its chats with the channel tools', async () => {
+    const read = (connection: string): ScriptedStepInput => ({
+      toolCalls: [
+        {
+          toolName: 'channel_read',
+          input: { action: 'history', connection, conversation: '-1001' },
+          toolCallId: 'r1',
+        },
+      ],
+    })
+    let id = ''
+    const { server, fake, leadId, models } = await boot([
+      () => read(id) as never,
+      { text: 'not mine' },
+      () => read(id) as never,
+      { text: 'read it' },
+    ])
+    id = (await connectBot(server, fake.token)).id
+    await until('running', async () => (await runningState(server, id)) === 'running')
+    const ops = know(server, id, '-1001', 'Ops')
+    await call(server, 'PATCH', `/channels/connections/${id}/chats/${ops}/policy`, {
+      enabled: true,
+      wake: 'mention',
+    })
+    fake.push(mention('@team_test_bot the release is out', 3, tg.group(-1001, 'Ops')))
+    await sleep(300)
+    // nobody answers: no model call, nothing sent
+    expect(models.lead?.prompts.length ?? 0).toBe(0)
+    expect(fake.callsOf('sendMessage')).toHaveLength(0)
+
+    const chat = async (text: string) => {
+      const res = await server.app.request(
+        `/sessions/dm:${leadId}/chat`,
+        postAs(`dm:${leadId}`, userMessage(text)),
+      )
+      await res.text()
+    }
+    // not shared yet: the lead has no channel tools at all
+    await chat('read the ops chat')
+    const results = (): string => JSON.stringify(models.lead?.prompts ?? [])
+    expect(results()).toContain("unavailable tool 'channel_read'")
+
+    // shared with every agent on the Connectors page: the lead reads the stored message
+    expect((await call(server, 'PUT', `/connections/${id}/access`, { mode: 'all' })).status).toBe(
+      200,
+    )
+    await sleep(3_500)
+    await chat('read the ops chat again')
+    expect(results()).toContain('the release is out')
+  }, 20_000)
 })
 
 describe('linking people without links', () => {

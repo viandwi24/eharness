@@ -30,7 +30,12 @@ import { localTime } from '../channels/header.ts'
 import type { ChannelGateway } from '../channels/index.ts'
 import { sqliteJoinRequestStore } from '../channels/join-requests.ts'
 import { listNodeViews, nodeView, pageNodeViews, writePolicy } from '../channels/node-views.ts'
-import { type ConnectionConfig, RateLimitsSchema, type ScopePolicy } from '../channels/policy.ts'
+import {
+  type ConnectionConfig,
+  NO_OWNER,
+  RateLimitsSchema,
+  type ScopePolicy,
+} from '../channels/policy.ts'
 import { createTelegramUserAdapter, type TelegramUserAdapter, type UserFatal } from './adapter.ts'
 import {
   type AdminLog,
@@ -671,11 +676,16 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         setState(e, 'needs-auth', record.statusMessage ?? 'Sign in again to connect this account.')
         continue
       }
-      if (gateway.config(id) === undefined) {
-        await halt(id)
-        setState(e, 'unbound')
-        continue
-      }
+      // no owning agent: the account still runs and records the chosen chats (observe-only);
+      // the agents allowed on the connection use its tools
+      if (gateway.config(id) === undefined)
+        gateway.configure({
+          connectionId: id,
+          agentId: NO_OWNER,
+          groupPolicy: 'allowlist',
+          replyToUnknown: false,
+          rate: { ...USER_RATE_DEFAULTS },
+        })
       const fp = await fingerprintOf(session)
       if (e.adapter !== undefined && e.fingerprint === fp) continue
       if (e.adapter !== undefined) await halt(id)
@@ -845,7 +855,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       },
       account,
       binding:
-        config === undefined
+        config === undefined || config.agentId === NO_OWNER
           ? null
           : {
               agentId: config.agentId,
@@ -995,8 +1005,11 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
       return viewOf(record)
     },
     async unbind(id) {
+      // removing the owner keeps the account running, observe-only, with its chats and people
       const record = await recordOf(id)
-      gateway.removeConnection(id)
+      const existing = gateway.config(id)
+      if (existing !== undefined)
+        gateway.configure({ ...existing, agentId: NO_OWNER, replyToUnknown: false })
       await sync()
       return viewOf(record)
     },
