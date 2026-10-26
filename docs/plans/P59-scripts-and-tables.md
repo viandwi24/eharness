@@ -75,15 +75,25 @@ they show.
 
 ### W3 — Script engine
 
-- [ ] Dependency `quickjs-emscripten` in `examples/team/server` (quickjs-ng sync variant).
-- [ ] Executor: Bun Worker per run (pool later), memory limit, CPU deadline through the interrupt
-      handler, wall-time watchdog that terminates the Worker; output and log caps.
-- [ ] Host RPC: promises across the Worker boundary; every call checked against the script's
-      grants and per-call rate limits; a recorder implementation for dry runs.
-- [ ] TypeScript: strip with the Bun transpiler; generated `scripts.d.ts`; type-check before a
-      dry run and return the errors as text.
-- [ ] Escape tests: no `fetch`, `fs`, `process`, `globalThis` host objects, infinite loops and
-      memory bombs are stopped, a thrown error is a run error, never a server crash.
+- [x] Dependency `quickjs-emscripten-core` + `@jitl/quickjs-ng-wasmfile-release-sync` (0.32.0) in
+      `examples/team/server`.
+- [x] Executor (`infra/scripts/executor.ts`, `worker.ts`): a fresh Bun Worker per run, QuickJS
+      memory limit, CPU deadline through the interrupt handler that counts only time spent in
+      script code (waiting on host calls does not count), wall-time watchdog that terminates the
+      Worker; host-call count, value size, log line and character caps. A run starts in ~15 ms.
+- [x] Host calls: promises across the Worker boundary (JSON text only), a frozen `ctx` built from
+      the method names the caller allows (`ctx.log`, `ctx.sleep` built in), errors of a host
+      method become the script's errors; dry runs record the methods marked as side effects and
+      answer `{ dryRun: true }`.
+- [x] TypeScript: stripped with the Bun transpiler (syntax errors with line and column), imports
+      refused, a default export required; `scriptTypes()` generates the `scripts.d.ts` text from
+      the host method docs. **Not yet:** type-checking a script against it before a dry run (needs
+      the TypeScript compiler at runtime; see open questions).
+- [x] Tests (`test/scripts-executor.test.ts`): ctx calls and traces, sync and async exports,
+      parallel calls, host errors, dry runs, refused sources, endless loops (also after an await),
+      memory bomb, waiting forever, call and size caps, no host globals (`fetch`, `process`,
+      `require`, `Bun`, timers, `Function('return this')`), frozen `ctx`, prototype pollution not
+      reaching the server, eight runs at once.
 
 ### W4 — Scripts: storage, API, dry run, manual runs
 
@@ -145,7 +155,12 @@ they show.
 - Tables travel in the database snapshot only (`snapshot` class); a workspace-zip section for
   tables is a later step. Meanwhile a table moves through export/import.
 - Should `http.fetch` be off until an owner turns it on per script (conservative default: yes)?
-- One Worker per run (chosen for isolation) or a warm pool per script? Measure in W3.
+- One Worker per run (chosen for isolation) or a warm pool per script? Measured in W3: a run
+  starts in about 15 ms, so one Worker per run stays.
+- Type-checking scripts against `scripts.d.ts` needs the TypeScript compiler at runtime (a large
+  dependency in the server image). Options: ship `typescript` and check before every dry run;
+  check only in the web editor (the browser loads the compiler); or rely on dry runs, which already
+  report runtime errors with their message. Default until decided: dry runs only.
 - May an admin (not only an owner) approve an agent-authored script? Default: owner or admin, as
   for other Decision Center questions.
 

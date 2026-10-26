@@ -18,6 +18,7 @@
     "@grammyjs/auto-retry": "2.0.2",
     "@grammyjs/runner": "2.0.3",
     "@hono/zod-openapi": "1.6.3",
+    "@jitl/quickjs-ng-wasmfile-release-sync": "0.32.0",
     "@mtcute/bun": "0.32.4",
     "@openrouter/ai-sdk-provider": "3.1.0",
     "@scalar/hono-api-reference": "0.12.11",
@@ -26,6 +27,7 @@
     "drizzle-orm": "0.45.4",
     "grammy": "1.46.0",
     "hono": "4.13.13",
+    "quickjs-emscripten-core": "0.32.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
