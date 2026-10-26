@@ -57,6 +57,7 @@
 	let exFrom = $state('Ana');
 	let exRole = $state('member');
 	let exText = $state('');
+	let exReplyTo = $state('');
 	let prefilled = false;
 	$effect(() => {
 		if (prefilled) return;
@@ -133,7 +134,8 @@
 					chat: { nodeId: 'example', nativeId: chat, title: chat, rootNativeId: chat, rootTitle: chat },
 					actor: { id: 'example', name: exFrom.trim() || 'Someone', role: exRole },
 					text: exText,
-					messageId: 'example'
+					messageId: 'example',
+					...(exReplyTo.trim() ? { replyTo: { messageId: exReplyTo.trim() } } : {})
 				}
 			};
 		} else if (source === 'recorded') {
@@ -207,6 +209,10 @@
 				<NativeSelect id="ex-role" bind:value={exRole}>
 					{#each ['owner', 'admin', 'member', 'guest'] as r (r)}<NativeSelectOption value={r}>{r}</NativeSelectOption>{/each}
 				</NativeSelect>
+			</Field.Field>
+			<Field.Field class="sm:col-span-2">
+				<Field.Label for="ex-reply">Replies to message id <span class="font-normal text-muted-foreground">(optional)</span></Field.Label>
+				<Input id="ex-reply" bind:value={exReplyTo} placeholder="e.g. 2" autocomplete="off" />
 			</Field.Field>
 			<Field.Field class="sm:col-span-2">
 				<Field.Label for="ex-text">Message</Field.Label>

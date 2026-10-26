@@ -134,6 +134,10 @@ export const SettingsSchema = z
     scriptRunsPerScript: z.number().int().min(10).max(100000).openapi({
       description: 'Run traces kept per script (the newest). Default 500.',
     }),
+    scriptsChatApproval: z.boolean().openapi({
+      description:
+        'A script an agent writes while an owner or admin asks for it in a chat runs at once (the request is the approval). Off: it waits for approval on the Scripts page. Default on.',
+    }),
     tasksRetentionDays: z.number().int().min(0).openapi({
       description: 'Finished tasks kept this many days; 0 = keep. Default 90.',
     }),
@@ -204,6 +208,7 @@ export const SettingsPatchSchema = z
     scriptRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
     scriptConcurrency: z.number().int().min(1).max(32).optional(),
     scriptRunsPerScript: z.number().int().min(10).max(100000).optional(),
+    scriptsChatApproval: z.boolean().optional(),
     tasksRetentionDays: z.number().int().min(0).max(36500).optional(),
     libraryHistoryRetentionDays: z.number().int().min(0).max(36500).optional(),
     backupEnabled: z.boolean().optional(),

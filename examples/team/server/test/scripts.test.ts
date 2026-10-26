@@ -369,7 +369,32 @@ describe('scripts over HTTP', () => {
 })
 
 describe('scripts written by an agent', () => {
-  test('the agent creates and dry-runs; activation waits for the owner; a non-widening fix switches at once; a widening one waits', async () => {
+  test('the owner asks in the chat: the agent creates, dry-runs and the script runs at once', async () => {
+    const r = rig({
+      lead: [
+        toolCall('scripts_write', {
+          action: 'create',
+          script: 'halo',
+          source: HALO,
+          manifest: haloManifest,
+        }),
+        toolCall('scripts_write', { action: 'request_activation', script: 'halo' }),
+        { text: 'running' },
+      ],
+    })
+    rigs.push(r)
+    await withVip(r)
+    await chat(r, 'lead', 'forward halo from Ops to VIP')
+    const out = toolResults(r.models.lead)
+    expect(out[1]).toContain('Active: halo runs v1 now (approved by the owner')
+    const s = (await r.api('GET', '/scripts/halo')).json.script as {
+      status: string
+      approval: { state: string; by: string }
+    }
+    expect(s).toMatchObject({ status: 'active', approval: { state: 'approved', by: 'the owner' } })
+  })
+
+  test('with chat approval off: activation waits for the owner; a non-widening fix switches at once; a widening one waits', async () => {
     const fixed = HALO.replace('Forwarded: ', 'Fwd: ')
     const r = rig({
       lead: [
@@ -416,6 +441,7 @@ describe('scripts written by an agent', () => {
     })
     rigs.push(r)
     await withVip(r)
+    expect((await r.api('PATCH', '/settings', { scriptsChatApproval: false })).status).toBe(200)
     await chat(r, 'lead', 'forward halo from Ops to VIP')
     const out = toolResults(r.models.lead)
     expect(out[0]).toContain('export default async function')
@@ -502,6 +528,67 @@ describe('scripts written by an agent', () => {
     await until('answered', () => (r.models.lead?.prompts.length ?? 0) >= 2)
     expect(toolResults(r.models.lead).join('\n')).toContain('Not allowed')
     expect((await r.api('GET', '/scripts')).json.scripts).toEqual([])
+  })
+})
+
+describe('messages of the connected account itself', () => {
+  test('what a person types on the account starts a script (with its reply id); what the app sent does not', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    const src = `export default async function (event, ctx) {
+  await ctx.tables.insert({ table: 'seen', rows: [{ text: event.text, reply_to: event.replyTo?.messageId ?? null }] })
+}`
+    await r.api('POST', '/tables', { name: 'seen' })
+    await r.api('POST', '/scripts', {
+      name: 'log-all',
+      source: src,
+      manifest: {
+        triggers: [{ kind: 'channel', events: ['message.created'], chats: [CHAT] }],
+        grants: { tablesWrite: ['seen'] },
+      },
+    })
+    await r.api('POST', '/scripts/log-all/activate', {})
+    const me = { ...mock.self(), isSelf: true }
+    // typed by the owner of the account on their phone: runs, and sees which message it answers
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: me,
+      id: 'p50',
+      text: 'yok buy ges',
+      replyTo: { messageId: 'p49' },
+    })
+    await until(
+      'logged',
+      async () =>
+        ((await r.api('POST', '/tables/seen/query', {})).json.rows as unknown[]).length === 1,
+    )
+    const rows = (await r.api('POST', '/tables/seen/query', {})).json.rows as Array<{
+      data: Record<string, unknown>
+    }>
+    expect(rows[0]?.data).toEqual({ text: 'yok buy ges', reply_to: 'p49' })
+    // sent by the app (stored when it was sent), then echoed back by the platform: skipped as a loop
+    const sent = await r.server.channels.post(
+      r.server.channels.resolveTarget(r.ids.lead, undefined, {
+        connection: 'c1',
+        conversation: CHAT,
+      }),
+      { text: 'buy from the app' },
+    )
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: me,
+      id: sent[0] as string,
+      text: 'buy from the app',
+    })
+    await until('skip logged', async () =>
+      (
+        (await r.api('GET', '/scripts/log-all/runs')).json.runs as Array<{ reason: string | null }>
+      ).some((x) => x.reason === 'loop'),
+    )
+    expect(((await r.api('POST', '/tables/seen/query', {})).json.rows as unknown[]).length).toBe(1)
   })
 })
 

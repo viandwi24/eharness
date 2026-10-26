@@ -156,6 +156,8 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
     '  text?: string',
     '  /** Message and reaction events: the platform id of the message. */',
     '  messageId?: string',
+    '  /** A reply: the message it answers (its platform id, and its sender when the platform says). */',
+    '  replyTo?: { messageId: string; senderId?: string; senderName?: string }',
     '  /** Reaction events. */',
     '  emoji?: string',
     '  /** Table events: the table, the changed row ids, the rows after the change (up to 20; none for deletions) and who changed them. */',

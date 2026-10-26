@@ -581,6 +581,8 @@ export interface ScriptChannelEvent {
   actor?: { id: string; name?: string; username?: string; role?: Role; isSelf?: boolean }
   text?: string
   messageId?: string
+  /** A reply: the platform id of the message it answers (and, when the platform says, its sender). */
+  replyTo?: { messageId: string; senderId?: string; senderName?: string }
   emoji?: string
 }
 

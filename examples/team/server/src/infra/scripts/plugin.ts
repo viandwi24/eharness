@@ -6,9 +6,10 @@
  *  - `scripts_write` (write): create, update (a new version), dry_run, request_activation,
  *    run_now, disable, delete (needs `confirm: true`).
  *
- * The agent writes and tests scripts; a person approves a script before it runs on its own (the
- * Scripts page). A new version of an approved script that widens nothing (same triggers, no wider
- * grants or caps) the agent may switch to itself. Who may use the tools: like `tables` — the web
+ * The agent writes and tests scripts. A script runs on its own once a person approved it: either
+ * the owner or an admin asked for it in this chat (`request_activation` then activates at once;
+ * Settings `scriptsChatApproval`), or on the Scripts page. A new version of an approved script
+ * that widens nothing (same triggers, no wider grants or caps) the agent may switch to itself. Who may use the tools: like `tables` — the web
  * owner, an owner or admin in a chat, and unattended runs. Answers are lines; errors `ERROR:` lines.
  */
 import { tool } from 'ai'
@@ -191,6 +192,19 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
         const r = await gw.requesterOf(sessionId)
         return r !== undefined && (r.role === 'owner' || r.role === 'admin')
       }
+      /**
+       * The person whose request in this chat counts as the approval of a script: the web owner in
+       * the app, or an owner or admin in a chat channel. Unattended runs have none.
+       */
+      const chatApprover = async (): Promise<string | undefined> => {
+        if (unattended) return undefined
+        const gw = options.gateway()
+        if (gw === undefined || gw.conversationOf(sessionId) === undefined || gw.webTurn(sessionId))
+          return 'the owner'
+        const r = await gw.requesterOf(sessionId)
+        if (r === undefined || (r.role !== 'owner' && r.role !== 'admin')) return undefined
+        return r.name ?? (r.username ? `@${r.username}` : r.nativeId)
+      }
       const app = (): Deps => {
         const d = options.app()
         if (d === undefined) throw new Error('the app is not ready')
@@ -271,7 +285,7 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
               manifest: a.manifest ?? {},
               note: a.note,
             })
-            return `Created ${s.name} v1 (draft). Next: dry_run it with an event, then request_activation; a person approves it on the Scripts page.`
+            return `Created ${s.name} v1 (draft). Next: dry_run it with an event, then request_activation (it runs at once when the owner or an admin asked for it in this chat; otherwise it waits for approval on the Scripts page).`
           }
           case 'update': {
             const r = await updateScript(d, actor, a.script, {
@@ -304,6 +318,15 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
             return [runText(r.run, true), ...t, 'Nothing was sent or changed (dry run).'].join('\n')
           }
           case 'request_activation': {
+            // an owner or admin asking for it in this chat is the approval (Settings can turn it off)
+            const approver = d.settings.get().scriptsChatApproval ? await chatApprover() : undefined
+            if (approver !== undefined) {
+              const r = activateScript(d, { kind: 'person', name: approver }, a.script, {
+                version: a.version,
+                note: a.note ?? `asked in chat by ${approver}`,
+              })
+              return `Active: ${r.script.name} runs v${r.script.activeVersion} now (approved by ${approver}, who asked for it in this chat).`
+            }
             const r = activateScript(d, actor, a.script, { version: a.version, note: a.note })
             return r.state === 'active'
               ? `Active: ${r.script.name} runs v${r.script.activeVersion} now (it widens nothing that was approved).`
@@ -336,7 +359,7 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
           }),
           [SCRIPTS_WRITE_TOOL]: tool({
             description:
-              'Write and test scripts. Use a script instead of waking an agent for repeatable, rule-based work (e.g. "when a message with halo arrives in chat A, post it to group B"). Actions: create (name, source, manifest), update (new version), dry_run (runs the code on a recorded event id or a synthetic event; sends nothing, shows "would …" lines), request_activation (a person approves on the Scripts page), run_now (real run of the active version), disable, delete (confirm: true). Always dry_run before request_activation.',
+              'Write and test scripts. Use a script instead of waking an agent for repeatable, rule-based work (e.g. "when a message with halo arrives in chat A, post it to group B"). Actions: create (name, source, manifest), update (new version), dry_run (runs the code on a recorded event id or a synthetic event; sends nothing, shows "would …" lines), request_activation (runs at once when the owner or an admin asked for it in this chat; otherwise a person approves on the Scripts page), run_now (real run of the active version), disable, delete (confirm: true). Always dry_run before request_activation.',
             inputSchema: writeSchema,
             metadata: { risk: 'write', idempotent: false },
             execute: (input): Promise<string> => guard(() => write(input)),

@@ -68,12 +68,14 @@ Rules for the source:
    `http.request`, `agent.wake`, `programs.run`) are **recorded, not done** ("would channels.send
    …"); reads are real. The answer also says, per channel trigger, whether the event would start
    the script or why not.
-3. **Activation.** The owner activates a version on the Scripts page. A version an agent wrote
-   waits for approval: the agent asks (`request_activation`), the bell shows "Script … waits for
-   your approval" with a link, and the owner approves or rejects on the script's page. A later
-   version of an approved, active script that **widens nothing** (same triggers, no new grants, no
-   shorter cooldown, no higher hourly cap, same limits) the agent may switch to itself; anything
-   wider waits for approval again, and the approved version keeps running meanwhile.
+3. **Activation.** The owner activates a version on the Scripts page. A script an agent writes
+   **while you (or an admin in a chat channel) ask for it in a chat** runs as soon as the agent calls
+   `request_activation`: your request is the approval (Settings > Limits > Scripts, on by default).
+   A script an agent writes on its own (a heartbeat, a program) waits for approval: the bell shows
+   "Script … waits for your approval" with a link, and the owner approves or rejects on the script's
+   page. A later version of an approved, active script that **widens nothing** (same triggers, no new
+   grants, no shorter cooldown, no higher hourly cap, same limits) the agent may switch to itself;
+   anything wider needs approval again, and the approved version keeps running meanwhile.
 4. **Running.** Each run leaves a trace: trigger, version, event (message text removed, only its
    length), the `ctx` calls with their answers, logs, result or error, duration and CPU time.
 5. **Off.** Disable by hand, or automatically after **5 failed runs in a row** (an alarm is
@@ -159,11 +161,13 @@ A channel event looks like this (the text is in memory only and never stored):
   "chat": { "nodeId": "…", "nativeId": "-1001", "title": "Ops", "rootNativeId": "-1001", "rootTitle": "Ops" },
   "actor": { "id": "42", "name": "Ana", "username": "ana", "role": "member" },
   "text": "halo everyone",
-  "messageId": "1234"
+  "messageId": "1234",
+  "replyTo": { "messageId": "1200" }
 }
 ```
 
-`emoji` is set on reactions. An app event: `{ "type": "task-changed", "at", "seq", "agentId",
+`replyTo` is set on replies (the id of the message answered, plus its sender when the platform
+says). `emoji` is set on reactions. An app event: `{ "type": "task-changed", "at", "seq", "agentId",
 "agentSlug", "sessionId", "payload": { … } }` (the payload is what the event stream shows). A
 webhook event: `{ "type": "webhook", "at", "method", "query", "headers" (content type, user agent
 and `x-*` headers without tokens or secrets), "body" (JSON when it parses, else text, at most
@@ -175,9 +179,11 @@ event given.
 ## Gates and safety
 
 Before an automatic run the engine checks, in order: **Pause all** (scripts hold too), the **loop
-guard** (events the agent's own identity caused, table changes the script itself made, and app
-events caused by its own `ctx.api` calls never start it), **freshness** (events older than 15 minutes, e.g. a catch-up after a restart, are not
-run), the **cooldown** and the **hourly cap**. A skipped event is logged as a `skipped` run with
+guard** (messages the app itself sent through a connection, table changes the script itself made,
+and app events caused by its own `ctx.api` calls never start it; a message a person types on a
+connected Telegram account from their phone is an ordinary message and does), **freshness**
+(events older than 15 minutes, e.g. a catch-up after a restart, are not run), the **cooldown** and
+the **hourly cap**. A skipped event is logged as a `skipped` run with
 the reason, at most once a minute per script and reason. Runs of one script go one after another
 (at most 20 waiting; more are skipped as `busy`); at most 4 runs go at once (Settings > Limits).
 

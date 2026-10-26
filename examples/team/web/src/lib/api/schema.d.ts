@@ -22298,6 +22298,8 @@ export interface components {
             scriptConcurrency: number;
             /** @description Run traces kept per script (the newest). Default 500. */
             scriptRunsPerScript: number;
+            /** @description A script an agent writes while an owner or admin asks for it in a chat runs at once (the request is the approval). Off: it waits for approval on the Scripts page. Default on. */
+            scriptsChatApproval: boolean;
             /** @description Finished tasks kept this many days; 0 = keep. Default 90. */
             tasksRetentionDays: number;
             /** @description Library history kept this many days; 0 = keep. Default 180. */
@@ -22456,6 +22458,7 @@ export interface components {
             scriptRunsRetentionDays?: number;
             scriptConcurrency?: number;
             scriptRunsPerScript?: number;
+            scriptsChatApproval?: boolean;
             tasksRetentionDays?: number;
             libraryHistoryRetentionDays?: number;
             backupEnabled?: boolean;

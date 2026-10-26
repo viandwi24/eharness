@@ -79,6 +79,11 @@ export interface WorkspaceSettings {
   scriptConcurrency: number
   /** Scripts: run traces kept per script (newest). */
   scriptRunsPerScript: number
+  /**
+   * Scripts an agent writes while an owner or admin asks for them in a chat run at once (that
+   * request is the approval). Off: every agent-written version waits for approval on the Scripts page.
+   */
+  scriptsChatApproval: boolean
   /** The team's name, given to agents in chats ("You are <agent>, the assistant of <team>"); null = none. */
   teamName: string | null
   /** Folder of the daily works journal (`<root>/YYYY/MM/DD.md`); default `/library/works`. */
@@ -140,6 +145,7 @@ export const SETTINGS_BUILTIN = {
   tablesMaxMb: 1024,
   scriptConcurrency: 4,
   scriptRunsPerScript: 500,
+  scriptsChatApproval: true,
   teamName: null,
   worksRoot: WORKS_ROOT_DEFAULT,
   companyRoot: null,

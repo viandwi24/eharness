@@ -5384,6 +5384,10 @@
             "maximum": 100000,
             "description": "Run traces kept per script (the newest). Default 500."
           },
+          "scriptsChatApproval": {
+            "type": "boolean",
+            "description": "A script an agent writes while an owner or admin asks for it in a chat runs at once (the request is the approval). Off: it waits for approval on the Scripts page. Default on."
+          },
           "tasksRetentionDays": {
             "type": "integer",
             "minimum": 0,
@@ -5457,6 +5461,7 @@
           "scriptRunsRetentionDays",
           "scriptConcurrency",
           "scriptRunsPerScript",
+          "scriptsChatApproval",
           "tasksRetentionDays",
           "libraryHistoryRetentionDays",
           "backupEnabled",
@@ -6030,6 +6035,9 @@
             "type": "integer",
             "minimum": 10,
             "maximum": 100000
+          },
+          "scriptsChatApproval": {
+            "type": "boolean"
           },
           "tasksRetentionDays": {
             "type": "integer",

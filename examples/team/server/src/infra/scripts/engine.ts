@@ -46,7 +46,7 @@ import {
 } from '../../domain/scripts.ts'
 import type { TableRowsChange } from '../../domain/tables.ts'
 import type { HandleResult } from '../channels/gateway/types.ts'
-import type { ChannelGateway } from '../channels/gateway.ts'
+import { type ChannelGateway, OWN_TYPED } from '../channels/gateway.ts'
 import type { RemoteEvent } from '../channels/types.ts'
 import { runScript } from './executor.ts'
 import { buildHost, HOST_METHODS, type HostContext, SIDE_EFFECTS } from './host.ts'
@@ -418,6 +418,7 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
             nativeId?: string
             text?: string
             sender?: { id: string; name?: string; username?: string; isSelf?: boolean }
+            replyTo?: { messageId: string; senderId?: string; senderName?: string }
           })
         : undefined
     const actor = e.actor ?? msg?.sender
@@ -453,6 +454,17 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
             },
           }),
       ...(msg?.text === undefined ? {} : { text: msg.text }),
+      ...(msg?.replyTo === undefined
+        ? {}
+        : {
+            replyTo: {
+              messageId: msg.replyTo.messageId,
+              ...(msg.replyTo.senderId === undefined ? {} : { senderId: msg.replyTo.senderId }),
+              ...(msg.replyTo.senderName === undefined
+                ? {}
+                : { senderName: msg.replyTo.senderName }),
+            },
+          }),
       ...(msg?.nativeId !== undefined
         ? { messageId: msg.nativeId }
         : 'messageNativeId' in e
@@ -492,10 +504,14 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
             (t) => t.kind === 'channel' && channelMismatch(t, ev) === undefined,
           )
           if (!matched) continue
+          // what the app itself sent never starts a script (loop guard); what a person typed on the
+          // connected account from their phone does (a user account used by its owner too)
+          const typedByPerson = info.result.action === 'drop' && info.result.reason === OWN_TYPED
           const selfCaused =
-            ev.actor?.isSelf === true ||
-            ('message' in info.event &&
-              (info.event.message as { direction?: string }).direction === 'out')
+            !typedByPerson &&
+            (ev.actor?.isSelf === true ||
+              ('message' in info.event &&
+                (info.event.message as { direction?: string }).direction === 'out'))
           const skip = gate(a.script, a.manifest, ev.at, selfCaused)
           if (skip !== undefined) {
             recordSkip(a.script, a.version.version, 'channel', skip, ev)

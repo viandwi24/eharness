@@ -271,6 +271,12 @@ export interface GatewayDeps {
   fixLinks?: (text: string, where: string) => string
 }
 
+/**
+ * Drop reason of a message this identity sent that the gateway did not send: a person typed it on
+ * another device (a user account used by its owner too). Scripts treat it as an ordinary message.
+ */
+export const OWN_TYPED = 'own message typed elsewhere'
+
 export type HandleResult =
   | { action: 'approval'; reason: string }
   | { action: 'wake'; reason: string }

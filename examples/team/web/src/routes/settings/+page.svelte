@@ -34,6 +34,7 @@
 	import { monthText, percentOf, sinceText, sourceLabel } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
 	import { ALL_KNOBS, GENERAL_KNOBS, KNOB_GROUPS, knobPatch, knobText } from '#lib/settings/knobs.js';
+	import ScriptsSettings from '#lib/components/app/ScriptsSettings.svelte';
 	import WarningIcon from 'phosphor-svelte/lib/Warning';
 	import TimerIcon from 'phosphor-svelte/lib/Timer';
 	import DatabaseIcon from 'phosphor-svelte/lib/Database';
@@ -505,6 +506,7 @@
 							</Card.Root>
 						{/if}
 
+						{#if section === 'limits'}<ScriptsSettings />{/if}
 						{#each KNOB_GROUPS.filter((g) => (section === 'limits' && g.id !== 'retention') || (section === 'data' && g.id === 'retention')) as g (g.id)}
 							<Card.Root>
 								<Card.Header>

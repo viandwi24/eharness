@@ -74,6 +74,7 @@ import {
   type InboxMessagePage,
   type OutboxAction,
   type OutboxAttentionPage,
+  OWN_TYPED,
   type PeerLink,
   type PendingView,
   type PeopleApi,
@@ -4363,10 +4364,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const self = adapter.self()
     if (senderDto.isSelf === true || senderDto.id === self.id) {
       // what this identity sent from another device (or echoed by the platform): kept in the full
-      // log, never acted on; a message the gateway sent is already stored (the insert is a no-op)
+      // log, never acted on; a message the gateway sent is already stored (the insert is a no-op).
+      // The reason tells them apart: scripts skip what the app sent, not what a person typed.
       if (event.type === 'message.created') {
         const me = selfIdentity(connectionId, adapter)
-        await log.insert(
+        const typed = await log.insert(
           {
             connectionId,
             nodeId: node.id,
@@ -4389,6 +4391,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           },
           { pending: false, handled: true },
         )
+        if (typed.inserted) return { action: 'drop', reason: OWN_TYPED }
       }
       return { action: 'drop', reason: 'own message' }
     }
