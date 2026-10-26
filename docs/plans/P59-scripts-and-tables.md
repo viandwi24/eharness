@@ -142,6 +142,21 @@ they show.
 - [x] `row.created/updated/deleted` as a script trigger kind (`{ kind: "table", table, events }`),
       with the loop guard (the script's own writes do not start it).
 
+### W8 — More inputs, the team API, editor (added after the first review)
+
+- [x] App-event trigger (`{ kind: "app", events, agents?, match? }`): every record appended to the
+      event feed on this instance (tasks, programs, routines, decisions, alarms, files, turns,
+      approvals, settings…); app events caused by the script's own `ctx.api` calls are skipped.
+- [x] Webhook trigger (`{ kind: "webhook" }`): `POST /hooks/scripts/{id}/{token}`, an HMAC token
+      (`TEAM_SECRET_KEY` / vault key), open route, body at most 256 KB, credentials headers dropped.
+- [x] `ctx.api.get` / `ctx.api.request`: the team HTTP API in-process as the owner (a per-process
+      internal key), on routes granted in `grants.api` (`METHOD /path` globs); `/scripts`, auth,
+      providers, connectors, backups, storage, developer, workspace, `/v1` and `/hooks` never.
+- [x] Web: Monaco editor (TypeScript with the server's `scripts.d.ts`: autocomplete, hover, type
+      errors; JSON with the manifest JSON Schema), recipes for new scripts, a Simple (forms) / JSON
+      manifest editor, an always-visible test panel with a plain verdict, save → test → turn on
+      steps, Monaco diffs of versions.
+
 ## Acceptance criteria
 
 - [x] The "halo" example works end to end with a fake channel: the agent writes it through the

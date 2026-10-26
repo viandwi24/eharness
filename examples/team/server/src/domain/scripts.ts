@@ -139,8 +139,48 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
     ...render(root, '  '),
     '}',
     '',
+    '/** What started the run. Which fields are set depends on `type`. */',
+    'interface ScriptEvent {',
+    '  /** `message.created`, `reaction.added`, `member.joined`, … (chat), `row.created` / `row.updated` / `row.deleted` (table), `schedule`, `manual`. */',
+    '  type: string',
+    '  /** Chat events: the connection (Channels page) and the id of the event in the log. */',
+    '  connectionId?: string',
+    '  eventId?: string',
+    '  /** When it happened (epoch ms). */',
+    '  at?: number',
+    '  /** Chat events: the chat (for a forum topic, `root*` is its group). */',
+    '  chat?: { nodeId: string; nativeId: string; title: string | null; rootNativeId: string; rootTitle: string | null }',
+    '  /** Chat events: who did it. `isSelf` = the agent itself. */',
+    "  actor?: { id: string; name?: string; username?: string; role?: 'owner' | 'admin' | 'member' | 'guest'; isSelf?: boolean }",
+    '  /** Message events: the text (never stored; a dry run uses the text you type). */',
+    '  text?: string',
+    '  /** Message and reaction events: the platform id of the message. */',
+    '  messageId?: string',
+    '  /** Reaction events. */',
+    '  emoji?: string',
+    '  /** Table events: the table, the changed row ids, the rows after the change (up to 20; none for deletions) and who changed them. */',
+    '  table?: string',
+    '  rowIds?: string[]',
+    '  rows?: Array<{ id: string; version: number; data: Record<string, unknown> }>',
+    '  by?: string',
+    '  /** Schedule events: the slot (epoch ms) and when it fired. */',
+    '  slot?: number',
+    '  firedAt?: number',
+    '  /** App events: the agent and session it is about, its feed number and its fields. */',
+    '  agentId?: string',
+    '  agentSlug?: string',
+    '  sessionId?: string',
+    '  seq?: number',
+    '  payload?: Record<string, any>',
+    '  /** Webhook events: the request (body as JSON when it parses, else text). */',
+    '  method?: string',
+    '  query?: Record<string, string>',
+    '  headers?: Record<string, string>',
+    '  body?: any',
+    '}',
+    '',
     '/** A script: `export default async function (event, ctx) { ... }`. Imports are not allowed. */',
-    'type Script = (event: Record<string, unknown>, ctx: ScriptContext) => unknown | Promise<unknown>',
+    'type Script = (event: ScriptEvent, ctx: ScriptContext) => unknown | Promise<unknown>',
     '',
   ].join('\n')
 }
@@ -150,7 +190,7 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
 export type ScriptStatus = 'draft' | 'active' | 'disabled'
 export type AuthorKind = 'person' | 'agent'
 export type ApprovalState = 'none' | 'pending' | 'approved' | 'rejected'
-export type RunTrigger = 'channel' | 'schedule' | 'table' | 'manual'
+export type RunTrigger = 'channel' | 'schedule' | 'table' | 'app' | 'webhook' | 'manual'
 export type RunOutcome = ScriptOutcome | 'skipped'
 
 export interface Script {

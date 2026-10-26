@@ -1,90 +1,155 @@
 <script lang="ts">
-	import { api } from '#lib/api/index.js';
+	import { untrack } from 'svelte';
+	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
+	import DownloadSimpleIcon from 'phosphor-svelte/lib/DownloadSimple';
+	import { api, fetchLibraryBlob } from '#lib/api/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Field from '#lib/components/ui/field/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
-	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
-	import { defaultExportPath, filesHref, type Filter } from '#lib/tables/tables.js';
+	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import type { SortRule } from '#lib/tables/filters.js';
+	import { defaultExportPath, type FileFormat, filesHref, type Filter, idsFilter, withFormat } from '#lib/tables/tables.js';
+	import { cn } from '#lib/utils.js';
 
-	/** Write a table's rows (all, or the grid's filter and sort) to a library file. */
+	/** Write rows (all, the current view, or the selected ones) to a library file, then download it. */
 	let {
 		open = $bindable(false),
 		table,
 		filter,
-		sort
-	}: { open?: boolean; table: string; filter: Filter | undefined; sort: Record<string, 1 | -1> | undefined } = $props();
+		sort,
+		selected = [],
+		total,
+		start = 'all'
+	}: {
+		open?: boolean;
+		table: string;
+		filter: Filter | undefined;
+		sort: SortRule[] | undefined;
+		selected?: string[];
+		/** Rows in the current view. */
+		total: number;
+		start?: 'all' | 'view' | 'selected';
+	} = $props();
 
+	const FORMATS: { id: FileFormat; label: string; hint: string }[] = [
+		{ id: 'csv', label: 'CSV', hint: 'Spreadsheets (Excel, Sheets)' },
+		{ id: 'json', label: 'JSON', hint: 'A list of objects' },
+		{ id: 'ndjson', label: 'NDJSON', hint: 'One object per line' }
+	];
+
+	let format = $state<FileFormat>('csv');
+	let scope = $state<'all' | 'view' | 'selected'>('all');
 	let path = $state('');
-	let format = $state<'' | 'csv' | 'json' | 'ndjson'>('');
-	let useView = $state(true);
 	let error = $state('');
 	let busy = $state(false);
 	let result = $state<{ path: string; rows: number } | null>(null);
 	const hasView = $derived(!!filter || !!sort);
 
 	$effect(() => {
-		if (open) {
-			path = defaultExportPath(table);
-			error = '';
-			result = null;
-		}
+		if (open)
+			untrack(() => {
+				format = 'csv';
+				scope = start === 'selected' && selected.length ? 'selected' : start === 'view' && hasView ? 'view' : 'all';
+				path = defaultExportPath(table);
+				error = '';
+				result = null;
+			});
 	});
+
+	function pickFormat(f: FileFormat): void {
+		format = f;
+		path = withFormat(path, f);
+	}
 
 	async function submit(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
 		error = '';
-		result = null;
 		busy = true;
 		try {
-			result = await api.post('/tables/{table}/export', {
-				params: { table },
-				body: { path: path.trim(), ...(format ? { format } : {}), ...(useView && filter ? { filter } : {}), ...(useView && sort ? { sort } : {}) }
-			});
+			const f = scope === 'selected' ? idsFilter(selected) : scope === 'view' ? filter : undefined;
+			result = await api.post('/tables/{table}/export', { params: { table }, body: { path: path.trim(), format, ...(f ? { filter: f } : {}), ...(scope !== 'all' && sort ? { sort } : {}) } });
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Could not export the rows';
 		} finally {
 			busy = false;
 		}
 	}
+
+	async function download(): Promise<void> {
+		if (!result) return;
+		try {
+			const blob = await fetchLibraryBlob(result.path);
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = result.path.split('/').pop() ?? 'export';
+			a.click();
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Could not download the file';
+		}
+	}
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content elevation="floating" class="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
-		<form class="flex flex-col gap-4" onsubmit={submit}>
-			<Dialog.Header>
-				<Dialog.Title>Export rows</Dialog.Title>
-				<Dialog.Description>Writes the rows to a library file. A CSV starts with the _id column and imports back.</Dialog.Description>
-			</Dialog.Header>
-			<Field.Field data-invalid={!!error}>
-				<Field.Label for="export-path">Library file</Field.Label>
-				<Input id="export-path" bind:value={path} class="font-mono text-xs" autocomplete="off" required />
-			</Field.Field>
-			<Field.Field>
-				<Field.Label for="export-format">Format</Field.Label>
-				<NativeSelect id="export-format" bind:value={format}>
-					<NativeSelectOption value="">From the extension</NativeSelectOption>
-					<NativeSelectOption value="csv">CSV</NativeSelectOption>
-					<NativeSelectOption value="json">JSON array</NativeSelectOption>
-					<NativeSelectOption value="ndjson">NDJSON</NativeSelectOption>
-				</NativeSelect>
-			</Field.Field>
-			<label class="flex items-center gap-2 text-sm {hasView ? '' : 'text-muted-foreground'}">
-				<Checkbox checked={useView && hasView} disabled={!hasView} onCheckedChange={(v) => (useView = v === true)} />
-				Use the current filter and sort{hasView ? '' : ' (none set: all rows)'}
-			</label>
+	<Dialog.Content elevation="floating" class="[&>*]:min-w-0 max-h-[92dvh] overflow-y-auto sm:max-w-lg">
+		<Dialog.Header>
+			<Dialog.Title>Export rows</Dialog.Title>
+			<Dialog.Description>Saves a file to the library that you can download or hand to an agent.</Dialog.Description>
+		</Dialog.Header>
+		{#if result}
+			<div class="flex flex-col items-center gap-2 rounded-lg border border-border p-6 text-center" role="status">
+				<CheckCircleIcon class="size-8 text-success-text" weight="fill" />
+				<p class="text-sm"><strong>{result.rows.toLocaleString()}</strong> row{result.rows === 1 ? '' : 's'} saved to</p>
+				<a class="font-mono text-xs underline underline-offset-4" href={filesHref(result.path)}>{result.path}</a>
+			</div>
 			{#if error}<p class="text-sm text-destructive-text" role="alert">{error}</p>{/if}
-			{#if result}
-				<p class="rounded-lg border border-border p-3 text-sm" role="status">
-					<strong>{result.rows.toLocaleString()}</strong> row{result.rows === 1 ? '' : 's'} written to
-					<a class="font-mono text-xs underline underline-offset-4" href={filesHref(result.path)}>{result.path}</a>
-				</p>
-			{/if}
 			<Dialog.Footer>
-				<Button type="button" variant="ghost" onclick={() => (open = false)}>{result ? 'Close' : 'Cancel'}</Button>
-				<Button type="submit" disabled={busy || !path.trim()}>Export</Button>
+				<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
+				<Button variant="outline" onclick={() => void download()}><DownloadSimpleIcon class="size-4" /> Download</Button>
 			</Dialog.Footer>
-		</form>
+		{:else}
+			<form class="flex flex-col gap-4" onsubmit={submit}>
+				<div class="flex flex-col gap-2">
+					<span class="text-sm font-medium">Format</span>
+					<div class="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Format">
+						{#each FORMATS as f (f.id)}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={format === f.id}
+								class={cn('flex flex-col items-start rounded-lg border px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring', format === f.id ? 'border-brand bg-brand-soft' : 'border-border hover:bg-accent')}
+								onclick={() => pickFormat(f.id)}
+							>
+								<span class="text-sm font-medium">{f.label}</span>
+								<span class="text-[11px] leading-tight text-muted-foreground">{f.hint}</span>
+							</button>
+						{/each}
+					</div>
+				</div>
+				<div class="flex flex-col gap-2">
+					<span class="text-sm font-medium">Rows</span>
+					<div class="flex flex-col gap-1" role="radiogroup" aria-label="Rows">
+						{#each [{ id: 'all', label: 'All rows', on: true }, { id: 'view', label: `Rows in the current view (${total.toLocaleString()}) — filter, search and sort`, on: hasView }, { id: 'selected', label: `Selected rows (${selected.length})`, on: selected.length > 0 }] as o (o.id)}
+							<label class="flex items-center gap-2 rounded-md px-1 py-1 text-sm {o.on ? '' : 'text-muted-foreground opacity-60'}">
+								<input type="radio" name="export-scope" value={o.id} bind:group={scope} disabled={!o.on} class="accent-[var(--brand)]" />
+								{o.label}
+							</label>
+						{/each}
+					</div>
+				</div>
+				<Field.Field>
+					<Field.Label for="export-path">Save as</Field.Label>
+					<Input id="export-path" bind:value={path} class="font-mono text-xs" autocomplete="off" required />
+					<Field.Description>A path in the library. An existing file there is replaced.</Field.Description>
+				</Field.Field>
+				{#if error}<p class="text-sm text-destructive-text" role="alert">{error}</p>{/if}
+				<Dialog.Footer>
+					<Button type="button" variant="ghost" onclick={() => (open = false)}>Cancel</Button>
+					<Button type="submit" disabled={busy || !path.trim()}>{#if busy}<Spinner />{/if}Export</Button>
+				</Dialog.Footer>
+			</form>
+		{/if}
 	</Dialog.Content>
 </Dialog.Root>

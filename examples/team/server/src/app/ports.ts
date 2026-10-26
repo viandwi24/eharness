@@ -504,6 +504,14 @@ export interface ScriptRunnerPort {
   types(): string
   /** The `ctx` methods with their docs. */
   methods(): readonly HostMethodDoc[]
+  /** The secret webhook path of a script (`/hooks/scripts/<id>/<token>`). */
+  webhookPath(scriptId: string): Promise<string>
+  /** A POST to a webhook path: checks the token, then runs the script (404 for a wrong token). */
+  webhook(
+    scriptId: string,
+    token: string,
+    event: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }>
 }
 
 /** A script version to store (immutable). */

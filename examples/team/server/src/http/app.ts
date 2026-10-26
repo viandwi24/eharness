@@ -31,6 +31,7 @@ import { eventRoutes } from './routes/events.ts'
 import { type HarnessFetch, harnessRoutes } from './routes/harness.ts'
 import { healthRoutes } from './routes/health.ts'
 import { heartbeatRoutes } from './routes/heartbeat.ts'
+import { hookRoutes } from './routes/hooks.ts'
 import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
@@ -56,6 +57,11 @@ export interface AppOptions {
   deps: Deps
   /** `TEAM_TOKEN`; absent or empty = open (localhost only). */
   token?: string | undefined
+  /**
+   * A per-process key for in-process calls of the server itself (script `ctx.api`): a request with
+   * `x-eh-internal: <key>` passes auth as the owner. Never leaves the process.
+   */
+  internalKey?: string | undefined
   /**
    * Origins allowed to send state-changing requests that carry an `Origin` header (the web app and
    * this server's own public origin). Absent: the check is off (tests).
@@ -220,11 +226,11 @@ const EH_STATUS: Record<string, number> = {
 const PUBLIC = new Set(['/health', '/openapi.json', '/docs', '/oauth/callback'])
 
 /**
- * Open prefixes: artifact content (`/art/`: signed or share tokens, no cookie) and the public share
- * metadata (`/share/<token>`).
+ * Open prefixes: artifact content (`/art/`: signed or share tokens, no cookie), the public share
+ * metadata (`/share/<token>`) and script webhooks (`/hooks/scripts/<id>/<token>`).
  */
 const isOpenPrefix = (path: string): boolean =>
-  path.startsWith('/art/') || path.startsWith('/share/')
+  path.startsWith('/art/') || path.startsWith('/share/') || path.startsWith('/hooks/')
 
 /**
  * `/v1/*` has its own auth (API keys) and CORS (per key): the owner's token, cookie and origin
@@ -317,8 +323,18 @@ export function createApp(options: AppOptions): OpenAPIHono {
     new URL(c.req.url).protocol === 'https:' ||
     (trustProxy && c.req.header('x-forwarded-proto') === 'https')
 
+  const internalOk = (c: Context): boolean => {
+    const key = options.internalKey
+    const given = c.req.header('x-eh-internal')
+    if (!key || !given || given.length !== key.length) return false
+    let diff = 0
+    for (let i = 0; i < key.length; i++) diff |= key.charCodeAt(i) ^ given.charCodeAt(i)
+    return diff === 0
+  }
+
   app.use('*', async (c, next) => {
     if (isOpenPrefix(c.req.path) || isDeveloperApi(c.req.path)) return next()
+    if (internalOk(c)) return next()
     // the live view WebSocket carries a one-time ticket instead of a header (live-tickets.ts)
     const liveProfile = liveProfileOf(c.req.path)
     if (liveProfile !== undefined && takeLiveTicket(c.req.query('ticket'), liveProfile))
@@ -435,6 +451,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', programRoutes(options.deps))
   app.route('/', tableRoutes(options.deps))
   app.route('/', scriptRoutes(options.deps))
+  app.route('/', hookRoutes(options.deps))
   app.route('/', decisionRoutes(options.deps))
   app.route('/', heartbeatRoutes(options.deps))
   app.route('/', channelRoutes(options.deps))

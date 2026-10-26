@@ -102,7 +102,8 @@ export function recordsFrom(
     const records = rows.slice(1).map((r) => {
       const out: Record<string, unknown> = {}
       header.forEach((h, i) => {
-        const raw = r[i] ?? ''
+        // our export guards text a spreadsheet would run as a formula with a leading `'`: undo it
+        const raw = (r[i] ?? '').replace(/^'(?=[=+\-@\t\r])/, '')
         if (raw !== '' && h !== '_id') out[h] = cell(types.get(h), raw)
       })
       return out

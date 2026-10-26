@@ -17,6 +17,7 @@ import {
   runScriptNow,
   scriptKv,
   scriptTypesText,
+  scriptWebhook,
   updateScript,
   WEB_OWNER,
   wideningOf,
@@ -44,6 +45,7 @@ import {
   ScriptUpdatedSchema,
   ScriptVersionListSchema,
   ScriptVersionSchema,
+  ScriptWebhookSchema,
   VersionParam,
 } from '../schemas/scripts.ts'
 
@@ -260,6 +262,20 @@ const kvRoute = createRoute({
   },
 })
 
+const webhookRoute = createRoute({
+  method: 'get',
+  path: '/scripts/{script}/webhook',
+  tags,
+  summary: 'The secret webhook URL of the script',
+  security,
+  request: { params: ScriptParam },
+  responses: {
+    200: { description: 'The URL', content: json(ScriptWebhookSchema) },
+    404: unknownScript,
+    ...errorResponses,
+  },
+})
+
 async function bodyOf<T>(req: { json(): Promise<unknown> }): Promise<T | undefined> {
   try {
     return (await req.json()) as T
@@ -388,6 +404,9 @@ export function scriptRoutes(deps: Deps): OpenAPIHono {
       const p = c.req.valid('param')
       return c.json(getRun(deps, p.script, p.runId) as never, 200)
     })
+    .openapi(webhookRoute, async (c) =>
+      c.json((await scriptWebhook(deps, c.req.valid('param').script)) as never, 200),
+    )
     .openapi(kvRoute, (c) =>
       c.json({ entries: scriptKv(deps, c.req.valid('param').script) } as never, 200),
     )

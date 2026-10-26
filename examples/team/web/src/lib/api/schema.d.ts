@@ -13916,6 +13916,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scripts/{script}/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The secret webhook URL of the script */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Script id or name. */
+                    script: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The URL */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScriptWebhook"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown script */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scripts/{script}/kv": {
         parameters: {
             query?: never;
@@ -24439,6 +24505,10 @@ export interface components {
                 doc: string;
                 sideEffect: boolean;
             }[];
+            /** @description A JSON Schema of the manifest (editor help; the server checks every save). */
+            manifestSchema: {
+                [key: string]: unknown;
+            };
         };
         ScriptCreate: {
             /** @description Lowercase letters, digits and -, starting with a letter. */
@@ -24526,7 +24596,7 @@ export interface components {
             scriptId: string;
             version: number;
             /** @enum {string} */
-            trigger: "channel" | "schedule" | "table" | "manual";
+            trigger: "channel" | "schedule" | "table" | "app" | "webhook" | "manual";
             dryRun: boolean;
             outcome: string;
             reason: string | null;
@@ -24565,6 +24635,12 @@ export interface components {
         };
         ScriptRunList: {
             runs: components["schemas"]["ScriptRun"][];
+        };
+        ScriptWebhook: {
+            /** @description POST here to run the script (the token in the path is the secret). */
+            url: string;
+            /** @description The active version has a webhook trigger. */
+            live: boolean;
         };
         ScriptKv: {
             entries: {

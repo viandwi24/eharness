@@ -20,6 +20,7 @@ import {
   type ChannelEventType,
   channelMismatch,
   grantWidening,
+  manifestJsonSchema,
   parseManifest,
   ROLES,
   type Role,
@@ -199,9 +200,13 @@ export function getRun(deps: Deps, ref: string, runId: string): ScriptRun {
   return r
 }
 
-export function scriptTypesText(deps: Deps): { types: string; methods: readonly HostMethodDoc[] } {
+export function scriptTypesText(deps: Deps): {
+  types: string
+  methods: readonly HostMethodDoc[]
+  manifestSchema: Record<string, unknown>
+} {
   const r = runner(deps)
-  return { types: r.types(), methods: r.methods() }
+  return { types: r.types(), methods: r.methods(), manifestSchema: manifestJsonSchema() }
 }
 
 /** The key-value state of a script (the Scripts page shows it). */
@@ -781,4 +786,51 @@ export async function runScriptNow(
     dryRun: false,
     startedBy: actor.name,
   })
+}
+
+/** The secret webhook URL of a script, and whether a POST to it runs anything now. */
+export async function scriptWebhook(
+  deps: Deps,
+  ref: string,
+): Promise<{ url: string; live: boolean }> {
+  const s = getScript(deps, ref)
+  const path = await runner(deps).webhookPath(s.id)
+  const v =
+    s.status === 'active' && s.activeVersion !== null
+      ? deps.scripts.version(s.id, s.activeVersion)
+      : undefined
+  const live = v !== undefined && versionManifest(v).triggers.some((t) => t.kind === 'webhook')
+  return { url: `${deps.webUrl.replace(/\/$/, '')}/api${path}`, live }
+}
+
+/** A request to a webhook as the event a script sees (selected headers, the body as JSON or text). */
+export function webhookEvent(input: {
+  method: string
+  query: Record<string, string>
+  headers: Record<string, string>
+  body: string
+  at: number
+}): Record<string, unknown> {
+  const KEEP = new Set(['content-type', 'user-agent'])
+  const headers: Record<string, string> = {}
+  for (const [k, v] of Object.entries(input.headers)) {
+    const key = k.toLowerCase()
+    if (
+      KEEP.has(key) ||
+      (key.startsWith('x-') &&
+        !key.includes('token') &&
+        !key.includes('secret') &&
+        !key.includes('auth'))
+    )
+      headers[key] = v.slice(0, 500)
+  }
+  let body: unknown = input.body
+  if (input.body.trim() !== '') {
+    try {
+      body = JSON.parse(input.body)
+    } catch {
+      body = input.body
+    }
+  } else body = null
+  return { type: 'webhook', at: input.at, method: input.method, query: input.query, headers, body }
 }

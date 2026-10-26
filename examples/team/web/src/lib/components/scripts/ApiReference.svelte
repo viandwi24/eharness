@@ -7,7 +7,7 @@
 	import type { ScriptTypes } from '#lib/scripts/scripts.js';
 
 	/** The `ctx` API scripts are written against: the methods, and the `scripts.d.ts` text. Loads on open. */
-	let open = $state(false);
+	let { open = $bindable(false) }: { open?: boolean } = $props();
 	let types = $state<ScriptTypes | null>(null);
 	let error = $state('');
 	let loading = $state(false);

@@ -1,8 +1,10 @@
 # Scripts
 
 Scripts are small TypeScript programs that run **without a model** when something happens: a
-chat event (a message, a reaction, a member joining), a schedule, or a change in a
-[table](tables.md). They do the rule-based work an agent should not be woken for: forward
+chat event (a message, a reaction, a member joining), a schedule, a change in a
+[table](tables.md), something the app itself does (a task finished, a program changed, an alarm),
+or a call from another system to the script's webhook URL. Through `ctx.api` a script can use the
+same team API the web app uses, route by route as its grants allow. They do the rule-based work an agent should not be woken for: forward
 messages, count things, log to a table, write a daily report to the library. An agent can write
 them itself; a person approves before a script runs on its own. Decision:
 [ADR-0065](../../../docs/decisions/0065-scripts-and-tables.md), plan:
@@ -96,6 +98,8 @@ Rules for the source:
 | `channel` | `events` (required: `message.created`, `message.edited`, `message.deleted`, `reaction.added`, `reaction.removed`, `member.joined`, `member.left`, `member.updated`, `member.join_requested`, `member.join_request_resolved`, `node.*`, `action`), and optional filters: `connections` (ids), `chats` (title, platform id or node id), `actorRoles` (`owner`, `admin`, `member`, `guest`), `actors` (platform id, name or `@username`), `textContains` (any of the words, ignoring case), `textRegex` (bounded: at most 200 characters, no nested quantifiers) |
 | `schedule` | `spec`: `{ "kind": "cron", "expr": "0 9 * * *", "timezone": "Asia/Jakarta" }` (timezone defaults to the team's), `{ "kind": "every", "everyMs": 3600000 }` (at least one minute), or `{ "kind": "at", "at": "2026-12-01T09:00:00Z" }` |
 | `table` | `table` and `events` (`row.created`, `row.updated`, `row.deleted`) |
+| `app` | `events`: what the app does (`task-changed`, `program-changed`, `routine-fired`, `decision-changed`, `alarm-raised`, `file-changed`, `message-added`, `turn-started`, `pending-changed`, `approval-decided`, `settings-changed`, …); optional `agents` (id or slug) and `match` (`{ "status": "done" }`: payload fields that must equal these values; dots reach nested fields) |
+| `webhook` | none. A `POST` to the script's secret URL (`GET /scripts/{script}/webhook`, shown in the editor) runs the active version; the answer is `{ ok, result, runId }` |
 
 All filters of one trigger must match; any trigger starts the script.
 
@@ -110,6 +114,7 @@ All filters of one trigger must match; any trigger starts the script.
 | `http` | hosts for `ctx.http.*` (`api.example.com`, `*.example.com`); https only, private addresses refused |
 | `wake` | agents (slug or name) `ctx.agent.wake` may give an instruction (a paid model turn) |
 | `programs` | programs (name or id) `ctx.programs.run` may start |
+| `api` | routes of the team API for `ctx.api`: `"GET /tasks/**"`, `"POST /tables/orders/rows"`, `"POST /programs/*/run"` (`*` one path part, `**` any). Never callable whatever the grant: `/scripts/**` (a script cannot approve or rewrite itself), `/auth`, `/providers`, `/connectors`, `/backups`, `/storage`, `/developer`, `/workspace`, `/v1`, `/hooks` |
 
 **Caps.** `cooldownSec` (0 to 7 days): after a run, events are skipped until it passes.
 `maxRunsPerHour` (default 60; 0 = no cap). **Limits** override the defaults within bounds:
@@ -138,6 +143,7 @@ Every method takes one object and returns a promise.
 | `http.get({ url, headers? })`, `http.request({ url, method, headers?, body? })` | https to granted hosts; 10 s timeout, 1 MB body, redirects not followed |
 | `agent.wake({ agent, instruction })` | an instruction in that agent's "Scripts" chat; at most 3 per run |
 | `programs.list()`, `programs.run({ program })` | granted programs |
+| `api.get({ path, query? })`, `api.request({ method, path, query?, body? })` | the team API (every route of the [API docs](api.md)) as the owner, on granted routes → `{ status, body }`; a dry run records `api.request` instead of doing it |
 | `log(...values)` | a trace line |
 
 ## Events
@@ -157,7 +163,11 @@ A channel event looks like this (the text is in memory only and never stored):
 }
 ```
 
-`emoji` is set on reactions. A table event: `{ "type": "row.created", "table", "rowIds", "rows":
+`emoji` is set on reactions. An app event: `{ "type": "task-changed", "at", "seq", "agentId",
+"agentSlug", "sessionId", "payload": { … } }` (the payload is what the event stream shows). A
+webhook event: `{ "type": "webhook", "at", "method", "query", "headers" (content type, user agent
+and `x-*` headers without tokens or secrets), "body" (JSON when it parses, else text, at most
+256 KB) }`. A table event: `{ "type": "row.created", "table", "rowIds", "rows":
 [{ id, version, data }] (up to 20; none for deletions), "by" }`. A schedule event: `{ "type":
 "schedule", "slot", "firedAt" }`. A run started by hand gets `{ "type": "manual", "at" }` or the
 event given.
@@ -165,8 +175,8 @@ event given.
 ## Gates and safety
 
 Before an automatic run the engine checks, in order: **Pause all** (scripts hold too), the **loop
-guard** (events the agent's own identity caused, and table changes the script itself made, never
-start it), **freshness** (events older than 15 minutes, e.g. a catch-up after a restart, are not
+guard** (events the agent's own identity caused, table changes the script itself made, and app
+events caused by its own `ctx.api` calls never start it), **freshness** (events older than 15 minutes, e.g. a catch-up after a restart, are not
 run), the **cooldown** and the **hourly cap**. A skipped event is logged as a `skipped` run with
 the reason, at most once a minute per script and reason. Runs of one script go one after another
 (at most 20 waiting; more are skipped as `busy`); at most 4 runs go at once (Settings > Limits).
@@ -216,6 +226,31 @@ export default async function (event, ctx) {
 
 Manifest: `{ "triggers": [{ "kind": "schedule", "spec": { "kind": "cron", "expr": "0 23 * * *" } }], "grants": { "tablesRead": ["join_counts"], "libraryWrite": ["/library/reports/**"] } }`.
 
+**Tell a chat when work is done** (app event, match):
+
+```json
+{ "triggers": [{ "kind": "app", "events": ["task-changed"], "match": { "status": "done" } }],
+  "grants": { "send": [{ "connection": "c1", "chat": "Ops" }] } }
+```
+
+```ts
+export default async function (event, ctx) {
+  await ctx.channels.send({ connection: 'c1', chat: 'Ops', text: `Done: ${event.payload.title}` })
+}
+```
+
+**Save webhook calls as rows** (webhook, `ctx.api`):
+
+```ts
+export default async function (event, ctx) {
+  const r = await ctx.api.request({ method: 'POST', path: '/tables/orders/rows', body: { rows: [{ id: event.body.id, total: event.body.total }] } })
+  return { status: r.status }
+}
+```
+
+Manifest: `{ "triggers": [{ "kind": "webhook" }], "grants": { "api": ["POST /tables/orders/rows"] } }`
+(`ctx.tables.insert` with `tablesWrite` does the same; `ctx.api` reaches everything else too).
+
 **Escalate to an agent only when needed** (rule first, model second):
 
 ```ts
@@ -245,7 +280,9 @@ own script.
 | `POST /scripts/{script}/run` | a real run of the active version (`{ event? }`) |
 | `GET /scripts/{script}/runs`, `GET /scripts/{script}/runs/{id}` | traces (`limit`, `before`, `dryRun`) |
 | `GET /scripts/{script}/kv` | the script's state |
-| `GET /scripts-types` | the `scripts.d.ts` and the method list |
+| `GET /scripts/{script}/webhook` | the secret webhook URL and whether it is live |
+| `POST /hooks/scripts/{id}/{token}` | the webhook itself (no bearer token; the path token is the secret) |
+| `GET /scripts-types` | the `scripts.d.ts`, the method list and the manifest JSON Schema |
 
 Changes go to the feed as `scripts-changed` events (the web refreshes on them).
 

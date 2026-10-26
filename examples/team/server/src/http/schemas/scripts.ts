@@ -137,7 +137,7 @@ export const ScriptRunSchema = z
     id: z.string(),
     scriptId: z.string(),
     version: z.number().int(),
-    trigger: z.enum(['channel', 'schedule', 'table', 'manual']),
+    trigger: z.enum(['channel', 'schedule', 'table', 'app', 'webhook', 'manual']),
     dryRun: z.boolean(),
     outcome: z.string(),
     reason: z.string().nullable(),
@@ -208,6 +208,9 @@ export const ScriptTypesSchema = z
         sideEffect: z.boolean(),
       }),
     ),
+    manifestSchema: z.record(z.string(), z.unknown()).openapi({
+      description: 'A JSON Schema of the manifest (editor help; the server checks every save).',
+    }),
   })
   .openapi('ScriptTypes')
 
@@ -216,3 +219,12 @@ export const ScriptKvSchema = z
   .openapi('ScriptKv')
 
 export const ScriptDeletedSchema = z.object({ deleted: z.literal(true) }).openapi('ScriptDeleted')
+
+export const ScriptWebhookSchema = z
+  .object({
+    url: z.string().openapi({
+      description: 'POST here to run the script (the token in the path is the secret).',
+    }),
+    live: z.boolean().openapi({ description: 'The active version has a webhook trigger.' }),
+  })
+  .openapi('ScriptWebhook')

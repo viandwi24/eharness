@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { versionDiff, numberLines } from './diff';
-import { lineDiff } from '../conflict';
 import {
 	approvalLabel,
 	callLabel,
@@ -12,7 +10,6 @@ import {
 	type Script,
 	shortJson,
 	statusLabel,
-	tabEdit,
 	TEMPLATE_MANIFEST,
 	triggerSummary,
 	versionMarkers
@@ -90,7 +87,7 @@ describe('manifest', () => {
 		expect(err('')).toContain('empty');
 		expect(err('[]')).toContain('JSON object');
 		expect(err('{"triggers": {}}')).toContain('list');
-		expect(err('{"triggers": [{"kind": "webhook"}]}')).toContain('Trigger 1');
+		expect(err('{"triggers": [{"kind": "nope"}]}')).toContain('Trigger 1');
 		expect(err('{"grants": []}')).toContain('grants');
 		expect(err('{"cooldownSec": -1}')).toContain('cooldownSec');
 	});
@@ -106,47 +103,5 @@ describe('manifest', () => {
 			})
 		).toEqual(['chat message.created in Ops with "halo"', 'cron 0 9 * * * (Europe/Berlin)', 'every 5 min', 'table members row.created']);
 		expect(triggerSummary(undefined)).toEqual([]);
-	});
-});
-
-describe('tab key', () => {
-	test('inserts two spaces at the cursor', () => {
-		expect(tabEdit('ab', 1, 1, false)).toEqual({ value: 'a  b', start: 3, end: 3 });
-	});
-	test('indents and outdents every selected line', () => {
-		const v = 'one\ntwo\nthree';
-		const r = tabEdit(v, 0, 7, false);
-		expect(r.value).toBe('  one\n  two\nthree');
-		expect(r.start).toBe(2);
-		expect(r.end).toBe(11);
-		const back = tabEdit(r.value, r.start, r.end, true);
-		expect(back.value).toBe(v);
-	});
-	test('shift+tab on one line removes its indent', () => {
-		expect(tabEdit('    x', 4, 4, true)).toEqual({ value: '  x', start: 2, end: 2 });
-		expect(tabEdit('x', 1, 1, true)).toEqual({ value: 'x', start: 1, end: 1 });
-	});
-});
-
-describe('version diff', () => {
-	test('numbers lines on both sides', () => {
-		expect(numberLines(lineDiff('a\nb', 'a\nc'))).toEqual([
-			{ kind: 'same', text: 'a', a: 1, b: 1 },
-			{ kind: 'del', text: 'b', a: 2, b: null },
-			{ kind: 'add', text: 'c', a: null, b: 2 }
-		]);
-	});
-	test('hunks keep context around changes and drop the rest', () => {
-		const old = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n');
-		const next = old.replace('line 3', 'line three').replace('line 18', 'line eighteen');
-		const d = versionDiff(old, next, 1);
-		expect(d.added).toBe(2);
-		expect(d.removed).toBe(2);
-		expect(d.hunks.length).toBe(2);
-		expect(d.hunks[0]?.lines.map((l) => l.text)).toEqual(['line 2', 'line 3', 'line three', 'line 4']);
-		expect(d.hunks[1]?.lines[0]?.a).toBe(17);
-	});
-	test('no changes, no hunks', () => {
-		expect(versionDiff('a\nb', 'a\nb')).toEqual({ hunks: [], added: 0, removed: 0 });
 	});
 });

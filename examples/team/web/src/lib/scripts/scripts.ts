@@ -100,7 +100,7 @@ export function triggerLabel(t: string, i: number): string {
 
 export type ManifestCheck = { ok: true; manifest: Manifest } | { ok: false; error: string };
 
-const TRIGGER_KINDS = ['channel', 'schedule', 'table'];
+const TRIGGER_KINDS = ['channel', 'schedule', 'table', 'app', 'webhook'];
 
 /** Line and column of a character offset (1-based). */
 function lineCol(text: string, offset: number): string {
@@ -130,7 +130,7 @@ export function checkManifest(text: string): ManifestCheck {
 		if (!Array.isArray(m.triggers)) return { ok: false, error: '"triggers" must be a list.' };
 		for (const [i, t] of m.triggers.entries()) {
 			const kind = t && typeof t === 'object' ? (t as { kind?: unknown }).kind : undefined;
-			if (typeof kind !== 'string' || !TRIGGER_KINDS.includes(kind)) return { ok: false, error: `Trigger ${i + 1}: "kind" must be channel, schedule or table.` };
+			if (typeof kind !== 'string' || !TRIGGER_KINDS.includes(kind)) return { ok: false, error: `Trigger ${i + 1}: "kind" must be channel, schedule, table, app or webhook.` };
 		}
 	}
 	if (m.grants !== undefined && (!m.grants || typeof m.grants !== 'object' || Array.isArray(m.grants))) return { ok: false, error: '"grants" must be an object.' };
@@ -159,6 +159,8 @@ export function triggerSummary(manifest: Manifest | undefined): string[] {
 			return 'schedule';
 		}
 		if (t.kind === 'table') return `table ${String(t.table ?? '?')} ${arr('events').join(', ')}`.trim();
+		if (t.kind === 'app') return `app ${arr('events').join(', ')}`.trim();
+		if (t.kind === 'webhook') return 'webhook';
 		return String(t.kind ?? '?');
 	});
 }
@@ -168,7 +170,7 @@ export function triggerSummary(manifest: Manifest | undefined): string[] {
 /** Starting source of a new script: the "halo" forwarder. */
 export const TEMPLATE_SOURCE = `// Runs when a chat message matches a trigger of the manifest.
 // \`event\` is the trigger event; \`ctx\` is the only way to reach the system (see API reference).
-export default async function (event: any, ctx: ScriptContext) {
+export default async function (event: ScriptEvent, ctx: ScriptContext) {
   const text = String(event.text ?? '');
   ctx.log('message from', event.actor?.name ?? event.actor?.id, 'in', event.chat?.title);
 
@@ -197,45 +199,6 @@ export const SAMPLE_EVENT = {
 
 export const toJsonText = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
 
-// ------------------------------------------------------------ editor
-
-export type EditResult = { value: string; start: number; end: number };
-
-const INDENT = '  ';
-
-/**
- * Tab and Shift+Tab in a code textarea: indent the cursor (or every selected line) by two spaces,
- * or take two spaces away.
- */
-export function tabEdit(value: string, start: number, end: number, outdent: boolean): EditResult {
-	const multi = value.slice(start, end).includes('\n');
-	if (!outdent && !multi) {
-		return { value: value.slice(0, start) + INDENT + value.slice(end), start: start + INDENT.length, end: start + INDENT.length };
-	}
-	const lineStart = value.lastIndexOf('\n', start - 1) + 1;
-	// a selection ending right after a newline does not include the next line
-	const stop = end > start && value[end - 1] === '\n' ? end - 1 : end;
-	const block = value.slice(lineStart, stop);
-	const lines = block.split('\n');
-	let first = 0;
-	let total = 0;
-	const changed = lines.map((l, i) => {
-		if (outdent) {
-			const n = l.startsWith(INDENT) ? 2 : l.startsWith(' ') || l.startsWith('\t') ? 1 : 0;
-			if (i === 0) first = -n;
-			total -= n;
-			return l.slice(n);
-		}
-		if (i === 0) first = INDENT.length;
-		total += INDENT.length;
-		return INDENT + l;
-	});
-	const next = value.slice(0, lineStart) + changed.join('\n') + value.slice(stop);
-	const newStart = Math.max(lineStart, start + first);
-	return { value: next, start: newStart, end: Math.max(newStart, end + total) };
-}
-
-/** Recorded channel event of the picker, as one line. */
 export function eventLine(e: { summary: string; chat?: { title: string } | undefined; type: string }): string {
 	return e.summary || `${e.type}${e.chat ? ` in ${e.chat.title}` : ''}`;
 }

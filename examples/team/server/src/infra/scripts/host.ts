@@ -20,6 +20,9 @@ import {
 } from '../../app/tables.ts'
 import { createThread, listThreads } from '../../app/threads.ts'
 import {
+  apiDenied,
+  apiPath,
+  canCallApi,
   canFetchHost,
   canReadPath,
   canReadTable,
@@ -177,6 +180,20 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
     doc: 'Start a run of a program listed in grants.programs.',
     sideEffect: true,
   },
+  {
+    name: 'api.get',
+    args: '{ path: string; query?: Record<string, string | number | boolean> }',
+    returns: '{ status: number; body: unknown }',
+    doc: 'Read from the team API (the same routes as the web app, see /api/docs) on a route listed in grants.api.',
+    sideEffect: false,
+  },
+  {
+    name: 'api.request',
+    args: "{ method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'; path: string; query?: Record<string, string | number | boolean>; body?: unknown }",
+    returns: '{ status: number; body: unknown }',
+    doc: 'Change something through the team API on a route listed in grants.api (create a task, start a program, add rows…).',
+    sideEffect: true,
+  },
 ]
 
 export const SIDE_EFFECTS: ReadonlySet<string> = new Set(
@@ -199,6 +216,12 @@ export interface HostContext {
   allowPrivateFetch?: boolean
   fetch?: typeof fetch
   resolveHost?: (host: string) => Promise<string[]>
+  /** The team API in-process, as the web owner (main.ts: the Hono app). Absent = `ctx.api` refuses. */
+  callApi?: (input: {
+    method: string
+    path: string
+    body?: unknown
+  }) => Promise<{ status: number; body: unknown }>
 }
 
 const FETCH_TIMEOUT_MS = 10_000
@@ -558,6 +581,46 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       const r = await runProgramNow(c.deps, p.id)
       return { started: r.started, sessionId: r.sessionId }
     },
+    'api.get': async (args) => callApi(obj(args, 'api.get'), 'GET', 'api.get'),
+    'api.request': async (args) => {
+      const o = obj(args, 'api.request')
+      const method = String(o.method ?? '').toUpperCase()
+      if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method))
+        return refuse(
+          'ctx.api.request: method is POST, PUT, PATCH or DELETE (use ctx.api.get to read)',
+        )
+      return callApi(o, method, 'api.request')
+    },
+  }
+
+  async function callApi(
+    o: Record<string, unknown>,
+    method: string,
+    label: string,
+  ): Promise<{ status: number; body: unknown }> {
+    const raw = str(o, 'path', label, 1000)
+    const path = apiPath(raw)
+    if (path === undefined)
+      return refuse(`ctx.${label}: "${raw.slice(0, 100)}" is not a clean path like /tasks`)
+    if (apiDenied(path)) return refuse(`ctx.${label}: ${path} is never callable from a script`)
+    if (!canCallApi(g, method, path))
+      return refuse(
+        `this script may not call ${method} ${path}: add "${method} ${path}" to grants.api`,
+      )
+    if (c.callApi === undefined) return refuse('ctx.api is not available on this server')
+    const q = new URLSearchParams()
+    if (o.query !== undefined)
+      for (const [k, v] of Object.entries(obj(o.query, label))) {
+        if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean')
+          return refuse(`ctx.${label}: query values are text, numbers or true/false`)
+        q.set(k, String(v))
+      }
+    const qs = q.toString()
+    return c.callApi({
+      method,
+      path: qs ? `${path}?${qs}` : path,
+      ...(o.body === undefined ? {} : { body: o.body }),
+    })
   }
 }
 

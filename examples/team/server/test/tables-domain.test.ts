@@ -281,3 +281,8 @@ describe('import formats', () => {
     expect(csvColumns(schema, [{ city: 'x', n: 1 }])).toEqual(['_id', 'n', 'ok', 'city'])
   })
 })
+
+test('a CSV import undoes the formula guard of the export', () => {
+  const r = recordsFrom("phone,name\n'+6281,'=x\n", 'csv', { columns: [] })
+  expect(r).toEqual({ records: [{ phone: '+6281', name: '=x' }] })
+})

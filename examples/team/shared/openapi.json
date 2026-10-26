@@ -13640,11 +13640,17 @@
                 "sideEffect"
               ]
             }
+          },
+          "manifestSchema": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "A JSON Schema of the manifest (editor help; the server checks every save)."
           }
         },
         "required": [
           "types",
-          "methods"
+          "methods",
+          "manifestSchema"
         ]
       },
       "ScriptCreate": {
@@ -13934,6 +13940,8 @@
               "channel",
               "schedule",
               "table",
+              "app",
+              "webhook",
               "manual"
             ]
           },
@@ -14066,6 +14074,23 @@
         },
         "required": [
           "runs"
+        ]
+      },
+      "ScriptWebhook": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "POST here to run the script (the token in the path is the secret)."
+          },
+          "live": {
+            "type": "boolean",
+            "description": "The active version has a webhook trigger."
+          }
+        },
+        "required": [
+          "url",
+          "live"
         ]
       },
       "ScriptKv": {
@@ -36797,6 +36822,73 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ScriptRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scripts/{script}/webhook": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "The secret webhook URL of the script",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptWebhook"
                 }
               }
             }

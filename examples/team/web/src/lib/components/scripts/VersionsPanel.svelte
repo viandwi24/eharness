@@ -9,7 +9,8 @@
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
-	import { versionDiff, type VersionDiff } from '#lib/scripts/diff.js';
+	import MonacoDiff from './MonacoDiff.svelte';
+	import MonacoEditor from './MonacoEditor.svelte';
 	import { type Script, type ScriptVersion, type ScriptVersionMeta, toJsonText, versionMarkers } from '#lib/scripts/scripts.js';
 
 	/**
@@ -74,13 +75,7 @@
 	}
 
 	const pair = $derived(picked.length === 2 ? ([Math.min(...picked), Math.max(...picked)] as const) : null);
-	const diff = $derived.by((): { source: VersionDiff; manifest: VersionDiff } | null => {
-		if (!pair) return null;
-		const a = full[pair[0]];
-		const b = full[pair[1]];
-		if (!a || !b) return null;
-		return { source: versionDiff(a.source, b.source), manifest: versionDiff(toJsonText(a.manifest), toJsonText(b.manifest)) };
-	});
+	const diff = $derived(pair && full[pair[0]] && full[pair[1]] ? { a: full[pair[0]]!, b: full[pair[1]]! } : null);
 	const opened = $derived(view !== null ? full[view] : undefined);
 
 	async function restore(): Promise<void> {
@@ -102,28 +97,6 @@
 	const when = (ms: number): string => new Date(ms).toLocaleString();
 </script>
 
-{#snippet diffView(title: string, d: VersionDiff)}
-	<section class="flex flex-col gap-1.5">
-		<h4 class="text-xs font-medium text-muted-foreground">{title} <span class="text-success-text">+{d.added}</span> <span class="text-destructive-text">−{d.removed}</span></h4>
-		{#if !d.hunks.length}
-			<p class="text-xs text-muted-foreground">No changes.</p>
-		{:else}
-			<div class="overflow-auto rounded-md border border-border font-mono text-xs leading-5">
-				{#each d.hunks as h, hi (hi)}
-					{#if hi > 0}<div class="border-y border-border bg-muted/50 px-2 text-muted-foreground">⋯</div>{/if}
-					{#each h.lines as l, li (li)}
-						<div class="flex whitespace-pre {l.kind === 'add' ? 'bg-success-soft' : l.kind === 'del' ? 'bg-destructive-soft' : ''}">
-							<span class="w-9 shrink-0 pr-1 text-right text-muted-foreground select-none">{l.a ?? ''}</span>
-							<span class="w-9 shrink-0 pr-1 text-right text-muted-foreground select-none">{l.b ?? ''}</span>
-							<span class="w-4 shrink-0 text-center select-none {l.kind === 'add' ? 'text-success-text' : l.kind === 'del' ? 'text-destructive-text' : 'text-muted-foreground'}">{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' '}</span>
-							<span class="pr-2">{l.text}</span>
-						</div>
-					{/each}
-				{/each}
-			</div>
-		{/if}
-	</section>
-{/snippet}
 
 <div class="flex flex-col gap-4">
 	{#if error}
@@ -164,9 +137,11 @@
 					<Button size="sm" variant="ghost" onclick={() => (view = null)}>Close</Button>
 				</div>
 				{#if opened}
-					<pre class="max-h-[50dvh] overflow-auto rounded-md border border-sk-bd bg-sk-bg p-2.5 font-mono text-xs leading-5">{opened.source}</pre>
-					<h4 class="text-xs font-medium text-muted-foreground">Manifest</h4>
-					<pre class="max-h-72 overflow-auto rounded-md border border-sk-bd bg-sk-bg p-2.5 font-mono text-xs leading-5">{toJsonText(opened.manifest)}</pre>
+					{#key view}
+						<MonacoEditor path="file:///versions/v{view}.ts" language="typescript" value={opened.source} readOnly label="Code of v{view}" class="h-[50dvh]" />
+						<h4 class="text-xs font-medium text-muted-foreground">Triggers and permissions</h4>
+						<MonacoEditor path="file:///versions/v{view}.json" language="json" value={toJsonText(opened.manifest)} readOnly label="Manifest of v{view}" class="h-64" />
+					{/key}
 				{:else if loadingFull}
 					<Spinner class="size-4" />
 				{/if}
@@ -177,8 +152,10 @@
 			<Surface class="flex flex-col gap-3 p-4">
 				<h3 class="text-sm font-medium">v{pair[0]} → v{pair[1]}</h3>
 				{#if diff}
-					{@render diffView('Code', diff.source)}
-					{@render diffView('Manifest', diff.manifest)}
+					<h4 class="text-xs font-medium text-muted-foreground">Code</h4>
+					<MonacoDiff original={diff.a.source} modified={diff.b.source} language="typescript" class="h-[50dvh]" />
+					<h4 class="text-xs font-medium text-muted-foreground">Triggers and permissions</h4>
+					<MonacoDiff original={toJsonText(diff.a.manifest)} modified={toJsonText(diff.b.manifest)} language="json" class="h-64" />
 				{:else}
 					<Spinner class="size-4" />
 				{/if}

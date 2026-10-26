@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	aggregateOf,
-	buildFilter,
-	cellType,
 	combineFilters,
 	defaultExportPath,
 	draftOf,
@@ -10,19 +8,14 @@ import {
 	filesHref,
 	formatBytes,
 	formatCell,
-	gridColumns,
+	formatOf,
 	idsFilter,
-	literal,
-	nextSort,
 	parseJsonFilter,
 	parseValue,
 	rowOf,
 	schemaOf,
-	sortBody,
-	type TableRecord
+	withFormat
 } from './tables.js';
-
-const rec = (id: string, data: Record<string, unknown>): TableRecord => ({ id, data, version: 1, createdAt: 1, updatedAt: 1, createdBy: 'owner', updatedBy: 'owner' });
 
 describe('formatBytes', () => {
 	test('scales units', () => {
@@ -68,59 +61,7 @@ describe('parseValue', () => {
 	});
 });
 
-describe('gridColumns', () => {
-	test('schema columns first, then extra fields in order seen', () => {
-		const cols = gridColumns({ columns: [{ name: 'name', type: 'string' }, { name: 'points', type: 'number' }] }, [rec('1', { name: 'a', vip: true }), rec('2', { tags: ['x'], points: 3, vip: false })]);
-		expect(cols.map((c) => [c.name, c.type])).toEqual([
-			['name', 'string'],
-			['points', 'number'],
-			['vip', 'boolean'],
-			['tags', 'json']
-		]);
-		expect(cellType(cols[2] as never, 'text')).toBe('string');
-		expect(cellType(cols[0] as never, 5)).toBe('string');
-	});
-});
-
-describe('sorting', () => {
-	test('cycles asc, desc, none', () => {
-		let s = nextSort(null, 'a');
-		expect(s).toEqual({ field: 'a', dir: 1 });
-		s = nextSort(s, 'a');
-		expect(sortBody(s)).toEqual({ a: -1 });
-		expect(nextSort(s, 'a')).toBeNull();
-		expect(nextSort({ field: 'a', dir: -1 }, 'b')).toEqual({ field: 'b', dir: 1 });
-		expect(sortBody(null)).toBeUndefined();
-	});
-});
-
 describe('filters', () => {
-	test('builder combines with AND and converts by type', () => {
-		expect(buildFilter([])).toEqual({ ok: true, filter: undefined });
-		expect(buildFilter([{ field: 'points', op: 'gte', value: '10' }], { points: 'number' })).toEqual({ ok: true, filter: { points: { $gte: 10 } } });
-		expect(
-			buildFilter(
-				[
-					{ field: 'city', op: 'eq', value: '10' },
-					{ field: 'name', op: 'contains', value: 'an' },
-					{ field: 'vip', op: 'exists', value: '' },
-					{ field: 'gone', op: 'missing', value: 'ignored' },
-					{ field: '', op: 'eq', value: 'skipped' }
-				],
-				{ city: 'string' }
-			)
-		).toEqual({ ok: true, filter: { $and: [{ city: { $eq: '10' } }, { name: { $contains: 'an' } }, { vip: { $exists: true } }, { gone: { $exists: false } }] } });
-		expect(buildFilter([{ field: 'points', op: 'gt', value: 'x' }], { points: 'number' }).ok).toBe(false);
-		expect(buildFilter([{ field: 'extra', op: 'ne', value: '3' }])).toEqual({ ok: true, filter: { extra: { $ne: 3 } } });
-		expect(buildFilter([{ field: '_version', op: 'gt', value: '2' }])).toEqual({ ok: true, filter: { _version: { $gt: 2 } } });
-	});
-	test('literal guesses', () => {
-		expect(literal('true')).toBe(true);
-		expect(literal('null')).toBeNull();
-		expect(literal('-1.5')).toBe(-1.5);
-		expect(literal('12abc')).toBe('12abc');
-		expect(literal('')).toBe('');
-	});
 	test('advanced JSON and combining', () => {
 		expect(parseJsonFilter('')).toEqual({ ok: true, filter: undefined });
 		expect(parseJsonFilter('{"a":1}')).toEqual({ ok: true, filter: { a: 1 } });
@@ -184,5 +125,13 @@ describe('aggregates and files', () => {
 	test('paths', () => {
 		expect(defaultExportPath('members')).toBe('/library/data/members.csv');
 		expect(filesHref('/library/data/a b.csv')).toBe('/files?path=%2Flibrary%2Fdata%2Fa%20b.csv');
+	});
+	test('formats by extension', () => {
+		expect(formatOf('/a/b.CSV')).toBe('csv');
+		expect(formatOf('x.jsonl')).toBe('ndjson');
+		expect(formatOf('x.json')).toBe('json');
+		expect(formatOf('x.txt')).toBeNull();
+		expect(withFormat('/library/data/x.csv', 'json')).toBe('/library/data/x.json');
+		expect(withFormat('/library/data/x', 'ndjson')).toBe('/library/data/x.ndjson');
 	});
 });

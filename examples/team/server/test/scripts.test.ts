@@ -67,7 +67,9 @@ describe('scripts over HTTP', () => {
       manifest: { triggers: [{ kind: 'nope' }] },
     })
     expect(badManifest.status).toBe(400)
-    expect(badManifest.json.error?.message).toContain('kind is channel, schedule or table')
+    expect(badManifest.json.error?.message).toContain(
+      'kind is channel, schedule, table, app or webhook',
+    )
     const badSource = await r.api('POST', '/scripts', {
       name: 'halo',
       source: 'export default async function (e, ctx) {',
@@ -500,6 +502,144 @@ describe('scripts written by an agent', () => {
     await until('answered', () => (r.models.lead?.prompts.length ?? 0) >= 2)
     expect(toolResults(r.models.lead).join('\n')).toContain('Not allowed')
     expect((await r.api('GET', '/scripts')).json.scripts).toEqual([])
+  })
+})
+
+describe('more inputs and the team API', () => {
+  test('an app event starts a script; ctx.api reads and changes through the API; its own events do not loop', async () => {
+    const r = rig()
+    rigs.push(r)
+    const src = `export default async function (event, ctx) {
+  const s = await ctx.api.get({ path: '/settings' })
+  await ctx.kv.set({ key: 'team', value: s.body.teamName })
+  if (s.body.teamName === 'First') await ctx.api.request({ method: 'PATCH', path: '/settings', body: { teamName: 'Second' } })
+  return event.type
+}`
+    const c = await r.api('POST', '/scripts', {
+      name: 'watch-settings',
+      source: src,
+      manifest: {
+        triggers: [{ kind: 'app', events: ['settings-changed'] }],
+        grants: { api: ['GET /settings', 'PATCH /settings'] },
+      },
+    })
+    expect(c.status).toBe(201)
+    await r.api('POST', '/scripts/watch-settings/activate', {})
+    expect((await r.api('PATCH', '/settings', { teamName: 'First' })).status).toBe(200)
+    await until('ran', async () =>
+      (
+        (await r.api('GET', '/scripts/watch-settings/runs?dryRun=false')).json.runs as Array<{
+          outcome: string
+        }>
+      ).some((x) => x.outcome === 'ok'),
+    )
+    await sleep(200)
+    const runs = (await r.api('GET', '/scripts/watch-settings/runs')).json.runs as Array<{
+      trigger: string
+      outcome: string
+      reason: string | null
+    }>
+    expect(runs.filter((x) => x.outcome === 'ok').map((x) => x.trigger)).toEqual(['app'])
+    // its own PATCH came back as settings-changed and was skipped by the loop guard
+    expect(runs.filter((x) => x.outcome === 'skipped').map((x) => x.reason)).toEqual(['loop'])
+    expect(r.server.deps.settings.get().teamName).toBe('Second')
+    expect((await r.api('GET', '/scripts/watch-settings/kv')).json.entries).toEqual([
+      { key: 'team', value: '"First"' },
+    ])
+  })
+
+  test('ctx.api refuses routes outside the grants and the routes no script may call', async () => {
+    const r = rig()
+    rigs.push(r)
+    const src = `export default async function (event, ctx) {
+  const out = []
+  for (const [m, p] of [['GET', '/agents'], ['GET', '/tasks'], ['POST', '/scripts/x/approve'], ['GET', '/settings/../scripts']]) {
+    try { await (m === 'GET' ? ctx.api.get({ path: p }) : ctx.api.request({ method: m, path: p })); out.push(m + ' ' + p + ' ok') }
+    catch (e) { out.push(m + ' ' + p + ': ' + e.message) }
+  }
+  return out
+}`
+    await r.api('POST', '/scripts', {
+      name: 'probe',
+      source: src,
+      manifest: { grants: { api: ['GET /agents', '* /scripts/**'] } },
+    })
+    await r.api('POST', '/scripts/probe/activate', {})
+    const run = await r.api('POST', '/scripts/probe/run', {})
+    expect(run.json.outcome).toBe('ok')
+    const out = run.json.result as string[]
+    expect(out[0]).toBe('GET /agents ok')
+    expect(out[1]).toContain('add "GET /tasks" to grants.api')
+    expect(out[2]).toContain('never callable')
+    expect(out[3]).toContain('not a clean path')
+    expect(
+      (
+        await r.api('POST', '/scripts', {
+          name: 'bad',
+          source: src,
+          manifest: { grants: { api: ['FETCH /x'] } },
+        })
+      ).status,
+    ).toBe(400)
+  })
+
+  test('a webhook: a secret URL runs the active version with the request as the event', async () => {
+    const r = rig()
+    rigs.push(r)
+    const src = `export default async function (event, ctx) {
+  ctx.log(event.headers['x-source'] ?? '')
+  return { got: event.body.order, method: event.method, q: event.query.k }
+}`
+    await r.api('POST', '/scripts', {
+      name: 'hook',
+      source: src,
+      manifest: { triggers: [{ kind: 'webhook' }] },
+    })
+    let wh = (await r.api('GET', '/scripts/hook/webhook')).json as { url: string; live: boolean }
+    expect(wh.live).toBe(false)
+    const path = new URL(wh.url).pathname.replace(/^\/api/, '')
+    // not active yet: 404, nothing runs
+    const post = (p: string) =>
+      r.app.request(`${p}?k=v`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-source': 'shop',
+          authorization: 'Bearer secret',
+        },
+        body: JSON.stringify({ order: 42 }),
+      })
+    expect((await post(path)).status).toBe(404)
+    await r.api('POST', '/scripts/hook/activate', {})
+    wh = (await r.api('GET', '/scripts/hook/webhook')).json as { url: string; live: boolean }
+    expect(wh.live).toBe(true)
+    const res = await post(path)
+    expect(res.status).toBe(200)
+    expect((await res.json()).result).toEqual({ got: 42, method: 'POST', q: 'v' })
+    // a wrong token is a 404
+    expect((await post(`${path.slice(0, -3)}xyz`)).status).toBe(404)
+    const runs = (await r.api('GET', '/scripts/hook/runs?dryRun=false')).json.runs as Array<{
+      trigger: string
+      logs: string[]
+      event: { headers: Record<string, string> }
+    }>
+    expect(runs[0]?.trigger).toBe('webhook')
+    expect(runs[0]?.logs).toEqual(['shop'])
+    // credentials never reach the script or the trace
+    expect(runs[0]?.event.headers.authorization).toBeUndefined()
+  })
+
+  test('the manifest JSON Schema and the types know the new triggers and grants', async () => {
+    const r = rig()
+    rigs.push(r)
+    const t = (await r.api('GET', '/scripts-types')).json as {
+      types: string
+      manifestSchema: { properties: { grants: { properties: Record<string, unknown> } } }
+    }
+    expect(t.types).toContain('interface ScriptEvent')
+    expect(t.types).toContain('api: {')
+    expect(Object.keys(t.manifestSchema.properties.grants.properties)).toContain('api')
+    expect(JSON.stringify(t.manifestSchema)).toContain('"webhook"')
   })
 })
 

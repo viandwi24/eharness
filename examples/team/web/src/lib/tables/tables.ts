@@ -10,7 +10,6 @@ export type TableAggregate = components['schemas']['TableAggregate'];
 export type TableImportResult = components['schemas']['TableImportResult'];
 export type ColumnType = TableColumn['type'];
 export type Filter = Record<string, unknown>;
-export type Sort = { field: string; dir: 1 | -1 } | null;
 
 export const COLUMN_TYPES: readonly ColumnType[] = ['string', 'number', 'boolean', 'date', 'json'];
 
@@ -96,107 +95,7 @@ export function editText(value: unknown, type: ColumnType): string {
 	return formatCell(value);
 }
 
-export type GridColumn = { name: string; type: ColumnType; column?: TableColumn };
-
-/** The grid's columns: the schema's columns in order, then other fields seen in the rows. */
-export function gridColumns(schema: TableSchema | undefined, rows: readonly TableRecord[]): GridColumn[] {
-	const out: GridColumn[] = (schema?.columns ?? []).map((c) => ({ name: c.name, type: c.type, column: c }));
-	const seen = new Set(out.map((c) => c.name));
-	for (const r of rows) {
-		for (const [k, v] of Object.entries(r.data)) {
-			if (seen.has(k)) continue;
-			seen.add(k);
-			out.push({ name: k, type: inferType(v) });
-		}
-	}
-	return out;
-}
-
-/** The type to edit a cell with: the column's, else what the current value looks like. */
-export function cellType(col: GridColumn, value: unknown): ColumnType {
-	return col.column ? col.column.type : value === undefined || value === null ? col.type : inferType(value);
-}
-
-// ---------------------------------------------------------------- sorting
-
-/** Header clicks cycle a field: ascending, descending, back to creation order. */
-export function nextSort(current: Sort, field: string): Sort {
-	if (!current || current.field !== field) return { field, dir: 1 };
-	if (current.dir === 1) return { field, dir: -1 };
-	return null;
-}
-
-/** The `sort` of a query, or undefined for creation order. */
-export function sortBody(sort: Sort): Record<string, 1 | -1> | undefined {
-	return sort ? { [sort.field]: sort.dir } : undefined;
-}
-
-// ---------------------------------------------------------------- filters
-
-export type FilterOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'startsWith' | 'exists' | 'missing';
-
-export const FILTER_OPS: readonly { id: FilterOp; label: string }[] = [
-	{ id: 'eq', label: '=' },
-	{ id: 'ne', label: '≠' },
-	{ id: 'gt', label: '>' },
-	{ id: 'gte', label: '≥' },
-	{ id: 'lt', label: '<' },
-	{ id: 'lte', label: '≤' },
-	{ id: 'contains', label: 'contains' },
-	{ id: 'startsWith', label: 'starts with' },
-	{ id: 'exists', label: 'exists' },
-	{ id: 'missing', label: 'is missing' }
-];
-
-/** Operators that take no value. */
-export const takesValue = (op: FilterOp): boolean => op !== 'exists' && op !== 'missing';
-
-export type Condition = { field: string; op: FilterOp; value: string };
-
-/** A filter value for a field without a known type: true/false, null, numbers, else text. */
-export function literal(text: string): unknown {
-	const t = text.trim();
-	if (t === 'true') return true;
-	if (t === 'false') return false;
-	if (t === 'null') return null;
-	if (t !== '' && /^-?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(t)) return Number(t);
-	return text;
-}
-
-const typeOfField = (field: string, types: Record<string, ColumnType>): ColumnType | undefined =>
-	field === '_version' || field === '_createdAt' || field === '_updatedAt' ? 'number' : field === '_id' ? 'string' : types[field];
-
-/**
- * The builder's conditions as one filter, combined with AND. Values follow the field's column
- * type (`types`, by field name); other fields guess (numbers, true/false). Rows without a field
- * are skipped; a value that does not fit the column type is an error.
- */
-export function buildFilter(conds: readonly Condition[], types: Record<string, ColumnType> = {}): { ok: true; filter: Filter | undefined } | { ok: false; error: string } {
-	const parts: Filter[] = [];
-	for (const c of conds) {
-		const field = c.field.trim();
-		if (!field) continue;
-		if (c.op === 'exists' || c.op === 'missing') {
-			parts.push({ [field]: { $exists: c.op === 'exists' } });
-			continue;
-		}
-		let value: unknown;
-		if (c.op === 'contains' || c.op === 'startsWith') value = c.value;
-		else {
-			const type = typeOfField(field, types);
-			if (type === undefined || type === 'json') value = literal(c.value);
-			else if (type === 'string' || type === 'date') value = c.value;
-			else {
-				const p = parseValue(c.value, type);
-				if (!p.ok) return { ok: false, error: `${field}: ${p.error}` };
-				value = 'unset' in p ? null : p.value;
-			}
-		}
-		parts.push({ [field]: { [`$${c.op}`]: value } });
-	}
-	if (parts.length === 0) return { ok: true, filter: undefined };
-	return { ok: true, filter: parts.length === 1 ? parts[0] : { $and: parts } };
-}
+// ---------------------------------------------------------------- filters (shared bits)
 
 /** A JSON object typed in a box (`what` names it in errors); empty is none. */
 export function parseJsonObject(text: string, what = 'The filter'): { ok: true; filter: Filter | undefined } | { ok: false; error: string } {
@@ -221,7 +120,7 @@ export function combineFilters(...filters: (Filter | undefined)[]): Filter | und
 	return parts.length === 1 ? parts[0] : { $and: parts };
 }
 
-/** A filter on a set of row ids (delete the selected rows). */
+/** A filter on a set of row ids (delete or export the selected rows). */
 export const idsFilter = (ids: readonly string[]): Filter => ({ _id: { $in: [...ids] } });
 
 // ---------------------------------------------------------------- schema drafts
@@ -272,7 +171,7 @@ export function schemaOf(drafts: readonly ColumnDraft[], strict: boolean): { ok:
 }
 
 /** A new row from form text by field: empty fields are left out. */
-export function rowOf(values: Record<string, string>, cols: readonly GridColumn[]): { ok: true; row: Record<string, unknown> } | { ok: false; error: string } {
+export function rowOf(values: Record<string, string>, cols: readonly { name: string; type: ColumnType }[]): { ok: true; row: Record<string, unknown> } | { ok: false; error: string } {
 	const row: Record<string, unknown> = {};
 	for (const c of cols) {
 		const text = values[c.name] ?? '';
@@ -311,3 +210,17 @@ export const defaultExportPath = (table: string): string => `/library/data/${tab
 
 /** The Files page showing a library file. */
 export const filesHref = (path: string): string => `/files?path=${encodeURIComponent(path)}`;
+
+export type FileFormat = 'csv' | 'json' | 'ndjson';
+
+/** A data file's format from its extension (how the server picks it), or null. */
+export function formatOf(path: string): FileFormat | null {
+	const ext = path.toLowerCase().split('.').pop() ?? '';
+	return ext === 'csv' ? 'csv' : ext === 'json' ? 'json' : ext === 'ndjson' || ext === 'jsonl' ? 'ndjson' : null;
+}
+
+/** A path with its extension swapped for a format's (`/library/data/x.csv` → `x.json`). */
+export function withFormat(path: string, format: FileFormat): string {
+	const ext = format === 'ndjson' ? 'ndjson' : format;
+	return /\.[A-Za-z0-9]+$/.test(path) ? path.replace(/\.[A-Za-z0-9]+$/, `.${ext}`) : `${path}.${ext}`;
+}

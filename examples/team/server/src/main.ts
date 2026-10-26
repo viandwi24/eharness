@@ -287,7 +287,12 @@ import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
 import { createEventStream } from './infra/events/stream.ts'
 import { installJsonSchemaValidator } from './infra/json-schema.ts'
 import { croneSchedule } from './infra/schedule.ts'
-import { createScriptEngine, type ScriptEngine } from './infra/scripts/engine.ts'
+import {
+  APP_TRIGGER_SET,
+  createScriptEngine,
+  type ScriptEngine,
+  watchScriptEvents,
+} from './infra/scripts/engine.ts'
 import { createStorageService } from './infra/storage/storage-service.ts'
 import {
   createTelegramChannels,
@@ -561,8 +566,27 @@ export function compose(config: ServerConfig): Server {
   let channelGateway: ChannelGateway | undefined
   // scripts (P59): built after the gateway; the deps and the gateway reach it late-bound
   let scriptEngine: ScriptEngine | undefined
-  const activityStore = watchPendingChanges(sqliteActivityStore(conn.sqlite), (e) =>
-    channelGateway?.pendingChanged(e),
+  /** The HTTP app for script `ctx.api` calls (set once it is built), with the per-process key. */
+  let scriptApi: ((path: string, init: RequestInit) => Promise<Response>) | undefined
+  const internalKey = crypto.randomUUID()
+  const activityStore = watchScriptEvents(
+    watchPendingChanges(sqliteActivityStore(conn.sqlite), (e) => channelGateway?.pendingChanged(e)),
+    (record) => {
+      // app triggers of scripts (P59): only the instance that appended the event runs them
+      if (scriptEngine === undefined || !APP_TRIGGER_SET.has(record.type)) return
+      const def =
+        record.agentId === null
+          ? undefined
+          : (agents.get(record.agentId) ?? agents.getBySlug(record.agentId))
+      scriptEngine.onAppEvent({
+        type: record.type,
+        seq: record.seq,
+        at: record.createdAt,
+        ...(def === undefined ? {} : { agentId: def.id, agentSlug: def.slug }),
+        ...(record.sessionId === null ? {} : { sessionId: record.sessionId }),
+        payload: record.payload,
+      })
+    },
   )
   const threadStore = sqliteThreadStore(conn.sqlite)
   const events = withThreadActivity(createEventAppender(activityStore), threadStore)
@@ -1669,6 +1693,24 @@ export function compose(config: ServerConfig): Server {
         .enqueue(text, { mode: 'queue', id, metadata: INSTRUCTION_METADATA })
     },
     allowPrivateFetch: (config.env ?? process.env).TEAM_SCRIPTS_ALLOW_PRIVATE_FETCH === '1',
+    webhookSecret: signingSecret,
+    // ctx.api: the team API in-process as the web owner (the HTTP app is built further down)
+    callApi: async ({ method, path, body }) => {
+      if (scriptApi === undefined) throw new Error('the API is not ready')
+      const res = await scriptApi(path, {
+        method,
+        headers: { 'content-type': 'application/json', 'x-eh-internal': internalKey },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+      const text = await res.text()
+      let parsed: unknown = text
+      try {
+        parsed = text ? JSON.parse(text) : null
+      } catch {
+        parsed = text.slice(0, 100_000)
+      }
+      return { status: res.status, body: parsed }
+    },
     ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
@@ -1969,6 +2011,7 @@ export function compose(config: ServerConfig): Server {
   const app = createApp({
     deps,
     token: config.token,
+    internalKey,
     harness,
     content: artifactContent,
     developer: developerApi,
@@ -1985,6 +2028,7 @@ export function compose(config: ServerConfig): Server {
   })
   routines.start()
   turnRetries.start()
+  scriptApi = async (path, init) => app.request(path, init)
   // phantom connector names of stored programs (a tool prefix instead of the id) are repaired once
   // (after the connectors are prepared: the repair itself never opens a connection)
   void connectorsReady

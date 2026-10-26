@@ -19,7 +19,8 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { relativeTime } from '#lib/routines/schedule.js';
-	import { approvalLabel, canActivate, outcomeTone, SCRIPT_NAME, type Script, type ScriptDetail, statusLabel, triggerSummary } from '#lib/scripts/scripts.js';
+	import { approvalLabel, canActivate, outcomeTone, SCRIPT_NAME, type Script, type ScriptDetail, statusLabel } from '#lib/scripts/scripts.js';
+	import { describeTrigger, fromManifest } from '#lib/scripts/manifest-model.js';
 
 	/**
 	 * The top of a script: status, the approval request (approve / reject), and the actions that
@@ -31,9 +32,19 @@
 		onViewVersion,
 		onRan,
 		onRenamed,
-		onDeleted
+		onDeleted,
+		dirty = false,
+		tested = 'none',
+		onSave,
+		onTest
 	}: {
 		detail: ScriptDetail;
+		/** Unsaved edits in the editor. */
+		dirty?: boolean;
+		/** The newest test of the latest version. */
+		tested?: 'ok' | 'failed' | 'none';
+		onSave?: () => void;
+		onTest?: () => void;
 		onChanged: (s: Script) => void;
 		onViewVersion: (version: number) => void;
 		onRan: () => void;
@@ -47,7 +58,19 @@
 	const s = $derived(detail.script);
 	const st = $derived(statusLabel(s));
 	const ap = $derived(approvalLabel(s));
-	const triggers = $derived(triggerSummary(detail.latest.manifest));
+	const triggers = $derived(fromManifest(detail.latest.manifest).triggers.map(describeTrigger));
+	const live = $derived(s.status === 'active' && s.activeVersion === s.latestVersion);
+	/** The guided path: save → test → turn on. */
+	const steps = $derived([
+		{ label: dirty ? 'Unsaved changes' : `Saved v${s.latestVersion}`, state: dirty ? 'todo' : 'done' },
+		{ label: tested === 'ok' ? `Tested v${s.latestVersion}` : tested === 'failed' ? 'Last test failed' : 'Not tested yet', state: tested === 'ok' ? 'done' : tested === 'failed' ? 'bad' : 'todo' },
+		{
+			label: live ? 'Live' : s.approval.state === 'pending' ? 'Waits for approval' : s.status === 'active' ? `Live on v${s.activeVersion}` : s.status === 'disabled' ? 'Switched off' : 'Not live',
+			state: live ? 'done' : s.status === 'active' ? 'partial' : 'todo'
+		}
+	] as const);
+	const activatable = $derived(canActivate(s) && s.approval.state !== 'pending');
+	const primary = $derived<'save' | 'test' | 'activate' | null>(dirty && onSave ? 'save' : tested !== 'ok' && onTest && !live ? 'test' : activatable ? 'activate' : null);
 	const versionsDesc = $derived(Array.from({ length: s.latestVersion }, (_, i) => s.latestVersion - i));
 
 	let busy = $state(false);
@@ -176,30 +199,53 @@
 </script>
 
 <Surface class="flex flex-col gap-3 p-4 text-sm">
-	<div class="flex flex-wrap items-center gap-2">
-		<Badge variant={st.tone} title={st.title}><span class="max-w-64 truncate">{st.label}</span></Badge>
-		{#if ap}<Badge variant={ap.tone}>{ap.label}</Badge>{/if}
-		<span class="text-xs text-muted-foreground">
-			latest v{s.latestVersion} · {s.runCount.toLocaleString()} run{s.runCount === 1 ? '' : 's'}{s.errorCount ? `, ${s.errorCount} failed` : ''} · last run {s.lastRunAt ? relativeTime(s.lastRunAt) : 'never'}
-		</span>
+	<div class="flex flex-wrap items-center gap-x-4 gap-y-3">
+		<ol class="flex flex-wrap items-center gap-1.5" aria-label="Progress">
+			{#each steps as step, i (i)}
+				<li class="flex items-center gap-1.5">
+					<span
+						class="flex size-5 items-center justify-center rounded-full text-[11px] font-semibold {step.state === 'done'
+							? 'bg-success text-white'
+							: step.state === 'bad'
+								? 'bg-destructive text-white'
+								: step.state === 'partial'
+									? 'bg-warning text-white'
+									: 'border border-border text-muted-foreground'}"
+					>{#if step.state === 'done'}<CheckIcon class="size-3" weight="bold" />{:else}{i + 1}{/if}</span>
+					<span class="text-xs {step.state === 'todo' ? 'text-muted-foreground' : ''}">{step.label}</span>
+					{#if i < steps.length - 1}<span class="mx-1 h-px w-5 bg-border" aria-hidden="true"></span>{/if}
+				</li>
+			{/each}
+		</ol>
 		<span class="flex-1"></span>
 		<div class="flex flex-wrap items-center gap-1">
-			{#if canActivate(s) && s.approval.state !== 'pending'}
-				<Button size="sm" disabled={busy} onclick={openActivate}><LightningIcon class="size-4" /> Activate</Button>
+			{#if primary === 'save'}
+				<Button size="sm" disabled={busy} onclick={onSave}>Save</Button>
+			{:else if primary === 'test'}
+				<Button size="sm" disabled={busy} onclick={onTest}><PlayIcon class="size-4" /> Test it</Button>
+			{/if}
+			{#if activatable}
+				<Button size="sm" variant={primary === 'activate' ? 'default' : 'ghost'} disabled={busy} onclick={openActivate}><LightningIcon class="size-4" /> {s.status === 'active' ? `Switch to v${s.latestVersion}` : 'Turn on'}</Button>
 			{/if}
 			{#if s.status === 'active'}
 				<Button size="sm" variant="outline" disabled={busy} onclick={() => (confirmRun = true)}><PlayIcon class="size-4" /> Run now</Button>
-				<Button size="sm" variant="ghost" disabled={busy} onclick={() => void disable()}><PauseIcon class="size-4" /> Disable</Button>
-			{:else if s.status === 'disabled'}
-				<Button size="sm" variant="outline" disabled={busy} onclick={() => void enable()}><PlayIcon class="size-4" /> Enable</Button>
+				<Button size="sm" variant="ghost" disabled={busy} onclick={() => void disable()}><PauseIcon class="size-4" /> Turn off</Button>
+			{:else if s.status === 'disabled' && s.activeVersion !== null}
+				<Button size="sm" variant="outline" disabled={busy} onclick={() => void enable()}><PlayIcon class="size-4" /> Turn on v{s.activeVersion}</Button>
 			{/if}
 			<Button size="icon-sm" variant="ghost" disabled={busy} aria-label="Rename or describe" title="Rename or describe" onclick={openEdit}><PencilSimpleIcon class="size-4" /></Button>
 			<Button size="icon-sm" variant="ghost" disabled={busy} aria-label="Delete the script" title="Delete" onclick={() => { deleteName = ''; deleting = true; }}><TrashIcon class="size-4" /></Button>
 		</div>
 	</div>
 
+	<div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+		<Badge variant={st.tone} title={st.title}><span class="max-w-64 truncate">{st.label}</span></Badge>
+		{#if ap}<Badge variant={ap.tone}>{ap.label}</Badge>{/if}
+		<span>{s.runCount.toLocaleString()} run{s.runCount === 1 ? '' : 's'}{s.errorCount ? `, ${s.errorCount} failed` : ''} · last run {s.lastRunAt ? relativeTime(s.lastRunAt) : 'never'}</span>
+	</div>
+
 	{#if triggers.length}
-		<p class="text-xs text-muted-foreground">Runs on: {triggers.join(' · ')}{s.status === 'active' && s.activeVersion !== s.latestVersion ? ` (latest version; v${s.activeVersion} is running)` : ''}</p>
+		<p class="text-xs text-muted-foreground">Runs when: {triggers.join(' · ')}{s.status === 'active' && s.activeVersion !== s.latestVersion ? ` (latest version; v${s.activeVersion} is running)` : ''}</p>
 	{/if}
 
 	{#if s.approval.state === 'pending'}
@@ -254,8 +300,8 @@
 	<Dialog.Content elevation="floating" class="sm:max-w-md">
 		<form class="flex flex-col gap-4" onsubmit={activate}>
 			<Dialog.Header>
-				<Dialog.Title>Activate a version</Dialog.Title>
-				<Dialog.Description>The version runs on its triggers from now on, with the grants of its manifest. Dry-run it first.</Dialog.Description>
+				<Dialog.Title>Turn on</Dialog.Title>
+				<Dialog.Description>The chosen version runs on its triggers from now on, with only the permissions it lists.</Dialog.Description>
 			</Dialog.Header>
 			<Field.Field>
 				<Field.Label for="activate-version">Version</Field.Label>
@@ -269,7 +315,7 @@
 			</Field.Field>
 			<Dialog.Footer>
 				<Button type="button" variant="ghost" onclick={() => (activating = false)}>Cancel</Button>
-				<Button type="submit" disabled={busy}>Activate</Button>
+				<Button type="submit" disabled={busy}>Turn on</Button>
 			</Dialog.Footer>
 		</form>
 	</Dialog.Content>

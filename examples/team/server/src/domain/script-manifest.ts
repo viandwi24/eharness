@@ -61,7 +61,55 @@ export interface TableTrigger {
   events: TableEventType[]
 }
 
-export type ScriptTrigger = ChannelTrigger | ScheduleTrigger | TableTrigger
+/**
+ * App events a script may start on: what the team app itself does (tasks, programs, routines,
+ * decisions, alarms, files, agents, settings…). Noisy or self-referencing types are left out.
+ */
+export const APP_TRIGGER_TYPES = [
+  'message-added',
+  'task-changed',
+  'agent-message',
+  'file-changed',
+  'agent-changed',
+  'routine-fired',
+  'routine-changed',
+  'program-changed',
+  'decision-changed',
+  'heartbeat-changed',
+  'settings-changed',
+  'providers-changed',
+  'connectors-changed',
+  'thread-changed',
+  'notification-changed',
+  'alarm-raised',
+  'turn-started',
+  'pending-changed',
+  'approval-decided',
+  'attention-answered',
+  'child-reported',
+] as const
+export type AppTriggerType = (typeof APP_TRIGGER_TYPES)[number]
+
+export interface AppTrigger {
+  kind: 'app'
+  events: AppTriggerType[]
+  /** Only events of these agents (id or slug); empty = any. */
+  agents: string[]
+  /** Payload fields that must equal these values (text compare, e.g. { "change": "done" }). */
+  match: Record<string, string>
+}
+
+/** A POST to the script's webhook URL (a secret link) starts it with the request as the event. */
+export interface WebhookTrigger {
+  kind: 'webhook'
+}
+
+export type ScriptTrigger =
+  | ChannelTrigger
+  | ScheduleTrigger
+  | TableTrigger
+  | AppTrigger
+  | WebhookTrigger
 
 /** A chat a script may post to. */
 export interface ChatGrant {
@@ -88,6 +136,11 @@ export interface ScriptGrants {
   wake: string[]
   /** Programs (name or id) `ctx.programs.run` may start. */
   programs: string[]
+  /**
+   * Routes of the team API `ctx.api` may call: `METHOD /path` with globs (`GET /tasks/**`,
+   * `* /tables/orders/**`; `*` is one path segment). Some routes are never callable (`API_DENIED`).
+   */
+  api: string[]
 }
 
 export interface ScriptManifest {
@@ -111,6 +164,7 @@ export const emptyGrants = (): ScriptGrants => ({
   http: [],
   wake: [],
   programs: [],
+  api: [],
 })
 
 /** The most a script may ask for. */
@@ -220,11 +274,41 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
         if (events.length === 0)
           errors.push(`${where}: name at least one of ${TABLE_EVENT_TYPES.join(', ')}`)
         triggers.push({ kind: 'table', table, events })
-      } else errors.push(`${where}: kind is channel, schedule or table`)
+      } else if (r.kind === 'app') {
+        const events = oneOf(r.events, APP_TRIGGER_TYPES, `${where} events`, errors)
+        if (events.length === 0) errors.push(`${where}: name at least one app event`)
+        const match: Record<string, string> = {}
+        const rawMatch = r.match ?? {}
+        if (typeof rawMatch !== 'object' || rawMatch === null || Array.isArray(rawMatch))
+          errors.push(`${where} match must be an object of field: value`)
+        else
+          for (const [k, v] of Object.entries(rawMatch)) {
+            if (Object.keys(match).length >= 10) {
+              errors.push(`${where} match: at most 10 fields`)
+              break
+            }
+            if (
+              !/^[A-Za-z_][A-Za-z0-9_.]{0,63}$/.test(k) ||
+              (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean')
+            )
+              errors.push(`${where} match: "${k}" needs a text, number or true/false value`)
+            else match[k] = String(v)
+          }
+        triggers.push({
+          kind: 'app',
+          events,
+          agents: strings(r.agents, `${where} agents`, errors),
+          match,
+        })
+      } else if (r.kind === 'webhook') {
+        triggers.push({ kind: 'webhook' })
+      } else errors.push(`${where}: kind is channel, schedule, table, app or webhook`)
     })
   }
   if (triggers.filter((t) => t.kind === 'schedule').length > 1)
     errors.push('at most one schedule trigger')
+  if (triggers.filter((t) => t.kind === 'webhook').length > 1)
+    errors.push('at most one webhook trigger')
 
   const g = (typeof raw.grants === 'object' && raw.grants !== null ? raw.grants : {}) as Record<
     string,
@@ -269,6 +353,11 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
     http: strings(g.http, 'grants.http', errors).map((h) => h.toLowerCase()),
     wake: strings(g.wake, 'grants.wake', errors),
     programs: strings(g.programs, 'grants.programs', errors),
+    api: strings(g.api, 'grants.api', errors).map((x) => x.replace(/\s+/g, ' ')),
+  }
+  for (const a of grants.api) {
+    const bad = apiGrantProblem(a)
+    if (bad !== undefined) errors.push(`grants.api: ${bad}`)
   }
   for (const h of grants.http)
     if (!/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h))
@@ -343,6 +432,82 @@ export function canFetchHost(g: ScriptGrants, host: string): boolean {
   )
 }
 
+// --- app events ----------------------------------------------------------------------------------
+
+/** An app event as the scripts engine sees it. */
+export interface ScriptAppEvent {
+  type: string
+  seq?: number
+  at: number
+  agentId?: string
+  agentSlug?: string
+  sessionId?: string
+  payload: Record<string, unknown>
+}
+
+/** Why an app trigger does not match an event, or undefined when it does. */
+export function appMismatch(t: AppTrigger, e: ScriptAppEvent): string | undefined {
+  if (!(t.events as readonly string[]).includes(e.type)) return 'another event type'
+  if (t.agents.length > 0 && !t.agents.some((a) => a === e.agentId || a === e.agentSlug))
+    return 'another agent'
+  for (const [k, want] of Object.entries(t.match)) {
+    let v: unknown = e.payload
+    for (const part of k.split('.'))
+      v = typeof v === 'object' && v !== null ? (v as Record<string, unknown>)[part] : undefined
+    if (v === undefined || v === null || String(v) !== want) return `${k} is not ${want}`
+  }
+  return undefined
+}
+
+// --- the team API ------------------------------------------------------------------------------
+
+/**
+ * Routes no script may call whatever its grants say: scripts themselves (a script must not approve
+ * or rewrite itself), credentials and secrets, sign-in, restores and the developer keys.
+ */
+export const API_DENIED = [
+  '/scripts/**',
+  '/scripts-types',
+  '/auth/**',
+  '/login/**',
+  '/providers/**',
+  '/connectors/**',
+  '/backups/**',
+  '/storage/**',
+  '/developer/**',
+  '/workspace/**',
+  '/v1/**',
+  '/hooks/**',
+] as const
+
+/** Why an API grant is not usable, or undefined. */
+export function apiGrantProblem(grant: string): string | undefined {
+  if (!/^(\*|GET|POST|PUT|PATCH|DELETE) \/\S*$/.test(grant))
+    return `"${grant.slice(0, 80)}" is "METHOD /path" (GET, POST, PUT, PATCH, DELETE or *; globs in the path)`
+  return undefined
+}
+
+/** The path of a call without its query, or undefined when it is not a clean absolute path. */
+export function apiPath(path: string): string | undefined {
+  const p = path.split('?')[0] ?? ''
+  if (!p.startsWith('/') || p.includes('..') || p.includes('//') || p.includes('\\'))
+    return undefined
+  return p.length > 1 ? p.replace(/\/+$/, '') : p
+}
+
+export const apiDenied = (path: string): boolean =>
+  API_DENIED.some(
+    (g) => globMatch(g, path) || globMatch(g, `${path}/`) || path === g.replace('/**', ''),
+  )
+
+export function canCallApi(g: ScriptGrants, method: string, path: string): boolean {
+  const m = method.toUpperCase()
+  return g.api.some((grant) => {
+    const [gm, gp] = grant.split(' ') as [string, string]
+    return (gm === '*' || gm === m) && globMatch(gp, path)
+  })
+}
+
 const sameChat = (a: ChatGrant, b: ChatGrant): boolean =>
   a.connection === b.connection &&
   a.chat.toLowerCase() === b.chat.toLowerCase() &&
@@ -372,6 +537,7 @@ export function grantWidening(before: ScriptGrants | undefined, after: ScriptGra
   newer(after.http, b.http, 'call')
   newer(after.wake, b.wake, 'wake agent')
   newer(after.programs, b.programs, 'run program')
+  newer(after.api, b.api, 'call the API')
   return out
 }
 
@@ -503,4 +669,216 @@ export const SKIP_TEXT: Record<SkipReason, string> = {
   loop: 'the event was caused by this script or by the agent itself (this avoids loops)',
   stale: 'the event is too old (seen again after a restart)',
   disabled: 'the script is not active',
+}
+
+// --- JSON Schema (editor help) -------------------------------------------------------------
+
+const list = (items: Record<string, unknown>, description: string): Record<string, unknown> => ({
+  type: 'array',
+  items,
+  maxItems: MAX_LIST,
+  description,
+})
+const text = { type: 'string', minLength: 1, maxLength: MAX_ITEM }
+
+/**
+ * A JSON Schema of the manifest for editors (autocomplete, hover docs, inline errors). It mirrors
+ * `parseManifest`, which stays the authority: the server checks every save.
+ */
+export function manifestJsonSchema(): Record<string, unknown> {
+  const limitProps: Record<string, unknown> = {}
+  for (const [key, [min, max]] of Object.entries(LIMIT_BOUNDS))
+    limitProps[key] = {
+      type: 'integer',
+      minimum: min,
+      maximum: max,
+      description: `Default ${DEFAULT_SCRIPT_LIMITS[key as keyof ScriptLimits]}.`,
+    }
+  return {
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    title: 'Script manifest',
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      triggers: {
+        type: 'array',
+        maxItems: MAX_TRIGGERS,
+        description:
+          'What starts the script. Any trigger starts it; all filters of one trigger must match. None = by hand only.',
+        items: {
+          type: 'object',
+          required: ['kind'],
+          oneOf: [
+            {
+              properties: {
+                kind: { const: 'channel', description: 'A chat event.' },
+                events: list({ enum: [...CHANNEL_EVENT_TYPES] }, 'Event types (at least one).'),
+                connections: list(text, 'Connection ids (Channels page). Empty = any.'),
+                chats: list(text, 'Chat title, platform id (-100…) or node id. Empty = any.'),
+                actorRoles: list({ enum: [...ROLES] }, 'Only events by people with these roles.'),
+                actors: list(text, 'Only events by these people: platform id, name or @username.'),
+                textContains: list(text, 'The text has any of these words (ignoring case).'),
+                textRegex: {
+                  type: 'string',
+                  maxLength: MAX_REGEX,
+                  description:
+                    'A bounded regular expression (no nested repeats, no back references).',
+                },
+              },
+              required: ['kind', 'events'],
+              additionalProperties: false,
+            },
+            {
+              properties: {
+                kind: { const: 'schedule', description: 'A schedule.' },
+                spec: {
+                  oneOf: [
+                    {
+                      type: 'object',
+                      properties: {
+                        kind: { const: 'cron' },
+                        expr: {
+                          type: 'string',
+                          description: 'Cron: minute hour day month weekday ("0 9 * * *").',
+                        },
+                        timezone: {
+                          type: 'string',
+                          description: 'IANA timezone; default the team timezone.',
+                        },
+                      },
+                      required: ['kind', 'expr'],
+                      additionalProperties: false,
+                    },
+                    {
+                      type: 'object',
+                      properties: {
+                        kind: { const: 'every' },
+                        everyMs: {
+                          type: 'integer',
+                          minimum: 60_000,
+                          description: 'Interval in ms (at least one minute).',
+                        },
+                      },
+                      required: ['kind', 'everyMs'],
+                      additionalProperties: false,
+                    },
+                    {
+                      type: 'object',
+                      properties: {
+                        kind: { const: 'at' },
+                        at: {
+                          type: ['string', 'integer'],
+                          description: 'Once: an ISO date or epoch ms.',
+                        },
+                      },
+                      required: ['kind', 'at'],
+                      additionalProperties: false,
+                    },
+                  ],
+                },
+              },
+              required: ['kind', 'spec'],
+              additionalProperties: false,
+            },
+            {
+              properties: {
+                kind: {
+                  const: 'app',
+                  description:
+                    'Something the team app did (a task, program, alarm, decision, file…).',
+                },
+                events: list({ enum: [...APP_TRIGGER_TYPES] }, 'App event types (at least one).'),
+                agents: list(text, 'Only events of these agents (id or slug). Empty = any.'),
+                match: {
+                  type: 'object',
+                  additionalProperties: { type: ['string', 'number', 'boolean'] },
+                  description:
+                    'Payload fields that must equal these values, e.g. { "change": "done" }.',
+                },
+              },
+              required: ['kind', 'events'],
+              additionalProperties: false,
+            },
+            {
+              properties: {
+                kind: {
+                  const: 'webhook',
+                  description: 'A POST to the secret webhook URL of the script.',
+                },
+              },
+              required: ['kind'],
+              additionalProperties: false,
+            },
+            {
+              properties: {
+                kind: { const: 'table', description: 'A change in a table.' },
+                table: { type: 'string', description: 'Table name.' },
+                events: list({ enum: [...TABLE_EVENT_TYPES] }, 'Row events (at least one).'),
+              },
+              required: ['kind', 'table', 'events'],
+              additionalProperties: false,
+            },
+          ],
+        },
+      },
+      grants: {
+        type: 'object',
+        additionalProperties: false,
+        description: 'What the script may touch. Default: nothing.',
+        properties: {
+          send: list(
+            {
+              type: 'object',
+              properties: { connection: text, chat: text, topic: text },
+              required: ['connection', 'chat'],
+              additionalProperties: false,
+            },
+            'Chats ctx.channels.send may post to.',
+          ),
+          reply: {
+            type: 'boolean',
+            description: 'ctx.channels.reply may answer in the chat of the event.',
+          },
+          libraryRead: list(
+            { type: 'string', pattern: '^/' },
+            'Library paths to read (globs: /library/reports/**).',
+          ),
+          libraryWrite: list(
+            { type: 'string', pattern: '^/' },
+            'Library paths to write (also readable).',
+          ),
+          tablesRead: list(text, 'Tables to read (* = any).'),
+          tablesWrite: list(text, 'Tables to change (also readable; * = any).'),
+          http: list(
+            { type: 'string' },
+            'Hosts for ctx.http (api.example.com, *.example.com); https only.',
+          ),
+          wake: list(text, 'Agents (slug or name) ctx.agent.wake may wake (a paid model turn).'),
+          programs: list(text, 'Programs (name or id) ctx.programs.run may start.'),
+          api: list(
+            { type: 'string', pattern: '^(\\*|GET|POST|PUT|PATCH|DELETE) /' },
+            'Team API routes ctx.api may call: "GET /tasks/**", "POST /tables/orders/rows". Scripts, secrets, sign-in and backups are never callable.',
+          ),
+        },
+      },
+      cooldownSec: {
+        type: 'integer',
+        minimum: 0,
+        maximum: 7 * 86_400,
+        description: 'After a run, skip events for this many seconds.',
+      },
+      maxRunsPerHour: {
+        type: 'integer',
+        minimum: 0,
+        maximum: 10_000,
+        description: 'Most runs in one hour (default 60; 0 = no cap).',
+      },
+      limits: {
+        type: 'object',
+        additionalProperties: false,
+        properties: limitProps,
+        description: 'Overrides of the default limits.',
+      },
+    },
+  }
 }

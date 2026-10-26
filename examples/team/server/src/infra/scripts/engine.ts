@@ -16,10 +16,14 @@
  * the one that changed the table, the one that claimed the routine slot), so nothing runs twice
  * across instances.
  */
+import { AsyncLocalStorage } from 'node:async_hooks'
+import type { ActivityRecord, ActivityStore } from 'eharness/activity'
 import { raiseAlarm } from '../../app/alarms.ts'
 import type { Deps, ScriptRunnerPort } from '../../app/ports.ts'
 import { getRow } from '../../app/tables.ts'
 import {
+  APP_TRIGGER_TYPES,
+  appMismatch,
   CHANNEL_EVENT_TYPES,
   type ChannelEventType,
   channelMismatch,
@@ -27,6 +31,7 @@ import {
   MAX_CONSECUTIVE_FAILURES,
   parseManifest,
   type Role,
+  type ScriptAppEvent,
   type ScriptChannelEvent,
   type ScriptManifest,
   type SkipReason,
@@ -58,6 +63,10 @@ export interface ScriptEngineOptions {
   allowPrivateFetch?: boolean
   fetch?: typeof fetch
   resolveHost?: (host: string) => Promise<string[]>
+  /** Signs webhook URLs (stable across restarts when TEAM_SECRET_KEY or the vault key is set). */
+  webhookSecret?: string
+  /** The team API in-process for `ctx.api` (main.ts). */
+  callApi?: HostContext['callApi']
   /** Runs at once across scripts (read for every run, so Settings apply at once). Default 4. */
   concurrency?: () => number
   log?: { warn(message: string): void }
@@ -75,6 +84,17 @@ export interface ScriptEngine extends ScriptRunnerPort {
   onChannelEvent(info: ChannelEventInfo): void
   onTableRows(change: TableRowsChange): void
   fireSchedule(scriptId: string, slot: number): Promise<{ ran: boolean; reason?: string }>
+  /** An app event was appended on this instance (main.ts wraps the event appender). */
+  onAppEvent(event: ScriptAppEvent): void
+  /** A POST to the script's webhook: a real run of the active version, awaited (the caller gets the result). */
+  fireWebhook(
+    scriptId: string,
+    event: Record<string, unknown>,
+  ): Promise<{ status: number; body: unknown }>
+  /** The secret webhook URL path of a script (`/hooks/scripts/<id>/<token>`). */
+  webhookPath(scriptId: string): Promise<string>
+  /** Whether a token belongs to the script. */
+  webhookOk(scriptId: string, token: string): Promise<boolean>
   /** Resolves when every queued run has finished (tests, shutdown). */
   idle(): Promise<void>
   /** Shutdown: no new automatic runs; waits up to `ms` for the running ones. */
@@ -102,6 +122,24 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
   const all = new Set<Promise<unknown>>()
   let running = 0
   let stopped = false
+  /** The script whose `ctx.api` call is running (events it causes do not start it again). */
+  const apiCaller = new AsyncLocalStorage<string>()
+  const hookKey = crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(`scripts-webhook|${o.webhookSecret ?? crypto.randomUUID()}`),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const hookToken = async (scriptId: string): Promise<string> => {
+    const sig = new Uint8Array(
+      await crypto.subtle.sign('HMAC', await hookKey, new TextEncoder().encode(scriptId)),
+    )
+    return btoa(String.fromCharCode(...sig.slice(0, 24)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')
+  }
   const slots: Array<() => void> = []
   const limit = (): number => Math.max(1, o.concurrency?.() ?? 4)
 
@@ -248,6 +286,9 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
         ...(o.allowPrivateFetch === undefined ? {} : { allowPrivateFetch: o.allowPrivateFetch }),
         ...(o.fetch === undefined ? {} : { fetch: o.fetch }),
         ...(o.resolveHost === undefined ? {} : { resolveHost: o.resolveHost }),
+        ...(o.callApi === undefined
+          ? {}
+          : { callApi: (req) => apiCaller.run(input.script.id, () => o.callApi!(req)) }),
       })
       const r = await runScript({
         source: input.version.source,
@@ -532,6 +573,61 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
       }
     },
 
+    onAppEvent(event) {
+      if (stopped) return
+      try {
+        const caller = apiCaller.getStore()
+        for (const a of active()) {
+          const matched = a.manifest.triggers.some(
+            (t) => t.kind === 'app' && appMismatch(t, event) === undefined,
+          )
+          if (!matched) continue
+          const skip = gate(a.script, a.manifest, event.at, caller === a.script.id)
+          if (skip !== undefined) {
+            recordSkip(a.script, a.version.version, 'app', skip, event)
+            continue
+          }
+          enqueue({
+            script: a.script,
+            version: a.version,
+            trigger: 'app',
+            event,
+            dryRun: false,
+            startedBy: 'app',
+          })
+        }
+      } catch (error) {
+        log.warn(
+          `scripts: an app event could not be handled: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    },
+
+    async fireWebhook(scriptId, event) {
+      if (stopped) return { status: 503, body: { error: 'the server is stopping' } }
+      const a = active().find((x) => x.script.id === scriptId)
+      if (a === undefined || !a.manifest.triggers.some((t) => t.kind === 'webhook'))
+        return { status: 404, body: { error: 'no such webhook' } }
+      const skip = gate(a.script, a.manifest, null, false)
+      if (skip !== undefined) {
+        recordSkip(a.script, a.version.version, 'webhook', skip, event)
+        return { status: skip === 'paused' ? 503 : 429, body: { error: `skipped: ${skip}` } }
+      }
+      const run = await track(
+        execute({
+          script: a.script,
+          version: a.version,
+          trigger: 'webhook',
+          event,
+          dryRun: false,
+          startedBy: 'webhook',
+        }),
+      )
+      return run.outcome === 'ok'
+        ? { status: 200, body: { ok: true, result: run.result ?? null, runId: run.id } }
+        : { status: 500, body: { ok: false, error: run.error ?? run.outcome, runId: run.id } }
+    },
+
     async fireSchedule(scriptId, slot) {
       if (stopped) return { ran: false, reason: 'the server is stopping' }
       const a = active().find((x) => x.script.id === scriptId)
@@ -554,6 +650,24 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
       return { ran: true, ...(run.outcome === 'ok' ? {} : { reason: run.error ?? run.outcome }) }
     },
 
+    async webhookPath(scriptId) {
+      return `/hooks/scripts/${encodeURIComponent(scriptId)}/${await hookToken(scriptId)}`
+    },
+
+    async webhook(scriptId, token, event) {
+      if (!(await this.webhookOk(scriptId, token)))
+        return { status: 404, body: { error: 'no such webhook' } }
+      return this.fireWebhook(scriptId, event)
+    },
+
+    async webhookOk(scriptId, token) {
+      const want = await hookToken(scriptId)
+      if (token.length !== want.length) return false
+      let diff = 0
+      for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ token.charCodeAt(i)
+      return diff === 0
+    },
+
     async idle() {
       while (all.size > 0) await Promise.allSettled([...all])
     },
@@ -569,5 +683,33 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
       ])
       if (timer !== undefined) clearTimeout(timer)
     },
+  }
+}
+
+/** App event types scripts may start on, as a set (the activity watcher filters with it). */
+export const APP_TRIGGER_SET: ReadonlySet<string> = new Set(APP_TRIGGER_TYPES)
+
+/** An activity store that also hands every appended record to `onRecord` (never awaited, never throws). */
+export function watchScriptEvents(
+  inner: ActivityStore,
+  onRecord: (record: ActivityRecord) => void,
+): ActivityStore {
+  return {
+    ...inner,
+    append: async (events) => {
+      const records = await inner.append(events)
+      for (const r of records) {
+        try {
+          onRecord(r)
+        } catch {
+          // a script problem never breaks the feed
+        }
+      }
+      return records
+    },
+    read: (q) => inner.read(q),
+    lastSeq: () => inner.lastSeq(),
+    prunedThrough: () => inner.prunedThrough(),
+    prune: (o) => inner.prune(o),
   }
 }
