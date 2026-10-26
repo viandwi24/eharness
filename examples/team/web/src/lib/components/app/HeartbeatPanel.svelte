@@ -363,7 +363,11 @@
 		{/if}
 
 		<section class="flex flex-col gap-2">
-			<div class="font-medium">Recent beats</div>
+			<div class="flex items-center gap-2">
+				<span class="font-medium">Recent beats</span>
+				<span class="flex-1"></span>
+				<a class="text-xs underline underline-offset-4" href="/agents/{agentId}/heartbeat">Open the heartbeat session (debug)</a>
+			</div>
 			{#if !hb.beats.length}
 				<p class="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">No beats yet.</p>
 			{:else}

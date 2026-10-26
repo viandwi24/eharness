@@ -36,6 +36,11 @@ export function createSessionResolver(options: {
       const def = thread === undefined ? undefined : agents.get(thread.agentId)
       return def === undefined ? undefined : { def, id: sessionId }
     }
+    if (sessionId.startsWith('heartbeat:')) {
+      // the rolling heartbeat session of an agent (read for debugging on its page)
+      const def = agents.get(sessionId.slice('heartbeat:'.length))
+      return def === undefined ? undefined : { def, id: sessionId }
+    }
     if (isDmSession(sessionId)) {
       const key = sessionId.slice('dm:'.length)
       const def = agents.get(key) ?? agents.getBySlug(key)

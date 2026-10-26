@@ -1015,3 +1015,14 @@ describe('upgrading an older database', () => {
     conn.close()
   })
 })
+
+describe('heartbeat session for debugging', () => {
+  test('the heartbeat session of an agent can be read through the session API', async () => {
+    const r = rig()
+    rigs.push(r)
+    const res = await r.app.request(`/sessions/heartbeat:${r.ids.lead}/messages?limit=5`)
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { messages: unknown[] }).messages).toEqual([])
+    expect((await r.app.request('/sessions/heartbeat:nobody/messages')).status).toBe(404)
+  })
+})
