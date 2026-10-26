@@ -32,8 +32,12 @@ import {
   parseManifest,
   type Role,
   type ScriptAppEvent,
+  type ScriptAttachment,
   type ScriptChannelEvent,
+  type ScriptEntity,
+  type ScriptForward,
   type ScriptManifest,
+  type ScriptStructured,
   type SkipReason,
 } from '../../domain/script-manifest.ts'
 import {
@@ -70,6 +74,8 @@ export interface ScriptEngineOptions {
   callApi?: HostContext['callApi']
   /** Runs at once across scripts (read for every run, so Settings apply at once). Default 4. */
   concurrency?: () => number
+  /** How long to wait for the rest of an album before one event goes out (ms). Default 1500. */
+  albumWaitMs?: number
   log?: { warn(message: string): void }
 }
 
@@ -105,14 +111,75 @@ export interface ScriptEngine extends ScriptRunnerPort {
 const MAX_WAITING = 20
 const SKIP_LOG_MS = 60_000
 const TABLE_EVENT_ROWS = 20
+const ALBUM_WAIT_MS = 1500
+/** Telegram albums hold at most 10 items. */
+const MAX_ALBUM = 10
 
-/** The event as the trace keeps it: no message text (only its length). */
+/** The event as the trace keeps it: no message text (only its length), album captions too. */
 function storedEvent(event: unknown): unknown {
   if (typeof event !== 'object' || event === null || Array.isArray(event)) return event
   const e = event as Record<string, unknown>
-  if (typeof e.text !== 'string') return event
+  const album = Array.isArray(e.album) ? { album: e.album.map(storedEvent) } : {}
+  if (typeof e.text !== 'string') return { ...e, ...album }
   const { text, ...rest } = e
-  return { ...rest, textLength: (text as string).length }
+  return { ...rest, ...album, textLength: (text as string).length }
+}
+
+type RawAttachment = Omit<ScriptAttachment, 'fetch'> & { fetch?: unknown }
+
+/** A transport attachment as scripts see it (no functions, no absent fields). */
+function scriptAttachmentOf(a: RawAttachment): ScriptAttachment {
+  const out: ScriptAttachment = { id: a.id, kind: a.kind }
+  for (const k of [
+    'media',
+    'name',
+    'mediaType',
+    'size',
+    'width',
+    'height',
+    'duration',
+    'ref',
+  ] as const) {
+    const v = a[k]
+    if (v !== undefined) (out as unknown as Record<string, unknown>)[k] = v
+  }
+  if (a.sticker !== undefined) out.sticker = { ...a.sticker }
+  return out
+}
+
+function scriptForwardOf(f: Record<string, unknown>): ScriptForward {
+  const out: ScriptForward = {}
+  for (const k of ['name', 'chat', 'user', 'messageId'] as const)
+    if (typeof f[k] === 'string') out[k] = f[k] as string
+  if (typeof f.at === 'number') out.at = f.at
+  return out
+}
+
+/** Messages of one album in one event: the first carries the caption, `album` lists each. */
+export function mergeAlbum(events: ScriptChannelEvent[]): ScriptChannelEvent {
+  const sorted = [...events].sort(
+    (a, b) =>
+      a.at - b.at ||
+      Number(a.messageId ?? 0) - Number(b.messageId ?? 0) ||
+      (a.messageId ?? '').localeCompare(b.messageId ?? ''),
+  )
+  const first = sorted[0] as ScriptChannelEvent
+  const captioned = sorted.find((e) => e.text !== undefined && e.text !== '')
+  const attachments = sorted.flatMap((e) => e.attachments ?? [])
+  const entities = captioned?.entities
+  const { text: _t, entities: _e, attachments: _a, ...base } = first
+  return {
+    ...base,
+    ...(captioned?.text === undefined ? {} : { text: captioned.text }),
+    ...(entities === undefined ? {} : { entities }),
+    ...(attachments.length === 0 ? {} : { attachments }),
+    album: sorted.map((e) => ({
+      messageId: e.messageId ?? '',
+      ...(e.text === undefined || e.text === '' ? {} : { text: e.text }),
+      ...(e.attachments === undefined ? {} : { attachments: e.attachments }),
+      ...(e.entities === undefined ? {} : { entities: e.entities }),
+    })),
+  }
 }
 
 export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
@@ -420,13 +487,11 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
             text?: string
             sender?: { id: string; name?: string; username?: string; isSelf?: boolean }
             replyTo?: { messageId: string; senderId?: string; senderName?: string }
-            attachments?: Array<{
-              id: string
-              kind: string
-              name?: string
-              mediaType?: string
-              size?: number
-            }>
+            attachments?: RawAttachment[]
+            entities?: ScriptEntity[]
+            forwardOf?: Record<string, unknown>
+            groupId?: string
+            content?: ScriptStructured
           })
         : undefined
     const actor = e.actor ?? msg?.sender
@@ -465,14 +530,14 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
       ...(msg?.attachments === undefined || msg.attachments.length === 0
         ? {}
         : {
-            attachments: msg.attachments.map((a) => ({
-              id: a.id,
-              kind: a.kind,
-              ...(a.name === undefined ? {} : { name: a.name }),
-              ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
-              ...(a.size === undefined ? {} : { size: a.size }),
-            })),
+            attachments: msg.attachments.map(scriptAttachmentOf),
           }),
+      ...(msg?.entities === undefined || msg.entities.length === 0
+        ? {}
+        : { entities: msg.entities.map((x) => ({ ...x })) }),
+      ...(msg?.forwardOf === undefined ? {} : { forward: scriptForwardOf(msg.forwardOf) }),
+      ...(msg?.groupId === undefined ? {} : { groupId: msg.groupId }),
+      ...(msg?.content === undefined ? {} : { content: structuredClone(msg.content) }),
       ...(msg?.replyTo === undefined
         ? {}
         : {
@@ -490,6 +555,58 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
           ? { messageId: String((e as { messageNativeId: string }).messageNativeId) }
           : {}),
       ...('emoji' in e ? { emoji: String((e as { emoji: string }).emoji) } : {}),
+    }
+  }
+
+  /** Albums waiting for their other items. */
+  const albums = new Map<
+    string,
+    { events: ScriptChannelEvent[]; info: ChannelEventInfo; timer: ReturnType<typeof setTimeout> }
+  >()
+  function flushAlbum(key: string): void {
+    const open = albums.get(key)
+    if (open === undefined) return
+    albums.delete(key)
+    clearTimeout(open.timer)
+    if (stopped) return
+    try {
+      dispatchChannel(mergeAlbum(open.events), open.info)
+    } catch (error) {
+      log.warn(
+        `scripts: an album could not be handled: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
+  function dispatchChannel(ev: ScriptChannelEvent, info: ChannelEventInfo): void {
+    const scripts = active().filter((a) => a.manifest.triggers.some((t) => t.kind === 'channel'))
+    for (const a of scripts) {
+      const matched = a.manifest.triggers.some(
+        (t) => t.kind === 'channel' && channelMismatch(t, ev) === undefined,
+      )
+      if (!matched) continue
+      // what the app itself sent never starts a script (loop guard); what a person typed on the
+      // connected account from their phone does (a user account used by its owner too)
+      const typedByPerson = info.result.action === 'drop' && info.result.reason === OWN_TYPED
+      const selfCaused =
+        !typedByPerson &&
+        (ev.actor?.isSelf === true ||
+          ('message' in info.event &&
+            (info.event.message as { direction?: string }).direction === 'out'))
+      const skip = gate(a.script, a.manifest, ev.at, selfCaused)
+      if (skip !== undefined) {
+        recordSkip(a.script, a.version.version, 'channel', skip, ev)
+        continue
+      }
+      enqueue({
+        script: a.script,
+        version: a.version,
+        trigger: 'channel',
+        event: ev,
+        dryRun: false,
+        startedBy: 'channel',
+        channelEvent: ev,
+      })
     }
   }
 
@@ -514,40 +631,26 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
     onChannelEvent(info) {
       if (stopped) return
       try {
-        const scripts = active().filter((a) =>
-          a.manifest.triggers.some((t) => t.kind === 'channel'),
-        )
-        if (scripts.length === 0) return
+        if (!active().some((a) => a.manifest.triggers.some((t) => t.kind === 'channel'))) return
         const ev = toChannelEvent(info)
         if (ev === undefined) return
-        for (const a of scripts) {
-          const matched = a.manifest.triggers.some(
-            (t) => t.kind === 'channel' && channelMismatch(t, ev) === undefined,
-          )
-          if (!matched) continue
-          // what the app itself sent never starts a script (loop guard); what a person typed on the
-          // connected account from their phone does (a user account used by its owner too)
-          const typedByPerson = info.result.action === 'drop' && info.result.reason === OWN_TYPED
-          const selfCaused =
-            !typedByPerson &&
-            (ev.actor?.isSelf === true ||
-              ('message' in info.event &&
-                (info.event.message as { direction?: string }).direction === 'out'))
-          const skip = gate(a.script, a.manifest, ev.at, selfCaused)
-          if (skip !== undefined) {
-            recordSkip(a.script, a.version.version, 'channel', skip, ev)
-            continue
+        // an album arrives as one message per item: wait a moment and start scripts once
+        if (ev.type === 'message.created' && ev.groupId !== undefined) {
+          const key = `${ev.connectionId}|${ev.chat?.nodeId ?? ''}|${ev.groupId}`
+          const open = albums.get(key)
+          if (open !== undefined) {
+            open.events.push(ev)
+            if (open.events.length >= MAX_ALBUM) flushAlbum(key)
+            return
           }
-          enqueue({
-            script: a.script,
-            version: a.version,
-            trigger: 'channel',
-            event: ev,
-            dryRun: false,
-            startedBy: 'channel',
-            channelEvent: ev,
+          albums.set(key, {
+            events: [ev],
+            info,
+            timer: setTimeout(() => flushAlbum(key), o.albumWaitMs ?? ALBUM_WAIT_MS),
           })
+          return
         }
+        dispatchChannel(ev, info)
       } catch (error) {
         log.warn(
           `scripts: a channel event could not be handled: ${error instanceof Error ? error.message : String(error)}`,
@@ -711,6 +814,8 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
 
     async stop(ms = 10_000) {
       stopped = true
+      for (const a of albums.values()) clearTimeout(a.timer)
+      albums.clear()
       let timer: ReturnType<typeof setTimeout> | undefined
       await Promise.race([
         this.idle(),

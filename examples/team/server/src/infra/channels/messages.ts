@@ -11,13 +11,69 @@ import { identityDtoOf } from './identities.ts'
 import {
   type ContentPart,
   FILE_URL_PREFIX,
+  type FileMedia,
   filesOfContent,
   type IdentityRow,
   type MessageContent,
   type MessageEntity,
+  type StructuredContent,
   textOfContent,
 } from './model.ts'
 import type { Identity } from './types.ts'
+
+/** A stored file of a message: what it is, never its bytes. */
+export interface LogAttachment extends FileMedia {
+  id: string
+  kind?: string
+  name?: string
+  mediaType?: string
+  size?: number
+}
+
+/** The stored form of an inbound attachment (drops `fetch` and absent fields). */
+export const logAttachmentOf = (
+  a: {
+    id: string
+    kind?: string
+    name?: string | undefined
+    mediaType?: string | undefined
+    size?: number | undefined
+  } & { [K in keyof FileMedia]?: FileMedia[K] | undefined },
+): LogAttachment => {
+  const out: LogAttachment = { id: a.id }
+  if (a.kind !== undefined) out.kind = a.kind
+  if (a.name !== undefined) out.name = a.name
+  if (a.mediaType !== undefined) out.mediaType = a.mediaType
+  if (a.size !== undefined) out.size = a.size
+  return { ...out, ...mediaOf(a as FileMedia) }
+}
+
+const MEDIA_NAMES: Record<string, string> = {
+  photo: 'photo',
+  video: 'video',
+  animation: 'GIF',
+  video_note: 'video note',
+  voice: 'voice message',
+  audio: 'audio',
+  document: 'file',
+  sticker: 'sticker',
+  image: 'image',
+  file: 'file',
+}
+
+/** `[photo]`, `[3 photos]`, `[sticker 🚀]`, `[voice message, file]` — what a message carries, for lines the agent reads. */
+export const attachmentsLabel = (list: readonly LogAttachment[]): string => {
+  if (list.length === 0) return ''
+  const counts = new Map<string, number>()
+  for (const a of list) {
+    const base = MEDIA_NAMES[a.media ?? a.kind ?? 'file'] ?? 'file'
+    const name = a.sticker?.emoji === undefined ? base : `${base} ${a.sticker.emoji}`
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  return `[${[...counts].map(([name, n]) => (n === 1 ? name : `${n} ${name}s`)).join(', ')}]`
+}
+
+const MEDIA_KEYS = ['media', 'width', 'height', 'duration', 'sticker', 'ref'] as const
 
 /** What a stored message says once opened. */
 export interface LogMessage {
@@ -34,18 +90,16 @@ export interface LogMessage {
   sender?: Identity
   senderIdentityId?: string
   text: string
-  attachments: Array<{
-    id: string
-    kind?: string
-    name?: string
-    mediaType?: string
-    size?: number
-  }>
+  attachments: LogAttachment[]
   entities?: MessageEntity[]
   replyTo?: { messageId: string; senderName?: string; text?: string }
   threadRoot?: string
   /** Origin of a forwarded message, as the adapter reported it. */
   forwardOf?: Record<string, unknown>
+  /** Album id shared by messages sent together. */
+  groupId?: string
+  /** A place, contact, poll or dice. */
+  structured?: StructuredContent
   kind: 'message' | 'service' | 'system'
   editedAt?: number
   deletedAt?: number
@@ -103,6 +157,8 @@ export interface NewLogMessage {
   sortKey?: string | undefined
   sendTxnId?: string | undefined
   forwardOf?: Record<string, unknown> | undefined
+  groupId?: string | undefined
+  structured?: StructuredContent | undefined
 }
 
 /** A message the Pause all hold kept from waking the agent. */
@@ -242,6 +298,8 @@ export const contentOf = (m: {
   entities?: MessageEntity[] | undefined
   replyTo?: LogMessage['replyTo'] | undefined
   forwardOf?: Record<string, unknown> | undefined
+  groupId?: string | undefined
+  structured?: StructuredContent | undefined
 }): MessageContent => {
   const parts: ContentPart[] = []
   if (m.text !== '') parts.push({ type: 'text', text: m.text })
@@ -256,6 +314,7 @@ export const contentOf = (m: {
           id: a.id,
           ...(a.kind === undefined ? {} : { kind: a.kind }),
           ...(a.size === undefined ? {} : { size: a.size }),
+          ...mediaOf(a),
         },
       },
     })
@@ -272,7 +331,15 @@ export const contentOf = (m: {
     ...(m.entities === undefined || m.entities.length === 0 ? {} : { entities: m.entities }),
     ...(reply === undefined ? {} : { reply }),
     ...(m.forwardOf === undefined ? {} : { forwardOf: m.forwardOf }),
+    ...(m.groupId === undefined ? {} : { groupId: m.groupId }),
+    ...(m.structured === undefined ? {} : { structured: m.structured }),
   }
+}
+
+const mediaOf = (a: FileMedia): FileMedia => {
+  const out: FileMedia = {}
+  for (const k of MEDIA_KEYS) if (a[k] !== undefined) (out as Record<string, unknown>)[k] = a[k]
+  return out
 }
 
 export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelLog {
@@ -370,6 +437,7 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
         ...(f.providerMetadata?.channel.size === undefined
           ? {}
           : { size: f.providerMetadata.channel.size }),
+        ...(f.providerMetadata === undefined ? {} : mediaOf(f.providerMetadata.channel)),
       })),
       ...(content.entities === undefined ? {} : { entities: content.entities }),
       ...(r.reply_to_native_id === null
@@ -385,6 +453,8 @@ export function sqliteChannelLog(sqlite: Database, vault: SecretVault): ChannelL
           }),
       ...(r.thread_root_native_id === null ? {} : { threadRoot: r.thread_root_native_id }),
       ...(content.forwardOf === undefined ? {} : { forwardOf: content.forwardOf }),
+      ...(content.groupId === undefined ? {} : { groupId: content.groupId }),
+      ...(content.structured === undefined ? {} : { structured: content.structured }),
       kind: r.kind as LogMessage['kind'],
       ...(r.edited_at === null ? {} : { editedAt: r.edited_at }),
       ...(r.deleted_at === null ? {} : { deletedAt: r.deleted_at }),

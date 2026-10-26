@@ -16,14 +16,17 @@ import type {
   Identity,
   InboundAttachment,
   InboundSignals,
+  MediaKind,
   NodeInfo,
   NodeRef,
   RemoteEvent,
   ReplyInfo,
+  StickerInfo,
+  StructuredContent,
 } from '../channels/types.ts'
 
 /** Bumped when the mapping below changes in a way that would give another result for the same update. */
-export const NORMALIZER_VERSION = 2
+export const NORMALIZER_VERSION = 3
 
 export interface NormalizeContext {
   botId: number
@@ -193,6 +196,10 @@ const ENTITY: Partial<Record<MessageEntity['type'], Entity['type']>> = {
   spoiler: 'spoiler',
   bot_command: 'command',
   hashtag: 'hashtag',
+  custom_emoji: 'custom_emoji',
+  cashtag: 'cashtag',
+  email: 'email',
+  phone_number: 'phone',
 }
 
 /** Normalized entities of a text (mentions by user id when the platform gives it, never by guessing a handle). */
@@ -213,6 +220,7 @@ export function entitiesOf(text: string, entities: readonly MessageEntity[] | un
         ...(e.type === 'text_link' ? { url: e.url } : {}),
         ...(e.type === 'url' ? { url: entityText(text, e) } : {}),
         ...(e.type === 'pre' && e.language !== undefined ? { language: e.language } : {}),
+        ...(e.type === 'custom_emoji' ? { customEmojiId: e.custom_emoji_id } : {}),
       })
     }
   }
@@ -260,24 +268,36 @@ export function signalsOf(message: Message, ctx: NormalizeContext): InboundSigna
 
 function attachmentsOf(message: Message, ctx: NormalizeContext): InboundAttachment[] {
   const out: InboundAttachment[] = []
-  const add = (
-    kind: InboundAttachment['kind'],
-    fileId: string,
-    uniqueId: string,
-    size: number | undefined,
-    name: string | undefined,
-    mediaType: string | undefined,
-  ): void => {
+  const add = (a: {
+    kind: InboundAttachment['kind']
+    media: MediaKind
+    fileId: string
+    uniqueId: string
+    size?: number | undefined
+    name?: string | undefined
+    mediaType?: string | undefined
+    width?: number | undefined
+    height?: number | undefined
+    duration?: number | undefined
+    sticker?: StickerInfo | undefined
+  }): void => {
     out.push({
-      id: uniqueId,
-      kind,
-      ...(name === undefined ? {} : { name }),
-      ...(mediaType === undefined ? {} : { mediaType }),
-      ...(size === undefined ? {} : { size }),
+      id: a.uniqueId,
+      kind: a.kind,
+      media: a.media,
+      // the bot's file_id sends the same file again without a download
+      ref: a.fileId,
+      ...(a.name === undefined ? {} : { name: a.name }),
+      ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
+      ...(a.size === undefined ? {} : { size: a.size }),
+      ...(a.width === undefined ? {} : { width: a.width }),
+      ...(a.height === undefined ? {} : { height: a.height }),
+      ...(a.duration === undefined ? {} : { duration: a.duration }),
+      ...(a.sticker === undefined ? {} : { sticker: a.sticker }),
       fetch: async () => ({
-        ...(await ctx.download(fileId, size)),
-        ...(mediaType === undefined ? {} : { mediaType }),
-        ...(name === undefined ? {} : { name }),
+        ...(await ctx.download(a.fileId, a.size)),
+        ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
+        ...(a.name === undefined ? {} : { name: a.name }),
       }),
     })
   }
@@ -285,50 +305,193 @@ function attachmentsOf(message: Message, ctx: NormalizeContext): InboundAttachme
     const best = message.photo.reduce((a, b) =>
       (b.file_size ?? b.width * b.height) >= (a.file_size ?? a.width * a.height) ? b : a,
     )
-    add(
-      'image',
-      best.file_id,
-      best.file_unique_id,
-      best.file_size,
-      `photo-${best.file_unique_id}.jpg`,
-      'image/jpeg',
-    )
+    add({
+      kind: 'image',
+      media: 'photo',
+      fileId: best.file_id,
+      uniqueId: best.file_unique_id,
+      size: best.file_size,
+      name: `photo-${best.file_unique_id}.jpg`,
+      mediaType: 'image/jpeg',
+      width: best.width,
+      height: best.height,
+    })
+  }
+  // an animation (GIF) also fills `document`: report it once, as an animation
+  const anim = message.animation
+  if (anim !== undefined) {
+    add({
+      kind: 'video',
+      media: 'animation',
+      fileId: anim.file_id,
+      uniqueId: anim.file_unique_id,
+      size: anim.file_size,
+      name: anim.file_name ?? `animation-${anim.file_unique_id}.mp4`,
+      mediaType: anim.mime_type ?? 'video/mp4',
+      width: anim.width,
+      height: anim.height,
+      duration: anim.duration,
+    })
   }
   const d = message.document
-  if (d !== undefined) {
-    add(
-      d.mime_type?.startsWith('image/') ? 'image' : 'file',
-      d.file_id,
-      d.file_unique_id,
-      d.file_size,
-      d.file_name,
-      d.mime_type,
-    )
+  if (d !== undefined && anim === undefined) {
+    add({
+      kind: d.mime_type?.startsWith('image/') ? 'image' : 'file',
+      media: 'document',
+      fileId: d.file_id,
+      uniqueId: d.file_unique_id,
+      size: d.file_size,
+      name: d.file_name,
+      mediaType: d.mime_type,
+    })
   }
   const a = message.audio
   if (a !== undefined)
-    add('audio', a.file_id, a.file_unique_id, a.file_size, a.file_name, a.mime_type ?? 'audio/mpeg')
+    add({
+      kind: 'audio',
+      media: 'audio',
+      fileId: a.file_id,
+      uniqueId: a.file_unique_id,
+      size: a.file_size,
+      name: a.file_name,
+      mediaType: a.mime_type ?? 'audio/mpeg',
+      duration: a.duration,
+    })
   const v = message.voice
   if (v !== undefined)
-    add(
-      'audio',
-      v.file_id,
-      v.file_unique_id,
-      v.file_size,
-      `voice-${v.file_unique_id}.ogg`,
-      v.mime_type ?? 'audio/ogg',
-    )
+    add({
+      kind: 'audio',
+      media: 'voice',
+      fileId: v.file_id,
+      uniqueId: v.file_unique_id,
+      size: v.file_size,
+      name: `voice-${v.file_unique_id}.ogg`,
+      mediaType: v.mime_type ?? 'audio/ogg',
+      duration: v.duration,
+    })
   const vid = message.video
   if (vid !== undefined)
-    add(
-      'video',
-      vid.file_id,
-      vid.file_unique_id,
-      vid.file_size,
-      vid.file_name,
-      vid.mime_type ?? 'video/mp4',
-    )
+    add({
+      kind: 'video',
+      media: 'video',
+      fileId: vid.file_id,
+      uniqueId: vid.file_unique_id,
+      size: vid.file_size,
+      name: vid.file_name ?? `video-${vid.file_unique_id}.mp4`,
+      mediaType: vid.mime_type ?? 'video/mp4',
+      width: vid.width,
+      height: vid.height,
+      duration: vid.duration,
+    })
+  const note = message.video_note
+  if (note !== undefined)
+    add({
+      kind: 'video',
+      media: 'video_note',
+      fileId: note.file_id,
+      uniqueId: note.file_unique_id,
+      size: note.file_size,
+      name: `video-note-${note.file_unique_id}.mp4`,
+      mediaType: 'video/mp4',
+      width: note.length,
+      height: note.length,
+      duration: note.duration,
+    })
+  const st = message.sticker
+  if (st !== undefined) {
+    const format: StickerInfo['format'] = st.is_animated
+      ? 'animated'
+      : st.is_video
+        ? 'video'
+        : 'static'
+    add({
+      kind: 'image',
+      media: 'sticker',
+      fileId: st.file_id,
+      uniqueId: st.file_unique_id,
+      size: st.file_size,
+      name: `sticker-${st.file_unique_id}.${format === 'animated' ? 'tgs' : format === 'video' ? 'webm' : 'webp'}`,
+      mediaType:
+        format === 'animated'
+          ? 'application/x-tgsticker'
+          : format === 'video'
+            ? 'video/webm'
+            : 'image/webp',
+      width: st.width,
+      height: st.height,
+      sticker: {
+        format,
+        ...(st.emoji === undefined ? {} : { emoji: st.emoji }),
+        ...(st.set_name === undefined ? {} : { setName: st.set_name }),
+        ...(st.custom_emoji_id === undefined ? {} : { customEmojiId: st.custom_emoji_id }),
+      },
+    })
+  }
   return out
+}
+
+/** A place, contact, poll or dice of a message (they carry no text and no file). */
+function contentOf(message: Message): StructuredContent | undefined {
+  if (message.venue !== undefined) {
+    const v = message.venue
+    return {
+      type: 'venue',
+      latitude: v.location.latitude,
+      longitude: v.location.longitude,
+      title: v.title,
+      address: v.address,
+    }
+  }
+  if (message.location !== undefined) {
+    const l = message.location
+    return {
+      type: 'location',
+      latitude: l.latitude,
+      longitude: l.longitude,
+      ...(l.live_period ? { live: true } : {}),
+    }
+  }
+  if (message.contact !== undefined) {
+    const c = message.contact
+    return {
+      type: 'contact',
+      phone: c.phone_number,
+      firstName: c.first_name,
+      ...(c.last_name === undefined ? {} : { lastName: c.last_name }),
+      ...(c.user_id === undefined ? {} : { userId: String(c.user_id) }),
+    }
+  }
+  if (message.poll !== undefined) {
+    const p = message.poll
+    return {
+      type: 'poll',
+      question: p.question,
+      options: p.options.map((o) => o.text),
+      ...(p.type === 'quiz' ? { quiz: true } : {}),
+      ...(p.allows_multiple_answers ? { multiple: true } : {}),
+      anonymous: p.is_anonymous,
+    }
+  }
+  if (message.dice !== undefined)
+    return { type: 'dice', emoji: message.dice.emoji, value: message.dice.value }
+  return undefined
+}
+
+/** A short line for a message that has no text of its own (a sticker, a place, a poll…). */
+function placeholderOf(
+  attachments: readonly InboundAttachment[],
+  content: StructuredContent | undefined,
+): string {
+  const st = attachments.find((a) => a.media === 'sticker')
+  if (st !== undefined) return `[sticker${st.sticker?.emoji ? ` ${st.sticker.emoji}` : ''}]`
+  if (attachments.some((a) => a.media === 'video_note')) return '[video note]'
+  if (content?.type === 'location') return `[location ${content.latitude}, ${content.longitude}]`
+  if (content?.type === 'venue') return `[venue ${content.title}, ${content.address}]`
+  if (content?.type === 'contact')
+    return `[contact ${content.firstName}${content.lastName ? ` ${content.lastName}` : ''}]`
+  if (content?.type === 'poll') return `[poll: ${content.question}]`
+  if (content?.type === 'dice') return `[dice ${content.emoji} ${content.value}]`
+  return ''
 }
 
 function replyInfoOf(message: Message): ReplyInfo | undefined {
@@ -524,9 +687,12 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
     const at = m.date * 1000
     const events: RemoteEvent[] = serviceEvents(update, m, at)
     const attachments = attachmentsOf(m, ctx)
-    const text = m.text ?? m.caption ?? ''
-    // service messages carry no text and no files
-    if (text === '' && attachments.length === 0) return { events }
+    const content = contentOf(m)
+    // a place, contact, poll or dice has no text of its own: a short line says what it is
+    const text =
+      m.text ?? m.caption ?? (attachments.length === 0 ? placeholderOf(attachments, content) : '')
+    // service messages carry no text, no files and no content
+    if (text === '' && attachments.length === 0 && content === undefined) return { events }
     // a post of a channel forwarded into its discussion group: the group is a discussion of the channel
     const chain = chainOfMessage(m)
     const forwarded = m.forward_origin
@@ -561,6 +727,8 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
           ? { threadRoot: String(m.message_thread_id) }
           : {}),
         ...(fwd === undefined ? {} : { forwardOf: fwd }),
+        ...(m.media_group_id === undefined ? {} : { groupId: m.media_group_id }),
+        ...(content === undefined ? {} : { content }),
         sortKey: String(m.message_id).padStart(12, '0'),
         ...(m.from?.id === ctx.botId ? { direction: 'out' as const } : {}),
       },

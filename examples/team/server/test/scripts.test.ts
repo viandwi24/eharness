@@ -838,6 +838,130 @@ describe('the full channel API', () => {
   })
 })
 
+describe('media in script events', () => {
+  test('an album is one event with every item; stickers, formatting, forwards and polls keep what they are', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    await r.api('POST', '/tables', { name: 'seen' })
+    const src = `export default async function (event, ctx) {
+  await ctx.tables.insert({ table: 'seen', rows: [{
+    id: event.messageId,
+    text: event.text ?? '',
+    album: (event.album ?? []).map((m) => m.messageId).join(','),
+    media: (event.attachments ?? []).map((a) => a.media + (a.sticker ? ':' + a.sticker.emoji : '')).join(','),
+    refs: (event.attachments ?? []).map((a) => a.ref ?? '').join(','),
+    bold: (event.entities ?? []).filter((e) => e.type === 'bold').length,
+    forward: event.forward?.name ?? '',
+    poll: event.content?.type === 'poll' ? event.content.question : '',
+  }] })
+}`
+    const manifest = {
+      triggers: [{ kind: 'channel', events: ['message.created'], chats: [CHAT] }],
+      grants: { tablesWrite: ['seen'] },
+    }
+    expect((await r.api('POST', '/scripts', { name: 'media', source: src, manifest })).status).toBe(
+      201,
+    )
+    await r.api('POST', '/scripts/media/activate', {})
+    const who = { id: '9', name: 'Zed' }
+    const img = (n: string) => ({
+      name: `${n}.jpg`,
+      mediaType: 'image/jpeg',
+      bytes: new Uint8Array([1]),
+      media: 'photo' as const,
+      ref: `file-${n}`,
+    })
+    // an album of three: the caption and its bold entity sit on the first item
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '101',
+      text: 'BUY BTC',
+      entities: [{ type: 'bold', offset: 0, length: 3 }],
+      groupId: 'g1',
+      attachments: [img('a')],
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '102',
+      text: '',
+      groupId: 'g1',
+      attachments: [img('b')],
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '103',
+      text: '',
+      groupId: 'g1',
+      attachments: [img('c')],
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '104',
+      text: '',
+      attachments: [
+        {
+          name: 'sticker.webp',
+          mediaType: 'image/webp',
+          bytes: new Uint8Array([1]),
+          media: 'sticker',
+          sticker: { emoji: '🚀', format: 'static' },
+        },
+      ],
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '105',
+      text: 'news',
+      forwardOf: { type: 'channel', name: 'Signals HQ', chat: '-100' },
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '106',
+      text: '[poll: Long or short?]',
+      content: { type: 'poll', question: 'Long or short?', options: ['Long', 'Short'] },
+    })
+    const rows = async () =>
+      (await r.api('POST', '/tables/seen/query', { limit: 50 })).json as {
+        rows: Array<{ data: Record<string, unknown> }>
+      }
+    await until('all seen', async () => (await rows()).rows.length >= 4, 5000)
+    await sleep(100)
+    const byId = new Map((await rows()).rows.map((x) => [x.data.id, x.data]))
+    expect(byId.size).toBe(4)
+    expect(byId.get('101')).toMatchObject({
+      text: 'BUY BTC',
+      album: '101,102,103',
+      media: 'photo,photo,photo',
+      refs: 'file-a,file-b,file-c',
+      bold: 1,
+    })
+    expect(byId.get('104')).toMatchObject({ media: 'sticker:🚀' })
+    expect(byId.get('105')).toMatchObject({ forward: 'Signals HQ' })
+    expect(byId.get('106')).toMatchObject({ poll: 'Long or short?' })
+    // the stored message keeps its media facts (resend without a download later)
+    const gw = r.server.channels
+    const node = gw.nodes.list('c1').find((n) => n.nativeId === CHAT)
+    const stored = await gw.log.find(node?.id ?? '', '102')
+    expect(stored).toMatchObject({
+      groupId: 'g1',
+      attachments: [{ media: 'photo', ref: 'file-b' }],
+    })
+  })
+})
+
 describe('more inputs and the team API', () => {
   test('an app event starts a script; ctx.api reads and changes through the API; its own events do not loop', async () => {
     const r = rig()

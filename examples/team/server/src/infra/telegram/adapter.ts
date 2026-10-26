@@ -728,6 +728,12 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
       meta: { chatId: identityNativeId },
     }),
     childNativeId: (parent, key) => `${parent.nativeId}/${key}`,
+    // a logged attachment keeps its file_id (`ref`): the bot downloads it again any time
+    async fetchAttachment(_node, _messageNativeId, attachmentId, ref) {
+      const fileId = ref ?? attachmentId
+      const got = await download(fileId, undefined)
+      return { bytes: got.bytes }
+    },
     actions: nativeActions(bot, token, joinRequests, joinResolved),
     events: TELEGRAM_BOT_EVENTS,
   }

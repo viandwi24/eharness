@@ -6,6 +6,7 @@
  * Node ids: a chat is `<chat>`, a topic of it `<chat>/<topic>` (the topic is a child thread node).
  */
 import { readableMentions } from './mentions.ts'
+import type { MessageEntity } from './model.ts'
 import {
   type AdapterEventType,
   type AdapterHost,
@@ -17,12 +18,15 @@ import {
   type HistoryEntry,
   type Identity,
   type InboundAttachment,
+  type MediaKind,
   type MemberInfo,
   type NativeAction,
   type NodeInfo,
   type NodeRef,
   type OutboundMessage,
   type RemoteEvent,
+  type StickerInfo,
+  type StructuredContent,
 } from './types.ts'
 
 export const MOCK_CAPABILITIES: ChannelCapabilities = {
@@ -70,6 +74,10 @@ export interface MockSay {
   replyTo?: { messageId: string; senderName?: string; senderId?: string; text?: string }
   forwardOf?: Record<string, unknown>
   command?: { name: string; args: string }
+  entities?: MessageEntity[]
+  /** Album id (messages sent together). */
+  groupId?: string
+  content?: StructuredContent
   attachments?: Array<{
     id?: string
     name: string
@@ -77,6 +85,9 @@ export interface MockSay {
     bytes: Uint8Array
     /** Report this size (default the byte length). */
     size?: number
+    media?: MediaKind
+    sticker?: StickerInfo
+    ref?: string
   }>
   at?: number
   /** Deliver again with the same key to model a redelivery of one platform event. */
@@ -355,6 +366,9 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
           name: a.name,
           mediaType: a.mediaType,
           size: a.size ?? a.bytes.byteLength,
+          ...(a.media === undefined ? {} : { media: a.media }),
+          ...(a.sticker === undefined ? {} : { sticker: a.sticker }),
+          ...(a.ref === undefined ? {} : { ref: a.ref }),
           fetch: async () => ({ bytes: a.bytes, mediaType: a.mediaType, name: a.name }),
         }
       })
@@ -374,6 +388,9 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
           attachments,
           ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
           ...(input.forwardOf === undefined ? {} : { forwardOf: input.forwardOf }),
+          ...(input.entities === undefined ? {} : { entities: input.entities }),
+          ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
+          ...(input.content === undefined ? {} : { content: input.content }),
         },
         signals: {
           mentionedSelf: input.mentionSelf === true,

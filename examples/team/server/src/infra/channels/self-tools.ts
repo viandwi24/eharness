@@ -28,7 +28,7 @@ import type { RunOrigin } from '../../domain/run-profiles.ts'
 import { connectionList, resolveConnectionRef } from './connection-ref.ts'
 import type { ChannelGateway, PersonView, Requester } from './gateway.ts'
 import { flat, localTime, personLabel, renderLinePrefix, timeLine } from './header.ts'
-import type { LogMessage } from './messages.ts'
+import { attachmentsLabel, type LogMessage } from './messages.ts'
 import type { NodeRow } from './model.ts'
 import type { Person } from './persons.ts'
 import { nativeToolName } from './policy.ts'
@@ -806,7 +806,7 @@ export function selfTools(ctx: SelfToolsContext): Record<string, unknown> {
       ...(withTopic && node?.kind === 'thread' ? { topic: node.title ?? node.nativeId } : {}),
       ...(m.editedAt === undefined ? {} : { edited: true }),
     })
-    const files = m.attachments.length > 0 ? ` [${m.attachments.length} attachment(s)]` : ''
+    const files = m.attachments.length > 0 ? ` ${attachmentsLabel(m.attachments)}` : ''
     return `${prefix}${m.self ? ' (me)' : ''} ${clip(flat(m.text.replace(/\n/g, ' ⏎ '), LINE_CHARS), LINE_CHARS)}${files}`
   }
 

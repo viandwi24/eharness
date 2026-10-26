@@ -1,6 +1,6 @@
 # P60 — Team example: scripts and tables, mature
 
-Status: planned · Owner: agent · Branch: `main` (local commits, one gate per step)
+Status: in progress (W1 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
 
 ## Goal
 
@@ -30,14 +30,17 @@ Inputs: the scenario catalog and capability checklist in
 ## Work
 
 ### W1 — Media model (both transports)
-- [ ] Attachment kinds: `photo`, `video`, `animation`, `video_note`, `voice`, `audio`, `document`,
+- [x] Attachment kinds: `photo`, `video`, `animation`, `video_note`, `voice`, `audio`, `document`,
       `sticker` (with emoji, set, animated/video flags), plus message kinds `location`, `venue`,
       `contact`, `poll`, `dice` as structured fields; nothing silently dropped.
-- [ ] Albums: `groupId` on messages; the gateway collects an album (short wait) and delivers one
+- [x] Albums: `groupId` on messages; the gateway collects an album (short wait) and delivers one
       script event with all items and the caption.
-- [ ] Reusable file references: the bot stores `file_id`, the account the message id, so media is
+- [x] Reusable file references: the bot stores `file_id`, the account the message id, so media is
       sent again without a download; the bot gets `fetchAttachment`.
-- [ ] Entities on captions for both transports; scripts receive `entities`, `forward`, `topic`.
+- [x] Entities on captions for both transports; scripts receive `entities`, `forward`, `topic`.
+- Notes: the user account's reference is the message itself (resend by copying it, W2); the topic
+  stays in `chat` (`rootNativeId` is the group). Lines the agent reads name the media
+  (`[sticker 🚀]`, `[3 photos]`). The bot normalizer is version 3.
 
 ### W2 — Sending media and copying
 - [ ] `ctx.channels.send` with `media: [{ kind, file | ref }]` (photo, video, animation, voice,

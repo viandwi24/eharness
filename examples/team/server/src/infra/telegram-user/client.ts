@@ -6,6 +6,8 @@
  * Chat ids are Bot API style strings ("marked" ids): a user is its positive id, a basic group is
  * `-<id>`, a channel or supergroup is `-100<id>`.
  */
+import type { MessageEntity } from '../channels/model.ts'
+import type { MediaKind, StickerInfo, StructuredContent } from '../channels/types.ts'
 
 export interface TgUser {
   id: string
@@ -31,9 +33,14 @@ export interface TgChat {
 export interface TgAttachment {
   id: string
   kind: 'image' | 'file' | 'audio' | 'video'
+  media?: MediaKind
   name?: string
   mediaType?: string
   size?: number
+  width?: number
+  height?: number
+  duration?: number
+  sticker?: StickerInfo
 }
 
 export interface TgMessage {
@@ -56,6 +63,14 @@ export interface TgMessage {
   /** The message mentions somebody else. */
   mentionsOthers: boolean
   attachments: TgAttachment[]
+  /** Album: messages sent together share it. */
+  groupId?: string
+  /** A place, contact, poll or dice. */
+  content?: StructuredContent
+  /** Formatting and references of the text or caption. */
+  entities?: MessageEntity[]
+  /** Where a forwarded message came from (a snapshot). */
+  forward?: { at: number; name?: string; chat?: string; user?: string; messageId?: string }
   /** A service message (joins, pins, title changes): never stored as a message. */
   service: boolean
 }

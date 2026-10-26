@@ -108,7 +108,7 @@ import {
   plainMentions,
   readableMentions,
 } from './mentions.ts'
-import { type LogMessage, sqliteChannelLog } from './messages.ts'
+import { attachmentsLabel, type LogMessage, logAttachmentOf, sqliteChannelLog } from './messages.ts'
 import type { IdentityRow, NodeRow } from './model.ts'
 import { channelNodeOf, type NodeStore, sqliteNodeStore } from './nodes.ts'
 import { createOutbound, type Outbound } from './outbound.ts'
@@ -3793,13 +3793,13 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         at: event.at,
         senderIdentityId: sender.id,
         text,
-        attachments: attachments.map((a) => ({
-          id: a.id,
-          kind: a.kind,
-          ...(a.name === undefined ? {} : { name: a.name }),
-          ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
-          ...(a.size === undefined ? {} : { size: a.size }),
-        })),
+        attachments: attachments.map(logAttachmentOf),
+        ...(event.type === 'message.created' && event.message.groupId !== undefined
+          ? { groupId: event.message.groupId }
+          : {}),
+        ...(event.type === 'message.created' && event.message.content !== undefined
+          ? { structured: event.message.content }
+          : {}),
         ...(event.type === 'message.created' && event.message.entities !== undefined
           ? { entities: event.message.entities }
           : {}),
@@ -4377,13 +4377,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
             direction: 'out',
             senderIdentityId: me.id,
             text: event.message.text,
-            attachments: event.message.attachments.map((a) => ({
-              id: a.id,
-              kind: a.kind,
-              ...(a.name === undefined ? {} : { name: a.name }),
-              ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
-              ...(a.size === undefined ? {} : { size: a.size }),
-            })),
+            attachments: event.message.attachments.map(logAttachmentOf),
+            ...(event.message.groupId === undefined ? {} : { groupId: event.message.groupId }),
+            ...(event.message.content === undefined ? {} : { structured: event.message.content }),
             ...(event.message.entities === undefined ? {} : { entities: event.message.entities }),
             ...(event.message.replyTo === undefined
               ? {}
@@ -4852,7 +4848,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           ? {}
           : { forwardedFrom: forwardedLabel(m.forwardOf) as string }),
       })
-      const note = m.attachments.length > 0 ? ` [${m.attachments.length} attachment(s)]` : ''
+      const note = m.attachments.length > 0 ? ` ${attachmentsLabel(m.attachments)}` : ''
       const gone = m.deletedAt === undefined ? '' : ' (deleted)'
       return `${prefix} ${neutralize(readableMentions(m.text))}${note}${gone}`
     })
@@ -5279,7 +5275,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       m.text.trim() !== ''
         ? clip(m.text.replace(/\s+/g, ' ').trim(), 140)
         : m.attachments.length > 0
-          ? `[${m.attachments.length} attachment${m.attachments.length === 1 ? '' : 's'}]`
+          ? attachmentsLabel(m.attachments)
           : ''
     const sender = m.self ? undefined : (m.sender?.name ?? m.sender?.username)
     return { text, at: m.at, self: m.self, ...(sender === undefined ? {} : { sender }) }
@@ -5455,14 +5451,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         direction: m.direction ?? (isSelf ? 'out' : 'in'),
         senderIdentityId: sender.id,
         text: m.text,
-        attachments: m.attachments.map((a) => ({
-          id: a.id,
-          kind: a.kind,
-          ...(a.name === undefined ? {} : { name: a.name }),
-          ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
-          ...(a.size === undefined ? {} : { size: a.size }),
-        })),
+        attachments: m.attachments.map(logAttachmentOf),
         ...(m.entities === undefined ? {} : { entities: m.entities }),
+        ...(m.forwardOf === undefined ? {} : { forwardOf: m.forwardOf }),
+        ...(m.groupId === undefined ? {} : { groupId: m.groupId }),
+        ...(m.content === undefined ? {} : { structured: m.content }),
         ...(m.replyTo === undefined
           ? {}
           : {

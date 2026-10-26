@@ -15,15 +15,25 @@
 import type { z } from 'zod'
 import type {
   IdentityKind,
+  MediaKind,
   MemberRole,
   MessageEntity,
   NodeKind,
   NodeLinkRel,
   NodeState,
   NodeTraits,
+  StickerInfo,
+  StructuredContent,
 } from './model.ts'
 
-export type { NodeKind, NodeState, NodeTraits } from './model.ts'
+export type {
+  MediaKind,
+  NodeKind,
+  NodeState,
+  NodeTraits,
+  StickerInfo,
+  StructuredContent,
+} from './model.ts'
 
 // --- nodes -------------------------------------------------------------------------------------
 
@@ -116,10 +126,23 @@ export interface IdentityInfo extends Identity {
 /** A file attached to an inbound message. Bytes are fetched lazily, only when the policy allows. */
 export interface InboundAttachment {
   id: string
+  /** Broad kind (what the agent's file handling looks at). */
   kind: 'image' | 'file' | 'audio' | 'video'
+  /** What it is on the platform (photo, sticker, voice, GIF…). */
+  media?: MediaKind
   name?: string
   mediaType?: string
   size?: number
+  width?: number
+  height?: number
+  /** Seconds (video, audio, voice, video note, animation). */
+  duration?: number
+  sticker?: StickerInfo
+  /**
+   * A platform reference that sends the same file again without a download (a Telegram bot
+   * `file_id`). Absent: the file is sent again by copying its message, or downloaded.
+   */
+  ref?: string
   fetch(): Promise<{ bytes: Uint8Array; mediaType?: string; name?: string }>
 }
 
@@ -150,6 +173,10 @@ export interface NormalizedMessage {
   /** The root of a reply chain on platforms that thread replies as relations. */
   threadRoot?: string
   forwardOf?: Record<string, unknown>
+  /** Messages sent together as an album share this id (Telegram `media_group_id` / `grouped_id`). */
+  groupId?: string
+  /** A place, contact, poll or dice instead of (or besides) text. */
+  content?: StructuredContent
   /** Platform order tie-breaker (a numeric id, a Slack `ts`). */
   sortKey?: string
   /** `out` = sent by this identity (from any of its devices). Default `in`. */
@@ -448,6 +475,8 @@ export interface ChannelAdapter {
     node: ChannelNode,
     messageNativeId: string,
     attachmentId: string,
+    /** The attachment's `ref` as it was logged (a bot `file_id`), when there is one. */
+    ref?: string,
   ): Promise<{ bytes: Uint8Array; mediaType?: string; name?: string }>
   /**
    * The node of a direct chat with an identity, composed without asking the platform (so the

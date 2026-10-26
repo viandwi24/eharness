@@ -168,7 +168,25 @@ A channel event looks like this (the text is in memory only and never stored):
 ```
 
 `replyTo` is set on replies (the id of the message answered, plus its sender when the platform
-says). `emoji` is set on reactions. An app event: `{ "type": "task-changed", "at", "seq", "agentId",
+says). `emoji` is set on reactions.
+
+Media and other message kinds:
+
+- `attachments[]`: `{ id, kind, media, name, mediaType, size, width, height, duration, sticker, ref }`.
+  `kind` is broad (`image`, `file`, `audio`, `video`); `media` says what it is on the platform:
+  `photo`, `video`, `animation` (a GIF), `video_note`, `voice`, `audio`, `document` or `sticker`
+  (with `sticker: { emoji, setName, format, customEmojiId }`). `ref` is a platform reference (a
+  Telegram bot file id) that sends the same file again without a download. Save a file with
+  `ctx.channels.download` to post it elsewhere.
+- `entities[]`: formatting and references of the text or caption (`bold`, `link`, `mention`,
+  `cashtag`, `custom_emoji`, …; offsets in UTF-16 code units).
+- `forward`: a forwarded message's origin `{ name, chat, user, messageId, at }`.
+- `content`: a place, contact, poll or dice roll (`{ type: 'location', latitude, longitude }`,
+  `{ type: 'poll', question, options }`, …). Such a message has a short `text` line such as
+  `[poll: Long or short?]`.
+- Albums: photos and videos sent together arrive as **one** event after a short wait (1.5 s):
+  `groupId`, `text` and `entities` of the caption, every file in `attachments`, and `album[]` with
+  each message (`messageId`, `text`, `attachments`) in order. `messageId` is the first item. An app event: `{ "type": "task-changed", "at", "seq", "agentId",
 "agentSlug", "sessionId", "payload": { … } }` (the payload is what the event stream shows). A
 webhook event: `{ "type": "webhook", "at", "method", "query", "headers" (content type, user agent
 and `x-*` headers without tokens or secrets), "body" (JSON when it parses, else text, at most

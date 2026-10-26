@@ -131,8 +131,24 @@ export function attachmentsOf(
     ...(a.name === undefined ? {} : { name: a.name }),
     ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
     ...(a.size === undefined ? {} : { size: a.size }),
+    ...(a.media === undefined ? {} : { media: a.media }),
+    ...(a.width === undefined ? {} : { width: a.width }),
+    ...(a.height === undefined ? {} : { height: a.height }),
+    ...(a.duration === undefined ? {} : { duration: a.duration }),
+    ...(a.sticker === undefined ? {} : { sticker: a.sticker }),
     fetch: fetch(m, a.id),
   }))
+}
+
+/** A short line for a message that has no text of its own (a place, a contact, a poll…). */
+export function placeholderOf(m: TgMessage): string {
+  const c = m.content
+  if (c?.type === 'location') return `[location ${c.latitude}, ${c.longitude}]`
+  if (c?.type === 'venue') return `[venue ${c.title}, ${c.address}]`
+  if (c?.type === 'contact') return `[contact ${c.firstName}${c.lastName ? ` ${c.lastName}` : ''}]`
+  if (c?.type === 'poll') return `[poll: ${c.question}]`
+  if (c?.type === 'dice') return `[dice ${c.emoji} ${c.value}]`
+  return ''
 }
 
 export interface NormalizeOptions {
@@ -161,8 +177,14 @@ export function normalizeMessage(
     message: {
       nativeId: String(m.id),
       sender,
-      text: m.text,
+      text: m.text === '' && m.attachments.length === 0 ? placeholderOf(m) : m.text,
       attachments: attachmentsOf(m, o.fetch),
+      ...(m.entities === undefined ? {} : { entities: m.entities }),
+      ...(m.groupId === undefined ? {} : { groupId: m.groupId }),
+      ...(m.content === undefined ? {} : { content: m.content }),
+      ...(m.forward === undefined
+        ? {}
+        : { forwardOf: { type: m.forward.chat ? 'channel' : 'user', ...m.forward } }),
       ...(m.replyTo === undefined
         ? {}
         : {

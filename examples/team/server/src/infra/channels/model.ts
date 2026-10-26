@@ -138,6 +138,52 @@ export interface IdentityRow {
 
 // --- message content --------------------------------------------------------------------------
 
+/** What a file of a message is, as the platform says (finer than `kind`). */
+export type MediaKind =
+  | 'photo'
+  | 'video'
+  | 'animation'
+  | 'video_note'
+  | 'voice'
+  | 'audio'
+  | 'document'
+  | 'sticker'
+
+/** A sticker's facts. */
+export interface StickerInfo {
+  emoji?: string
+  setName?: string
+  /** `static` (webp), `animated` (tgs) or `video` (webm). */
+  format: 'static' | 'animated' | 'video'
+  /** A custom emoji sticker: its id. */
+  customEmojiId?: string
+}
+
+/** A message that is not text or a file: a place, a contact, a poll, a dice roll. */
+export type StructuredContent =
+  | { type: 'location'; latitude: number; longitude: number; live?: boolean }
+  | { type: 'venue'; latitude: number; longitude: number; title: string; address: string }
+  | { type: 'contact'; phone: string; firstName: string; lastName?: string; userId?: string }
+  | {
+      type: 'poll'
+      question: string
+      options: string[]
+      quiz?: boolean
+      multiple?: boolean
+      anonymous?: boolean
+    }
+  | { type: 'dice'; emoji: string; value: number }
+
+/** Media facts of a stored file (what scripts and resends need; never bytes). */
+export interface FileMedia {
+  media?: MediaKind
+  width?: number
+  height?: number
+  duration?: number
+  sticker?: StickerInfo
+  ref?: string
+}
+
 /** UIMessage compatible parts of a stored message (text, file references). Never bytes. */
 export type ContentPart =
   | { type: 'text'; text: string }
@@ -147,7 +193,7 @@ export type ContentPart =
       filename?: string
       /** `channel-file:<attachment id>`: bytes are fetched from the platform on demand. */
       url: string
-      providerMetadata?: { channel: { id: string; kind?: string; size?: number } }
+      providerMetadata?: { channel: { id: string; kind?: string; size?: number } & FileMedia }
     }
 
 /** Normalized formatting and references inside the text (offsets in UTF-16 code units). */
@@ -165,6 +211,10 @@ export interface MessageEntity {
     | 'pre'
     | 'quote'
     | 'spoiler'
+    | 'custom_emoji'
+    | 'cashtag'
+    | 'email'
+    | 'phone'
   offset: number
   length: number
   /** `mention`: the native id of the identity mentioned, when the platform says (not a username). */
@@ -173,6 +223,8 @@ export interface MessageEntity {
   handle?: string
   url?: string
   language?: string
+  /** `custom_emoji`: the platform's id of the emoji. */
+  customEmojiId?: string
 }
 
 /** What a stored message says once opened (the sealed content). */
@@ -183,6 +235,10 @@ export interface MessageContent {
   reply?: { senderName?: string; text?: string }
   /** Origin of a forwarded message. */
   forwardOf?: Record<string, unknown>
+  /** Album id shared by messages sent together. */
+  groupId?: string
+  /** A place, contact, poll or dice. */
+  structured?: StructuredContent
 }
 
 export const textOfContent = (content: MessageContent): string =>

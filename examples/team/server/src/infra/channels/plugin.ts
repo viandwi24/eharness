@@ -440,7 +440,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           }
           if (t.adapter.fetchAttachment === undefined)
             return `ERROR: ${t.adapter.platform} cannot download files.`
-          const got = await t.adapter.fetchAttachment(t.view, row.nativeId, meta.id)
+          const got = await t.adapter.fetchAttachment(t.view, row.nativeId, meta.id, meta.ref)
           const name = got.name ?? meta.name ?? meta.id
           const type = (
             got.mediaType ??

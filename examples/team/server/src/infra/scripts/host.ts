@@ -724,7 +724,7 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
         )
       if (t.adapter.fetchAttachment === undefined)
         return refuse(`${t.adapter.platform} cannot download files`)
-      const got = await t.adapter.fetchAttachment(t.view, row.nativeId, meta.id)
+      const got = await t.adapter.fetchAttachment(t.view, row.nativeId, meta.id, meta.ref)
       const name = got.name ?? meta.name ?? meta.id
       const mediaType = (
         got.mediaType ??

@@ -24,6 +24,8 @@ import {
   thtml,
   type User,
 } from '@mtcute/bun'
+import type { MessageEntity } from '../channels/model.ts'
+import type { StructuredContent } from '../channels/types.ts'
 import type {
   TgAdminEvent,
   TgAttachment,
@@ -221,50 +223,216 @@ function attachmentsOf(m: Message): TgAttachment[] {
   const media = m.media
   if (media === null) return []
   const id = String(m.id)
+  const size = (n: number | undefined) => (n === undefined ? {} : { size: n })
   switch (media.type) {
     case 'photo':
       return [
         {
           id,
           kind: 'image',
+          media: 'photo',
           name: `photo-${m.id}.jpg`,
           mediaType: 'image/jpeg',
-          ...(media.fileSize === undefined ? {} : { size: media.fileSize }),
+          ...size(media.fileSize),
+          width: media.width,
+          height: media.height,
         },
       ]
-    case 'video':
+    case 'video': {
+      // mtcute reports GIFs and round video notes as videos with a flag
+      const kind = media.isRound ? 'video_note' : media.isAnimation ? 'animation' : 'video'
       return [
         {
           id,
           kind: 'video',
-          ...(media.fileName === null ? {} : { name: media.fileName }),
+          media: kind,
+          name: media.fileName ?? `${kind === 'video_note' ? 'video-note' : kind}-${m.id}.mp4`,
           mediaType: media.mimeType,
-          ...(media.fileSize === undefined ? {} : { size: media.fileSize }),
+          ...size(media.fileSize),
+          width: media.width,
+          height: media.height,
+          duration: media.duration,
         },
       ]
+    }
     case 'audio':
+      return [
+        {
+          id,
+          kind: 'audio',
+          media: 'audio',
+          ...(media.fileName === null ? {} : { name: media.fileName }),
+          mediaType: media.mimeType,
+          ...size(media.fileSize),
+          duration: media.duration,
+        },
+      ]
     case 'voice':
       return [
         {
           id,
           kind: 'audio',
-          ...(media.fileName === null ? {} : { name: media.fileName }),
+          media: 'voice',
+          name: media.fileName ?? `voice-${m.id}.ogg`,
           mediaType: media.mimeType,
-          ...(media.fileSize === undefined ? {} : { size: media.fileSize }),
+          ...size(media.fileSize),
+          duration: media.duration,
         },
       ]
+    case 'sticker': {
+      const format = media.sourceType
+      const custom = media.stickerType === 'emoji' ? String(media.customEmojiId) : undefined
+      return [
+        {
+          id,
+          kind: 'image',
+          media: 'sticker',
+          name: `sticker-${m.id}.${format === 'animated' ? 'tgs' : format === 'video' ? 'webm' : 'webp'}`,
+          mediaType: media.mimeType,
+          ...size(media.fileSize),
+          sticker: {
+            format,
+            ...(media.emoji ? { emoji: media.emoji } : {}),
+            ...(custom === undefined ? {} : { customEmojiId: custom }),
+          },
+        },
+      ]
+    }
     case 'document':
       return [
         {
           id,
-          kind: 'file',
+          kind: media.mimeType.startsWith('image/') ? 'image' : 'file',
+          media: 'document',
           ...(media.fileName === null ? {} : { name: media.fileName }),
           mediaType: media.mimeType,
-          ...(media.fileSize === undefined ? {} : { size: media.fileSize }),
+          ...size(media.fileSize),
         },
       ]
     default:
       return []
+  }
+}
+
+/** A place, contact, poll or dice of a message. */
+function contentOf(m: Message): StructuredContent | undefined {
+  const media = m.media
+  if (media === null) return undefined
+  switch (media.type) {
+    case 'venue':
+      return {
+        type: 'venue',
+        latitude: media.location.latitude,
+        longitude: media.location.longitude,
+        title: media.title,
+        address: media.address,
+      }
+    case 'location':
+      return { type: 'location', latitude: media.latitude, longitude: media.longitude }
+    case 'live_location':
+      return { type: 'location', latitude: media.latitude, longitude: media.longitude, live: true }
+    case 'contact':
+      return {
+        type: 'contact',
+        phone: media.phoneNumber,
+        firstName: media.firstName,
+        ...(media.lastName ? { lastName: media.lastName } : {}),
+        ...(media.userId ? { userId: String(media.userId) } : {}),
+      }
+    case 'poll':
+      return {
+        type: 'poll',
+        question: media.question,
+        options: media.answers.map((a) => a.text),
+        ...(media.isQuiz ? { quiz: true } : {}),
+        ...(media.isMultiple ? { multiple: true } : {}),
+        anonymous: !media.isPublic,
+      }
+    case 'dice':
+      return { type: 'dice', emoji: media.emoji, value: media.value }
+    default:
+      return undefined
+  }
+}
+
+const ENTITY_KINDS: Record<string, MessageEntity['type']> = {
+  bold: 'bold',
+  italic: 'italic',
+  underline: 'underline',
+  strikethrough: 'strike',
+  code: 'code',
+  pre: 'pre',
+  blockquote: 'quote',
+  spoiler: 'spoiler',
+  url: 'link',
+  text_link: 'link',
+  hashtag: 'hashtag',
+  cashtag: 'cashtag',
+  bot_command: 'command',
+  email: 'email',
+  phone_number: 'phone',
+  emoji: 'custom_emoji',
+}
+
+/** mtcute entities as the gateway's (offsets in UTF-16 code units, like JavaScript strings). */
+function entitiesOf(m: Message): MessageEntity[] {
+  const out: MessageEntity[] = []
+  for (const e of m.entities) {
+    const base = { offset: e.offset, length: e.length }
+    const params = (e.params ?? {}) as {
+      url?: string
+      userId?: number
+      language?: string
+      emojiId?: { toString(): string }
+    }
+    if (e.kind === 'mention')
+      out.push({
+        type: 'mention',
+        ...base,
+        handle: m.text.slice(e.offset + 1, e.offset + e.length),
+      })
+    else if (e.kind === 'text_mention')
+      out.push({
+        type: 'mention',
+        ...base,
+        ...(params.userId === undefined ? {} : { identity: String(params.userId) }),
+      })
+    else {
+      const type = ENTITY_KINDS[e.kind]
+      if (type === undefined) continue
+      out.push({
+        type,
+        ...base,
+        ...(e.kind === 'text_link' && params.url ? { url: params.url } : {}),
+        ...(e.kind === 'url' ? { url: m.text.slice(e.offset, e.offset + e.length) } : {}),
+        ...(e.kind === 'pre' && params.language ? { language: params.language } : {}),
+        ...(e.kind === 'emoji' && params.emojiId !== undefined
+          ? { customEmojiId: params.emojiId.toString() }
+          : {}),
+      })
+    }
+  }
+  return out
+}
+
+/** Where a forwarded message came from. */
+function forwardOfMessage(m: Message): TgMessage['forward'] {
+  const f = m.forward
+  if (f === null) return undefined
+  const s = f.sender as
+    | { type?: string; id?: number; displayName?: string; title?: string }
+    | string
+  const name = typeof s === 'string' ? s : (s.displayName ?? s.title)
+  const isChat = typeof s !== 'string' && s.type === 'chat'
+  return {
+    at: f.date.getTime(),
+    ...(name === undefined ? {} : { name }),
+    ...(typeof s !== 'string' && s.id !== undefined
+      ? isChat
+        ? { chat: String(s.id) }
+        : { user: String(s.id) }
+      : {}),
+    ...(f.fromMessageId === null ? {} : { messageId: String(f.fromMessageId) }),
   }
 }
 
@@ -311,6 +479,17 @@ function messageOf(m: Message, me: { id: string; username?: string }): TgMessage
     mention: m.isMention || mentionsSelf,
     mentionsOthers: mentions.length > 0 && !mentionsSelf,
     attachments: attachmentsOf(m),
+    ...(m.groupedIdUnique === null ? {} : { groupId: m.groupedIdUnique }),
+    ...((): Partial<TgMessage> => {
+      const content = contentOf(m)
+      const entities = entitiesOf(m)
+      const forward = forwardOfMessage(m)
+      return {
+        ...(content === undefined ? {} : { content }),
+        ...(entities.length === 0 ? {} : { entities }),
+        ...(forward === undefined ? {} : { forward }),
+      }
+    })(),
     service: m.isService,
   }
 }

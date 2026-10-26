@@ -634,15 +634,76 @@ export interface ScriptChannelEvent {
   /** A reply: the platform id of the message it answers (and, when the platform says, its sender). */
   replyTo?: { messageId: string; senderId?: string; senderName?: string }
   /** Files of the message (fetch one with `ctx.channels.download`). */
-  attachments?: Array<{
-    id: string
-    kind: string
-    name?: string
-    mediaType?: string
-    size?: number
+  attachments?: ScriptAttachment[]
+  /** Formatting and references in the text or caption (offsets in UTF-16 code units). */
+  entities?: ScriptEntity[]
+  /** A forwarded message: where it came from, as far as the platform tells. */
+  forward?: ScriptForward
+  /** Album id shared by messages sent together. */
+  groupId?: string
+  /** An album: every message of it in order (the event is the first; `text` is the caption). */
+  album?: Array<{
+    messageId: string
+    text?: string
+    attachments?: ScriptAttachment[]
+    entities?: ScriptEntity[]
   }>
+  /** A place, contact, poll or dice. */
+  content?: ScriptStructured
   emoji?: string
 }
+
+/** A file of a chat message as scripts see it. */
+export interface ScriptAttachment {
+  id: string
+  /** Broad kind: image, file, audio, video. */
+  kind: string
+  /** What it is on the platform: photo, video, animation (GIF), video_note, voice, audio, document, sticker. */
+  media?: string
+  name?: string
+  mediaType?: string
+  size?: number
+  width?: number
+  height?: number
+  /** Seconds. */
+  duration?: number
+  sticker?: { emoji?: string; setName?: string; format: string; customEmojiId?: string }
+  /** A platform reference that sends the same file again without a download. */
+  ref?: string
+}
+
+export interface ScriptEntity {
+  type: string
+  offset: number
+  length: number
+  url?: string
+  language?: string
+  identity?: string
+  handle?: string
+  customEmojiId?: string
+}
+
+export interface ScriptForward {
+  name?: string
+  chat?: string
+  user?: string
+  messageId?: string
+  at?: number
+}
+
+export type ScriptStructured =
+  | { type: 'location'; latitude: number; longitude: number; live?: boolean }
+  | { type: 'venue'; latitude: number; longitude: number; title: string; address: string }
+  | { type: 'contact'; phone: string; firstName: string; lastName?: string; userId?: string }
+  | {
+      type: 'poll'
+      question: string
+      options: string[]
+      quiz?: boolean
+      multiple?: boolean
+      anonymous?: boolean
+    }
+  | { type: 'dice'; emoji: string; value: number }
 
 /** Why a channel trigger does not match an event, or undefined when it does. */
 export function channelMismatch(t: ChannelTrigger, e: ScriptChannelEvent): string | undefined {
