@@ -37,7 +37,16 @@ import { ChannelUserError } from '../channels/gateway/types.ts'
 import type { ChannelGateway, ResolvedTarget } from '../channels/gateway.ts'
 import type { LogMessage } from '../channels/messages.ts'
 import { nativeToolName } from '../channels/policy.ts'
-import type { MediaKind, OutboundFile, TextFormat } from '../channels/types.ts'
+import {
+  MEMBER_RIGHTS,
+  type MediaKind,
+  type MemberRight,
+  type ModerationOp,
+  type OutboundButton,
+  type OutboundFile,
+  SCRIPT_BUTTON,
+  type TextFormat,
+} from '../channels/types.ts'
 import type { HostHandler } from './executor.ts'
 
 const ROW = '{ id: string; version: number; data: Record<string, unknown> }'
@@ -47,14 +56,14 @@ const FILTER = 'Record<string, unknown>'
 export const HOST_METHODS: readonly HostMethodDoc[] = [
   {
     name: 'channels.send',
-    args: "{ connection: string; chat: string; topic?: string; text?: string; format?: 'markdown' | 'html' | 'plain'; replyTo?: string; files?: string[]; media?: Array<{ file?: string; ref?: string; kind?: 'photo' | 'video' | 'animation' | 'video_note' | 'voice' | 'audio' | 'document' | 'sticker'; name?: string; mediaType?: string }>; silent?: boolean; linkPreview?: boolean; mentions?: string[]; copyOf?: { chat: string; topic?: string; messageId: string } }",
+    args: "{ connection: string; chat: string; topic?: string; text?: string; format?: 'markdown' | 'html' | 'plain'; replyTo?: string; files?: string[]; media?: Array<{ file?: string; ref?: string; kind?: 'photo' | 'video' | 'animation' | 'video_note' | 'voice' | 'audio' | 'document' | 'sticker'; name?: string; mediaType?: string }>; silent?: boolean; linkPreview?: boolean; buttons?: Array<Array<{ text: string; data?: string; url?: string }>>; mentions?: string[]; copyOf?: { chat: string; topic?: string; messageId: string } }",
     returns: '{ messageIds: string[] }',
-    doc: 'Post to a chat listed in grants.send: text (Markdown by default; format html/plain), a reply (replyTo = message id), files (library paths) or media (a library file, or ref = an attachment ref from an event, sent again without a download; kind = photo, video, animation, voice, video_note, sticker, audio, document). Several photos/videos go out as one album; messageIds lists every message. silent = no notification. copyOf remembers this post as a copy of that message (see channels.copies).',
+    doc: 'Post to a chat listed in grants.send: buttons = rows of { text, data } (a press starts scripts with an action trigger: event.button.data) or { text, url } (bot connections only); text (Markdown by default; format html/plain), a reply (replyTo = message id), files (library paths) or media (a library file, or ref = an attachment ref from an event, sent again without a download; kind = photo, video, animation, voice, video_note, sticker, audio, document). Several photos/videos go out as one album; messageIds lists every message. silent = no notification. copyOf remembers this post as a copy of that message (see channels.copies).',
     sideEffect: true,
   },
   {
     name: 'channels.reply',
-    args: "{ text?: string; format?: 'markdown' | 'html' | 'plain'; files?: string[]; media?: Array<{ file?: string; ref?: string; kind?: 'photo' | 'video' | 'animation' | 'video_note' | 'voice' | 'audio' | 'document' | 'sticker'; name?: string; mediaType?: string }>; silent?: boolean; quote?: boolean }",
+    args: "{ text?: string; format?: 'markdown' | 'html' | 'plain'; files?: string[]; media?: Array<{ file?: string; ref?: string; kind?: 'photo' | 'video' | 'animation' | 'video_note' | 'voice' | 'audio' | 'document' | 'sticker'; name?: string; mediaType?: string }>; silent?: boolean; buttons?: Array<Array<{ text: string; data?: string; url?: string }>>; quote?: boolean }",
     returns: '{ messageIds: string[] }',
     doc: 'Answer in the chat of the event that started this run, as a reply to that message (quote: false = a plain message); grants.reply.',
     sideEffect: true,
@@ -68,9 +77,9 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
   },
   {
     name: 'channels.edit',
-    args: "{ connection: string; chat: string; topic?: string; messageId: string; text: string; format?: 'markdown' | 'html' | 'plain' }",
+    args: "{ connection: string; chat: string; topic?: string; messageId: string; text?: string; format?: 'markdown' | 'html' | 'plain'; buttons?: Array<Array<{ text: string; data?: string; url?: string }>> }",
     returns: '{ ok: true }',
-    doc: 'Edit the text (or the caption of a photo, video or file) of a message the connection sent, in a chat listed in grants.send.',
+    doc: 'Edit the text (or the caption of a photo, video or file) of a message the connection sent, in a chat listed in grants.send; buttons replaces its buttons ([] removes them; without text only the buttons change).',
     sideEffect: true,
   },
   {
@@ -100,6 +109,28 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
     returns:
       '{ copies: Array<{ chat: string; topic?: string; messageId: string }>; source?: { chat: string; topic?: string; messageId: string } }',
     doc: 'What this script copied a message to (copies), or, for a copy, the message it was copied from (source). Use it to answer, edit or delete under each copy.',
+    sideEffect: false,
+  },
+  {
+    name: 'channels.moderate',
+    args: "{ connection: string; chat: string; action: 'ban' | 'unban' | 'kick' | 'mute' | 'unmute' | 'restrict' | 'approve_join' | 'decline_join' | 'delete_messages'; user: string; forSec?: number; deleteMessages?: boolean; allow?: Array<'send_messages' | 'send_media' | 'send_polls' | 'send_other' | 'add_link_previews' | 'invite_users' | 'pin_messages' | 'change_info' | 'manage_topics'> }",
+    returns: '{ ok: true }',
+    doc: 'Moderate a person (user = platform user id, e.g. event.actor.id) in a group listed in grants.moderate: ban (forSec = for a while; deleteMessages = remove what they wrote), unban, kick (may join again), mute (forSec) / unmute, restrict to the rights in allow, approve_join / decline_join a join request, delete_messages (user accounts). The connection needs the admin right.',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.inviteLink',
+    args: '{ connection: string; chat: string; name?: string; expireSec?: number; memberLimit?: number; joinRequest?: boolean }',
+    returns: '{ link: string }',
+    doc: 'Create an invite link for a group in grants.moderate (joinRequest = people ask to join and a script or admin approves).',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.member',
+    args: '{ connection: string; chat: string; user: string }',
+    returns:
+      "{ status: 'owner' | 'admin' | 'member' | 'restricted' | 'left' | 'banned'; name?: string; username?: string; until?: number; allow?: string[] }",
+    doc: "A person's standing in a group in grants.moderate, grants.read or grants.send (left = not in it).",
     sideEffect: false,
   },
   {
@@ -537,6 +568,11 @@ export function dryRunRefusal(
           ? undefined
           : `this script may not post to ${where(to, toTopic, conn)}: add it to grants.send`
       }
+      case 'channels.moderate':
+      case 'channels.inviteLink':
+        return inList(g.moderate, conn, chat, topic)
+          ? undefined
+          : `this script may not moderate ${where(chat, topic, conn)}: add it to grants.moderate`
       case 'channels.download':
         return inList(g.send, conn, chat, topic) || inList(g.read, conn, chat, topic)
           ? undefined
@@ -707,6 +743,7 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
     granted(c.gateway(), list, p.connection, p.chat, p.topic ?? '')
   const mayWrite = (p: Place): boolean => inList(g.send, p)
   const mayRead = (p: Place): boolean => inList(g.send, p) || inList(g.read, p)
+  const mayModerate = (p: Place): boolean => inList(g.moderate, p)
   const sameName = (
     want: string,
     n: { nativeId: string; title?: string | null; id: string },
@@ -786,6 +823,54 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       }
     }
     if (out.length > 10) return refuse(`ctx.${label}: at most 10 files and media items together`)
+    return out
+  }
+  /** Rows of buttons as the adapters take them; data rides in the press (64 bytes with its name). */
+  const buttonsArg = (
+    o: Record<string, unknown>,
+    label: string,
+    t?: ResolvedTarget,
+  ): OutboundButton[] | undefined => {
+    if (o.buttons === undefined) return undefined
+    const rows = o.buttons
+    if (
+      !Array.isArray(rows) ||
+      rows.length > 8 ||
+      rows.some((row) => !Array.isArray(row) || row.length > 8)
+    )
+      return refuse(`ctx.${label}: buttons is rows (at most 8) of buttons (at most 8 each)`)
+    if (
+      t !== undefined &&
+      rows.length > 0 &&
+      gw().capabilities(t.config.connectionId, t.node)?.buttons !== true
+    )
+      return refuse(
+        `ctx.${label}: this chat cannot show buttons (a user account cannot; use a bot connection)`,
+      )
+    const out: OutboundButton[] = []
+    for (const [i, row] of (rows as unknown[][]).entries()) {
+      for (const raw of row) {
+        const b = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+        const text = typeof b.text === 'string' ? b.text.trim() : ''
+        if (text === '' || text.length > 64)
+          return refuse(`ctx.${label}: each button needs a text (at most 64 characters)`)
+        if (typeof b.url === 'string') {
+          if (!/^(https?:\/\/|tg:\/\/)/i.test(b.url) || b.url.length > 2000)
+            return refuse(`ctx.${label}: a button url is https://, http:// or tg://`)
+          out.push({ name: SCRIPT_BUTTON, label: text, url: b.url, row: i })
+          continue
+        }
+        const data = b.data === undefined ? undefined : String(b.data)
+        if (data !== undefined && new TextEncoder().encode(data).byteLength > 60)
+          return refuse(`ctx.${label}: button data is at most 60 bytes`)
+        out.push({
+          name: SCRIPT_BUTTON,
+          label: text,
+          ...(data === undefined ? {} : { data }),
+          row: i,
+        })
+      }
+    }
     return out
   }
   const formatArg = (o: Record<string, unknown>, label: string): TextFormat | undefined => {
@@ -976,10 +1061,12 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
           messageId: str(co, 'messageId', 'channels.send copyOf', 100),
         }
       }
+      const buttons = buttonsArg(o, 'channels.send', t)
       const messageIds = await paced(() =>
         gw().post(t, {
           text,
           retriesRateLimit: true,
+          ...(buttons === undefined || buttons.length === 0 ? {} : { buttons }),
           ...(mentions.length ? { mentions } : {}),
           ...(replyTo === undefined ? {} : { replyTo }),
           ...(files.length ? { files } : {}),
@@ -1017,6 +1104,10 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
           gw().post(t, {
             text,
             retriesRateLimit: true,
+            ...((): { buttons?: OutboundButton[] } => {
+              const b = buttonsArg(o, 'channels.reply', t)
+              return b === undefined || b.length === 0 ? {} : { buttons: b }
+            })(),
             ...(quote && e.messageId !== undefined ? { replyTo: e.messageId } : {}),
             ...(files.length ? { files } : {}),
             ...(o.silent === true ? { silent: true } : {}),
@@ -1057,26 +1148,160 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       if (!mayWrite(place))
         return refuse(`this script may not edit in ${placeText(place)}: add it to grants.send`)
       const messageId = str(o, 'messageId', 'channels.edit', 100)
-      const text = typeof o.text === 'string' ? o.text : refuse('ctx.channels.edit: text is needed')
-      if (text.length > MAX_TEXT)
+      const t = targetOf(place)
+      const buttons = buttonsArg(o, 'channels.edit', t)
+      const text = typeof o.text === 'string' ? o.text : undefined
+      if (text === undefined && buttons === undefined)
+        return refuse('ctx.channels.edit: text or buttons is needed')
+      if (text !== undefined && text.length > MAX_TEXT)
         return refuse(`ctx.channels.edit: text is longer than ${MAX_TEXT} characters`)
       const format = formatArg(o, 'channels.edit')
-      const t = targetOf(place)
       const caps = gw().capabilities(t.config.connectionId, t.node)
       if (caps?.edit !== true || t.adapter.edit === undefined)
         return refuse(`${t.adapter.platform} cannot edit messages here`)
-      const stored = await gw().log.find(t.node.id, messageId)
-      // a message with a file: its caption (an empty text clears it)
-      const caption =
-        stored !== undefined && stored.attachments.length > 0 && t.adapter.editCaption !== undefined
-      const edit = caption ? t.adapter.editCaption : t.adapter.edit
-      if (edit === undefined) return refuse(`${t.adapter.platform} cannot edit messages here`)
-      if (!caption && text.trim() === '') return refuse('ctx.channels.edit: text is needed')
-      await gw().outbound.run(laneOf(t), () =>
-        edit.call(t.adapter, t.view, messageId, text, format),
-      )
-      await gw().log.recordEdit(t.node.id, messageId, { text }, Date.now())
+      if (text !== undefined) {
+        const stored = await gw().log.find(t.node.id, messageId)
+        // a message with a file: its caption (an empty text clears it)
+        const caption =
+          stored !== undefined &&
+          stored.attachments.length > 0 &&
+          t.adapter.editCaption !== undefined
+        const edit = caption ? t.adapter.editCaption : t.adapter.edit
+        if (edit === undefined) return refuse(`${t.adapter.platform} cannot edit messages here`)
+        if (!caption && text.trim() === '') return refuse('ctx.channels.edit: text is needed')
+        await gw().outbound.run(laneOf(t), () =>
+          edit.call(t.adapter, t.view, messageId, text, format),
+        )
+        await gw().log.recordEdit(t.node.id, messageId, { text }, Date.now())
+      }
+      // an edit of the text removes the buttons: put the wanted ones back (or new ones)
+      if (buttons !== undefined) {
+        const editButtons = t.adapter.editButtons
+        if (editButtons === undefined) return refuse(`${t.adapter.platform} cannot change buttons`)
+        await gw().outbound.run(laneOf(t), () =>
+          editButtons.call(t.adapter, t.view, messageId, buttons),
+        )
+      }
       return { ok: true }
+    },
+    'channels.moderate': async (args) => {
+      const o = obj(args, 'channels.moderate')
+      const place = chatArg(o, 'channels.moderate')
+      if (!mayModerate(place))
+        return refuse(`this script may not moderate ${placeText(place)}: add it to grants.moderate`)
+      const action = str(o, 'action', 'channels.moderate', 40)
+      const user = String(o.user ?? '')
+      if (!/^[\w@:.-]{1,64}$/.test(user))
+        return refuse(
+          'ctx.channels.moderate: user is the platform id of a person (e.g. event.actor.id)',
+        )
+      const t = targetOf(place)
+      if (t.adapter.self().id === user)
+        return refuse('ctx.channels.moderate: the connection never moderates itself')
+      const moderate = t.adapter.moderate
+      if (moderate === undefined) return refuse(`${t.adapter.platform} cannot moderate`)
+      const untilMs =
+        o.forSec === undefined
+          ? undefined
+          : typeof o.forSec === 'number' && o.forSec >= 30 && o.forSec <= 366 * 86_400
+            ? c.deps.clock.now() + Math.round(o.forSec * 1000)
+            : refuse('ctx.channels.moderate: forSec is from 30 seconds to 366 days')
+      let op: ModerationOp
+      switch (action) {
+        case 'ban':
+          op = {
+            action,
+            user,
+            ...(untilMs === undefined ? {} : { untilMs }),
+            ...(o.deleteMessages === true ? { deleteMessages: true } : {}),
+          }
+          break
+        case 'mute':
+          op = { action, user, ...(untilMs === undefined ? {} : { untilMs }) }
+          break
+        case 'restrict': {
+          const allow = Array.isArray(o.allow) ? o.allow : []
+          if (allow.some((x) => !(MEMBER_RIGHTS as readonly unknown[]).includes(x)))
+            return refuse(`ctx.channels.moderate: allow lists ${MEMBER_RIGHTS.join(', ')}`)
+          op = {
+            action,
+            user,
+            allow: allow as MemberRight[],
+            ...(untilMs === undefined ? {} : { untilMs }),
+          }
+          break
+        }
+        case 'unban':
+        case 'kick':
+        case 'unmute':
+        case 'approve_join':
+        case 'decline_join':
+          op = { action, user }
+          break
+        case 'delete_messages':
+          op = { action: 'delete_member_messages', user }
+          break
+        default:
+          return refuse(
+            'ctx.channels.moderate: action is ban, unban, kick, mute, unmute, restrict, approve_join, decline_join or delete_messages',
+          )
+      }
+      await gw().outbound.run(laneOf(t), () => moderate.call(t.adapter, t.view, op))
+      return { ok: true }
+    },
+    'channels.inviteLink': async (args) => {
+      const o = obj(args, 'channels.inviteLink')
+      const place = chatArg(o, 'channels.inviteLink')
+      if (!mayModerate(place))
+        return refuse(
+          `this script may not make links for ${placeText(place)}: add it to grants.moderate`,
+        )
+      const t = targetOf(place)
+      const moderate =
+        t.adapter.moderate ?? refuse(`${t.adapter.platform} cannot make invite links`)
+      const name = optStr(o, 'name')
+      const expireSec = o.expireSec
+      if (
+        expireSec !== undefined &&
+        (typeof expireSec !== 'number' || expireSec < 60 || expireSec > 366 * 86_400)
+      )
+        return refuse('ctx.channels.inviteLink: expireSec is from 60 seconds to 366 days')
+      const memberLimit = o.memberLimit
+      if (
+        memberLimit !== undefined &&
+        (typeof memberLimit !== 'number' ||
+          !Number.isInteger(memberLimit) ||
+          memberLimit < 1 ||
+          memberLimit > 99_999)
+      )
+        return refuse('ctx.channels.inviteLink: memberLimit is a whole number from 1 to 99999')
+      const r = await gw().outbound.run(laneOf(t), () =>
+        moderate.call(t.adapter, t.view, {
+          action: 'invite_link',
+          ...(name === undefined ? {} : { name }),
+          ...(typeof expireSec === 'number'
+            ? { expiresAt: c.deps.clock.now() + expireSec * 1000 }
+            : {}),
+          ...(typeof memberLimit === 'number' ? { memberLimit } : {}),
+          ...(o.joinRequest === true ? { joinRequest: true } : {}),
+        }),
+      )
+      return { link: r.link ?? refuse('ctx.channels.inviteLink: the platform gave no link') }
+    },
+    'channels.member': async (args) => {
+      const o = obj(args, 'channels.member')
+      const place = chatArg(o, 'channels.member')
+      if (!mayRead(place) && !mayModerate(place))
+        return refuse(`this script may not look at ${placeText(place)}: add it to grants.read`)
+      const user = String(o.user ?? '')
+      if (!/^[\w@:.-]{1,64}$/.test(user))
+        return refuse('ctx.channels.member: user is the platform id of a person')
+      const t = targetOf(place)
+      const moderate = t.adapter.moderate ?? refuse(`${t.adapter.platform} cannot look up members`)
+      const r = await gw().outbound.run(laneOf(t), () =>
+        moderate.call(t.adapter, t.view, { action: 'member', user }),
+      )
+      return r.member ?? { status: 'left' }
     },
     'channels.delete': async (args) => {
       const o = obj(args, 'channels.delete')

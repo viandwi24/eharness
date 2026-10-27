@@ -71,6 +71,13 @@ function grantProblem(method: string, m: ScriptManifest): string | undefined {
     case 'channels.chats':
     case 'channels.copies':
       return has(g.read) || has(g.send) ? undefined : 'grants.read and grants.send are empty'
+    case 'channels.member':
+      return has(g.read) || has(g.send) || has(g.moderate)
+        ? undefined
+        : 'grants.read, grants.send and grants.moderate are empty'
+    case 'channels.moderate':
+    case 'channels.inviteLink':
+      return has(g.moderate) ? undefined : 'grants.moderate is empty'
     case 'channels.action':
       return has(g.actions) ? undefined : 'grants.actions is empty'
     case 'library.read':

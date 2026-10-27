@@ -176,6 +176,11 @@ export interface ScriptGrants {
    * `members`, `download`); `chat: "*"` = every chat of that connection. Chats in `send` are readable.
    */
   read: ChatGrant[]
+  /**
+   * Groups where the script may moderate (`ctx.channels.moderate`: ban, kick, mute, restrict,
+   * answer join requests, delete a person's messages; `inviteLink`; `member`). `chat: "*"` = any.
+   */
+  moderate: ChatGrant[]
   /** Native actions of a connection `ctx.channels.action` may run (`create_channel`, `ban`…; `*` = any). */
   actions: Array<{ connection: string; name: string }>
   /** `ctx.notify` may put a notification in the owner's bell. */
@@ -211,6 +216,7 @@ export const emptyGrants = (): ScriptGrants => ({
   programs: [],
   api: [],
   read: [],
+  moderate: [],
   actions: [],
   notify: false,
 })
@@ -369,7 +375,7 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
     string,
     unknown
   >
-  const chatList = (key: 'send' | 'read'): ChatGrant[] => {
+  const chatList = (key: 'send' | 'read' | 'moderate'): ChatGrant[] => {
     const out: ChatGrant[] = []
     const raw = g[key] ?? []
     if (!Array.isArray(raw)) {
@@ -431,6 +437,7 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
     programs: strings(g.programs, 'grants.programs', errors),
     api: strings(g.api, 'grants.api', errors).map((x) => x.replace(/\s+/g, ' ')),
     read: chatList('read'),
+    moderate: chatList('moderate'),
     actions,
     notify: g.notify === true,
   }
@@ -624,6 +631,9 @@ export function grantWidening(before: ScriptGrants | undefined, after: ScriptGra
   for (const a of after.actions)
     if (!b.actions.some((x) => x.connection === a.connection && x.name === a.name))
       out.push(`run ${a.name} on ${a.connection}`)
+  for (const m of after.moderate)
+    if (!b.moderate.some((x) => sameChat(x, m)))
+      out.push(`moderate ${m.chat}${m.topic ? ` / ${m.topic}` : ''} on ${m.connection}`)
   if (after.notify && !b.notify) out.push('send notifications')
   return out
 }
@@ -689,6 +699,8 @@ export interface ScriptChannelEvent {
   }>
   /** A place, contact, poll or dice. */
   content?: ScriptStructured
+  /** A press of a button a script sent (`action` events): its data. */
+  button?: { data?: string }
   /** Reactions: the emoji (`custom:<id>` for a custom emoji). */
   emoji?: string
   customEmojiId?: string
@@ -1088,6 +1100,19 @@ export function manifestJsonSchema(): Record<string, unknown> {
               additionalProperties: false,
             },
             'Chats whose messages, members and files ctx.channels.history / message / members / download may read (chats in send are readable).',
+          ),
+          moderate: list(
+            {
+              type: 'object',
+              properties: {
+                connection: text,
+                chat: { ...text, description: 'Title, platform id or node id; "*" = every chat.' },
+                topic: text,
+              },
+              required: ['connection', 'chat'],
+              additionalProperties: false,
+            },
+            'Groups where ctx.channels.moderate (ban, kick, mute, restrict, join requests), inviteLink and member may act.',
           ),
           actions: list(
             {

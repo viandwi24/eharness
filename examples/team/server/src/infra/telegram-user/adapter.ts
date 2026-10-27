@@ -28,6 +28,9 @@ import {
   type HistoryEntry,
   type Identity,
   type InboundAttachment,
+  MEMBER_RIGHTS,
+  type MemberRight,
+  type ModerationResult,
   type NativeAction,
   type NodeInfo,
   type OutboundMessage,
@@ -44,6 +47,7 @@ import type {
   TgJoinRequestsUpdate,
   TgMemberUpdate,
   TgMessage,
+  TgRestrictions,
   TgTopic,
   TgUser,
   TgUserClient,
@@ -160,6 +164,22 @@ export interface TelegramUserAdapter extends ChannelAdapter {
 }
 
 const DEDUPE_MAX = 5000
+
+/** Rights a member keeps, as the restrictions MTProto takes (true = taken away). */
+function deniedOf(allow: readonly MemberRight[]): TgRestrictions {
+  const no = (r: MemberRight): boolean => !allow.includes(r)
+  return {
+    sendMessages: no('send_messages'),
+    sendMedia: no('send_media'),
+    sendPolls: no('send_polls'),
+    sendOther: no('send_other'),
+    embedLinks: no('add_link_previews'),
+    inviteUsers: no('invite_users'),
+    pinMessages: no('pin_messages'),
+    changeInfo: no('change_info'),
+    manageTopics: no('manage_topics'),
+  }
+}
 
 export function createTelegramUserAdapter(options: UserAdapterOptions): TelegramUserAdapter {
   const { connectionId, client, chats, counters, hooks } = options
@@ -900,6 +920,102 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
         for (let i = 0; i < nativeIds.length; i += 100)
           await client.deleteMessages(targetOf(node).chat, nativeIds.slice(i, i + 100).map(Number))
       }),
+    async moderate(node, op) {
+      const chat = targetOf(node).chat
+      const need = <K extends keyof TgUserClient>(name: K): NonNullable<TgUserClient[K]> => {
+        const fn = client[name]
+        if (fn === undefined)
+          throw new ChannelError('invalid', `this account cannot ${String(name)}`)
+        return (fn as (...a: never[]) => unknown).bind(client) as NonNullable<TgUserClient[K]>
+      }
+      return guarded(node, async (): Promise<ModerationResult> => {
+        switch (op.action) {
+          case 'ban':
+            await need('banMember')(chat, op.user, op.untilMs)
+            if (op.deleteMessages === true) await need('deleteMemberMessages')(chat, op.user)
+            return {}
+          case 'unban':
+            await need('unbanMember')(chat, op.user)
+            return {}
+          case 'kick':
+            await need('kickMember')(chat, op.user)
+            return {}
+          case 'mute':
+          case 'unmute':
+          case 'restrict': {
+            const allow: readonly MemberRight[] =
+              op.action === 'mute' ? [] : op.action === 'unmute' ? MEMBER_RIGHTS : op.allow
+            await need('restrictMember')(
+              chat,
+              op.user,
+              deniedOf(allow),
+              op.action === 'unmute' ? undefined : op.untilMs,
+            )
+            return {}
+          }
+          case 'approve_join':
+          case 'decline_join':
+            await need('answerJoinRequests')(chat, {
+              action: op.action === 'approve_join' ? 'approve' : 'decline',
+              userId: op.user,
+            })
+            return {}
+          case 'delete_member_messages':
+            await need('deleteMemberMessages')(chat, op.user)
+            return {}
+          case 'member': {
+            const m = await need('getMember')(chat, op.user)
+            if (m === null) return { member: { status: 'left' } }
+            const s = String(m.status)
+            const status =
+              s === 'creator' || s === 'owner'
+                ? 'owner'
+                : s === 'admin' || s === 'administrator'
+                  ? 'admin'
+                  : s === 'banned' || s === 'kicked'
+                    ? 'banned'
+                    : s === 'restricted'
+                      ? 'restricted'
+                      : s === 'left'
+                        ? 'left'
+                        : 'member'
+            const forbidden = new Set(m.forbidden ?? [])
+            const NAMES: Record<MemberRight, string> = {
+              send_messages: 'send_messages',
+              send_media: 'send_media',
+              send_polls: 'send_polls',
+              send_other: 'send_stickers',
+              add_link_previews: 'embed_links',
+              invite_users: 'invite_users',
+              pin_messages: 'pin_messages',
+              change_info: 'change_info',
+              manage_topics: 'manage_topics',
+            }
+            return {
+              member: {
+                status,
+                ...(m.user.name === '' ? {} : { name: m.user.name }),
+                ...(m.user.username === undefined ? {} : { username: m.user.username }),
+                ...(status === 'restricted'
+                  ? { allow: MEMBER_RIGHTS.filter((r) => !forbidden.has(NAMES[r])) }
+                  : {}),
+              },
+            }
+          }
+          case 'invite_link': {
+            const r = await need('createInviteLink')(chat, {
+              ...(op.name === undefined ? {} : { title: op.name.slice(0, 32) }),
+              ...(op.expiresAt === undefined ? {} : { expiresAt: op.expiresAt }),
+              ...(op.memberLimit === undefined || op.joinRequest === true
+                ? {}
+                : { usageLimit: op.memberLimit }),
+              ...(op.joinRequest === true ? { withApproval: true } : {}),
+            })
+            return { link: r.link }
+          }
+        }
+      })
+    },
     async copy(from, nativeIds, to, o) {
       await guardSend(to)
       const source = targetOf(from).chat

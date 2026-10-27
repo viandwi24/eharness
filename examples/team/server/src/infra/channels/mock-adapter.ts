@@ -21,9 +21,11 @@ import {
   type InboundAttachment,
   type MediaKind,
   type MemberInfo,
+  type ModerationOp,
   type NativeAction,
   type NodeInfo,
   type NodeRef,
+  type OutboundButton,
   type OutboundMessage,
   type RemoteEvent,
   type StickerInfo,
@@ -113,6 +115,14 @@ export interface MockAdapter extends ChannelAdapter {
     format?: TextFormat
   }>
   readonly deletes: Array<{ conversationId: string; messageId: string }>
+  /** Moderation steps (`moderate`). */
+  readonly moderations: Array<{ conversationId: string; op: ModerationOp }>
+  /** Button changes (`editButtons`). */
+  readonly buttonEdits: Array<{
+    conversationId: string
+    messageId: string
+    buttons: OutboundButton[]
+  }>
   /** Copies and forwards (`copy`), with the ids they got. */
   readonly copies: Array<{
     from: string
@@ -257,6 +267,8 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     edits: [],
     deletes: [],
     copies: [],
+    moderations: [],
+    buttonEdits: [],
     pins: [],
     typings: [],
     onSend: [],
@@ -360,6 +372,16 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     async deleteMany(node, nativeIds) {
       for (const id of nativeIds)
         adapter.deletes.push({ conversationId: node.nativeId, messageId: id })
+    },
+    async moderate(node, op) {
+      adapter.moderations.push({ conversationId: node.nativeId, op })
+      if (op.action === 'invite_link')
+        return { link: `https://t.me/+mock${adapter.moderations.length}` }
+      if (op.action === 'member') return { member: { status: 'member', name: `user ${op.user}` } }
+      return {}
+    },
+    async editButtons(node, nativeId, buttons) {
+      adapter.buttonEdits.push({ conversationId: node.nativeId, messageId: nativeId, buttons })
     },
     async copy(from, nativeIds, to, o) {
       const messageIds = nativeIds.map(() => `m${++counter}-${options.connectionId}`)

@@ -173,6 +173,8 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
     '  /** A place, contact, poll or dice roll instead of text. */',
     "  content?: { type: 'location'; latitude: number; longitude: number; live?: boolean } | { type: 'venue'; latitude: number; longitude: number; title: string; address: string } | { type: 'contact'; phone: string; firstName: string; lastName?: string; userId?: string } | { type: 'poll'; question: string; options: string[]; quiz?: boolean; multiple?: boolean; anonymous?: boolean } | { type: 'dice'; emoji: string; value: number }",
     '  /** Reaction events. */',
+    '  /** action events: a press of a button a script sent (channels.send buttons), with its data. */',
+    '  button?: { data?: string }',
     '  emoji?: string',
     '  /** Reaction events with a custom emoji: its id (emoji is `custom:<id>`). */',
     '  customEmojiId?: string',

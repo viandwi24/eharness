@@ -1239,6 +1239,124 @@ describe('state helpers, later runs and pacing', () => {
   }, 15_000)
 })
 
+describe('moderation and buttons', () => {
+  test('a guard mutes a flooder, a vote uses buttons, presses reach the script and not the agent', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    const src = `export default async function (event, ctx) {
+  const c = event.connectionId
+  const here = { connection: c, chat: event.chat.nativeId }
+  if (event.type === 'action') {
+    const n = (await ctx.kv.incr({ key: 'votes:' + event.button.data })).value
+    await ctx.channels.edit({ ...here, messageId: event.messageId, buttons: [[{ text: 'Yes (' + n + ')', data: 'yes' }], [{ text: 'Rules', url: 'https://example.com/rules' }]] })
+    return { voted: event.button.data, n }
+  }
+  if (event.text === '/vote') {
+    await ctx.channels.send({ ...here, text: 'Long or short?', buttons: [[{ text: 'Yes', data: 'yes' }, { text: 'No', data: 'no' }]] })
+    return 'asked'
+  }
+  if (event.text === '/invite') {
+    const { link } = await ctx.channels.inviteLink({ ...here, name: 'signals', expireSec: 3600, joinRequest: true })
+    return link
+  }
+  const rl = await ctx.kv.rateLimit({ key: 'flood:' + event.actor.id, limit: 3, windowSec: 60 })
+  if (!rl.allowed) {
+    await ctx.channels.moderate({ ...here, action: 'mute', user: event.actor.id, forSec: 600 })
+    const m = await ctx.channels.member({ ...here, user: event.actor.id })
+    return { muted: event.actor.id, status: m.status }
+  }
+  return 'ok'
+}`
+    const manifest = {
+      triggers: [{ kind: 'channel', events: ['message.created', 'action'], chats: [CHAT] }],
+      grants: {
+        send: [{ connection: 'c1', chat: CHAT }],
+        moderate: [{ connection: 'c1', chat: CHAT }],
+      },
+    }
+    expect((await r.api('POST', '/scripts', { name: 'guard', source: src, manifest })).status).toBe(
+      201,
+    )
+    expect((await r.api('POST', '/scripts/guard/check', {})).json.problems).toEqual([])
+    await r.api('POST', '/scripts/guard/activate', {})
+    const spam = { id: '77', name: 'Spammer' }
+    for (let i = 1; i <= 4; i++)
+      await mock.say({ chat: CHAT, kind: 'group', from: spam, id: `f${i}`, text: `spam ${i}` })
+    await until('muted', () => mock.moderations.length >= 2)
+    expect(mock.moderations[0]?.op).toMatchObject({ action: 'mute', user: '77' })
+    expect((mock.moderations[0]?.op as { untilMs?: number } | undefined)?.untilMs).toBeGreaterThan(
+      Date.now(),
+    )
+    expect(mock.moderations[1]?.op).toEqual({ action: 'member', user: '77' })
+
+    const who = { id: '9', name: 'Zed' }
+    await mock.say({ chat: CHAT, kind: 'group', from: who, id: 'v1', text: '/vote' })
+    await until('vote sent', () => mock.sent.some((s) => s.message.text === 'Long or short?'))
+    const vote = mock.sent.find((s) => s.message.text === 'Long or short?')
+    expect(vote?.message.buttons).toEqual([
+      { name: 's', label: 'Yes', data: 'yes', row: 0 },
+      { name: 's', label: 'No', data: 'no', row: 0 },
+    ])
+    const before = mock.sent.length
+    await mock.press({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      name: 's',
+      data: 'yes',
+      messageId: vote?.messageId as string,
+    })
+    await until('buttons edited', () => mock.buttonEdits.length === 1)
+    expect(mock.buttonEdits[0]?.buttons).toEqual([
+      { name: 's', label: 'Yes (1)', data: 'yes', row: 0 },
+      { name: 's', label: 'Rules', url: 'https://example.com/rules', row: 1 },
+    ])
+    // the press woke no agent: nothing else was sent
+    await sleep(200)
+    expect(mock.sent.length).toBe(before)
+
+    await mock.say({ chat: CHAT, kind: 'group', from: who, id: 'i1', text: '/invite' })
+    await until('link made', () => mock.moderations.some((m) => m.op.action === 'invite_link'))
+    expect(mock.moderations.find((m) => m.op.action === 'invite_link')?.op).toMatchObject({
+      name: 'signals',
+      joinRequest: true,
+    })
+  }, 20_000)
+
+  test('moderation needs grants.moderate and never targets the connection itself', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    const self = mock.self().id
+    await r.api('POST', '/scripts', {
+      name: 'mod',
+      source: `export default async function (event, ctx) {
+  return ctx.channels.moderate({ connection: 'c1', chat: '${CHAT}', action: 'ban', user: event.data.user })
+}`,
+      manifest: { triggers: [], grants: {} },
+    })
+    const check = await r.api('POST', '/scripts/mod/check', {})
+    expect(JSON.stringify(check.json.problems)).toContain('grants.moderate is empty')
+    const dry = await r.api('POST', '/scripts/mod/dry-run', {
+      event: { type: 'manual', data: { user: '5' } },
+    })
+    expect(JSON.stringify(dry.json)).toContain('add it to grants.moderate')
+    const v = (await r.api('GET', '/scripts/mod')).json.latest as {
+      manifest: Record<string, unknown>
+    }
+    await r.api('PATCH', '/scripts/mod', {
+      manifest: { ...v.manifest, grants: { moderate: [{ connection: 'c1', chat: CHAT }] } },
+    })
+    await r.api('POST', '/scripts/mod/activate', {})
+    const run = await r.api('POST', '/scripts/mod/run', {
+      event: { type: 'manual', data: { user: self } },
+    })
+    expect(String(run.json.error)).toContain('never moderates itself')
+    expect(mock.moderations).toHaveLength(0)
+  })
+})
+
 describe('more inputs and the team API', () => {
   test('an app event starts a script; ctx.api reads and changes through the API; its own events do not loop', async () => {
     const r = rig()

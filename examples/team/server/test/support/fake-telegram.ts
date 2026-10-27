@@ -206,6 +206,21 @@ export function fakeTelegram(
             file_path: f.path,
           })
         }
+        case 'getChatMember':
+          return ok({
+            status: 'restricted',
+            until_date: 1_900_000_000,
+            user: { id: Number(params.user_id), is_bot: false, first_name: 'Ana', username: 'ana' },
+            can_send_messages: true,
+            can_send_audios: false,
+            can_send_documents: false,
+            can_send_photos: false,
+            can_send_videos: false,
+            can_send_video_notes: false,
+            can_send_voice_notes: false,
+          })
+        case 'createChatInviteLink':
+          return ok({ invite_link: 'https://t.me/+abc', creator: bot, creates_join_request: true })
         case 'getChatAdministrators':
           return ok([{ status: 'creator', user: { id: 1, is_bot: false, first_name: 'Ana' } }])
         default:

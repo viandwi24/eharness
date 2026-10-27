@@ -51,7 +51,7 @@ import {
 import type { TableRowsChange } from '../../domain/tables.ts'
 import type { HandleResult } from '../channels/gateway/types.ts'
 import { type ChannelGateway, OWN_TYPED } from '../channels/gateway.ts'
-import type { RemoteEvent } from '../channels/types.ts'
+import { type RemoteEvent, SCRIPT_BUTTON } from '../channels/types.ts'
 import { checkScript } from './check.ts'
 import { runScript } from './executor.ts'
 import {
@@ -631,6 +631,9 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
           ? { messageId: String((e as { messageNativeId: string }).messageNativeId) }
           : {}),
       ...('emoji' in e ? { emoji: String((e as { emoji: string }).emoji) } : {}),
+      ...(e.type === 'action' && e.name === SCRIPT_BUTTON
+        ? { button: e.data === undefined ? {} : { data: e.data } }
+        : {}),
       ...('customEmojiId' in e && typeof e.customEmojiId === 'string'
         ? { customEmojiId: e.customEmojiId }
         : {}),

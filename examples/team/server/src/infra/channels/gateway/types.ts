@@ -38,6 +38,7 @@ import type {
   CopyOptions,
   EventOf,
   NodeInfo,
+  OutboundButton,
   OutboundFile,
   RemoteEvent,
   TextFormat,
@@ -424,6 +425,8 @@ export interface PostOptions {
   silent?: boolean | undefined
   format?: TextFormat | undefined
   linkPreview?: boolean | undefined
+  /** Buttons under the message (the last part of a long one), where the chat shows buttons. */
+  buttons?: OutboundButton[] | undefined
   /** The caller retries a rate-limited post: its unsent rows are not left for a person to look at. */
   retriesRateLimit?: boolean | undefined
 }

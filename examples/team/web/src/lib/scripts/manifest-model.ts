@@ -117,6 +117,10 @@ export type Grants = {
 	wake: string[];
 	programs: string[];
 	api: string[];
+	read: ChatGrant[];
+	moderate: ChatGrant[];
+	actions: Array<{ connection: string; name: string }>;
+	notify: boolean;
 };
 
 export type SimpleManifest = {
@@ -136,7 +140,7 @@ const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v
 const tri = (v: unknown): TriState => (v === true ? 'yes' : v === false ? 'no' : 'any');
 const int = (v: unknown, dflt: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : dflt);
 
-export const emptyGrants = (): Grants => ({ send: [], reply: false, libraryRead: [], libraryWrite: [], tablesRead: [], tablesWrite: [], http: [], wake: [], programs: [], api: [] });
+export const emptyGrants = (): Grants => ({ send: [], reply: false, libraryRead: [], libraryWrite: [], tablesRead: [], tablesWrite: [], http: [], wake: [], programs: [], api: [], read: [], moderate: [], actions: [], notify: false });
 
 export const newTrigger = (kind: Trigger['kind']): Trigger =>
 	kind === 'channel'
@@ -233,10 +237,12 @@ export function fromManifest(input: unknown): SimpleManifest {
 		else if (r.kind === 'webhook') triggers.push({ kind: 'webhook' });
 	}
 	const g = obj(raw.grants);
-	const send: ChatGrant[] = (Array.isArray(g.send) ? g.send : []).map((x) => {
-		const o = obj(x);
-		return { connection: String(o.connection ?? ''), chat: String(o.chat ?? ''), topic: typeof o.topic === 'string' ? o.topic : '' };
-	});
+	const chatGrants = (v: unknown): ChatGrant[] =>
+		(Array.isArray(v) ? v : []).map((x) => {
+			const o = obj(x);
+			return { connection: String(o.connection ?? ''), chat: String(o.chat ?? ''), topic: typeof o.topic === 'string' ? o.topic : '' };
+		});
+	const send = chatGrants(g.send);
 	const limits: Record<string, number> = {};
 	for (const [k, v] of Object.entries(obj(raw.limits))) if (typeof v === 'number') limits[k] = v;
 	return {
@@ -251,7 +257,14 @@ export function fromManifest(input: unknown): SimpleManifest {
 			http: strings(g.http),
 			wake: strings(g.wake),
 			programs: strings(g.programs),
-			api: strings(g.api)
+			api: strings(g.api),
+			read: chatGrants(g.read),
+			moderate: chatGrants(g.moderate),
+			actions: (Array.isArray(g.actions) ? g.actions : []).map((x) => {
+				const o = obj(x);
+				return { connection: String(o.connection ?? ''), name: String(o.name ?? '') };
+			}),
+			notify: g.notify === true
 		},
 		cooldownSec: int(raw.cooldownSec, 0),
 		maxRunsPerHour: int(raw.maxRunsPerHour, DEFAULT_RUNS_PER_HOUR),
@@ -289,15 +302,24 @@ export function toManifest(m: SimpleManifest): Record<string, unknown> {
 	});
 	const g = m.grants;
 	const grants: Record<string, unknown> = {};
-	const send = g.send
-		.filter((s) => s.connection.trim() && s.chat.trim())
-		.map((s) => ({ connection: s.connection.trim(), chat: s.chat.trim(), ...(s.topic.trim() ? { topic: s.topic.trim() } : {}) }));
+	const chats = (list: ChatGrant[]) =>
+		list
+			.filter((s) => s.connection.trim() && s.chat.trim())
+			.map((s) => ({ connection: s.connection.trim(), chat: s.chat.trim(), ...(s.topic.trim() ? { topic: s.topic.trim() } : {}) }));
+	const send = chats(g.send);
 	if (send.length) grants.send = send;
 	if (g.reply) grants.reply = true;
 	for (const key of ['libraryRead', 'libraryWrite', 'tablesRead', 'tablesWrite', 'http', 'wake', 'programs', 'api'] as const) {
 		const v = clean(g[key]);
 		if (v.length) grants[key] = v;
 	}
+	const read = chats(g.read);
+	if (read.length) grants.read = read;
+	const moderate = chats(g.moderate);
+	if (moderate.length) grants.moderate = moderate;
+	const actions = g.actions.filter((a) => a.connection.trim() && a.name.trim()).map((a) => ({ connection: a.connection.trim(), name: a.name.trim() }));
+	if (actions.length) grants.actions = actions;
+	if (g.notify) grants.notify = true;
 	const out: Record<string, unknown> = { triggers, grants };
 	if (m.cooldownSec > 0) out.cooldownSec = m.cooldownSec;
 	if (m.maxRunsPerHour !== DEFAULT_RUNS_PER_HOUR) out.maxRunsPerHour = m.maxRunsPerHour;

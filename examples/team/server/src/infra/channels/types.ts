@@ -308,6 +308,54 @@ export interface OutboundFile {
   ref?: string
 }
 
+/** What a member may do in a group (a muted person may do none of it). */
+export const MEMBER_RIGHTS = [
+  'send_messages',
+  'send_media',
+  'send_polls',
+  'send_other',
+  'add_link_previews',
+  'invite_users',
+  'pin_messages',
+  'change_info',
+  'manage_topics',
+] as const
+export type MemberRight = (typeof MEMBER_RIGHTS)[number]
+
+/** A moderation step in a group (typed, unlike native actions). `user` is the platform user id. */
+export type ModerationOp =
+  | { action: 'ban'; user: string; untilMs?: number; deleteMessages?: boolean }
+  | { action: 'unban'; user: string }
+  | { action: 'kick'; user: string }
+  | { action: 'mute'; user: string; untilMs?: number }
+  | { action: 'unmute'; user: string }
+  | { action: 'restrict'; user: string; allow: MemberRight[]; untilMs?: number }
+  | { action: 'approve_join'; user: string }
+  | { action: 'decline_join'; user: string }
+  | { action: 'delete_member_messages'; user: string }
+  | { action: 'member'; user: string }
+  | {
+      action: 'invite_link'
+      name?: string
+      expiresAt?: number
+      memberLimit?: number
+      joinRequest?: boolean
+    }
+
+/** What a moderation step answers: an invite link, or a member's standing. */
+export interface ModerationResult {
+  link?: string
+  member?: {
+    status: 'owner' | 'admin' | 'member' | 'restricted' | 'left' | 'banned'
+    name?: string
+    username?: string
+    /** Restricted or banned until (epoch ms); absent = for good. */
+    until?: number
+    /** Restricted members: what they may still do. */
+    allow?: MemberRight[]
+  }
+}
+
 /** How the text of a message is written: Markdown (default), the platform's HTML subset, or plain. */
 export type TextFormat = 'markdown' | 'html' | 'plain'
 
@@ -327,7 +375,14 @@ export interface OutboundButton {
   name: string
   label: string
   data?: string
+  /** A link button (opens the URL; no `action` event). */
+  url?: string
+  /** The row it sits in (0 = first); buttons of one row are side by side. */
+  row?: number
 }
+
+/** The `name` of buttons scripts send: a press reaches scripts, never the agent. */
+export const SCRIPT_BUTTON = 's'
 
 export interface OutboundMessage {
   text: string
@@ -499,6 +554,10 @@ export interface ChannelAdapter {
     to: ChannelNode,
     options: CopyOptions,
   ): Promise<string[]>
+  /** Replace the buttons under a message (none = remove them). */
+  editButtons?(node: ChannelNode, nativeId: string, buttons: OutboundButton[]): Promise<void>
+  /** Moderate a member of a group (ban, mute, join requests, invite links…). */
+  moderate?(node: ChannelNode, op: ModerationOp): Promise<ModerationResult>
   typing?(node: ChannelNode): Promise<void>
   fetchHistory?(
     node: ChannelNode,

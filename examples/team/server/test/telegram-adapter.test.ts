@@ -675,6 +675,99 @@ describe('outbound', () => {
   })
 })
 
+describe('moderation and buttons', () => {
+  const room: ChannelNode = {
+    id: '-1001',
+    connectionId: 'tg1',
+    nativeId: '-1001',
+    kind: 'room',
+    traits: traitsOf({ multiUser: true }),
+    platformType: 'telegram:supergroup',
+    title: undefined,
+    parentNativeId: undefined,
+    meta: { chatId: '-1001' },
+  }
+
+  test('mute takes every right for a while; restrict keeps the allowed ones; ban deletes messages', async () => {
+    const { fake, adapter, start } = setup()
+    await start()
+    await adapter.moderate?.(room, { action: 'mute', user: '77', untilMs: 1_900_000_000_000 })
+    const mute = fake.callsOf('restrictChatMember')[0]?.params
+    expect(mute).toMatchObject({
+      user_id: 77,
+      until_date: 1_900_000_000,
+      use_independent_chat_permissions: true,
+    })
+    expect(
+      Object.values(mute?.permissions as Record<string, boolean>).every((v) => v === false),
+    ).toBe(true)
+    await adapter.moderate?.(room, { action: 'restrict', user: '77', allow: ['send_messages'] })
+    const restrict = fake.callsOf('restrictChatMember')[1]?.params.permissions as Record<
+      string,
+      boolean
+    >
+    expect(restrict.can_send_messages).toBe(true)
+    expect(restrict.can_send_photos).toBe(false)
+    await adapter.moderate?.(room, { action: 'ban', user: '78', deleteMessages: true })
+    expect(fake.callsOf('banChatMember')[0]?.params).toMatchObject({
+      user_id: 78,
+      revoke_messages: true,
+    })
+    await adapter.moderate?.(room, { action: 'approve_join', user: '79' })
+    expect(fake.callsOf('approveChatJoinRequest')).toHaveLength(1)
+  })
+
+  test('a member lookup and an invite link with join requests', async () => {
+    const { fake, adapter, start } = setup()
+    await start()
+    const m = await adapter.moderate?.(room, { action: 'member', user: '77' })
+    expect(m?.member).toEqual({
+      status: 'restricted',
+      name: 'Ana',
+      username: 'ana',
+      until: 1_900_000_000_000,
+      allow: ['send_messages'],
+    })
+    const l = await adapter.moderate?.(room, {
+      action: 'invite_link',
+      name: 'signals',
+      joinRequest: true,
+      memberLimit: 5,
+    })
+    expect(l?.link).toBe('https://t.me/+abc')
+    const p = fake.callsOf('createChatInviteLink')[0]?.params
+    expect(p).toMatchObject({ name: 'signals', creates_join_request: true })
+    expect(p?.member_limit).toBeUndefined()
+  })
+
+  test('buttons go in rows; a link button opens a URL; buttons can be replaced', async () => {
+    const { fake, adapter, start } = setup()
+    await start()
+    await adapter.send(room, {
+      text: 'vote',
+      buttons: [
+        { name: 's', label: 'Yes', data: 'y', row: 0 },
+        { name: 's', label: 'No', data: 'n', row: 0 },
+        { name: 's', label: 'Rules', url: 'https://example.com', row: 1 },
+      ],
+    })
+    expect(fake.callsOf('sendMessage')[0]?.params.reply_markup).toEqual({
+      inline_keyboard: [
+        [
+          { text: 'Yes', callback_data: 's:y' },
+          { text: 'No', callback_data: 's:n' },
+        ],
+        [{ text: 'Rules', url: 'https://example.com' }],
+      ],
+    })
+    await adapter.editButtons?.(room, '5', [])
+    expect(fake.callsOf('editMessageReplyMarkup')[0]?.params).toMatchObject({
+      message_id: 5,
+      reply_markup: { inline_keyboard: [] },
+    })
+  })
+})
+
 describe('files in', () => {
   test('a document is downloaded through getFile; over 20 MB is refused with a readable error', async () => {
     const { fake, events, start } = setup()

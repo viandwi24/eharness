@@ -112,6 +112,10 @@ All filters of one trigger must match; any trigger starts the script.
 |---|---|
 | `send: [{ connection, chat, topic? }]` | `ctx.channels.send` to those chats |
 | `reply: true` | `ctx.channels.reply` in the chat of the event that started the run |
+| `read: [{ connection, chat, topic? }]` | history, messages, members and files of those chats (chats in `send` are readable) |
+| `moderate: [{ connection, chat }]` | `ctx.channels.moderate`, `inviteLink` and `member` in those groups (`chat: "*"` = any) |
+| `actions: [{ connection, name }]` | native actions through `ctx.channels.action` (`name: "*"` = any) |
+| `notify: true` | `ctx.notify` (a notification in the owner's bell) |
 | `libraryRead`, `libraryWrite` | library paths by glob (`/library/reports/**`; `*` inside one folder); write implies read |
 | `tablesRead`, `tablesWrite` | table names (`*` = any); write implies read |
 | `http` | hosts for `ctx.http.*` (`api.example.com`, `*.example.com`); https only, private addresses refused |
@@ -143,6 +147,8 @@ Every method takes one object and returns a promise.
 | `channels.copies({ connection, chat, topic?, messageId })` | what this script copied a message to (`copies`), or for a copy its `source` |
 | `channels.edit({ …, messageId, text, format? })`, `channels.delete({ …, messageId? , messageIds? })`, `channels.react({ …, messageId, emoji, customEmojiId? })`, `channels.pin(…)` | change messages in a granted chat (edit changes the caption of a message with a file) |
 | `channels.history`, `channels.message`, `channels.members`, `channels.chats`, `channels.download`, `channels.action` | read a chat, save a file to the library, run a native action |
+| `channels.moderate({ connection, chat, action, user, forSec?, deleteMessages?, allow? })` | `ban`, `unban`, `kick`, `mute`, `unmute`, `restrict` (to the rights in `allow`), `approve_join`, `decline_join`, `delete_messages` in a group of `grants.moderate`; `user` is the platform id (`event.actor.id`); the connection needs the admin right and never moderates itself |
+| `channels.inviteLink({ connection, chat, name?, expireSec?, memberLimit?, joinRequest? })` → `{ link }`, `channels.member({ connection, chat, user })` → `{ status, until?, allow? }` | invite links and a person's standing (`owner`, `admin`, `member`, `restricted`, `left`, `banned`) |
 | `library.read({ path })`, `library.list({ prefix })`, `library.write({ path, content })` | library text files |
 | `tables.query({ table, filter?, sort?, fields?, limit?, cursor? })`, `tables.get({ table, id })`, `tables.aggregate({ table, filter?, groupBy?, metrics })` | read [tables](tables.md) |
 | `tables.insert({ table, rows })`, `tables.update({ table, id?, filter?, set?, unset?, inc?, ifVersion? })`, `tables.delete({ table, id?, filter? })` | change tables; rows record `script:<name>` as author |
@@ -154,6 +160,20 @@ Every method takes one object and returns a promise.
 | `programs.list()`, `programs.run({ program })` | granted programs |
 | `api.get({ path, query? })`, `api.request({ method, path, query?, body? })` | the team API (every route of the [API docs](api.md)) as the owner, on granted routes → `{ status, body }`; a dry run records `api.request` instead of doing it |
 | `log(...values)` | a trace line |
+
+### Buttons
+
+On a bot connection, `channels.send` and `channels.reply` take `buttons`: rows of `{ text, data }`
+(a press is an `action` event with `event.button.data`, for scripts only: the agent is not woken)
+or `{ text, url }` (a link). `channels.edit({ …, buttons })` replaces them (`[]` removes them;
+without `text` only the buttons change). A user account cannot send buttons.
+
+```ts
+if (event.type === 'action') {
+  const n = (await ctx.kv.incr({ key: 'votes:' + event.button.data })).value
+  await ctx.channels.edit({ connection: c, chat: event.chat.nativeId, messageId: event.messageId, buttons: [[{ text: 'Yes (' + n + ')', data: 'yes' }]] })
+}
+```
 
 ### Media, formatting and copies
 

@@ -56,6 +56,20 @@ describe('manifest model', () => {
 		expect(describeTrigger(hook!)).toContain('POST');
 	});
 
+	test('read, moderate, native action and notify grants survive a round trip (simple mode can show them)', () => {
+		const m = {
+			triggers: [],
+			grants: {
+				read: [{ connection: 'c1', chat: 'Signals' }],
+				moderate: [{ connection: 'c1', chat: '*' }],
+				actions: [{ connection: 'c1', name: 'create_link' }],
+				notify: true
+			}
+		};
+		expect(toManifest(fromManifest(m))).toEqual(m);
+		expect(simpleCanShow(m)).toBe(true);
+	});
+
 	test('message filters survive a round trip and read as a line', () => {
 		const m = {
 			triggers: [{ kind: 'channel', events: ['message.created'], messageKinds: ['photo', 'album'], forwardFrom: ['Signals HQ'], isReply: false, isForward: true, hasLink: true }],

@@ -15,6 +15,7 @@
 	import WebhooksLogoIcon from 'phosphor-svelte/lib/WebhooksLogo';
 	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
 	import CopyIcon from 'phosphor-svelte/lib/Copy';
+	import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheck';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
@@ -89,6 +90,26 @@
 	const chip = (on: boolean): string =>
 		cn('rounded-full border px-2.5 py-1 text-xs transition-colors', on ? 'border-transparent bg-foreground text-background' : 'border-border text-muted-foreground hover:text-foreground');
 </script>
+
+{#snippet chatRows(key: 'send' | 'read' | 'moderate', addLabel: string)}
+	{#each manifest.grants[key] as g, i (i)}
+		<div class="flex flex-wrap items-center gap-2">
+			<NativeSelect bind:value={g.connection} class="w-48" aria-label="Connection" onchange={() => void lookups.chatsOf(g.connection)}>
+				<NativeSelectOption value="">Connection…</NativeSelectOption>
+				{#each L.connections as c (c.value)}<NativeSelectOption value={c.value}>{c.label}</NativeSelectOption>{/each}
+				{#if g.connection && !L.connections.some((c) => c.value === g.connection)}<NativeSelectOption value={g.connection}>{g.connection}</NativeSelectOption>{/if}
+			</NativeSelect>
+			<Input bind:value={g.chat} list="mb-{key}-chats-{i}" placeholder="Chat title or id (* = all)" class="w-56" aria-label="Chat" autocomplete="off" />
+			<datalist id="mb-{key}-chats-{i}">{#each L.chats[g.connection] ?? [] as c (c.value)}<option value={c.value}>{c.hint}</option>{/each}</datalist>
+			<Input bind:value={g.topic} placeholder="Topic (optional)" class="w-40" aria-label="Topic" autocomplete="off" />
+			<Button size="icon-sm" variant="ghost" aria-label="Remove chat" onclick={() => (manifest.grants[key] = manifest.grants[key].filter((_, j) => j !== i))}><TrashIcon class="size-4" /></Button>
+		</div>
+	{/each}
+	<div>
+		<Button size="sm" variant="ghost" onclick={() => (manifest.grants[key] = [...manifest.grants[key], { connection: L.connections[0]?.value ?? '', chat: '', topic: '' }])}><PlusIcon class="size-4" /> {addLabel}</Button>
+	</div>
+{/snippet}
+
 
 <div class="flex flex-col gap-6">
 	<!-- RUNS WHEN -->
@@ -333,25 +354,45 @@
 		<div class="divide-y divide-border rounded-lg border border-border bg-card text-sm">
 			<div class="flex flex-col gap-3 p-3">
 				<div class="flex items-center gap-2"><PaperPlaneTiltIcon class="size-4 text-muted-foreground" /><span class="font-medium">Send to chats</span></div>
-				{#each manifest.grants.send as g, i (i)}
-					<div class="flex flex-wrap items-center gap-2">
-						<NativeSelect bind:value={g.connection} class="w-48" aria-label="Connection" onchange={() => void lookups.chatsOf(g.connection)}>
-							<NativeSelectOption value="">Connection…</NativeSelectOption>
-							{#each L.connections as c (c.value)}<NativeSelectOption value={c.value}>{c.label}</NativeSelectOption>{/each}
-							{#if g.connection && !L.connections.some((c) => c.value === g.connection)}<NativeSelectOption value={g.connection}>{g.connection}</NativeSelectOption>{/if}
-						</NativeSelect>
-						<Input bind:value={g.chat} list="mb-chats-{i}" placeholder="Chat title or id" class="w-56" aria-label="Chat" autocomplete="off" />
-						<datalist id="mb-chats-{i}">{#each L.chats[g.connection] ?? [] as c (c.value)}<option value={c.value}>{c.hint}</option>{/each}</datalist>
-						<Input bind:value={g.topic} placeholder="Topic (optional)" class="w-40" aria-label="Topic" autocomplete="off" />
-						<Button size="icon-sm" variant="ghost" aria-label="Remove chat" onclick={() => (manifest.grants.send = manifest.grants.send.filter((_, j) => j !== i))}><TrashIcon class="size-4" /></Button>
-					</div>
-				{/each}
-				<div>
-					<Button size="sm" variant="ghost" onclick={() => (manifest.grants.send = [...manifest.grants.send, { connection: L.connections[0]?.value ?? '', chat: '', topic: '' }])}><PlusIcon class="size-4" /> Add a chat</Button>
-				</div>
+				{@render chatRows('send', 'Add a chat')}
 				<label class="flex items-center gap-3">
 					<Switch bind:checked={manifest.grants.reply} size="sm" />
 					<span>Reply in the chat of the event <span class="text-xs text-muted-foreground">(ctx.channels.reply)</span></span>
+				</label>
+			</div>
+
+			<div class="flex flex-col gap-3 p-3">
+				<div class="flex items-center gap-2"><ChatCircleIcon class="size-4 text-muted-foreground" /><span class="font-medium">Read chats</span><span class="text-xs text-muted-foreground">history, members and files (chats you send to are readable already)</span></div>
+				{@render chatRows('read', 'Add a chat to read')}
+			</div>
+
+			<div class="flex flex-col gap-3 p-3">
+				<div class="flex items-center gap-2"><ShieldCheckIcon class="size-4 text-muted-foreground" /><span class="font-medium">Moderate groups</span><span class="text-xs text-muted-foreground">ban, mute, restrict, join requests, invite links (the connection needs the admin right)</span></div>
+				{@render chatRows('moderate', 'Add a group')}
+			</div>
+
+			<div class="flex flex-col gap-3 p-3">
+				<div class="flex items-center gap-2"><LightningIcon class="size-4 text-muted-foreground" /><span class="font-medium">Native actions</span><span class="text-xs text-muted-foreground">what a connection can do beyond messages (the Channels page lists them; * = any)</span></div>
+				{#each manifest.grants.actions as a, i (i)}
+					<div class="flex flex-wrap items-center gap-2">
+						<NativeSelect bind:value={a.connection} class="w-48" aria-label="Connection">
+							<NativeSelectOption value="">Connection…</NativeSelectOption>
+							{#each L.connections as c (c.value)}<NativeSelectOption value={c.value}>{c.label}</NativeSelectOption>{/each}
+							{#if a.connection && !L.connections.some((c) => c.value === a.connection)}<NativeSelectOption value={a.connection}>{a.connection}</NativeSelectOption>{/if}
+						</NativeSelect>
+						<Input bind:value={a.name} placeholder="Action (e.g. create_link)" class="w-56 font-mono text-xs" aria-label="Action" autocomplete="off" />
+						<Button size="icon-sm" variant="ghost" aria-label="Remove action" onclick={() => (manifest.grants.actions = manifest.grants.actions.filter((_, j) => j !== i))}><TrashIcon class="size-4" /></Button>
+					</div>
+				{/each}
+				<div>
+					<Button size="sm" variant="ghost" onclick={() => (manifest.grants.actions = [...manifest.grants.actions, { connection: L.connections[0]?.value ?? '', name: '' }])}><PlusIcon class="size-4" /> Add an action</Button>
+				</div>
+			</div>
+
+			<div class="p-3">
+				<label class="flex items-center gap-3">
+					<Switch bind:checked={manifest.grants.notify} size="sm" />
+					<span>Notify the owner <span class="text-xs text-muted-foreground">(ctx.notify: a notification in the bell)</span></span>
 				</label>
 			</div>
 

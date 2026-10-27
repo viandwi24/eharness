@@ -810,6 +810,22 @@ export function governAdapter<A extends ChannelAdapter>(
               { messages: ids.length },
               () => fn.call(target, node, ids) as Promise<unknown>,
             )
+        case 'editButtons':
+          return (node: ChannelNode, nativeId: string, buttons: unknown) =>
+            nodeWrite(
+              'edit',
+              node,
+              { message: nativeId },
+              () => fn.call(target, node, nativeId, buttons) as Promise<unknown>,
+            )
+        case 'moderate':
+          return (node: ChannelNode, op: { action: string; user?: string }) =>
+            nodeWrite(
+              'moderate',
+              node,
+              { action: op.action, ...(op.user === undefined ? {} : { user: op.user }) },
+              () => fn.call(target, node, op) as Promise<unknown>,
+            )
         case 'copy':
           return (from: ChannelNode, ids: string[], to: ChannelNode, o: unknown) =>
             run(

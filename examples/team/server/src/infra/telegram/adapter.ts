@@ -10,7 +10,7 @@
 import { autoRetry } from '@grammyjs/auto-retry'
 import { run, sequentialize } from '@grammyjs/runner'
 import { Bot, GrammyError, HttpError, InputFile } from 'grammy'
-import type { Update } from 'grammy/types'
+import type { InlineKeyboardButton, InlineKeyboardMarkup, Update } from 'grammy/types'
 import { z } from 'zod'
 import { reportFailure } from '../channels/governor.ts'
 import {
@@ -28,9 +28,13 @@ import {
   type CopyOptions,
   type EventSink,
   type Identity,
+  MEMBER_RIGHTS,
   type MediaKind,
+  type MemberRight,
+  type ModerationResult,
   type NativeAction,
   type NodeInfo,
+  type OutboundButton,
   type OutboundFile,
   type OutboundMessage,
   type SentMessage,
@@ -217,6 +221,32 @@ export function targetOf(node: ChannelNode): { chat: string; topic: number | und
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
+/** Generic member rights as Bot API permissions (every other one switched off). */
+const BOT_RIGHTS: Record<MemberRight, string[]> = {
+  send_messages: ['can_send_messages'],
+  send_media: [
+    'can_send_audios',
+    'can_send_documents',
+    'can_send_photos',
+    'can_send_videos',
+    'can_send_video_notes',
+    'can_send_voice_notes',
+  ],
+  send_polls: ['can_send_polls'],
+  send_other: ['can_send_other_messages'],
+  add_link_previews: ['can_add_web_page_previews'],
+  invite_users: ['can_invite_users'],
+  pin_messages: ['can_pin_messages'],
+  change_info: ['can_change_info'],
+  manage_topics: ['can_manage_topics'],
+}
+const botPermissions = (allow: readonly MemberRight[]): Record<string, boolean> => {
+  const out: Record<string, boolean> = { can_react_to_messages: allow.length > 0 }
+  for (const [right, perms] of Object.entries(BOT_RIGHTS) as Array<[MemberRight, string[]]>)
+    for (const p of perms) out[p] = allow.includes(right)
+  return out
+}
+
 /** Telegram HTML as plain text. */
 const stripHtml = (html: string): string =>
   html
@@ -351,17 +381,23 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
 
   // --- outbound --------------------------------------------------------------------------------
 
+  const keyboard = (buttons: readonly OutboundButton[]): InlineKeyboardMarkup => {
+    const rows = new Map<number, InlineKeyboardButton[]>()
+    for (const b of buttons) {
+      const row = rows.get(b.row ?? 0) ?? []
+      row.push(
+        b.url === undefined
+          ? { text: b.label, callback_data: encodeCallback(b.name, b.data) }
+          : { text: b.label, url: b.url },
+      )
+      rows.set(b.row ?? 0, row)
+    }
+    return { inline_keyboard: [...rows.entries()].sort((a, b) => a[0] - b[0]).map(([, r]) => r) }
+  }
   const markup = (message: OutboundMessage) =>
     message.buttons === undefined || message.buttons.length === 0
       ? undefined
-      : {
-          inline_keyboard: [
-            message.buttons.map((b) => ({
-              text: b.label,
-              callback_data: encodeCallback(b.name, b.data),
-            })),
-          ],
-        }
+      : keyboard(message.buttons)
 
   /** HTML first; when Telegram cannot parse the entities, the same text goes out plain. */
   async function withHtml<T>(html: () => Promise<T>, plain: () => Promise<T>): Promise<T> {
@@ -864,6 +900,19 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
         }
       })
     },
+    async editButtons(node, nativeId, buttons) {
+      try {
+        await guard(() =>
+          bot.api.editMessageReplyMarkup(chatArg(targetOf(node).chat), Number(nativeId), {
+            reply_markup:
+              buttons.length === 0 ? { inline_keyboard: [] } : (keyboard(buttons) as never),
+          }),
+        )
+      } catch (error) {
+        if (error instanceof ChannelError && /not modified/i.test(error.message)) return
+        throw error
+      }
+    },
     async editCaption(node, nativeId, text, format) {
       await guard(() => editCaption(targetOf(node).chat, nativeId, text, format))
     },
@@ -880,6 +929,111 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
     },
     async copy(from, nativeIds, to, o) {
       return guard(() => copyTo(from, nativeIds, to, o))
+    },
+    async moderate(node, op) {
+      const chat = chatArg(targetOf(node).chat)
+      const until = (ms: number | undefined): Record<string, number> =>
+        ms === undefined ? {} : { until_date: Math.floor(ms / 1000) }
+      return guard(async (): Promise<ModerationResult> => {
+        switch (op.action) {
+          case 'ban':
+            await bot.api.banChatMember(chat, Number(op.user), {
+              ...until(op.untilMs),
+              ...(op.deleteMessages === true ? { revoke_messages: true } : {}),
+            })
+            return {}
+          case 'unban':
+            await bot.api.unbanChatMember(chat, Number(op.user), { only_if_banned: true })
+            return {}
+          case 'kick':
+            await bot.api.banChatMember(chat, Number(op.user))
+            await bot.api.unbanChatMember(chat, Number(op.user), { only_if_banned: true })
+            return {}
+          case 'mute':
+          case 'unmute':
+          case 'restrict': {
+            const allow: readonly MemberRight[] =
+              op.action === 'mute' ? [] : op.action === 'unmute' ? MEMBER_RIGHTS : op.allow
+            await bot.api.restrictChatMember(
+              chat,
+              Number(op.user),
+              botPermissions(allow) as never,
+              {
+                ...(op.action === 'unmute' ? {} : until(op.untilMs)),
+                use_independent_chat_permissions: true,
+              },
+            )
+            return {}
+          }
+          case 'approve_join':
+          case 'decline_join': {
+            if (op.action === 'approve_join')
+              await bot.api.approveChatJoinRequest(chat, Number(op.user))
+            else await bot.api.declineChatJoinRequest(chat, Number(op.user))
+            const resolution: JoinResolution =
+              op.action === 'approve_join' ? 'approved' : 'declined'
+            const r = joinRequests.resolve(String(chat), op.user, resolution, 'this bot')
+            if (r !== undefined) joinResolved(r, resolution)
+            return {}
+          }
+          case 'delete_member_messages':
+            throw new ChannelError(
+              'invalid',
+              'a bot cannot delete everything a person wrote (ban with deleteMessages does it)',
+            )
+          case 'member': {
+            const m = (await bot.api.getChatMember(chat, Number(op.user))) as unknown as {
+              status: string
+              until_date?: number
+              user: { first_name?: string; last_name?: string; username?: string }
+            } & Record<string, unknown>
+            const status =
+              m.status === 'creator'
+                ? 'owner'
+                : m.status === 'administrator'
+                  ? 'admin'
+                  : m.status === 'kicked'
+                    ? 'banned'
+                    : m.status === 'restricted'
+                      ? 'restricted'
+                      : m.status === 'left'
+                        ? 'left'
+                        : 'member'
+            const name = [m.user.first_name, m.user.last_name].filter(Boolean).join(' ')
+            const allow =
+              status === 'restricted'
+                ? (Object.entries(BOT_RIGHTS) as Array<[MemberRight, string[]]>)
+                    .filter(([, perms]) => perms.every((p) => m[p] === true))
+                    .map(([r]) => r)
+                : undefined
+            return {
+              member: {
+                status,
+                ...(name === '' ? {} : { name }),
+                ...(m.user.username === undefined ? {} : { username: m.user.username }),
+                ...(m.until_date === undefined || m.until_date === 0
+                  ? {}
+                  : { until: m.until_date * 1000 }),
+                ...(allow === undefined ? {} : { allow }),
+              },
+            }
+          }
+          case 'invite_link': {
+            const link = await bot.api.createChatInviteLink(chat, {
+              ...(op.name === undefined ? {} : { name: op.name.slice(0, 32) }),
+              ...(op.expiresAt === undefined
+                ? {}
+                : { expire_date: Math.floor(op.expiresAt / 1000) }),
+              ...(op.joinRequest === true
+                ? { creates_join_request: true }
+                : op.memberLimit === undefined
+                  ? {}
+                  : { member_limit: op.memberLimit }),
+            })
+            return { link: link.invite_link }
+          }
+        }
+      })
     },
     async pin(node, nativeId, pinned) {
       const { chat } = targetOf(node)

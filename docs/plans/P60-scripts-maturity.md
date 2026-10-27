@@ -1,6 +1,6 @@
 # P60 — Team example: scripts and tables, mature
 
-Status: in progress (W1–W3 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
+Status: in progress (W1–W4 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
 
 ## Goal
 
@@ -71,9 +71,13 @@ Inputs: the scenario catalog and capability checklist in
   longer active. Edits are a trigger already (`message.edited`).
 
 ### W4 — Moderation and interaction
-- [ ] Typed moderation: ban, mute/restrict with an end, set permissions, approve/decline join
+- [x] Typed moderation: ban, mute/restrict with an end, set permissions, approve/decline join
       requests, member lookup, invite links (wrapping the native actions).
-- [ ] Buttons and callbacks: send inline buttons, a `callback` trigger, answer and edit buttons.
+- [x] Buttons and callbacks: send inline buttons, a `callback` trigger, answer and edit buttons.
+- Notes: one adapter operation, `moderate`, carries the typed steps (`grants.moderate`); member
+  lookup lives there too. Presses use the existing `action` trigger (`event.button.data`); the bot
+  stops the spinner at once, so a script answers with an edit or a message, not a toast. The
+  Simple editor now covers the read, moderate, native action and notify grants.
 
 ### W5 — Tables
 - [ ] Unique keys and `upsert` in `ctx.tables` and the API.

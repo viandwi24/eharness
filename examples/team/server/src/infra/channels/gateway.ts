@@ -167,6 +167,7 @@ import {
   type OutboundFile,
   type OutboundMessage,
   type RemoteEvent,
+  SCRIPT_BUTTON,
   type TextFormat,
 } from './types.ts'
 
@@ -4488,6 +4489,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       }
       return { action: 'record', reason: 'edited' }
     }
+    // a button a script sent: for scripts only, the agent is not woken
+    if (event.type === 'action' && event.name === SCRIPT_BUTTON)
+      return { action: 'record', reason: 'script button' }
     if (event.type === 'action' && (event.name === 'approve' || event.name === 'deny')) {
       const answered = await handleApprovalAction(event, config, adapter, node, sender)
       if (answered !== undefined) return answered
@@ -4858,6 +4862,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
             ...(options.replyTo !== undefined && caps.quote ? { replyTo: options.replyTo } : {}),
             ...(options.silent === true ? { silent: true } : {}),
             ...(options.format === undefined ? {} : { format: options.format }),
+            ...(options.buttons !== undefined && options.buttons.length > 0 && caps.buttons === true
+              ? { buttons: options.buttons }
+              : {}),
           }),
         )
         const all = sent.nativeIds ?? [sent.nativeId]
@@ -4905,6 +4912,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           ? { replyTo: options.replyTo }
           : {}),
         ...(styleOf(options) === undefined ? {} : { style: styleOf(options) }),
+        ...(i === chunks.length - 1 && options.buttons !== undefined && options.buttons.length > 0
+          ? { buttons: options.buttons }
+          : {}),
       })),
       now(),
     )
