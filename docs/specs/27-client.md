@@ -278,7 +278,7 @@ own writes to `messages` at once (React would show them after the next render).
 ## 8. Following a session
 
 ```ts
-followSessionStream(client, sessionId, { signal?, onMessage?, onChunk?, onError? }): Promise<'streamed' | 'idle' | 'error'>
+followSessionStream(client, sessionId, { signal?, onMessage?, onChunk?, onError?, deltaHoldMs?, clip? }): Promise<'streamed' | 'idle' | 'error'>
 ```
 
 A read-only follower of the active turn of a session this tab did not start (a task, a routine, a
@@ -288,6 +288,22 @@ SDK's reducer and SSE parser. `idle` = nothing streams (`204`); `error` = a fail
 broken stream or an abort (also reported to `onError`); it never throws. The server replays the
 whole message first, also for a `respond()` continuation (spec 04 §6.3), so `onMessage` receives
 complete states of the message; clone them before keeping them.
+
+Every state is a full copy of the message (the SDK snapshots it), so the number of states decides
+the cost of a long turn: a turn of hundreds of steps, replayed in full on connect, would otherwise
+copy a large message once per chunk. Two options keep it cheap:
+
+- `deltaHoldMs` (default `50`): consecutive `text-delta` / `reasoning-delta` chunks of the same part
+  are merged before folding, the way the SDK reducer would fold them (text appended, the last
+  `providerMetadata` wins), so the built message is unchanged. A held delta is folded with the next
+  other chunk, after `deltaHoldMs`, or at the end of the stream, so text still arrives live. `0`
+  folds every delta on its own.
+- `clip` (off by default): a tool `input` / `output` or a non-transient data part's `data` whose JSON
+  is longer than `clip` characters is replaced by the preview of a clipped read (spec 26 §2.2,
+  `{ eharnessClipped: true, chars, preview }`, told by `isClippedPart`); the whole value is read from
+  the stored message. Transient data parts are never clipped.
+
+`onChunk` receives every chunk as it arrived, before merging and clipping.
 
 ## 9. Out of scope
 

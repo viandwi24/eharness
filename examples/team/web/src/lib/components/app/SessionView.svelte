@@ -24,7 +24,8 @@
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
-	import { followTaskStream, type TurnUsage } from '#lib/tasks/live-stream.js';
+	import { followSessionStream } from 'eharness/client';
+	import { usageOf, type TurnUsage } from '#lib/tasks/live-stream.js';
 	import { isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
 	import { emptyPages, mergeNewest, prependOlder, replaceMessage, type PageState } from '#lib/tasks/pages.js';
 	import { CLIP_CHARS, PAGE_SIZE, revealEarlier, windowStart } from '#lib/chat/window.js';
@@ -238,7 +239,8 @@
 		void (async () => {
 			try {
 				while (!ctl.signal.aborted) {
-					const result = await followTaskStream(harness, sessionId, {
+					// big tool payloads come as `?clip=` previews like the stored pages; deltas are merged (long turns)
+					const result = await followSessionStream(harness, sessionId, {
 						signal: ctl.signal,
 						clip: CLIP_CHARS,
 						onMessage: (m) => {
@@ -247,8 +249,9 @@
 							pending.set(m.id, m); // a fresh snapshot of the SDK: no clone needed
 							frame ??= setTimeout(flush, LIVE_FRAME_MS);
 						},
-						onUsage: (u) => {
-							if (!ctl.signal.aborted && mine === loopToken) turnUsage = u;
+						onChunk: (c) => {
+							const u = usageOf(c);
+							if (u && !ctl.signal.aborted && mine === loopToken) turnUsage = u;
 						}
 					});
 					if (ctl.signal.aborted || mine !== loopToken) return;
