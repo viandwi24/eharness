@@ -1,4 +1,4 @@
-// Icons of the navigation (rail, bottom bar, work menu).
+// Icons of the navigation (rail, bottom bar, group menus).
 import BriefcaseIcon from 'phosphor-svelte/lib/Briefcase';
 import CodeIcon from 'phosphor-svelte/lib/Code';
 import GlobeIcon from 'phosphor-svelte/lib/Globe';
@@ -16,6 +16,7 @@ import BracketsCurlyIcon from 'phosphor-svelte/lib/BracketsCurly';
 import CubeIcon from 'phosphor-svelte/lib/Cube';
 import PulseIcon from 'phosphor-svelte/lib/Pulse';
 import TableIcon from 'phosphor-svelte/lib/Table';
+import ToolboxIcon from 'phosphor-svelte/lib/Toolbox';
 import StrategyIcon from 'phosphor-svelte/lib/Strategy';
 import UsersThreeIcon from 'phosphor-svelte/lib/UsersThree';
 import type { Component } from 'svelte';
@@ -35,6 +36,7 @@ export const NAV_ICONS: Record<SectionId | RailId, Component> = {
 	channels: ChatCircleDotsIcon,
 	people: UsersThreeIcon,
 	connectors: PlugsConnectedIcon,
+	tools: ToolboxIcon,
 	browser: GlobeIcon,
 	developers: CodeIcon,
 	logs: PulseIcon,

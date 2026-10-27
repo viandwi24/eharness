@@ -9,7 +9,7 @@
 	import AgentDialog from '#lib/components/app/AgentDialog.svelte';
 	import AgentListPanel from '#lib/components/app/AgentListPanel.svelte';
 	import AppRail from '#lib/components/app/AppRail.svelte';
-	import WorkNavPanel from '#lib/components/app/WorkNavPanel.svelte';
+	import GroupNavPanel from '#lib/components/app/GroupNavPanel.svelte';
 	import { subSidebarOf } from '#lib/nav/sections.js';
 	import PauseBanner from '#lib/components/app/PauseBanner.svelte';
 	import ProgramDialog from '#lib/components/app/ProgramDialog.svelte';
@@ -68,7 +68,7 @@
 
 	// Mobile: list -> chat -> panel sheet. The list is the home screen; other routes replace it.
 	const isHome = $derived(page.url.pathname === '/');
-	// Desktop: [icon rail] [second column: agent list or work menu] [page]. ⌘B hides the column.
+	// Desktop: [icon rail] [second column: agent list or the menu of a group] [page]. ⌘B hides the column.
 	const sub = $derived(subSidebarOf(page.url.pathname));
 	const listShown = $derived(sub !== undefined && sidebarOpen);
 	// Mobile bottom bar on top-level pages; a chat (/a/…) gets the whole screen.
@@ -91,9 +91,9 @@
 		<div class="hidden md:flex"><AppRail /></div>
 		<div class="flex min-h-0 min-w-0 flex-1">
 			<!-- the agent list sits on the shell background next to the rail (no card); only the page is a panel -->
-			{#if sub === 'work'}
+			{#if sub !== undefined && sub !== 'agents'}
 				<aside class="hidden h-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {listShown ? 'md:flex' : 'md:hidden'} md:w-60">
-					<WorkNavPanel />
+					<GroupNavPanel group={sub} />
 				</aside>
 			{:else}
 				<aside
@@ -111,7 +111,7 @@
 					<!-- page header on the shell, above the plate (edmi inset panel recipe) -->
 					<InsetPanel.Header class="block p-0 font-normal">{@render shell.header()}</InsetPanel.Header>
 				{/if}
-				{#if sub === 'work'}<div class="md:hidden"><WorkNavPanel row /></div>{/if}
+				{#if sub !== undefined && sub !== 'agents'}<div class="md:hidden"><GroupNavPanel group={sub} row /></div>{/if}
 				<InsetPanel.Body class="{shell.header ? '' : 'mt-0.5'} flex min-h-0 text-foreground max-md:m-0 max-md:rounded-none max-md:border-0">
 					<!-- a new team timezone re-renders the page so every time follows it -->
 					{#key teamClock.rev}{@render children()}{/key}

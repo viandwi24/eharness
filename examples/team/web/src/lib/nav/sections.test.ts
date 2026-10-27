@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { hasSubSidebar, RAIL, railOf, sectionOf, subSidebarOf } from './sections';
+import { GROUPS, hasSubSidebar, RAIL, railOf, SECTIONS, sectionOf, sectionsOf, subSidebarOf } from './sections';
 
 describe('sections', () => {
 	test('paths map to their section; chats and home are agents', () => {
@@ -28,18 +28,35 @@ describe('sections', () => {
 		expect(sectionOf('/settings')).toBe('settings');
 		expect(sectionOf('/filesystem')).toBe('agents');
 	});
-	test('the agent list and the work menu are the second columns', () => {
+	test('the agent list and the menus of groups are the second columns', () => {
 		expect(hasSubSidebar('/a/1')).toBe(true);
 		expect(subSidebarOf('/a/1')).toBe('agents');
 		expect(subSidebarOf('/decisions')).toBe('work');
 		expect(subSidebarOf('/tasks/abc')).toBe('work');
-		expect(hasSubSidebar('/files')).toBe(false);
+		expect(subSidebarOf('/files')).toBe('files');
+		expect(subSidebarOf('/artifacts/x')).toBe('files');
+		expect(subSidebarOf('/people')).toBe('channels');
+		expect(subSidebarOf('/tables')).toBe('tools');
+		expect(subSidebarOf('/developers')).toBe('settings');
+		expect(hasSubSidebar('/connectors')).toBe(false);
+		expect(hasSubSidebar('/logs')).toBe(false);
 	});
-	test('the work sections are one rail item', () => {
-		expect(RAIL.map((s) => s.id)).toEqual(['agents', 'work', 'files', 'artifacts', 'tables', 'scripts', 'channels', 'people', 'connectors', 'browser', 'developers', 'logs', 'audit', 'attention', 'settings']);
-		for (const p of ['/tasks', '/decisions/x', '/programs', '/routines']) expect(railOf(p)).toBe('work');
-		expect(railOf('/people')).toBe('people');
-		expect(railOf('/scripts/x')).toBe('scripts');
+	test('the rail has eight groups; every section is in exactly one', () => {
+		expect(RAIL.map((s) => s.id)).toEqual(['agents', 'work', 'files', 'connectors', 'channels', 'tools', 'logs', 'settings']);
+		for (const p of ['/tasks', '/decisions/x', '/programs', '/routines', '/attention', '/audit']) expect(railOf(p)).toBe('work');
+		expect(railOf('/artifacts')).toBe('files');
+		expect(railOf('/people')).toBe('channels');
+		expect(railOf('/scripts/x')).toBe('tools');
+		expect(railOf('/browser/x')).toBe('tools');
+		expect(railOf('/developers')).toBe('settings');
 		expect(railOf('/')).toBe('agents');
+		const all = GROUPS.flatMap((g) => g.sections);
+		expect(new Set(all).size).toBe(all.length);
+		expect([...all].sort()).toEqual(SECTIONS.map((s) => s.id).sort());
+	});
+	test('a rail item opens the home section of its group', () => {
+		expect(RAIL.find((r) => r.id === 'work')?.href).toBe('/tasks');
+		expect(RAIL.find((r) => r.id === 'tools')?.href).toBe('/tables');
+		expect(sectionsOf('settings').map((s) => s.label)).toEqual(['Settings', 'Developers']);
 	});
 });

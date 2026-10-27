@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { subSidebarOf } from '#lib/nav/sections.js';
+	import { GROUPS, subSidebarOf } from '#lib/nav/sections.js';
 	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimple';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Kbd, KbdGroup } from '#lib/components/ui/kbd/index.js';
@@ -13,10 +13,10 @@
 	 */
 	let { whenCollapsed = false }: { whenCollapsed?: boolean } = $props();
 	const sidebar = useSidebar();
-	// it toggles the second column: the agent list (agents) or the work menu (tasks, decisions, ...)
+	// it toggles the second column: the agent list (agents) or the menu of a group (Work, Files, ...)
 	const sub = $derived(subSidebarOf(page.url.pathname));
 	const shown = $derived(sub !== undefined);
-	const what = $derived(sub === 'work' ? 'work menu' : 'agent list');
+	const what = $derived(sub === 'agents' ? 'agent list' : `${(GROUPS.find((g) => g.id === sub)?.label ?? '').toLowerCase()} menu`);
 	const mac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform);
 </script>
 

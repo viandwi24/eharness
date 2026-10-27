@@ -4,8 +4,7 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { NAV_ICONS } from '#lib/nav/icons.js';
-	import { browserNav, loadBrowserNav } from '#lib/browser/nav.svelte.js';
-	import { lastWork } from '#lib/nav/last-work.svelte.js';
+	import { lastVisit } from '#lib/nav/last-visit.svelte.js';
 	import { RAIL, railOf } from '#lib/nav/sections.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -19,21 +18,18 @@
 
 	/**
 	 * Main navigation as an icon rail (WhatsApp / Slack style): sections at the top, notifications,
-	 * theme and settings at the bottom. `bar`: the same items as a bottom tab bar on mobile. The agent's
-	 * work (tasks, decisions, programs, reminders) is one item with its own menu.
+	 * theme and settings at the bottom. `bar`: the same items as a bottom tab bar on mobile. A group of
+	 * sections (Work, Files, Channels, Tools, Settings) is one item with its own menu.
 	 */
 	let { bar = false }: { bar?: boolean } = $props();
 
 	const current = $derived(railOf(page.url.pathname));
-	$effect(() => lastWork.visit(page.url.pathname));
+	$effect(() => lastVisit.visit(page.url.pathname));
 	const unread = $derived(Object.values(agentsStore.state.activity).reduce((n, a) => n + (a?.unread ? 1 : 0), 0));
 	const decisionCount = $derived(live.state.decisions.length);
-	$effect(() => {
-		void loadBrowserNav();
-	});
-	const main = $derived(RAIL.filter((s) => s.id !== 'settings' && (s.id !== 'browser' || browserNav.visible || current === 'browser')));
+	const main = RAIL.filter((s) => s.id !== 'settings');
 	const settings = RAIL.find((s) => s.id === 'settings')!;
-	const hrefOf = (s: (typeof RAIL)[number]): string => (s.id === 'work' ? lastWork.href : s.href);
+	const hrefOf = (s: (typeof RAIL)[number]): string => lastVisit.hrefOf(s.id);
 
 	// The bottom bar scrolls sideways: it fades where more tabs are hidden.
 	let strip = $state<HTMLElement | null>(null);

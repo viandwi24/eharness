@@ -2,25 +2,25 @@
 	import { page } from '$app/state';
 	import SidebarToggle from './SidebarToggle.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
+	import { browserNav, loadBrowserNav } from '#lib/browser/nav.svelte.js';
 	import { NAV_ICONS } from '#lib/nav/icons.js';
-	import { isWorkSection, SECTIONS, sectionOf, type SectionId } from '#lib/nav/sections.js';
+	import { GROUPS, sectionOf, sectionsOf, type RailId, type SectionId } from '#lib/nav/sections.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { cn } from '#lib/utils.js';
 
 	/**
-	 * The menu of the agent's work (tasks, decisions, programs, reminders): the second column
-	 * next to the rail on a desktop, a row you scroll above the page on a phone (`row`).
+	 * The menu of a rail group (Work, Files, Channels, Tools, Settings): the second column next to
+	 * the rail on a desktop, a row you scroll above the page on a phone (`row`).
 	 */
-	let { row = false }: { row?: boolean } = $props();
+	let { group, row = false }: { group: RailId; row?: boolean } = $props();
 
-	const items = SECTIONS.filter((s) => isWorkSection(s.id));
 	const current = $derived(sectionOf(page.url.pathname));
-	const HINTS: Partial<Record<SectionId, string>> = {
-		tasks: 'Work the agents do',
-		decisions: 'Questions waiting for you',
-		programs: 'Standing orders',
-		routines: 'Reminders you set'
-	};
+	const title = $derived(GROUPS.find((g) => g.id === group)?.label ?? '');
+	$effect(() => {
+		if (group === 'tools') void loadBrowserNav();
+	});
+	// Browser shows once a browser is set up (or while you are on it)
+	const items = $derived(sectionsOf(group).filter((s) => s.id !== 'browser' || browserNav.visible || current === 'browser'));
 
 	/** What waits for a person: open decisions. */
 	function badge(id: SectionId): { text: number; tone: 'warning' | 'secondary' } | undefined {
@@ -30,7 +30,7 @@
 </script>
 
 {#if row}
-	<nav class="shrink-0 border-b border-border" aria-label="Work" data-testid="work-menu">
+	<nav class="shrink-0 border-b border-border" aria-label={title} data-testid="group-menu">
 		<ul class="flex gap-1 overflow-x-auto px-3 py-2">
 			{#each items as s (s.id)}
 				{@const b = badge(s.id)}
@@ -50,12 +50,12 @@
 		</ul>
 	</nav>
 {:else}
-	<div class="flex h-full min-h-0 flex-col" data-testid="work-menu">
+	<div class="flex h-full min-h-0 flex-col" data-testid="group-menu">
 		<div class="flex items-center gap-1 px-3 pt-3 pb-2">
-			<h2 class="mr-auto px-1 text-base font-semibold">Work</h2>
+			<h2 class="mr-auto px-1 text-base font-semibold">{title}</h2>
 			<SidebarToggle />
 		</div>
-		<nav class="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3" aria-label="Work">
+		<nav class="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3" aria-label={title}>
 			<ul class="flex flex-col gap-0.5">
 				{#each items as s (s.id)}
 					{@const Icon = NAV_ICONS[s.id]}
@@ -73,7 +73,7 @@
 							<Icon class="size-5 shrink-0" weight={active ? 'fill' : 'regular'} />
 							<span class="flex min-w-0 flex-1 flex-col">
 								<span class="truncate text-sm font-medium">{s.label}</span>
-								<span class="truncate text-xs text-muted-foreground">{HINTS[s.id]}</span>
+								<span class="truncate text-xs text-muted-foreground">{s.hint}</span>
 							</span>
 							{#if b}<Badge shape="number" variant={b.tone}>{b.text}</Badge>{/if}
 						</a>
