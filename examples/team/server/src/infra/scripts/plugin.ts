@@ -29,6 +29,7 @@ import {
   listRuns,
   listScripts,
   listVersions,
+  rerunScript,
   runScriptNow,
   type ScriptActor,
   scriptTypesText,
@@ -72,6 +73,10 @@ const readSchema = z.object({
   runId: z.string().optional().describe('run: the run id from runs.'),
   limit: z.number().int().min(1).max(50).optional().describe('runs: how many (default 10).'),
   dryRun: z.boolean().optional().describe('runs: only dry runs (true) or only real runs (false).'),
+  failed: z
+    .boolean()
+    .optional()
+    .describe('runs: only runs that failed (error, cpu, memory, timeout, limit).'),
 })
 
 const writeSchema = z.object({
@@ -81,10 +86,12 @@ const writeSchema = z.object({
     'dry_run',
     'request_activation',
     'run_now',
+    'rerun',
     'disable',
     'delete',
   ]),
   script: z.string().describe('Script name (create: lowercase letters, digits and -) or id.'),
+  runId: z.string().optional().describe('rerun: the run to run again (from scripts_read runs).'),
   description: z.string().max(500).optional().describe('create, update.'),
   source: z
     .string()
@@ -292,6 +299,7 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
             const runs = listRuns(d, need(a.script, 'script'), {
               limit: a.limit ?? 10,
               dryRun: a.dryRun,
+              ...(a.failed === true ? { outcome: 'failed' } : {}),
             })
             return runs.length === 0
               ? 'No runs yet.'
@@ -367,6 +375,8 @@ export function scriptsTools(options: ScriptsPluginOptions): HarnessPlugin<'scri
           }
           case 'run_now':
             return runText(await runScriptNow(d, actor, a.script, a.event), true)
+          case 'rerun':
+            return runText(await rerunScript(d, actor, a.script, need(a.runId, 'runId')), true)
           case 'disable': {
             const s = disableScript(d, actor, a.script)
             return `Switched off ${s.name}. A person turns it on again on the Scripts page.`

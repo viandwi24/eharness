@@ -47,6 +47,7 @@ import type {
   TgJoinRequestsUpdate,
   TgMemberUpdate,
   TgMessage,
+  TgReactionsUpdate,
   TgRestrictions,
   TgTopic,
   TgUser,
@@ -395,6 +396,24 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
         actor: identityOfTg(u.user),
         ...(u.actor === undefined ? {} : { by: identityOfTg(u.actor) }),
         role,
+      })
+    })
+  }
+
+  /** Reaction counts of a message (Telegram sends counts, not who reacted, for most chats). */
+  function onReactions(u: TgReactionsUpdate): void {
+    const known = chats.get(connectionId, u.chatId)
+    const kind = known?.kind ?? kindOfChatId(u.chatId)
+    if (!accepts({ chat: { id: u.chatId, kind } })) return
+    inLane(u.chatId, async () => {
+      const room = roomOf({ id: u.chatId })
+      await deliver({
+        type: 'reactions.updated',
+        dedupeKey: `tgu:rx:${u.chatId}:${u.messageId}:${u.counts.map((c) => `${c.emoji}=${c.count}`).join(',')}`,
+        at: now(),
+        node: { nativeId: room.nativeId, chain: [room] },
+        messageNativeId: String(u.messageId),
+        counts: u.counts,
       })
     })
   }
@@ -871,6 +890,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
           delete: onDelete,
           member: onMember,
           joinRequests: onJoinRequests,
+          reactions: onReactions,
           error: (error) => {
             const k = classifyError(error)
             if (k.kind === 'auth-lost' || k.kind === 'duplicated') {

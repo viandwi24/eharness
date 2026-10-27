@@ -14,6 +14,7 @@ export const CHANNEL_EVENT_TYPES = [
   'message.deleted',
   'reaction.added',
   'reaction.removed',
+  'reactions.updated',
   'member.joined',
   'member.left',
   'member.updated',
@@ -207,6 +208,11 @@ export interface ScriptManifest {
    * hourly cap still limit a loop).
    */
   loopGuard: boolean
+  /**
+   * Log only: every run (automatic or by hand) does nothing outside the script and records what it
+   * would have done, like a dry run on real events. For trying a script on live traffic.
+   */
+  logOnly: boolean
   /** Overrides of the default limits, bounded by `LIMIT_BOUNDS`. */
   limits: Partial<ScriptLimits>
 }
@@ -237,6 +243,8 @@ export const LIMIT_BOUNDS: Record<keyof ScriptLimits, [number, number]> = {
   maxLogLines: [10, 2_000],
   maxLogChars: [1_000, 200_000],
   maxValueChars: [1_000, 1_000_000],
+  maxSends: [1, 500],
+  maxSendsPerChat: [1, 200],
 }
 
 export const MAX_TRIGGERS = 10
@@ -515,6 +523,7 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
     cooldownSec: num(raw.cooldownSec, 'cooldownSec', 0, 7 * 86_400, 0),
     maxRunsPerHour: num(raw.maxRunsPerHour, 'maxRunsPerHour', 0, 10_000, 60),
     loopGuard: raw.loopGuard !== false,
+    logOnly: raw.logOnly === true,
     limits,
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: manifest }
@@ -735,6 +744,8 @@ export interface ScriptChannelEvent {
   content?: ScriptStructured
   /** A press of a button a script sent (`action` events): its data. */
   button?: { data?: string }
+  /** reactions.updated: how many reacted with each emoji now (anonymous counts). */
+  reactions?: Array<{ emoji: string; count: number; customEmojiId?: string }>
   /** Reactions: the emoji (`custom:<id>` for a custom emoji). */
   emoji?: string
   customEmojiId?: string
@@ -883,7 +894,7 @@ export function channelMismatch(t: ChannelTrigger, e: ScriptChannelEvent): strin
 
 // --- gates -------------------------------------------------------------------------------------
 
-export type SkipReason = 'paused' | 'cooldown' | 'cap' | 'loop' | 'stale' | 'disabled'
+export type SkipReason = 'paused' | 'cooldown' | 'cap' | 'loop' | 'chain' | 'stale' | 'disabled'
 
 export interface GateState {
   now: number
@@ -914,6 +925,8 @@ export const SKIP_TEXT: Record<SkipReason, string> = {
   cooldown: 'the script ran a moment ago and is cooling down',
   cap: 'the script reached its runs per hour',
   loop: 'the event was caused by this script or by the agent itself (this avoids loops)',
+  chain:
+    'scripts started each other too many times in a row (or in a circle), so the chain stops here',
   stale: 'the event is too old (seen again after a restart)',
   disabled: 'the script is not active',
 }
@@ -1192,6 +1205,11 @@ export function manifestJsonSchema(): Record<string, unknown> {
         minimum: 0,
         maximum: 10_000,
         description: 'Most runs in one hour (default 60; 0 = no cap).',
+      },
+      logOnly: {
+        type: 'boolean',
+        description:
+          'true: runs do nothing outside the script and record what they would have done (a dry run on real events).',
       },
       loopGuard: {
         type: 'boolean',

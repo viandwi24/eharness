@@ -341,6 +341,10 @@ export function sqliteScriptStore(sqlite: Database): ScriptStore {
         where.push('dry_run = ?')
         params.push(q.dryRun ? 1 : 0)
       }
+      if (q.outcomes !== undefined && q.outcomes.length > 0) {
+        where.push(`outcome IN (${q.outcomes.map(() => '?').join(', ')})`)
+        params.push(...q.outcomes)
+      }
       return sqlite
         .query<RunRow, Array<string | number>>(
           `SELECT * FROM script_runs WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ?`,

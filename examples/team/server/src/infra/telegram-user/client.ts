@@ -308,6 +308,13 @@ export interface TgMemberUpdate {
 }
 
 /** The pending join requests of a chat the account administers changed (who recently asked, and the total). */
+export interface TgReactionsUpdate {
+  chatId: string
+  messageId: number
+  /** Per emoji (`custom:<id>` for a custom emoji). */
+  counts: Array<{ emoji: string; count: number; customEmojiId?: string }>
+}
+
 export interface TgJoinRequestsUpdate {
   chat: { id: string; kind: TgChatKind; title: string; forum: boolean; username?: string }
   users: TgUser[]
@@ -325,6 +332,8 @@ export interface TgUpdateHandlers {
   member?(update: TgMemberUpdate): void
   /** Optional: join requests are pending in a chat the account administers. */
   joinRequests?(update: TgJoinRequestsUpdate): void
+  /** Optional: the reaction counts of a message changed. */
+  reactions?(update: TgReactionsUpdate): void
   /** The connection to Telegram failed in a way the client cannot recover from itself. */
   error(error: unknown): void
 }

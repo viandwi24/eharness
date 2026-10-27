@@ -7,6 +7,7 @@ export const CHANNEL_EVENTS = [
 	{ value: 'message.deleted', label: 'Message deleted', group: 'Messages' },
 	{ value: 'reaction.added', label: 'Reaction added', group: 'Reactions' },
 	{ value: 'reaction.removed', label: 'Reaction removed', group: 'Reactions' },
+	{ value: 'reactions.updated', label: 'Reaction counts', group: 'Reactions' },
 	{ value: 'member.joined', label: 'Member joined', group: 'Members' },
 	{ value: 'member.left', label: 'Member left', group: 'Members' },
 	{ value: 'member.updated', label: 'Member changed', group: 'Members' },
@@ -131,6 +132,7 @@ export type SimpleManifest = {
 	maxRunsPerHour: number;
 	/** Off: what the app sent, what the script wrote and what its own API calls caused start it too. */
 	loopGuard: boolean;
+	logOnly: boolean;
 	limits: Record<string, number>;
 };
 
@@ -288,6 +290,7 @@ export function fromManifest(input: unknown): SimpleManifest {
 		cooldownSec: int(raw.cooldownSec, 0),
 		maxRunsPerHour: int(raw.maxRunsPerHour, DEFAULT_RUNS_PER_HOUR),
 		loopGuard: raw.loopGuard !== false,
+		logOnly: raw.logOnly === true,
 		limits
 	};
 }
@@ -351,6 +354,7 @@ export function toManifest(m: SimpleManifest): Record<string, unknown> {
 	if (m.cooldownSec > 0) out.cooldownSec = m.cooldownSec;
 	if (m.maxRunsPerHour !== DEFAULT_RUNS_PER_HOUR) out.maxRunsPerHour = m.maxRunsPerHour;
 	if (!m.loopGuard) out.loopGuard = false;
+	if (m.logOnly) out.logOnly = true;
 	if (Object.keys(m.limits).length) out.limits = { ...m.limits };
 	return out;
 }
@@ -361,7 +365,7 @@ export function simpleCanShow(input: unknown): boolean {
 	const norm = (v: unknown): string => JSON.stringify(toManifest(fromManifest(v)));
 	// a manifest with fields the simple model drops would lose them on a round trip
 	const raw = obj(input);
-	const knownTop = new Set(['triggers', 'grants', 'cooldownSec', 'maxRunsPerHour', 'loopGuard', 'limits']);
+	const knownTop = new Set(['triggers', 'grants', 'cooldownSec', 'maxRunsPerHour', 'loopGuard', 'logOnly', 'limits']);
 	if (Object.keys(raw).some((k) => !knownTop.has(k))) return false;
 	return norm(input) === JSON.stringify(back);
 }
@@ -418,6 +422,19 @@ export function sampleEventFor(t: Trigger | undefined): Record<string, unknown> 
 	if (t.kind === 'app')
 		return { type: t.events[0] ?? 'task-changed', at, agentSlug: t.agents[0] ?? 'lead', payload: Object.fromEntries(t.match.map((m) => [m.key, m.value])) };
 	if (t.kind === 'webhook') return { type: 'webhook', at, method: 'POST', query: {}, headers: { 'content-type': 'application/json' }, body: { hello: 'world' } };
-	if (t.kind === 'table') return { type: t.events[0] ?? 'row.created', table: t.table, rowIds: ['row-1'], rows: [{ id: 'row-1', version: 1, data: {} }], by: 'web owner' };
+	if (t.kind === 'table') {
+		const type = t.events[0] ?? 'row.created';
+		const field = t.fields[0] ?? 'status';
+		const before = type === 'row.created' ? undefined : { [field]: 'before' };
+		const after = type === 'row.deleted' ? undefined : { [field]: 'after' };
+		return {
+			type,
+			table: t.table,
+			rowIds: ['row-1'],
+			rows: after === undefined ? [] : [{ id: 'row-1', version: 2, data: after }],
+			changes: [{ id: 'row-1', ...(before ? { before } : {}), ...(after ? { after } : {}), changed: [field] }],
+			by: 'web owner'
+		};
+	}
 	return { type: 'schedule', slot: at, firedAt: at };
 }

@@ -183,13 +183,24 @@ export function listVersions(deps: Deps, ref: string): ScriptVersion[] {
 export function listRuns(
   deps: Deps,
   ref: string,
-  q: { limit?: number | undefined; before?: string | undefined; dryRun?: boolean | undefined } = {},
+  q: {
+    limit?: number | undefined
+    before?: string | undefined
+    dryRun?: boolean | undefined
+    outcome?: string | undefined
+  } = {},
 ): ScriptRun[] {
   const s = getScript(deps, ref)
   return deps.scripts.runs(s.id, {
     limit: Math.min(Math.max(q.limit ?? 50, 1), 200),
     before: q.before,
     dryRun: q.dryRun,
+    outcomes:
+      q.outcome === undefined
+        ? undefined
+        : q.outcome === 'failed'
+          ? ['error', 'cpu', 'memory', 'timeout', 'limit']
+          : [q.outcome],
   })
 }
 
@@ -372,6 +383,7 @@ export function wideningOf(deps: Deps, s: Script, to: ScriptVersion): string[] {
     out.push('more runs per hour')
   if (JSON.stringify(a.limits) !== JSON.stringify(b.limits)) out.push('other limits')
   if (a.loopGuard && !b.loopGuard) out.push('the loop guard is off')
+  if (a.logOnly && !b.logOnly) out.push('runs act for real (log only is off)')
   return out
 }
 
@@ -754,6 +766,45 @@ export async function dryRunScript(
     startedBy: actor.name,
   })
   return { run, triggers }
+}
+
+/**
+ * Run the active version again with the event of an earlier run (a failed one, typically). Message
+ * texts come back from the channel log; the run is real (or log only, as the manifest says).
+ */
+export async function rerunScript(
+  deps: Deps,
+  actor: ScriptActor,
+  ref: string,
+  runId: string,
+): Promise<ScriptRun> {
+  const s = getScript(deps, ref)
+  const before = deps.scripts.run(runId)
+  if (before === undefined || before.scriptId !== s.id) throw notFound('Run', runId)
+  if (before.outcome === 'skipped' && before.event === null)
+    throw invalid('this run has no event to run again', 'INVALID_EVENT')
+  if (actor.kind === 'agent' && actor.agentId !== s.agentId)
+    throw new DomainError(
+      'forbidden',
+      'FORBIDDEN',
+      'Only the agent the script belongs to may run it',
+    )
+  if (s.status !== 'active' || s.activeVersion === null)
+    throw conflict(`Script "${s.name}" is not active: activate it first`, 'NOT_ACTIVE')
+  if (deps.pause.get().pausedAt !== null)
+    throw conflict('Everything is paused (Pause all): resume first', 'PAUSED')
+  const v = getVersion(deps, s.id, s.activeVersion)
+  const r = runner(deps)
+  const event = await r.restoreEvent(before.event)
+  const channel = before.trigger === 'channel' ? asChannelEvent(event) : undefined
+  return r.run({
+    script: s,
+    version: v,
+    trigger: before.trigger,
+    event: channel ?? event ?? { type: 'manual', at: deps.clock.now() },
+    dryRun: false,
+    startedBy: `${actor.name} (again)`,
+  })
 }
 
 /** Run the active version now, for real (a person, or the agent the script belongs to). */

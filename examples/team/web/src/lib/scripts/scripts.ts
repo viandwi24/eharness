@@ -199,6 +199,49 @@ export const SAMPLE_EVENT = {
 
 export const toJsonText = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
 
+/** Example events of every kind a script meets, for the Test panel's JSON tab. */
+export function sampleEvents(connection = 'CONNECTION_ID', chatId = '-1001234567890', chatTitle = 'Signals'): Array<{ id: string; label: string; event: Record<string, unknown> }> {
+	const at = Date.now();
+	const chat = { nodeId: 'NODE_ID', nativeId: chatId, title: chatTitle, rootNativeId: chatId, rootTitle: chatTitle };
+	const actor = { id: '42', name: 'Ana', username: 'ana', role: 'member' };
+	const msg = (extra: Record<string, unknown>) => ({ type: 'message.created', connectionId: connection, eventId: 'sample', at, chat, actor, messageId: '1001', ...extra });
+	const photo = (n: number) => ({ id: `ph${n}`, kind: 'image', media: 'photo', mediaType: 'image/jpeg', width: 1280, height: 720, ref: `PHOTO_FILE_ID_${n}` });
+	return [
+		{ id: 'photo', label: 'Photo with a formatted caption', event: msg({ text: 'BUY BTC 60k', entities: [{ type: 'bold', offset: 0, length: 3 }], attachments: [photo(1)] }) },
+		{
+			id: 'album',
+			label: 'Album of 3 photos',
+			event: msg({
+				text: 'Setup for today',
+				groupId: 'ALBUM_1',
+				attachments: [photo(1), photo(2), photo(3)],
+				album: [
+					{ messageId: '1001', text: 'Setup for today', attachments: [photo(1)] },
+					{ messageId: '1002', attachments: [photo(2)] },
+					{ messageId: '1003', attachments: [photo(3)] }
+				]
+			})
+		},
+		{ id: 'sticker', label: 'Sticker', event: msg({ text: '', attachments: [{ id: 'st1', kind: 'image', media: 'sticker', mediaType: 'image/webp', sticker: { emoji: '🚀', setName: 'Rockets', format: 'static' }, ref: 'STICKER_FILE_ID' }] }) },
+		{ id: 'voice', label: 'Voice message', event: msg({ text: '', attachments: [{ id: 'v1', kind: 'audio', media: 'voice', mediaType: 'audio/ogg', duration: 7, ref: 'VOICE_FILE_ID' }] }) },
+		{ id: 'reply', label: 'Reply to a message', event: msg({ text: 'TP1 hit', messageId: '1010', replyTo: { messageId: '1001', senderName: 'Ana' } }) },
+		{ id: 'forward', label: 'Forwarded post', event: msg({ text: 'Breaking news', forward: { name: 'News channel', chat: '-1009876543210', messageId: '55', at } }) },
+		{ id: 'poll', label: 'Poll', event: msg({ text: '[poll: Long or short?]', content: { type: 'poll', question: 'Long or short?', options: ['Long', 'Short'], anonymous: true } }) },
+		{ id: 'edited', label: 'Edited message', event: { ...msg({ text: 'BUY BTC 61k' }), type: 'message.edited' } },
+		{ id: 'deleted', label: 'Deleted messages', event: { type: 'message.deleted', connectionId: connection, eventId: 'sample', at, chat, messageId: '1001', messageIds: ['1001', '1002'] } },
+		{ id: 'button', label: 'Button press', event: { type: 'action', connectionId: connection, eventId: 'sample', at, chat, actor, messageId: '1001', button: { data: 'yes' } } },
+		{ id: 'joined', label: 'Member joined', event: { type: 'member.joined', connectionId: connection, eventId: 'sample', at, chat, actor: { id: '77', name: 'New person' } } },
+		{ id: 'reaction', label: 'Reaction', event: { type: 'reaction.added', connectionId: connection, eventId: 'sample', at, chat, actor, messageId: '1001', emoji: '🔥' } },
+		{
+			id: 'table',
+			label: 'Table row changed (before and after)',
+			event: { type: 'row.updated', table: 'signals', rowIds: ['row-1'], rows: [{ id: 'row-1', version: 2, data: { ref: 'S1', status: 'closed' } }], changes: [{ id: 'row-1', before: { ref: 'S1', status: 'open' }, after: { ref: 'S1', status: 'closed' }, changed: ['status'] }], by: 'web owner' }
+		},
+		{ id: 'later', label: 'Later run (ctx.later)', event: { type: 'later', at, dueAt: at, firedAt: at, timerId: 'TIMER_ID', key: 'remind', data: { note: 'check the signal' } } },
+		{ id: 'schedule', label: 'Schedule', event: { type: 'schedule', slot: at, firedAt: at } }
+	];
+}
+
 export function eventLine(e: { summary: string; chat?: { title: string } | undefined; type: string }): string {
 	return e.summary || `${e.type}${e.chat ? ` in ${e.chat.title}` : ''}`;
 }

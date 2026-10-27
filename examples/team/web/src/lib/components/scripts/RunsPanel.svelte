@@ -8,6 +8,7 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { formatTime } from '#lib/format.js';
 	import { formatDuration, outcomeTone, type ScriptRun } from '#lib/scripts/scripts.js';
 	import RunTrace from './RunTrace.svelte';
@@ -16,7 +17,8 @@
 	let { script, rev = 0 }: { script: string; rev?: number } = $props();
 
 	const SIZE = 30;
-	let filter = $state<'all' | 'real' | 'dry'>('all');
+	let filter = $state<'all' | 'real' | 'dry' | 'failed'>('all');
+	let again = $state<string | null>(null);
 	let runs = $state<ScriptRun[] | null>(null);
 	let more = $state(false);
 	let loading = $state(false);
@@ -26,13 +28,30 @@
 	let seq = 0;
 
 	const dryRun = (): 'true' | 'false' | undefined => (filter === 'dry' ? 'true' : filter === 'real' ? 'false' : undefined);
+	const outcome = (): { outcome?: 'failed' } => (filter === 'failed' ? { outcome: 'failed' } : {});
+	const FAILED = new Set(['error', 'cpu', 'memory', 'timeout', 'limit']);
+
+	/** Run the active version again with this run's event (message texts come back from the log). */
+	async function rerun(run: ScriptRun): Promise<void> {
+		again = run.id;
+		try {
+			const r = await api.post('/scripts/{script}/runs/{runId}/rerun', { params: { script, runId: run.id } });
+			toast.success(r.outcome === 'ok' ? 'Ran again: it worked' : `Ran again: ${r.outcome}`, { description: r.error ?? undefined });
+			await load();
+			open = r.id;
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not run it again');
+		} finally {
+			again = null;
+		}
+	}
 
 	async function load(): Promise<void> {
 		const mine = ++seq;
 		loading = true;
 		try {
 			const d = dryRun();
-			const r = await api.get('/scripts/{script}/runs', { params: { script }, query: { limit: SIZE, ...(d ? { dryRun: d } : {}) } });
+			const r = await api.get('/scripts/{script}/runs', { params: { script }, query: { limit: SIZE, ...(d ? { dryRun: d } : {}), ...outcome() } });
 			if (mine !== seq) return;
 			runs = r.runs;
 			more = r.runs.length === SIZE;
@@ -51,7 +70,7 @@
 		loadingMore = true;
 		try {
 			const d = dryRun();
-			const r = await api.get('/scripts/{script}/runs', { params: { script }, query: { limit: SIZE, before: last.id, ...(d ? { dryRun: d } : {}) } });
+			const r = await api.get('/scripts/{script}/runs', { params: { script }, query: { limit: SIZE, before: last.id, ...(d ? { dryRun: d } : {}), ...outcome() } });
 			if (mine !== seq || !runs) return;
 			const seen = new Set(runs.map((x) => x.id));
 			runs = [...runs, ...r.runs.filter((x) => !seen.has(x.id))];
@@ -77,6 +96,7 @@
 			<NativeSelectOption value="all">All runs</NativeSelectOption>
 			<NativeSelectOption value="real">Real runs</NativeSelectOption>
 			<NativeSelectOption value="dry">Dry runs</NativeSelectOption>
+			<NativeSelectOption value="failed">Failed runs</NativeSelectOption>
 		</NativeSelect>
 		<span class="flex-1"></span>
 		<Button variant="outline" size="icon-sm" aria-label="Refresh" title="Refresh" disabled={loading} onclick={() => void load()}>
@@ -104,7 +124,15 @@
 							{#if r.error || r.reason}<span class="min-w-0 flex-1 truncate text-xs {r.error ? 'text-destructive-text' : 'text-muted-foreground'}" title={r.error ?? r.reason ?? ''}>{r.error ?? r.reason}</span>{/if}
 						</button>
 						{#if open === r.id}
-							<div class="border-t border-border bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] px-4 py-3">
+							<div class="flex flex-col gap-3 border-t border-border bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] px-4 py-3">
+								{#if FAILED.has(r.outcome) && !r.dryRun}
+									<div class="flex items-center gap-2">
+										<Button size="sm" variant="outline" disabled={again !== null} onclick={() => void rerun(r)}>
+											{#if again === r.id}<Spinner />{:else}<ArrowClockwiseIcon class="size-4" />{/if}Run again
+										</Button>
+										<span class="text-xs text-muted-foreground">The active version, with this event (message texts are read back from the chat log).</span>
+									</div>
+								{/if}
 								<RunTrace run={r} />
 							</div>
 						{/if}

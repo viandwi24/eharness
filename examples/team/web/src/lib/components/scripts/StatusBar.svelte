@@ -65,13 +65,14 @@
 	const ap = $derived(approvalLabel(s));
 	const triggers = $derived(fromManifest(detail.latest.manifest).triggers.map(describeTrigger));
 	const live = $derived(s.status === 'active' && s.activeVersion === s.latestVersion);
+	const logOnly = $derived(fromManifest(detail.latest.manifest).logOnly);
 	/** The guided path: save → test → turn on. */
 	const steps = $derived([
 		{ label: dirty ? 'Unsaved changes' : `Saved v${s.latestVersion}`, state: dirty ? 'todo' : 'done' },
 		{ label: checked === 'ok' ? 'Checked' : checked === 'failed' ? 'Check found errors' : 'Not checked yet', state: checked === 'ok' ? 'done' : checked === 'failed' ? 'bad' : 'todo' },
 		{ label: tested === 'ok' ? `Tested v${s.latestVersion}` : tested === 'failed' ? 'Last test failed' : 'Not tested yet', state: tested === 'ok' ? 'done' : tested === 'failed' ? 'bad' : 'todo' },
 		{
-			label: live ? 'Live' : s.approval.state === 'pending' ? 'Waits for approval' : s.status === 'active' ? `Live on v${s.activeVersion}` : s.status === 'disabled' ? 'Switched off' : 'Not live',
+			label: live ? (logOnly ? 'Live, log only' : 'Live') : s.approval.state === 'pending' ? 'Waits for approval' : s.status === 'active' ? `Live on v${s.activeVersion}` : s.status === 'disabled' ? 'Switched off' : 'Not live',
 			state: live ? 'done' : s.status === 'active' ? 'partial' : 'todo'
 		}
 	] as const);

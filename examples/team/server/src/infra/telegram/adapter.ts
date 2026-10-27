@@ -61,6 +61,7 @@ export const ALLOWED_UPDATES = [
   'my_chat_member',
   'chat_member',
   'message_reaction',
+  'message_reaction_count',
   'chat_join_request',
 ] as const
 

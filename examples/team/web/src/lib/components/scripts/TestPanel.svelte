@@ -15,7 +15,7 @@
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { formatTime } from '#lib/format.js';
 	import type { Lookups } from '#lib/scripts/lookups.svelte.js';
-	import { type DryRunResult, eventLine, SAMPLE_EVENT, toJsonText } from '#lib/scripts/scripts.js';
+	import { type DryRunResult, eventLine, SAMPLE_EVENT, sampleEvents, toJsonText } from '#lib/scripts/scripts.js';
 	import { verdictOf } from '#lib/scripts/verdict.js';
 	import { cn } from '#lib/utils.js';
 	import MonacoEditor from './MonacoEditor.svelte';
@@ -254,6 +254,22 @@
 			</Field.Field>
 		</div>
 	{:else if source === 'json'}
+		<div class="flex flex-wrap items-center gap-2">
+			<NativeSelect
+				class="w-72"
+				aria-label="Load a sample event"
+				value=""
+				onchange={(e) => {
+					const s = sampleEvents(exConnection || undefined, exChat || undefined).find((x) => x.id === e.currentTarget.value);
+					if (s) json = toJsonText(s.event);
+					e.currentTarget.value = '';
+				}}
+			>
+				<NativeSelectOption value="">Load a sample event…</NativeSelectOption>
+				{#each sampleEvents() as s (s.id)}<NativeSelectOption value={s.id}>{s.label}</NativeSelectOption>{/each}
+			</NativeSelect>
+			<span class="text-xs text-muted-foreground">Photos, albums, stickers, replies, buttons, table changes… then edit it.</span>
+		</div>
 		<MonacoEditor path="file:///test-event.json" language="json" bind:value={json} label="Test event JSON" class="h-56" />
 	{:else}
 		<p class="text-xs text-muted-foreground">Runs with an empty event, like Run now or a schedule.</p>

@@ -20,6 +20,10 @@ export interface ScriptLimits {
   maxLogChars: number
   /** Characters of the JSON result and of one host call's arguments or answer. */
   maxValueChars: number
+  /** Messages one run may post (send, reply, copy, forward calls). */
+  maxSends: number
+  /** Messages one run may post to one chat. */
+  maxSendsPerChat: number
 }
 
 export const DEFAULT_SCRIPT_LIMITS: ScriptLimits = {
@@ -30,6 +34,8 @@ export const DEFAULT_SCRIPT_LIMITS: ScriptLimits = {
   maxLogLines: 200,
   maxLogChars: 20_000,
   maxValueChars: 100_000,
+  maxSends: 30,
+  maxSendsPerChat: 10,
 }
 
 /** How a run ended. */
@@ -173,6 +179,8 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
     '  /** A place, contact, poll or dice roll instead of text. */',
     "  content?: { type: 'location'; latitude: number; longitude: number; live?: boolean } | { type: 'venue'; latitude: number; longitude: number; title: string; address: string } | { type: 'contact'; phone: string; firstName: string; lastName?: string; userId?: string } | { type: 'poll'; question: string; options: string[]; quiz?: boolean; multiple?: boolean; anonymous?: boolean } | { type: 'dice'; emoji: string; value: number }",
     '  /** Reaction events. */',
+    '  /** reactions.updated: the reaction counts of messageId now (who reacted is not known). */',
+    '  reactions?: Array<{ emoji: string; count: number; customEmojiId?: string }>',
     '  /** action events: a press of a button a script sent (channels.send buttons), with its data. */',
     '  button?: { data?: string }',
     '  emoji?: string',

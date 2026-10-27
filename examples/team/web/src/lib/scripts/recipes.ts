@@ -16,7 +16,7 @@ export type Recipe = {
 	id: string;
 	title: string;
 	summary: string;
-	icon: 'forward' | 'reply' | 'table' | 'count' | 'report' | 'agent' | 'webhook' | 'task' | 'blank';
+	icon: 'forward' | 'reply' | 'table' | 'count' | 'report' | 'agent' | 'webhook' | 'task' | 'copy' | 'shield' | 'clock' | 'blank';
 	name: string;
 	fields: RecipeField[];
 	build(v: RecipeValues): { source: string; manifest: Record<string, unknown>; description: string };
@@ -281,6 +281,257 @@ export default async function (event: ScriptEvent, ctx: ScriptContext) {
 				manifest: {
 					triggers: [{ kind: 'app', events: ['task-changed'], ...(agent ? { agents: [agent] } : {}), match: { status: 'done' } }],
 					grants: { send: [{ connection: to.connection, chat: to.chat }] }
+				}
+			};
+		}
+	},
+	{
+		id: 'distribute',
+		title: 'Signal distributor',
+		summary: 'Copy posts (albums too) from a source chat to one chat, or in turn to two; replies, edits and deletions follow each copy.',
+		icon: 'copy',
+		name: 'signal-distributor',
+		fields: [
+			{ key: 'from', kind: 'chat', label: 'Source chat' },
+			{ key: 'to', kind: 'chat', label: 'Copy to' },
+			{ key: 'to2', kind: 'chat', label: 'And in turn to', help: 'Optional: posts alternate between the two chats.', optional: true },
+			{ key: 'words', kind: 'words', label: 'Only posts containing', help: 'Empty = every post. Replies always follow their copy.', optional: true }
+		],
+		build(v) {
+			const from = chatOf(v, 'from');
+			const to = chatOf(v, 'to');
+			const to2 = chatOf(v, 'to2');
+			const words = wordsOf(v, 'words');
+			const targets = [to.chat, ...(to2.chat ? [to2.chat] : [])];
+			return {
+				description: `Copy posts from ${from.chat || 'a chat'} to ${targets.join(' and ') || 'a chat'}, keeping replies, edits and deletions in step`,
+				source: `// Pass posts on as copies (an album stays an album, formatting is kept, nothing is downloaded).
+// Replies, edits and deletions in the source chat follow each copy.
+const TARGETS: string[] = ${JSON.stringify(targets)}
+const WORDS: string[] = ${JSON.stringify(words)}
+
+export default async function (event: ScriptEvent, ctx: ScriptContext) {
+  const c = event.connectionId ?? ''
+  const here = { connection: c, chat: event.chat?.nativeId ?? '' }
+  if (event.type === 'message.deleted') {
+    for (const id of event.messageIds ?? []) {
+      const { copies } = await ctx.channels.copies({ ...here, messageId: id })
+      for (const k of copies) await ctx.channels.delete({ connection: c, chat: k.chat, topic: k.topic, messageIds: [k.messageId] })
+    }
+    return { deleted: event.messageIds?.length ?? 0 }
+  }
+  if (event.type === 'message.edited') {
+    const { copies } = await ctx.channels.copies({ ...here, messageId: event.messageId ?? '' })
+    for (const k of copies) await ctx.channels.edit({ connection: c, chat: k.chat, topic: k.topic, messageId: k.messageId, text: event.text ?? '' })
+    return { edited: copies.length }
+  }
+  if (event.replyTo) {
+    // a reply to a copied post: copy it as a reply under each copy
+    const { copies } = await ctx.channels.copies({ ...here, messageId: event.replyTo.messageId })
+    for (const k of copies)
+      await ctx.channels.copy({ ...here, messageIds: [event.messageId ?? ''], toChat: k.chat, toTopic: k.topic, replyTo: k.messageId })
+    return { followed: copies.length }
+  }
+  const text = (event.text ?? '').toLowerCase()
+  if (WORDS.length > 0 && !WORDS.some((w) => text.includes(w.toLowerCase()))) return { skipped: 'no signal word' }
+  const turn = (await ctx.kv.incr({ key: 'turn' })).value
+  const to = TARGETS[(turn - 1) % TARGETS.length]
+  const ids = event.album ? event.album.map((m) => m.messageId) : [event.messageId ?? '']
+  const sent = await ctx.channels.copy({ ...here, messageIds: ids, toChat: to })
+  return { copied: sent.messageIds.length, to }
+}
+`,
+				manifest: {
+					triggers: [{ ...messageTrigger(from, []), events: ['message.created', 'message.edited', 'message.deleted'] }],
+					grants: {
+						read: from.connection && from.chat ? [{ connection: from.connection, chat: from.chat }] : [],
+						send: targets.filter(Boolean).map((chat) => ({ connection: from.connection || to.connection, chat }))
+					}
+				}
+			};
+		}
+	},
+	{
+		id: 'signal-log',
+		title: 'Signal log with outcomes',
+		summary: 'Log posts with signal words to a table; a reply with TP or SL marks the outcome.',
+		icon: 'table',
+		name: 'signal-log',
+		fields: [
+			{ key: 'from', kind: 'chat', label: 'Signals chat' },
+			{ key: 'words', kind: 'words', label: 'A signal contains', help: 'e.g. buy, sell, long, short' },
+			{ key: 'table', kind: 'table', label: 'Table', help: 'Make its "message" field unique so a post is logged once.' }
+		],
+		build(v) {
+			const from = chatOf(v, 'from');
+			const words = wordsOf(v, 'words');
+			const table = textOf(v, 'table');
+			return {
+				description: `Log signals from ${from.chat || 'a chat'} to ${table || 'a table'} with their outcome`,
+				source: `// One row per signal (keyed by its message id); a reply that says TP or SL sets the outcome.
+const TABLE = ${js(table)}
+const WORDS: string[] = ${JSON.stringify(words)}
+
+export default async function (event: ScriptEvent, ctx: ScriptContext) {
+  const text = event.text ?? ''
+  if (event.replyTo) {
+    const outcome = /\\b(sl|stop)\\b/i.test(text) ? 'stopped' : /\\btp\\s*\\d*\\b|target/i.test(text) ? 'target hit' : undefined
+    if (!outcome) return { skipped: 'no outcome in the reply' }
+    return ctx.tables.update({ table: TABLE, filter: { message: event.replyTo.messageId }, set: { status: outcome, outcome_text: text } })
+  }
+  const lower = text.toLowerCase()
+  if (!WORDS.some((w) => lower.includes(w.toLowerCase()))) return { skipped: 'not a signal' }
+  return ctx.tables.upsert({
+    table: TABLE,
+    key: 'message',
+    rows: [{ message: event.messageId, chat: event.chat?.title ?? '', from: event.actor?.name ?? '', text, status: 'open', at: new Date(event.at ?? Date.now()).toISOString() }],
+  })
+}
+`,
+				manifest: { triggers: [messageTrigger(from, [])], grants: { tablesWrite: table ? [table] : [] } }
+			};
+		}
+	},
+	{
+		id: 'welcome-captcha',
+		title: 'Welcome with a captcha',
+		summary: 'New members stay muted until they press "I am human"; anyone who does not is removed after a while (bot connections).',
+		icon: 'shield',
+		name: 'welcome-captcha',
+		fields: [
+			{ key: 'chat', kind: 'chat', label: 'Group' },
+			{ key: 'welcome', kind: 'text', label: 'Welcome text', placeholder: 'Welcome {name}! Press the button to start chatting.', optional: true, multiline: true },
+			{ key: 'minutes', kind: 'text', label: 'Minutes to answer', placeholder: '5', optional: true }
+		],
+		build(v) {
+			const chat = chatOf(v, 'chat');
+			const minutes = Math.min(Math.max(Number(textOf(v, 'minutes')) || 5, 1), 1440);
+			const welcome = textOf(v, 'welcome') || 'Welcome {name}! Press the button to start chatting.';
+			return {
+				description: `New members of ${chat.chat || 'a group'} prove they are human within ${minutes} minutes`,
+				source: `// A new member is muted and asked to press a button; pressing it unmutes them, silence removes them.
+const WELCOME = ${js(welcome)}
+const MINUTES = ${minutes}
+
+export default async function (event: ScriptEvent, ctx: ScriptContext) {
+  const c = event.connectionId ?? ''
+  const here = { connection: c, chat: event.chat?.nativeId ?? '' }
+  if (event.type === 'member.joined' && event.actor && !event.actor.isSelf) {
+    const user = event.actor.id
+    await ctx.channels.moderate({ ...here, action: 'mute', user })
+    const sent = await ctx.channels.send({
+      ...here,
+      text: WELCOME.replace('{name}', event.actor.name ?? 'there'),
+      buttons: [[{ text: 'I am human', data: 'human:' + user }]],
+    })
+    await ctx.kv.set({ key: 'captcha:' + user, value: sent.messageIds[0], ttlSec: MINUTES * 60 + 600 })
+    await ctx.later({ in: MINUTES * 60, data: { user, ...here }, key: 'captcha:' + user })
+    return { asked: user }
+  }
+  if (event.type === 'action' && event.button?.data?.startsWith('human:')) {
+    const user = event.button.data.slice('human:'.length)
+    if (event.actor?.id !== user) return { skipped: 'someone else pressed it' }
+    await ctx.channels.moderate({ ...here, action: 'unmute', user })
+    await ctx.cancelLater({ key: 'captcha:' + user })
+    await ctx.kv.delete({ key: 'captcha:' + user })
+    await ctx.channels.edit({ ...here, messageId: event.messageId ?? '', text: 'Welcome, ' + (event.actor?.name ?? 'friend') + '!', buttons: [] })
+    return { passed: user }
+  }
+  if (event.type === 'later') {
+    const d = event.data as { user: string; connection: string; chat: string }
+    const pending = (await ctx.kv.get({ key: 'captcha:' + d.user })).value
+    if (pending === null) return { skipped: 'already answered' }
+    await ctx.channels.moderate({ connection: d.connection, chat: d.chat, action: 'kick', user: d.user })
+    await ctx.channels.delete({ connection: d.connection, chat: d.chat, messageIds: [String(pending)] })
+    await ctx.kv.delete({ key: 'captcha:' + d.user })
+    return { removed: d.user }
+  }
+  return { skipped: event.type }
+}
+`,
+				manifest: {
+					triggers: [{ ...messageTrigger(chat, []), events: ['member.joined', 'action'] }],
+					grants: chat.connection && chat.chat ? { send: [{ connection: chat.connection, chat: chat.chat }], moderate: [{ connection: chat.connection, chat: chat.chat }] } : {}
+				}
+			};
+		}
+	},
+	{
+		id: 'antiflood',
+		title: 'Antiflood',
+		summary: 'Mute a member who posts too many messages a minute (admins are left alone).',
+		icon: 'shield',
+		name: 'antiflood',
+		fields: [
+			{ key: 'chat', kind: 'chat', label: 'Group' },
+			{ key: 'limit', kind: 'text', label: 'Messages a minute', placeholder: '5', optional: true },
+			{ key: 'minutes', kind: 'text', label: 'Mute for (minutes)', placeholder: '10', optional: true }
+		],
+		build(v) {
+			const chat = chatOf(v, 'chat');
+			const limit = Math.min(Math.max(Number(textOf(v, 'limit')) || 5, 1), 100);
+			const minutes = Math.min(Math.max(Number(textOf(v, 'minutes')) || 10, 1), 10080);
+			return {
+				description: `Mute members of ${chat.chat || 'a group'} who send more than ${limit} messages a minute`,
+				source: `// More than LIMIT messages in a minute: muted for MINUTES (owners and admins are never muted).
+const LIMIT = ${limit}
+const MINUTES = ${minutes}
+
+export default async function (event: ScriptEvent, ctx: ScriptContext) {
+  const a = event.actor
+  if (!a || a.isSelf || a.role === 'owner' || a.role === 'admin') return { skipped: 'staff or the bot' }
+  const rl = await ctx.kv.rateLimit({ key: 'flood:' + a.id, limit: LIMIT, windowSec: 60 })
+  if (rl.allowed) return { ok: true, left: rl.remaining }
+  const here = { connection: event.connectionId ?? '', chat: event.chat?.nativeId ?? '' }
+  // once per window: the person is muted already
+  if (!(await ctx.kv.once({ key: 'muted:' + a.id, ttlSec: MINUTES * 60 })).first) return { skipped: 'muted already' }
+  await ctx.channels.moderate({ ...here, action: 'mute', user: a.id, forSec: MINUTES * 60 })
+  await ctx.channels.reply({ text: (a.name ?? 'Someone') + ' is muted for ' + MINUTES + ' minutes: too many messages.', quote: false })
+  return { muted: a.id }
+}
+`,
+				manifest: {
+					triggers: [messageTrigger(chat, [])],
+					grants: { reply: true, ...(chat.connection && chat.chat ? { moderate: [{ connection: chat.connection, chat: chat.chat }] } : {}) }
+				}
+			};
+		}
+	},
+	{
+		id: 'scheduled-post',
+		title: 'Scheduled post',
+		summary: 'Post a message (and a library file, like a chart) to a chat every day at a time.',
+		icon: 'clock',
+		name: 'daily-post',
+		fields: [
+			{ key: 'to', kind: 'chat', label: 'Post to' },
+			{ key: 'time', kind: 'time', label: 'Every day at' },
+			{ key: 'text', kind: 'text', label: 'Text', placeholder: 'Good morning! Today’s plan…', multiline: true },
+			{ key: 'file', kind: 'text', label: 'Library file', placeholder: '/library/charts/today.png', help: 'Optional: a photo or file to post with the text.', optional: true }
+		],
+		build(v) {
+			const to = chatOf(v, 'to');
+			const file = textOf(v, 'file');
+			const time = textOf(v, 'time') || '09:00';
+			return {
+				description: `Post to ${to.chat || 'a chat'} every day at ${time}`,
+				source: `// A post at a fixed time; the file (when set) goes along as a photo or document.
+const TEXT = ${js(textOf(v, 'text') || 'Good morning!')}
+const FILE = ${js(file)}
+
+export default async function (event: ScriptEvent, ctx: ScriptContext) {
+  const sent = await ctx.channels.send({
+    connection: ${js(to.connection)},
+    chat: ${js(to.chat)},
+    text: TEXT,
+    ...(FILE ? { files: [FILE] } : {}),
+  })
+  return { posted: sent.messageIds }
+}
+`,
+				manifest: {
+					triggers: [{ kind: 'schedule', spec: { kind: 'cron', expr: cronAt(time) } }],
+					grants: { send: to.connection && to.chat ? [{ connection: to.connection, chat: to.chat }] : [], ...(file ? { libraryRead: [file] } : {}) }
 				}
 			};
 		}

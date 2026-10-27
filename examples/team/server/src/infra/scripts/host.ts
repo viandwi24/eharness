@@ -33,7 +33,12 @@ import {
   type ScriptChannelEvent,
   type ScriptManifest,
 } from '../../domain/script-manifest.ts'
-import { type HostMethodDoc, KV_LIMITS, type Script } from '../../domain/scripts.ts'
+import {
+  DEFAULT_SCRIPT_LIMITS,
+  type HostMethodDoc,
+  KV_LIMITS,
+  type Script,
+} from '../../domain/scripts.ts'
 import { ChannelUserError } from '../channels/gateway/types.ts'
 import type { ChannelGateway, ResolvedTarget } from '../channels/gateway.ts'
 import type { LogMessage } from '../channels/messages.ts'
@@ -958,6 +963,23 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       }
     }
   }
+  // --- send caps (per run, and per chat) ---
+  const caps = { ...DEFAULT_SCRIPT_LIMITS, ...c.manifest.limits }
+  let sends = 0
+  const sendsTo = new Map<string, number>()
+  const countSend = (nodeId: string, label: string): void => {
+    if (sends >= caps.maxSends)
+      refuse(
+        `ctx.${label}: this run already posted ${sends} messages (limits.maxSends = ${caps.maxSends})`,
+      )
+    const n = sendsTo.get(nodeId) ?? 0
+    if (n >= caps.maxSendsPerChat)
+      refuse(
+        `ctx.${label}: this run already posted ${n} messages to that chat (limits.maxSendsPerChat = ${caps.maxSendsPerChat})`,
+      )
+    sends++
+    sendsTo.set(nodeId, n + 1)
+  }
   /** A new key must fit the per-script key limit. */
   const roomFor = (key: string, label: string, now: number): void => {
     if (
@@ -1003,6 +1025,7 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
     const replyTo = forward ? undefined : optStr(o, 'replyTo')
     const source = targetOf(from)
     const target = targetOf(to)
+    countSend(target.node.id, label)
     const messageIds = await paced(() =>
       gw().copy(source, ids, target, {
         ...(forward ? { forward: true } : {}),
@@ -1071,6 +1094,7 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
         }
       }
       const buttons = buttonsArg(o, 'channels.send', t)
+      countSend(t.node.id, 'channels.send')
       const messageIds = await paced(() =>
         gw().post(t, {
           text,
@@ -1108,6 +1132,7 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       )
       const quote = o.quote !== false
       const format = formatArg(o, 'channels.reply')
+      countSend(t.node.id, 'channels.reply')
       return {
         messageIds: await paced(() =>
           gw().post(t, {

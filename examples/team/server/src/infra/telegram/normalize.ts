@@ -531,6 +531,17 @@ function forwardOf(message: Message): Record<string, unknown> | undefined {
   }
 }
 
+/** `message_reaction_count`: anonymous reaction counts of a channel post. */
+interface ReactionCountUpdate {
+  chat: { id: number; type: string; title?: string }
+  message_id: number
+  date: number
+  reactions: Array<{
+    type: { type: string; emoji?: string; custom_emoji_id?: string }
+    total_count: number
+  }>
+}
+
 /** Callback data: `<name>:<data>` (Telegram allows 64 bytes). */
 export const encodeCallback = (name: string, data: string | undefined): string =>
   data === undefined ? name : `${name}:${data}`
@@ -814,6 +825,31 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
     for (const emoji of after) if (!before.has(emoji)) push(emoji, true)
     for (const emoji of before) if (!after.has(emoji)) push(emoji, false)
     return { events }
+  }
+  const counted = (update as { message_reaction_count?: ReactionCountUpdate })
+    .message_reaction_count
+  if (counted !== undefined) {
+    const room = chatNode(counted.chat as never)
+    return {
+      events: [
+        {
+          type: 'reactions.updated',
+          dedupeKey: key(update, 'counts'),
+          at: counted.date * 1000,
+          node: { nativeId: room.nativeId, chain: [room] },
+          messageNativeId: String(counted.message_id),
+          counts: counted.reactions.map((r) => {
+            const custom = r.type.type === 'custom_emoji' ? r.type.custom_emoji_id : undefined
+            return {
+              emoji: custom === undefined ? (r.type.emoji ?? r.type.type) : `custom:${custom}`,
+              count: r.total_count,
+              ...(custom === undefined ? {} : { customEmojiId: custom }),
+            }
+          }),
+          raw: update,
+        },
+      ],
+    }
   }
   const mine = update.my_chat_member
   if (mine !== undefined) {

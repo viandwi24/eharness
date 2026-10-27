@@ -2,6 +2,9 @@
 	import { goto } from '$app/navigation';
 	import ArrowRightIcon from 'phosphor-svelte/lib/ArrowRight';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeft';
+	import CopySimpleIcon from 'phosphor-svelte/lib/CopySimple';
+	import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheck';
+	import ClockIcon from 'phosphor-svelte/lib/Clock';
 	import ShareFatIcon from 'phosphor-svelte/lib/ShareFat';
 	import ChatTextIcon from 'phosphor-svelte/lib/ChatText';
 	import TableIcon from 'phosphor-svelte/lib/Table';
@@ -33,7 +36,7 @@
 	const lookups = createLookups();
 	$effect(() => void lookups.load());
 
-	const icons = { forward: ShareFatIcon, reply: ChatTextIcon, table: TableIcon, count: HashIcon, report: FileTextIcon, agent: RobotIcon, webhook: WebhooksLogoIcon, task: CheckSquareIcon, blank: CodeIcon } as const;
+	const icons = { forward: ShareFatIcon, reply: ChatTextIcon, table: TableIcon, count: HashIcon, report: FileTextIcon, agent: RobotIcon, webhook: WebhooksLogoIcon, task: CheckSquareIcon, copy: CopySimpleIcon, shield: ShieldCheckIcon, clock: ClockIcon, blank: CodeIcon } as const;
 
 	let recipe = $state<Recipe | null>(null);
 	let values = $state<RecipeValues>({});

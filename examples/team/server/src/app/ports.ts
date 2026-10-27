@@ -515,6 +515,11 @@ export interface ScriptRunnerPort {
     dryRun: boolean
     startedBy: string
   }): Promise<ScriptRun>
+  /**
+   * A stored run event made whole again for a re-run: the message texts a trace never keeps are
+   * read back from the channel log (the event as stored when they are gone).
+   */
+  restoreEvent(event: unknown): Promise<unknown>
   /** Why a source cannot run (syntax, imports, no default export), or undefined. */
   check(source: string): string | undefined
   /** The `scripts.d.ts` authors write against. */
@@ -589,7 +594,13 @@ export interface ScriptStore {
   recordRun(run: ScriptRun): void
   runs(
     scriptId: string,
-    q: { limit: number; before?: string | undefined; dryRun?: boolean | undefined },
+    q: {
+      limit: number
+      before?: string | undefined
+      dryRun?: boolean | undefined
+      /** Outcomes to keep (any when absent). */
+      outcomes?: readonly string[] | undefined
+    },
   ): ScriptRun[]
   run(id: string): ScriptRun | undefined
   /** Real runs started since `since` (the hourly cap). */

@@ -4076,6 +4076,11 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       case 'reaction.added':
       case 'reaction.removed':
         return { messageNativeId: event.messageNativeId, emoji: event.emoji }
+      case 'reactions.updated':
+        return {
+          messageNativeId: event.messageNativeId,
+          counts: event.counts.map((c) => `${c.emoji} ${c.count}`).join(', '),
+        }
       case 'node.state_changed':
         return {
           state: event.state,
@@ -4221,7 +4226,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           ? event.message.nativeId
           : event.type === 'message.edited'
             ? event.message.nativeId
-            : event.type === 'reaction.added' || event.type === 'reaction.removed'
+            : event.type === 'reaction.added' ||
+                event.type === 'reaction.removed' ||
+                event.type === 'reactions.updated'
               ? event.messageNativeId
               : event.type === 'action'
                 ? (event.messageNativeId ?? null)
@@ -4390,6 +4397,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       tombstone(node, event.messageNativeIds, event.at, scope)
       return { action: 'record', reason: 'deleted' }
     }
+    // counts only (who reacted is not known): recorded for the Events page and scripts
+    if (event.type === 'reactions.updated') return { action: 'record', reason: 'reaction counts' }
     if (event.type === 'reaction.added' || event.type === 'reaction.removed') {
       if (event.actor === undefined) return { action: 'record', reason: 'reaction' }
       const who = identityOfSender(connectionId, event.actor, node, adapter)

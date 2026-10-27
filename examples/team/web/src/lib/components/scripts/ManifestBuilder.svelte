@@ -29,6 +29,15 @@
 
 	let { manifest = $bindable(), lookups, webhookUrl = '' }: { manifest: SimpleManifest; lookups: Lookups; webhookUrl?: string } = $props();
 
+	/** A limit typed in a field: empty = the default (left out of the manifest). */
+	function setLimit(key: string, raw: string): void {
+		const n = Number(raw);
+		const next = { ...manifest.limits };
+		if (raw.trim() === '' || !Number.isFinite(n)) delete next[key];
+		else next[key] = Math.trunc(n);
+		manifest.limits = next;
+	}
+
 	const L = $derived(lookups.state);
 	const tableOptions = $derived([{ value: '*', label: 'Any table' }, ...L.tables]);
 	const chatSuggestions = (connections: string[]) => {
@@ -466,7 +475,7 @@
 		<button type="button" class="flex items-center gap-2 text-left" aria-expanded={showLimits} onclick={() => (showLimits = !showLimits)}>
 			<h3 id="mb-limits" class="text-sm font-semibold">Limits</h3>
 			<span class="text-xs text-muted-foreground">
-				{manifest.cooldownSec ? `wait ${manifest.cooldownSec}s between runs · ` : ''}{manifest.maxRunsPerHour ? `at most ${manifest.maxRunsPerHour} runs an hour` : 'no hourly cap'}{manifest.loopGuard ? '' : ' · loop guard off'}
+				{manifest.cooldownSec ? `wait ${manifest.cooldownSec}s between runs · ` : ''}{manifest.maxRunsPerHour ? `at most ${manifest.maxRunsPerHour} runs an hour` : 'no hourly cap'}{manifest.loopGuard ? '' : ' · loop guard off'}{manifest.logOnly ? ' · log only' : ''}
 			</span>
 			<CaretDownIcon class={cn('size-4 text-muted-foreground transition-transform', showLimits && 'rotate-180')} />
 		</button>
@@ -481,6 +490,15 @@
 						<span class="text-xs text-muted-foreground">On (recommended): messages the app itself sent, rows this script wrote and what its own API calls caused never start it again. Messages you type on a connected account always count. Off: everything starts it; the wait and the hourly cap above still stop a runaway loop.</span>
 					</span>
 				</label>
+				<label class="flex w-full items-start gap-3">
+					<Switch bind:checked={manifest.logOnly} size="sm" class="mt-0.5" />
+					<span class="flex flex-col gap-0.5">
+						<span class="text-xs font-medium">Log only</span>
+						<span class="text-xs text-muted-foreground">Runs on real events but does nothing outside the script: every send, write or call is only recorded in the run trace. Try a script on live traffic, then turn this off.</span>
+					</span>
+				</label>
+				<label class="flex flex-col gap-1 text-xs font-medium">Most messages per run<Input type="number" min="1" max="500" placeholder="30" value={manifest.limits.maxSends ?? ''} oninput={(e) => setLimit('maxSends', e.currentTarget.value)} class="w-36" /></label>
+				<label class="flex flex-col gap-1 text-xs font-medium">Most messages per chat per run<Input type="number" min="1" max="200" placeholder="10" value={manifest.limits.maxSendsPerChat ?? ''} oninput={(e) => setLimit('maxSendsPerChat', e.currentTarget.value)} class="w-36" /></label>
 				<p class="w-full text-xs text-muted-foreground">Memory, CPU and time limits have safe defaults; change them in JSON mode (<code class="font-mono">limits</code>).</p>
 			</div>
 		{/if}

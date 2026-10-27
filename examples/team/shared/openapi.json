@@ -36996,6 +36996,91 @@
         }
       }
     },
+    "/scripts/{script}/runs/{runId}/rerun": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Run the active version again with the event of an earlier run (message texts restored)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Script id or name."
+            },
+            "required": true,
+            "description": "Script id or name.",
+            "name": "script",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not possible in the current state (see the message)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/scripts/{script}/runs": {
       "get": {
         "tags": [
@@ -37050,6 +37135,26 @@
             "required": false,
             "description": "Only dry runs (true) or only real runs (false).",
             "name": "dryRun",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "error",
+                "cpu",
+                "memory",
+                "timeout",
+                "limit",
+                "skipped",
+                "failed"
+              ],
+              "description": "Only runs that ended so; `failed` = error, cpu, memory, timeout or limit."
+            },
+            "required": false,
+            "description": "Only runs that ended so; `failed` = error, cpu, memory, timeout or limit.",
+            "name": "outcome",
             "in": "query"
           }
         ],

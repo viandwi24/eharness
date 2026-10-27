@@ -164,6 +164,12 @@ export const RunsQuery = z.object({
     .enum(['true', 'false'])
     .optional()
     .openapi({ description: 'Only dry runs (true) or only real runs (false).' }),
+  outcome: z
+    .enum(['ok', 'error', 'cpu', 'memory', 'timeout', 'limit', 'skipped', 'failed'])
+    .optional()
+    .openapi({
+      description: 'Only runs that ended so; `failed` = error, cpu, memory, timeout or limit.',
+    }),
 })
 
 export const DryRunSchema = z

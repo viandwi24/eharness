@@ -210,3 +210,32 @@ describe('Telegram user account media', () => {
     expect(e.message.content).toMatchObject({ type: 'poll', options: ['Long', 'Short'] })
   })
 })
+
+describe('reaction counts', () => {
+  test("a channel post's anonymous counts arrive as reactions.updated (custom emoji by id)", () => {
+    const r = normalizeUpdate(
+      {
+        update_id: 9,
+        message_reaction_count: {
+          chat: { id: -1009, type: 'channel', title: 'Signals' },
+          message_id: 77,
+          date: 1_700_000_000,
+          reactions: [
+            { type: { type: 'emoji', emoji: '🔥' }, total_count: 12 },
+            { type: { type: 'custom_emoji', custom_emoji_id: '555' }, total_count: 3 },
+          ],
+        },
+      } as unknown as Update,
+      ctx,
+    )
+    expect(r.events).toHaveLength(1)
+    expect(r.events[0]).toMatchObject({
+      type: 'reactions.updated',
+      messageNativeId: '77',
+      counts: [
+        { emoji: '🔥', count: 12 },
+        { emoji: 'custom:555', count: 3, customEmojiId: '555' },
+      ],
+    })
+  })
+})

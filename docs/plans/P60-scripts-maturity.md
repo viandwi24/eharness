@@ -1,6 +1,6 @@
 # P60 — Team example: scripts and tables, mature
 
-Status: in progress (W1–W5 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
+Status: done (2026-10-27) · Owner: agent · Branch: `main` (local commits, one gate per step)
 
 ## Goal
 
@@ -52,8 +52,8 @@ Inputs: the scenario catalog and capability checklist in
       and deletes follow each copy.
 - [x] Edit captions and media; delete in bulk.
 - [x] Reactions: custom emoji out (both transports) and in (bot, `customEmojiId` on the event).
-- [ ] Inbound reactions on the user account and anonymous reaction counts of channel posts (bot
-      `message_reaction_count`): need a counts event type; open.
+- [x] Inbound reaction counts on the user account (`updateMessageReactions`) and for channel posts
+      (bot `message_reaction_count`): a `reactions.updated` event with counts per emoji.
 - Notes: buttons on sends land with W4 (callbacks). Edits of the media itself (replace the photo)
   are not offered; captions are. Grants match a chat by id or title either way. A dry run checks
   grants. A user account's own echo during a send is never taken as typed by the person.
@@ -89,16 +89,21 @@ Inputs: the scenario catalog and capability checklist in
   open (nice-to-have).
 
 ### W6 — Safety, observability, UX
-- [ ] Chain loop detection across scripts; caps on sends per run and per chat; a "log only" mode.
-- [ ] Failed events list with re-run.
-- [ ] Test panel with sample media events (photo + caption, album, sticker, voice, forward, reply).
-- [ ] Recipes: signal distributor with reply/edit sync, signal logger and outcome tracker, welcome
+- [x] Chain loop detection across scripts; caps on sends per run and per chat; a "log only" mode.
+- [x] Failed events list with re-run.
+- [x] Test panel with sample media events (photo + caption, album, sticker, voice, forward, reply).
+- [x] Recipes: signal distributor with reply/edit sync, signal logger and outcome tracker, welcome
       + captcha, antiflood and locks, FAQ, scheduled posts, daily report.
+- Notes: chains are tracked through the calls of a run (table writes, API calls), at most 4 scripts
+  deep, never a circle. Send caps: 30 per run, 10 per chat (limits). Log only runs record their
+  side effects like a dry run. Re-runs read message texts back from the chat log. The recipes are
+  type-checked by the server's Check in a test (`test/recipes-check.test.ts`); the FAQ recipe is the
+  existing keyword reply, link locks fit the antiflood recipe as an extra rule.
 
 ## Acceptance
 
-- [ ] A signal with a photo (and an album of 3) in channel #1 is copied, with its formatted caption,
+- [x] A signal with a photo (and an album of 3) in channel #1 is copied, with its formatted caption,
       to #2 or #3 by the balancer recipe; "TP hit" replies thread under the right copy; an edit in
       #1 updates the copy; no download of large media.
-- [ ] A sticker, a voice note and a poll each reach a script with their kind and can be resent.
-- [ ] Full gate green; docs (`examples/team/docs/scripts.md`) updated.
+- [x] A sticker, a voice note and a poll each reach a script with their kind and can be resent.
+- [x] Full gate green; docs (`examples/team/docs/scripts.md`) updated.

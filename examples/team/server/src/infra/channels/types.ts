@@ -217,6 +217,12 @@ export type RemoteEvent =
       emoji: string
       customEmojiId?: string
     })
+  | (EventBase & {
+      /** The reaction counts of a message changed (anonymous: channel posts, a user account's view). */
+      type: 'reactions.updated'
+      messageNativeId: string
+      counts: ReactionCount[]
+    })
   | (EventBase & { type: 'node.created' | 'node.updated' })
   | (EventBase & { type: 'node.state_changed'; state: NodeState; reason?: string })
   /** The chat got a new id (a basic group became a supergroup): `node` is the new one. */
@@ -341,6 +347,13 @@ export type ModerationOp =
       memberLimit?: number
       joinRequest?: boolean
     }
+
+/** How many people reacted with one emoji (`custom:<id>` for a custom emoji). */
+export interface ReactionCount {
+  emoji: string
+  count: number
+  customEmojiId?: string
+}
 
 /** What a moderation step answers: an invite link, or a member's standing. */
 export interface ModerationResult {

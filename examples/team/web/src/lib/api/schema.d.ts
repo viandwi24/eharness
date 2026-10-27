@@ -13926,6 +13926,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scripts/{script}/runs/{runId}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the active version again with the event of an earlier run (message texts restored) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Script id or name. */
+                    script: string;
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new run */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScriptRun"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown script */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not possible in the current state (see the message) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scripts/{script}/runs": {
         parameters: {
             query?: never;
@@ -13942,6 +14018,8 @@ export interface paths {
                     before?: string;
                     /** @description Only dry runs (true) or only real runs (false). */
                     dryRun?: "true" | "false";
+                    /** @description Only runs that ended so; `failed` = error, cpu, memory, timeout or limit. */
+                    outcome?: "ok" | "error" | "cpu" | "memory" | "timeout" | "limit" | "skipped" | "failed";
                 };
                 header?: never;
                 path: {

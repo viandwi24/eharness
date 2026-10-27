@@ -125,6 +125,8 @@ const MAX_WAITING = 20
 const SKIP_LOG_MS = 60_000
 const TABLE_EVENT_ROWS = 20
 const ALBUM_WAIT_MS = 1500
+/** Scripts that may start each other in a row through their own calls. */
+const MAX_CHAIN = 4
 /** Telegram albums hold at most 10 items. */
 const MAX_ALBUM = 10
 
@@ -203,6 +205,8 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
   const all = new Set<Promise<unknown>>()
   let running = 0
   let stopped = false
+  /** The scripts whose host call is running (a chain of scripts starting each other). */
+  const chainStore = new AsyncLocalStorage<string[]>()
   /** The script whose `ctx.api` call is running (events it causes do not start it again). */
   const apiCaller = new AsyncLocalStorage<string>()
   const hookKey = crypto.subtle.importKey(
@@ -322,17 +326,21 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
     dryRun: boolean
     startedBy: string
     channelEvent?: ScriptChannelEvent
+    /** The scripts whose calls led to this run (oldest first). */
+    chain?: string[]
   }): Promise<ScriptRun> {
     const d = app()
     const runId = d.ids.next()
     const startedAt = d.clock.now()
     const manifest = manifestOf(input.version)
+    // log only: every run records what it would do and does nothing outside the script
+    const dry = input.dryRun || manifest?.logOnly === true
     const base = {
       id: runId,
       scriptId: input.script.id,
       version: input.version.version,
       trigger: input.trigger,
-      dryRun: input.dryRun,
+      dryRun: dry,
       event: storedEvent(input.event),
       startedBy: input.startedBy,
       startedAt,
@@ -355,14 +363,14 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
     await acquire()
     let run: ScriptRun
     try {
-      const host = buildHost({
+      const built = buildHost({
         deps: d,
         script: input.script,
         manifest,
         channelEvent: input.channelEvent,
         event: input.event,
         runId,
-        ...(input.dryRun ? { dryRun: true } : {}),
+        ...(dry ? { dryRun: true } : {}),
         gateway: o.gateway,
         wake: o.wake,
         ...(o.allowPrivateFetch === undefined ? {} : { allowPrivateFetch: o.allowPrivateFetch }),
@@ -372,12 +380,20 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
           ? {}
           : { callApi: (req) => apiCaller.run(input.script.id, () => o.callApi!(req)) }),
       })
+      // what this run's calls cause (table writes, API calls) starts other scripts as part of a chain
+      const chain = [...(input.chain ?? []), input.script.id]
+      const host: typeof built = Object.fromEntries(
+        Object.entries(built).map(([name, fn]) => [
+          name,
+          (args: unknown) => chainStore.run(chain, () => fn(args)),
+        ]),
+      )
       const r = await runScript({
         source: input.version.source,
         event: input.event,
         host,
         limits: manifest.limits,
-        ...(input.dryRun
+        ...(dry
           ? {
               dryRun: {
                 sideEffects: SIDE_EFFECTS,
@@ -511,7 +527,10 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
       : undefined
   ;(timerLoop as { unref?: () => void } | undefined)?.unref?.()
 
-  function enqueue(input: Parameters<typeof execute>[0]): void {
+  function enqueue(raw: Parameters<typeof execute>[0]): void {
+    // a run started by another script's call carries the chain of scripts that led to it
+    const chain = chainStore.getStore()
+    const input = chain === undefined || raw.chain !== undefined ? raw : { ...raw, chain }
     const q = queues.get(input.script.id) ?? { tail: Promise.resolve(), waiting: 0 }
     queues.set(input.script.id, q)
     if (q.waiting >= MAX_WAITING) {
@@ -541,6 +560,12 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
   ): SkipReason | undefined => {
     const d = o.app()
     if (d === undefined) return 'disabled'
+    // started by a script's own call (a table write, an API call): no circles, no long chains
+    const chain = chainStore.getStore()
+    if (chain !== undefined) {
+      if (chain.includes(script.id) && manifest.loopGuard) return 'loop'
+      if (chain.length >= MAX_CHAIN) return 'chain'
+    }
     const now = d.clock.now()
     return gateOf(manifest, {
       now,
@@ -633,6 +658,7 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
           ? { messageId: String((e as { messageNativeId: string }).messageNativeId) }
           : {}),
       ...('emoji' in e ? { emoji: String((e as { emoji: string }).emoji) } : {}),
+      ...(e.type === 'reactions.updated' ? { reactions: e.counts.map((x) => ({ ...x })) } : {}),
       ...(e.type === 'action' && e.name === SCRIPT_BUTTON
         ? { button: e.data === undefined ? {} : { data: e.data } }
         : {}),
@@ -711,6 +737,40 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
             : input,
         ),
       ),
+    async restoreEvent(stored) {
+      if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored
+      const e = { ...(stored as Record<string, unknown>) }
+      const gw = o.gateway()
+      const chat = e.chat as { nodeId?: string } | undefined
+      const textOf = async (messageId: unknown): Promise<string | undefined> => {
+        if (gw === undefined || chat?.nodeId === undefined || typeof messageId !== 'string')
+          return undefined
+        try {
+          return (await gw.log.find(chat.nodeId, messageId))?.text
+        } catch {
+          return undefined
+        }
+      }
+      if (typeof e.textLength === 'number') {
+        const text = await textOf(e.messageId)
+        if (text !== undefined) {
+          delete e.textLength
+          e.text = text
+        }
+      }
+      if (Array.isArray(e.album))
+        e.album = await Promise.all(
+          e.album.map(async (item: unknown) => {
+            const it = { ...(item as Record<string, unknown>) }
+            if (typeof it.textLength !== 'number') return it
+            const text = await textOf(it.messageId)
+            if (text === undefined) return it
+            delete it.textLength
+            return { ...it, text }
+          }),
+        )
+      return e
+    },
     check(source) {
       const p = prepareScript(source)
       return p.ok ? undefined : p.error

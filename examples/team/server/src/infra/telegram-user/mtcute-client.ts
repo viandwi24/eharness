@@ -16,6 +16,7 @@ import {
   type ChatMember,
   type ChatMemberUpdate,
   type DeleteMessageUpdate,
+  getMarkedPeerId,
   Long,
   MemoryStorage,
   type Message,
@@ -845,6 +846,48 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
               total: u.totalPending,
               at: Date.now(),
             })
+          })
+        }
+        if (h.reactions !== undefined) {
+          const onReactions = h.reactions
+          tg.onRawUpdate.add((info) => {
+            const u = info.update as {
+              _: string
+              peer?: unknown
+              msgId?: number
+              reactions?: {
+                results?: Array<{
+                  reaction: { _: string; emoticon?: string; documentId?: { toString(): string } }
+                  count: number
+                }>
+              }
+            }
+            if (u._ !== 'updateMessageReactions' || u.peer === undefined || u.msgId === undefined)
+              return
+            try {
+              onReactions({
+                chatId: String(getMarkedPeerId(u.peer as never)),
+                messageId: u.msgId,
+                counts: (u.reactions?.results ?? []).map((r) => {
+                  const custom =
+                    r.reaction._ === 'reactionCustomEmoji'
+                      ? r.reaction.documentId?.toString()
+                      : undefined
+                  return {
+                    emoji:
+                      custom !== undefined
+                        ? `custom:${custom}`
+                        : r.reaction._ === 'reactionEmoji'
+                          ? (r.reaction.emoticon ?? '?')
+                          : 'paid',
+                    count: r.count,
+                    ...(custom === undefined ? {} : { customEmojiId: custom }),
+                  }
+                }),
+              })
+            } catch (error) {
+              h.error(error)
+            }
           })
         }
         tg.onError.add((e: unknown) => h.error(e))

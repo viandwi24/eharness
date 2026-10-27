@@ -15,6 +15,7 @@ import {
   listRuns,
   listScripts,
   listVersions,
+  rerunScript,
   runScriptNow,
   scriptKv,
   scriptTypesText,
@@ -223,6 +224,21 @@ const checkRoute = createRoute({
   },
 })
 
+const rerunRoute = createRoute({
+  method: 'post',
+  path: '/scripts/{script}/runs/{runId}/rerun',
+  tags,
+  summary: 'Run the active version again with the event of an earlier run (message texts restored)',
+  security,
+  request: { params: RunParam },
+  responses: {
+    200: { description: 'The new run', content: json(ScriptRunSchema) },
+    404: unknownScript,
+    409: conflictError,
+    ...errorResponses,
+  },
+})
+
 const runRoute = createRoute({
   method: 'post',
   path: '/scripts/{script}/run',
@@ -411,6 +427,10 @@ export function scriptRoutes(deps: Deps): OpenAPIHono {
         200,
       )
     })
+    .openapi(rerunRoute, async (c) => {
+      const p = c.req.valid('param')
+      return c.json((await rerunScript(deps, WEB_OWNER, p.script, p.runId)) as never, 200)
+    })
     .openapi(runsRoute, (c) => {
       const q = c.req.valid('query')
       return c.json(
@@ -419,6 +439,7 @@ export function scriptRoutes(deps: Deps): OpenAPIHono {
             limit: q.limit,
             before: q.before,
             dryRun: q.dryRun === undefined ? undefined : q.dryRun === 'true',
+            outcome: q.outcome,
           }),
         } as never,
         200,

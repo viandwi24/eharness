@@ -1451,6 +1451,354 @@ describe('table triggers on field changes', () => {
   }, 15_000)
 })
 
+describe('safety: chains, caps, log only, re-runs', () => {
+  test("two scripts that write each other's tables stop after one round (a circle)", async () => {
+    const r = rig()
+    rigs.push(r)
+    await r.api('POST', '/tables', { name: 'a' })
+    await r.api('POST', '/tables', { name: 'b' })
+    const pong = (from: string, to: string) => ({
+      source: `export default async function (event, ctx) { await ctx.tables.insert({ table: '${to}', rows: [{ from: '${from}' }] }) }`,
+      manifest: {
+        triggers: [{ kind: 'table', table: from, events: ['row.created'] }],
+        grants: { tablesWrite: [to] },
+        maxRunsPerHour: 0,
+      },
+    })
+    await r.api('POST', '/scripts', { name: 'ping', ...pong('a', 'b') })
+    await r.api('POST', '/scripts', { name: 'pong', ...pong('b', 'a') })
+    await r.api('POST', '/scripts/ping/activate', {})
+    await r.api('POST', '/scripts/pong/activate', {})
+    await r.api('POST', '/tables/a/rows', { rows: [{ start: true }] })
+    await until(
+      'pong ran',
+      async () => ((await r.api('GET', '/scripts/pong/runs')).json.runs as unknown[]).length > 0,
+    )
+    await sleep(300)
+    // ping ran on the owner's row, pong on ping's row; ping on pong's row is the circle: skipped
+    const runs = async (n: string) =>
+      (await r.api('GET', `/scripts/${n}/runs`)).json.runs as Array<{
+        outcome: string
+        reason: string | null
+      }>
+    expect((await runs('ping')).map((x) => x.outcome)).toEqual(['skipped', 'ok'])
+    expect((await runs('ping'))[0]?.reason).toBe('loop')
+    expect((await runs('pong')).map((x) => x.outcome)).toEqual(['ok'])
+    expect((await r.api('GET', '/tables/a')).json.rowCount).toBe(2)
+  })
+
+  test('sends per run and per chat are capped; log only records what would happen', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    const src = `export default async function (event, ctx) {
+  for (let i = 0; i < 4; i++) await ctx.channels.send({ connection: 'c1', chat: 'VIP', text: 'n' + i })
+}`
+    await r.api('POST', '/scripts', {
+      name: 'chatty',
+      source: src,
+      manifest: {
+        triggers: [],
+        grants: { send: [{ connection: 'c1', chat: 'VIP' }] },
+        limits: { maxSendsPerChat: 2 },
+      },
+    })
+    await r.api('POST', '/scripts/chatty/activate', {})
+    const run = await r.api('POST', '/scripts/chatty/run', {})
+    expect(run.json.outcome).toBe('error')
+    expect(String(run.json.error)).toContain('limits.maxSendsPerChat = 2')
+    expect(mock.sent.map((s) => s.message.text)).toEqual(['n0', 'n1'])
+
+    // log only: the same run sends nothing and the trace shows the calls
+    const v = (await r.api('GET', '/scripts/chatty')).json.latest as {
+      manifest: Record<string, unknown>
+    }
+    await r.api('PATCH', '/scripts/chatty', {
+      manifest: { ...v.manifest, logOnly: true, limits: {} },
+    })
+    const act = await r.api('POST', '/scripts/chatty/activate', {})
+    expect(act.status).toBe(200)
+    const logged = await r.api('POST', '/scripts/chatty/run', {})
+    expect(logged.json).toMatchObject({ outcome: 'ok', dryRun: true })
+    expect((logged.json.calls as Array<{ dryRun?: boolean }>).every((c) => c.dryRun === true)).toBe(
+      true,
+    )
+    expect(mock.sent).toHaveLength(2)
+  })
+
+  test('a failed run is listed and runs again with its message text restored', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    await r.api('POST', '/tables', { name: 'seen' })
+    await r.api('POST', '/scripts', {
+      name: 'flaky',
+      source: `export default async function (event, ctx) {
+  const n = (await ctx.kv.incr({ key: 'n' })).value
+  if (n === 1) throw new Error('first time fails')
+  await ctx.tables.insert({ table: 'seen', rows: [{ text: event.text }] })
+}`,
+      manifest: {
+        triggers: [{ kind: 'channel', events: ['message.created'], chats: [CHAT] }],
+        grants: { tablesWrite: ['seen'] },
+      },
+    })
+    await r.api('POST', '/scripts/flaky/activate', {})
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: { id: '9', name: 'Zed' },
+      id: 'x1',
+      text: 'BUY SOL',
+    })
+    await until(
+      'failed',
+      async () =>
+        ((await r.api('GET', '/scripts/flaky/runs?outcome=failed')).json.runs as unknown[])
+          .length === 1,
+    )
+    const failed = (
+      (await r.api('GET', '/scripts/flaky/runs?outcome=failed')).json.runs as unknown[]
+    )[0] as {
+      id: string
+      event: Record<string, unknown>
+    }
+    expect(failed.event.text).toBeUndefined()
+    const again = await r.api('POST', `/scripts/flaky/runs/${failed.id}/rerun`, {})
+    expect(again.json).toMatchObject({
+      outcome: 'ok',
+      trigger: 'channel',
+      startedBy: 'web owner (again)',
+    })
+    const rows = (await r.api('POST', '/tables/seen/query', {})).json.rows as Array<{
+      data: Record<string, unknown>
+    }>
+    expect(rows.map((x) => x.data.text)).toEqual(['BUY SOL'])
+  })
+})
+
+describe('P60 acceptance', () => {
+  test('the distributor recipe: an album of 3 and a photo go to #2 and #3 in turn; replies and edits follow; nothing is downloaded', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    const gw = r.server.channels
+    const desk = gw.settings.ensureNode('c1', { nativeId: '-3003', kind: 'room', title: 'Desk' })
+    gw.settings.set(desk.id, { enabled: true, label: 'Desk', ack: false } as never)
+    const { RECIPES } = await import('../../web/src/lib/scripts/recipes.ts')
+    const recipe = RECIPES.find((x) => x.id === 'distribute')
+    if (recipe === undefined) throw new Error('no distribute recipe')
+    const built = recipe.build({
+      from: { connection: 'c1', chat: CHAT },
+      to: { connection: 'c1', chat: 'VIP' },
+      to2: { connection: 'c1', chat: 'Desk' },
+      words: ['buy', 'sell'],
+    } as never)
+    expect(
+      (
+        await r.api('POST', '/scripts', {
+          name: 'distributor',
+          source: built.source,
+          manifest: built.manifest,
+        })
+      ).status,
+    ).toBe(201)
+    expect((await r.api('POST', '/scripts/distributor/check', {})).json.problems).toEqual([])
+    await r.api('POST', '/scripts/distributor/activate', {})
+    const who = { id: '9', name: 'Zed' }
+    const img = (n: string) => ({
+      name: `${n}.jpg`,
+      mediaType: 'image/jpeg',
+      bytes: new Uint8Array([1]),
+      media: 'photo' as const,
+      ref: `f-${n}`,
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '301',
+      text: '**BUY** BTC',
+      entities: [{ type: 'bold', offset: 0, length: 3 }],
+      groupId: 'g3',
+      attachments: [img('a')],
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '302',
+      text: '',
+      groupId: 'g3',
+      attachments: [img('b')],
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '303',
+      text: '',
+      groupId: 'g3',
+      attachments: [img('c')],
+    })
+    await until('album copied', () => mock.copies.length === 1, 5000)
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '304',
+      text: 'SELL ETH',
+      attachments: [img('d')],
+    })
+    await until('photo copied', () => mock.copies.length === 2, 5000)
+    expect(mock.copies.map((c) => [c.to, c.ids])).toEqual([
+      ['-2002', ['301', '302', '303']],
+      ['-3003', ['304']],
+    ])
+    // a reply to the second album photo follows under its copy in #2
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '305',
+      text: 'TP1 hit',
+      replyTo: { messageId: '302' },
+    })
+    await until('reply copied', () => mock.copies.length === 3)
+    expect(mock.copies[2]).toMatchObject({
+      to: '-2002',
+      ids: ['305'],
+      options: { replyTo: mock.copies[0]?.messageIds[1] },
+    })
+    // an edit of the photo post updates its copy in #3
+    await mock.userEdit({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '304',
+      text: 'SELL ETH (updated)',
+    })
+    await until('edit followed', () => mock.edits.some((e) => e.text === 'SELL ETH (updated)'))
+    expect(mock.edits.find((e) => e.text === 'SELL ETH (updated)')).toMatchObject({
+      conversationId: '-3003',
+      messageId: mock.copies[1]?.messageIds[0],
+      caption: true,
+    })
+    // nothing was downloaded or uploaded: copies only
+    expect(
+      mock.sent.filter((s) => (s.message.files ?? []).some((f) => f.bytes !== undefined)),
+    ).toHaveLength(0)
+  }, 20_000)
+
+  test('a voice note and a poll reach a script with their kind and go out again', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    await r.api('POST', '/scripts', {
+      name: 'resend',
+      source: `export default async function (event, ctx) {
+  const here = { connection: event.connectionId, chat: event.chat.nativeId }
+  const a = event.attachments?.[0]
+  if (a?.media === 'voice') {
+    await ctx.channels.send({ connection: event.connectionId, chat: 'VIP', media: [{ ref: a.ref, kind: 'voice' }] })
+    return 'voice'
+  }
+  if (event.content?.type === 'poll') {
+    await ctx.channels.copy({ ...here, messageIds: [event.messageId], toChat: 'VIP' })
+    return 'poll'
+  }
+}`,
+      manifest: {
+        triggers: [
+          {
+            kind: 'channel',
+            events: ['message.created'],
+            chats: [CHAT],
+            messageKinds: ['voice', 'poll'],
+          },
+        ],
+        grants: {
+          send: [{ connection: 'c1', chat: 'VIP' }],
+          read: [{ connection: 'c1', chat: CHAT }],
+        },
+      },
+    })
+    await r.api('POST', '/scripts/resend/activate', {})
+    const who = { id: '9', name: 'Zed' }
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: 'v1',
+      text: '',
+      attachments: [
+        {
+          name: 'v.ogg',
+          mediaType: 'audio/ogg',
+          bytes: new Uint8Array([1]),
+          media: 'voice',
+          ref: 'voice-1',
+        },
+      ],
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: 'p1',
+      text: '[poll: Long?]',
+      content: { type: 'poll', question: 'Long?', options: ['Yes', 'No'] },
+    })
+    await mock.say({ chat: CHAT, kind: 'group', from: who, id: 't1', text: 'just text' })
+    await until('both out', () => mock.sent.length === 1 && mock.copies.length === 1)
+    expect(mock.sent[0]?.message.files?.[0]).toMatchObject({ media: 'voice', ref: 'voice-1' })
+    expect(mock.copies[0]).toMatchObject({ ids: ['p1'], to: '-2002' })
+    await sleep(200)
+    const runs = (await r.api('GET', '/scripts/resend/runs')).json.runs as unknown[]
+    expect(runs).toHaveLength(2)
+  }, 15_000)
+})
+
+describe('reaction counts', () => {
+  test('a script sees the counts of a post and acts when they pass a mark', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    await r.api('POST', '/scripts', {
+      name: 'hot',
+      source: `export default async function (event, ctx) {
+  const fire = event.reactions.find((x) => x.emoji === '🔥')?.count ?? 0
+  if (fire < 10) return { fire }
+  if (!(await ctx.kv.once({ key: 'hot:' + event.messageId, ttlSec: 86400 })).first) return 'told already'
+  await ctx.channels.send({ connection: event.connectionId, chat: 'VIP', text: 'Hot post: ' + event.messageId })
+  return { fire }
+}`,
+      manifest: {
+        triggers: [{ kind: 'channel', events: ['reactions.updated'], chats: [CHAT] }],
+        grants: { send: [{ connection: 'c1', chat: 'VIP' }] },
+      },
+    })
+    await r.api('POST', '/scripts/hot/activate', {})
+    const counts = async (n: number, key: string) =>
+      mock.emit({
+        type: 'reactions.updated',
+        dedupeKey: key,
+        at: Date.now(),
+        node: mock.ref(CHAT, { kind: 'group' }),
+        messageNativeId: '500',
+        counts: [{ emoji: '🔥', count: n }],
+      })
+    await counts(3, 'rx1')
+    await counts(11, 'rx2')
+    await counts(12, 'rx3')
+    await until(
+      'told once',
+      async () => ((await r.api('GET', '/scripts/hot/runs')).json.runs as unknown[]).length === 3,
+    )
+    expect(mock.sent.map((s) => s.message.text)).toEqual(['Hot post: 500'])
+  })
+})
+
 describe('more inputs and the team API', () => {
   test('an app event starts a script; ctx.api reads and changes through the API; its own events do not loop', async () => {
     const r = rig()

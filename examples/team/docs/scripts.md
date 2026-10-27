@@ -222,7 +222,10 @@ A channel event looks like this (the text is in memory only and never stored):
 
 `replyTo` is set on replies (the id of the message answered, plus its sender when the platform
 says). `emoji` is set on reactions (`custom:<id>` and `customEmojiId` for a custom emoji);
-`messageIds` on deletions.
+`messageIds` on deletions. `reactions.updated` carries the current counts of a message
+(`reactions: [{ emoji, count }]`; Telegram sends counts, not who reacted, for channel posts and to
+user accounts), handy for "a post got 10 🔥". A press of a script's button is an `action` event
+with `button.data`.
 
 Media and other message kinds:
 
@@ -263,6 +266,22 @@ editor, turns the guard off), **freshness**
 the **hourly cap**. A skipped event is logged as a `skipped` run with
 the reason, at most once a minute per script and reason. Runs of one script go one after another
 (at most 20 waiting; more are skipped as `busy`); at most 4 runs go at once (Settings > Limits).
+
+**Chains.** A run started by another script's own call (a table write, an API call) knows the
+chain of scripts that led to it: a script never starts again inside its own chain (a circle such as
+A writes B's table, B writes A's: skipped as `loop`), and a chain stops after 4 scripts (`chain`).
+
+**Send caps.** One run posts at most 30 messages and at most 10 to one chat (`limits.maxSends`,
+`limits.maxSendsPerChat`, or the Limits section of the editor); the next send fails with a readable
+reason.
+
+**Log only.** `"logOnly": true` (the Log only switch) runs the script on real events but performs
+nothing outside it: every send, write and call is recorded in the trace, like a dry run. Turning it
+off widens the script (it waits for approval like a new grant).
+
+**Failed runs.** The Runs tab filters failed runs (`GET /scripts/{script}/runs?outcome=failed`);
+**Run again** (`POST /scripts/{script}/runs/{runId}/rerun`) runs the active version with that
+run's event, its message texts read back from the chat log.
 
 Each run executes in a fresh QuickJS (WebAssembly) sandbox inside its own Worker: no access to
 the server's modules, files, network, environment or timers; memory, CPU time, wall time and
@@ -361,7 +380,8 @@ own script.
 | `POST /scripts/{script}/activate`, `/approve`, `/reject`, `/disable`, `/enable` | lifecycle |
 | `POST /scripts/{script}/dry-run` | `{ version?, eventId?, text?, event? }` → the run and the trigger matches |
 | `POST /scripts/{script}/run` | a real run of the active version (`{ event? }`) |
-| `GET /scripts/{script}/runs`, `GET /scripts/{script}/runs/{id}` | traces (`limit`, `before`, `dryRun`) |
+| `GET /scripts/{script}/runs`, `GET /scripts/{script}/runs/{id}` | traces (`limit`, `before`, `dryRun`, `outcome`: `failed` = error, cpu, memory, timeout or limit) |
+| `POST /scripts/{script}/runs/{runId}/rerun` | run the active version again with that run's event (message texts restored) |
 | `GET /scripts/{script}/kv` | the script's state |
 | `GET /scripts/{script}/webhook` | the secret webhook URL and whether it is live |
 | `POST /hooks/scripts/{id}/{token}` | the webhook itself (no bearer token; the path token is the secret) |
@@ -371,7 +391,8 @@ Changes go to the feed as `scripts-changed` events (the web refreshes on them).
 
 ## Storage and operations
 
-Tables `scripts`, `script_versions`, `script_runs` and `script_kv` live in the main database and
+Tables `scripts`, `script_versions`, `script_runs`, `script_kv`, `script_timers` (pending `ctx.later`
+runs) and `script_copies` (what was copied where) live in the main database and
 travel in the database snapshot (not in the workspace zip). Run traces are kept 30 days and at
 most 500 per script by default (Settings > Data retention; pruned with the other retention jobs,
 also by Settings > Storage "Apply retention now"). Settings > Limits sets how many scripts run at
