@@ -10,12 +10,15 @@ import type { AgentDef } from '../../domain/agents.ts'
 export function createAgentCompletion(deps: {
   agent: (id: string) => AgentDef | undefined
   model: (def: AgentDef) => LanguageModel
+  /** Wrap the model of each call (the Logs page records it as a `job` of the agent). */
+  observe?: (model: LanguageModel, agentId: string) => LanguageModel
 }): AgentCompletion {
   return async (agentId, input) => {
     const def = deps.agent(agentId)
     if (def === undefined) throw new Error(`agent ${agentId} not found`)
+    const model = deps.model(def)
     const result = await generateText({
-      model: deps.model(def),
+      model: deps.observe?.(model, def.id) ?? model,
       instructions: input.system,
       prompt: input.prompt,
       maxOutputTokens: input.maxOutputTokens,

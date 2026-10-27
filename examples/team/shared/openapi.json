@@ -19720,9 +19720,11 @@
               "step",
               "compaction",
               "flush",
+              "search",
+              "job",
               "other"
             ],
-            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier)."
           },
           "agentId": {
             "type": [
@@ -20210,9 +20212,11 @@
               "step",
               "compaction",
               "flush",
+              "search",
+              "job",
               "other"
             ],
-            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier)."
           },
           "agentId": {
             "type": [
@@ -43261,12 +43265,14 @@
                 "step",
                 "compaction",
                 "flush",
+                "search",
+                "job",
                 "other"
               ],
-              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier)."
             },
             "required": false,
-            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).",
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier).",
             "name": "kind",
             "in": "query"
           },
@@ -43296,6 +43302,8 @@
                 "routine",
                 "heartbeat",
                 "api",
+                "search",
+                "job",
                 "compaction",
                 "flush",
                 "classifier",
@@ -43458,12 +43466,14 @@
                 "step",
                 "compaction",
                 "flush",
+                "search",
+                "job",
                 "other"
               ],
-              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier)."
             },
             "required": false,
-            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).",
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier).",
             "name": "kind",
             "in": "query"
           },
@@ -43493,6 +43503,8 @@
                 "routine",
                 "heartbeat",
                 "api",
+                "search",
+                "job",
                 "compaction",
                 "flush",
                 "classifier",
@@ -43656,12 +43668,14 @@
                 "step",
                 "compaction",
                 "flush",
+                "search",
+                "job",
                 "other"
               ],
-              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier)."
             },
             "required": false,
-            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).",
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier).",
             "name": "kind",
             "in": "query"
           },
@@ -43691,6 +43705,8 @@
                 "routine",
                 "heartbeat",
                 "api",
+                "search",
+                "job",
                 "compaction",
                 "flush",
                 "classifier",

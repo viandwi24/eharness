@@ -10,7 +10,8 @@
  *  - one-shot runs use in-memory storage: nothing of the input or the answer is stored.
  *
  * Every model call is tagged with the API key that paid for it (`api_calls`); the workspace budget
- * still applies through the shared ledger scope.
+ * still applies through the shared ledger scope. Calls also reach the Logs page (`activityLog`) with
+ * model, tokens, cost and timing only: prompts and answers are never kept there.
  */
 import type { Database } from 'bun:sqlite'
 import {
@@ -27,6 +28,8 @@ import {
   type HarnessSession,
   lookupModel,
   type MessageAdapter,
+  type ModelCallEvent,
+  type ModelCallRecord,
   type ModelCatalog,
   type SessionLock,
   type TurnResult,
@@ -61,6 +64,7 @@ import {
   mayWrite,
 } from '../../domain/developer-api.ts'
 import { zodSchemaValidator } from '../json-schema.ts'
+import type { ActivityLog } from './activity-log.ts'
 import type { ModelConfig } from './provider.ts'
 import { setBudgetLimit, sqliteBudgetLedger } from './storage.ts'
 
@@ -128,6 +132,8 @@ export interface ApiRuntimeDeps {
   storage: { messages: MessageAdapter; state: unknown }
   lock: SessionLock
   usage: ApiUsageStore
+  /** The model call log of the Logs page; it gets metadata only (no prompt, no answer). */
+  activityLog?: Pick<ActivityLog, 'record'>
   workspaceId: string
   /** Ledger scope of the workspace (`workspaceScope`). */
   workspaceScope: (workspaceId: string) => string
@@ -146,6 +152,26 @@ const textOf = (message: { parts: Array<{ type: string; text?: string }> } | und
     .filter((p) => p.type === 'text')
     .map((p) => p.text ?? '')
     .join('')
+
+/** A call without what was said: the Logs page shows API calls as metadata only. */
+function withoutContent(e: ModelCallEvent): ModelCallRecord {
+  const {
+    kind: _k,
+    sessionId: _s,
+    turnId: _t,
+    stepIndex: _i,
+    messageId: _m,
+    costUsd: _c,
+    costSource: _cs,
+    ...call
+  } = e
+  return {
+    ...call,
+    request: { options: null },
+    response: {},
+    output: { text: '', reasoning: '', toolCalls: [] },
+  }
+}
 
 /** The text-only view of a UI message stream: no tools, reasoning, data parts or metadata. */
 function publicStream(source: ReadableStream<UIMessageChunk>): ReadableStream<UIMessageChunk> {
@@ -210,15 +236,8 @@ export function createApiRuntime(deps: ApiRuntimeDeps): ApiRuntime & {
       name: 'api-usage',
       setup: () => ({
         hooks: {
-          'model.call': (
-            ctx: { runtime: Record<string, unknown> },
-            e: {
-              id: string
-              model: { modelId: string }
-              costUsd?: number
-              usage: { inputTokens?: number; outputTokens?: number }
-            },
-          ): void => {
+          'model.call': (ctx: { runtime: Record<string, unknown> }, e: ModelCallEvent): void => {
+            deps.activityLog?.record(withoutContent(e), { ...e, agentId: agent.id })
             const keyId = ctx.runtime.apiKeyId
             const requestId = ctx.runtime.apiRequestId
             if (typeof keyId !== 'string' || typeof requestId !== 'string') return

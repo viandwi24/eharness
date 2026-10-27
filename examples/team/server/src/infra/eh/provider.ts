@@ -107,6 +107,7 @@ export function providerModelConfig(
     searchModel: null,
     searchProfile: null,
   }),
+  options: { observeSearch?: (model: LanguageModel) => LanguageModel } = {},
 ): ModelConfig {
   const { manager } = service
 
@@ -142,6 +143,7 @@ export function providerModelConfig(
   const defaultResolved = (): ResolvedSelection => effective(null)
 
   const search: SearchFn = createSearchFn({
+    ...(options.observeSearch === undefined ? {} : { observe: options.observeSearch }),
     target: () => {
       const profiles = service.profiles()
       const kindOf = (id: string): 'openrouter' | 'gateway' | undefined => {

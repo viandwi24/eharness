@@ -3,7 +3,7 @@ import { MODEL_CALL_KINDS, MODEL_CALL_SOURCES, MODEL_CALL_STATUSES } from '../..
 
 export const ModelCallKindSchema = z.enum(MODEL_CALL_KINDS).openapi({
   description:
-    '`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).',
+    "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier).",
 })
 export const ModelCallStatusSchema = z.enum(MODEL_CALL_STATUSES).openapi({
   description:

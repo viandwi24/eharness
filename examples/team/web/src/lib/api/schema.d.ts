@@ -18990,12 +18990,12 @@ export interface paths {
                     agentId?: string;
                     /** @description Only calls of this session (`dm:<agentId>`, a task session, ...). */
                     sessionId?: string;
-                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier). */
-                    kind?: "step" | "compaction" | "flush" | "other";
+                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier). */
+                    kind?: "step" | "compaction" | "flush" | "search" | "job" | "other";
                     /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
                     status?: "ok" | "error" | "aborted";
                     /** @description Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`. */
-                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "compaction" | "flush" | "classifier" | "other";
+                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "search" | "job" | "compaction" | "flush" | "classifier" | "other";
                     /** @description Model id contains this text (case-insensitive). */
                     model?: string;
                     /** @description Free text: matches the model id, the provider or the name of the agent. */
@@ -19069,12 +19069,12 @@ export interface paths {
                     agentId?: string;
                     /** @description Only calls of this session (`dm:<agentId>`, a task session, ...). */
                     sessionId?: string;
-                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier). */
-                    kind?: "step" | "compaction" | "flush" | "other";
+                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier). */
+                    kind?: "step" | "compaction" | "flush" | "search" | "job" | "other";
                     /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
                     status?: "ok" | "error" | "aborted";
                     /** @description Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`. */
-                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "compaction" | "flush" | "classifier" | "other";
+                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "search" | "job" | "compaction" | "flush" | "classifier" | "other";
                     /** @description Model id contains this text (case-insensitive). */
                     model?: string;
                     /** @description Free text: matches the model id, the provider or the name of the agent. */
@@ -19147,12 +19147,12 @@ export interface paths {
                     agentId?: string;
                     /** @description Only calls of this session (`dm:<agentId>`, a task session, ...). */
                     sessionId?: string;
-                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier). */
-                    kind?: "step" | "compaction" | "flush" | "other";
+                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier). */
+                    kind?: "step" | "compaction" | "flush" | "search" | "job" | "other";
                     /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
                     status?: "ok" | "error" | "aborted";
                     /** @description Where the call came from: `chat`, `task`, `delegated` (work a lead handed to a role agent), `program` (also rehearsals), `routine`, `heartbeat`, `api` (developer API), `compaction`, `flush`, `classifier` (Auto mode), `other`. */
-                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "compaction" | "flush" | "classifier" | "other";
+                    source?: "chat" | "task" | "delegated" | "program" | "routine" | "heartbeat" | "api" | "search" | "job" | "compaction" | "flush" | "classifier" | "other";
                     /** @description Model id contains this text (case-insensitive). */
                     model?: string;
                     /** @description Free text: matches the model id, the provider or the name of the agent. */
@@ -26376,10 +26376,10 @@ export interface components {
             /** @description When the row was stored (epoch ms). */
             createdAt: number;
             /**
-             * @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).
+             * @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier).
              * @enum {string}
              */
-            kind: "step" | "compaction" | "flush" | "other";
+            kind: "step" | "compaction" | "flush" | "search" | "job" | "other";
             agentId: string | null;
             sessionId: string | null;
             turnId: string | null;
@@ -26511,10 +26511,10 @@ export interface components {
             /** @description When the row was stored (epoch ms). */
             createdAt: number;
             /**
-             * @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).
+             * @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `search` = the model behind the `web_search` tool, `job` = a background job on an agent's model (memory reorganization), `other` = any other model call (the Auto mode classifier).
              * @enum {string}
              */
-            kind: "step" | "compaction" | "flush" | "other";
+            kind: "step" | "compaction" | "flush" | "search" | "job" | "other";
             agentId: string | null;
             sessionId: string | null;
             turnId: string | null;

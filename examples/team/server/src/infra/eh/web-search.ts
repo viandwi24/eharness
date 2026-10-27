@@ -30,11 +30,14 @@ export interface CreateSearchOptions {
    * Throws a readable error when the workspace has no provider that can search.
    */
   target: () => SearchTarget
+  /** Wrap the model of each call (the Logs page records it). */
+  observe?: (model: LanguageModel) => LanguageModel
 }
 
 export function createSearchFn(opts: CreateSearchOptions): SearchFn {
   return async (query, { allowedDomains, blockedDomains, signal } = {}) => {
-    const { provider, model } = opts.target()
+    const { provider, model: picked } = opts.target()
+    const model = opts.observe?.(picked) ?? picked
     const common = { model, prompt: PROMPT(query), ...(signal ? { abortSignal: signal } : {}) }
     const result =
       provider === 'openrouter'

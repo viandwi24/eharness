@@ -498,6 +498,34 @@ describe('limits and cost per key', () => {
     }
     expect(res.requests[0]).toMatchObject({ mode: 'run', status: 200, inputTokens: 10 })
   })
+
+  test('API calls reach the Logs page with tokens and cost, never the prompt or the answer', async () => {
+    const { server: s } = boot([{ text: 'secret answer' }, { text: 'second secret' }], {
+      priced: true,
+    })
+    const agent = await makeAgent(s)
+    const { key } = await makeKey(s)
+    await asKey(s, key, 'POST', '/v1/agents/support-bot/run', { input: 'a very private question' })
+    const conv = (await (
+      await asKey(s, key, 'POST', '/v1/conversations', { agent: 'support-bot' })
+    ).json()) as { id: string }
+    await asKey(s, key, 'POST', `/v1/conversations/${conv.id}/messages`, {
+      text: 'another private question',
+      stream: false,
+    })
+    const logs = (await (await owner(s, 'GET', '/logs?source=api')).json()) as {
+      items: Array<{ kind: string; agentId: string; sessionId: string; costUsd: number }>
+    }
+    expect(logs.items).toHaveLength(2)
+    for (const item of logs.items) {
+      expect(item).toMatchObject({ kind: 'step', agentId: agent.id })
+      expect(item.sessionId.startsWith(`api:${agent.id}:`)).toBe(true)
+      expect(item.costUsd).toBeCloseTo(15, 6)
+    }
+    const raw = JSON.stringify(s.conn.sqlite.query('SELECT * FROM model_calls').all())
+    for (const text of ['private question', 'secret answer', 'second secret', 'Support bot'])
+      expect(raw).not.toContain(text)
+  })
 })
 
 describe('mode A: run', () => {

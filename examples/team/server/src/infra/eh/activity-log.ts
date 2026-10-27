@@ -2,12 +2,15 @@
  * `activityLog` plugin: the `model.call` hook (ADR-0047) persists one `model_calls` row per
  * provider call and appends a lightweight `model-call` event to the feed so the Logs page can
  * live-update. Calls the engine makes without a session (the Auto mode classifier) arrive through
- * `ActivityLog.observer`.
+ * `ActivityLog.observer`; model calls the server makes itself (web search, memory reorganization)
+ * go through `ActivityLog.watch`, and the Developer API books its calls with `record`. Every call
+ * to a model shows up on the Logs page.
  *
  * Retention is a count and an age: a cheap prune runs after every `pruneEvery` writes and at most
  * once a minute, on whichever instance writes. Nothing here may break a turn: every failure is
  * logged and swallowed.
  */
+import type { LanguageModel } from 'ai'
 import {
   definePlugin,
   errorText,
@@ -15,6 +18,9 @@ import {
   type HarnessPlugin,
   type ModelCallEvent,
   type ModelCallRecord,
+  type ModelCatalog,
+  observeModel,
+  settledCostOf,
 } from 'eharness'
 import type { NewEvent } from '../../domain/events.ts'
 import {
@@ -31,6 +37,8 @@ export interface ActivityLogOptions {
   events: { append(event: NewEvent): void }
   /** The agent of a hook context (`ctx.agent.id` is the slug of the definition). */
   agentOf(slug: string): { id: string } | undefined
+  /** Prices of models, for the cost of calls no hook priced (`watch`, `observer`). */
+  catalog?: () => ModelCatalog | undefined
   /** Keep at most this many rows. Default 5000. */
   maxRows?: number | (() => number)
   /** Keep the full request/response for this many hours; older rows keep metadata. Default 24. */
@@ -49,13 +57,19 @@ export interface CallContext {
   agentId?: string | undefined
 }
 
+/** Context of a stored call: the hook event's fields, with the team's own kinds (`search`, `job`). */
+export type RecordInfo = CallContext &
+  Omit<Partial<ModelCallEvent>, 'kind' | 'sessionId'> & { kind?: ModelCallKind }
+
 export interface ActivityLog {
   /** The plugin to register on every agent. */
   plugin(): HarnessPlugin<'activity-log'>
   /** Store a call; never throws. */
-  record(call: ModelCallRecord, info: CallContext & Partial<ModelCallEvent>): void
+  record(call: ModelCallRecord, info: RecordInfo): void
   /** A `modelClassifier({ onModelCall })` for a session (kind `other`). */
   observer(info: CallContext): (record: ModelCallRecord) => void
+  /** `model`, logging each call it makes (priced from the catalog when the provider reports no cost). */
+  watch(model: LanguageModel, info: CallContext & { kind: ModelCallKind }): LanguageModel
   /** Run the retention now (also done periodically); returns the rows deleted. */
   prune(): number
 }
@@ -140,10 +154,26 @@ export function createActivityLog(options: ActivityLogOptions): ActivityLog {
     }
   }
 
+  /** The settled cost of a call no hook priced; undefined when neither provider nor catalog knows. */
+  const priced = (
+    model: LanguageModel,
+    call: ModelCallRecord,
+  ): { costUsd?: number; costSource?: 'provider' | 'estimate' } => {
+    try {
+      const settled = settledCostOf(options.catalog?.(), model, call.usage, call.providerMetadata)
+      return settled === undefined ? {} : { costUsd: settled.costUsd, costSource: settled.source }
+    } catch {
+      return {}
+    }
+  }
+
   return {
     record,
     prune,
-    observer: (info) => (call) => record(call, info),
+    observer: (info) => (call) =>
+      record(call, { ...info, ...priced(`${call.model.provider}/${call.model.modelId}`, call) }),
+    watch: (model, info) =>
+      observeModel(model, (call) => record(call, { ...info, ...priced(model, call) })),
     plugin: () =>
       definePlugin({
         name: 'activity-log',

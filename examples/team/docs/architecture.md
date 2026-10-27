@@ -157,8 +157,13 @@ every agent and persists each `model.call` event
 ([ADR-0047](../../../docs/decisions/0047-model-call-observer.md)) into `model_calls`: summary columns
 for the table plus capped JSON columns (request options and body, response, output, provider
 metadata, raw usage; 512 KB each, `truncated` flag). Auto mode classifier calls arrive through
-`modelClassifier({ onModelCall })` per session (kind `other`). Retention is a row cap and an age, pruned
-cheaply while writing (`TEAM_LOG_MAX_ROWS`, `TEAM_LOG_RETENTION_DAYS`). Each call also appends a
+`modelClassifier({ onModelCall })` per session (kind `other`). Model calls the server makes itself go
+through `activityLog.watch` (`observeModel`, priced from the catalog): the `web_search` tool's model
+(kind `search`) and memory reorganization (kind `job`). Developer API calls (`api:` sessions) are
+recorded from the API runtime's `model.call` hook with metadata only: no prompt, no answer. Every
+model call shows up on the Logs page. Retention is a row cap and an age (default 50 000 rows and 30
+days, Settings), pruned cheaply while writing (`TEAM_LOG_MAX_ROWS`, `TEAM_LOG_RETENTION_DAYS`); the
+page opens on the last 30 days. Each call also appends a
 `model-call` event so the page live-updates. A write failure is logged and never breaks a turn.
 
 **Stream log.** `eh_stream_log` / `eh_stream_chunks` implement the `StreamLogAdapter` port

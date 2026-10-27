@@ -1,6 +1,6 @@
 /** Model call log (the "Logs" page): one row per provider call. Pure types and rules. */
 
-export const MODEL_CALL_KINDS = ['step', 'compaction', 'flush', 'other'] as const
+export const MODEL_CALL_KINDS = ['step', 'compaction', 'flush', 'search', 'job', 'other'] as const
 export type ModelCallKind = (typeof MODEL_CALL_KINDS)[number]
 
 export const MODEL_CALL_STATUSES = ['ok', 'error', 'aborted'] as const
@@ -73,7 +73,8 @@ export interface NewModelCall
 
 /**
  * Where a call came from, for the Logs charts: derived from the session id and the kind. `system`
- * rows are `compaction`, `flush` and `classifier` (the Auto mode classifier); `other` has no session.
+ * rows are `compaction`, `flush`, `classifier` (the Auto mode classifier), `search` (the model of
+ * the `web_search` tool) and `job` (memory reorganization); `other` has no session.
  */
 export const MODEL_CALL_SOURCES = [
   'chat',
@@ -83,6 +84,8 @@ export const MODEL_CALL_SOURCES = [
   'routine',
   'heartbeat',
   'api',
+  'search',
+  'job',
   'compaction',
   'flush',
   'classifier',
@@ -177,8 +180,8 @@ export interface ModelCallStats {
 
 /** Default size cap of one JSON column (bytes of its JSON text). */
 export const DEFAULT_JSON_CAP = 512 * 1024
-export const DEFAULT_MAX_ROWS = 5000
-export const DEFAULT_RETENTION_DAYS = 7
+export const DEFAULT_MAX_ROWS = 50_000
+export const DEFAULT_RETENTION_DAYS = 30
 export const MAX_BUCKETS = 200
 
 /**

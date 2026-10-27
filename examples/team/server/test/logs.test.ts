@@ -1,5 +1,6 @@
 /** Model call log: repo (filters, cursors, neighbours, stats, retention, truncation) and routes. */
 import { afterEach, describe, expect, test } from 'bun:test'
+import { generateText } from 'ai'
 import { scriptedModel } from 'eharness/testing'
 import type { NewModelCall } from '../src/domain/model-calls.ts'
 import { type Connection, openDatabase } from '../src/infra/db/client.ts'
@@ -7,9 +8,14 @@ import { sqliteModelCallStore } from '../src/infra/db/model-calls-repo.ts'
 import { sqliteTaskStore } from '../src/infra/db/tasks-repo.ts'
 import { createActivityLog } from '../src/infra/eh/activity-log.ts'
 import { scriptedModelConfig } from '../src/infra/eh/provider.ts'
+import { createSearchFn } from '../src/infra/eh/web-search.ts'
 import { compose, type Server } from '../src/main.ts'
 
 const T0 = 1_700_000_000_000
+
+async function until(ok: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !ok(); i++) await new Promise((r) => setTimeout(r, 5))
+}
 const MIN = 60_000
 
 let conn: Connection | undefined
@@ -397,5 +403,35 @@ describe('activity log plugin and routes', () => {
     }
     expect(real.count()).toBe(3)
     expect(real.list({ limit: 10 }).items.map((r) => r.id)).toEqual(['id5', 'id4', 'id3'])
+  })
+
+  test('calls the server makes itself (web search, memory jobs) are logged and priced', async () => {
+    conn = openDatabase(':memory:')
+    const real = sqliteModelCallStore(conn.sqlite)
+    const log = createActivityLog({
+      store: real,
+      tasks: sqliteTaskStore(conn.sqlite),
+      events: { append: () => undefined },
+      agentOf: () => undefined,
+      catalog: () => ({ scripted: { pricing: { input: 1_000_000, output: 1_000_000 } } }),
+    })
+    // the search function wraps the model of each call
+    const search = createSearchFn({
+      target: () => ({ provider: 'openrouter', model: scriptedModel([{ text: 'found it' }]) }),
+      observe: (model) => log.watch(model, { kind: 'search' }),
+    })
+    await search('gold price', {})
+    const job = log.watch(scriptedModel([{ text: 'plan' }]), { kind: 'job', agentId: 'a1' })
+    await generateText({ model: job, prompt: 'reorganize' })
+    await until(() => real.count() === 2)
+    const rows = real.list({ limit: 10 }).items
+    expect(rows.map((r) => r.kind).sort()).toEqual(['job', 'search'])
+    expect(rows.find((r) => r.kind === 'job')?.agentId).toBe('a1')
+    for (const r of rows) {
+      expect(r.costUsd).toBeCloseTo(15, 6)
+      expect(r.costSource).toBe('estimate')
+    }
+    expect(real.list({ limit: 10, source: 'search' }).items).toHaveLength(1)
+    expect(real.list({ limit: 10, source: 'job' }).items).toHaveLength(1)
   })
 })

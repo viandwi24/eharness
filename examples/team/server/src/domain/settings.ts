@@ -153,8 +153,9 @@ export const SETTINGS_BUILTIN = {
   companyRoot: null,
   eventsRetentionHours: 72,
   eventsMaxRows: 100_000,
-  logMaxRows: 5000,
-  logRetentionDays: 7,
+  // a month of calls; rows past `logBodyHours` keep metadata only, so they stay small
+  logMaxRows: 50_000,
+  logRetentionDays: 30,
   // full prompts are large: keep them for a day only, metadata longer
   logBodyHours: 24,
   mediaRetentionDays: 3,

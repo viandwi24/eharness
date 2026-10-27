@@ -648,7 +648,10 @@ export function compose(config: ServerConfig): Server {
   const models: ModelConfig =
     config.models ??
     scriptedModelConfigFromEnv(config.env) ??
-    providerModelConfig(providers, () => settings.get())
+    providerModelConfig(providers, () => settings.get(), {
+      // called per search, long after `activityLog` below exists
+      observeSearch: (model) => activityLog.watch(model, { kind: 'search' }),
+    })
   // profiles and catalogs load in the background; `resolve` needs them (main awaits this)
   const providersReady = providers.ready()
   // a provider catalog that fails to load is an alarm, not a silent default
@@ -679,6 +682,7 @@ export function compose(config: ServerConfig): Server {
     tasks,
     events,
     agentOf: (slug) => agents.getBySlug(slug),
+    catalog: () => config.catalog ?? models.catalog,
     // read on every prune: a change in Settings applies at once
     maxRows: () => settings.get().logMaxRows,
     retentionDays: () => settings.get().logRetentionDays,
@@ -1259,6 +1263,7 @@ export function compose(config: ServerConfig): Server {
     completion: createAgentCompletion({
       agent: (id) => agents.get(id),
       model: (def) => factory.modelOf(def),
+      observe: (model, agentId) => activityLog.watch(model, { kind: 'job', agentId }),
     }),
     programMemory: sqliteProgramMemory(conn.sqlite),
     decisions: decisionStore,
@@ -2015,6 +2020,7 @@ export function compose(config: ServerConfig): Server {
       storage: factory.storage,
       lock: factory.lock,
       usage: sqliteApiUsage(conn.sqlite),
+      activityLog,
       workspaceId: 'default',
       workspaceScope,
       settings: () => settings.get(),

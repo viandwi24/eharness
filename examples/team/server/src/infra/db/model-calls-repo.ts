@@ -112,6 +112,8 @@ type Param = string | number
 const SOURCE_SQL = `CASE
   WHEN kind = 'compaction' THEN 'compaction'
   WHEN kind = 'flush' THEN 'flush'
+  WHEN kind = 'search' THEN 'search'
+  WHEN kind = 'job' THEN 'job'
   WHEN kind = 'other' THEN 'classifier'
   WHEN session_id IS NULL THEN 'other'
   WHEN session_id LIKE 'heartbeat:%' THEN 'heartbeat'

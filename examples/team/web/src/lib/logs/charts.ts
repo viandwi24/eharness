@@ -24,7 +24,7 @@ export function alignStart(ms: number, bucketMs: number): number {
 
 export type SourceGroup = { id: string; label: string; slot: string; members: readonly string[] };
 
-/** Cost sources as the chart shows them. Compaction, memory flush, the Auto classifier and "other" share one neutral group. */
+/** Cost sources as the chart shows them. Compaction, memory flush, the Auto classifier, web search, background jobs and "other" share one neutral group. */
 export const SOURCE_GROUPS: readonly SourceGroup[] = [
 	{ id: 'chat', label: 'Chat', slot: 'var(--viz-1)', members: ['chat'] },
 	{ id: 'program', label: 'Programs', slot: 'var(--viz-2)', members: ['program'] },
@@ -33,7 +33,7 @@ export const SOURCE_GROUPS: readonly SourceGroup[] = [
 	{ id: 'routine', label: 'Routines', slot: 'var(--viz-5)', members: ['routine'] },
 	{ id: 'api', label: 'Developer API', slot: 'var(--viz-6)', members: ['api'] },
 	{ id: 'task', label: 'Tasks', slot: 'var(--viz-7)', members: ['task'] },
-	{ id: 'system', label: 'System (compaction, flush, classifier)', slot: 'var(--viz-other)', members: ['compaction', 'flush', 'classifier', 'other'] }
+	{ id: 'system', label: 'System (compaction, flush, classifier, search, jobs)', slot: 'var(--viz-other)', members: ['compaction', 'flush', 'classifier', 'search', 'job', 'other'] }
 ];
 
 export const SOURCES = [
@@ -44,6 +44,8 @@ export const SOURCES = [
 	{ id: 'routine', label: 'Routines' },
 	{ id: 'heartbeat', label: 'Heartbeat' },
 	{ id: 'api', label: 'Developer API' },
+	{ id: 'search', label: 'Web search' },
+	{ id: 'job', label: 'Background jobs' },
 	{ id: 'compaction', label: 'Compaction' },
 	{ id: 'flush', label: 'Memory flush' },
 	{ id: 'classifier', label: 'Classifier' },

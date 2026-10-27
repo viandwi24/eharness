@@ -9,16 +9,18 @@ export const RANGES = [
 	{ id: '30d', label: 'Last 30 days', ms: 30 * 86_400_000 }
 ] as const;
 export type RangeId = (typeof RANGES)[number]['id'];
-export const DEFAULT_RANGE: RangeId = '24h';
+export const DEFAULT_RANGE: RangeId = '30d';
 
 export const KINDS = [
 	{ id: 'step', label: 'Step' },
 	{ id: 'compaction', label: 'Compaction' },
 	{ id: 'flush', label: 'Memory flush' },
+	{ id: 'search', label: 'Web search' },
+	{ id: 'job', label: 'Background job' },
 	{ id: 'other', label: 'Other' }
 ] as const;
 /** Values of the `source` filter (the server's `ModelCallSource`). */
-const SOURCE_IDS: readonly string[] = ['chat', 'task', 'delegated', 'program', 'routine', 'heartbeat', 'api', 'compaction', 'flush', 'classifier', 'other'];
+const SOURCE_IDS: readonly string[] = ['chat', 'task', 'delegated', 'program', 'routine', 'heartbeat', 'api', 'search', 'job', 'compaction', 'flush', 'classifier', 'other'];
 export const STATUSES = ['ok', 'error', 'aborted'] as const;
 
 export const kindLabel = (kind: string): string => KINDS.find((k) => k.id === kind)?.label ?? kind;
