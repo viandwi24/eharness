@@ -24,7 +24,7 @@
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
-	import { followSessionStream } from 'eharness/client';
+	import { followTaskStream, type TurnUsage } from '#lib/tasks/live-stream.js';
 	import { isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
 	import { emptyPages, mergeNewest, prependOlder, replaceMessage, type PageState } from '#lib/tasks/pages.js';
 	import { CLIP_CHARS, PAGE_SIZE, revealEarlier, windowStart } from '#lib/chat/window.js';
@@ -68,6 +68,8 @@
 	/** Messages being streamed right now, laid over the stored ones by id. */
 	let liveMessages = $state<Map<string, UIMessage>>(new Map());
 	let streaming = $state(false);
+	/** Steps and cost of the running turn (the job row counts finished turns only). */
+	let turnUsage = $state<TurnUsage | undefined>(undefined);
 
 	const task = $derived(detail?.task);
 	const agent = $derived(task ? agentsStore.find(task.agentId) : undefined);
@@ -185,6 +187,7 @@
 			if (detail && detail.task.id !== id) {
 				detail = null;
 				liveMessages = new Map();
+				turnUsage = undefined;
 				pages = emptyPages();
 				pagesFor = '';
 				messagesLoaded = false;
@@ -203,6 +206,7 @@
 		})
 	);
 
+	const LIVE_FRAME_MS = 150;
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 	// While the task runs: follow the stream; when it ends or nothing streams, re-read the stored
@@ -218,21 +222,42 @@
 		loopId = id;
 		const mine = ++loopToken;
 		const ctl = new AbortController();
+		// The newest state of each streaming message reaches the view at most every LIVE_FRAME_MS: a
+		// long transcript re-renders a few times a second, not once per chunk.
+		const pending = new Map<string, UIMessage>();
+		let frame: ReturnType<typeof setTimeout> | undefined;
+		const flush = (): void => {
+			frame = undefined;
+			if (ctl.signal.aborted || mine !== loopToken || pending.size === 0) return;
+			const next = new Map(liveMessages);
+			for (const [k, m] of pending) next.set(k, m);
+			pending.clear();
+			liveMessages = next;
+		};
+		ctl.signal.addEventListener('abort', () => clearTimeout(frame));
 		void (async () => {
 			try {
 				while (!ctl.signal.aborted) {
-					const result = await followSessionStream(harness, sessionId, {
+					const result = await followTaskStream(harness, sessionId, {
 						signal: ctl.signal,
+						clip: CLIP_CHARS,
 						onMessage: (m) => {
 							if (ctl.signal.aborted || mine !== loopToken) return;
 							streaming = true;
-							liveMessages = new Map(liveMessages).set(m.id, structuredClone(m));
+							pending.set(m.id, m); // a fresh snapshot of the SDK: no clone needed
+							frame ??= setTimeout(flush, LIVE_FRAME_MS);
+						},
+						onUsage: (u) => {
+							if (!ctl.signal.aborted && mine === loopToken) turnUsage = u;
 						}
 					});
 					if (ctl.signal.aborted || mine !== loopToken) return;
+					clearTimeout(frame);
+					flush();
 					streaming = false;
 					await reload(id);
 					if (ctl.signal.aborted || mine !== loopToken) return;
+					turnUsage = undefined; // the job row now counts the finished turn
 					if (error === null) liveMessages = new Map(); // the stored messages are the truth again (a failed read keeps the live ones)
 					if (!isLive(detail?.task.status)) return;
 					await sleep(result === 'streamed' ? 250 : (pollDelay({ status: 'running', streaming: false, visible: document.visibilityState === 'visible' }) ?? 1000));
@@ -422,7 +447,7 @@
 		</div>
 	</header>
 	{#if task && job}
-		<WorkerJobPanel taskId={task.id} {job} onChange={() => void reload(task.id)} />
+		<WorkerJobPanel taskId={task.id} {job} turn={job.status === 'running' ? turnUsage : undefined} onChange={() => void reload(task.id)} />
 	{/if}
 
 	{#if task}<TaskInfo {task} />{/if}
