@@ -29,6 +29,26 @@ export type ChannelEventType = (typeof CHANNEL_EVENT_TYPES)[number]
 export const TABLE_EVENT_TYPES = ['row.created', 'row.updated', 'row.deleted'] as const
 export type TableEventType = (typeof TABLE_EVENT_TYPES)[number]
 
+/** What a message is, for the `messageKinds` filter (a message may be several: a photo with text). */
+export const MESSAGE_KINDS = [
+  'text',
+  'photo',
+  'video',
+  'animation',
+  'video_note',
+  'voice',
+  'audio',
+  'document',
+  'sticker',
+  'album',
+  'location',
+  'venue',
+  'contact',
+  'poll',
+  'dice',
+] as const
+export type MessageKind = (typeof MESSAGE_KINDS)[number]
+
 export const ROLES = ['owner', 'admin', 'member', 'guest'] as const
 export type Role = (typeof ROLES)[number]
 
@@ -47,6 +67,16 @@ export interface ChannelTrigger {
   textContains: string[]
   /** Message events: the text matches this expression (case-insensitive, bounded). */
   textRegex?: string
+  /** Message events: the message is any of these kinds (photo, sticker, poll, album…); empty = any. */
+  messageKinds: MessageKind[]
+  /** true = only replies, false = never replies. */
+  isReply?: boolean
+  /** true = only forwarded messages, false = never forwarded ones. */
+  isForward?: boolean
+  /** Forwarded from any of these (a name, a chat or user id). Implies isForward. */
+  forwardFrom: string[]
+  /** true = the text has a link, false = it has none. */
+  hasLink?: boolean
 }
 
 export interface ScheduleTrigger {
@@ -272,6 +302,13 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
           actorRoles: oneOf(r.actorRoles, ROLES, `${where} actorRoles`, errors),
           actors: strings(r.actors, `${where} actors`, errors),
           textContains: strings(r.textContains, `${where} textContains`, errors),
+          messageKinds: oneOf(r.messageKinds, MESSAGE_KINDS, `${where} messageKinds`, errors),
+          forwardFrom: strings(r.forwardFrom, `${where} forwardFrom`, errors),
+        }
+        for (const k of ['isReply', 'isForward', 'hasLink'] as const) {
+          if (r[k] === undefined || r[k] === null) continue
+          if (typeof r[k] !== 'boolean') errors.push(`${where} ${k} is true or false`)
+          else trig[k] = r[k]
         }
         if (typeof r.textRegex === 'string' && r.textRegex !== '') {
           const bad = regexProblem(r.textRegex)
@@ -709,6 +746,28 @@ export type ScriptStructured =
     }
   | { type: 'dice'; emoji: string; value: number }
 
+/** What a message is (a photo with a caption is `photo` and `text`). */
+export function messageKindsOf(e: ScriptChannelEvent): MessageKind[] {
+  const out = new Set<MessageKind>()
+  if ((e.text ?? '') !== '' && e.content === undefined) out.add('text')
+  for (const a of e.attachments ?? []) {
+    const m = a.media
+    if (m !== undefined && (MESSAGE_KINDS as readonly string[]).includes(m))
+      out.add(m as MessageKind)
+    else if (a.kind === 'image') out.add('photo')
+    else if (a.kind === 'video') out.add('video')
+    else if (a.kind === 'audio') out.add('audio')
+    else out.add('document')
+  }
+  if (e.content !== undefined) out.add(e.content.type)
+  if (e.album !== undefined && e.album.length > 1) out.add('album')
+  return [...out]
+}
+
+const hasLinkIn = (e: ScriptChannelEvent): boolean =>
+  (e.entities ?? []).some((x) => x.type === 'link') ||
+  /\bhttps?:\/\/|\bt\.me\//i.test((e.text ?? '').slice(0, MAX_TEXT_SCAN))
+
 /** Why a channel trigger does not match an event, or undefined when it does. */
 export function channelMismatch(t: ChannelTrigger, e: ScriptChannelEvent): string | undefined {
   if (!t.events.includes(e.type)) return 'another event type'
@@ -737,6 +796,23 @@ export function channelMismatch(t: ChannelTrigger, e: ScriptChannelEvent): strin
     )
       return 'another person'
   }
+  if (t.messageKinds.length > 0) {
+    const kinds = messageKindsOf(e)
+    if (!t.messageKinds.some((k) => kinds.includes(k))) return 'another kind of message'
+  }
+  if (t.isReply !== undefined && (e.replyTo !== undefined) !== t.isReply)
+    return t.isReply ? 'not a reply' : 'a reply'
+  const forwarded = e.forward !== undefined
+  if ((t.isForward === true || t.forwardFrom.length > 0) && !forwarded) return 'not forwarded'
+  if (t.isForward === false && forwarded) return 'forwarded'
+  if (t.forwardFrom.length > 0) {
+    const f = e.forward ?? {}
+    const from = [f.name, f.chat, f.user].filter((x): x is string => x !== undefined)
+    if (!t.forwardFrom.some((w) => from.some((x) => x.toLowerCase() === w.toLowerCase())))
+      return 'forwarded from somewhere else'
+  }
+  if (t.hasLink !== undefined && hasLinkIn(e) !== t.hasLink)
+    return t.hasLink ? 'no link' : 'has a link'
   if (t.textContains.length > 0 || t.textRegex !== undefined) {
     const text = (e.text ?? '').slice(0, MAX_TEXT_SCAN)
     if (
@@ -848,6 +924,23 @@ export function manifestJsonSchema(): Record<string, unknown> {
                   maxLength: MAX_REGEX,
                   description:
                     'A bounded regular expression (no nested repeats, no back references).',
+                },
+                messageKinds: list(
+                  { enum: [...MESSAGE_KINDS] },
+                  'Only messages of these kinds (text, photo, video, animation = GIF, video_note, voice, audio, document, sticker, album, location, venue, contact, poll, dice). Empty = any.',
+                ),
+                isReply: {
+                  type: 'boolean',
+                  description: 'true = only replies; false = no replies.',
+                },
+                isForward: {
+                  type: 'boolean',
+                  description: 'true = only forwarded messages; false = none.',
+                },
+                forwardFrom: list(text, 'Forwarded from: a channel or person name, or its id.'),
+                hasLink: {
+                  type: 'boolean',
+                  description: 'true = the text has a link; false = none.',
                 },
               },
               required: ['kind', 'events'],

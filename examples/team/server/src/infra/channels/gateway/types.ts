@@ -43,7 +43,20 @@ import type {
   TextFormat,
 } from '../types.ts'
 
-export class ChannelUserError extends Error {}
+export class ChannelUserError extends Error {
+  /** A platform refusal behind this error (a rate limit says when to try again). */
+  readonly platform: { kind: string; retryAfterMs?: number } | undefined
+  constructor(message: string, platform?: { kind: string; retryAfterMs?: number | undefined }) {
+    super(message)
+    this.platform =
+      platform === undefined
+        ? undefined
+        : {
+            kind: platform.kind,
+            ...(platform.retryAfterMs === undefined ? {} : { retryAfterMs: platform.retryAfterMs }),
+          }
+  }
+}
 
 export interface FilePart {
   type: 'file'
@@ -411,6 +424,8 @@ export interface PostOptions {
   silent?: boolean | undefined
   format?: TextFormat | undefined
   linkPreview?: boolean | undefined
+  /** The caller retries a rate-limited post: its unsent rows are not left for a person to look at. */
+  retriesRateLimit?: boolean | undefined
 }
 
 /** The node a channel session answers in. */

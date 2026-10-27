@@ -137,7 +137,7 @@ export const ScriptRunSchema = z
     id: z.string(),
     scriptId: z.string(),
     version: z.number().int(),
-    trigger: z.enum(['channel', 'schedule', 'table', 'app', 'webhook', 'manual']),
+    trigger: z.enum(['channel', 'schedule', 'table', 'app', 'webhook', 'later', 'manual']),
     dryRun: z.boolean(),
     outcome: z.string(),
     reason: z.string().nullable(),

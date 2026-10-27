@@ -55,4 +55,17 @@ describe('manifest model', () => {
 		expect(describeTrigger(app!)).toBe('Task changed of lead where change = done');
 		expect(describeTrigger(hook!)).toContain('POST');
 	});
+
+	test('message filters survive a round trip and read as a line', () => {
+		const m = {
+			triggers: [{ kind: 'channel', events: ['message.created'], messageKinds: ['photo', 'album'], forwardFrom: ['Signals HQ'], isReply: false, isForward: true, hasLink: true }],
+			grants: {}
+		};
+		expect(toManifest(fromManifest(m))).toEqual(m);
+		const [t] = fromManifest(m).triggers;
+		expect(describeTrigger(t!)).toBe('New message (Photo or Album) no replies forwarded from Signals HQ with a link');
+		// left open: nothing written
+		const open = fromManifest({ triggers: [{ kind: 'channel', events: ['message.created'] }] });
+		expect(toManifest(open).triggers).toEqual([{ kind: 'channel', events: ['message.created'] }]);
+	});
 });

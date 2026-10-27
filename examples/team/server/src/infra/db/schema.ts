@@ -2192,6 +2192,25 @@ export const scriptKv = sqliteTable(
   (t) => [primaryKey({ columns: [t.scriptId, t.key] })],
 )
 
+/** A run a script asked for later (`ctx.later`); deleted when it is claimed. */
+export const scriptTimers = sqliteTable(
+  'script_timers',
+  {
+    id: text('id').primaryKey(),
+    scriptId: text('script_id').notNull(),
+    /** Set: a newer `later` with the same key replaces this one. */
+    key: text('key'),
+    dueAt: integer('due_at').notNull(),
+    /** JSON given to the run as `event.data`. */
+    data: text('data').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    index('script_timers_due').on(t.dueAt),
+    uniqueIndex('script_timers_key').on(t.scriptId, t.key),
+  ],
+)
+
 /** Which message a script copied where (`ctx.channels.copy`), so replies and edits follow each copy. */
 export const scriptCopies = sqliteTable(
   'script_copies',

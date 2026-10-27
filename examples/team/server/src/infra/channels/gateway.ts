@@ -4765,7 +4765,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       )
     } catch (error) {
       if (error instanceof ChannelError)
-        throw new ChannelUserError(`Copying failed (${error.kind}): ${error.message}`)
+        throw new ChannelUserError(`Copying failed (${error.kind}): ${error.message}`, error)
       throw error
     }
     const sources = await Promise.all(sorted.map((id) => log.find(from.node.id, id)))
@@ -4885,7 +4885,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         }
       } catch (error) {
         if (error instanceof ChannelError) {
-          throw new ChannelUserError(`Sending failed (${error.kind}): ${error.message}`)
+          throw new ChannelUserError(`Sending failed (${error.kind}): ${error.message}`, error)
         }
         throw error
       }
@@ -4921,8 +4921,16 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       } catch (error) {
         for (const later of rowIds.slice(i + 1))
           outbox.markFailed(later, 'an earlier part of the message was not sent', now())
+        // nothing went out and the caller tries again: no failed rows to look at
+        if (
+          i === 0 &&
+          options.retriesRateLimit === true &&
+          error instanceof ChannelError &&
+          error.kind === 'rate_limit'
+        )
+          for (const id of rowIds) outbox.dismiss(config.connectionId, id, now())
         if (error instanceof ChannelError) {
-          throw new ChannelUserError(`Sending failed (${error.kind}): ${error.message}`)
+          throw new ChannelUserError(`Sending failed (${error.kind}): ${error.message}`, error)
         }
         throw error
       }

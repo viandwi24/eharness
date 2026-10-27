@@ -83,6 +83,8 @@ export interface ScriptEngineOptions {
   concurrency?: () => number
   /** How long to wait for the rest of an album before one event goes out (ms). Default 1500. */
   albumWaitMs?: number
+  /** How often due `ctx.later` runs are claimed (ms). Default 1000; 0 = never (tests call tick). */
+  timerTickMs?: number
   log?: { warn(message: string): void }
 }
 
@@ -109,6 +111,8 @@ export interface ScriptEngine extends ScriptRunnerPort {
   webhookPath(scriptId: string): Promise<string>
   /** Whether a token belongs to the script. */
   webhookOk(scriptId: string, token: string): Promise<boolean>
+  /** Claims due `ctx.later` runs now (the poller does it every second). */
+  tickTimers(): number
   /** Resolves when every queued run has finished (tests, shutdown). */
   idle(): Promise<void>
   /** Shutdown: no new automatic runs; waits up to `ms` for the running ones. */
@@ -356,6 +360,7 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
         channelEvent: input.channelEvent,
         event: input.event,
         runId,
+        ...(input.dryRun ? { dryRun: true } : {}),
         gateway: o.gateway,
         wake: o.wake,
         ...(o.allowPrivateFetch === undefined ? {} : { allowPrivateFetch: o.allowPrivateFetch }),
@@ -447,6 +452,63 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
   }
 
   /** Queue an automatic run behind the script's earlier runs. */
+  /** Due `ctx.later` runs: each is claimed by one instance (removed as it is taken). */
+  function tickTimers(): number {
+    if (stopped || o.paused()) return 0
+    const d = o.app()
+    if (d === undefined) return 0
+    const due = d.scripts.timersTake(Date.now(), 20)
+    if (due.length === 0) return 0
+    const live = active()
+    for (const x of due) {
+      const a = live.find((s) => s.script.id === x.scriptId)
+      if (a === undefined) continue
+      let data: unknown = null
+      try {
+        data = JSON.parse(x.data) as unknown
+      } catch {
+        data = null
+      }
+      const event = {
+        type: 'later',
+        at: x.dueAt,
+        dueAt: x.dueAt,
+        firedAt: Date.now(),
+        timerId: x.id,
+        ...(x.key === undefined ? {} : { key: x.key }),
+        data,
+      }
+      const skip = gate(a.script, a.manifest, null, false)
+      if (skip !== undefined) {
+        recordSkip(a.script, a.version.version, 'later', skip, event)
+        continue
+      }
+      enqueue({
+        script: a.script,
+        version: a.version,
+        trigger: 'later',
+        event,
+        dryRun: false,
+        startedBy: 'later',
+      })
+    }
+    return due.length
+  }
+  const tickMs = o.timerTickMs ?? 1000
+  const timerLoop =
+    tickMs > 0
+      ? setInterval(() => {
+          try {
+            tickTimers()
+          } catch (error) {
+            log.warn(
+              `scripts: later runs could not be claimed: ${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
+        }, tickMs)
+      : undefined
+  ;(timerLoop as { unref?: () => void } | undefined)?.unref?.()
+
   function enqueue(input: Parameters<typeof execute>[0]): void {
     const q = queues.get(input.script.id) ?? { tail: Promise.resolve(), waiting: 0 }
     queues.set(input.script.id, q)
@@ -838,12 +900,15 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
       return diff === 0
     },
 
+    tickTimers,
+
     async idle() {
       while (all.size > 0) await Promise.allSettled([...all])
     },
 
     async stop(ms = 10_000) {
       stopped = true
+      if (timerLoop !== undefined) clearInterval(timerLoop)
       for (const a of albums.values()) clearTimeout(a.timer)
       albums.clear()
       let timer: ReturnType<typeof setTimeout> | undefined

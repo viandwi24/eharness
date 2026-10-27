@@ -27,6 +27,28 @@ export const TABLE_EVENTS = [
 
 export const ROLES = ['owner', 'admin', 'member', 'guest'] as const;
 
+/** Message kinds a channel trigger can filter on (the server's MESSAGE_KINDS). */
+export const MESSAGE_KINDS = [
+	{ value: 'text', label: 'Text' },
+	{ value: 'photo', label: 'Photo' },
+	{ value: 'video', label: 'Video' },
+	{ value: 'animation', label: 'GIF' },
+	{ value: 'album', label: 'Album' },
+	{ value: 'sticker', label: 'Sticker' },
+	{ value: 'voice', label: 'Voice' },
+	{ value: 'video_note', label: 'Video note' },
+	{ value: 'audio', label: 'Audio' },
+	{ value: 'document', label: 'File' },
+	{ value: 'poll', label: 'Poll' },
+	{ value: 'location', label: 'Location' },
+	{ value: 'venue', label: 'Venue' },
+	{ value: 'contact', label: 'Contact' },
+	{ value: 'dice', label: 'Dice' }
+] as const;
+
+/** A yes/no filter that may be left open. */
+export type TriState = 'any' | 'yes' | 'no';
+
 /** What the team app does that a script may start on. */
 export const APP_EVENTS = [
 	{ value: 'task-changed', label: 'Task changed', group: 'Work' },
@@ -61,6 +83,11 @@ export type ChannelTrigger = {
 	actors: string[];
 	textContains: string[];
 	textRegex: string;
+	messageKinds: string[];
+	isReply: TriState;
+	isForward: TriState;
+	forwardFrom: string[];
+	hasLink: TriState;
 };
 
 /** A schedule in friendly terms; `cron` and `at` keep the raw form. */
@@ -106,13 +133,14 @@ export const DEFAULT_RUNS_PER_HOUR = 60;
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const tri = (v: unknown): TriState => (v === true ? 'yes' : v === false ? 'no' : 'any');
 const int = (v: unknown, dflt: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : dflt);
 
 export const emptyGrants = (): Grants => ({ send: [], reply: false, libraryRead: [], libraryWrite: [], tablesRead: [], tablesWrite: [], http: [], wake: [], programs: [], api: [] });
 
 export const newTrigger = (kind: Trigger['kind']): Trigger =>
 	kind === 'channel'
-		? { kind, events: ['message.created'], connections: [], chats: [], actorRoles: [], actors: [], textContains: [], textRegex: '' }
+		? { kind, events: ['message.created'], connections: [], chats: [], actorRoles: [], actors: [], textContains: [], textRegex: '', messageKinds: [], isReply: 'any', isForward: 'any', forwardFrom: [], hasLink: 'any' }
 		: kind === 'schedule'
 			? { kind, schedule: { mode: 'daily', time: '09:00', timezone: '' } }
 			: kind === 'table'
@@ -191,7 +219,12 @@ export function fromManifest(input: unknown): SimpleManifest {
 				actorRoles: strings(r.actorRoles),
 				actors: strings(r.actors),
 				textContains: strings(r.textContains),
-				textRegex: typeof r.textRegex === 'string' ? r.textRegex : ''
+				textRegex: typeof r.textRegex === 'string' ? r.textRegex : '',
+				messageKinds: strings(r.messageKinds),
+				isReply: tri(r.isReply),
+				isForward: tri(r.isForward),
+				forwardFrom: strings(r.forwardFrom),
+				hasLink: tri(r.hasLink)
 			});
 		else if (r.kind === 'schedule') triggers.push({ kind: 'schedule', schedule: scheduleFromSpec(r.spec) });
 		else if (r.kind === 'table') triggers.push({ kind: 'table', table: typeof r.table === 'string' ? r.table : '', events: strings(r.events) });
@@ -234,11 +267,12 @@ export function toManifest(m: SimpleManifest): Record<string, unknown> {
 	const triggers = m.triggers.map((t) => {
 		if (t.kind === 'channel') {
 			const out: Record<string, unknown> = { kind: 'channel', events: clean(t.events) };
-			for (const key of ['connections', 'chats', 'actorRoles', 'actors', 'textContains'] as const) {
+			for (const key of ['connections', 'chats', 'actorRoles', 'actors', 'textContains', 'messageKinds', 'forwardFrom'] as const) {
 				const v = clean(t[key]);
 				if (v.length) out[key] = v;
 			}
 			if (t.textRegex.trim()) out.textRegex = t.textRegex.trim();
+			for (const key of ['isReply', 'isForward', 'hasLink'] as const) if (t[key] !== 'any') out[key] = t[key] === 'yes';
 			return out;
 		}
 		if (t.kind === 'schedule') return { kind: 'schedule', spec: specFromSchedule(t.schedule) };
@@ -291,7 +325,15 @@ export function describeTrigger(t: Trigger): string {
 		const ev = t.events.map((e) => CHANNEL_EVENTS.find((x) => x.value === e)?.label ?? e);
 		const parts = [ev.length ? ev.join(', ') : 'No event chosen'];
 		if (t.chats.length) parts.push(`in ${t.chats.join(', ')}`);
+		if (t.messageKinds.length) parts.push(`(${t.messageKinds.map((k) => MESSAGE_KINDS.find((x) => x.value === k)?.label ?? k).join(' or ')})`);
 		if (t.textContains.length) parts.push(`containing ${t.textContains.map((w) => `“${w}”`).join(' or ')}`);
+		if (t.isReply === 'yes') parts.push('replies only');
+		if (t.isReply === 'no') parts.push('no replies');
+		if (t.forwardFrom.length) parts.push(`forwarded from ${t.forwardFrom.join(', ')}`);
+		else if (t.isForward === 'yes') parts.push('forwarded only');
+		if (t.isForward === 'no') parts.push('not forwarded');
+		if (t.hasLink === 'yes') parts.push('with a link');
+		if (t.hasLink === 'no') parts.push('without links');
 		if (t.actorRoles.length) parts.push(`by ${t.actorRoles.join('/')}`);
 		return parts.join(' ');
 	}

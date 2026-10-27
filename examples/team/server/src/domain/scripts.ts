@@ -190,6 +190,11 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
     '  sessionId?: string',
     '  seq?: number',
     '  payload?: Record<string, any>',
+    "  /** Later runs (`type: 'later'`, from ctx.later): when it was due, its id and key, and the data given. */",
+    '  dueAt?: number',
+    '  timerId?: string',
+    '  key?: string',
+    '  data?: any',
     '  /** Webhook events: the request (body as JSON when it parses, else text). */',
     '  method?: string',
     '  query?: Record<string, string>',
@@ -227,7 +232,7 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
 export type ScriptStatus = 'draft' | 'active' | 'disabled'
 export type AuthorKind = 'person' | 'agent'
 export type ApprovalState = 'none' | 'pending' | 'approved' | 'rejected'
-export type RunTrigger = 'channel' | 'schedule' | 'table' | 'app' | 'webhook' | 'manual'
+export type RunTrigger = 'channel' | 'schedule' | 'table' | 'app' | 'webhook' | 'later' | 'manual'
 export type RunOutcome = ScriptOutcome | 'skipped'
 
 export interface Script {

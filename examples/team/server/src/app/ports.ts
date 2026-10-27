@@ -595,10 +595,40 @@ export interface ScriptStore {
   runsSince(scriptId: string, since: number): number
   /** Removes runs older than `olderThan` and all but the newest `keepPerScript` of each script. */
   pruneRuns(olderThan: number, keepPerScript: number): number
-  kvGet(scriptId: string, key: string): string | undefined
-  kvSet(scriptId: string, key: string, value: string, now: number): void
+  /** A value; an expired one reads as absent (pass `now`). */
+  kvGet(scriptId: string, key: string, now?: number): string | undefined
+  /** `expiresAt` = epoch ms after which the key reads as absent; absent = kept. */
+  kvSet(scriptId: string, key: string, value: string, now: number, expiresAt?: number): void
   kvDelete(scriptId: string, key: string): boolean
-  kvKeys(scriptId: string, prefix: string): string[]
+  kvKeys(scriptId: string, prefix: string, now?: number): string[]
+  /** Add `by` to a number (absent = 0) atomically; the new value, or an error when it is no number. */
+  kvIncr(
+    scriptId: string,
+    key: string,
+    by: number,
+    now: number,
+    expiresAt?: number,
+  ): { value: number } | { error: string }
+  /** True the first time a key is claimed until it expires (atomic). */
+  kvOnce(scriptId: string, key: string, now: number, expiresAt: number): boolean
+  /** A sliding window: at most `limit` hits in `windowMs` (atomic). */
+  kvRate(
+    scriptId: string,
+    key: string,
+    limit: number,
+    windowMs: number,
+    now: number,
+  ): { allowed: boolean; remaining: number; resetAt: number }
+  /** Removes expired keys. */
+  kvPrune(now: number): number
+  /** A later run; a timer with the same key (per script) is replaced. */
+  timerAdd(t: ScriptTimer): void
+  timerCancel(scriptId: string, ref: { id?: string; key?: string }): boolean
+  /** Pending timers of a script, soonest first. */
+  timersOf(scriptId: string, limit: number): ScriptTimer[]
+  timersCount(scriptId: string): number
+  /** Claims (removes and returns) due timers: each is returned to one caller only. */
+  timersTake(now: number, limit: number): ScriptTimer[]
   /** Record copies made by a script (source message → copy). */
   copiesAdd(scriptId: string, rows: ScriptCopyRow[], now: number): void
   /** The copies of a source message. */
@@ -607,6 +637,16 @@ export interface ScriptStore {
   copySource(scriptId: string, targetNode: string, targetId: string): ScriptCopyRow | undefined
   /** Removes copy records older than `olderThan`. */
   pruneCopies(olderThan: number): number
+}
+
+export interface ScriptTimer {
+  id: string
+  scriptId: string
+  key?: string
+  dueAt: number
+  /** JSON. */
+  data: string
+  createdAt: number
 }
 
 export interface ScriptCopyRow {

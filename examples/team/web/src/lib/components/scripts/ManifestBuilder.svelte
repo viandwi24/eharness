@@ -24,7 +24,7 @@
 	import TagInput from './TagInput.svelte';
 	import { cn } from '#lib/utils.js';
 	import type { Lookups } from '#lib/scripts/lookups.svelte.js';
-	import { APP_EVENTS, CHANNEL_EVENTS, describeTrigger, newTrigger, ROLES, type Schedule, type SimpleManifest, TABLE_EVENTS, type Trigger, WEEKDAYS } from '#lib/scripts/manifest-model.js';
+	import { APP_EVENTS, CHANNEL_EVENTS, describeTrigger, MESSAGE_KINDS, newTrigger, ROLES, type Schedule, type SimpleManifest, TABLE_EVENTS, type Trigger, WEEKDAYS } from '#lib/scripts/manifest-model.js';
 
 	let { manifest = $bindable(), lookups, webhookUrl = '' }: { manifest: SimpleManifest; lookups: Lookups; webhookUrl?: string } = $props();
 
@@ -163,9 +163,49 @@
 										<TagInput label="Words" bind:values={t.textContains} placeholder="e.g. halo" />
 									</div>
 									<div class="flex flex-col gap-1.5">
-										<span class="text-xs font-medium">Or matches a pattern <span class="font-normal text-muted-foreground">(regular expression, optional)</span></span>
+										<span class="text-xs font-medium">And matches a pattern <span class="font-normal text-muted-foreground">(regular expression, optional)</span></span>
 										<Input bind:value={t.textRegex} class="font-mono text-xs" placeholder="^order\s+#\d+" autocomplete="off" />
 									</div>
+									<div class="flex flex-col gap-1.5 md:col-span-2">
+										<span class="text-xs font-medium">Only these kinds of message <span class="font-normal text-muted-foreground">(none chosen = any)</span></span>
+										<div class="flex flex-wrap gap-1.5">
+											{#each MESSAGE_KINDS as k (k.value)}
+												<button type="button" class={chip(t.messageKinds.includes(k.value))} aria-pressed={t.messageKinds.includes(k.value)} onclick={() => (t.messageKinds = toggle(t.messageKinds, k.value))}>{k.label}</button>
+											{/each}
+										</div>
+									</div>
+									<div class="flex flex-wrap items-end gap-3 md:col-span-2">
+										<label class="flex flex-col gap-1.5">
+											<span class="text-xs font-medium">Replies</span>
+											<NativeSelect bind:value={t.isReply} class="w-40" aria-label="Replies">
+												<NativeSelectOption value="any">Any message</NativeSelectOption>
+												<NativeSelectOption value="yes">Only replies</NativeSelectOption>
+												<NativeSelectOption value="no">No replies</NativeSelectOption>
+											</NativeSelect>
+										</label>
+										<label class="flex flex-col gap-1.5">
+											<span class="text-xs font-medium">Forwarded</span>
+											<NativeSelect bind:value={t.isForward} class="w-44" aria-label="Forwarded">
+												<NativeSelectOption value="any">Any message</NativeSelectOption>
+												<NativeSelectOption value="yes">Only forwarded</NativeSelectOption>
+												<NativeSelectOption value="no">Not forwarded</NativeSelectOption>
+											</NativeSelect>
+										</label>
+										<label class="flex flex-col gap-1.5">
+											<span class="text-xs font-medium">Links</span>
+											<NativeSelect bind:value={t.hasLink} class="w-40" aria-label="Links">
+												<NativeSelectOption value="any">Any message</NativeSelectOption>
+												<NativeSelectOption value="yes">With a link</NativeSelectOption>
+												<NativeSelectOption value="no">Without links</NativeSelectOption>
+											</NativeSelect>
+										</label>
+									</div>
+									{#if t.isForward === 'yes'}
+										<div class="flex flex-col gap-1.5 md:col-span-2">
+											<span class="text-xs font-medium">Forwarded from <span class="font-normal text-muted-foreground">(empty = from anywhere)</span></span>
+											<TagInput label="Forwarded from" bind:values={t.forwardFrom} placeholder="Channel name or id" />
+										</div>
+									{/if}
 								{/if}
 								<div class="flex flex-col gap-1.5">
 									<span class="text-xs font-medium">Only by people with role</span>

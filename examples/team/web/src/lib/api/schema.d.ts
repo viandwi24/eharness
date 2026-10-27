@@ -24672,7 +24672,7 @@ export interface components {
             scriptId: string;
             version: number;
             /** @enum {string} */
-            trigger: "channel" | "schedule" | "table" | "app" | "webhook" | "manual";
+            trigger: "channel" | "schedule" | "table" | "app" | "webhook" | "later" | "manual";
             dryRun: boolean;
             outcome: string;
             reason: string | null;

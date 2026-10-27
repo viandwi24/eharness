@@ -5,7 +5,7 @@
  * script sees it as an error it may catch.
  */
 import { lookup } from 'node:dns/promises'
-import { isPrivateHost } from 'eharness'
+import { isPrivateHost, uuidv7 } from 'eharness'
 import type { Deps } from '../../app/ports.ts'
 import { findProgram, listPrograms, runProgramNow } from '../../app/programs.ts'
 import {
@@ -33,6 +33,7 @@ import {
   type ScriptManifest,
 } from '../../domain/script-manifest.ts'
 import { type HostMethodDoc, KV_LIMITS, type Script } from '../../domain/scripts.ts'
+import { ChannelUserError } from '../channels/gateway/types.ts'
 import type { ChannelGateway, ResolvedTarget } from '../channels/gateway.ts'
 import type { LogMessage } from '../channels/messages.ts'
 import { nativeToolName } from '../channels/policy.ts'
@@ -237,6 +238,27 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
     sideEffect: true,
   },
   {
+    name: 'later',
+    args: '{ in?: number; at?: number | string; data?: unknown; key?: string }',
+    returns: '{ id: string; at: number }',
+    doc: "Run this script again later: in seconds from now, or at a time (epoch ms or ISO date), at most 30 days ahead. The run gets { type: 'later', data, key, timerId }. A key replaces the earlier pending run with that key (debounce, a reminder that moves). Survives restarts; at most 1000 pending per script.",
+    sideEffect: true,
+  },
+  {
+    name: 'cancelLater',
+    args: '{ id?: string; key?: string }',
+    returns: '{ cancelled: boolean }',
+    doc: 'Cancel a pending later run by its id or key.',
+    sideEffect: true,
+  },
+  {
+    name: 'listLater',
+    args: '{ limit?: number }',
+    returns: '{ timers: Array<{ id: string; at: number; key?: string }> }',
+    doc: 'The pending later runs of this script, soonest first.',
+    sideEffect: false,
+  },
+  {
     name: 'kv.get',
     args: '{ key: string }',
     returns: '{ value: unknown }',
@@ -245,10 +267,31 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
   },
   {
     name: 'kv.set',
-    args: '{ key: string; value: unknown }',
+    args: '{ key: string; value: unknown; ttlSec?: number }',
     returns: '{ ok: true }',
-    doc: "Store a JSON value in this script's own state (kept between runs).",
+    doc: "Store a JSON value in this script's own state (kept between runs; ttlSec = forgotten after that many seconds).",
     sideEffect: true,
+  },
+  {
+    name: 'kv.incr',
+    args: '{ key: string; by?: number; ttlSec?: number }',
+    returns: '{ value: number }',
+    doc: 'Add to a number atomically (absent = 0; by default 1) and get the new value: counters that two runs at once never lose. A dry run computes it without storing.',
+    sideEffect: false,
+  },
+  {
+    name: 'kv.once',
+    args: '{ key: string; ttlSec: number }',
+    returns: '{ first: boolean }',
+    doc: 'first is true only for the first run that claims the key until it expires: skip duplicates (the same signal twice, a retried webhook). A dry run checks without claiming.',
+    sideEffect: false,
+  },
+  {
+    name: 'kv.rateLimit',
+    args: '{ key: string; limit: number; windowSec: number }',
+    returns: '{ allowed: boolean; remaining: number; resetAt: number }',
+    doc: 'A sliding window: allowed while fewer than limit hits happened in the last windowSec (counts this one when allowed). Per person: key = "warn:" + event.actor.id. A dry run checks without counting.',
+    sideEffect: false,
   },
   {
     name: 'kv.delete',
@@ -320,6 +363,8 @@ export const SIDE_EFFECTS: ReadonlySet<string> = new Set(
 )
 
 export interface HostContext {
+  /** A dry run: state helpers answer without writing. */
+  dryRun?: boolean
   deps: Deps
   script: Script
   manifest: ScriptManifest
@@ -347,6 +392,11 @@ const FETCH_TIMEOUT_MS = 10_000
 const FETCH_BODY_CHARS = 1_000_000
 const MAX_TEXT = 4_000
 const MAX_FILE_BYTES = 20 * 1024 * 1024
+const SEND_RETRIES = 3
+const SEND_RETRY_MAX_MS = 15_000
+const LATER_MAX_MS = 30 * 86_400_000
+const LATER_DATA_CHARS = 10_000
+const LATER_MAX_PENDING = 1000
 const MEDIA_KINDS = [
   'photo',
   'video',
@@ -794,6 +844,46 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
     const r = gw().resolveMentions(connection, o.mentions as string[])
     return 'error' in r ? refuse(`ctx.channels.send: ${r.error}`) : r.ids
   }
+  /**
+   * A send the platform refused with "slow down" (certainly not sent) is tried again after the
+   * wait it names (at most 3 times, 15 s each): a fan-out to many chats paces itself instead of
+   * failing. Other failures are not retried (the message may have gone out).
+   */
+  const paced = async <T>(send: () => Promise<T>): Promise<T> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await send()
+      } catch (error) {
+        const p = error instanceof ChannelUserError ? error.platform : undefined
+        if (p?.kind !== 'rate_limit' || attempt >= SEND_RETRIES) throw error
+        const wait = Math.min(
+          Math.max(p.retryAfterMs ?? 1000 * 2 ** attempt, 200),
+          SEND_RETRY_MAX_MS,
+        )
+        await new Promise((resolve) => setTimeout(resolve, wait))
+      }
+    }
+  }
+  /** A new key must fit the per-script key limit. */
+  const roomFor = (key: string, label: string, now: number): void => {
+    if (
+      c.deps.scripts.kvGet(c.script.id, key, now) === undefined &&
+      c.deps.scripts.kvKeys(c.script.id, '', now).length >= KV_LIMITS.keys
+    )
+      refuse(`ctx.${label}: at most ${KV_LIMITS.keys} keys per script (expired keys do not count)`)
+  }
+  const expiryOf = (
+    o: Record<string, unknown>,
+    label: string,
+    now: number,
+    required: boolean,
+  ): number | undefined => {
+    if (o.ttlSec === undefined && !required) return undefined
+    const ttl = o.ttlSec
+    if (typeof ttl !== 'number' || !(ttl > 0) || ttl > 365 * 86_400)
+      return refuse(`ctx.${label}: ttlSec is more than 0 and at most a year (in seconds)`)
+    return now + Math.round(ttl * 1000)
+  }
   const copyOrForward = async (
     args: unknown,
     label: string,
@@ -819,14 +909,16 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
     const replyTo = forward ? undefined : optStr(o, 'replyTo')
     const source = targetOf(from)
     const target = targetOf(to)
-    const messageIds = await gw().copy(source, ids, target, {
-      ...(forward ? { forward: true } : {}),
-      ...(o.silent === true ? { silent: true } : {}),
-      ...(replyTo === undefined ? {} : { replyTo }),
-      ...(!forward && o.dropCaptions === true ? { dropCaptions: true } : {}),
-      ...(caption === undefined ? {} : { caption }),
-      ...(format === undefined ? {} : { format }),
-    })
+    const messageIds = await paced(() =>
+      gw().copy(source, ids, target, {
+        ...(forward ? { forward: true } : {}),
+        ...(o.silent === true ? { silent: true } : {}),
+        ...(replyTo === undefined ? {} : { replyTo }),
+        ...(!forward && o.dropCaptions === true ? { dropCaptions: true } : {}),
+        ...(caption === undefined ? {} : { caption }),
+        ...(format === undefined ? {} : { format }),
+      }),
+    )
     const sorted = [...ids].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b))
     remember(source.config.connectionId, source.node.id, sorted, target.node.id, messageIds)
     return { messageIds }
@@ -884,15 +976,18 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
           messageId: str(co, 'messageId', 'channels.send copyOf', 100),
         }
       }
-      const messageIds = await gw().post(t, {
-        text,
-        ...(mentions.length ? { mentions } : {}),
-        ...(replyTo === undefined ? {} : { replyTo }),
-        ...(files.length ? { files } : {}),
-        ...(o.silent === true ? { silent: true } : {}),
-        ...(format === undefined ? {} : { format }),
-        ...(o.linkPreview === true ? { linkPreview: true } : {}),
-      })
+      const messageIds = await paced(() =>
+        gw().post(t, {
+          text,
+          retriesRateLimit: true,
+          ...(mentions.length ? { mentions } : {}),
+          ...(replyTo === undefined ? {} : { replyTo }),
+          ...(files.length ? { files } : {}),
+          ...(o.silent === true ? { silent: true } : {}),
+          ...(format === undefined ? {} : { format }),
+          ...(o.linkPreview === true ? { linkPreview: true } : {}),
+        }),
+      )
       if (copyOf !== undefined)
         remember(t.config.connectionId, copyOf.node, [copyOf.messageId], t.node.id, messageIds)
       return { messageIds }
@@ -918,13 +1013,16 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       const quote = o.quote !== false
       const format = formatArg(o, 'channels.reply')
       return {
-        messageIds: await gw().post(t, {
-          text,
-          ...(quote && e.messageId !== undefined ? { replyTo: e.messageId } : {}),
-          ...(files.length ? { files } : {}),
-          ...(o.silent === true ? { silent: true } : {}),
-          ...(format === undefined ? {} : { format }),
-        }),
+        messageIds: await paced(() =>
+          gw().post(t, {
+            text,
+            retriesRateLimit: true,
+            ...(quote && e.messageId !== undefined ? { replyTo: e.messageId } : {}),
+            ...(files.length ? { files } : {}),
+            ...(o.silent === true ? { silent: true } : {}),
+            ...(format === undefined ? {} : { format }),
+          }),
+        ),
       }
     },
     'channels.react': async (args) => {
@@ -1327,9 +1425,70 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
         return refuse('ctx.tables.delete: give id (one row) or filter (many rows)')
       return deleteRows(c.deps, by, t, o.filter)
     },
+    later: async (args) => {
+      const o = obj(args ?? {}, 'later')
+      const now = c.deps.clock.now()
+      let at: number
+      if (o.in !== undefined) {
+        if (typeof o.in !== 'number' || !(o.in >= 0))
+          return refuse('ctx.later: in is seconds (0 or more)')
+        at = now + Math.round(o.in * 1000)
+      } else if (typeof o.at === 'number') at = Math.round(o.at)
+      else if (typeof o.at === 'string') {
+        const parsed = Date.parse(o.at)
+        if (Number.isNaN(parsed)) return refuse('ctx.later: at is epoch ms or an ISO date')
+        at = parsed
+      } else return refuse('ctx.later: give in (seconds) or at (a time)')
+      if (at > now + LATER_MAX_MS) return refuse('ctx.later: at most 30 days ahead')
+      at = Math.max(at, now)
+      const data = JSON.stringify(o.data ?? null)
+      if (data.length > LATER_DATA_CHARS)
+        return refuse(`ctx.later: data is at most ${LATER_DATA_CHARS} characters of JSON`)
+      const key = optStr(o, 'key')
+      if (key !== undefined && key.length > 200)
+        return refuse('ctx.later: key is at most 200 characters')
+      if (c.deps.scripts.timersCount(c.script.id) >= LATER_MAX_PENDING)
+        return refuse(`ctx.later: at most ${LATER_MAX_PENDING} pending later runs per script`)
+      const id = uuidv7()
+      c.deps.scripts.timerAdd({
+        id,
+        scriptId: c.script.id,
+        ...(key === undefined ? {} : { key }),
+        dueAt: at,
+        data,
+        createdAt: now,
+      })
+      return { id, at }
+    },
+    cancelLater: async (args) => {
+      const o = obj(args ?? {}, 'cancelLater')
+      const id = optStr(o, 'id')
+      const key = optStr(o, 'key')
+      if (id === undefined && key === undefined) return refuse('ctx.cancelLater: give id or key')
+      return {
+        cancelled: c.deps.scripts.timerCancel(c.script.id, {
+          ...(id === undefined ? {} : { id }),
+          ...(key === undefined ? {} : { key }),
+        }),
+      }
+    },
+    listLater: async (args) => {
+      const o = args === undefined || args === null ? {} : obj(args, 'listLater')
+      const limit = Math.min(
+        Math.max(typeof o.limit === 'number' ? Math.trunc(o.limit) : 50, 1),
+        500,
+      )
+      return {
+        timers: c.deps.scripts.timersOf(c.script.id, limit).map((x) => ({
+          id: x.id,
+          at: x.dueAt,
+          ...(x.key === undefined ? {} : { key: x.key }),
+        })),
+      }
+    },
     'kv.get': async (args) => {
       const key = str(obj(args, 'kv.get'), 'key', 'kv.get', KV_LIMITS.keyChars)
-      const raw = c.deps.scripts.kvGet(c.script.id, key)
+      const raw = c.deps.scripts.kvGet(c.script.id, key, c.deps.clock.now())
       return { value: raw === undefined ? null : (JSON.parse(raw) as unknown) }
     },
     'kv.set': async (args) => {
@@ -1338,13 +1497,63 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       const text = JSON.stringify(o.value ?? null)
       if (text.length > KV_LIMITS.valueChars)
         return refuse(`ctx.kv.set: a value is at most ${KV_LIMITS.valueChars} characters of JSON`)
-      if (
-        c.deps.scripts.kvGet(c.script.id, key) === undefined &&
-        c.deps.scripts.kvKeys(c.script.id, '').length >= KV_LIMITS.keys
-      )
-        return refuse(`ctx.kv.set: at most ${KV_LIMITS.keys} keys per script`)
-      c.deps.scripts.kvSet(c.script.id, key, text, c.deps.clock.now())
+      const now = c.deps.clock.now()
+      roomFor(key, 'kv.set', now)
+      c.deps.scripts.kvSet(c.script.id, key, text, now, expiryOf(o, 'kv.set', now, false))
       return { ok: true }
+    },
+    'kv.incr': async (args) => {
+      const o = obj(args, 'kv.incr')
+      const key = str(o, 'key', 'kv.incr', KV_LIMITS.keyChars)
+      const by = o.by === undefined ? 1 : o.by
+      if (typeof by !== 'number' || !Number.isFinite(by))
+        return refuse('ctx.kv.incr: by is a number')
+      const now = c.deps.clock.now()
+      const expiresAt = expiryOf(o, 'kv.incr', now, false)
+      if (c.dryRun === true) {
+        const raw = c.deps.scripts.kvGet(c.script.id, key, now)
+        const before = raw === undefined ? 0 : (JSON.parse(raw) as unknown)
+        if (typeof before !== 'number') return refuse(`ctx.kv.incr: ${key} holds no number`)
+        return { value: before + by }
+      }
+      roomFor(key, 'kv.incr', now)
+      const r = c.deps.scripts.kvIncr(c.script.id, key, by, now, expiresAt)
+      return 'error' in r ? refuse(`ctx.kv.incr: ${r.error}`) : r
+    },
+    'kv.once': async (args) => {
+      const o = obj(args, 'kv.once')
+      const key = str(o, 'key', 'kv.once', KV_LIMITS.keyChars)
+      const now = c.deps.clock.now()
+      const expiresAt = expiryOf(o, 'kv.once', now, true) as number
+      if (c.dryRun === true)
+        return { first: c.deps.scripts.kvGet(c.script.id, key, now) === undefined }
+      roomFor(key, 'kv.once', now)
+      return { first: c.deps.scripts.kvOnce(c.script.id, key, now, expiresAt) }
+    },
+    'kv.rateLimit': async (args) => {
+      const o = obj(args, 'kv.rateLimit')
+      const key = str(o, 'key', 'kv.rateLimit', KV_LIMITS.keyChars)
+      const limit = o.limit
+      const windowSec = o.windowSec
+      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 10_000)
+        return refuse('ctx.kv.rateLimit: limit is a whole number from 1 to 10000')
+      if (typeof windowSec !== 'number' || !(windowSec > 0) || windowSec > 30 * 86_400)
+        return refuse('ctx.kv.rateLimit: windowSec is more than 0 and at most 30 days')
+      const now = c.deps.clock.now()
+      const windowMs = Math.round(windowSec * 1000)
+      if (c.dryRun === true) {
+        const raw = c.deps.scripts.kvGet(c.script.id, key, now)
+        const hits = (raw === undefined ? [] : (JSON.parse(raw) as unknown[])).filter(
+          (x): x is number => typeof x === 'number' && x > now - windowMs,
+        )
+        return {
+          allowed: hits.length < limit,
+          remaining: Math.max(0, limit - hits.length - (hits.length < limit ? 1 : 0)),
+          resetAt: (hits[0] ?? now) + windowMs,
+        }
+      }
+      roomFor(key, 'kv.rateLimit', now)
+      return c.deps.scripts.kvRate(c.script.id, key, limit, windowMs, now)
     },
     'kv.delete': async (args) => {
       const key = str(obj(args, 'kv.delete'), 'key', 'kv.delete', KV_LIMITS.keyChars)

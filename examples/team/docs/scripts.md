@@ -98,7 +98,7 @@ Rules for the source:
 
 | Kind | Fields |
 |---|---|
-| `channel` | `events` (required: `message.created`, `message.edited`, `message.deleted`, `reaction.added`, `reaction.removed`, `member.joined`, `member.left`, `member.updated`, `member.join_requested`, `member.join_request_resolved`, `node.*`, `action`), and optional filters: `connections` (ids), `chats` (title, platform id or node id), `actorRoles` (`owner`, `admin`, `member`, `guest`), `actors` (platform id, name or `@username`), `textContains` (any of the words, ignoring case), `textRegex` (bounded: at most 200 characters, no nested quantifiers) |
+| `channel` | `events` (required: `message.created`, `message.edited`, `message.deleted`, `reaction.added`, `reaction.removed`, `member.joined`, `member.left`, `member.updated`, `member.join_requested`, `member.join_request_resolved`, `node.*`, `action`), and optional filters: `connections` (ids), `chats` (title, platform id or node id), `actorRoles` (`owner`, `admin`, `member`, `guest`), `actors` (platform id, name or `@username`), `textContains` (any of the words, ignoring case), `textRegex` (bounded: at most 200 characters, no nested quantifiers; both must match when both are set), `messageKinds` (`text`, `photo`, `video`, `animation`, `video_note`, `voice`, `audio`, `document`, `sticker`, `album`, `location`, `venue`, `contact`, `poll`, `dice`: any of them), `isReply`, `isForward`, `hasLink` (`true` = only, `false` = never), `forwardFrom` (forwarded from a name, chat or user id) |
 | `schedule` | `spec`: `{ "kind": "cron", "expr": "0 9 * * *", "timezone": "Asia/Jakarta" }` (timezone defaults to the team's), `{ "kind": "every", "everyMs": 3600000 }` (at least one minute), or `{ "kind": "at", "at": "2026-12-01T09:00:00Z" }` |
 | `table` | `table` and `events` (`row.created`, `row.updated`, `row.deleted`) |
 | `app` | `events`: what the app does (`task-changed`, `program-changed`, `routine-fired`, `decision-changed`, `alarm-raised`, `file-changed`, `message-added`, `turn-started`, `pending-changed`, `approval-decided`, `settings-changed`, …); optional `agents` (id or slug) and `match` (`{ "status": "done" }`: payload fields that must equal these values; dots reach nested fields) |
@@ -146,7 +146,9 @@ Every method takes one object and returns a promise.
 | `library.read({ path })`, `library.list({ prefix })`, `library.write({ path, content })` | library text files |
 | `tables.query({ table, filter?, sort?, fields?, limit?, cursor? })`, `tables.get({ table, id })`, `tables.aggregate({ table, filter?, groupBy?, metrics })` | read [tables](tables.md) |
 | `tables.insert({ table, rows })`, `tables.update({ table, id?, filter?, set?, unset?, inc?, ifVersion? })`, `tables.delete({ table, id?, filter? })` | change tables; rows record `script:<name>` as author |
-| `kv.get({ key })` → `{ value }`, `kv.set({ key, value })`, `kv.delete({ key })`, `kv.keys({ prefix? })` | the script's own JSON state (1 000 keys, 100 000 characters a value) |
+| `kv.get({ key })` → `{ value }`, `kv.set({ key, value, ttlSec? })`, `kv.delete({ key })`, `kv.keys({ prefix? })` | the script's own JSON state (1 000 keys, 100 000 characters a value; `ttlSec` forgets the key after that long) |
+| `kv.incr({ key, by?, ttlSec? })` → `{ value }`, `kv.once({ key, ttlSec })` → `{ first }`, `kv.rateLimit({ key, limit, windowSec })` → `{ allowed, remaining, resetAt }` | atomic counters, duplicate skipping, a sliding-window limiter (per person: `'warn:' + event.actor.id`); a dry run answers without writing |
+| `later({ in?, at?, data?, key? })` → `{ id, at }`, `cancelLater({ id?, key? })`, `listLater()` | run this script again later (at most 30 days ahead; survives restarts; a `key` replaces the pending run with that key); the run gets `{ type: 'later', data, key, timerId }` |
 | `http.get({ url, headers? })`, `http.request({ url, method, headers?, body? })` | https to granted hosts; 10 s timeout, 1 MB body, redirects not followed |
 | `agent.wake({ agent, instruction })` | an instruction in that agent's "Scripts" chat; at most 3 per run |
 | `programs.list()`, `programs.run({ program })` | granted programs |
@@ -176,6 +178,9 @@ for (const k of copies) await ctx.channels.send({ connection: c, chat: k.chat, t
   Copy records are kept 90 days (Settings → Limits → Script copy records).
 - A dry run (Test) performs no side effect, but a call the real run would refuse for a missing
   grant fails the same way.
+- Sends are paced: the outbound limits space them per chat, and a send the platform refuses with
+  "too many requests" waits the time it names and goes out (up to 3 tries, 15 s each). Other
+  failures are not retried, since the message may have gone out.
 
 ## Events
 

@@ -3,7 +3,7 @@
  * Plain SQL on the app connection, like the tables store.
  */
 import type { Database } from 'bun:sqlite'
-import type { ScriptCopyRow, ScriptStore } from '../../app/ports.ts'
+import type { ScriptCopyRow, ScriptStore, ScriptTimer } from '../../app/ports.ts'
 import type {
   ApprovalState,
   AuthorKind,
@@ -157,6 +157,33 @@ export function sqliteScriptStore(sqlite: Database): ScriptStore {
       .get(ref, ref)
     return r === null ? undefined : toScript(r)
   }
+  const kvRead = (scriptId: string, key: string, now: number): string | undefined =>
+    sqlite
+      .query<{ value: string }, [string, string, number]>(
+        'SELECT value FROM script_kv WHERE script_id = ? AND key = ? AND (expires_at IS NULL OR expires_at > ?)',
+      )
+      .get(scriptId, key, now)?.value ?? undefined
+  const kvExpiry = (scriptId: string, key: string, now: number): number | undefined =>
+    sqlite
+      .query<{ expires_at: number | null }, [string, string, number]>(
+        'SELECT expires_at FROM script_kv WHERE script_id = ? AND key = ? AND expires_at > ?',
+      )
+      .get(scriptId, key, now)?.expires_at ?? undefined
+  const kvWrite = (
+    scriptId: string,
+    key: string,
+    value: string,
+    now: number,
+    expiresAt: number | undefined,
+  ): void => {
+    sqlite
+      .query(
+        `INSERT INTO script_kv (script_id, key, value, updated_at, expires_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (script_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at,
+           expires_at = excluded.expires_at`,
+      )
+      .run(scriptId, key, value, now, expiresAt ?? null)
+  }
   return {
     list() {
       return sqlite.query<ScriptRow, []>('SELECT * FROM scripts ORDER BY name').all().map(toScript)
@@ -248,6 +275,7 @@ export function sqliteScriptStore(sqlite: Database): ScriptStore {
           sqlite.query('DELETE FROM script_runs WHERE script_id = ?').run(id)
           sqlite.query('DELETE FROM script_kv WHERE script_id = ?').run(id)
           sqlite.query('DELETE FROM script_copies WHERE script_id = ?').run(id)
+          sqlite.query('DELETE FROM script_timers WHERE script_id = ?').run(id)
           return sqlite.query('DELETE FROM scripts WHERE id = ?').run(id).changes > 0
         })
         .immediate()
@@ -344,22 +372,65 @@ export function sqliteScriptStore(sqlite: Database): ScriptStore {
         .run(keepPerScript).changes
       return a + b
     },
-    kvGet(scriptId, key) {
-      return (
-        sqlite
-          .query<{ value: string }, [string, string]>(
-            'SELECT value FROM script_kv WHERE script_id = ? AND key = ?',
-          )
-          .get(scriptId, key)?.value ?? undefined
-      )
+    kvGet(scriptId, key, now = Date.now()) {
+      return kvRead(scriptId, key, now)
     },
-    kvSet(scriptId, key, value, now) {
-      sqlite
-        .query(
-          `INSERT INTO script_kv (script_id, key, value, updated_at) VALUES (?, ?, ?, ?)
-           ON CONFLICT (script_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-        )
-        .run(scriptId, key, value, now)
+    kvSet(scriptId, key, value, now, expiresAt) {
+      kvWrite(scriptId, key, value, now, expiresAt)
+    },
+    kvIncr(scriptId, key, by, now, expiresAt) {
+      return sqlite
+        .transaction(() => {
+          const raw = kvRead(scriptId, key, now)
+          const before = raw === undefined ? 0 : (JSON.parse(raw) as unknown)
+          if (typeof before !== 'number' || !Number.isFinite(before))
+            return { error: `${key} holds no number` }
+          const value = before + by
+          // a running counter keeps its expiry unless a new one is given
+          kvWrite(
+            scriptId,
+            key,
+            JSON.stringify(value),
+            now,
+            expiresAt ?? kvExpiry(scriptId, key, now),
+          )
+          return { value }
+        })
+        .immediate()
+    },
+    kvOnce(scriptId, key, now, expiresAt) {
+      return sqlite
+        .transaction(() => {
+          if (kvRead(scriptId, key, now) !== undefined) return false
+          kvWrite(scriptId, key, 'true', now, expiresAt)
+          return true
+        })
+        .immediate()
+    },
+    kvRate(scriptId, key, limit, windowMs, now) {
+      return sqlite
+        .transaction(() => {
+          const raw = kvRead(scriptId, key, now)
+          const parsed = raw === undefined ? [] : (JSON.parse(raw) as unknown)
+          const hits = (Array.isArray(parsed) ? parsed : []).filter(
+            (x): x is number => typeof x === 'number' && x > now - windowMs,
+          )
+          const allowed = hits.length < limit
+          if (allowed) hits.push(now)
+          kvWrite(scriptId, key, JSON.stringify(hits), now, now + windowMs)
+          const oldest = hits[0] ?? now
+          return {
+            allowed,
+            remaining: Math.max(0, limit - hits.length),
+            resetAt: oldest + windowMs,
+          }
+        })
+        .immediate()
+    },
+    kvPrune(now) {
+      return sqlite
+        .query('DELETE FROM script_kv WHERE expires_at IS NOT NULL AND expires_at <= ?')
+        .run(now).changes
     },
     kvDelete(scriptId, key) {
       return (
@@ -367,12 +438,13 @@ export function sqliteScriptStore(sqlite: Database): ScriptStore {
           .changes > 0
       )
     },
-    kvKeys(scriptId, prefix) {
+    kvKeys(scriptId, prefix, now = Date.now()) {
       return sqlite
-        .query<{ key: string }, [string, string, string]>(
-          'SELECT key FROM script_kv WHERE script_id = ? AND substr(key, 1, length(?)) = ? ORDER BY key LIMIT 1000',
+        .query<{ key: string }, [string, string, string, number]>(
+          `SELECT key FROM script_kv WHERE script_id = ? AND substr(key, 1, length(?)) = ?
+             AND (expires_at IS NULL OR expires_at > ?) ORDER BY key LIMIT 1000`,
         )
-        .all(scriptId, prefix, prefix)
+        .all(scriptId, prefix, prefix, now)
         .map((r) => r.key)
     },
     copiesAdd(scriptId, rows, now) {
@@ -403,11 +475,86 @@ export function sqliteScriptStore(sqlite: Database): ScriptStore {
         .get(scriptId, targetNode, targetId)
       return r === null ? undefined : copyOf(r)
     },
+    timerAdd(x) {
+      sqlite
+        .transaction(() => {
+          if (x.key !== undefined)
+            sqlite
+              .query('DELETE FROM script_timers WHERE script_id = ? AND key = ?')
+              .run(x.scriptId, x.key)
+          sqlite
+            .query(
+              'INSERT INTO script_timers (id, script_id, key, due_at, data, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+            )
+            .run(x.id, x.scriptId, x.key ?? null, x.dueAt, x.data, x.createdAt)
+        })
+        .immediate()
+    },
+    timerCancel(scriptId, ref) {
+      if (ref.id !== undefined)
+        return (
+          sqlite
+            .query('DELETE FROM script_timers WHERE script_id = ? AND id = ?')
+            .run(scriptId, ref.id).changes > 0
+        )
+      if (ref.key !== undefined)
+        return (
+          sqlite
+            .query('DELETE FROM script_timers WHERE script_id = ? AND key = ?')
+            .run(scriptId, ref.key).changes > 0
+        )
+      return false
+    },
+    timersOf(scriptId, limit) {
+      return sqlite
+        .query<TimerDb, [string, number]>(
+          'SELECT * FROM script_timers WHERE script_id = ? ORDER BY due_at, id LIMIT ?',
+        )
+        .all(scriptId, limit)
+        .map(timerOf)
+    },
+    timersCount(scriptId) {
+      return (
+        sqlite
+          .query<{ n: number }, [string]>(
+            'SELECT COUNT(*) AS n FROM script_timers WHERE script_id = ?',
+          )
+          .get(scriptId)?.n ?? 0
+      )
+    },
+    timersTake(now, limit) {
+      return sqlite
+        .query<TimerDb, [number, number]>(
+          `DELETE FROM script_timers WHERE id IN (
+             SELECT id FROM script_timers WHERE due_at <= ? ORDER BY due_at, id LIMIT ?)
+           RETURNING *`,
+        )
+        .all(now, limit)
+        .map(timerOf)
+        .sort((a, b) => a.dueAt - b.dueAt || a.id.localeCompare(b.id))
+    },
     pruneCopies(olderThan) {
       return sqlite.query('DELETE FROM script_copies WHERE created_at < ?').run(olderThan).changes
     },
   }
 }
+
+interface TimerDb {
+  id: string
+  script_id: string
+  key: string | null
+  due_at: number
+  data: string
+  created_at: number
+}
+const timerOf = (r: TimerDb): ScriptTimer => ({
+  id: r.id,
+  scriptId: r.script_id,
+  ...(r.key === null ? {} : { key: r.key }),
+  dueAt: r.due_at,
+  data: r.data,
+  createdAt: r.created_at,
+})
 
 interface CopyDb {
   connection_id: string

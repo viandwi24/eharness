@@ -1135,6 +1135,110 @@ describe('sending media and copying', () => {
   })
 })
 
+describe('state helpers, later runs and pacing', () => {
+  test('kv.once skips duplicates, kv.incr counts, kv.rateLimit holds a window, ttl forgets; a dry run writes nothing', async () => {
+    const r = rig()
+    rigs.push(r)
+    await withVip(r)
+    await r.api('POST', '/tables', { name: 'out' })
+    const src = `export default async function (event, ctx) {
+  if (event.data?.keys) return (await ctx.kv.keys({})).keys
+  const key = event.data?.key ?? 'sig-1'
+  const first = (await ctx.kv.once({ key: 'seen:' + key, ttlSec: 600 })).first
+  const n = (await ctx.kv.incr({ key: 'n' })).value
+  const rl = await ctx.kv.rateLimit({ key: 'rl', limit: 2, windowSec: 60 })
+  await ctx.kv.set({ key: 'short', value: 1, ttlSec: 0.3 })
+  return { first, n, allowed: rl.allowed, remaining: rl.remaining }
+}`
+    await r.api('POST', '/scripts', {
+      name: 'state',
+      source: src,
+      manifest: { triggers: [], grants: {} },
+    })
+    // a dry run answers from the stored state without writing
+    const dry = await r.api('POST', '/scripts/state/dry-run', { event: { type: 'manual' } })
+    expect((dry.json.run as { result: unknown }).result).toEqual({
+      first: true,
+      n: 1,
+      allowed: true,
+      remaining: 1,
+    })
+    expect((dry.json.run as { outcome: string }).outcome).toBe('ok')
+    await r.api('POST', '/scripts/state/activate', {})
+    const run = async (data?: unknown) =>
+      (await r.api('POST', '/scripts/state/run', { event: { type: 'manual', data } })).json.result
+    expect(await run()).toEqual({ first: true, n: 1, allowed: true, remaining: 1 })
+    expect(await run()).toEqual({ first: false, n: 2, allowed: true, remaining: 0 })
+    expect(await run()).toEqual({ first: false, n: 3, allowed: false, remaining: 0 })
+    // the short key expires
+    await sleep(400)
+    const keys = (await run({ keys: true })) as string[]
+    expect(keys).toContain('n')
+    expect(keys).not.toContain('short')
+  }, 15_000)
+
+  test('ctx.later runs the script again with its data; a key replaces the pending one; cancel and list', async () => {
+    const r = rig()
+    rigs.push(r)
+    await withVip(r)
+    await r.api('POST', '/tables', { name: 'fired' })
+    const src = `export default async function (event, ctx) {
+  if (event.type === 'later') {
+    await ctx.tables.insert({ table: 'fired', rows: [{ note: event.data.note, key: event.key ?? null }] })
+    return 'fired'
+  }
+  await ctx.later({ in: 0.2, data: { note: 'first' }, key: 'remind' })
+  await ctx.later({ in: 0.3, data: { note: 'second' }, key: 'remind' })
+  const keep = await ctx.later({ in: 0.2, data: { note: 'plain' } })
+  const gone = await ctx.later({ in: 60, data: { note: 'never' } })
+  await ctx.cancelLater({ id: gone.id })
+  return (await ctx.listLater({})).timers.length
+}`
+    await r.api('POST', '/scripts', {
+      name: 'later',
+      source: src,
+      manifest: { triggers: [], grants: { tablesWrite: ['fired'] } },
+    })
+    await r.api('POST', '/scripts/later/activate', {})
+    const started = await r.api('POST', '/scripts/later/run', { event: { type: 'manual' } })
+    expect(started.json.result).toBe(2)
+    const rows = async () =>
+      (
+        (await r.api('POST', '/tables/fired/query', {})).json.rows as Array<{
+          data: Record<string, unknown>
+        }>
+      ).map((x) => x.data.note)
+    await until('later runs', async () => (await rows()).length === 2, 5000)
+    await sleep(300)
+    expect((await rows()).sort()).toEqual(['plain', 'second'])
+    const runs = (await r.api('GET', '/scripts/later/runs')).json.runs as Array<{ trigger: string }>
+    expect(runs.filter((x) => x.trigger === 'later')).toHaveLength(2)
+  }, 15_000)
+
+  test('a rate-limited send waits and goes out; nothing is left in Needs a look', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    const src = `export default async function (event, ctx) {
+  const sent = await ctx.channels.send({ connection: 'c1', chat: 'VIP', text: 'paced' })
+  return sent.messageIds.length
+}`
+    await r.api('POST', '/scripts', {
+      name: 'pace',
+      source: src,
+      manifest: { triggers: [], grants: { send: [{ connection: 'c1', chat: 'VIP' }] } },
+    })
+    await r.api('POST', '/scripts/pace/activate', {})
+    const { ChannelError } = await import('../src/infra/channels/types.ts')
+    mock.failNext(new ChannelError('rate_limit', 'Too Many Requests: retry after 1', 300, 'chat'))
+    const run = await r.api('POST', '/scripts/pace/run', { event: { type: 'manual' } })
+    expect(run.json.outcome).toBe('ok')
+    expect(mock.sent.map((s) => s.message.text)).toEqual(['paced'])
+    const attention = await r.server.channels.outboxAttention('c1', { limit: 20 })
+    expect(JSON.stringify(attention.items)).not.toContain('paced')
+  }, 15_000)
+})
+
 describe('more inputs and the team API', () => {
   test('an app event starts a script; ctx.api reads and changes through the API; its own events do not loop', async () => {
     const r = rig()

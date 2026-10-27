@@ -256,6 +256,11 @@ export const COVERAGE: readonly TableEntry[] = [
     'small state a script keeps between runs; travels with the scripts',
   ),
   snapshot(
+    'script_timers',
+    'Later runs the scripts asked for',
+    'pending ctx.later runs (at most 30 days ahead); travel with the scripts',
+  ),
+  snapshot(
     'script_copies',
     'What the scripts copied where',
     'source message to copy, so replies and edits follow each copy (kept 90 days by default)',

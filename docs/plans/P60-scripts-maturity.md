@@ -1,6 +1,6 @@
 # P60 — Team example: scripts and tables, mature
 
-Status: in progress (W1, W2 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
+Status: in progress (W1–W3 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
 
 ## Goal
 
@@ -59,11 +59,16 @@ Inputs: the scenario catalog and capability checklist in
   grants. A user account's own echo during a send is never taken as typed by the person.
 
 ### W3 — Triggers and state
-- [ ] Channel trigger filters: media kinds, has reply, is forward (and from where), has link,
+- [x] Channel trigger filters: media kinds, has reply, is forward (and from where), has link,
       caption regex, edited.
-- [ ] `ctx.later({ in | at, event })`: one-shot delayed runs (durable, multi-instance).
-- [ ] KV with TTL, atomic increment, `ctx.once(key, ttl)` dedupe, sliding-window rate limiter.
-- [ ] Send pacing with retries on 429 / 5xx for fan-out (through the outbox).
+- [x] `ctx.later({ in | at, event })`: one-shot delayed runs (durable, multi-instance).
+- [x] KV with TTL, atomic increment, `ctx.once(key, ttl)` dedupe, sliding-window rate limiter.
+- [x] Send pacing with retries on 429 / 5xx for fan-out (through the outbox).
+- Notes: names as shipped: `ctx.later({ in | at, data, key })`, `ctx.cancelLater`, `ctx.listLater`,
+  `ctx.kv.once`, `ctx.kv.incr`, `ctx.kv.rateLimit`, `ttlSec` on `kv.set`. Only 429 is retried (a
+  5xx or network failure may have delivered the message: no blind resend). Later runs are claimed
+  by deleting the row (at most once across instances); a run is dropped when its script is no
+  longer active. Edits are a trigger already (`message.edited`).
 
 ### W4 — Moderation and interaction
 - [ ] Typed moderation: ban, mute/restrict with an end, set permissions, approve/decline join
