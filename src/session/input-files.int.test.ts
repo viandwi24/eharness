@@ -60,8 +60,9 @@ describe('item 20: client file URLs', () => {
       model: scriptedModel([{ text: 'ok' }]),
       inputFiles: { protocols: ['data:', 'https:', 'http:'] },
     })
-    // http: is allowed now (AI SDK then decides how to fetch it)
-    const run = http.agent.session('s1').send(withFile('http://example.com/x.png'))
+    // http: is allowed now (AI SDK then decides how to fetch it; it refuses localhost before any
+    // network access, so the test never waits on the internet)
+    const run = http.agent.session('s1').send(withFile('http://localhost/x.png'))
     expect((await run.result).error?.code).not.toBe('EH_INVALID_INPUT')
   })
 
@@ -137,13 +138,14 @@ describe('R15: inputFiles.resolve', () => {
       inputFiles: {
         protocols: ['data:', 'https:', 'library:'],
         resolve: (url) =>
-          url.startsWith('library:') ? { url: 'https://cdn.test/a.png?sig=1' } : undefined,
+          url.startsWith('library:') ? { url: 'https://signed.localhost/a.png?sig=1' } : undefined,
       },
     })
     const result = await agent.session('s1').send(withFile('library://uploads/9')).result
-    // AI SDK downloads the resolved URL (the mock provider supports none): it is the one it tried
+    // AI SDK downloads the resolved URL (the mock provider supports none): it is the one it tried.
+    // A localhost URL is refused before any network access, so the test never waits on DNS.
     expect(result.stop).toBe('error')
-    expect(logs.join('\n')).toContain('cdn.test/a.png')
+    expect(logs.join('\n')).toContain('signed.localhost')
   })
 
   test('null (or a throw) degrades the file to FILE_UNAVAILABLE and the turn continues', async () => {
