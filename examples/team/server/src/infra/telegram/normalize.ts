@@ -784,8 +784,12 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
   }
   const r = update.message_reaction
   if (r !== undefined) {
-    const label = (x: { type: string; emoji?: string }): string =>
-      x.type === 'emoji' && x.emoji !== undefined ? x.emoji : x.type
+    const label = (x: { type: string; emoji?: string; custom_emoji_id?: string }): string =>
+      x.type === 'emoji' && x.emoji !== undefined
+        ? x.emoji
+        : x.type === 'custom_emoji' && x.custom_emoji_id !== undefined
+          ? `custom:${x.custom_emoji_id}`
+          : x.type
     const before = new Set(r.old_reaction.map(label))
     const after = new Set(r.new_reaction.map(label))
     const actor: Identity =
@@ -803,6 +807,7 @@ export function normalizeUpdate(update: Update, ctx: NormalizeContext): Normaliz
         actor,
         messageNativeId: String(r.message_id),
         emoji,
+        ...(emoji.startsWith('custom:') ? { customEmojiId: emoji.slice(7) } : {}),
         raw: update,
       })
     }

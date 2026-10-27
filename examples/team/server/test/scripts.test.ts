@@ -962,6 +962,179 @@ describe('media in script events', () => {
   })
 })
 
+describe('sending media and copying', () => {
+  test('a distributor: an album is copied with a new caption, replies and edits follow the copy, deletions too', async () => {
+    const r = rig()
+    rigs.push(r)
+    const mock = await withVip(r)
+    const src = `export default async function (event, ctx) {
+  const c = event.connectionId
+  const here = { connection: c, chat: event.chat.nativeId }
+  if (event.type === 'message.deleted') {
+    for (const id of event.messageIds) {
+      const { copies } = await ctx.channels.copies({ ...here, messageId: id })
+      for (const k of copies) await ctx.channels.delete({ connection: c, chat: k.chat, messageIds: [k.messageId] })
+    }
+    return { deleted: event.messageIds.length }
+  }
+  if (event.type === 'message.edited') {
+    const { copies } = await ctx.channels.copies({ ...here, messageId: event.messageId })
+    for (const k of copies) await ctx.channels.edit({ connection: c, chat: k.chat, messageId: k.messageId, text: '[VIP] ' + event.text })
+    return { edited: copies.length }
+  }
+  if (event.replyTo) {
+    const { copies } = await ctx.channels.copies({ ...here, messageId: event.replyTo.messageId })
+    for (const k of copies)
+      await ctx.channels.send({ connection: c, chat: k.chat, text: event.text, replyTo: k.messageId, silent: true, format: 'plain' })
+    return { followed: copies.length }
+  }
+  if (event.attachments?.[0]?.media === 'sticker') {
+    await ctx.channels.send({ connection: c, chat: 'VIP', media: [{ ref: event.attachments[0].ref, kind: 'sticker' }], text: 'from #1' })
+    await ctx.channels.react({ ...here, messageId: event.messageId, emoji: '👍', customEmojiId: '5368324170671202286' })
+    return { sticker: true }
+  }
+  const ids = event.album ? event.album.map((m) => m.messageId) : [event.messageId]
+  const sent = await ctx.channels.copy({ ...here, messageIds: ids, toChat: 'VIP', caption: '[VIP] ' + (event.text ?? '') })
+  return { copied: sent.messageIds }
+}`
+    const manifest = {
+      triggers: [
+        {
+          kind: 'channel',
+          events: ['message.created', 'message.edited', 'message.deleted'],
+          chats: [CHAT],
+        },
+      ],
+      grants: {
+        send: [
+          { connection: 'c1', chat: 'VIP' },
+          { connection: 'c1', chat: CHAT },
+        ],
+        read: [{ connection: 'c1', chat: CHAT }],
+      },
+    }
+    const created = await r.api('POST', '/scripts', { name: 'distributor', source: src, manifest })
+    expect(created.status).toBe(201)
+    const check = await r.api('POST', '/scripts/distributor/check', {})
+    expect(check.json.errors).toBe(0)
+    await r.api('POST', '/scripts/distributor/activate', {})
+    const who = { id: '9', name: 'Zed' }
+    const img = (n: string) => ({
+      name: `${n}.jpg`,
+      mediaType: 'image/jpeg',
+      bytes: new Uint8Array([1]),
+      media: 'photo' as const,
+      ref: `f-${n}`,
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '201',
+      text: 'BUY BTC 60k',
+      groupId: 'g2',
+      attachments: [img('a')],
+    })
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '202',
+      text: '',
+      groupId: 'g2',
+      attachments: [img('b')],
+    })
+    await until('album copied', () => mock.copies.length === 1, 5000)
+    expect(mock.copies[0]).toMatchObject({ from: CHAT, ids: ['201', '202'], to: '-2002' })
+    const copyIds = mock.copies[0]?.messageIds as string[]
+    // the caption of the copy is replaced (on the copy of the captioned message)
+    await until('caption set', () => mock.edits.some((e) => e.caption === true))
+    expect(mock.edits.find((e) => e.caption)).toMatchObject({
+      messageId: copyIds[0],
+      text: '[VIP] BUY BTC 60k',
+    })
+
+    // a reply to the second photo follows under its copy, silently, as plain text
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '203',
+      text: 'TP1 hit *yes*',
+      replyTo: { messageId: '202' },
+    })
+    await until('reply followed', () => mock.sent.some((s) => s.message.text === 'TP1 hit *yes*'))
+    const reply = mock.sent.find((s) => s.message.text === 'TP1 hit *yes*')
+    expect(reply?.message).toMatchObject({ replyTo: copyIds[1], silent: true, format: 'plain' })
+
+    // an edit of the signal edits the copy (its caption: the copy has files)
+    await mock.userEdit({ chat: CHAT, kind: 'group', from: who, id: '201', text: 'BUY BTC 61k' })
+    await until('edit synced', () => mock.edits.some((e) => e.text === '[VIP] BUY BTC 61k'))
+    expect(mock.edits.find((e) => e.text === '[VIP] BUY BTC 61k')).toMatchObject({
+      messageId: copyIds[0],
+      caption: true,
+    })
+
+    // a sticker goes out again by its reference (no bytes), and the source gets a custom emoji
+    await mock.say({
+      chat: CHAT,
+      kind: 'group',
+      from: who,
+      id: '204',
+      text: '',
+      attachments: [
+        {
+          name: 's.webp',
+          mediaType: 'image/webp',
+          bytes: new Uint8Array([1]),
+          media: 'sticker',
+          ref: 'stk-1',
+          sticker: { emoji: '🚀', format: 'static' },
+        },
+      ],
+    })
+    await until('sticker sent', () => mock.sent.some((s) => s.message.files?.[0]?.ref === 'stk-1'))
+    const st = mock.sent.find((s) => s.message.files?.[0]?.ref === 'stk-1')
+    expect(st?.message.files?.[0]).toMatchObject({ media: 'sticker', ref: 'stk-1' })
+    expect(st?.message.files?.[0]?.bytes).toBeUndefined()
+    await until('reacted', () => mock.reactions.length === 1)
+    expect(mock.reactions[0]).toMatchObject({
+      messageId: '204',
+      customEmojiId: '5368324170671202286',
+    })
+
+    // deleting the album deletes both copies
+    await mock.userDelete({ chat: CHAT, kind: 'group', ids: ['201', '202'] })
+    await until('copies deleted', () => mock.deletes.length === 2)
+    expect(mock.deletes.map((d) => d.messageId).sort()).toEqual([...copyIds].sort())
+  }, 20_000)
+
+  test('copy refuses chats outside the grants; Check knows copy and forward', async () => {
+    const r = rig()
+    rigs.push(r)
+    await withVip(r)
+    const src = `export default async function (event, ctx) {
+  await ctx.channels.copy({ connection: 'c1', chat: '${CHAT}', messageIds: ['1'], toChat: 'Elsewhere' })
+}`
+    await r.api('POST', '/scripts', {
+      name: 'copier',
+      source: src,
+      manifest: {
+        triggers: [],
+        grants: {
+          send: [{ connection: 'c1', chat: 'VIP' }],
+          read: [{ connection: 'c1', chat: CHAT }],
+        },
+      },
+    })
+    const check = await r.api('POST', '/scripts/copier/check', {})
+    const problems = check.json.problems as Array<{ message: string }>
+    expect(problems.map((p) => p.message)).toContain('Chat "Elsewhere" is not in grants.send.')
+    const run = await r.api('POST', '/scripts/copier/dry-run', { event: { type: 'manual' } })
+    expect(JSON.stringify(run.json)).toContain('may not post to Elsewhere')
+  })
+})
+
 describe('more inputs and the team API', () => {
   test('an app event starts a script; ctx.api reads and changes through the API; its own events do not loop', async () => {
     const r = rig()

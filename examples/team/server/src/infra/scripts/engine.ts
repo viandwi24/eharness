@@ -54,7 +54,14 @@ import { type ChannelGateway, OWN_TYPED } from '../channels/gateway.ts'
 import type { RemoteEvent } from '../channels/types.ts'
 import { checkScript } from './check.ts'
 import { runScript } from './executor.ts'
-import { buildHost, HOST_METHODS, type HostContext, SIDE_EFFECTS } from './host.ts'
+import {
+  buildHost,
+  chatNames,
+  dryRunRefusal,
+  HOST_METHODS,
+  type HostContext,
+  SIDE_EFFECTS,
+} from './host.ts'
 import { prepareScript } from './prepare.ts'
 
 export interface ScriptEngineOptions {
@@ -363,7 +370,14 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
         event: input.event,
         host,
         limits: manifest.limits,
-        ...(input.dryRun ? { dryRun: { sideEffects: SIDE_EFFECTS } } : {}),
+        ...(input.dryRun
+          ? {
+              dryRun: {
+                sideEffects: SIDE_EFFECTS,
+                refusal: dryRunRefusal(manifest, input.channelEvent, o.gateway()),
+              },
+            }
+          : {}),
       })
       run = {
         ...base,
@@ -555,6 +569,17 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
           ? { messageId: String((e as { messageNativeId: string }).messageNativeId) }
           : {}),
       ...('emoji' in e ? { emoji: String((e as { emoji: string }).emoji) } : {}),
+      ...('customEmojiId' in e && typeof e.customEmojiId === 'string'
+        ? { customEmojiId: e.customEmojiId }
+        : {}),
+      ...('messageNativeIds' in e
+        ? {
+            messageIds: (e as { messageNativeIds: string[] }).messageNativeIds.map(String),
+            ...((e as { messageNativeIds: string[] }).messageNativeIds[0] === undefined
+              ? {}
+              : { messageId: String((e as { messageNativeIds: string[] }).messageNativeIds[0]) }),
+          }
+        : {}),
     }
   }
 
@@ -625,7 +650,12 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
     },
     types: () => scriptTypes(HOST_METHODS),
     checkCode: (source, manifest) =>
-      checkScript({ source, manifest, types: scriptTypes(HOST_METHODS) }),
+      checkScript({
+        source,
+        manifest,
+        types: scriptTypes(HOST_METHODS),
+        chatNames: (connection, chat) => chatNames(o.gateway(), connection, chat),
+      }),
     methods: (): readonly HostMethodDoc[] => HOST_METHODS,
 
     onChannelEvent(info) {

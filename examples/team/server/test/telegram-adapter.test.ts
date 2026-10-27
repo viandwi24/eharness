@@ -592,6 +592,87 @@ describe('outbound', () => {
     })
     expect(fake.callsOf('sendDocument')).toHaveLength(1)
   })
+
+  test('media kinds: a sticker by its file id (no upload), a voice note, a GIF; every album id comes back', async () => {
+    const { fake, adapter, start } = setup()
+    await start()
+    const sticker = await adapter.send(ref(), {
+      text: '',
+      files: [{ name: 's', mediaType: 'image/webp', media: 'sticker', ref: 'CAAC-sticker' }],
+    })
+    expect(sticker.nativeId).toMatch(/^\d+$/)
+    const s = fake.callsOf('sendSticker')[0]
+    expect(s?.params).toMatchObject({ sticker: 'CAAC-sticker' })
+    expect(s?.files).toHaveLength(0)
+    const ogg = { name: 'v.ogg', mediaType: 'audio/ogg', bytes: new Uint8Array([1]) }
+    await adapter.send(ref(), { text: 'listen', files: [{ ...ogg, media: 'voice' }] })
+    expect(fake.callsOf('sendVoice')[0]?.params).toMatchObject({ caption: 'listen' })
+    await adapter.send(ref(), {
+      text: '',
+      files: [{ name: 'g.gif', mediaType: 'image/gif', bytes: new Uint8Array([1]) }],
+    })
+    expect(fake.callsOf('sendAnimation')).toHaveLength(1)
+    const png = { name: 'a.png', mediaType: 'image/png', bytes: new Uint8Array([1]) }
+    const album = await adapter.send(ref(), {
+      text: 'three',
+      files: [png, { ...png, name: 'b.png' }, { name: 'c', mediaType: 'video/mp4', ref: 'vid-1' }],
+    })
+    expect(album.nativeIds).toHaveLength(3)
+    expect(album.nativeId).toBe(album.nativeIds?.[0] as string)
+  })
+
+  test('a sticker takes no caption: the text follows as its own message; plain text is escaped, not formatted', async () => {
+    const { fake, adapter, start } = setup()
+    await start()
+    const sent = await adapter.send(ref(), {
+      text: 'from **#1**',
+      format: 'plain',
+      files: [{ name: 's', mediaType: 'image/webp', media: 'sticker', ref: 'CAAC-1' }],
+    })
+    expect(sent.nativeIds).toHaveLength(2)
+    expect(fake.callsOf('sendSticker')[0]?.params.caption).toBeUndefined()
+    expect(fake.callsOf('sendMessage')[0]?.params).toMatchObject({ text: 'from **#1**' })
+    await adapter.send(ref(), { text: '<b>bold</b> & co', format: 'html' })
+    expect(fake.callsOf('sendMessage')[1]?.params).toMatchObject({
+      text: '<b>bold</b> & co',
+      parse_mode: 'HTML',
+    })
+  })
+
+  test('copy keeps an album together, forward too; a caption edit and a bulk delete', async () => {
+    const { fake, adapter, start } = setup()
+    await start()
+    const ids = await adapter.copy?.(ref('-1001'), ['12', '11'], ref('-2002', '7'), {
+      silent: true,
+    })
+    expect(ids).toHaveLength(2)
+    expect(fake.callsOf('copyMessages')[0]?.params).toMatchObject({
+      chat_id: -2002,
+      from_chat_id: -1001,
+      message_ids: [11, 12],
+      message_thread_id: 7,
+      disable_notification: true,
+    })
+    const one = await adapter.copy?.(ref('-1001'), ['11'], ref('-2002'), { replyTo: '5' })
+    expect(one).toHaveLength(1)
+    expect(fake.callsOf('copyMessage')[0]?.params).toMatchObject({
+      reply_parameters: { message_id: 5, allow_sending_without_reply: true },
+    })
+    await adapter.copy?.(ref('-1001'), ['11', '12'], ref('-2002'), { forward: true })
+    expect(fake.callsOf('forwardMessages')).toHaveLength(1)
+    await adapter.editCaption?.(ref('-2002'), '40', 'New **caption**')
+    expect(fake.callsOf('editMessageCaption')[0]?.params).toMatchObject({
+      message_id: 40,
+      caption: 'New <b>caption</b>',
+      parse_mode: 'HTML',
+    })
+    await adapter.deleteMany?.(ref('-2002'), ['40', '41'])
+    expect(fake.callsOf('deleteMessages')[0]?.params).toMatchObject({ message_ids: [40, 41] })
+    await adapter.react?.(ref('-2002'), '40', '👍', { customEmojiId: '123' })
+    expect(fake.callsOf('setMessageReaction')[0]?.params).toMatchObject({
+      reaction: [{ type: 'custom_emoji', custom_emoji_id: '123' }],
+    })
+  })
 })
 
 describe('files in', () => {

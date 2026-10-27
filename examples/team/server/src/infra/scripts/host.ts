@@ -36,6 +36,7 @@ import { type HostMethodDoc, KV_LIMITS, type Script } from '../../domain/scripts
 import type { ChannelGateway, ResolvedTarget } from '../channels/gateway.ts'
 import type { LogMessage } from '../channels/messages.ts'
 import { nativeToolName } from '../channels/policy.ts'
+import type { MediaKind, OutboundFile, TextFormat } from '../channels/types.ts'
 import type { HostHandler } from './executor.ts'
 
 const ROW = '{ id: string; version: number; data: Record<string, unknown> }'
@@ -45,38 +46,60 @@ const FILTER = 'Record<string, unknown>'
 export const HOST_METHODS: readonly HostMethodDoc[] = [
   {
     name: 'channels.send',
-    args: '{ connection: string; chat: string; topic?: string; text?: string; replyTo?: string; files?: string[]; mentions?: string[] }',
+    args: "{ connection: string; chat: string; topic?: string; text?: string; format?: 'markdown' | 'html' | 'plain'; replyTo?: string; files?: string[]; media?: Array<{ file?: string; ref?: string; kind?: 'photo' | 'video' | 'animation' | 'video_note' | 'voice' | 'audio' | 'document' | 'sticker'; name?: string; mediaType?: string }>; silent?: boolean; linkPreview?: boolean; mentions?: string[]; copyOf?: { chat: string; topic?: string; messageId: string } }",
     returns: '{ messageIds: string[] }',
-    doc: 'Post to a chat listed in grants.send: text, a reply to a message (replyTo = its id), library files (paths), mentions of team members.',
+    doc: 'Post to a chat listed in grants.send: text (Markdown by default; format html/plain), a reply (replyTo = message id), files (library paths) or media (a library file, or ref = an attachment ref from an event, sent again without a download; kind = photo, video, animation, voice, video_note, sticker, audio, document). Several photos/videos go out as one album; messageIds lists every message. silent = no notification. copyOf remembers this post as a copy of that message (see channels.copies).',
     sideEffect: true,
   },
   {
     name: 'channels.reply',
-    args: '{ text?: string; files?: string[]; quote?: boolean }',
+    args: "{ text?: string; format?: 'markdown' | 'html' | 'plain'; files?: string[]; media?: Array<{ file?: string; ref?: string; kind?: 'photo' | 'video' | 'animation' | 'video_note' | 'voice' | 'audio' | 'document' | 'sticker'; name?: string; mediaType?: string }>; silent?: boolean; quote?: boolean }",
     returns: '{ messageIds: string[] }',
     doc: 'Answer in the chat of the event that started this run, as a reply to that message (quote: false = a plain message); grants.reply.',
     sideEffect: true,
   },
   {
     name: 'channels.react',
-    args: '{ connection: string; chat: string; topic?: string; messageId: string; emoji: string }',
+    args: '{ connection: string; chat: string; topic?: string; messageId: string; emoji: string; customEmojiId?: string }',
     returns: '{ ok: true }',
-    doc: 'Put an emoji reaction on a message in a chat listed in grants.send.',
+    doc: 'Put an emoji reaction on a message in a chat listed in grants.send (customEmojiId = a custom emoji where allowed; emoji is the fallback).',
     sideEffect: true,
   },
   {
     name: 'channels.edit',
-    args: '{ connection: string; chat: string; topic?: string; messageId: string; text: string }',
+    args: "{ connection: string; chat: string; topic?: string; messageId: string; text: string; format?: 'markdown' | 'html' | 'plain' }",
     returns: '{ ok: true }',
-    doc: 'Edit a message the connection sent, in a chat listed in grants.send.',
+    doc: 'Edit the text (or the caption of a photo, video or file) of a message the connection sent, in a chat listed in grants.send.',
     sideEffect: true,
   },
   {
     name: 'channels.delete',
-    args: '{ connection: string; chat: string; topic?: string; messageId: string }',
-    returns: '{ ok: true }',
-    doc: 'Delete a message in a chat listed in grants.send.',
+    args: '{ connection: string; chat: string; topic?: string; messageId?: string; messageIds?: string[] }',
+    returns: '{ ok: true; deleted: number }',
+    doc: 'Delete a message (or up to 100 with messageIds, e.g. a whole album) in a chat listed in grants.send.',
     sideEffect: true,
+  },
+  {
+    name: 'channels.copy',
+    args: "{ connection: string; chat: string; topic?: string; messageIds: string[]; toChat: string; toTopic?: string; caption?: string; format?: 'markdown' | 'html' | 'plain'; silent?: boolean; replyTo?: string; dropCaptions?: boolean }",
+    returns: '{ messageIds: string[] }',
+    doc: 'Copy messages (an album: all its ids) from a chat in grants.read or grants.send to a chat in grants.send of the same connection, by reference: no download, albums kept, formatting kept. caption replaces the caption; replyTo answers a message in the target chat. Each copy is remembered (channels.copies).',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.forward',
+    args: '{ connection: string; chat: string; topic?: string; messageIds: string[]; toChat: string; toTopic?: string; silent?: boolean }',
+    returns: '{ messageIds: string[] }',
+    doc: 'Forward messages (shows the original sender) like channels.copy; remembered as copies too.',
+    sideEffect: true,
+  },
+  {
+    name: 'channels.copies',
+    args: '{ connection: string; chat: string; topic?: string; messageId: string }',
+    returns:
+      '{ copies: Array<{ chat: string; topic?: string; messageId: string }>; source?: { chat: string; topic?: string; messageId: string } }',
+    doc: 'What this script copied a message to (copies), or, for a copy, the message it was copied from (source). Use it to answer, edit or delete under each copy.',
+    sideEffect: false,
   },
   {
     name: 'channels.pin',
@@ -88,7 +111,7 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
   {
     name: 'channels.history',
     args: '{ connection: string; chat: string; topic?: string; limit?: number; before?: string }',
-    returns: `{ messages: Array<${'{ id: string; at: number; self: boolean; from?: { id: string; name?: string; username?: string }; text: string; replyTo?: { messageId: string }; attachments: Array<{ id: string; kind?: string; name?: string; mediaType?: string; size?: number }>; editedAt?: number; deleted?: true }'}> }`,
+    returns: `{ messages: Array<${'{ id: string; at: number; self: boolean; from?: { id: string; name?: string; username?: string }; text: string; replyTo?: { messageId: string }; attachments: Array<{ id: string; kind?: string; media?: string; name?: string; mediaType?: string; size?: number; duration?: number; sticker?: { emoji?: string; setName?: string; format: string }; ref?: string }>; groupId?: string; editedAt?: number; deleted?: true }'}> }`,
     doc: 'Stored messages of a chat in grants.read or grants.send, oldest first (limit default 20, at most 200; before = an older page).',
     sideEffect: false,
   },
@@ -96,7 +119,7 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
     name: 'channels.message',
     args: '{ connection: string; chat: string; topic?: string; messageId: string }',
     returns:
-      '{ id: string; at: number; self: boolean; from?: { id: string; name?: string; username?: string }; text: string; replyTo?: { messageId: string }; attachments: Array<{ id: string; name?: string; mediaType?: string }> } | null',
+      '{ id: string; at: number; self: boolean; from?: { id: string; name?: string; username?: string }; text: string; replyTo?: { messageId: string }; attachments: Array<{ id: string; kind?: string; media?: string; name?: string; mediaType?: string; size?: number; ref?: string }>; groupId?: string } | null',
     doc: 'One stored message by its id (e.g. the message a reply answers), or null.',
     sideEffect: false,
   },
@@ -324,6 +347,29 @@ const FETCH_TIMEOUT_MS = 10_000
 const FETCH_BODY_CHARS = 1_000_000
 const MAX_TEXT = 4_000
 const MAX_FILE_BYTES = 20 * 1024 * 1024
+const MEDIA_KINDS = [
+  'photo',
+  'video',
+  'animation',
+  'video_note',
+  'voice',
+  'audio',
+  'document',
+  'sticker',
+] as const
+/** A media type for a file sent by reference (the platform knows the real one). */
+const defaultMediaType = (kind: MediaKind | undefined): string =>
+  kind === 'photo'
+    ? 'image/jpeg'
+    : kind === 'sticker'
+      ? 'image/webp'
+      : kind === 'video' || kind === 'animation' || kind === 'video_note'
+        ? 'video/mp4'
+        : kind === 'voice'
+          ? 'audio/ogg'
+          : kind === 'audio'
+            ? 'audio/mpeg'
+            : 'application/octet-stream'
 const MAX_INSTRUCTION = 2_000
 
 class ScriptCallError extends Error {}
@@ -352,6 +398,163 @@ const rowOut = (r: { id: string; version: number; data: Record<string, unknown> 
 })
 
 /** The host side of `ctx` for one run. */
+/**
+ * The names a chat goes by (its platform id, its title, our node id), so a grant written with the
+ * title matches a call that names the chat by id and the other way round.
+ */
+export function chatNames(
+  gw: ChannelGateway | undefined,
+  connection: string,
+  chat: string,
+): string[] {
+  const want = chat.toLowerCase()
+  const out = [want]
+  if (gw === undefined) return out
+  try {
+    const n = gw.nodes
+      .list(connection)
+      .find(
+        (x) =>
+          x.nativeId.toLowerCase() === want ||
+          x.id.toLowerCase() === want ||
+          (x.title ?? '').toLowerCase() === want,
+      )
+    if (n !== undefined)
+      out.push(n.nativeId.toLowerCase(), n.id.toLowerCase(), (n.title ?? '').toLowerCase())
+  } catch {
+    // unknown connection: the name as written
+  }
+  return out.filter((x) => x !== '')
+}
+
+/** Whether a chat (and topic) is in a grant list. */
+function granted(
+  gw: ChannelGateway | undefined,
+  list: readonly ChatGrant[],
+  connection: string,
+  chat: string,
+  topic: string,
+): boolean {
+  const mine = list.filter((x) => x.connection === connection)
+  if (mine.length === 0) return false
+  if (mine.some((x) => x.chat === '*')) return true
+  const names = chatNames(gw, connection, chat)
+  return mine.some(
+    (x) =>
+      names.includes(x.chat.toLowerCase()) && (x.topic ?? '').toLowerCase() === topic.toLowerCase(),
+  )
+}
+
+/**
+ * A dry run performs no side effect, but a call the real run would refuse for a missing grant fails
+ * the same way: the Test panel shows the refusal instead of a misleading success. Only what the
+ * arguments and the manifest decide is checked (not whether a chat or file exists).
+ */
+export function dryRunRefusal(
+  m: ScriptManifest,
+  channelEvent: ScriptChannelEvent | undefined,
+  gw?: ChannelGateway,
+): (method: string, args: unknown) => string | undefined {
+  const g = m.grants
+  const rec = (x: unknown): Record<string, unknown> =>
+    typeof x === 'object' && x !== null && !Array.isArray(x) ? (x as Record<string, unknown>) : {}
+  const s = (x: unknown): string => (typeof x === 'string' ? x : '')
+  const inList = (list: readonly ChatGrant[], conn: string, chat: string, topic: string): boolean =>
+    granted(gw, list, conn, chat, topic)
+  const where = (chat: string, topic: string, conn: string): string =>
+    `${chat}${topic ? ` / ${topic}` : ''} on ${conn}`
+  return (method, args) => {
+    const o = rec(args)
+    const conn = s(o.connection)
+    const chat = s(o.chat)
+    const topic = s(o.topic)
+    switch (method) {
+      case 'channels.send':
+      case 'channels.edit':
+      case 'channels.delete':
+      case 'channels.pin':
+      case 'channels.react':
+        return inList(g.send, conn, chat, topic)
+          ? undefined
+          : `this script may not post to ${where(chat, topic, conn)}: add it to grants.send`
+      case 'channels.copy':
+      case 'channels.forward': {
+        if (!inList(g.send, conn, chat, topic) && !inList(g.read, conn, chat, topic))
+          return `this script may not read ${where(chat, topic, conn)}: add it to grants.read`
+        const to = s(o.toChat)
+        const toTopic = s(o.toTopic)
+        return inList(g.send, conn, to, toTopic)
+          ? undefined
+          : `this script may not post to ${where(to, toTopic, conn)}: add it to grants.send`
+      }
+      case 'channels.download':
+        return inList(g.send, conn, chat, topic) || inList(g.read, conn, chat, topic)
+          ? undefined
+          : `this script may not read ${where(chat, topic, conn)}: add it to grants.read`
+      case 'channels.reply':
+        if (!g.reply) return 'this script may not reply in chats: turn on grants.reply'
+        return channelEvent?.chat === undefined
+          ? 'ctx.channels.reply works only in a run started by a chat event'
+          : undefined
+      case 'channels.action': {
+        const name = s(o.name)
+        return g.actions.some((a) => a.connection === conn && (a.name === name || a.name === '*'))
+          ? undefined
+          : `this script may not run ${name} on ${conn}: add { connection, name } to grants.actions`
+      }
+      case 'library.write':
+      case 'library.delete':
+        return canWritePath(g, s(o.path))
+          ? undefined
+          : `this script may not change ${s(o.path)}: add it to grants.libraryWrite`
+      case 'library.move':
+        return canWritePath(g, s(o.from)) && canWritePath(g, s(o.to))
+          ? undefined
+          : `this script may not move ${s(o.from)} to ${s(o.to)}: both must be in grants.libraryWrite`
+      case 'tables.insert':
+      case 'tables.update':
+      case 'tables.delete':
+        return canWriteTable(g, s(o.table))
+          ? undefined
+          : `this script may not change table ${s(o.table)}: add it to grants.tablesWrite`
+      case 'http.request': {
+        let host = ''
+        try {
+          host = new URL(s(o.url)).hostname
+        } catch {
+          return 'ctx.http.request: url is not a valid URL'
+        }
+        return canFetchHost(g, host)
+          ? undefined
+          : `this script may not call ${host}: add it to grants.http`
+      }
+      case 'agent.wake':
+        return g.wake.length > 0
+          ? undefined
+          : 'this script may not wake agents: grants.wake is empty'
+      case 'programs.run':
+        return g.programs.length > 0
+          ? undefined
+          : 'this script may not run programs: grants.programs is empty'
+      case 'api.request': {
+        const path = apiPath(s(o.path))
+        if (path === undefined)
+          return `ctx.api.request: "${s(o.path).slice(0, 100)}" is not a clean path`
+        if (apiDenied(path)) return `ctx.api.request: ${path} is never callable from a script`
+        return canCallApi(g, s(o.method) || 'POST', path)
+          ? undefined
+          : `this script may not call ${s(o.method).toUpperCase()} ${path}: add it to grants.api`
+      }
+      case 'notify':
+        return g.notify
+          ? undefined
+          : 'this script may not send notifications: turn on grants.notify'
+      default:
+        return undefined
+    }
+  }
+}
+
 export function buildHost(c: HostContext): Record<string, HostHandler> {
   const g = c.manifest.grants
   const by = `script:${c.script.name}`
@@ -451,12 +654,7 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
   const placeText = (p: Place): string =>
     `${p.chat}${p.topic ? ` / ${p.topic}` : ''} on ${p.connection}`
   const inList = (list: readonly ChatGrant[], p: Place): boolean =>
-    list.some(
-      (x) =>
-        x.connection === p.connection &&
-        (x.chat === '*' || x.chat.toLowerCase() === p.chat.toLowerCase()) &&
-        (x.chat === '*' || (x.topic ?? '').toLowerCase() === (p.topic ?? '').toLowerCase()),
-    )
+    granted(c.gateway(), list, p.connection, p.chat, p.topic ?? '')
   const mayWrite = (p: Place): boolean => inList(g.send, p)
   const mayRead = (p: Place): boolean => inList(g.send, p) || inList(g.read, p)
   const sameName = (
@@ -482,28 +680,112 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
   })
   /** Files from library paths: readable by the grants, or downloaded by this run. */
   const downloaded = new Map<string, string>()
-  const filesArg = async (
-    o: Record<string, unknown>,
-    label: string,
-  ): Promise<Array<{ name: string; mediaType: string; bytes: Uint8Array }>> => {
-    if (o.files === undefined) return []
-    if (!Array.isArray(o.files) || o.files.length > 10)
-      return refuse(`ctx.${label}: files is a list of at most 10 library paths`)
-    const out: Array<{ name: string; mediaType: string; bytes: Uint8Array }> = []
-    for (const p of o.files) {
-      if (typeof p !== 'string' || p === '') return refuse(`ctx.${label}: files are library paths`)
-      if (!downloaded.has(p) && !canReadPath(g, p))
-        return refuse(`this script may not read ${p}: add it to grants.libraryRead`)
-      const f = (await gw().files.read(p)) ?? refuse(`ctx.${label}: no such file ${p}`)
-      if (f.bytes.byteLength > MAX_FILE_BYTES)
-        return refuse(`ctx.${label}: ${p} is larger than ${MAX_FILE_BYTES} bytes`)
-      out.push({
-        name: downloaded.get(p) ?? p.split('/').pop() ?? 'file',
-        mediaType: f.mediaType,
-        bytes: f.bytes,
-      })
+  const libraryFile = async (p: unknown, label: string): Promise<OutboundFile> => {
+    if (typeof p !== 'string' || p === '') return refuse(`ctx.${label}: files are library paths`)
+    if (!downloaded.has(p) && !canReadPath(g, p))
+      return refuse(`this script may not read ${p}: add it to grants.libraryRead`)
+    const f = (await gw().files.read(p)) ?? refuse(`ctx.${label}: no such file ${p}`)
+    if (f.bytes.byteLength > MAX_FILE_BYTES)
+      return refuse(`ctx.${label}: ${p} is larger than ${MAX_FILE_BYTES} bytes`)
+    return {
+      name: downloaded.get(p) ?? p.split('/').pop() ?? 'file',
+      mediaType: f.mediaType,
+      bytes: f.bytes,
     }
+  }
+  /** `files` (library paths) and `media` (a library file or a platform ref, with a kind), in order. */
+  const filesArg = async (o: Record<string, unknown>, label: string): Promise<OutboundFile[]> => {
+    const out: OutboundFile[] = []
+    if (o.files !== undefined) {
+      if (!Array.isArray(o.files) || o.files.length > 10)
+        return refuse(`ctx.${label}: files is a list of at most 10 library paths`)
+      for (const p of o.files) out.push(await libraryFile(p, label))
+    }
+    if (o.media !== undefined) {
+      if (!Array.isArray(o.media) || o.media.length > 10)
+        return refuse(`ctx.${label}: media is a list of at most 10 items`)
+      for (const raw of o.media) {
+        if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+          return refuse(
+            `ctx.${label}: each media item is { file } or { ref } with an optional kind`,
+          )
+        const m = raw as Record<string, unknown>
+        const kind = m.kind
+        if (kind !== undefined && !(MEDIA_KINDS as readonly unknown[]).includes(kind))
+          return refuse(`ctx.${label}: kind is one of ${MEDIA_KINDS.join(', ')}`)
+        const name = typeof m.name === 'string' && m.name !== '' ? m.name.slice(0, 200) : undefined
+        if (typeof m.file === 'string') {
+          const f = await libraryFile(m.file, label)
+          out.push({
+            ...f,
+            ...(name === undefined ? {} : { name }),
+            ...(kind === undefined ? {} : { media: kind as MediaKind }),
+          })
+        } else if (typeof m.ref === 'string' && m.ref !== '' && m.ref.length <= 500) {
+          const mediaType =
+            typeof m.mediaType === 'string' && m.mediaType !== ''
+              ? m.mediaType.toLowerCase()
+              : defaultMediaType(kind as MediaKind | undefined)
+          out.push({
+            name: name ?? `${(kind as string | undefined) ?? 'file'}`,
+            mediaType,
+            ref: m.ref,
+            ...(kind === undefined ? {} : { media: kind as MediaKind }),
+          })
+        } else return refuse(`ctx.${label}: a media item needs file (a library path) or ref`)
+      }
+    }
+    if (out.length > 10) return refuse(`ctx.${label}: at most 10 files and media items together`)
     return out
+  }
+  const formatArg = (o: Record<string, unknown>, label: string): TextFormat | undefined => {
+    if (o.format === undefined) return undefined
+    if (o.format !== 'markdown' && o.format !== 'html' && o.format !== 'plain')
+      return refuse(`ctx.${label}: format is 'markdown', 'html' or 'plain'`)
+    return o.format
+  }
+  const idsArg = (o: Record<string, unknown>, label: string, max = 100): string[] => {
+    const raw = o.messageIds ?? (o.messageId === undefined ? undefined : [o.messageId])
+    if (
+      !Array.isArray(raw) ||
+      raw.length === 0 ||
+      raw.length > max ||
+      raw.some((x) => (typeof x !== 'string' && typeof x !== 'number') || String(x) === '')
+    )
+      return refuse(`ctx.${label}: messageIds is a list of 1 to ${max} message ids`)
+    return raw.map(String)
+  }
+  /** A node as a script names it: the chat id and, for a topic, its title. */
+  const placeOfNode = (nodeId: string): { chat: string; topic?: string } | undefined => {
+    const node = gw().nodes.get(nodeId)
+    if (node === undefined) return undefined
+    const room = gw().roomOf(node)
+    return room.id === node.id
+      ? { chat: node.nativeId }
+      : { chat: room.nativeId, topic: node.title ?? node.nativeId }
+  }
+  const remember = (
+    connectionId: string,
+    sourceNode: string,
+    sourceIds: string[],
+    targetNode: string,
+    targetIds: string[],
+  ): void => {
+    const pairs =
+      sourceIds.length === targetIds.length
+        ? sourceIds.map((s, i) => [s, targetIds[i] as string] as const)
+        : sourceIds.flatMap((s) => targetIds.map((x) => [s, x] as const))
+    c.deps.scripts.copiesAdd(
+      c.script.id,
+      pairs.slice(0, 200).map(([sourceId, targetId]) => ({
+        connectionId,
+        sourceNode,
+        sourceId,
+        targetNode,
+        targetId,
+      })),
+      c.deps.clock.now(),
+    )
   }
   const mentionsArg = (o: Record<string, unknown>, connection: string): string[] => {
     if (o.mentions === undefined) return []
@@ -511,6 +793,43 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       return refuse('ctx.channels.send: mentions is a list of team member names or @usernames')
     const r = gw().resolveMentions(connection, o.mentions as string[])
     return 'error' in r ? refuse(`ctx.channels.send: ${r.error}`) : r.ids
+  }
+  const copyOrForward = async (
+    args: unknown,
+    label: string,
+    forward: boolean,
+  ): Promise<{ messageIds: string[] }> => {
+    const o = obj(args, label)
+    const from = chatArg(o, label)
+    if (!mayRead(from))
+      return refuse(`this script may not read ${placeText(from)}: add it to grants.read`)
+    const toTopic = optStr(o, 'toTopic')
+    const to = {
+      connection: from.connection,
+      chat: str(o, 'toChat', label, 200),
+      ...(toTopic === undefined ? {} : { topic: toTopic }),
+    }
+    if (!mayWrite(to))
+      return refuse(`this script may not post to ${placeText(to)}: add it to grants.send`)
+    const ids = idsArg(o, label)
+    const caption = forward ? undefined : typeof o.caption === 'string' ? o.caption : undefined
+    if (caption !== undefined && caption.length > 1024)
+      return refuse(`ctx.${label}: caption is at most 1024 characters`)
+    const format = formatArg(o, label)
+    const replyTo = forward ? undefined : optStr(o, 'replyTo')
+    const source = targetOf(from)
+    const target = targetOf(to)
+    const messageIds = await gw().copy(source, ids, target, {
+      ...(forward ? { forward: true } : {}),
+      ...(o.silent === true ? { silent: true } : {}),
+      ...(replyTo === undefined ? {} : { replyTo }),
+      ...(!forward && o.dropCaptions === true ? { dropCaptions: true } : {}),
+      ...(caption === undefined ? {} : { caption }),
+      ...(format === undefined ? {} : { format }),
+    })
+    const sorted = [...ids].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b))
+    remember(source.config.connectionId, source.node.id, sorted, target.node.id, messageIds)
+    return { messageIds }
   }
   const messageOut = (m: LogMessage) => ({
     id: m.nativeId,
@@ -527,13 +846,9 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
         }),
     text: m.text,
     ...(m.replyTo === undefined ? {} : { replyTo: { messageId: m.replyTo.messageId } }),
-    attachments: m.attachments.map((a) => ({
-      id: a.id,
-      ...(a.kind === undefined ? {} : { kind: a.kind }),
-      ...(a.name === undefined ? {} : { name: a.name }),
-      ...(a.mediaType === undefined ? {} : { mediaType: a.mediaType }),
-      ...(a.size === undefined ? {} : { size: a.size }),
-    })),
+    attachments: m.attachments.map((a) => ({ ...a })),
+    ...(m.groupId === undefined ? {} : { groupId: m.groupId }),
+    ...(m.structured === undefined ? {} : { content: m.structured }),
     ...(m.editedAt === undefined ? {} : { editedAt: m.editedAt }),
     ...(m.deletedAt === undefined ? {} : { deleted: true }),
   })
@@ -553,14 +868,34 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       const t = targetOf(place)
       const replyTo = optStr(o, 'replyTo')
       const mentions = mentionsArg(o, place.connection)
-      return {
-        messageIds: await gw().post(t, {
-          text,
-          ...(mentions.length ? { mentions } : {}),
-          ...(replyTo === undefined ? {} : { replyTo }),
-          ...(files.length ? { files } : {}),
-        }),
+      const format = formatArg(o, 'channels.send')
+      let copyOf: { node: string; messageId: string } | undefined
+      if (o.copyOf !== undefined) {
+        const co = obj(o.copyOf, 'channels.send copyOf')
+        const from = {
+          connection: place.connection,
+          chat: str(co, 'chat', 'channels.send copyOf', 200),
+          ...(optStr(co, 'topic') === undefined ? {} : { topic: optStr(co, 'topic') as string }),
+        }
+        if (!mayRead(from))
+          return refuse(`this script may not read ${placeText(from)}: add it to grants.read`)
+        copyOf = {
+          node: targetOf(from).node.id,
+          messageId: str(co, 'messageId', 'channels.send copyOf', 100),
+        }
       }
+      const messageIds = await gw().post(t, {
+        text,
+        ...(mentions.length ? { mentions } : {}),
+        ...(replyTo === undefined ? {} : { replyTo }),
+        ...(files.length ? { files } : {}),
+        ...(o.silent === true ? { silent: true } : {}),
+        ...(format === undefined ? {} : { format }),
+        ...(o.linkPreview === true ? { linkPreview: true } : {}),
+      })
+      if (copyOf !== undefined)
+        remember(t.config.connectionId, copyOf.node, [copyOf.messageId], t.node.id, messageIds)
+      return { messageIds }
     },
     'channels.reply': async (args) => {
       const o = obj(args, 'channels.reply')
@@ -581,11 +916,14 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
         { trusted: true },
       )
       const quote = o.quote !== false
+      const format = formatArg(o, 'channels.reply')
       return {
         messageIds: await gw().post(t, {
           text,
           ...(quote && e.messageId !== undefined ? { replyTo: e.messageId } : {}),
           ...(files.length ? { files } : {}),
+          ...(o.silent === true ? { silent: true } : {}),
+          ...(format === undefined ? {} : { format }),
         }),
       }
     },
@@ -595,13 +933,24 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       if (!mayWrite(place))
         return refuse(`this script may not react in ${placeText(place)}: add it to grants.send`)
       const messageId = str(o, 'messageId', 'channels.react', 100)
-      const emoji = str(o, 'emoji', 'channels.react', 20)
+      const emoji = typeof o.emoji === 'string' ? o.emoji.slice(0, 20) : ''
+      const customEmojiId = optStr(o, 'customEmojiId')
+      if (emoji === '' && customEmojiId === undefined)
+        return refuse('ctx.channels.react: emoji (or customEmojiId) is needed')
       const t = targetOf(place)
       const caps = gw().capabilities(t.config.connectionId, t.node)
       if (caps?.reactions !== true || t.adapter.react === undefined)
         return refuse(`${t.adapter.platform} cannot react here`)
       const react = t.adapter.react
-      await gw().outbound.run(laneOf(t), () => react.call(t.adapter, t.view, messageId, emoji))
+      await gw().outbound.run(laneOf(t), () =>
+        react.call(
+          t.adapter,
+          t.view,
+          messageId,
+          emoji,
+          customEmojiId === undefined ? undefined : { customEmojiId },
+        ),
+      )
       return { ok: true }
     },
     'channels.edit': async (args) => {
@@ -610,13 +959,24 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       if (!mayWrite(place))
         return refuse(`this script may not edit in ${placeText(place)}: add it to grants.send`)
       const messageId = str(o, 'messageId', 'channels.edit', 100)
-      const text = str(o, 'text', 'channels.edit', MAX_TEXT)
+      const text = typeof o.text === 'string' ? o.text : refuse('ctx.channels.edit: text is needed')
+      if (text.length > MAX_TEXT)
+        return refuse(`ctx.channels.edit: text is longer than ${MAX_TEXT} characters`)
+      const format = formatArg(o, 'channels.edit')
       const t = targetOf(place)
       const caps = gw().capabilities(t.config.connectionId, t.node)
       if (caps?.edit !== true || t.adapter.edit === undefined)
         return refuse(`${t.adapter.platform} cannot edit messages here`)
-      const edit = t.adapter.edit
-      await gw().outbound.run(laneOf(t), () => edit.call(t.adapter, t.view, messageId, text))
+      const stored = await gw().log.find(t.node.id, messageId)
+      // a message with a file: its caption (an empty text clears it)
+      const caption =
+        stored !== undefined && stored.attachments.length > 0 && t.adapter.editCaption !== undefined
+      const edit = caption ? t.adapter.editCaption : t.adapter.edit
+      if (edit === undefined) return refuse(`${t.adapter.platform} cannot edit messages here`)
+      if (!caption && text.trim() === '') return refuse('ctx.channels.edit: text is needed')
+      await gw().outbound.run(laneOf(t), () =>
+        edit.call(t.adapter, t.view, messageId, text, format),
+      )
       await gw().log.recordEdit(t.node.id, messageId, { text }, Date.now())
       return { ok: true }
     },
@@ -625,15 +985,42 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       const place = chatArg(o, 'channels.delete')
       if (!mayWrite(place))
         return refuse(`this script may not delete in ${placeText(place)}: add it to grants.send`)
-      const messageId = str(o, 'messageId', 'channels.delete', 100)
+      const ids = idsArg(o, 'channels.delete')
       const t = targetOf(place)
       const caps = gw().capabilities(t.config.connectionId, t.node)
       if (caps?.delete !== true || t.adapter.delete === undefined)
         return refuse(`${t.adapter.platform} cannot delete messages here`)
       const del = t.adapter.delete
-      await gw().outbound.run(laneOf(t), () => del.call(t.adapter, t.view, messageId))
-      gw().log.recordDeleted(t.node.id, [messageId], Date.now(), { redact: t.scope.redactOnDelete })
-      return { ok: true }
+      const many = t.adapter.deleteMany
+      if (ids.length > 1 && many !== undefined)
+        await gw().outbound.run(laneOf(t), () => many.call(t.adapter, t.view, ids))
+      else
+        for (const id of ids)
+          await gw().outbound.run(laneOf(t), () => del.call(t.adapter, t.view, id))
+      gw().log.recordDeleted(t.node.id, ids, Date.now(), { redact: t.scope.redactOnDelete })
+      return { ok: true, deleted: ids.length }
+    },
+    'channels.copy': async (args) => copyOrForward(args, 'channels.copy', false),
+    'channels.forward': async (args) => copyOrForward(args, 'channels.forward', true),
+    'channels.copies': async (args) => {
+      const o = obj(args, 'channels.copies')
+      const place = chatArg(o, 'channels.copies')
+      if (!mayRead(place))
+        return refuse(`this script may not read ${placeText(place)}: add it to grants.read`)
+      const messageId = str(o, 'messageId', 'channels.copies', 100)
+      const t = targetOf(place)
+      const copies = c.deps.scripts.copiesOf(c.script.id, t.node.id, messageId).flatMap((r) => {
+        const where = placeOfNode(r.targetNode)
+        return where === undefined ? [] : [{ ...where, messageId: r.targetId }]
+      })
+      const src = c.deps.scripts.copySource(c.script.id, t.node.id, messageId)
+      const where = src === undefined ? undefined : placeOfNode(src.sourceNode)
+      return {
+        copies,
+        ...(src === undefined || where === undefined
+          ? {}
+          : { source: { ...where, messageId: src.sourceId } }),
+      }
     },
     'channels.pin': async (args) => {
       const o = obj(args, 'channels.pin')

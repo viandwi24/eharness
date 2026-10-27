@@ -13,7 +13,7 @@ import type {
   OutboxState,
 } from 'eharness/channels'
 import type { SecretVault } from 'eharness/providers'
-import type { OutboundButton } from './types.ts'
+import type { OutboundButton, TextFormat } from './types.ts'
 
 // --- outbox ------------------------------------------------------------------------------------
 
@@ -44,6 +44,8 @@ export interface OutboxRow {
   buttons?: OutboundButton[]
   /** The approval row an `approval` message announces. */
   approvalId?: string
+  /** How the message is sent (silent, text format, link preview). */
+  style?: SendStyle
   status: OutboxStatus
   attempts: number
   nextAt: number
@@ -84,6 +86,13 @@ export interface NewOutbox {
   replyTo?: string | undefined
   buttons?: OutboundButton[] | undefined
   approvalId?: string | undefined
+  style?: SendStyle | undefined
+}
+
+export interface SendStyle {
+  silent?: boolean
+  format?: TextFormat
+  linkPreview?: boolean
 }
 
 interface OutboxDb {
@@ -116,6 +125,7 @@ interface OutboxBody {
   replyTo?: string
   buttons?: OutboundButton[]
   approvalId?: string
+  style?: SendStyle
 }
 
 export interface QueueOptions {
@@ -221,6 +231,7 @@ export function sqliteOutboxStore(
       ...(body.replyTo === undefined ? {} : { replyTo: body.replyTo }),
       ...(body.buttons === undefined ? {} : { buttons: body.buttons }),
       ...(body.approvalId === undefined ? {} : { approvalId: body.approvalId }),
+      ...(body.style === undefined ? {} : { style: body.style }),
       status: r.status as OutboxStatus,
       attempts: r.attempts,
       nextAt: r.next_at,
@@ -533,6 +544,7 @@ export function sqliteOutboxStore(
           ...(row.replyTo === undefined ? {} : { replyTo: row.replyTo }),
           ...(row.buttons === undefined ? {} : { buttons: row.buttons }),
           ...(row.approvalId === undefined ? {} : { approvalId: row.approvalId }),
+          ...(row.style === undefined ? {} : { style: row.style }),
         }
         sealed.push({ id, row, body: await vault.seal(JSON.stringify(body), context(id)) })
       }

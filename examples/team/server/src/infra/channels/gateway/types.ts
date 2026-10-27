@@ -35,10 +35,12 @@ import type {
   ChannelAdapter,
   ChannelCapabilities,
   ChannelNode,
+  CopyOptions,
   EventOf,
   NodeInfo,
   OutboundFile,
   RemoteEvent,
+  TextFormat,
 } from '../types.ts'
 
 export class ChannelUserError extends Error {}
@@ -406,6 +408,9 @@ export interface PostOptions {
   files?: OutboundFile[]
   /** The session whose tool call posts (kept on the outbox row). */
   sessionId?: string | undefined
+  silent?: boolean | undefined
+  format?: TextFormat | undefined
+  linkPreview?: boolean | undefined
 }
 
 /** The node a channel session answers in. */
@@ -874,6 +879,13 @@ export interface ChannelGateway {
     options?: { trusted?: boolean },
   ): ResolvedTarget
   post(target: ResolvedTarget, options: PostOptions): Promise<string[]>
+  /** Copy or forward messages to another chat of the same connection (no download; albums kept). */
+  copy(
+    from: ResolvedTarget,
+    nativeIds: string[],
+    to: ResolvedTarget,
+    options: CopyOptions & { caption?: string; format?: TextFormat },
+  ): Promise<string[]>
   /** What a node supports now (the adapter's answer for this node). */
   capabilities(connectionId: string, node: NodeRow): ChannelCapabilities | undefined
   /** Instructions of a channel session (static for the session). */

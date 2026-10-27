@@ -350,12 +350,16 @@ export interface TgSendOptions {
   html?: { handles: string[] }
   /** Stable per message: Telegram dedupes a send with the same key (`random_id`). */
   key?: string
+  /** Show a preview of the first link (default off). */
+  linkPreview?: boolean
 }
 
 export interface TgFile {
   name: string
   mediaType: string
   bytes: Uint8Array
+  /** How it goes out (photo, voice, sticker…). Absent: from the media type. */
+  media?: MediaKind
 }
 
 export interface TgUserClient {
@@ -430,7 +434,7 @@ export interface TgUserClient {
     fromChatId: string,
     ids: number[],
     toChatId: string,
-    options?: TgPostOptions & { dropAuthor?: boolean },
+    options?: TgPostOptions & { dropAuthor?: boolean; dropCaptions?: boolean },
   ): Promise<number[]>
   sendPoll?(chatId: string, poll: TgPollInput, options?: TgPostOptions): Promise<{ id: number }>
   /** Text sent by Telegram at `options.at`. */
@@ -547,7 +551,7 @@ export interface TgUserClient {
     fromChatId: string,
     id: number,
     toChatId: string,
-    options?: { topicId?: number; silent?: boolean },
+    options?: { topicId?: number; silent?: boolean; replyTo?: number; noCaption?: boolean },
   ): Promise<{ id: number }>
   messageStats?(chatId: string, ids: number[]): Promise<TgMessageStat[]>
   /** A comment under a channel post (in the discussion group), or a reply when it is no post. */
@@ -579,17 +583,19 @@ export interface TgUserClient {
    */
   forumTopics?(chatId: string, options?: { ids?: number[]; limit?: number }): Promise<TgTopic[]>
   sendText(chatId: string, text: string, options?: TgSendOptions): Promise<{ id: number }>
+  /** `options.html` = the caption is Telegram HTML. `ids` = every message of an album. */
   sendFiles(
     chatId: string,
     files: TgFile[],
     caption: string,
     options?: TgSendOptions,
-  ): Promise<{ id: number }>
+  ): Promise<{ id: number; ids?: number[] }>
   /** `html` = the text is Telegram HTML (as `TgSendOptions.html`). */
   editText(chatId: string, id: number, text: string, html?: { handles: string[] }): Promise<void>
   deleteMessages(chatId: string, ids: number[]): Promise<void>
   pin(chatId: string, id: number, pinned: boolean): Promise<void>
-  react(chatId: string, id: number, emoji: string): Promise<void>
+  /** `customEmojiId` = a custom emoji (Premium accounts); `emoji` is used without it. */
+  react(chatId: string, id: number, emoji: string, customEmojiId?: string): Promise<void>
   download(
     chatId: string,
     id: number,

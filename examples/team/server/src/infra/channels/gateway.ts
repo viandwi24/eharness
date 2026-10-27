@@ -111,7 +111,7 @@ import {
 import { attachmentsLabel, type LogMessage, logAttachmentOf, sqliteChannelLog } from './messages.ts'
 import type { IdentityRow, NodeRow } from './model.ts'
 import { channelNodeOf, type NodeStore, sqliteNodeStore } from './nodes.ts'
-import { createOutbound, type Outbound } from './outbound.ts'
+import { createOutbound, type Outbound, type OutboundTarget } from './outbound.ts'
 import { type PeopleStore, type PersonEntry, sqlitePeopleStore } from './people.ts'
 import { type PeopleNotes, sqlitePeopleNotes } from './people-notes.ts'
 import { type Person, PersonError, type PersonStore, sqlitePersonStore } from './persons.ts'
@@ -160,12 +160,14 @@ import {
   type ChannelCapabilities,
   ChannelError,
   type ChannelNode,
+  type CopyOptions,
   type EventOf,
   type Identity,
   type InboundAttachment,
   type OutboundFile,
   type OutboundMessage,
   type RemoteEvent,
+  type TextFormat,
 } from './types.ts'
 
 export { approvalRemembers, approvalWord } from './gateway/approval-words.ts'
@@ -439,7 +441,44 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       })
     },
   })
-  const limitedOutbound = outbound
+  /**
+   * Chats the app is sending to now, and the ids it just got back: the platform may echo our own
+   * message before the send returns (or before it is stored), so such an own message counts as sent
+   * by the app, never as typed by the person (a script must not start on what a script sent).
+   */
+  const appSending = new Map<string, number>()
+  const appSentIds = new Map<string, number>()
+  const APP_ECHO_MS = 60_000
+  const idsOfResult = (r: unknown): string[] => {
+    if (Array.isArray(r)) return r.filter((x): x is string => typeof x === 'string')
+    if (typeof r !== 'object' || r === null) return []
+    const s = r as { nativeId?: unknown; nativeIds?: unknown }
+    if (Array.isArray(s.nativeIds)) return idsOfResult(s.nativeIds)
+    return typeof s.nativeId === 'string' ? [s.nativeId] : []
+  }
+  const limitedOutbound: Outbound = {
+    ...outbound,
+    run: <T>(target: OutboundTarget, op: () => Promise<T>): Promise<T> => {
+      const key = target.conversationId
+      appSending.set(key, (appSending.get(key) ?? 0) + 1)
+      return outbound
+        .run(target, op)
+        .then((result) => {
+          const until = now() + APP_ECHO_MS
+          for (const id of idsOfResult(result)) appSentIds.set(`${key}:${id}`, until)
+          if (appSentIds.size > 5000)
+            for (const [k, v] of appSentIds) if (v < now()) appSentIds.delete(k)
+          return result
+        })
+        .finally(() => {
+          const n = (appSending.get(key) ?? 1) - 1
+          if (n <= 0) appSending.delete(key)
+          else appSending.set(key, n)
+        })
+    },
+  }
+  const appIsSending = (nodeId: string, nativeId: string): boolean =>
+    (appSending.get(nodeId) ?? 0) > 0 || (appSentIds.get(`${nodeId}:${nativeId}`) ?? 0) > now()
 
   const guardOf = (config: ConnectionConfig): ReturnType<typeof createLoopGuard> => {
     let g = guards.get(config.connectionId)
@@ -2470,6 +2509,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     files: OutboundFile[] = [],
     sendTxnId?: string,
     replyTo?: string,
+    stored?: LogMessage['attachments'],
   ): void => {
     const write = migrated
       .then(() =>
@@ -2482,12 +2522,18 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
             direction: 'out',
             senderIdentityId: selfIdentity(config.connectionId, adapter).id,
             text,
-            attachments: files.map((f) => ({
-              id: f.name,
-              name: f.name,
-              mediaType: f.mediaType,
-              size: f.bytes.byteLength,
-            })),
+            attachments:
+              stored ??
+              files.map((f) =>
+                logAttachmentOf({
+                  id: f.name,
+                  name: f.name,
+                  mediaType: f.mediaType,
+                  size: f.bytes?.byteLength,
+                  media: f.media,
+                  ref: f.ref,
+                }),
+              ),
             ...(replyTo === undefined ? {} : { replyTo: { messageId: replyTo } }),
             ...(sendTxnId === undefined ? {} : { sendTxnId }),
           },
@@ -2570,6 +2616,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       ...(row.buttons !== undefined && row.buttons.length > 0 && caps.buttons === true
         ? { buttons: row.buttons }
         : {}),
+      ...(row.style?.silent === true ? { silent: true } : {}),
+      ...(row.style?.format === undefined ? {} : { format: row.style.format }),
+      ...(row.style?.linkPreview === true ? { linkPreview: true } : {}),
     }
     let target = node
     let out = message
@@ -4387,7 +4436,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           },
           { pending: false, handled: true },
         )
-        if (typed.inserted) return { action: 'drop', reason: OWN_TYPED }
+        if (typed.inserted && !appIsSending(node.id, event.message.nativeId))
+          return { action: 'drop', reason: OWN_TYPED }
       }
       return { action: 'drop', reason: 'own message' }
     }
@@ -4672,6 +4722,97 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return { config, adapter, node, view: viewOf(node), scope }
   }
 
+  /** How a post is sent (kept on its outbox rows). */
+  const styleOf = (o: PostOptions): OutboxRow['style'] => {
+    const style = {
+      ...(o.silent === true ? { silent: true } : {}),
+      ...(o.format === undefined ? {} : { format: o.format }),
+      ...(o.linkPreview === true ? { linkPreview: true } : {}),
+    }
+    return Object.keys(style).length === 0 ? undefined : style
+  }
+
+  /**
+   * Copy (or forward) messages to another chat of the same connection by reference: no download,
+   * albums kept. The copies are stored with the source's text and files, so history and replies
+   * know them. `caption` replaces the caption of the copy (not for a forward).
+   */
+  async function copy(
+    from: ResolvedTarget,
+    nativeIds: string[],
+    to: ResolvedTarget,
+    o: CopyOptions & { caption?: string; format?: TextFormat },
+  ): Promise<string[]> {
+    if (from.config.connectionId !== to.config.connectionId)
+      throw new ChannelUserError(
+        'Copies stay within one connection: download and send the file instead.',
+      )
+    const fn = to.adapter.copy
+    if (fn === undefined) throw new ChannelUserError(`${to.adapter.platform} cannot copy messages.`)
+    if (nativeIds.length === 0 || nativeIds.length > 100)
+      throw new ChannelUserError('Copy 1 to 100 messages at a time.')
+    const caps = capsOf(to.adapter, to.node)
+    const sorted = [...nativeIds].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b))
+    let out: string[]
+    try {
+      out = await limitedOutbound.run(laneOf(to.node), () =>
+        fn.call(to.adapter, from.view, sorted, to.view, {
+          ...(o.forward === true ? { forward: true } : {}),
+          ...(o.silent === true ? { silent: true } : {}),
+          ...(o.replyTo !== undefined && caps.quote ? { replyTo: o.replyTo } : {}),
+          ...(o.dropCaptions === true ? { dropCaptions: true } : {}),
+        }),
+      )
+    } catch (error) {
+      if (error instanceof ChannelError)
+        throw new ChannelUserError(`Copying failed (${error.kind}): ${error.message}`)
+      throw error
+    }
+    const sources = await Promise.all(sorted.map((id) => log.find(from.node.id, id)))
+    const captionIdx = Math.max(
+      0,
+      sources.findIndex((s) => s !== undefined && s.text !== ''),
+    )
+    for (const [i, nativeId] of out.entries()) {
+      const s = out.length === sources.length ? sources[i] : i === 0 ? sources[0] : undefined
+      const text =
+        o.caption !== undefined && o.forward !== true
+          ? i === captionIdx
+            ? o.caption
+            : ''
+          : o.dropCaptions === true
+            ? ''
+            : (s?.text ?? '')
+      logSent(
+        to.config,
+        to.adapter,
+        to.node,
+        nativeId,
+        text,
+        [],
+        undefined,
+        i === 0 ? o.replyTo : undefined,
+        s?.attachments ?? [],
+      )
+    }
+    if (o.caption !== undefined && o.forward !== true) {
+      const target = out[Math.min(captionIdx, out.length - 1)]
+      const edit = to.adapter.editCaption
+      if (target !== undefined && edit !== undefined) {
+        try {
+          await limitedOutbound.run(laneOf(to.node), () =>
+            edit.call(to.adapter, to.view, target, o.caption as string, o.format),
+          )
+        } catch (error) {
+          throw new ChannelUserError(
+            `Copied as ${out.join(', ')}, but the caption could not be changed: ${errorText(error)}`,
+          )
+        }
+      }
+    }
+    return out
+  }
+
   async function post(target: ResolvedTarget, raw: PostOptions): Promise<string[]> {
     const { adapter, node, config } = target
     const caps = capsOf(adapter, node)
@@ -4691,8 +4832,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (files.length > 0 && !caps.upload) {
       throw new ChannelUserError(`${adapter.platform} cannot upload files here.`)
     }
+    const captioned = files.some((f) => f.media !== 'sticker' && f.media !== 'video_note')
     if (
       files.length > 0 &&
+      captioned &&
       caps.maxCaptionLength !== undefined &&
       options.text.length > caps.maxCaptionLength
     ) {
@@ -4709,10 +4852,37 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       // files are not kept in the outbox (the tool call is answered at once; it can post again)
       try {
         const sent = await limitedOutbound.run(laneOf(node), () =>
-          adapter.send(viewOf(node), { text: chunks[0] as string, files }),
+          adapter.send(viewOf(node), {
+            text: chunks[0] as string,
+            files,
+            ...(options.replyTo !== undefined && caps.quote ? { replyTo: options.replyTo } : {}),
+            ...(options.silent === true ? { silent: true } : {}),
+            ...(options.format === undefined ? {} : { format: options.format }),
+          }),
         )
-        ids.push(sent.nativeId)
-        logSent(config, adapter, node, sent.nativeId, readableMentions(chunks[0] as string), files)
+        const all = sent.nativeIds ?? [sent.nativeId]
+        ids.push(...all)
+        const text = readableMentions(chunks[0] as string)
+        if (all.length === 1) {
+          logSent(config, adapter, node, sent.nativeId, text, files, undefined, options.replyTo)
+        } else {
+          // an album (or files one by one): each message with its file, the text on the first
+          // (or on the message after the files when none could carry it)
+          const textAt = all.length > files.length ? files.length : 0
+          for (const [i, nativeId] of all.entries()) {
+            const file = files[i]
+            logSent(
+              config,
+              adapter,
+              node,
+              nativeId,
+              i === textAt ? text : '',
+              file === undefined ? [] : [file],
+              undefined,
+              i === 0 ? options.replyTo : undefined,
+            )
+          }
+        }
       } catch (error) {
         if (error instanceof ChannelError) {
           throw new ChannelUserError(`Sending failed (${error.kind}): ${error.message}`)
@@ -4734,6 +4904,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         ...(i === 0 && options.replyTo !== undefined && caps.quote
           ? { replyTo: options.replyTo }
           : {}),
+        ...(styleOf(options) === undefined ? {} : { style: styleOf(options) }),
       })),
       now(),
     )
@@ -6060,6 +6231,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     },
     resolveTarget,
     post,
+    copy,
     capabilities(connectionId, node) {
       const adapter = adapters.get(connectionId)
       return adapter === undefined ? undefined : capsOf(adapter, node)

@@ -1,6 +1,6 @@
 # P60 — Team example: scripts and tables, mature
 
-Status: in progress (W1 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
+Status: in progress (W1, W2 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
 
 ## Goal
 
@@ -43,16 +43,20 @@ Inputs: the scenario catalog and capability checklist in
   (`[sticker 🚀]`, `[3 photos]`). The bot normalizer is version 3.
 
 ### W2 — Sending media and copying
-- [ ] `ctx.channels.send` with `media: [{ kind, file | ref }]` (photo, video, animation, voice,
+- [x] `ctx.channels.send` with `media: [{ kind, file | ref }]` (photo, video, animation, voice,
       video note, document, sticker), captions with formatting (`format: 'markdown' | 'html' | 'plain'`),
       albums, `silent`, `buttons`, `replyTo` with files, link preview on/off.
-- [ ] `ctx.channels.copy` and `ctx.channels.forward`: by reference, albums kept, caption override,
+- [x] `ctx.channels.copy` and `ctx.channels.forward`: by reference, albums kept, caption override,
       returns the new message ids per item.
-- [ ] Copy map helper: `ctx.channels.copies` keeps source → copies (per target) so replies, edits
+- [x] Copy map helper: `ctx.channels.copies` keeps source → copies (per target) so replies, edits
       and deletes follow each copy.
-- [ ] Edit captions and media; delete in bulk.
-- [ ] Reactions: custom emoji where the transport allows; inbound reactions for channels and the
-      user account.
+- [x] Edit captions and media; delete in bulk.
+- [x] Reactions: custom emoji out (both transports) and in (bot, `customEmojiId` on the event).
+- [ ] Inbound reactions on the user account and anonymous reaction counts of channel posts (bot
+      `message_reaction_count`): need a counts event type; open.
+- Notes: buttons on sends land with W4 (callbacks). Edits of the media itself (replace the photo)
+  are not offered; captions are. Grants match a chat by id or title either way. A dry run checks
+  grants. A user account's own echo during a send is never taken as typed by the person.
 
 ### W3 — Triggers and state
 - [ ] Channel trigger filters: media kinds, has reply, is forward (and from where), has link,

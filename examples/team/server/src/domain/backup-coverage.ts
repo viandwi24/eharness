@@ -255,6 +255,11 @@ export const COVERAGE: readonly TableEntry[] = [
     'Key-value state of the scripts',
     'small state a script keeps between runs; travels with the scripts',
   ),
+  snapshot(
+    'script_copies',
+    'What the scripts copied where',
+    'source message to copy, so replies and edits follow each copy (kept 90 days by default)',
+  ),
   derived('ch_meta', 'Channels migration markers', 'rewritten by the boot-time migration'),
   snapshot(
     'channel_approvals',

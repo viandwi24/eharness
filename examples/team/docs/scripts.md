@@ -137,8 +137,12 @@ Every method takes one object and returns a promise.
 
 | Method | Does |
 |---|---|
-| `channels.send({ connection, chat, topic?, text })` | post to a granted chat → `{ messageIds }` |
-| `channels.reply({ text })` | reply in the event's chat (`grants.reply`) |
+| `channels.send({ connection, chat, topic?, text?, format?, replyTo?, files?, media?, silent?, linkPreview?, mentions?, copyOf? })` | post to a granted chat → `{ messageIds }` (every message of an album) |
+| `channels.reply({ text?, format?, files?, media?, silent?, quote? })` | reply in the event's chat (`grants.reply`) |
+| `channels.copy({ connection, chat, topic?, messageIds, toChat, toTopic?, caption?, format?, silent?, replyTo?, dropCaptions? })`, `channels.forward({ … })` | copy or forward messages to another granted chat of the same connection by reference: no download, albums and formatting kept → `{ messageIds }` |
+| `channels.copies({ connection, chat, topic?, messageId })` | what this script copied a message to (`copies`), or for a copy its `source` |
+| `channels.edit({ …, messageId, text, format? })`, `channels.delete({ …, messageId? , messageIds? })`, `channels.react({ …, messageId, emoji, customEmojiId? })`, `channels.pin(…)` | change messages in a granted chat (edit changes the caption of a message with a file) |
+| `channels.history`, `channels.message`, `channels.members`, `channels.chats`, `channels.download`, `channels.action` | read a chat, save a file to the library, run a native action |
 | `library.read({ path })`, `library.list({ prefix })`, `library.write({ path, content })` | library text files |
 | `tables.query({ table, filter?, sort?, fields?, limit?, cursor? })`, `tables.get({ table, id })`, `tables.aggregate({ table, filter?, groupBy?, metrics })` | read [tables](tables.md) |
 | `tables.insert({ table, rows })`, `tables.update({ table, id?, filter?, set?, unset?, inc?, ifVersion? })`, `tables.delete({ table, id?, filter? })` | change tables; rows record `script:<name>` as author |
@@ -148,6 +152,30 @@ Every method takes one object and returns a promise.
 | `programs.list()`, `programs.run({ program })` | granted programs |
 | `api.get({ path, query? })`, `api.request({ method, path, query?, body? })` | the team API (every route of the [API docs](api.md)) as the owner, on granted routes → `{ status, body }`; a dry run records `api.request` instead of doing it |
 | `log(...values)` | a trace line |
+
+### Media, formatting and copies
+
+- `format`: `markdown` (default: `**bold**`, `_italic_`, `` `code` ``, links), `html` (Telegram's
+  subset: `<b>`, `<i>`, `<u>`, `<s>`, `<code>`, `<pre>`, `<a href>`, `<blockquote>`, `<tg-spoiler>`)
+  or `plain` (sent as written).
+- `media`: `[{ file: '/path/in/library' }]` or `[{ ref: event.attachments[0].ref, kind: 'sticker' }]`.
+  `kind` is `photo`, `video`, `animation`, `voice`, `video_note`, `audio`, `document` or `sticker`;
+  without it the media type decides. Photos and videos (or documents, or audio files) sent together
+  go out as one album. Stickers and video notes carry no caption: the text follows as its own
+  message. A `ref` is a Telegram bot file id; a user account sends files by their bytes, so on an
+  account use `channels.copy` to resend media.
+- `channels.copy` is the way to pass a post on: an album stays an album, the caption keeps its
+  formatting (or `caption` replaces it), nothing is downloaded. Every copy is remembered, so a
+  reply, an edit or a deletion in the source chat can follow each copy:
+
+```ts
+const { copies } = await ctx.channels.copies({ connection: c, chat: event.chat.nativeId, messageId: event.replyTo.messageId })
+for (const k of copies) await ctx.channels.send({ connection: c, chat: k.chat, text: event.text, replyTo: k.messageId })
+```
+
+  Copy records are kept 90 days (Settings → Limits → Script copy records).
+- A dry run (Test) performs no side effect, but a call the real run would refuse for a missing
+  grant fails the same way.
 
 ## Events
 
@@ -168,7 +196,8 @@ A channel event looks like this (the text is in memory only and never stored):
 ```
 
 `replyTo` is set on replies (the id of the message answered, plus its sender when the platform
-says). `emoji` is set on reactions.
+says). `emoji` is set on reactions (`custom:<id>` and `customEmojiId` for a custom emoji);
+`messageIds` on deletions.
 
 Media and other message kinds:
 

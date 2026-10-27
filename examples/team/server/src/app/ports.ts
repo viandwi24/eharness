@@ -599,6 +599,22 @@ export interface ScriptStore {
   kvSet(scriptId: string, key: string, value: string, now: number): void
   kvDelete(scriptId: string, key: string): boolean
   kvKeys(scriptId: string, prefix: string): string[]
+  /** Record copies made by a script (source message → copy). */
+  copiesAdd(scriptId: string, rows: ScriptCopyRow[], now: number): void
+  /** The copies of a source message. */
+  copiesOf(scriptId: string, sourceNode: string, sourceId: string): ScriptCopyRow[]
+  /** The source of a copy. */
+  copySource(scriptId: string, targetNode: string, targetId: string): ScriptCopyRow | undefined
+  /** Removes copy records older than `olderThan`. */
+  pruneCopies(olderThan: number): number
+}
+
+export interface ScriptCopyRow {
+  connectionId: string
+  sourceNode: string
+  sourceId: string
+  targetNode: string
+  targetId: string
 }
 
 /** One row to write: a new document, or a replacement checked against `ifVersion`. */

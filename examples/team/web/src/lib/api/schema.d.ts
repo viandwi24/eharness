@@ -22364,6 +22364,8 @@ export interface components {
             routineRunsRetentionDays: number;
             /** @description Script run traces kept this many days; 0 = keep (the per-script cap still applies). Default 30. */
             scriptRunsRetentionDays: number;
+            /** @description Records of what scripts copied where (replies and edits follow each copy) kept this many days; 0 = keep. Default 90. */
+            scriptCopiesRetentionDays: number;
             /** @description Script runs at once across all scripts. Default 4. */
             scriptConcurrency: number;
             /** @description Run traces kept per script (the newest). Default 500. */
@@ -22526,6 +22528,7 @@ export interface components {
             mediaRetentionDays?: number;
             routineRunsRetentionDays?: number;
             scriptRunsRetentionDays?: number;
+            scriptCopiesRetentionDays?: number;
             scriptConcurrency?: number;
             scriptRunsPerScript?: number;
             scriptsChatApproval?: boolean;

@@ -2186,6 +2186,28 @@ export const scriptKv = sqliteTable(
     key: text('key').notNull(),
     value: text('value').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    /** Epoch ms after which the key reads as absent (`ttlSec`); null = kept. */
+    expiresAt: integer('expires_at'),
   },
   (t) => [primaryKey({ columns: [t.scriptId, t.key] })],
+)
+
+/** Which message a script copied where (`ctx.channels.copy`), so replies and edits follow each copy. */
+export const scriptCopies = sqliteTable(
+  'script_copies',
+  {
+    scriptId: text('script_id').notNull(),
+    connectionId: text('connection_id').notNull(),
+    /** Channel node ids (a chat or a topic) and platform message ids. */
+    sourceNode: text('source_node').notNull(),
+    sourceId: text('source_id').notNull(),
+    targetNode: text('target_node').notNull(),
+    targetId: text('target_id').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.scriptId, t.sourceNode, t.sourceId, t.targetNode, t.targetId] }),
+    index('script_copies_target').on(t.scriptId, t.targetNode, t.targetId),
+    index('script_copies_created').on(t.createdAt),
+  ],
 )

@@ -93,6 +93,7 @@ bookkeeping tables).
 | `script_versions` | Versions of the scripts (code and manifest) | immutable history of each script; travels with the scripts |
 | `script_runs` | Run traces of the scripts | a log of what each run did (kept 30 days, 500 per script) |
 | `script_kv` | Key-value state of the scripts | small state a script keeps between runs; travels with the scripts |
+| `script_copies` | What the scripts copied where | source message to copy, so replies and edits follow each copy (kept 90 days by default) |
 | `ch_message_revisions` | Edits of channel messages | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
 | `ch_messages` | Channel message log | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
 | `ch_reactions` | Reactions in channels | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |

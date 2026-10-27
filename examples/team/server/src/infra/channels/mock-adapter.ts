@@ -14,6 +14,7 @@ import {
   type ChannelCapabilities,
   ChannelError,
   type ChannelNode,
+  type CopyOptions,
   type EventSink,
   type HistoryEntry,
   type Identity,
@@ -27,6 +28,7 @@ import {
   type RemoteEvent,
   type StickerInfo,
   type StructuredContent,
+  type TextFormat,
 } from './types.ts'
 
 export const MOCK_CAPABILITIES: ChannelCapabilities = {
@@ -97,9 +99,28 @@ export interface MockSay {
 export interface MockAdapter extends ChannelAdapter {
   /** Everything the gateway sent, in order. */
   readonly sent: MockSent[]
-  readonly reactions: Array<{ conversationId: string; messageId: string; emoji: string }>
-  readonly edits: Array<{ conversationId: string; messageId: string; text: string }>
+  readonly reactions: Array<{
+    conversationId: string
+    messageId: string
+    emoji: string
+    customEmojiId?: string
+  }>
+  readonly edits: Array<{
+    conversationId: string
+    messageId: string
+    text: string
+    caption?: boolean
+    format?: TextFormat
+  }>
   readonly deletes: Array<{ conversationId: string; messageId: string }>
+  /** Copies and forwards (`copy`), with the ids they got. */
+  readonly copies: Array<{
+    from: string
+    ids: string[]
+    to: string
+    options: CopyOptions
+    messageIds: string[]
+  }>
   readonly pins: Array<{ conversationId: string; messageId: string; pinned: boolean }>
   readonly typings: number[]
   /** Deliver a message from a person; resolves with its native id when the gateway handled it. */
@@ -235,6 +256,7 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
     reactions: [],
     edits: [],
     deletes: [],
+    copies: [],
     pins: [],
     typings: [],
     onSend: [],
@@ -304,19 +326,62 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
           })
           .catch(() => undefined)
       }
+      // several files: one message each (like an album)
+      const files = message.files ?? []
+      if (files.length > 1) {
+        const ids = [
+          messageId,
+          ...files.slice(1).map(() => `m${++counter}-${options.connectionId}`),
+        ]
+        return { nativeId: messageId, nativeIds: ids }
+      }
       return { nativeId: messageId }
     },
-    async edit(node, nativeId, text) {
-      adapter.edits.push({ conversationId: node.nativeId, messageId: nativeId, text })
+    async edit(node, nativeId, text, format) {
+      adapter.edits.push({
+        conversationId: node.nativeId,
+        messageId: nativeId,
+        text,
+        ...(format === undefined ? {} : { format }),
+      })
+    },
+    async editCaption(node, nativeId, text, format) {
+      adapter.edits.push({
+        conversationId: node.nativeId,
+        messageId: nativeId,
+        text,
+        caption: true,
+        ...(format === undefined ? {} : { format }),
+      })
     },
     async delete(node, nativeId) {
       adapter.deletes.push({ conversationId: node.nativeId, messageId: nativeId })
     },
+    async deleteMany(node, nativeIds) {
+      for (const id of nativeIds)
+        adapter.deletes.push({ conversationId: node.nativeId, messageId: id })
+    },
+    async copy(from, nativeIds, to, o) {
+      const messageIds = nativeIds.map(() => `m${++counter}-${options.connectionId}`)
+      adapter.copies.push({
+        from: from.nativeId,
+        ids: nativeIds,
+        to: to.nativeId,
+        options: o,
+        messageIds,
+      })
+      return messageIds
+    },
     async pin(node, nativeId, pinned) {
       adapter.pins.push({ conversationId: node.nativeId, messageId: nativeId, pinned })
     },
-    async react(node, nativeId, emoji) {
-      adapter.reactions.push({ conversationId: node.nativeId, messageId: nativeId, emoji })
+    async react(node, nativeId, emoji, custom) {
+      adapter.reactions.push({
+        conversationId: node.nativeId,
+        messageId: nativeId,
+        emoji,
+        ...(custom === undefined ? {} : { customEmojiId: custom.customEmojiId }),
+      })
     },
     async typing() {
       adapter.typings.push(clock())

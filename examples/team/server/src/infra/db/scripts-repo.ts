@@ -3,7 +3,7 @@
  * Plain SQL on the app connection, like the tables store.
  */
 import type { Database } from 'bun:sqlite'
-import type { ScriptStore } from '../../app/ports.ts'
+import type { ScriptCopyRow, ScriptStore } from '../../app/ports.ts'
 import type {
   ApprovalState,
   AuthorKind,
@@ -247,6 +247,7 @@ export function sqliteScriptStore(sqlite: Database): ScriptStore {
           sqlite.query('DELETE FROM script_versions WHERE script_id = ?').run(id)
           sqlite.query('DELETE FROM script_runs WHERE script_id = ?').run(id)
           sqlite.query('DELETE FROM script_kv WHERE script_id = ?').run(id)
+          sqlite.query('DELETE FROM script_copies WHERE script_id = ?').run(id)
           return sqlite.query('DELETE FROM scripts WHERE id = ?').run(id).changes > 0
         })
         .immediate()
@@ -374,5 +375,51 @@ export function sqliteScriptStore(sqlite: Database): ScriptStore {
         .all(scriptId, prefix, prefix)
         .map((r) => r.key)
     },
+    copiesAdd(scriptId, rows, now) {
+      const q = sqlite.query(
+        `INSERT INTO script_copies (script_id, connection_id, source_node, source_id, target_node, target_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      )
+      sqlite.transaction(() => {
+        for (const r of rows)
+          q.run(scriptId, r.connectionId, r.sourceNode, r.sourceId, r.targetNode, r.targetId, now)
+      })()
+    },
+    copiesOf(scriptId, sourceNode, sourceId) {
+      return sqlite
+        .query<CopyDb, [string, string, string]>(
+          `SELECT connection_id, source_node, source_id, target_node, target_id FROM script_copies
+           WHERE script_id = ? AND source_node = ? AND source_id = ? ORDER BY created_at, target_id LIMIT 100`,
+        )
+        .all(scriptId, sourceNode, sourceId)
+        .map(copyOf)
+    },
+    copySource(scriptId, targetNode, targetId) {
+      const r = sqlite
+        .query<CopyDb, [string, string, string]>(
+          `SELECT connection_id, source_node, source_id, target_node, target_id FROM script_copies
+           WHERE script_id = ? AND target_node = ? AND target_id = ? LIMIT 1`,
+        )
+        .get(scriptId, targetNode, targetId)
+      return r === null ? undefined : copyOf(r)
+    },
+    pruneCopies(olderThan) {
+      return sqlite.query('DELETE FROM script_copies WHERE created_at < ?').run(olderThan).changes
+    },
   }
 }
+
+interface CopyDb {
+  connection_id: string
+  source_node: string
+  source_id: string
+  target_node: string
+  target_id: string
+}
+const copyOf = (r: CopyDb): ScriptCopyRow => ({
+  connectionId: r.connection_id,
+  sourceNode: r.source_node,
+  sourceId: r.source_id,
+  targetNode: r.target_node,
+  targetId: r.target_id,
+})

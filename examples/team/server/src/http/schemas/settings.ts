@@ -128,6 +128,10 @@ export const SettingsSchema = z
       description:
         'Script run traces kept this many days; 0 = keep (the per-script cap still applies). Default 30.',
     }),
+    scriptCopiesRetentionDays: z.number().int().min(0).openapi({
+      description:
+        'Records of what scripts copied where (replies and edits follow each copy) kept this many days; 0 = keep. Default 90.',
+    }),
     scriptConcurrency: z.number().int().min(1).max(32).openapi({
       description: 'Script runs at once across all scripts. Default 4.',
     }),
@@ -206,6 +210,7 @@ export const SettingsPatchSchema = z
     mediaRetentionDays: z.number().int().min(0).max(36500).optional(),
     routineRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
     scriptRunsRetentionDays: z.number().int().min(0).max(36500).optional(),
+    scriptCopiesRetentionDays: z.number().int().min(0).max(36500).optional(),
     scriptConcurrency: z.number().int().min(1).max(32).optional(),
     scriptRunsPerScript: z.number().int().min(10).max(100000).optional(),
     scriptsChatApproval: z.boolean().optional(),

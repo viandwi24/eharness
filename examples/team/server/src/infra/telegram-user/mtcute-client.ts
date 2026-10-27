@@ -25,7 +25,7 @@ import {
   type User,
 } from '@mtcute/bun'
 import type { MessageEntity } from '../channels/model.ts'
-import type { StructuredContent } from '../channels/types.ts'
+import type { MediaKind, StructuredContent } from '../channels/types.ts'
 import type {
   TgAdminEvent,
   TgAttachment,
@@ -588,49 +588,97 @@ export interface MediaSender {
 export async function sendFilesWith(
   tg: MediaSender,
   chatId: string,
-  files: ReadonlyArray<{ name: string; mediaType: string; bytes: Uint8Array }>,
-  caption: string | undefined,
+  files: ReadonlyArray<{ name: string; mediaType: string; bytes: Uint8Array; media?: MediaKind }>,
+  caption: unknown,
   o: { replyTo?: number; topicId?: number; silent?: boolean; key?: string } | undefined,
   randomIdOf: (key: string) => unknown,
-): Promise<{ id: number }> {
+): Promise<{ id: number; ids?: number[] }> {
   const common = {
     ...(o?.replyTo === undefined ? {} : { replyTo: o.replyTo }),
     ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
     ...(o?.silent === true ? { silent: true } : {}),
   }
-  const build = (asPhoto: boolean) =>
-    files.map((f) => ({
-      type: asPhoto && PHOTO_TYPES.has(f.mediaType) ? ('photo' as const) : ('document' as const),
-      file: f.bytes,
-      fileName: f.name,
-      fileMime: f.mediaType,
-    }))
-  const attempt = async (media: ReturnType<typeof build>): Promise<{ id: number }> => {
-    if (media.length === 1) {
-      const m = await tg.sendMedia(
-        Number(chatId),
-        { ...(media[0] as (typeof media)[0]), caption } as never,
-        {
-          ...common,
-          ...(o?.key === undefined ? {} : { randomId: randomIdOf(o.key) }),
-        } as never,
-      )
-      return { id: m.id }
-    }
-    const first = { ...(media[0] as (typeof media)[0]), caption }
-    const list = await tg.sendMediaGroup(
-      Number(chatId),
-      [first, ...media.slice(1)] as never,
-      common as never,
-    )
-    return { id: (list[0] as { id: number }).id }
+  const later = {
+    ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
+    ...(o?.silent === true ? { silent: true } : {}),
   }
-  const media = build(true)
+  type Item = {
+    type: 'photo' | 'video' | 'voice' | 'audio' | 'sticker' | 'document'
+    file: Uint8Array
+    fileName: string
+    fileMime: string
+    isAnimated?: boolean
+    isRound?: boolean
+    caption?: unknown
+  }
+  const itemOf = (f: (typeof files)[number], asPhoto: boolean): Item => {
+    const base = { file: f.bytes, fileName: f.name, fileMime: f.mediaType }
+    switch (f.media) {
+      case 'photo':
+        return { ...base, type: asPhoto ? 'photo' : 'document' }
+      case 'video':
+        return { ...base, type: 'video' }
+      case 'animation':
+        return { ...base, type: 'video', isAnimated: true }
+      case 'video_note':
+        return { ...base, type: 'video', isRound: true }
+      case 'voice':
+        return { ...base, type: 'voice' }
+      case 'audio':
+        return { ...base, type: 'audio' }
+      case 'sticker':
+        return { ...base, type: 'sticker' }
+      case 'document':
+        return { ...base, type: 'document' }
+      default:
+        if (asPhoto && PHOTO_TYPES.has(f.mediaType)) return { ...base, type: 'photo' }
+        if (f.mediaType === 'video/mp4') return { ...base, type: 'video' }
+        if (f.mediaType === 'audio/mpeg') return { ...base, type: 'audio' }
+        return { ...base, type: 'document' }
+    }
+  }
+  const takesCaption = (i: Item): boolean => i.type !== 'sticker' && i.isRound !== true
+  const classOf = (i: Item): string | undefined =>
+    (i.type === 'photo' || i.type === 'video') && i.isAnimated !== true && i.isRound !== true
+      ? 'visual'
+      : i.type === 'document' || i.type === 'audio'
+        ? i.type
+        : undefined
+  const attempt = async (items: Item[]): Promise<{ id: number; ids?: number[] }> => {
+    const at = caption === undefined || caption === '' ? -1 : items.findIndex(takesCaption)
+    const withCaption = items.map((it, i) => (i === at ? { ...it, caption } : it))
+    const ids: number[] = []
+    const first = classOf(items[0] as Item)
+    if (items.length >= 2 && first !== undefined && items.every((i) => classOf(i) === first)) {
+      for (let start = 0; start < withCaption.length; start += 10) {
+        const list = await tg.sendMediaGroup(
+          Number(chatId),
+          withCaption.slice(start, start + 10) as never,
+          (start === 0 ? common : later) as never,
+        )
+        for (const m of list) ids.push(m.id)
+      }
+    } else {
+      for (const [i, it] of withCaption.entries()) {
+        const m = await tg.sendMedia(
+          Number(chatId),
+          it as never,
+          {
+            ...(i === 0 ? common : later),
+            ...(i === 0 && o?.key !== undefined ? { randomId: randomIdOf(o.key) } : {}),
+          } as never,
+        )
+        ids.push(m.id)
+      }
+    }
+    return { id: ids[0] as number, ...(ids.length > 1 ? { ids } : {}) }
+  }
+  const items = files.map((f) => itemOf(f, true))
   try {
-    return await attempt(media)
+    return await attempt(items)
   } catch (error) {
-    if (!media.some((m) => m.type === 'photo') || !isPhotoRejection(error)) throw error
-    return attempt(build(false))
+    if (!items.some((m) => m.type === 'photo') || !isPhotoRejection(error)) throw error
+    return attempt(files.map((f) => itemOf(f, false)))
   }
 }
 
@@ -904,6 +952,7 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
           ...(o?.silent === true ? { silent: true } : {}),
           ...(o?.at === undefined ? {} : { schedule: o.at }),
           ...(o?.dropAuthor === true ? { noAuthor: true } : {}),
+          ...(o?.dropCaptions === true ? { noCaption: true } : {}),
         })
         return list.map((m) => m.id)
       },
@@ -1375,6 +1424,8 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
           toChatId: Number(toChatId),
           ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
           ...(o?.silent === true ? { silent: true } : {}),
+          ...(o?.replyTo === undefined ? {} : { replyTo: o.replyTo }),
+          ...(o?.noCaption === true ? { caption: '' } : {}),
         })
         return { id: m.id }
       },
@@ -1534,12 +1585,18 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
           ...(o?.topicId === undefined ? {} : { threadId: o.topicId }),
           ...(o?.silent === true ? { silent: true } : {}),
           ...(o?.key === undefined ? {} : { randomId: randomIdOf(o.key) }),
-          disableWebPreview: true,
+          disableWebPreview: o?.linkPreview !== true,
         })
         return { id: m.id }
       },
       async sendFiles(chatId, files, caption, o) {
-        return sendFilesWith(tg, chatId, files, caption, o, randomIdOf)
+        const input =
+          caption === ''
+            ? undefined
+            : o?.html !== undefined
+              ? fromHtml(caption, o.html.handles)
+              : caption
+        return sendFilesWith(tg, chatId, files, input, o, randomIdOf)
       },
       async editText(chatId, id, text, html) {
         await tg.editMessage({
@@ -1555,8 +1612,12 @@ export function createMtcuteClient(mt: MtcuteOptions = {}): TgClientFactory {
         if (pinned) await tg.pinMessage({ chatId: Number(chatId), message: id })
         else await tg.unpinMessage({ chatId: Number(chatId), message: id })
       },
-      async react(chatId, id, emoji) {
-        await tg.sendReaction({ chatId: Number(chatId), message: id, emoji })
+      async react(chatId, id, emoji, customEmojiId) {
+        await tg.sendReaction({
+          chatId: Number(chatId),
+          message: id,
+          emoji: customEmojiId === undefined ? emoji : Long.fromString(customEmojiId),
+        })
       },
       async download(chatId, id) {
         const [m] = await tg.getMessages(Number(chatId), [id])

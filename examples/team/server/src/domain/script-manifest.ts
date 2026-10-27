@@ -631,6 +631,8 @@ export interface ScriptChannelEvent {
   actor?: { id: string; name?: string; username?: string; role?: Role; isSelf?: boolean }
   text?: string
   messageId?: string
+  /** Deletions: every message deleted (messageId is the first). */
+  messageIds?: string[]
   /** A reply: the platform id of the message it answers (and, when the platform says, its sender). */
   replyTo?: { messageId: string; senderId?: string; senderName?: string }
   /** Files of the message (fetch one with `ctx.channels.download`). */
@@ -650,7 +652,9 @@ export interface ScriptChannelEvent {
   }>
   /** A place, contact, poll or dice. */
   content?: ScriptStructured
+  /** Reactions: the emoji (`custom:<id>` for a custom emoji). */
   emoji?: string
+  customEmojiId?: string
 }
 
 /** A file of a chat message as scripts see it. */

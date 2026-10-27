@@ -33,8 +33,9 @@ import {
   type OutboundMessage,
   type RemoteEvent,
   type SentMessage,
+  type TextFormat,
 } from '../channels/types.ts'
-import { toTelegramHtml } from '../telegram/format.ts'
+import { escapeHtml, toTelegramHtml } from '../telegram/format.ts'
 import { accountActions, DELETED_HINT } from './actions.ts'
 import type { AdminLogQuery } from './adminlog.ts'
 import type {
@@ -677,7 +678,12 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
    * (bold, italic, code, links, lists), and the gateway's mention tokens as `@handle` when the person
    * has a username (Telegram pings and links it) or a `tg://user` link by id otherwise.
    */
-  function renderForTelegram(text: string): { html: string; handles: string[] } {
+  function renderForTelegram(
+    text: string,
+    format?: TextFormat,
+  ): { html: string; handles: string[] } {
+    if (format === 'html') return { html: text, handles: [] }
+    if (format === 'plain') return { html: escapeHtml(plainMentions(text)), handles: [] }
     const handles: string[] = []
     let out = ''
     let at = 0
@@ -691,31 +697,66 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     return { html: toTelegramHtml(out + text.slice(at)), handles }
   }
 
+  /** Stickers and video notes carry no caption: the text follows as its own message. */
+  const captionless = (m: OutboundMessage): boolean =>
+    (m.files ?? []).every((f) => f.media === 'sticker' || f.media === 'video_note')
+
   async function send(node: ChannelNode, message: OutboundMessage): Promise<SentMessage> {
     await guardSend(node)
     const chat = targetOf(node).chat
     try {
-      const rendered = renderForTelegram(message.text)
-      const sent =
-        message.files !== undefined && message.files.length > 0
-          ? await client.sendFiles(
-              chat,
-              message.files,
-              plainMentions(message.text),
-              sendOptions(node, message),
+      const rendered = renderForTelegram(message.text, message.format)
+      const ids: number[] = []
+      if (message.files !== undefined && message.files.length > 0) {
+        const files = message.files.map((f) => {
+          if (f.bytes === undefined)
+            throw new ChannelError(
+              'invalid',
+              `${f.name}: a user account sends files by their bytes (copy the message to resend it)`,
             )
-          : await client.sendText(chat, rendered.html, {
-              ...sendOptions(node, message),
-              html: { handles: rendered.handles },
-            })
-      sentIds.add(`${chat}:${sent.id}`)
-      if (sentIds.size > DEDUPE_MAX) {
+          return {
+            name: f.name,
+            mediaType: f.mediaType,
+            bytes: f.bytes,
+            ...(f.media === undefined ? {} : { media: f.media }),
+          }
+        })
+        const textAfter = message.text.trim() !== '' && captionless(message)
+        const r = await client.sendFiles(chat, files, textAfter ? '' : rendered.html, {
+          ...sendOptions(node, message),
+          html: { handles: rendered.handles },
+        })
+        ids.push(...(r.ids ?? [r.id]))
+        if (textAfter) {
+          const tail = await client.sendText(chat, rendered.html, {
+            ...(targetOf(node).topic === undefined
+              ? {}
+              : { topicId: targetOf(node).topic as number }),
+            ...(message.silent === true ? { silent: true } : {}),
+            html: { handles: rendered.handles },
+          })
+          ids.push(tail.id)
+        }
+      } else {
+        const r = await client.sendText(chat, rendered.html, {
+          ...sendOptions(node, message),
+          html: { handles: rendered.handles },
+          ...(message.linkPreview === true ? { linkPreview: true } : {}),
+        })
+        ids.push(r.id)
+      }
+      for (const id of ids) sentIds.add(`${chat}:${id}`)
+      while (sentIds.size > DEDUPE_MAX) {
         const oldest = sentIds.values().next().value
-        if (oldest !== undefined) sentIds.delete(oldest)
+        if (oldest === undefined) break
+        sentIds.delete(oldest)
       }
       counters.add(connectionId, 'all', now())
       if (node.kind === 'direct') counters.add(connectionId, 'dm', now())
-      return { nativeId: String(sent.id) }
+      return {
+        nativeId: String(ids[0]),
+        ...(ids.length > 1 ? { nativeIds: ids.map(String) } : {}),
+      }
     } catch (error) {
       throw toChannelError(error, chat)
     }
@@ -837,19 +878,64 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
       await client.stop().catch(() => undefined)
     },
     send,
-    edit: (node, nativeId, text) =>
+    edit: (node, nativeId, text, format) =>
       guarded(node, () => {
-        const rendered = renderForTelegram(text)
+        const rendered = renderForTelegram(text, format)
+        return client.editText(targetOf(node).chat, Number(nativeId), rendered.html, {
+          handles: rendered.handles,
+        })
+      }),
+    // a caption is edited like a text (MTProto edits the message's text field either way)
+    editCaption: (node, nativeId, text, format) =>
+      guarded(node, () => {
+        const rendered = renderForTelegram(text, format)
         return client.editText(targetOf(node).chat, Number(nativeId), rendered.html, {
           handles: rendered.handles,
         })
       }),
     delete: (node, nativeId) =>
       guarded(node, () => client.deleteMessages(targetOf(node).chat, [Number(nativeId)])),
+    deleteMany: (node, nativeIds) =>
+      guarded(node, async () => {
+        for (let i = 0; i < nativeIds.length; i += 100)
+          await client.deleteMessages(targetOf(node).chat, nativeIds.slice(i, i + 100).map(Number))
+      }),
+    async copy(from, nativeIds, to, o) {
+      await guardSend(to)
+      const source = targetOf(from).chat
+      const target = targetOf(to)
+      const ids = nativeIds.map(Number).sort((a, b) => a - b)
+      const out = await guarded(to, async () => {
+        // one message (with a reply or a caption change): a copy; several: one forward without
+        // the author, which keeps an album together
+        if (ids.length === 1 && o.forward !== true && client.copyMessage !== undefined) {
+          const m = await client.copyMessage(source, ids[0] as number, target.chat, {
+            ...(target.topic === undefined ? {} : { topicId: target.topic }),
+            ...(o.silent === true ? { silent: true } : {}),
+            ...(o.replyTo === undefined ? {} : { replyTo: Number(o.replyTo) }),
+            ...(o.dropCaptions === true ? { noCaption: true } : {}),
+          })
+          return [m.id]
+        }
+        if (client.forwardMessages === undefined)
+          throw new ChannelError('invalid', 'this account cannot copy messages')
+        return client.forwardMessages(source, ids, target.chat, {
+          ...(target.topic === undefined ? {} : { topicId: target.topic }),
+          ...(o.silent === true ? { silent: true } : {}),
+          ...(o.forward === true ? {} : { dropAuthor: true }),
+          ...(o.dropCaptions === true && o.forward !== true ? { dropCaptions: true } : {}),
+        })
+      })
+      for (const id of out) sentIds.add(`${target.chat}:${id}`)
+      counters.add(connectionId, 'all', now())
+      return out.map(String)
+    },
     pin: (node, nativeId, pinned) =>
       guarded(node, () => client.pin(targetOf(node).chat, Number(nativeId), pinned)),
-    react: (node, nativeId, emoji) =>
-      guarded(node, () => client.react(targetOf(node).chat, Number(nativeId), emoji)),
+    react: (node, nativeId, emoji, custom) =>
+      guarded(node, () =>
+        client.react(targetOf(node).chat, Number(nativeId), emoji, custom?.customEmojiId),
+      ),
     async fetchHistory(node, o): Promise<HistoryEntry[]> {
       const { chat, topic } = targetOf(node)
       // a topic of a forum: only its messages; General (topic 0) is the chat's history without a topic

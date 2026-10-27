@@ -787,12 +787,41 @@ export function governAdapter<A extends ChannelAdapter>(
             )
           }
         case 'edit':
-          return (node: ChannelNode, nativeId: string, text: string) =>
+          return (node: ChannelNode, nativeId: string, text: string, ...rest: unknown[]) =>
             nodeWrite(
               'edit',
               node,
               { message: nativeId },
-              () => fn.call(target, node, nativeId, text) as Promise<unknown>,
+              () => fn.call(target, node, nativeId, text, ...rest) as Promise<unknown>,
+            )
+        case 'editCaption':
+          return (node: ChannelNode, nativeId: string, text: string, ...rest: unknown[]) =>
+            nodeWrite(
+              'edit',
+              node,
+              { message: nativeId },
+              () => fn.call(target, node, nativeId, text, ...rest) as Promise<unknown>,
+            )
+        case 'deleteMany':
+          return (node: ChannelNode, ids: string[]) =>
+            nodeWrite(
+              'delete',
+              node,
+              { messages: ids.length },
+              () => fn.call(target, node, ids) as Promise<unknown>,
+            )
+        case 'copy':
+          return (from: ChannelNode, ids: string[], to: ChannelNode, o: unknown) =>
+            run(
+              {
+                cls: 'send',
+                action: 'copy',
+                nodeId: to.id,
+                chatKey: chatKeyOf(id, to),
+                audit: false,
+                noWait: true,
+              },
+              () => fn.call(target, from, ids, to, o) as Promise<unknown>,
             )
         case 'delete':
           return (node: ChannelNode, nativeId: string) =>
@@ -811,12 +840,12 @@ export function governAdapter<A extends ChannelAdapter>(
               () => fn.call(target, node, nativeId, pinned) as Promise<unknown>,
             )
         case 'react':
-          return (node: ChannelNode, nativeId: string, emoji: string) =>
+          return (node: ChannelNode, nativeId: string, emoji: string, ...rest: unknown[]) =>
             nodeWrite(
               'react',
               node,
               { message: nativeId },
-              () => fn.call(target, node, nativeId, emoji) as Promise<unknown>,
+              () => fn.call(target, node, nativeId, emoji, ...rest) as Promise<unknown>,
             )
         case 'fetchHistory':
           return (node: ChannelNode, o: { limit: number; before?: string }) =>
@@ -825,12 +854,18 @@ export function governAdapter<A extends ChannelAdapter>(
           return (node: ChannelNode, o: { limit: number }) =>
             nodeRead('members', node, o, () => fn.call(target, node, o) as Promise<unknown>)
         case 'fetchAttachment':
-          return (node: ChannelNode, messageNativeId: string, attachmentId: string) =>
+          return (
+            node: ChannelNode,
+            messageNativeId: string,
+            attachmentId: string,
+            ...rest: unknown[]
+          ) =>
             nodeRead(
               'download',
               node,
               { message: messageNativeId, attachment: attachmentId },
-              () => fn.call(target, node, messageNativeId, attachmentId) as Promise<unknown>,
+              () =>
+                fn.call(target, node, messageNativeId, attachmentId, ...rest) as Promise<unknown>,
             )
         case 'getNodeInfo':
           return (nativeId: string) =>

@@ -5372,6 +5372,11 @@
             "minimum": 0,
             "description": "Script run traces kept this many days; 0 = keep (the per-script cap still applies). Default 30."
           },
+          "scriptCopiesRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Records of what scripts copied where (replies and edits follow each copy) kept this many days; 0 = keep. Default 90."
+          },
           "scriptConcurrency": {
             "type": "integer",
             "minimum": 1,
@@ -5459,6 +5464,7 @@
           "mediaRetentionDays",
           "routineRunsRetentionDays",
           "scriptRunsRetentionDays",
+          "scriptCopiesRetentionDays",
           "scriptConcurrency",
           "scriptRunsPerScript",
           "scriptsChatApproval",
@@ -6022,6 +6028,11 @@
             "maximum": 36500
           },
           "scriptRunsRetentionDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500
+          },
+          "scriptCopiesRetentionDays": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500

@@ -689,6 +689,8 @@ export function compose(config: ServerConfig): Server {
     const st = settings.get()
     const olderThan =
       st.scriptRunsRetentionDays > 0 ? Date.now() - st.scriptRunsRetentionDays * 86_400_000 : 0
+    if (st.scriptCopiesRetentionDays > 0)
+      scriptStore.pruneCopies(Date.now() - st.scriptCopiesRetentionDays * 86_400_000)
     return scriptStore.pruneRuns(olderThan, st.scriptRunsPerScript)
   }
   const pruneEvents = (): void => {

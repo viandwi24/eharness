@@ -43,6 +43,62 @@ function sender(failPhoto?: string, failAll?: string) {
 }
 const key = () => 1
 
+describe('media kinds on the user account', () => {
+  test('voice, video note, GIF and sticker go as their kind; photos and videos share an album; every id comes back', async () => {
+    const seen: Array<Record<string, unknown>> = []
+    let id = 10
+    const tg: MediaSender = {
+      async sendMedia(_chat, media) {
+        seen.push(media as unknown as Record<string, unknown>)
+        return { id: ++id }
+      },
+      async sendMediaGroup(_chat, media) {
+        const list = media as unknown as Array<Record<string, unknown>>
+        seen.push(...list)
+        return list.map(() => ({ id: ++id }))
+      },
+    }
+    const f = (name: string, mediaType: string, media?: string) => ({
+      ...file(name, mediaType),
+      ...(media === undefined ? {} : { media: media as never }),
+    })
+    const one = await sendFilesWith(
+      tg,
+      '1',
+      [
+        f('v.ogg', 'audio/ogg', 'voice'),
+        f('n.mp4', 'video/mp4', 'video_note'),
+        f('g.mp4', 'video/mp4', 'animation'),
+        f('s.webp', 'image/webp', 'sticker'),
+      ],
+      'hello',
+      undefined,
+      key,
+    )
+    expect(one.ids).toHaveLength(4)
+    expect(
+      seen.map((m) => [m.type, m.isRound ?? false, m.isAnimated ?? false, m.caption ?? null]),
+    ).toEqual([
+      ['voice', false, false, 'hello'],
+      ['video', true, false, null],
+      ['video', false, true, null],
+      ['sticker', false, false, null],
+    ])
+    seen.length = 0
+    const album = await sendFilesWith(
+      tg,
+      '1',
+      [f('a.jpg', 'image/jpeg'), f('b.mp4', 'video/mp4')],
+      'cap',
+      undefined,
+      key,
+    )
+    expect(album.ids).toHaveLength(2)
+    expect(seen.map((m) => m.type)).toEqual(['photo', 'video'])
+    expect(seen[0]?.caption).toBe('cap')
+  })
+})
+
 describe('image type routing', () => {
   test('jpeg, png and webp go as photos; gif, svg, bmp, heic and pdf as documents', async () => {
     for (const [mime, type] of [

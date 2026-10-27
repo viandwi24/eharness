@@ -59,6 +59,8 @@ function grantProblem(method: string, m: ScriptManifest): string | undefined {
     case 'channels.delete':
     case 'channels.pin':
     case 'channels.react':
+    case 'channels.copy':
+    case 'channels.forward':
       return has(g.send) ? undefined : 'grants.send is empty'
     case 'channels.reply':
       return g.reply ? undefined : 'grants.reply is off'
@@ -67,6 +69,7 @@ function grantProblem(method: string, m: ScriptManifest): string | undefined {
     case 'channels.members':
     case 'channels.download':
     case 'channels.chats':
+    case 'channels.copies':
       return has(g.read) || has(g.send) ? undefined : 'grants.read and grants.send are empty'
     case 'channels.action':
       return has(g.actions) ? undefined : 'grants.actions is empty'
@@ -122,6 +125,8 @@ export async function checkScript(input: {
   source: string
   types: string
   manifest: ScriptManifest
+  /** The names a chat goes by (id, title), so a grant by title matches a call by id. */
+  chatNames?: (connection: string, chat: string) => string[]
 }): Promise<CheckResult> {
   const started = performance.now()
   const ts = await loadTs()
@@ -261,11 +266,22 @@ export async function checkScript(input: {
             'channels.react',
           ].includes(method)
             ? literalProp(ts, node, 'chat')
-            : undefined
+            : method === 'channels.copy' || method === 'channels.forward'
+              ? literalProp(ts, node, 'toChat')
+              : undefined
+          const connection = literalProp(ts, node, 'connection')
+          const names =
+            chat === undefined
+              ? []
+              : connection !== undefined && input.chatNames !== undefined
+                ? input.chatNames(connection, chat)
+                : [chat.toLowerCase()]
           if (
             chat !== undefined &&
             !input.manifest.grants.send.some(
-              (x) => x.chat === '*' || x.chat.toLowerCase() === chat.toLowerCase(),
+              (x) =>
+                (connection === undefined || x.connection === connection) &&
+                (x.chat === '*' || names.includes(x.chat.toLowerCase())),
             )
           )
             problems.push({

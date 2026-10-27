@@ -403,6 +403,7 @@ describe('migration of the single DM', () => {
       'script_versions',
       'script_runs',
       'script_kv',
+      'script_copies',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(

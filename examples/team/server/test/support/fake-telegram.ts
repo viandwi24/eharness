@@ -147,6 +147,11 @@ export function fakeTelegram(
         case 'sendDocument':
         case 'sendAudio':
         case 'sendVideo':
+        case 'sendSticker':
+        case 'sendVoice':
+        case 'sendAnimation':
+        case 'sendVideoNote':
+        case 'forwardMessage':
           return ok({
             message_id: ++messageId,
             date: Math.floor(Date.now() / 1000),
@@ -154,14 +159,35 @@ export function fakeTelegram(
             from: bot,
             text: params.text,
           })
-        case 'sendMediaGroup':
-          return ok([
-            {
+        case 'sendMediaGroup': {
+          const media = (
+            typeof params.media === 'string' ? JSON.parse(params.media) : (params.media ?? [{}])
+          ) as unknown[]
+          return ok(
+            media.map(() => ({
               message_id: ++messageId,
               date: 1,
               chat: { id: Number(params.chat_id), type: 'supergroup' },
-            },
-          ])
+            })),
+          )
+        }
+        case 'copyMessage':
+          return ok({ message_id: ++messageId })
+        case 'copyMessages':
+        case 'forwardMessages': {
+          const ids = (
+            typeof params.message_ids === 'string'
+              ? JSON.parse(params.message_ids)
+              : params.message_ids
+          ) as unknown[]
+          return ok(ids.map(() => ({ message_id: ++messageId })))
+        }
+        case 'editMessageCaption':
+          return ok({
+            message_id: Number(params.message_id),
+            date: 1,
+            chat: { id: Number(params.chat_id), type: 'supergroup' },
+          })
         case 'editMessageText':
           return ok({
             message_id: Number(params.message_id),

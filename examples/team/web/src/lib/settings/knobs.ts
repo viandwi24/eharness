@@ -17,6 +17,7 @@ export type KnobKey =
 	| 'scriptConcurrency'
 	| 'scriptRunsPerScript'
 	| 'scriptRunsRetentionDays'
+	| 'scriptCopiesRetentionDays'
 	| 'eventsRetentionHours'
 	| 'eventsMaxRows'
 	| 'logMaxRows'
@@ -84,6 +85,7 @@ export const KNOB_GROUPS: KnobGroup[] = [
 			{ key: 'mediaRetentionDays', label: 'Screenshots and tool media', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them. A chat that still shows a removed one shows "expired".' },
 			{ key: 'routineRunsRetentionDays', label: 'Finished routine runs', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them.' },
 			{ key: 'scriptRunsRetentionDays', label: 'Script run traces', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them (up to the per-script count).' },
+			{ key: 'scriptCopiesRetentionDays', label: 'Script copy records', unit: 'days', min: 0, max: 36500, integer: true, description: 'What scripts copied where; replies and edits to a copy older than this no longer find their source. 0 keeps them.' },
 			{ key: 'scriptRunsPerScript', label: 'Script run traces per script', min: 10, max: 100000, integer: true, description: 'The newest traces kept for each script.' },
 			{ key: 'tasksRetentionDays', label: 'Finished tasks', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps them.' },
 			{ key: 'libraryHistoryRetentionDays', label: 'Library history', unit: 'days', min: 0, max: 36500, integer: true, description: '0 keeps it.' }

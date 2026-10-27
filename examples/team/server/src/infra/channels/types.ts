@@ -213,7 +213,9 @@ export type RemoteEvent =
   | (EventBase & {
       type: 'reaction.added' | 'reaction.removed'
       messageNativeId: string
+      /** The emoji; for a custom emoji `custom:<id>` (see `customEmojiId`). */
       emoji: string
+      customEmojiId?: string
     })
   | (EventBase & { type: 'node.created' | 'node.updated' })
   | (EventBase & { type: 'node.state_changed'; state: NodeState; reason?: string })
@@ -298,7 +300,26 @@ export interface ChannelCapabilities {
 export interface OutboundFile {
   name: string
   mediaType: string
-  bytes: Uint8Array
+  /** The bytes; absent when `ref` names a file the platform already has. */
+  bytes?: Uint8Array
+  /** How it goes out (photo, voice, sticker, GIF…). Absent: chosen from the media type. */
+  media?: MediaKind
+  /** A platform reference (a Telegram bot file id) that sends the file without an upload. */
+  ref?: string
+}
+
+/** How the text of a message is written: Markdown (default), the platform's HTML subset, or plain. */
+export type TextFormat = 'markdown' | 'html' | 'plain'
+
+/** A copy or forward of messages to another chat. */
+export interface CopyOptions {
+  /** Forward (shows the original sender) instead of a copy. */
+  forward?: boolean
+  silent?: boolean
+  /** Native id in the target chat to answer. */
+  replyTo?: string
+  /** Copies without their captions. */
+  dropCaptions?: boolean
 }
 
 /** An action button under a message. `name` and `data` come back in the inbound `action` event. */
@@ -316,6 +337,10 @@ export interface OutboundMessage {
   threadRoot?: string
   files?: OutboundFile[]
   silent?: boolean
+  /** Default `markdown`. */
+  format?: TextFormat
+  /** Show a preview of the first link (default off). */
+  linkPreview?: boolean
   /** Only sent when the node's capabilities have `buttons`. */
   buttons?: OutboundButton[]
   /**
@@ -327,8 +352,10 @@ export interface OutboundMessage {
 }
 
 export interface SentMessage {
-  /** The native id of the message that was posted. */
+  /** The native id of the message that was posted (the first one of an album). */
   nativeId: string
+  /** Every message posted, in order, when there are more than one (an album, files one by one). */
+  nativeIds?: string[]
 }
 
 export interface HistoryEntry {
@@ -443,10 +470,35 @@ export interface ChannelAdapter {
   getCapabilities(node: ChannelNode): ChannelCapabilities
   send(node: ChannelNode, message: OutboundMessage): Promise<SentMessage>
   /** Replace the text of a message. Editing removes its buttons (a message edited this way has none). */
-  edit?(node: ChannelNode, nativeId: string, text: string): Promise<void>
+  edit?(node: ChannelNode, nativeId: string, text: string, format?: TextFormat): Promise<void>
+  /** Replace the caption of a message with a file (empty = no caption). */
+  editCaption?(
+    node: ChannelNode,
+    nativeId: string,
+    text: string,
+    format?: TextFormat,
+  ): Promise<void>
   delete?(node: ChannelNode, nativeId: string): Promise<void>
+  /** Delete several messages of one chat in one call. */
+  deleteMany?(node: ChannelNode, nativeIds: string[]): Promise<void>
   pin?(node: ChannelNode, nativeId: string, pinned: boolean): Promise<void>
-  react?(node: ChannelNode, nativeId: string, emoji: string): Promise<void>
+  /** `custom` = a custom emoji by its id (where the platform allows it); `emoji` is its fallback. */
+  react?(
+    node: ChannelNode,
+    nativeId: string,
+    emoji: string,
+    custom?: { customEmojiId: string },
+  ): Promise<void>
+  /**
+   * Copy (or forward) messages of `from` to `to` by reference: no download, albums kept. Returns
+   * the native ids of the new messages in order.
+   */
+  copy?(
+    from: ChannelNode,
+    nativeIds: string[],
+    to: ChannelNode,
+    options: CopyOptions,
+  ): Promise<string[]>
   typing?(node: ChannelNode): Promise<void>
   fetchHistory?(
     node: ChannelNode,

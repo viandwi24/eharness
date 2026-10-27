@@ -110,6 +110,8 @@ export interface WorkspaceSettings {
   routineRunsRetentionDays: number
   /** Script run traces kept this many days (0 = keep; the per-script cap still applies). */
   scriptRunsRetentionDays: number
+  /** What scripts copied where (`ctx.channels.copy`) kept this many days (0 = keep). */
+  scriptCopiesRetentionDays: number
   /** Finished tasks kept this many days (0 = keep). */
   tasksRetentionDays: number
   /** Library history kept this many days (0 = keep). */
@@ -158,6 +160,7 @@ export const SETTINGS_BUILTIN = {
   mediaRetentionDays: 3,
   routineRunsRetentionDays: 30,
   scriptRunsRetentionDays: 30,
+  scriptCopiesRetentionDays: 90,
   tasksRetentionDays: 90,
   libraryHistoryRetentionDays: 180,
   backupEnabled: true,
@@ -400,6 +403,7 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
     'mediaRetentionDays',
     'routineRunsRetentionDays',
     'scriptRunsRetentionDays',
+    'scriptCopiesRetentionDays',
     'tasksRetentionDays',
     'libraryHistoryRetentionDays',
   ] as const) {

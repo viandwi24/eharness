@@ -25,17 +25,20 @@ import {
   type ChannelCapabilities,
   ChannelError,
   type ChannelNode,
+  type CopyOptions,
   type EventSink,
   type Identity,
+  type MediaKind,
   type NativeAction,
   type NodeInfo,
   type OutboundFile,
   type OutboundMessage,
   type SentMessage,
+  type TextFormat,
 } from '../channels/types.ts'
 import { botActions } from './actions.ts'
 import { TELEGRAM_BOT_EVENTS } from './events.ts'
-import { htmlChunks, toTelegramHtml } from './format.ts'
+import { escapeHtml, htmlChunks, toTelegramHtml } from './format.ts'
 import {
   chatNode,
   encodeCallback,
@@ -214,6 +217,15 @@ export function targetOf(node: ChannelNode): { chat: string; topic: number | und
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
+/** Telegram HTML as plain text. */
+const stripHtml = (html: string): string =>
+  html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+
 export function createTelegramAdapter(options: TelegramAdapterOptions): TelegramAdapter {
   const { token } = options
   const warn = (m: string): void => (options.hooks?.warn ?? (() => undefined))(scrubToken(m, token))
@@ -367,6 +379,49 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
     }
   }
 
+  /** The text as Telegram HTML in the format it was written in. */
+  const htmlOf = (text: string, format: TextFormat | undefined): string =>
+    format === 'html' ? text : format === 'plain' ? escapeHtml(text) : toTelegramHtml(text)
+  /** The same text without markup (the fallback when Telegram cannot parse the HTML). */
+  const plainOf = (text: string, format: TextFormat | undefined): string =>
+    format === 'html' ? stripHtml(text) : plainMentions(text)
+  /** Message-sized HTML parts. */
+  function chunksOf(text: string, format: TextFormat | undefined): string[] {
+    const max = TELEGRAM_CAPABILITIES.maxTextLength as number
+    if (format === 'html') {
+      if (text.length > max)
+        throw new ChannelError('invalid', `HTML text is longer than ${max} characters: split it`)
+      return [text]
+    }
+    if (format === 'plain') {
+      const out: string[] = []
+      for (let i = 0; i < text.length; i += 3500) out.push(escapeHtml(text.slice(i, i + 3500)))
+      return out
+    }
+    return htmlChunks(text, max)
+  }
+
+  /** How a file goes out: the kind the caller asked for, else what its media type suggests. */
+  const kindOf = (f: OutboundFile): MediaKind => {
+    if (f.media !== undefined) return f.media
+    if (f.mediaType === 'image/gif') return 'animation'
+    if (IMAGE_TYPES.has(f.mediaType)) return 'photo'
+    if (f.mediaType.startsWith('audio/')) return 'audio'
+    if (f.mediaType === 'video/mp4') return 'video'
+    return 'document'
+  }
+  /** Stickers and video notes carry no caption. */
+  const takesCaption = (k: MediaKind): boolean => k !== 'sticker' && k !== 'video_note'
+  /** Which files may share an album: photos with videos, documents, or audio. */
+  const albumClass = (k: MediaKind): string | undefined =>
+    k === 'photo' || k === 'video'
+      ? 'visual'
+      : k === 'document'
+        ? 'document'
+        : k === 'audio'
+          ? 'audio'
+          : undefined
+
   async function sendFiles(
     node: ChannelNode,
     message: OutboundMessage,
@@ -374,56 +429,194 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
     common: Record<string, unknown>,
   ): Promise<SentMessage> {
     const chat = chatArg(targetOf(node).chat)
-    const html = toTelegramHtml(message.text)
+    const html = message.text === '' ? '' : htmlOf(message.text, message.format)
     const captionOk = html.length <= (TELEGRAM_CAPABILITIES.maxCaptionLength as number)
-    const caption = message.text === '' ? undefined : captionOk ? html : undefined
-    const input = (f: OutboundFile): InputFile => new InputFile(f.bytes, f.name)
+    const input = (f: OutboundFile): InputFile | string => {
+      if (f.ref !== undefined && f.ref !== '') return f.ref
+      if (f.bytes === undefined)
+        throw new ChannelError('invalid', `${f.name} has no bytes and no reference`)
+      return new InputFile(f.bytes, f.name)
+    }
+    const kinds = files.map(kindOf)
+    const captionAt = html !== '' && captionOk ? kinds.findIndex(takesCaption) : -1
+    const ids: string[] = []
+    const classes = kinds.map(albumClass)
     const albumable =
-      files.length >= 2 && files.length <= 10 && files.every((f) => IMAGE_TYPES.has(f.mediaType))
-    let first: SentMessage | undefined
+      files.length >= 2 && classes[0] !== undefined && classes.every((c) => c === classes[0])
     if (albumable) {
-      const media = files.map((f, i) => ({
-        type: 'photo' as const,
-        media: input(f),
-        ...(i === 0 && caption !== undefined ? { caption, parse_mode: 'HTML' as const } : {}),
-      }))
-      const result = await withHtml(
-        () => bot.api.sendMediaGroup(chat, media, common),
-        () =>
-          bot.api.sendMediaGroup(
-            chat,
-            media.map((m) => ({ type: m.type, media: m.media })),
-            common,
-          ),
-      )
-      first = { nativeId: String(result[0]?.message_id) }
+      for (let start = 0; start < files.length; start += 10) {
+        const media = files.slice(start, start + 10).map((f, j) => {
+          const i = start + j
+          return {
+            type: kinds[i] as 'photo' | 'video' | 'document' | 'audio',
+            media: input(f),
+            ...(i === captionAt ? { caption: html, parse_mode: 'HTML' as const } : {}),
+          }
+        })
+        const result = await withHtml(
+          () =>
+            bot.api.sendMediaGroup(chat, media as never, start === 0 ? common : threadOf(common)),
+          () =>
+            bot.api.sendMediaGroup(
+              chat,
+              media.map((m, j) =>
+                start + j === captionAt
+                  ? {
+                      type: m.type,
+                      media: m.media,
+                      caption: plainOf(message.text, message.format).slice(0, 1024),
+                    }
+                  : { type: m.type, media: m.media },
+              ) as never,
+              start === 0 ? common : threadOf(common),
+            ),
+        )
+        for (const r of result) ids.push(String(r.message_id))
+      }
     } else {
       for (const [i, f] of files.entries()) {
-        const opts = {
-          ...common,
-          ...(i === 0 && caption !== undefined ? { caption, parse_mode: 'HTML' as const } : {}),
+        const kind = kinds[i] as MediaKind
+        const keyboard = i === files.length - 1 ? markup(message) : undefined
+        const base = {
+          ...(i === 0 ? common : threadOf(common)),
+          ...(keyboard === undefined ? {} : { reply_markup: keyboard }),
         }
-        const plainOpts = { ...common }
-        const send = (o: typeof opts | typeof plainOpts): Promise<{ message_id: number }> => {
-          if (IMAGE_TYPES.has(f.mediaType)) return bot.api.sendPhoto(chat, input(f), o)
-          if (f.mediaType.startsWith('audio/')) return bot.api.sendAudio(chat, input(f), o)
-          if (f.mediaType === 'video/mp4') return bot.api.sendVideo(chat, input(f), o)
-          return bot.api.sendDocument(chat, input(f), o)
+        const opts = {
+          ...base,
+          ...(i === captionAt ? { caption: html, parse_mode: 'HTML' as const } : {}),
+        }
+        const plainOpts = {
+          ...base,
+          ...(i === captionAt
+            ? { caption: plainOf(message.text, message.format).slice(0, 1024) }
+            : {}),
+        }
+        const file = input(f)
+        const sendOne = (o: Record<string, unknown>): Promise<{ message_id: number }> => {
+          switch (kind) {
+            case 'photo':
+              return bot.api.sendPhoto(chat, file, o)
+            case 'video':
+              return bot.api.sendVideo(chat, file, o)
+            case 'animation':
+              return bot.api.sendAnimation(chat, file, o)
+            case 'voice':
+              return bot.api.sendVoice(chat, file, o)
+            case 'video_note':
+              return bot.api.sendVideoNote(chat, file, o)
+            case 'audio':
+              return bot.api.sendAudio(chat, file, o)
+            case 'sticker':
+              return bot.api.sendSticker(chat, file, o)
+            default:
+              return bot.api.sendDocument(chat, file, o)
+          }
         }
         const result = await withHtml(
-          () => send(opts),
-          () => send(plainOpts),
+          () => sendOne(opts),
+          () => sendOne(plainOpts),
         )
-        first ??= { nativeId: String(result.message_id) }
+        ids.push(String(result.message_id))
       }
     }
-    if (caption === undefined && message.text !== '') {
-      // a caption that grew over the limit as HTML goes out as its own message
-      await bot.api
-        .sendMessage(chat, html, { ...common, parse_mode: 'HTML' })
-        .catch(() => undefined)
+    if (html !== '' && captionAt < 0) {
+      // no file takes a caption (stickers, video notes) or it grew over the limit: the text follows
+      for (const part of chunksOf(message.text, message.format)) {
+        const r = await withHtml(
+          () =>
+            bot.api.sendMessage(chat, part, {
+              ...threadOf(common),
+              parse_mode: 'HTML',
+              link_preview_options: { is_disabled: message.linkPreview !== true },
+            }),
+          () => bot.api.sendMessage(chat, stripHtml(part), threadOf(common)),
+        )
+        ids.push(String(r.message_id))
+      }
     }
-    return first as SentMessage
+    return { nativeId: ids[0] as string, ...(ids.length > 1 ? { nativeIds: ids } : {}) }
+  }
+
+  /** Only the topic of the common options (later parts of one message are no replies). */
+  const threadOf = (common: Record<string, unknown>): Record<string, unknown> => ({
+    ...(common.message_thread_id === undefined
+      ? {}
+      : { message_thread_id: common.message_thread_id }),
+    ...(common.disable_notification === undefined
+      ? {}
+      : { disable_notification: common.disable_notification }),
+  })
+
+  async function editCaption(
+    chat: string,
+    nativeId: string,
+    text: string,
+    format: TextFormat | undefined,
+  ): Promise<void> {
+    const html = text === '' ? '' : htmlOf(text, format)
+    try {
+      await withHtml(
+        () =>
+          bot.api.editMessageCaption(
+            chatArg(chat),
+            Number(nativeId),
+            html === '' ? {} : { caption: html, parse_mode: 'HTML' as const },
+          ),
+        () =>
+          bot.api.editMessageCaption(chatArg(chat), Number(nativeId), {
+            caption: plainOf(text, format).slice(0, 1024),
+          }),
+      )
+    } catch (error) {
+      if (error instanceof GrammyError && /not modified/i.test(error.description)) return
+      throw error
+    }
+  }
+
+  /** Copies keep albums together (Telegram groups copied album items again). */
+  async function copyTo(
+    from: ChannelNode,
+    nativeIds: string[],
+    to: ChannelNode,
+    o: CopyOptions,
+  ): Promise<string[]> {
+    const source = chatArg(targetOf(from).chat)
+    const target = targetOf(to)
+    const extra: Record<string, unknown> = {
+      ...(target.topic === undefined ? {} : { message_thread_id: target.topic }),
+      ...(o.silent === true ? { disable_notification: true } : {}),
+    }
+    const ids = nativeIds.map(Number).sort((a, b) => a - b)
+    const reply =
+      o.replyTo === undefined
+        ? {}
+        : { reply_parameters: { message_id: Number(o.replyTo), allow_sending_without_reply: true } }
+    if (o.forward === true) {
+      if (ids.length === 1) {
+        const r = await bot.api.forwardMessage(
+          chatArg(target.chat),
+          source,
+          ids[0] as number,
+          extra,
+        )
+        return [String(r.message_id)]
+      }
+      const r = await bot.api.forwardMessages(chatArg(target.chat), source, ids, extra)
+      return r.map((m) => String(m.message_id))
+    }
+    if (ids.length === 1) {
+      const r = await bot.api.copyMessage(chatArg(target.chat), source, ids[0] as number, {
+        ...extra,
+        ...reply,
+        ...(o.dropCaptions === true ? { caption: '' } : {}),
+      })
+      return [String(r.message_id)]
+    }
+    const r = await bot.api.copyMessages(chatArg(target.chat), source, ids, {
+      ...extra,
+      ...(o.dropCaptions === true ? { remove_caption: true } : {}),
+    })
+    return r.map((m) => String(m.message_id))
   }
 
   async function send(node: ChannelNode, message: OutboundMessage): Promise<SentMessage> {
@@ -449,15 +642,15 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
         return remember(message.sendTxnId, await sendFiles(node, message, message.files, common))
       }
       if (message.text.trim() === '') throw new ChannelError('invalid', 'there is nothing to send')
-      const parts = htmlChunks(message.text, TELEGRAM_CAPABILITIES.maxTextLength)
-      const plainText = plainMentions(message.text)
+      const parts = chunksOf(message.text, message.format)
+      const plainText = plainOf(message.text, message.format)
       const plainParts = parts.length === 1 ? [plainText.slice(0, 4096)] : undefined
-      let first: SentMessage | undefined
+      const ids: string[] = []
       for (const [i, html] of parts.entries()) {
         const last = i === parts.length - 1
         const keyboard = last ? markup(message) : undefined
         const extra = {
-          ...(i === 0 ? common : thread === undefined ? {} : { message_thread_id: thread }),
+          ...(i === 0 ? common : threadOf(common)),
           ...(keyboard === undefined ? {} : { reply_markup: keyboard }),
         }
         const result = await withHtml(
@@ -465,7 +658,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
             bot.api.sendMessage(chat, html, {
               ...extra,
               parse_mode: 'HTML',
-              link_preview_options: { is_disabled: true },
+              link_preview_options: { is_disabled: message.linkPreview !== true },
             }),
           () =>
             bot.api.sendMessage(
@@ -474,9 +667,12 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
               extra,
             ),
         )
-        first ??= { nativeId: String(result.message_id) }
+        ids.push(String(result.message_id))
       }
-      return remember(message.sendTxnId, first as SentMessage)
+      return remember(message.sendTxnId, {
+        nativeId: ids[0] as string,
+        ...(ids.length > 1 ? { nativeIds: ids } : {}),
+      })
     })
   }
 
@@ -639,10 +835,10 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
       if (h?.isRunning()) await h.stop().catch(() => undefined)
     },
     send,
-    async edit(node, nativeId, text) {
+    async edit(node, nativeId, text, format) {
       const { chat } = targetOf(node)
       await guard(async () => {
-        const html = htmlChunks(text, TELEGRAM_CAPABILITIES.maxTextLength)[0] ?? ''
+        const html = chunksOf(text, format)[0] ?? ''
         try {
           await withHtml(
             () =>
@@ -652,18 +848,38 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
                 link_preview_options: { is_disabled: true },
               }),
             () =>
-              bot.api.editMessageText(chatArg(chat), Number(nativeId), text.slice(0, 4096), {
-                reply_markup: { inline_keyboard: [] },
-              }),
+              bot.api.editMessageText(
+                chatArg(chat),
+                Number(nativeId),
+                plainOf(text, format).slice(0, 4096),
+                { reply_markup: { inline_keyboard: [] } },
+              ),
           )
         } catch (error) {
           if (error instanceof GrammyError && /not modified/i.test(error.description)) return
+          // a message with a file has a caption, not a text
+          if (error instanceof GrammyError && /no text in the message/i.test(error.description))
+            return editCaption(chat, nativeId, text, format)
           throw error
         }
       })
     },
+    async editCaption(node, nativeId, text, format) {
+      await guard(() => editCaption(targetOf(node).chat, nativeId, text, format))
+    },
     async delete(node, nativeId) {
       await guard(() => bot.api.deleteMessage(chatArg(targetOf(node).chat), Number(nativeId)))
+    },
+    async deleteMany(node, nativeIds) {
+      const chat = chatArg(targetOf(node).chat)
+      // at most 100 per call
+      for (let i = 0; i < nativeIds.length; i += 100) {
+        const ids = nativeIds.slice(i, i + 100).map(Number)
+        await guard(() => bot.api.deleteMessages(chat, ids))
+      }
+    },
+    async copy(from, nativeIds, to, o) {
+      return guard(() => copyTo(from, nativeIds, to, o))
     },
     async pin(node, nativeId, pinned) {
       const { chat } = targetOf(node)
@@ -675,12 +891,23 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): Telegram
           : bot.api.unpinChatMessage(chatArg(chat), Number(nativeId)),
       )
     },
-    async react(node, nativeId, emoji) {
-      await guard(() =>
-        bot.api.setMessageReaction(chatArg(targetOf(node).chat), Number(nativeId), [
-          { type: 'emoji', emoji: emoji as never },
-        ]),
-      )
+    async react(node, nativeId, emoji, custom) {
+      const chat = chatArg(targetOf(node).chat)
+      const reaction =
+        custom === undefined
+          ? [{ type: 'emoji' as const, emoji: emoji as never }]
+          : [{ type: 'custom_emoji' as const, custom_emoji_id: custom.customEmojiId }]
+      try {
+        await guard(() => bot.api.setMessageReaction(chat, Number(nativeId), reaction))
+      } catch (error) {
+        // a bot may not use custom emoji where the chat does not allow it: the plain emoji instead
+        if (custom === undefined || emoji === '' || !(error instanceof ChannelError)) throw error
+        await guard(() =>
+          bot.api.setMessageReaction(chat, Number(nativeId), [
+            { type: 'emoji', emoji: emoji as never },
+          ]),
+        )
+      }
     },
     async typing(node) {
       const { chat, topic } = targetOf(node)

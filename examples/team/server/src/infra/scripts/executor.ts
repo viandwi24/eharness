@@ -31,7 +31,11 @@ export interface RunScriptInput {
   host: Readonly<Record<string, HostHandler>>
   limits?: Partial<ScriptLimits>
   /** Methods that change something outside the script: recorded, not called. */
-  dryRun?: { sideEffects: ReadonlySet<string> }
+  dryRun?: {
+    sideEffects: ReadonlySet<string>
+    /** A refusal the real run would give (a missing grant): the dry call fails with it. */
+    refusal?: (method: string, args: unknown) => string | undefined
+  }
 }
 
 const WORKER_URL = new URL('./worker.ts', import.meta.url).href
@@ -147,6 +151,11 @@ export async function runScript(input: RunScriptInput): Promise<ScriptRunResult>
       let value: unknown
       if (input.dryRun?.sideEffects.has(method)) {
         record.dryRun = true
+        const refused = input.dryRun.refusal?.(method, args)
+        if (refused !== undefined) {
+          fail(refused)
+          return
+        }
         value = { dryRun: true }
       } else {
         try {
