@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
+import { setupSignalRouter } from '../../app/signal-router.ts'
 import {
   ChannelActivityActionsSchema,
   ChannelActivityPageSchema,
@@ -55,6 +56,8 @@ import {
   ChannelSelectBodySchema,
   ChannelUnlinkedListSchema,
   ChannelUnlinkedQuery,
+  SignalRouterBodySchema,
+  SignalRouterResultSchema,
 } from '../schemas/channels.ts'
 import { errorResponses, jsonError } from '../schemas/common.ts'
 
@@ -190,6 +193,25 @@ const policyRemove = createRoute({
     200: { description: 'The node', content: content(ChannelChatSchema) },
     404: jsonError('Unknown connection or node'),
     409: jsonError('The connection is not bound to an agent'),
+    ...errorResponses,
+  },
+})
+const signalRouter = createRoute({
+  method: 'post',
+  path: '/channels/connections/{id}/signal-router',
+  tags,
+  summary: 'Set up a Signal Router agent (template)',
+  description:
+    "Creates an agent that reads the source chat as a feed and copies trading signals and their follow-ups to the target chats, a table of trade ideas as its memory, and the chat settings (the source becomes a feed of the agent, starting in trial mode: decisions are recorded, nothing is sent). Everything stays editable: the agent's instructions, the table, the chat settings.",
+  security,
+  request: {
+    params: ChannelIdParam,
+    body: { required: true, content: content(SignalRouterBodySchema) },
+  },
+  responses: {
+    201: { description: 'What was set up', content: content(SignalRouterResultSchema) },
+    404: jsonError('Unknown connection'),
+    409: jsonError('The source chat is a feed of another agent already'),
     ...errorResponses,
   },
 })
@@ -893,6 +915,22 @@ export function channelRoutes(deps: Deps) {
     .openapi(policyRemove, async (c) => {
       const { id, chatId } = c.req.valid('param')
       return c.json(await ch.setChatPolicy(id, chatId, null), 200)
+    })
+    .openapi(signalRouter, async (c) => {
+      const r = await setupSignalRouter(deps, {
+        connectionId: c.req.valid('param').id,
+        ...c.req.valid('json'),
+      })
+      return c.json(
+        {
+          agent: { id: r.agent.id, slug: r.agent.slug, name: r.agent.name },
+          table: r.table,
+          source: r.source,
+          targets: r.targets,
+          trial: r.trial,
+        } as never,
+        201,
+      )
     })
     .openapi(links, async (c) => c.json({ items: await ch.links(c.req.valid('param').id) }, 200))
     .openapi(members, async (c) =>

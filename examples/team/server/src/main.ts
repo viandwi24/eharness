@@ -61,6 +61,7 @@
  * order (providers, connectors, then the reconcile pass of section 6-7), the activity feed and its
  * retention (13), `createTeamHttp` (14) and `Bun.serve` with `idleTimeout: 0` (16).
  */
+
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
@@ -185,6 +186,7 @@ import {
   channelVaultFromEnv,
   createChannelGateway,
 } from './infra/channels/index.ts'
+import { channelSettingsPort } from './infra/channels/node-views.ts'
 import { createPeoplePort, lazyPeoplePort } from './infra/channels/people-admin.ts'
 import { webReminderSession } from './infra/channels/reminders.ts'
 import { webReminderPost } from './infra/channels/web-reminders.ts'
@@ -1250,6 +1252,8 @@ export function compose(config: ServerConfig): Server {
     tables: tableStore,
     scripts: scriptStore,
     scriptRunner: () => scriptEngine,
+    channelSettings: () =>
+      channelGateway === undefined ? undefined : channelSettingsPort(channelGateway, deps.agents),
     onTableRows: (change) => scriptEngine?.onTableRows(change),
     programRunner,
     completion: createAgentCompletion({

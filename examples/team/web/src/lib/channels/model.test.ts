@@ -56,6 +56,8 @@ const effective = (over: Partial<ChannelChat['effective']> = {}): ChannelChat['e
 	agentId: 'lead',
 	wake: 'mention',
 	delivery: 'final_text',
+	feed: false,
+	copyTrial: false,
 	retentionDays: 30,
 	observe: true,
 	sessionScope: 'node',
@@ -113,8 +115,8 @@ describe('chat policy form', () => {
 			inherited: { enabled: { from: 'node', nodeId: 'n-1' }, wake: { from: 'node', nodeId: 'n-1' }, delivery: { from: 'connection' } }
 		});
 		const f = formOfChat(c);
-		expect(f).toEqual({ allowed: 'on', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '', proactive: '', quietFrom: '', quietTo: '', digest: '', maxMentions: '', defaultRole: '', replyStyle: '', personaOverlay: '' });
-		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null, proactive: null, defaultRole: null, replyStyle: null, personaOverlay: null });
+		expect(f).toEqual({ allowed: 'on', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '', proactive: '', quietFrom: '', quietTo: '', digest: '', maxMentions: '', defaultRole: '', replyStyle: '', personaOverlay: '', feed: '', copyTrial: '' });
+		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null, proactive: null, defaultRole: null, replyStyle: null, personaOverlay: null, feed: null, copyTrial: null });
 		// the trusted internal group switch writes the role of unknown people
 		expect(policyBody({ ...f, defaultRole: 'member' })).toMatchObject({ defaultRole: 'member' });
 		expect(formChanged(f, { ...f, defaultRole: 'member' })).toBe(true);

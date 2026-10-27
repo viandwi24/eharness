@@ -372,6 +372,9 @@ export interface ModerationResult {
 /** How the text of a message is written: Markdown (default), the platform's HTML subset, or plain. */
 export type TextFormat = 'markdown' | 'html' | 'plain'
 
+/** How a copy is made: the platform's own copy (`native`), downloaded and sent again by us (`resend`), or `auto` (native when possible). */
+export type CopyVia = 'auto' | 'native' | 'resend'
+
 /** A copy or forward of messages to another chat. */
 export interface CopyOptions {
   /** Forward (shows the original sender) instead of a copy. */

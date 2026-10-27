@@ -366,6 +366,7 @@ describe('migration of the single DM', () => {
       'ch_identity_profiles',
       'ch_memberships',
       'ch_messages',
+      'ch_copies',
       'ch_message_revisions',
       'ch_reactions',
       'ch_events',

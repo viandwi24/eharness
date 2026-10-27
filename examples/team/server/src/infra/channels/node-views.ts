@@ -3,6 +3,8 @@
  * shows, with what each node sets itself and what it inherits, and the one way a policy is written
  * to a node. Shared by every transport service; platform neutral.
  */
+
+import type { ChannelSettingsPort } from '../../app/ports.ts'
 import type {
   ChannelChatsQuery,
   ChannelNodeView,
@@ -11,7 +13,7 @@ import type {
   ChannelSettingKey,
   TablePage,
 } from '../../domain/channels.ts'
-import { invalid } from '../../domain/errors.ts'
+import { invalid, notFound } from '../../domain/errors.ts'
 import { checkOverlay } from '../../domain/persona.ts'
 import type { ChannelGateway } from './gateway.ts'
 import type { NodeRow } from './model.ts'
@@ -30,6 +32,8 @@ const KEYS: ChannelSettingKey[] = [
   'defaultRole',
   'replyStyle',
   'personaOverlay',
+  'feed',
+  'copyTrial',
 ]
 
 /** The part of the settings stored on one node that the page edits. */
@@ -49,6 +53,8 @@ export function policyView(own: ScopePolicy): ChannelPolicy | null {
     ...(own.defaultRole === undefined ? {} : { defaultRole: own.defaultRole }),
     ...(own.replyStyle === undefined ? {} : { replyStyle: own.replyStyle }),
     ...(own.personaOverlay === undefined ? {} : { personaOverlay: own.personaOverlay }),
+    ...(own.feed === undefined ? {} : { feed: own.feed }),
+    ...(own.copyTrial === undefined ? {} : { copyTrial: own.copyTrial }),
   }
 }
 
@@ -108,6 +114,8 @@ export function nodeView(
       ...(scope.defaultRole === undefined ? {} : { defaultRole: scope.defaultRole }),
       ...(scope.replyStyle === undefined ? {} : { replyStyle: scope.replyStyle }),
       ...(scope.personaOverlay === undefined ? {} : { personaOverlay: scope.personaOverlay }),
+      feed: scope.feed,
+      copyTrial: scope.copyTrial,
     },
     inherited,
   }
@@ -191,4 +199,33 @@ export function writePolicy(
     patch.enabled = true
   }
   gateway.settings.set(node.id, patch)
+}
+
+/** Chat settings of any connection through the gateway (`ChannelSettingsPort`). */
+export function channelSettingsPort(
+  gateway: ChannelGateway,
+  agents: { get(id: string): { archivedAt: number | null } | undefined },
+): ChannelSettingsPort {
+  const nodeOf = (connectionId: string, nodeId: string): NodeRow => {
+    const node = gateway.nodes.get(nodeId)
+    if (node === undefined || node.connectionId !== connectionId || node.kind === 'direct')
+      throw notFound('chat', nodeId)
+    return node
+  }
+  return {
+    chats: (connectionId) => {
+      if (gateway.config(connectionId) === undefined) throw notFound('connection', connectionId)
+      return listNodeViews(gateway, connectionId)
+    },
+    chat: (connectionId, nodeId) =>
+      nodeView(gateway, nodeOf(connectionId, nodeId)) as ChannelNodeView,
+    setChatPolicy(connectionId, nodeId, input) {
+      const node = nodeOf(connectionId, nodeId)
+      writePolicy(gateway, node, input, (agentId) => {
+        const a = agents.get(agentId)
+        if (a === undefined || a.archivedAt !== null) throw invalid(`unknown agent: ${agentId}`)
+      })
+      return nodeView(gateway, node) as ChannelNodeView
+    },
+  }
 }

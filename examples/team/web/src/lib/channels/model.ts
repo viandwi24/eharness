@@ -124,6 +124,10 @@ export interface PolicyForm {
 	replyStyle: Inherit<'brief' | 'normal' | 'detailed'>;
 	/** Tone, language and length of this place for the agent persona (max 1000 characters); '' = inherit. */
 	personaOverlay: string;
+	/** A feed for its agent (every message is input, nothing is answered); '' = inherit. */
+	feed: Tri;
+	/** Copies from here are only recorded (trial); '' = inherit. */
+	copyTrial: Tri;
 }
 
 /** The longest overlay the server accepts. */
@@ -151,7 +155,9 @@ export const formOfChat = (c: ChannelChat): PolicyForm => ({
 	maxMentions: c.policy?.proactive?.maxMentions === undefined ? '' : String(c.policy.proactive.maxMentions),
 	defaultRole: c.policy?.defaultRole ?? '',
 	replyStyle: c.policy?.replyStyle ?? '',
-	personaOverlay: c.policy?.personaOverlay ?? ''
+	personaOverlay: c.policy?.personaOverlay ?? '',
+	feed: triOf(c.policy?.feed),
+	copyTrial: triOf(c.policy?.copyTrial)
 });
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -187,7 +193,9 @@ export function policyBody(f: PolicyForm): ChannelPolicyBody {
 		proactive: proactiveBody(f),
 		defaultRole: f.defaultRole === '' ? null : f.defaultRole,
 		replyStyle: f.replyStyle === '' ? null : f.replyStyle,
-		personaOverlay: f.personaOverlay.trim() === '' ? null : f.personaOverlay.trim()
+		personaOverlay: f.personaOverlay.trim() === '' ? null : f.personaOverlay.trim(),
+		feed: boolOf(f.feed),
+		copyTrial: boolOf(f.copyTrial)
 	};
 }
 
@@ -221,6 +229,8 @@ export const formChanged = (a: PolicyForm, b: PolicyForm): boolean =>
 	a.defaultRole !== b.defaultRole ||
 	a.replyStyle !== b.replyStyle ||
 	a.personaOverlay.trim() !== b.personaOverlay.trim() ||
+	a.feed !== b.feed ||
+	a.copyTrial !== b.copyTrial ||
 	fieldText(a.maxMentions) !== fieldText(b.maxMentions);
 
 /** Where one effective setting comes from, in words ("set here", "inherited from Company"). */
@@ -894,7 +904,7 @@ export const personName = (p: ChannelPerson): string => p.name ?? (p.username ? 
 
 // ---- navigation of the Channels pages ----
 
-export type SectionId = 'overview' | 'chats' | 'people' | 'inbox' | 'activity' | 'events' | 'reminders' | 'delivery' | 'history' | 'admin-log' | 'settings';
+export type SectionId = 'overview' | 'chats' | 'people' | 'inbox' | 'activity' | 'events' | 'reminders' | 'router' | 'delivery' | 'history' | 'admin-log' | 'settings';
 
 export interface Section {
 	id: SectionId;
@@ -917,6 +927,7 @@ export function sectionsOf(c: Pick<ChannelConnection, 'binding' | 'transport'> |
 		bound && { id: 'activity', label: 'Activity' },
 		bound && { id: 'events', label: 'Events' },
 		bound && !account && { id: 'reminders', label: 'Reminders' },
+		bound && { id: 'router', label: 'Router' },
 		bound && { id: 'delivery', label: account ? 'Send limits' : 'Delivery' },
 		bound && account && { id: 'history', label: 'History' },
 		bound && account && { id: 'admin-log', label: 'Admin log' },
@@ -933,6 +944,7 @@ export const SECTION_TITLE: Record<SectionId, string> = {
 	activity: 'Activity',
 	events: 'Events',
 	reminders: 'Reminders',
+	router: 'Router',
 	delivery: 'Delivery',
 	history: 'History',
 	'admin-log': 'Admin log',

@@ -705,7 +705,9 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
       if (!matched) continue
       // what the app itself sent never starts a script (loop guard); what a person typed on the
       // connected account from their phone does (a user account used by its owner too)
-      const typedByPerson = info.result.action === 'drop' && info.result.reason === OWN_TYPED
+      const typedByPerson =
+        (info.result.action === 'drop' && info.result.reason === OWN_TYPED) ||
+        info.result.ownTyped === true
       const selfCaused =
         !typedByPerson &&
         (ev.actor?.isSelf === true ||

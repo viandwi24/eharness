@@ -6,6 +6,9 @@
  *  - `channel_read`      (read)         history from the log or the platform, members, download an attachment.
  *  - `channel_send`      (external)     send, reply, upload, react.
  *  - `channel_manage`    (destructive)  edit, delete, pin, unpin.
+ *  - `channel_copy`      (external)     copy or forward messages to another chat (albums kept, no
+ *                                       download); the copy map threads replies and syncs edits.
+ *  - `channel_copies`    (read)         where a message was copied (or what a copy came from).
  *  - one deferred tool per native action of a connection (`tool_search`), each with its own risk.
  *  - in a channel session: the session note, the turn reminder of observed messages, typing, and
  *    delivery of the final text at the end of the turn.
@@ -52,11 +55,15 @@ export const CHANNEL_DESCRIBE_TOOL = 'channel_describe'
 export const CHANNEL_READ_TOOL = 'channel_read'
 export const CHANNEL_SEND_TOOL = 'channel_send'
 export const CHANNEL_MANAGE_TOOL = 'channel_manage'
+export const CHANNEL_COPY_TOOL = 'channel_copy'
+export const CHANNEL_COPIES_TOOL = 'channel_copies'
 export const CHANNEL_TOOLS = [
   CHANNEL_DESCRIBE_TOOL,
   CHANNEL_READ_TOOL,
   CHANNEL_SEND_TOOL,
   CHANNEL_MANAGE_TOOL,
+  CHANNEL_COPY_TOOL,
+  CHANNEL_COPIES_TOOL,
   ...SELF_TOOLS,
 ] as const
 
@@ -64,6 +71,7 @@ export const CHANNEL_TOOLS = [
 export const CHANNEL_READ_TOOLS = [
   CHANNEL_DESCRIBE_TOOL,
   CHANNEL_READ_TOOL,
+  CHANNEL_COPIES_TOOL,
   ...SELF_READ_TOOLS,
 ] as const
 
@@ -201,6 +209,57 @@ const manageSchema = z.object({
   ...target,
   messageId: z.string().min(1).describe('The platform message id.'),
   text: z.string().optional().describe('edit: the new text.'),
+})
+
+const copySchema = z.object({
+  connection: z.string().optional().describe('The connection (default: the one of this chat).'),
+  conversation: z
+    .string()
+    .optional()
+    .describe('The chat the messages are in (default: this conversation).'),
+  topic: z.string().optional().describe('Its topic, when the messages are in one.'),
+  messageIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(100)
+    .describe('Platform message ids to copy; an album: every id of it, in one call.'),
+  to: z.string().min(1).describe('The chat to copy to: its title or platform id.'),
+  toConnection: z
+    .string()
+    .optional()
+    .describe('Another connection for the target chat (the copy is then sent again by us).'),
+  toTopic: z.string().optional().describe('A topic of that chat.'),
+  replyTo: z
+    .string()
+    .optional()
+    .describe(
+      'A message of the target chat the copy answers. Default: the copy of the message the first one replies to, when there is one (follow-ups thread under their signal on their own).',
+    ),
+  caption: z
+    .string()
+    .max(1024)
+    .optional()
+    .describe('A new caption instead of the original text (edits of the original then leave it).'),
+  forward: z.boolean().optional().describe('Forward (shows the original sender) instead of copy.'),
+  via: z
+    .enum(['auto', 'native', 'resend'])
+    .optional()
+    .describe(
+      'auto (default): the platform copy when the connection has one, else resend. native: only the platform copy. resend: we download the files and post text and files again (works across connections; use it with caption to post a rewritten text).',
+    ),
+  silent: z.boolean().optional().describe('No notification sound for the members.'),
+  note: z
+    .string()
+    .max(300)
+    .optional()
+    .describe('Why, kept with the copy ("signal 3 -> VIP", "follow-up of 120").'),
+})
+
+const copiesSchema = z.object({
+  connection: z.string().optional(),
+  conversation: z.string().optional().describe('The chat of the message (default: this one).'),
+  topic: z.string().optional(),
+  messageId: z.string().min(1).describe('The platform message id.'),
 })
 
 const describeSchema = z.object({
@@ -663,6 +722,112 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         return `${input.action === 'pin' ? 'Pinned' : 'Unpinned'} message ${input.messageId}.`
       }
 
+      const nameOf = (n: NodeRow): string => {
+        const room = gw.roomOf(n)
+        return room.id === n.id
+          ? (n.title ?? n.nativeId)
+          : `${room.title ?? room.nativeId} / ${n.title ?? n.nativeId}`
+      }
+
+      const copyMessages = async (input: z.infer<typeof copySchema>): Promise<string> => {
+        const from = resolve({
+          ...(input.connection === undefined ? {} : { connection: input.connection }),
+          ...(input.conversation === undefined ? {} : { conversation: input.conversation }),
+          ...(input.topic === undefined ? {} : { topic: input.topic }),
+        })
+        const to = resolve({
+          connection: input.toConnection ?? from.config.connectionId,
+          conversation: input.to,
+          ...(input.toTopic === undefined ? {} : { topic: input.toTopic }),
+        })
+        if (to.node.id === from.node.id) return 'ERROR: copy to another chat, not the same one.'
+        const ids = [...new Set(input.messageIds)].sort(
+          (a, b) => Number(a) - Number(b) || a.localeCompare(b),
+        )
+        // a follow-up answers the copy of the message it replies to, in the same target chat
+        let replyTo = input.replyTo
+        if (replyTo === undefined && input.forward !== true) {
+          const first = await gw.log.find(from.node.id, ids[0] as string)
+          const answers = first?.replyTo?.messageId
+          if (answers !== undefined)
+            replyTo =
+              gw.copies
+                .of(from.node.id, answers)
+                .find((k) => !k.trial && k.targetNode === to.node.id && k.targetId !== null)
+                ?.targetId ?? undefined
+        }
+        const pair = (out: readonly (string | null)[]) =>
+          ids.length === out.length
+            ? ids.map((s, i) => [s, out[i] ?? null] as const)
+            : ids.flatMap((s) => out.map((x) => [s, x] as const))
+        const where = `${nameOf(to.node)}${replyTo === undefined ? '' : ` as a reply to ${replyTo}`}`
+        if (gw.settings.resolve(from.node.id)?.copyTrial === true) {
+          gw.copies.add(
+            ids.map((sourceId) => ({
+              connectionId: from.config.connectionId,
+              sourceNode: from.node.id,
+              sourceId,
+              targetNode: to.node.id,
+              targetId: null,
+              trial: true,
+              agentId,
+              ...(input.note === undefined ? {} : { note: input.note }),
+            })),
+            Date.now(),
+          )
+          return `Trial mode: recorded that ${ids.length} message(s) (${ids.join(', ')}) would go to ${where}. Nothing was sent.`
+        }
+        const out = await gw.copy(from, ids, to, {
+          ...(input.forward === true ? { forward: true } : {}),
+          ...(input.silent === true ? { silent: true } : {}),
+          ...(replyTo === undefined ? {} : { replyTo }),
+          ...(input.caption === undefined ? {} : { caption: input.caption }),
+          ...(input.via === undefined ? {} : { via: input.via }),
+        })
+        gw.copies.add(
+          pair(out).map(([sourceId, targetId]) => ({
+            connectionId: from.config.connectionId,
+            sourceNode: from.node.id,
+            sourceId,
+            targetNode: to.node.id,
+            targetId,
+            ownCaption: input.caption !== undefined,
+            agentId,
+            ...(input.note === undefined ? {} : { note: input.note }),
+          })),
+          Date.now(),
+        )
+        return `Copied ${ids.length} message(s) to ${where}: new message id(s) ${out.join(', ')}. Edits and deletions of the originals reach the copies on their own.`
+      }
+
+      const listCopies = async (input: z.infer<typeof copiesSchema>): Promise<string> => {
+        const t = resolve({
+          ...(input.connection === undefined ? {} : { connection: input.connection }),
+          ...(input.conversation === undefined ? {} : { conversation: input.conversation }),
+          ...(input.topic === undefined ? {} : { topic: input.topic }),
+        })
+        const lines: string[] = []
+        for (const k of gw.copies.of(t.node.id, input.messageId)) {
+          const target = gw.nodes.get(k.targetNode)
+          const place = target === undefined ? k.targetNode : nameOf(target)
+          lines.push(
+            `- ${k.trial ? 'trial (not sent): ' : ''}${place}${k.targetId === null ? '' : ` message ${k.targetId}`} · ${timeOf(k.createdAt)}${k.note === null ? '' : ` · ${k.note}`}`,
+          )
+        }
+        const src = gw.copies.sourceOf(t.node.id, input.messageId)
+        const srcNode = src === undefined ? undefined : gw.nodes.get(src.sourceNode)
+        return [
+          lines.length === 0
+            ? `Message ${input.messageId} of ${nameOf(t.node)} was not copied anywhere.`
+            : `Message ${input.messageId} of ${nameOf(t.node)} was copied to:\n${lines.join('\n')}`,
+          ...(src === undefined
+            ? []
+            : [
+                `It is itself a copy of message ${src.sourceId} of ${srcNode === undefined ? src.sourceNode : nameOf(srcNode)}.`,
+              ]),
+        ].join('\n')
+      }
+
       const tools: Record<string, unknown> = {
         [CHANNEL_DESCRIBE_TOOL]: tool({
           description:
@@ -690,6 +855,20 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           inputSchema: manageSchema,
           metadata: { risk: 'destructive', idempotent: false },
           execute: (input): Promise<string> => guard(() => manage(input)),
+        }),
+        [CHANNEL_COPY_TOOL]: tool({
+          description:
+            'Copy (or forward) messages of a chat to another chat of the same connection: photos, videos, albums, stickers and formatting are kept, nothing is downloaded. A follow-up goes under the copy of the message it replies to on its own. The copy is remembered: edits and deletions of the original reach it automatically, and channel_copies tells where a message went.',
+          inputSchema: copySchema,
+          metadata: { risk: 'external', idempotent: false },
+          execute: (input): Promise<string> => guard(() => copyMessages(input)),
+        }),
+        [CHANNEL_COPIES_TOOL]: tool({
+          description:
+            'Where a message was copied with channel_copy (chat, message id, note; trial rows too), or which message a copy came from. Read-only.',
+          inputSchema: copiesSchema,
+          metadata: { risk: 'read', idempotent: true },
+          execute: (input): Promise<string> => guard(() => listCopies(input)),
         }),
       }
 
@@ -862,6 +1041,8 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           const refusal = memoryWriteRefusal(e.toolName, e.input)
           if (refusal !== undefined) return { type: 'denied', reason: refusal }
         }
+        // a feed: nobody is being answered; the agent works on its own permissions (its mode and rules)
+        if (gw.feedOf(sessionId)?.feed === true) return undefined
         const requester = await gw.requesterOf(sessionId)
         if (inChannel && requester?.smallTalk === true && MEMORY_READ_TOOLS.includes(e.toolName))
           return { type: 'denied', reason: SMALL_TALK_MEMORY_REFUSAL }

@@ -68,6 +68,13 @@ export const ChannelPolicySchema = z
       description:
         'Tone, language and length of this place for the agent persona (max 1000 characters). Inherited. It never widens tools or loosens rules.',
     }),
+    feed: z.boolean().optional().openapi({
+      description:
+        "A feed for its agent: every message (also the account's own posts) wakes it, nothing is posted back, and tools run on the agent's own permissions. For router and processing agents.",
+    }),
+    copyTrial: z.boolean().optional().openapi({
+      description: 'Copies an agent makes from this chat are only recorded, not sent (trial mode).',
+    }),
   })
   .openapi('ChannelPolicy')
 
@@ -220,6 +227,8 @@ const settingKey = z.enum([
   'defaultRole',
   'replyStyle',
   'personaOverlay',
+  'feed',
+  'copyTrial',
 ])
 
 export const ChannelNodeSchema = z
@@ -262,6 +271,8 @@ export const ChannelNodeSchema = z
       defaultRole: z.enum(['guest', 'member']).optional(),
       replyStyle: z.enum(['brief', 'normal', 'detailed']).optional(),
       personaOverlay: z.string().optional(),
+      feed: z.boolean(),
+      copyTrial: z.boolean(),
     }),
     inherited: z
       .partialRecord(
@@ -331,6 +342,8 @@ export const ChannelPolicyBodySchema = z
     defaultRole: z.enum(['guest', 'member']).nullable().optional(),
     replyStyle: z.enum(['brief', 'normal', 'detailed']).nullable().optional(),
     personaOverlay: z.string().max(1000).nullable().optional(),
+    feed: z.boolean().nullable().optional(),
+    copyTrial: z.boolean().nullable().optional(),
   })
   .openapi('ChannelPolicyBody')
 
@@ -881,3 +894,44 @@ export const ChannelRemindersTablePageSchema = tablePage(
   ChannelReminderSchema,
   'ChannelRemindersTablePage',
 )
+
+export const SignalRouterBodySchema = z
+  .object({
+    source: z.string().min(1).openapi({
+      description: 'The chat the signals are posted in (title, platform id or node id).',
+    }),
+    targets: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(50)
+      .openapi({ description: 'The chats the signals are shared out to.' }),
+    name: z
+      .string()
+      .max(80)
+      .optional()
+      .openapi({ description: 'The agent name (default "Signal Router").' }),
+    trial: z.boolean().optional().openapi({
+      description: 'Default true: copies are only recorded until trial mode is turned off.',
+    }),
+    table: z
+      .string()
+      .max(63)
+      .optional()
+      .openapi({ description: 'The table of trade ideas (default trade_ideas).' }),
+    rules: z
+      .string()
+      .max(4000)
+      .optional()
+      .openapi({ description: 'More rules for the agent (appended to its instructions).' }),
+  })
+  .openapi('SignalRouterBody')
+
+export const SignalRouterResultSchema = z
+  .object({
+    agent: z.object({ id: z.string(), slug: z.string(), name: z.string() }),
+    table: z.string(),
+    source: ChannelChatSchema,
+    targets: z.array(ChannelChatSchema),
+    trial: z.boolean(),
+  })
+  .openapi('SignalRouterResult')

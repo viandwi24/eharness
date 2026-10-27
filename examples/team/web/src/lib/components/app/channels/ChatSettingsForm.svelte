@@ -94,6 +94,28 @@
 	{#if chat.container}
 		<p class="text-xs text-muted-foreground">Settings set here apply to every topic below unless a topic sets its own.</p>
 	{/if}
+	<div class="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2" data-testid="feed">
+		<label class="flex flex-col gap-1">
+			<span class="text-xs font-medium">Feed for its agent <span class="font-normal text-muted-foreground">· {origin('feed')}</span></span>
+			<NativeSelect bind:value={form.feed} aria-label="Feed for its agent">
+				<NativeSelectOption value="">{inheritLabel(chat.effective.feed ? 'a feed' : 'not a feed')}</NativeSelectOption>
+				<NativeSelectOption value="on">A feed: every message is input</NativeSelectOption>
+				<NativeSelectOption value="off">Not a feed</NativeSelectOption>
+			</NativeSelect>
+			<span class="text-xs text-muted-foreground">For a router or processing agent: it wakes on every message (also what this account posts itself), never answers here, and acts with its own tools and permissions.</span>
+		</label>
+		{#if form.feed === 'on' || (form.feed === '' && chat.effective.feed)}
+			<label class="flex flex-col gap-1">
+				<span class="text-xs font-medium">Copies from here <span class="font-normal text-muted-foreground">· {origin('copyTrial')}</span></span>
+				<NativeSelect bind:value={form.copyTrial} aria-label="Copies from here">
+					<NativeSelectOption value="">{inheritLabel(chat.effective.copyTrial ? 'trial' : 'sent')}</NativeSelectOption>
+					<NativeSelectOption value="on">Trial: only recorded, nothing sent</NativeSelectOption>
+					<NativeSelectOption value="off">Sent for real</NativeSelectOption>
+				</NativeSelect>
+				<span class="text-xs text-muted-foreground">In trial the agent decides as usual and each decision is kept (its trade table, and the copy records); check them, then switch to sent.</span>
+			</label>
+		{/if}
+	</div>
 	<div class="grid gap-3 sm:grid-cols-2" data-testid="essentials">
 		<label class="flex flex-col gap-1">
 			<span class="text-xs font-medium">Agent may be used here <span class="font-normal text-muted-foreground">· {origin('enabled')}</span></span>

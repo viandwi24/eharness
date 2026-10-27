@@ -1209,6 +1209,36 @@ export const tguSettings = sqliteTable('tgu_settings', {
 // `channel_outbox` and `channel_approvals` stay; their `conversation_id` column now holds a node id.
 
 /** Small key/value facts about the channel storage (migration markers). */
+/**
+ * Copies an agent made (`channel_copy`): source message → copy, so replies follow each copy and
+ * edits and deletions of the source reach it. A trial row (`trial = 1`) records a decision the
+ * agent made while its source chat copies in trial mode: nothing was sent (`target_id` null).
+ */
+export const chCopies = sqliteTable(
+  'ch_copies',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    sourceNode: text('source_node').notNull(),
+    sourceId: text('source_id').notNull(),
+    targetNode: text('target_node').notNull(),
+    targetId: text('target_id'),
+    trial: integer('trial').notNull().default(0),
+    /** Edits and deletions of the source are applied to the copy. */
+    sync: integer('sync').notNull().default(1),
+    /** The copy got its own caption: edits of the source do not overwrite it. */
+    ownCaption: integer('own_caption').notNull().default(0),
+    agentId: text('agent_id'),
+    note: text('note'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    index('ch_copies_source').on(t.sourceNode, t.sourceId),
+    index('ch_copies_target').on(t.targetNode, t.targetId),
+    index('ch_copies_created').on(t.createdAt),
+  ],
+)
+
 export const chMeta = sqliteTable('ch_meta', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),

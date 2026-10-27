@@ -39,6 +39,10 @@ export interface ChannelPolicy {
   replyStyle?: 'brief' | 'normal' | 'detailed'
   /** Tone, language and length of this place for the persona (max 1000 characters). Inherited. */
   personaOverlay?: string
+  /** A feed for its agent: every message is input, nothing is answered, tools on the agent's permissions. */
+  feed?: boolean
+  /** Copies an agent makes from here are only recorded (trial). */
+  copyTrial?: boolean
 }
 
 export interface ChannelProactive {
@@ -262,6 +266,8 @@ export type ChannelSettingKey =
   | 'defaultRole'
   | 'replyStyle'
   | 'personaOverlay'
+  | 'feed'
+  | 'copyTrial'
 
 /** Where an effective setting comes from. */
 export interface ChannelSettingOrigin {
@@ -316,6 +322,8 @@ export interface ChannelNodeView {
     defaultRole?: 'guest' | 'member'
     replyStyle?: 'brief' | 'normal' | 'detailed'
     personaOverlay?: string
+    feed: boolean
+    copyTrial: boolean
   }
   /** Where each effective setting comes from. */
   inherited: Partial<Record<ChannelSettingKey, ChannelSettingOrigin>>
@@ -358,6 +366,8 @@ export interface ChannelPolicyInput {
   defaultRole?: 'guest' | 'member' | null
   replyStyle?: 'brief' | 'normal' | 'detailed' | null
   personaOverlay?: string | null
+  feed?: boolean | null
+  copyTrial?: boolean | null
 }
 
 export interface ChannelLimitsInput {

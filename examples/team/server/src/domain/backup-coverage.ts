@@ -211,6 +211,11 @@ export const COVERAGE: readonly TableEntry[] = [
     ['reminders'],
   ),
   snapshot('ch_messages', 'Channel message log', CHANNEL_KEY),
+  snapshot(
+    'ch_copies',
+    'What agents copied where',
+    'source message to copy (ids only), so replies, edits and deletions follow each copy',
+  ),
   snapshot('ch_message_revisions', 'Edits of channel messages', CHANNEL_KEY),
   snapshot('ch_reactions', 'Reactions in channels', CHANNEL_KEY),
   snapshot('ch_events', 'Channel event log', CHANNEL_KEY),

@@ -85,6 +85,15 @@ export const ScopePolicySchema = z.object({
   replyStyle: z.enum(['brief', 'normal', 'detailed']).optional(),
   /** Tone, language and length of this place, for the persona (P42, layer 5). Inherited; never widens tools or rules. */
   personaOverlay: z.string().max(1000).optional(),
+  /**
+   * A feed for its agent: every message (also what the connected account posts itself) is input
+   * to process, nobody is being answered. The agent wakes on each message, its final text is never
+   * posted (it acts through tools), and tools run on the agent's own permissions, not the role of
+   * whoever posted. For routers and processors (copy signals, file posts, sort requests).
+   */
+  feed: z.boolean().optional(),
+  /** Copies an agent makes from this chat are only recorded, not sent (try a router first). */
+  copyTrial: z.boolean().optional(),
 })
 export type ScopePolicy = z.infer<typeof ScopePolicySchema>
 
@@ -243,6 +252,10 @@ export interface ResolvedScope {
   replyStyle: 'brief' | 'normal' | 'detailed' | undefined
   /** The channel overlay of the persona (tone, language, length), inherited. */
   personaOverlay: string | undefined
+  /** A feed for its agent (wake always, tool delivery, the agent's own permissions). */
+  feed: boolean
+  /** Copies from here are only recorded. */
+  copyTrial: boolean
   /** The node is a thread that has its own agent entry (an "own topic" wake). */
   ownTopic: boolean
   /** Per setting, which level decided it (for the Channels page). */
@@ -300,10 +313,12 @@ export function resolveScope(config: ConnectionConfig, chain: readonly ScopeNode
   fallback('enabled', allowed)
   const implicit = pick('implicit')
   const own = leaf?.settings
+  const feed = pick('feed') ?? fallback('feed', false)
   return {
     allowed,
     agentId: pick('agentId') ?? fallback('agentId', config.agentId),
-    wake: pick('wake') ?? fallback('wake', 'mention' as const),
+    // a feed wakes on every message and never posts its final text
+    wake: feed ? 'always' : (pick('wake') ?? fallback('wake', 'mention' as const)),
     implicit: {
       reply: implicit?.reply ?? true,
       alias: implicit?.alias ?? true,
@@ -312,9 +327,11 @@ export function resolveScope(config: ConnectionConfig, chain: readonly ScopeNode
     aliases: pick('aliases') ?? [],
     ignoreWhenOthersMentioned:
       pick('ignoreWhenOthersMentioned') ?? fallback('ignoreWhenOthersMentioned', true),
-    delivery: pick('delivery') ?? fallback('delivery', 'final_text' as const),
+    delivery: feed
+      ? 'message_tool'
+      : (pick('delivery') ?? fallback('delivery', 'final_text' as const)),
     quote: pick('quote') ?? fallback('quote', isDirect ? ('off' as const) : ('first' as const)),
-    ack: pick('ack') ?? fallback('ack', '👀'),
+    ack: feed ? false : (pick('ack') ?? fallback('ack', '👀')),
     retentionDays: pick('retentionDays') ?? fallback('retentionDays', DEFAULT_RETENTION_DAYS),
     label: pick('label'),
     observe: pick('observe') ?? fallback('observe', true),
@@ -324,6 +341,8 @@ export function resolveScope(config: ConnectionConfig, chain: readonly ScopeNode
     defaultRole: pick('defaultRole'),
     replyStyle: pick('replyStyle'),
     personaOverlay: pick('personaOverlay'),
+    feed,
+    copyTrial: pick('copyTrial') ?? fallback('copyTrial', false),
     ownTopic: leaf?.node.kind === 'thread' && own?.agentId !== undefined,
     origin,
   }

@@ -178,6 +178,8 @@ export function tablesTools(options: TablesPluginOptions): HarnessPlugin<'tables
         const gw = options.gateway()
         if (gw === undefined || gw.conversationOf(sessionId) === undefined || gw.webTurn(sessionId))
           return true
+        // a feed works on the agent's own permissions, not the role of whoever posted
+        if (gw.feedOf(sessionId)?.feed === true) return true
         const r = await gw.requesterOf(sessionId)
         return r !== undefined && (r.role === 'owner' || r.role === 'admin')
       }

@@ -1420,6 +1420,13 @@ export interface ConnectorsPort {
 export type { AgentConnectors }
 
 /** Channel connections (chat platforms), their bindings, chats, pairing and delivery state. */
+/** The chats of a connection and their settings, for any adapter (a template sets them up). */
+export interface ChannelSettingsPort {
+  chats(connectionId: string): ChannelNodeView[]
+  chat(connectionId: string, nodeId: string): ChannelNodeView
+  setChatPolicy(connectionId: string, nodeId: string, input: ChannelPolicyInput): ChannelNodeView
+}
+
 export interface ChannelsPort {
   connections(): Promise<ChannelConnectionView[]>
   connection(id: string): Promise<ChannelConnectionView>
@@ -1870,6 +1877,8 @@ export interface Deps {
   scripts: ScriptStore
   /** Late-bound: the scripts engine (built after the deps). */
   scriptRunner?: () => ScriptRunnerPort | undefined
+  /** Chat settings of any chat connection (the gateway itself), for templates. Late-bound. */
+  channelSettings?: () => ChannelSettingsPort | undefined
   /** Rows of a table changed (late-bound: the scripts engine listens, P59 W7). */
   onTableRows?: (change: TableRowsChange) => void
   /** One plain model call with an agent's own model (P57: the memory reorganization proposal). */

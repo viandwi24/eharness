@@ -17157,6 +17157,87 @@ export interface paths {
         };
         trace?: never;
     };
+    "/channels/connections/{id}/signal-router": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set up a Signal Router agent (template)
+         * @description Creates an agent that reads the source chat as a feed and copies trading signals and their follow-ups to the target chats, a table of trade ideas as its memory, and the chat settings (the source becomes a feed of the agent, starting in trial mode: decisions are recorded, nothing is sent). Everything stays editable: the agent's instructions, the table, the chat settings.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SignalRouterBody"];
+                };
+            };
+            responses: {
+                /** @description What was set up */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SignalRouterResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The source chat is a feed of another agent already */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/channels/connections/{id}/links": {
         parameters: {
             query?: never;
@@ -25546,6 +25627,8 @@ export interface components {
                 /** @enum {string} */
                 replyStyle?: "brief" | "normal" | "detailed";
                 personaOverlay?: string;
+                feed: boolean;
+                copyTrial: boolean;
             };
             /** @description Where each effective setting comes from. */
             inherited: {
@@ -25605,6 +25688,16 @@ export interface components {
                     nodeId?: string;
                 };
                 personaOverlay?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                feed?: {
+                    /** @enum {string} */
+                    from: "node" | "ancestor" | "connection" | "default";
+                    nodeId?: string;
+                };
+                copyTrial?: {
                     /** @enum {string} */
                     from: "node" | "ancestor" | "connection" | "default";
                     nodeId?: string;
@@ -25672,6 +25765,10 @@ export interface components {
             replyStyle?: "brief" | "normal" | "detailed";
             /** @description Tone, language and length of this place for the agent persona (max 1000 characters). Inherited. It never widens tools or loosens rules. */
             personaOverlay?: string;
+            /** @description A feed for its agent: every message (also the account's own posts) wakes it, nothing is posted back, and tools run on the agent's own permissions. For router and processing agents. */
+            feed?: boolean;
+            /** @description Copies an agent makes from this chat are only recorded, not sent (trial mode). */
+            copyTrial?: boolean;
         } | null;
         ChannelPeopleTablePage: {
             items: components["schemas"]["ChannelPerson"][];
@@ -26072,6 +26169,33 @@ export interface components {
             /** @enum {string|null} */
             replyStyle?: "brief" | "normal" | "detailed" | null;
             personaOverlay?: string | null;
+            feed?: boolean | null;
+            copyTrial?: boolean | null;
+        };
+        SignalRouterResult: {
+            agent: {
+                id: string;
+                slug: string;
+                name: string;
+            };
+            table: string;
+            source: components["schemas"]["ChannelNode"];
+            targets: components["schemas"]["ChannelNode"][];
+            trial: boolean;
+        };
+        SignalRouterBody: {
+            /** @description The chat the signals are posted in (title, platform id or node id). */
+            source: string;
+            /** @description The chats the signals are shared out to. */
+            targets: string[];
+            /** @description The agent name (default "Signal Router"). */
+            name?: string;
+            /** @description Default true: copies are only recorded until trial mode is turned off. */
+            trial?: boolean;
+            /** @description The table of trade ideas (default trade_ideas). */
+            table?: string;
+            /** @description More rules for the agent (appended to its instructions). */
+            rules?: string;
         };
         ChannelLinkList: {
             items: components["schemas"]["ChannelLink"][];

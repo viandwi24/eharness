@@ -4,6 +4,7 @@ import type { Answer as QuestionAnswer, Question as QuestionSpec } from 'eharnes
 import type { SecretVault } from 'eharness/providers'
 import type { EventAppender, NewRoutine, RoutinePatch, ThreadStore } from '../../../app/ports.ts'
 import type { Routine, RoutineSpec } from '../../../domain/routines.ts'
+import type { CopyStore } from '../copies.ts'
 import type { ApprovalStore, OutboxRow, OutboxStore } from '../delivery-store.ts'
 import type {
   AuditQuery,
@@ -36,6 +37,7 @@ import type {
   ChannelCapabilities,
   ChannelNode,
   CopyOptions,
+  CopyVia,
   EventOf,
   NodeInfo,
   OutboundButton,
@@ -293,12 +295,16 @@ export interface GatewayDeps {
  */
 export const OWN_TYPED = 'own message typed elsewhere'
 
-export type HandleResult =
+export type HandleResult = (
   | { action: 'approval'; reason: string }
   | { action: 'wake'; reason: string }
   | { action: 'observe'; reason: string }
   | { action: 'drop'; reason: string }
   | { action: 'record'; reason: string }
+) & {
+  /** The connected account itself posted it from another device (a feed acted on it). */
+  ownTyped?: boolean
+}
 
 export interface ConnectionInfo {
   connectionId: string
@@ -897,12 +903,16 @@ export interface ChannelGateway {
     options?: { trusted?: boolean },
   ): ResolvedTarget
   post(target: ResolvedTarget, options: PostOptions): Promise<string[]>
+  /** Agents' copy map (`channel_copy`). */
+  copies: CopyStore
+  /** The feed settings of a chat session (undefined outside a chat). */
+  feedOf(sessionId: string): { feed: boolean; copyTrial: boolean; nodeId: string } | undefined
   /** Copy or forward messages to another chat of the same connection (no download; albums kept). */
   copy(
     from: ResolvedTarget,
     nativeIds: string[],
     to: ResolvedTarget,
-    options: CopyOptions & { caption?: string; format?: TextFormat },
+    options: CopyOptions & { caption?: string; format?: TextFormat; via?: CopyVia },
   ): Promise<string[]>
   /** What a node supports now (the adapter's answer for this node). */
   capabilities(connectionId: string, node: NodeRow): ChannelCapabilities | undefined

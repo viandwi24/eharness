@@ -96,6 +96,7 @@ bookkeeping tables).
 | `script_timers` | Later runs the scripts asked for | pending ctx.later runs (at most 30 days ahead); travel with the scripts |
 | `script_copies` | What the scripts copied where | source message to copy, so replies and edits follow each copy (kept 90 days by default) |
 | `ch_message_revisions` | Edits of channel messages | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
+| `ch_copies` | What agents copied where | source message to copy (ids only), so replies, edits and deletions follow each copy |
 | `ch_messages` | Channel message log | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
 | `ch_reactions` | Reactions in channels | sealed with TEAM_CHANNEL_KEY and bound to the ids of the node and message: a copy only reads with the same key |
 | `channel_approvals` | Approvals asked in a chat | bound to live sessions and tool calls; the snapshot keeps the record |

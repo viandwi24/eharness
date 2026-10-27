@@ -47,6 +47,8 @@ export interface MessageMeta {
   timezone: string
   edited?: boolean | undefined
   forwardedFrom?: string | undefined
+  /** Messages sent together (an album) share this id. */
+  album?: string | undefined
 }
 
 /** One line of data: no tags, no line breaks, bounded. */
@@ -161,6 +163,7 @@ export function renderHeader(m: MessageMeta): string {
   where.push(timeLine(m.at, m.timezone))
   if (m.edited === true) where.push('edited')
   if (m.forwardedFrom !== undefined) where.push(`forwarded from ${flat(m.forwardedFrom, 60)}`)
+  if (m.album !== undefined) where.push(`album ${flat(m.album, 40)}`)
   return [
     '<message-meta>',
     `from (the person you are answering; address only them): ${from.join(' · ')}`,

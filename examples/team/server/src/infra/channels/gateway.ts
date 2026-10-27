@@ -21,12 +21,14 @@ import { reminderKey } from '../../domain/heartbeat.ts'
 import { overlayNote, personNoteLine } from '../../domain/persona.ts'
 import { HAND_OVER_REMINDER } from '../../domain/prompts.ts'
 import type { Routine } from '../../domain/routines.ts'
+import { sqliteCopyStore } from './copies.ts'
 import {
   type ApprovalRow,
   type OutboxRow,
   sqliteApprovalStore,
   sqliteOutboxStore,
 } from './delivery-store.ts'
+import { entitiesToHtml } from './entities-html.ts'
 import {
   type ChannelEventType,
   DROP_REASONS,
@@ -109,7 +111,7 @@ import {
   readableMentions,
 } from './mentions.ts'
 import { attachmentsLabel, type LogMessage, logAttachmentOf, sqliteChannelLog } from './messages.ts'
-import type { IdentityRow, NodeRow } from './model.ts'
+import type { IdentityRow, MessageEntity, NodeRow } from './model.ts'
 import { channelNodeOf, type NodeStore, sqliteNodeStore } from './nodes.ts'
 import { createOutbound, type Outbound, type OutboundTarget } from './outbound.ts'
 import { type PeopleStore, type PersonEntry, sqlitePeopleStore } from './people.ts'
@@ -161,6 +163,7 @@ import {
   ChannelError,
   type ChannelNode,
   type CopyOptions,
+  type CopyVia,
   type EventOf,
   type Identity,
   type InboundAttachment,
@@ -201,6 +204,9 @@ type WakeBatch = WakeEntry[]
 /** `2026-05-01 09:30 UTC`, the time form of the offline notes. */
 const utcMinute = (at: number): string =>
   `${new Date(at).toISOString().slice(0, 16).replace('T', ' ')} UTC`
+
+/** The largest file a copy by us downloads and sends again. */
+const MAX_RESEND_BYTES = 20 * 1024 * 1024
 
 export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const now = deps.now ?? (() => Date.now())
@@ -329,6 +335,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const proactiveStore: ProactiveStore = sqliteProactiveStore(deps.sqlite, deps.vault)
   const sessions = sqliteSessionStore(deps.sqlite)
   const log = sqliteChannelLog(deps.sqlite, deps.vault)
+  const copies = sqliteCopyStore(deps.sqlite)
   const approvals = sqliteApprovalStore(deps.sqlite)
   const events: EventStore = sqliteEventStore(deps.sqlite)
   const unknownReplied = new Map<string, number>()
@@ -1086,6 +1093,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       | undefined
     edited?: boolean | undefined
     forwardOf?: Record<string, unknown> | undefined
+    album?: string | undefined
   }): MessageMeta {
     const r = resolveIdentityRole(input.sender.connectionId, input.sender, input.node)
     const room = roomOf(input.node)
@@ -1136,6 +1144,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       },
       ...(topic === undefined ? {} : { topic }),
       messageId: input.nativeId,
+      ...(input.album === undefined ? {} : { album: input.album }),
       ...(input.replyTo === undefined
         ? {}
         : {
@@ -3950,6 +3959,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
             },
           }),
       forwardOf: event.type === 'message.created' ? event.message.forwardOf : undefined,
+      album: event.type === 'message.created' ? event.message.groupId : undefined,
     })
     const callOnly =
       event.type === 'message.created' &&
@@ -4166,6 +4176,69 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   })
 
   /** Tombstone messages of one node (the `redactOnDelete` setting decides whether content goes too). */
+  /**
+   * Edits and deletions of a copied message reach its copies (`channel_copy`, sync on). A copy with
+   * its own caption keeps it; trial rows were never sent. Best effort: a failure is logged.
+   */
+  async function syncCopies(
+    kind: 'edit' | 'delete',
+    node: NodeRow,
+    ids: readonly string[],
+    change?: { text: string; entities?: MessageEntity[] | undefined },
+  ): Promise<void> {
+    for (const id of ids) {
+      for (const row of copies.of(node.id, id)) {
+        if (row.trial || !row.sync || row.targetId === null) continue
+        if (kind === 'edit' && row.ownCaption) continue
+        const target = nodes.get(row.targetNode)
+        // the target's own connection (a copy sent again by us may sit on another one)
+        const adapter = target === undefined ? undefined : adapters.get(target.connectionId)
+        if (target === undefined || adapter === undefined) continue
+        const targetId = row.targetId
+        try {
+          if (kind === 'delete') {
+            const del = adapter.delete
+            if (del === undefined) continue
+            await limitedOutbound.run(laneOf(target), () =>
+              del.call(adapter, viewOf(target), targetId),
+            )
+            log.recordDeleted(target.id, [targetId], now(), {
+              redact: scopeOf(target)?.redactOnDelete === true,
+            })
+            continue
+          }
+          if (change === undefined) continue
+          const stored = await log.find(target.id, targetId)
+          const caption = (stored?.attachments.length ?? 0) > 0 && adapter.editCaption !== undefined
+          const edit = caption ? adapter.editCaption : adapter.edit
+          if (edit === undefined) continue
+          const html = entitiesToHtml(change.text, change.entities ?? [])
+          await limitedOutbound.run(laneOf(target), () =>
+            edit.call(adapter, viewOf(target), targetId, html, 'html'),
+          )
+          await log.recordEdit(target.id, targetId, { text: change.text }, now())
+        } catch (error) {
+          if (!stopped)
+            warn(
+              `channels: the ${kind} of copy ${targetId} in ${target.id} failed: ${errorText(error)}`,
+            )
+        }
+      }
+    }
+  }
+
+  /** The feed settings of a chat session (undefined outside a chat). */
+  function feedOf(
+    sessionId: string,
+  ): { feed: boolean; copyTrial: boolean; nodeId: string } | undefined {
+    const row = sessions.bySession(sessionId)
+    const target = row === undefined ? undefined : sessionTarget(row)
+    if (target === undefined) return undefined
+    const scope = scopeOf(target.node)
+    if (scope === undefined) return undefined
+    return { feed: scope.feed, copyTrial: scope.copyTrial, nodeId: target.node.id }
+  }
+
   function tombstone(
     node: NodeRow,
     ids: string[],
@@ -4395,6 +4468,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
 
     if (event.type === 'message.deleted') {
       tombstone(node, event.messageNativeIds, event.at, scope)
+      void syncCopies('delete', node, event.messageNativeIds)
       return { action: 'record', reason: 'deleted' }
     }
     // counts only (who reacted is not known): recorded for the Events page and scripts
@@ -4422,6 +4496,33 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (senderDto === undefined) return { action: 'drop', reason: 'no sender' }
     const self = adapter.self()
     if (senderDto.isSelf === true || senderDto.id === self.id) {
+      // an edit of the account's own post: kept, and its copies follow
+      if (event.type === 'message.edited') {
+        await log.recordEdit(
+          node.id,
+          event.message.nativeId,
+          { text: event.message.text, entities: event.message.entities },
+          event.at,
+          selfIdentity(connectionId, adapter).id,
+        )
+        void syncCopies('edit', node, [event.message.nativeId], {
+          text: event.message.text,
+          entities: event.message.entities,
+        })
+        return { action: 'record', reason: 'own edit' }
+      }
+      // a feed: what the account posts itself (the analyst typing on it) is input for the agent
+      if (
+        event.type === 'message.created' &&
+        scope?.feed === true &&
+        scope.allowed &&
+        !appIsSending(node.id, event.message.nativeId) &&
+        (await log.find(node.id, event.message.nativeId)) === undefined
+      ) {
+        const me = selfIdentity(connectionId, adapter)
+        const r = await handleMessage(event, config, adapter, node, scope, me, senderDto, batch)
+        return { ...r, ownTyped: true }
+      }
       // what this identity sent from another device (or echoed by the platform): kept in the full
       // log, never acted on; a message the gateway sent is already stored (the insert is a no-op).
       // The reason tells them apart: scripts skip what the app sent, not what a person typed.
@@ -4496,6 +4597,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           { pending: false, handled: true },
         )
       }
+      void syncCopies('edit', node, [event.message.nativeId], {
+        text: event.message.text,
+        entities: event.message.entities,
+      })
       return { action: 'record', reason: 'edited' }
     }
     // a button a script sent: for scripts only, the agent is not woken
@@ -4754,18 +4859,27 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     from: ResolvedTarget,
     nativeIds: string[],
     to: ResolvedTarget,
-    o: CopyOptions & { caption?: string; format?: TextFormat },
+    o: CopyOptions & { caption?: string; format?: TextFormat; via?: CopyVia },
   ): Promise<string[]> {
-    if (from.config.connectionId !== to.config.connectionId)
-      throw new ChannelUserError(
-        'Copies stay within one connection: download and send the file instead.',
-      )
-    const fn = to.adapter.copy
-    if (fn === undefined) throw new ChannelUserError(`${to.adapter.platform} cannot copy messages.`)
     if (nativeIds.length === 0 || nativeIds.length > 100)
       throw new ChannelUserError('Copy 1 to 100 messages at a time.')
-    const caps = capsOf(to.adapter, to.node)
     const sorted = [...nativeIds].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b))
+    // the platform's own copy when it has one; else (or when asked) we download and send again
+    const native =
+      o.via !== 'resend' &&
+      to.adapter.copy !== undefined &&
+      from.config.connectionId === to.config.connectionId
+    if (!native) {
+      if (o.via === 'native')
+        throw new ChannelUserError(
+          from.config.connectionId !== to.config.connectionId
+            ? 'A platform copy stays within one connection: use via "resend".'
+            : `${to.adapter.platform} cannot copy messages: use via "resend".`,
+        )
+      return resendCopy(from, sorted, to, o)
+    }
+    const fn = to.adapter.copy as NonNullable<ChannelAdapter['copy']>
+    const caps = capsOf(to.adapter, to.node)
     let out: string[]
     try {
       out = await limitedOutbound.run(laneOf(to.node), () =>
@@ -4824,6 +4938,72 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       }
     }
     return out
+  }
+
+  /**
+   * A copy made by us: the stored text (its formatting as HTML) and the files, downloaded from the
+   * source and posted to the target as one message (an album stays an album). Works across
+   * connections and on platforms without a copy; the files must still be downloadable.
+   */
+  async function resendCopy(
+    from: ResolvedTarget,
+    ids: string[],
+    to: ResolvedTarget,
+    o: CopyOptions & { caption?: string; format?: TextFormat },
+  ): Promise<string[]> {
+    if (o.forward === true)
+      throw new ChannelUserError(
+        'A forward needs the platform copy: drop forward or use via "native".',
+      )
+    const rows = await Promise.all(ids.map((id) => log.find(from.node.id, id)))
+    const missing = ids.filter((_, i) => rows[i] === undefined)
+    if (missing.length > 0)
+      throw new ChannelUserError(
+        `Message ${missing.join(', ')} is not stored here, so it cannot be sent again (only messages the gateway recorded can).`,
+      )
+    const files: OutboundFile[] = []
+    for (const row of rows as LogMessage[]) {
+      for (const a of row.attachments) {
+        const fetch = from.adapter.fetchAttachment
+        if (fetch === undefined)
+          throw new ChannelUserError(
+            `${from.adapter.platform} cannot download files to send them again.`,
+          )
+        let got: Awaited<ReturnType<NonNullable<ChannelAdapter['fetchAttachment']>>>
+        try {
+          got = await limitedOutbound.run(laneOf(from.node), () =>
+            fetch.call(from.adapter, from.view, row.nativeId, a.id, a.ref),
+          )
+        } catch (error) {
+          throw new ChannelUserError(
+            `The file of message ${row.nativeId} could not be downloaded: ${errorText(error)}`,
+          )
+        }
+        if (got.bytes.byteLength > MAX_RESEND_BYTES)
+          throw new ChannelUserError(
+            `The file of message ${row.nativeId} is larger than ${MAX_RESEND_BYTES / 1024 / 1024} MB.`,
+          )
+        files.push({
+          name: got.name ?? a.name ?? a.id,
+          mediaType: (got.mediaType ?? a.mediaType ?? 'application/octet-stream').toLowerCase(),
+          bytes: got.bytes,
+          ...(a.media === undefined ? {} : { media: a.media }),
+        })
+      }
+    }
+    const withText = (rows as LogMessage[]).find((r) => r.text.trim() !== '')
+    const text =
+      o.caption ??
+      (withText === undefined ? '' : entitiesToHtml(withText.text, withText.entities ?? []))
+    if (text.trim() === '' && files.length === 0)
+      throw new ChannelUserError('Nothing to send: the messages have no text and no files.')
+    return post(to, {
+      text,
+      ...(files.length === 0 ? {} : { files }),
+      ...(o.replyTo === undefined ? {} : { replyTo: o.replyTo }),
+      ...(o.silent === true ? { silent: true } : {}),
+      format: o.caption === undefined ? 'html' : (o.format ?? 'markdown'),
+    })
   }
 
   async function post(target: ResolvedTarget, raw: PostOptions): Promise<string[]> {
@@ -5157,6 +5337,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       delivery: scope.delivery,
       wake: scope.wake,
       identity,
+      ...(scope.feed ? { feed: { copyTrial: scope.copyTrial } } : {}),
     })
   }
 
@@ -6259,6 +6440,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     resolveTarget,
     post,
     copy,
+    copies,
+    feedOf,
     capabilities(connectionId, node) {
       const adapter = adapters.get(connectionId)
       return adapter === undefined ? undefined : capsOf(adapter, node)
