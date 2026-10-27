@@ -23,6 +23,13 @@ export const MAX_RETENTION_DAYS = 3650
 export const MAX_INPUT_CHARS = 100_000
 /** Largest `context` object of a run (JSON characters). */
 export const MAX_CONTEXT_CHARS = 50_000
+/** Most images one run may carry. */
+export const MAX_IMAGES = 4
+/** Largest decoded image of a run (bytes): 1.5 MB. */
+export const MAX_IMAGE_BYTES = 1_572_864
+/** Image types a run accepts. */
+export const IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const
+export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number]
 /** How long the request log is kept. */
 export const REQUEST_LOG_RETENTION_DAYS = 90
 
@@ -324,4 +331,16 @@ export function apiInstructions(agent: Pick<ApiAgent, 'instructions' | 'rules'>)
 export function contextBlock(context: Record<string, unknown> | undefined): string {
   if (context === undefined || Object.keys(context).length === 0) return ''
   return JSON.stringify(context, null, 2)
+}
+
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/
+
+/**
+ * Decoded size in bytes of standard base64 (padded), or `undefined` when `data` is not valid
+ * base64 (empty, a `data:` URL, URL-safe alphabet, whitespace, bad length or padding).
+ */
+export function base64Bytes(data: string): number | undefined {
+  if (data.length === 0 || data.length % 4 !== 0 || !BASE64.test(data)) return undefined
+  const pad = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
+  return (data.length / 4) * 3 - pad
 }

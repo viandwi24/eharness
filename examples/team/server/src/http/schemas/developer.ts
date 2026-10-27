@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi'
+import { IMAGE_MEDIA_TYPES, MAX_IMAGE_BYTES, MAX_IMAGES } from '../../app/developer-api.ts'
 
 // --- API agents (owner) ------------------------------------------------------------------------
 
@@ -167,6 +168,16 @@ export const ApiUsageSchema = z
 
 // --- /v1 (developers) --------------------------------------------------------------------------
 
+export const V1ImageSchema = z
+  .object({
+    mediaType: z.enum(IMAGE_MEDIA_TYPES).openapi({ example: 'image/jpeg' }),
+    data: z.string().min(1).openapi({
+      description: 'The image as standard base64, without a `data:` prefix.',
+      example: '/9j/4AAQSkZJRgABAQ...',
+    }),
+  })
+  .openapi('V1Image')
+
 export const V1RunBodySchema = z
   .object({
     input: z
@@ -201,6 +212,14 @@ export const V1RunBodySchema = z
           },
           required: ['intent', 'urgent'],
         },
+      }),
+    images: z
+      .array(V1ImageSchema)
+      .max(MAX_IMAGES)
+      .optional()
+      .openapi({
+        description: `Up to ${MAX_IMAGES} images (e.g. photos a customer sent), attached in order to the input (the last user message). Each is at most ${MAX_IMAGE_BYTES} bytes (1.5 MB) decoded. Never stored or logged. Errors: \`400 INVALID_IMAGES\` (type, base64 or count), \`413 IMAGE_TOO_LARGE\`, \`400 IMAGES_UNSUPPORTED\` (the agent's model cannot see images).`,
+        example: [{ mediaType: 'image/jpeg', data: '/9j/4AAQSkZJRgABAQ...' }],
       }),
   })
   .openapi('V1RunBody')

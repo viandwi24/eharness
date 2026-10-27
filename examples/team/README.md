@@ -661,6 +661,10 @@ curl -X POST $BASE/v1/agents/support-bot/run \
   -d '{"input":"Where is order 1042?","context":{"customer":"Acme"},
        "outputSchema":{"type":"object","properties":{"intent":{"type":"string"}},"required":["intent"]}}'
 # -> { "output": { "intent": "shipping" }, "usage": { ... }, "costUsd": 0.0018 }
+# with images (photos a customer sent): up to 4, standard base64 without a data: prefix
+curl -X POST $BASE/v1/agents/support-bot/run \
+  -H "Authorization: Bearer $EHARNESS_KEY" -H "content-type: application/json" \
+  -d '{"input":"Is this item damaged?","images":[{"mediaType":"image/jpeg","data":"/9j/4AAQ..."}]}'
 
 # Mode B: conversations (history stored, retention per agent, default 30 days)
 curl -X POST $BASE/v1/conversations -H "Authorization: Bearer $EHARNESS_KEY" \
@@ -669,6 +673,13 @@ curl -N -X POST $BASE/v1/conversations/$ID/messages -H "Authorization: Bearer $E
   -H "content-type: application/json" -d '{"text":"Hello"}'      # SSE; "stream": false for JSON
 curl $BASE/v1/conversations/$ID/messages -H "Authorization: Bearer $EHARNESS_KEY"   # paged history
 ```
+
+Mode A takes optional `images` (`image/jpeg`, `image/png`, `image/webp` or `image/gif`; at most 4,
+each at most 1.5 MB decoded). They are attached in order to the input (the last user message) and,
+like the input, never stored or logged. Errors: `400 INVALID_IMAGES` (type, base64 or count),
+`413 IMAGE_TOO_LARGE`, and `400 IMAGES_UNSUPPORTED` when the agent's model does not take image input.
+The run body may be up to 9 MB; every other `/v1` route keeps 1 MB (`413 PAYLOAD_TOO_LARGE`).
+Mode B is text only.
 
 `$BASE` is the server (`/api` behind the web server of the Docker image). Reusing the same
 `endUserId` with the same agent and key returns the open conversation. The message stream is the

@@ -42,6 +42,14 @@ conversations that stream (mode B). The team's own agents, chats and channels ar
   metadata (time, key, agent, status, tokens, cost) is logged, never input or answer. `outputSchema`
   (JSON Schema, `type: object`) uses the library's structured output (tool mode, validated with the
   zod JSON Schema conversion of the deliverables code, 2 retries); no valid answer is `502 OUTPUT_INVALID`.
+- **Images in mode A.** `images: [{ mediaType, data }]` (jpeg, png, webp, gif; at most 4; standard
+  base64 without a `data:` prefix; at most 1.5 MB decoded each) become AI SDK file parts (`data:`
+  URLs) of the input, the last user message. They live only in the in-memory run and are never
+  stored or logged; errors never echo them. `400 INVALID_IMAGES` (type, base64, count),
+  `413 IMAGE_TOO_LARGE`; a model whose catalog modalities lack `image` is refused by the core before
+  the turn starts (`EH_INVALID_INPUT`, `unsupported-modality`), answered as `400 IMAGES_UNSUPPORTED`
+  with the core message. The run route allows a 9 MB body; every other `/v1` route keeps 1 MB. Mode
+  B stays text only.
 - **Mode B** sessions are `api:<agentId>:<conversationId>` on the shared SQLite storage and lock. A
   conversation belongs to its key; the same `endUserId` + agent + key returns the open one.
   The stream is the AI SDK UI message stream with tool calls, reasoning and metadata removed
@@ -66,6 +74,7 @@ conversations that stream (mode B). The team's own agents, chats and channels ar
 - [x] Retention sweep
 - [x] Developers page: agents, keys with chart, requests, Try it with snippets
 - [x] OpenAPI (`developer` and `v1` tags, `ApiKey` scheme) and tests (`test/developer-api.test.ts`)
+- [x] Mode A images (`images`, up to 4 × 1.5 MB, 9 MB run body), never stored or logged
 
 ## Phase 2 (not built)
 

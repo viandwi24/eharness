@@ -15,6 +15,7 @@
 import type { Database } from 'bun:sqlite'
 import {
   createUIMessageStreamResponse,
+  type FileUIPart,
   jsonSchema,
   type LanguageModel,
   type UIMessageChunk,
@@ -331,8 +332,11 @@ export function createApiRuntime(deps: ApiRuntimeDeps): ApiRuntime & {
   })
 
   /** A failure before the turn's commit point (busy, invalid input) reads as an error with a code. */
-  const acceptedError = (e: { code: string; message: string }): Error =>
-    Object.assign(new Error(e.message), { code: e.code })
+  const acceptedError = (e: {
+    code: string
+    message: string
+    details?: Record<string, unknown> | undefined
+  }): Error => Object.assign(new Error(e.message), { code: e.code, details: e.details })
 
   const turnRuntime = (req: { keyId: string; requestId: string }) => ({
     workspaceId: deps.workspaceId,
@@ -362,10 +366,25 @@ export function createApiRuntime(deps: ApiRuntimeDeps): ApiRuntime & {
       }
       const last = req.messages.at(-1)?.content ?? ''
       const ctxText = contextBlock(req.context)
-      const input =
+      const text =
         ctxText === ''
           ? last
           : `${last}\n\n${untrustedContent(ctxText, { source: 'api-context', name: 'context' })}`
+      // images ride on the input (the last user message) as data URLs; memory storage only
+      const images = req.images ?? []
+      const input =
+        images.length === 0
+          ? text
+          : {
+              text,
+              files: images.map(
+                (image): FileUIPart => ({
+                  type: 'file',
+                  mediaType: image.mediaType,
+                  url: `data:${image.mediaType};base64,${image.data}`,
+                }),
+              ),
+            }
       const session = runAgent.session(sessionId, {
         runtime: { workspaceId: deps.workspaceId },
       }) as HarnessSession

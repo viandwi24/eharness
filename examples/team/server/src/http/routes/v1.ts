@@ -23,6 +23,9 @@ import {
 
 /** Largest request body of `/v1` (the input limit is lower: this only stops absurd bodies early). */
 const MAX_V1_BODY = 1024 * 1024
+/** Largest body of `POST /v1/agents/:slug/run`: room for 4 base64 images of 1.5 MB plus the input. */
+const MAX_V1_RUN_BODY = 9 * 1024 * 1024
+const RUN_PATH = /^\/v1\/agents\/[^/]+\/run\/?$/
 
 const security = [{ ApiKey: [] }]
 const json = <T extends z.ZodType>(schema: T) => ({ 'application/json': { schema } })
@@ -117,7 +120,11 @@ export function v1Routes(api: DeveloperApi): OpenAPIHono<Env> {
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
   }
 
-  app.use('/v1/*', requestLimit(MAX_V1_BODY))
+  const v1Limit = requestLimit(MAX_V1_BODY)
+  const runLimit = requestLimit(MAX_V1_RUN_BODY)
+  app.use('/v1/*', (c, next) =>
+    c.req.method === 'POST' && RUN_PATH.test(c.req.path) ? runLimit(c, next) : v1Limit(c, next),
+  )
   app.use('/v1/*', async (c, next) => {
     const origin = c.req.header('origin')
     if (c.req.method === 'OPTIONS') {
@@ -160,9 +167,11 @@ export function v1Routes(api: DeveloperApi): OpenAPIHono<Env> {
     }
     const parsed = schema.safeParse(raw)
     if (!parsed.success) {
+      // problems with `images` keep their own code (the messages never echo image data)
+      const images = parsed.error.issues.some((i) => i.path[0] === 'images')
       throw new ApiError(
         400,
-        'INVALID_REQUEST',
+        images ? 'INVALID_IMAGES' : 'INVALID_REQUEST',
         parsed.error.issues.map((i) => `${i.path.join('.') || '(body)'}: ${i.message}`).join('; '),
       )
     }
@@ -332,7 +341,7 @@ export function v1Routes(api: DeveloperApi): OpenAPIHono<Env> {
     tags: ['v1'],
     summary: 'Mode A: run an agent once',
     description:
-      'One-shot: send an input, get an answer. Nothing is stored except metadata (time, key, tokens, cost). With `outputSchema` the answer is validated JSON.\n\n```bash\ncurl -X POST $BASE/v1/agents/support-bot/run \\\n  -H "Authorization: Bearer $EHARNESS_KEY" -H "content-type: application/json" \\\n  -d \'{"input":"Where is order 1042?","context":{"customer":"Acme"}}\'\n```',
+      'One-shot: send an input, get an answer. Nothing is stored except metadata (time, key, tokens, cost). With `outputSchema` the answer is validated JSON. `images` (up to 4, base64, 1.5 MB each) go with the input; they are never stored or logged, and an agent whose model cannot see images answers `400 IMAGES_UNSUPPORTED`. The body may be up to 9 MB (1 MB on every other `/v1` route).\n\n```bash\ncurl -X POST $BASE/v1/agents/support-bot/run \\\n  -H "Authorization: Bearer $EHARNESS_KEY" -H "content-type: application/json" \\\n  -d \'{"input":"Where is order 1042?","context":{"customer":"Acme"}}\'\n```',
     security,
     request: {
       params: z.object({
@@ -367,7 +376,11 @@ export function v1Routes(api: DeveloperApi): OpenAPIHono<Env> {
           },
         },
       },
-      413: { description: 'Input too large', content: json(ErrorSchema) },
+      413: {
+        description:
+          'Input, context or an image too large (`INPUT_TOO_LARGE`, `CONTEXT_TOO_LARGE`, `IMAGE_TOO_LARGE`), or a body over 9 MB (`PAYLOAD_TOO_LARGE`)',
+        content: json(ErrorSchema),
+      },
       502: {
         description:
           'The agent failed, or its answer never matched `outputSchema` (`OUTPUT_INVALID`)',

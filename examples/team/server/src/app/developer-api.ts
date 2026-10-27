@@ -11,13 +11,18 @@ import {
   type ApiKeyDraft,
   type ApiMode,
   type ApiRequestRow,
+  base64Bytes,
   bearerOf,
   cleanDraft,
   cleanKeyDraft,
   generateKey,
   hashKey,
+  IMAGE_MEDIA_TYPES,
+  type ImageMediaType,
   keyIdOf,
   MAX_CONTEXT_CHARS,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGES,
   MAX_INPUT_CHARS,
   REQUEST_LOG_RETENTION_DAYS,
   sameHash,
@@ -26,6 +31,7 @@ import {
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 
 export type { ApiKey }
+export { IMAGE_MEDIA_TYPES, MAX_IMAGE_BYTES, MAX_IMAGES }
 
 /** An error of the `/v1` side: its own status (401, 403, 404, 409, 429, ...) and a readable message. */
 export class ApiError extends Error {
@@ -138,6 +144,11 @@ export interface ApiRunRequest {
   keyId: string
   requestId: string
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  /**
+   * Images of the last user message, in order (validated: type, base64, size). Held in memory for
+   * the run only: never stored or logged.
+   */
+  images?: RunImage[] | undefined
   /** Untrusted extra facts. */
   context?: Record<string, unknown> | undefined
   outputSchema?: Record<string, unknown> | undefined
@@ -195,10 +206,17 @@ export interface KeyView extends Omit<ApiKey, 'hash'> {
   month: UsageTotals
 }
 
+export interface RunImage {
+  mediaType: ImageMediaType
+  /** Standard base64, without a `data:` prefix. */
+  data: string
+}
+
 export interface RunBody {
   input: string | Array<{ role: 'user' | 'assistant'; content: string }>
   context?: Record<string, unknown> | undefined
   outputSchema?: Record<string, unknown> | undefined
+  images?: Array<{ mediaType: string; data: string }> | undefined
 }
 
 export interface RunResponse {
@@ -512,6 +530,47 @@ export function createDeveloperApi(deps: DeveloperApiDeps) {
     return out
   }
 
+  /** Checks the images of a run; errors never echo image data. */
+  const imagesOf = (images: RunBody['images']): RunImage[] => {
+    if (images === undefined) return []
+    if (images.length > MAX_IMAGES) {
+      throw new ApiError(400, 'INVALID_IMAGES', `send at most ${MAX_IMAGES} images.`)
+    }
+    return images.map((image, i) => {
+      if (!(IMAGE_MEDIA_TYPES as readonly string[]).includes(image.mediaType)) {
+        throw new ApiError(
+          400,
+          'INVALID_IMAGES',
+          `images.${i}.mediaType must be one of ${IMAGE_MEDIA_TYPES.join(', ')}.`,
+        )
+      }
+      // cheap upper bound first, so a huge string is not scanned
+      if (Math.floor(image.data.length / 4) * 3 > MAX_IMAGE_BYTES + 2) {
+        throw new ApiError(
+          413,
+          'IMAGE_TOO_LARGE',
+          `images.${i} is over ${MAX_IMAGE_BYTES} bytes (1.5 MB).`,
+        )
+      }
+      const bytes = base64Bytes(image.data)
+      if (bytes === undefined) {
+        throw new ApiError(
+          400,
+          'INVALID_IMAGES',
+          `images.${i}.data is not valid base64 (standard alphabet, padded, no "data:" prefix).`,
+        )
+      }
+      if (bytes > MAX_IMAGE_BYTES) {
+        throw new ApiError(
+          413,
+          'IMAGE_TOO_LARGE',
+          `images.${i} is over ${MAX_IMAGE_BYTES} bytes (1.5 MB).`,
+        )
+      }
+      return { mediaType: image.mediaType as ImageMediaType, data: image.data }
+    })
+  }
+
   const v1 = {
     authenticate,
     agentOfKey,
@@ -525,6 +584,7 @@ export function createDeveloperApi(deps: DeveloperApiDeps) {
     ): Promise<RunResponse> {
       const agent = agentOfKey(key, slug)
       const messages = messagesOf(body.input)
+      const images = imagesOf(body.images)
       if (body.context !== undefined && JSON.stringify(body.context).length > MAX_CONTEXT_CHARS) {
         throw new ApiError(
           413,
@@ -547,6 +607,7 @@ export function createDeveloperApi(deps: DeveloperApiDeps) {
           keyId: key.id,
           requestId,
           messages,
+          ...(images.length === 0 ? {} : { images }),
           context: body.context,
           outputSchema: body.outputSchema,
           signal,
@@ -563,7 +624,18 @@ export function createDeveloperApi(deps: DeveloperApiDeps) {
           costUsd: summary.costUsd,
         }
       } catch (e) {
-        if (!(e instanceof ApiError)) finish(requestId, started, 500, undefined, 'INTERNAL')
+        if (e instanceof ApiError) throw e
+        // the model cannot take images: the core refuses before anything runs
+        const refused = e as { code?: unknown; details?: { reason?: unknown } }
+        if (
+          refused.code === 'EH_INVALID_INPUT' &&
+          refused.details?.reason === 'unsupported-modality'
+        ) {
+          const err = new ApiError(400, 'IMAGES_UNSUPPORTED', (e as Error).message)
+          finish(requestId, started, err.status, undefined, err.code)
+          throw err
+        }
+        finish(requestId, started, 500, undefined, 'INTERNAL')
         throw e
       }
     },

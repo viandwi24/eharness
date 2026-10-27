@@ -20517,7 +20517,7 @@ export interface paths {
         put?: never;
         /**
          * Mode A: run an agent once
-         * @description One-shot: send an input, get an answer. Nothing is stored except metadata (time, key, tokens, cost). With `outputSchema` the answer is validated JSON.
+         * @description One-shot: send an input, get an answer. Nothing is stored except metadata (time, key, tokens, cost). With `outputSchema` the answer is validated JSON. `images` (up to 4, base64, 1.5 MB each) go with the input; they are never stored or logged, and an agent whose model cannot see images answers `400 IMAGES_UNSUPPORTED`. The body may be up to 9 MB (1 MB on every other `/v1` route).
          *
          *     ```bash
          *     curl -X POST $BASE/v1/agents/support-bot/run \
@@ -20576,7 +20576,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description Input too large */
+                /** @description Input, context or an image too large (`INPUT_TOO_LARGE`, `CONTEXT_TOO_LARGE`, `IMAGE_TOO_LARGE`), or a body over 9 MB (`PAYLOAD_TOO_LARGE`) */
                 413: {
                     headers: {
                         [name: string]: unknown;
@@ -26956,6 +26956,28 @@ export interface components {
             outputSchema?: {
                 [key: string]: unknown;
             };
+            /**
+             * @description Up to 4 images (e.g. photos a customer sent), attached in order to the input (the last user message). Each is at most 1572864 bytes (1.5 MB) decoded. Never stored or logged. Errors: `400 INVALID_IMAGES` (type, base64 or count), `413 IMAGE_TOO_LARGE`, `400 IMAGES_UNSUPPORTED` (the agent's model cannot see images).
+             * @example [
+             *       {
+             *         "mediaType": "image/jpeg",
+             *         "data": "/9j/4AAQSkZJRgABAQ..."
+             *       }
+             *     ]
+             */
+            images?: components["schemas"]["V1Image"][];
+        };
+        V1Image: {
+            /**
+             * @example image/jpeg
+             * @enum {string}
+             */
+            mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+            /**
+             * @description The image as standard base64, without a `data:` prefix.
+             * @example /9j/4AAQSkZJRgABAQ...
+             */
+            data: string;
         };
         V1Conversation: {
             id: string;

@@ -22,7 +22,7 @@ const PRICED = { scripted: { pricing: { input: 1_000_000, output: 1_000_000 } } 
 
 function boot(
   steps: ScriptedStepInput[],
-  opts: { token?: string; priced?: boolean } = {},
+  opts: { token?: string; priced?: boolean; catalog?: Record<string, unknown> } = {},
 ): { server: Server; model: ReturnType<typeof scriptedModel> } {
   const model = scriptedModel(steps)
   server = compose({
@@ -31,6 +31,7 @@ function boot(
     ...(opts.token === undefined ? {} : { token: opts.token }),
     models: scriptedModelConfig(model as never),
     ...(opts.priced === true ? { catalog: PRICED } : {}),
+    ...(opts.catalog === undefined ? {} : { catalog: opts.catalog as never }),
     tuning: { modelMaxRetries: 0 },
   })
   return { server, model }
@@ -953,5 +954,105 @@ describe('owner API', () => {
       expect(doc.paths[path]).toBeDefined()
     }
     expect(doc.components.securitySchemes.ApiKey).toBeDefined()
+  })
+})
+
+describe('mode A: images', () => {
+  /** A 1x1 transparent PNG. */
+  const PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+  const run = (s: Server, key: string, body: Record<string, unknown>) =>
+    asKey(s, key, 'POST', '/v1/agents/support-bot/run', { input: 'What is in the photo?', ...body })
+  const codeOf = async (res: Response): Promise<string> =>
+    ((await res.json()) as { error: { code: string } }).error.code
+
+  test('images reach the model as file parts of the input, in order, and are not stored', async () => {
+    const { server: s, model } = boot([{ text: 'A pixel.' }])
+    await makeAgent(s)
+    const { key } = await makeKey(s)
+    const res = await run(s, key, {
+      context: { order: '1042' },
+      images: [
+        { mediaType: 'image/png', data: PNG },
+        { mediaType: 'image/jpeg', data: 'AAAA' },
+      ],
+    })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { output: string }).output).toBe('A pixel.')
+    const prompt = model.prompts[0] as Array<{
+      role: string
+      content: string | Array<{ type: string; mediaType?: string; text?: string }>
+    }>
+    const user = prompt.findLast((m) => m.role === 'user')
+    const parts = Array.isArray(user?.content) ? user.content : []
+    expect(parts.filter((p) => p.type === 'file').map((p) => p.mediaType)).toEqual([
+      'image/png',
+      'image/jpeg',
+    ])
+    const text = parts.find((p) => p.type === 'text')?.text ?? ''
+    expect(text).toContain('What is in the photo?')
+    expect(text).toContain('<untrusted-content')
+    expect(s.conn.sqlite.query('SELECT COUNT(*) AS n FROM eh_messages').get()).toEqual({ n: 0 })
+    const log = JSON.stringify(s.conn.sqlite.query('SELECT * FROM api_requests').all())
+    expect(log).not.toContain(PNG.slice(0, 20))
+  })
+
+  test('a bad type, bad base64 or more than 4 images is 400 INVALID_IMAGES', async () => {
+    const { server: s } = boot([])
+    await makeAgent(s)
+    const { key } = await makeKey(s)
+    const badType = await run(s, key, { images: [{ mediaType: 'image/bmp', data: PNG }] })
+    expect(badType.status).toBe(400)
+    expect(await codeOf(badType)).toBe('INVALID_IMAGES')
+    for (const data of [`data:image/png;base64,${PNG}`, 'abc', 'a b=', '****']) {
+      const bad = await run(s, key, { images: [{ mediaType: 'image/png', data }] })
+      expect(bad.status).toBe(400)
+      expect(await codeOf(bad)).toBe('INVALID_IMAGES')
+    }
+    const five = await run(s, key, {
+      images: Array.from({ length: 5 }, () => ({ mediaType: 'image/png', data: PNG })),
+    })
+    expect(five.status).toBe(400)
+    expect(await codeOf(five)).toBe('INVALID_IMAGES')
+  })
+
+  test('an image over 1.5 MB is 413 IMAGE_TOO_LARGE; the run body may be up to 9 MB', async () => {
+    const { server: s } = boot([{ text: 'ok' }])
+    await makeAgent(s)
+    const { key } = await makeKey(s)
+    const exact = 'A'.repeat((1_572_864 / 3) * 4)
+    const over = await run(s, key, { images: [{ mediaType: 'image/png', data: `${exact}AAAA` }] })
+    expect(over.status).toBe(413)
+    expect(await codeOf(over)).toBe('IMAGE_TOO_LARGE')
+    // 4 images of exactly 1.5 MB (an 8 MB body) pass the body limit and the size check
+    const four = await run(s, key, {
+      images: Array.from({ length: 4 }, () => ({ mediaType: 'image/png', data: exact })),
+    })
+    expect(four.status).toBe(200)
+  })
+
+  test('other /v1 routes keep the 1 MB body limit', async () => {
+    const { server: s } = boot([])
+    await makeAgent(s)
+    const { key } = await makeKey(s)
+    const big = { agent: 'support-bot', metadata: { blob: 'x'.repeat(1024 * 1024 + 10) } }
+    const res = await asKey(s, key, 'POST', '/v1/conversations', big)
+    expect(res.status).toBe(413)
+    expect(await codeOf(res)).toBe('PAYLOAD_TOO_LARGE')
+  })
+
+  test('a model without image input is 400 IMAGES_UNSUPPORTED with the core message', async () => {
+    const { server: s, model } = boot([{ text: 'never' }], {
+      catalog: { scripted: { inputModalities: ['text'] } },
+    })
+    await makeAgent(s)
+    const { key } = await makeKey(s)
+    const res = await run(s, key, { images: [{ mediaType: 'image/png', data: PNG }] })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('IMAGES_UNSUPPORTED')
+    expect(body.error.message).toContain('does not accept image input')
+    expect(body.error.message).not.toContain(PNG.slice(0, 20))
+    expect(model.prompts.length).toBe(0)
   })
 })
