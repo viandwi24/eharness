@@ -226,6 +226,17 @@
 		const def = providersStore.definition(p.definitionId);
 		return def ? envVariables(def.envMap, p.settings) : [];
 	};
+
+	/** One line under each provider in the picker. */
+	const PROVIDER_BLURB: Record<string, string> = {
+		openrouter: 'One key for hundreds of models from many labs.',
+		gateway: 'Route through Vercel with one key and unified billing.',
+		ollama: 'Models on your own machine or GPU server. No key needed.',
+		lmstudio: 'Models loaded in LM Studio. No key needed.',
+		vllm: 'A vLLM server you run. No key needed.',
+		llamacpp: 'A llama.cpp server you run. No key needed.',
+		'openai-compatible': 'Any OpenAI-compatible API: your own base URL and headers.'
+	};
 </script>
 
 <div class="flex flex-col gap-5">
@@ -356,7 +367,7 @@
 						<ProviderIcon definitionId={d.id} />
 						<span class="min-w-0">
 							<span class="block text-sm font-medium">{d.label}</span>
-							<span class="mt-0.5 block text-xs text-muted-foreground">{d.id === 'openrouter' ? 'One key for hundreds of models from many labs.' : d.id === 'gateway' ? 'Route through Vercel with one key and unified billing.' : (d.doc ?? 'Bring your own key')}</span>
+							<span class="mt-0.5 block text-xs text-muted-foreground">{PROVIDER_BLURB[d.id] ?? d.doc ?? 'Bring your own key'}</span>
 						</span>
 					</button>
 				{/each}
@@ -372,6 +383,11 @@
 					<Field.Description>Shown in pickers. Several profiles of one provider need different names.</Field.Description>
 				</Field.Field>
 				<SchemaForm fields={definition.fields} bind:values current={editing?.settings} {errors} idPrefix="pf" disabled={saving} />
+				{#if definition.id in PROVIDER_BLURB && !['openrouter', 'gateway'].includes(definition.id)}
+					<p class="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-testid="local-address-note">
+						The team server connects to this address, not your browser: <span class="font-mono">localhost</span> is the machine the server runs on. A server on another machine needs an address the team server can reach. Under Advanced, set Context length if the server runs models with more than it reports.
+					</p>
+				{/if}
 				<Field.Field orientation="horizontal">
 					<Field.Content>
 						<Field.Label for="pf-enabled">Enabled</Field.Label>

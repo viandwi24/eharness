@@ -88,6 +88,16 @@ export interface TestResultView {
   latencyMs?: number
 }
 
+/** Whether a model answered a small tool call (`POST /providers/profiles/{id}/probe`). */
+export interface ToolProbeView {
+  /** The model was reached and answered. */
+  ok: boolean
+  /** It called the tool with the right input. */
+  tools: boolean
+  message: string
+  latencyMs: number
+}
+
 export interface ProfileCreate {
   providerId: string
   /** Default: the provider id, then `-2`, `-3`, ... */

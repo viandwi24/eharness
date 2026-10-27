@@ -8917,6 +8917,45 @@
           "ok"
         ]
       },
+      "ToolProbeResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "The model was reached and answered."
+          },
+          "tools": {
+            "type": "boolean",
+            "description": "It called the tool with the right input: agents can use it."
+          },
+          "message": {
+            "type": "string",
+            "description": "What happened, in one sentence."
+          },
+          "latencyMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "ok",
+          "tools",
+          "message",
+          "latencyMs"
+        ]
+      },
+      "ToolProbe": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "minLength": 1,
+            "example": "qwen3:8b"
+          }
+        },
+        "required": [
+          "modelId"
+        ]
+      },
       "ProviderModelList": {
         "type": "object",
         "properties": {
@@ -30508,6 +30547,86 @@
           },
           "404": {
             "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/profiles/{id}/probe": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Check that a model can call tools",
+        "description": "Sends the model one small request with one tool and checks it calls the tool with the right input. Agents need that: a model that answers in text instead (or a server without tool calling turned on) cannot run an agent. Costs one model call (on the Logs page). A model error is `ok: false`, never an error status.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "openrouter",
+              "description": "Provider profile id."
+            },
+            "required": true,
+            "description": "Provider profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolProbe"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolProbeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or disabled profile",
             "content": {
               "application/json": {
                 "schema": {

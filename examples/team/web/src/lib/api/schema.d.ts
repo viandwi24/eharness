@@ -7811,6 +7811,79 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/providers/profiles/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check that a model can call tools
+         * @description Sends the model one small request with one tool and checks it calls the tool with the right input. Agents need that: a model that answers in text instead (or a server without tool calling turned on) cannot run an agent. Costs one model call (on the Logs page). A model error is `ok: false`, never an error status.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ToolProbe"];
+                };
+            };
+            responses: {
+                /** @description Result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ToolProbeResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown or disabled profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/providers/profiles/{id}/models": {
         parameters: {
             query?: never;
@@ -23426,6 +23499,19 @@ export interface components {
             /** @description Never contains a secret. */
             message?: string;
             latencyMs?: number;
+        };
+        ToolProbeResult: {
+            /** @description The model was reached and answered. */
+            ok: boolean;
+            /** @description It called the tool with the right input: agents can use it. */
+            tools: boolean;
+            /** @description What happened, in one sentence. */
+            message: string;
+            latencyMs: number;
+        };
+        ToolProbe: {
+            /** @example qwen3:8b */
+            modelId: string;
         };
         ProviderModelList: {
             models: components["schemas"]["ProviderModel"][];

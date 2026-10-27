@@ -644,6 +644,8 @@ export function compose(config: ServerConfig): Server {
     ...(config.offline === undefined ? {} : { offline: config.offline }),
     ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
     changes,
+    // called per probe, long after `activityLog` below exists
+    observeProbe: (model) => activityLog.watch(model, { kind: 'other' }),
   })
   const models: ModelConfig =
     config.models ??

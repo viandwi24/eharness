@@ -1,7 +1,11 @@
 /**
  * Model providers of the team server: the `eharness/providers` manager over the app's pieces.
  *
- * - definitions: OpenRouter (`@openrouter/ai-sdk-provider`) and the Vercel AI Gateway (`ai`);
+ * - definitions: OpenRouter (`@openrouter/ai-sdk-provider`), the Vercel AI Gateway (`ai`), any
+ *   OpenAI-compatible endpoint and the local servers Ollama, LM Studio, vLLM and llama.cpp
+ *   (`@ai-sdk/openai-compatible`). Local servers report the context they run each model with; the
+ *   listing is warmed at boot and after a profile change, so the catalog knows it before a model
+ *   list is opened (a model runs cut at its server's context otherwise);
  * - profiles: environment variables are read-only `env` profiles (`OPENROUTER_API_KEY`,
  *   `OPENROUTER_BASE_URL`, `AI_GATEWAY_API_KEY`); everything saved from the web lives in
  *   `config_profiles`, sealed by the server's one vault (`profile-store.ts`, `secret-vault.ts`);
@@ -13,16 +17,23 @@
  * `ModelConfig` the agent factory resolves models with (`provider.ts`).
  */
 import type { Database } from 'bun:sqlite'
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
-import { createGateway } from 'ai'
+import { createGateway, generateText, type LanguageModel, stepCountIs, tool } from 'ai'
 import {
   createProviderManager,
   gatewayProvider,
+  llamaCppProvider,
+  lmStudioProvider,
+  ollamaProvider,
+  openAICompatibleProvider,
   openRouterProvider,
   type ProfileStore,
   type ProviderManager,
   type PublicProfile,
+  vllmProvider,
 } from 'eharness/providers'
+import { z } from 'zod'
 import type { ProvidersPort } from '../../app/ports.ts'
 import { DomainError, invalid, notFound } from '../../domain/errors.ts'
 import type {
@@ -30,6 +41,7 @@ import type {
   ProfileView,
   ProviderDefinitionView,
   TestResultView,
+  ToolProbeView,
 } from '../../domain/providers.ts'
 import { sqliteCatalogCache } from './catalog-cache.ts'
 import type { ChangeFeed } from './change-feed.ts'
@@ -60,6 +72,73 @@ export interface ProviderServiceOptions {
   /** Other instances' changes (`providers-changed`) reload the manager. */
   changes?: ChangeFeed
   warn?: (message: string) => void
+  /** Wraps the model of a tool probe (the Logs page records it). Late-bound by the caller. */
+  observeProbe?: (model: LanguageModel) => LanguageModel
+}
+
+/** A local model may load from disk first: give a probe time. */
+const PROBE_TIMEOUT_MS = 120_000
+const PROBE_WORD = 'pong'
+
+/**
+ * Ask the model to call one tool with a fixed input. `tools: true` when it did, with that input;
+ * a model that answers in text, or calls with a wrong input, cannot be trusted with agent tools.
+ */
+export async function probeModelTools(model: LanguageModel): Promise<ToolProbeView> {
+  const started = Date.now()
+  let input: unknown
+  try {
+    const result = await generateText({
+      model,
+      instructions:
+        'You are a connectivity check. Always answer by calling the tool you are given.',
+      prompt: `Call the tool "echo" with the word "${PROBE_WORD}".`,
+      tools: {
+        echo: tool({
+          description: 'Echo a word back.',
+          inputSchema: z.object({ word: z.string() }),
+          execute: async (i) => {
+            input = i
+            return 'ok'
+          },
+        }),
+      },
+      stopWhen: stepCountIs(1),
+      maxOutputTokens: 400,
+      abortSignal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    })
+    const latencyMs = Date.now() - started
+    const word = (input as { word?: unknown } | undefined)?.word
+    if (typeof word === 'string' && word.trim().toLowerCase() === PROBE_WORD)
+      return {
+        ok: true,
+        tools: true,
+        message: 'Calls tools: agents can use this model.',
+        latencyMs,
+      }
+    if (input !== undefined)
+      return {
+        ok: true,
+        tools: false,
+        message: `Called the tool with the wrong input (${JSON.stringify(input).slice(0, 80)}): tool use is unreliable.`,
+        latencyMs,
+      }
+    const text = result.text.trim().replace(/\s+/g, ' ').slice(0, 120)
+    return {
+      ok: true,
+      tools: false,
+      message: `Answered in text instead of calling the tool${text ? ` ("${text}")` : ''}. The model or the server does not support tool calling (vLLM needs --enable-auto-tool-choice, llama.cpp --jinja).`,
+      latencyMs,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      ok: false,
+      tools: false,
+      message: `The model did not answer: ${message.replace(/\s+/g, ' ').slice(0, 300)}`,
+      latencyMs: Date.now() - started,
+    }
+  }
 }
 
 export interface ProviderService extends ProvidersPort {
@@ -89,6 +168,11 @@ const mapError = (error: unknown): never =>
     conflicts: { 'read-only': 'READ_ONLY_PROFILE', 'profile-exists': 'PROFILE_EXISTS' },
   })
 
+/** Definitions whose model list comes from the server itself (context windows included). */
+const LOCAL_DEFINITIONS = [ollamaProvider, lmStudioProvider, vllmProvider, llamaCppProvider]
+/** Profiles of these are listed in the background at boot and after a change (`warm`). */
+const SELF_LISTED = new Set(['ollama', 'lmstudio', 'vllm', 'llamacpp', 'openai-compatible'])
+
 /** `kind` of provider rows in the profile table. */
 export const PROVIDER_KIND = 'provider'
 
@@ -97,7 +181,16 @@ export function createProviderService(options: ProviderServiceOptions): Provider
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
   const store = options.store
   const manager = createProviderManager({
-    definitions: [openRouterProvider({ createOpenRouter }), gatewayProvider({ createGateway })],
+    definitions: [
+      openRouterProvider({ createOpenRouter }),
+      gatewayProvider({ createGateway }),
+      ...LOCAL_DEFINITIONS.map((make) => make({ createOpenAICompatible })),
+      openAICompatibleProvider({
+        createOpenAICompatible,
+        label: 'Custom (OpenAI-compatible)',
+        apiKeyOptional: true,
+      }),
+    ],
     store,
     env,
     cache: sqliteCatalogCache(options.sqlite),
@@ -138,6 +231,18 @@ export function createProviderService(options: ProviderServiceOptions): Provider
     revision++
   }
 
+  /**
+   * List the models of self-listed profiles in the background: their context windows live in the
+   * listing, and the catalog reads it (never throws; a server that is down is listed later).
+   */
+  const warm = (ids?: readonly string[]): void => {
+    for (const v of views) {
+      if (!v.enabled || !SELF_LISTED.has(v.definitionId)) continue
+      if (ids !== undefined && !ids.includes(v.id)) continue
+      void manager.models(v.id).catch(() => undefined)
+    }
+  }
+
   async function loadDefinitions(): Promise<void> {
     const { providers } = await manager.describe()
     definitions = providers.map((d) => ({
@@ -158,6 +263,7 @@ export function createProviderService(options: ProviderServiceOptions): Provider
   async function reloadFromFeed(): Promise<void> {
     await manager.reload()
     await refresh()
+    warm()
   }
 
   options.changes?.on('providers-changed', reloadFromFeed)
@@ -167,6 +273,7 @@ export function createProviderService(options: ProviderServiceOptions): Provider
       await manager.ready()
       await loadDefinitions()
       await refresh()
+      warm()
       // prices and context windows; a failure leaves the catalog empty, never fatal
       await manager.loadCatalogs().then(
         (r) => void r.refresh?.catch(() => undefined),
@@ -262,6 +369,7 @@ export function createProviderService(options: ProviderServiceOptions): Provider
         })
         await refresh()
         loadCatalogsLater()
+        warm([profile.id])
         return published(profile.id)
       } catch (error) {
         return mapError(error)
@@ -278,6 +386,7 @@ export function createProviderService(options: ProviderServiceOptions): Provider
           ...(patch.models === undefined ? {} : { models: patch.models }),
         })
         await refresh()
+        warm([id])
         return published(id)
       } catch (error) {
         // an edit of an id that does not exist would otherwise create nothing and say "provider required"
@@ -299,6 +408,18 @@ export function createProviderService(options: ProviderServiceOptions): Provider
       await ready()
       if (!views.some((p) => p.id === id)) throw notFound('provider profile', id)
       return manager.test(id)
+    },
+    async probeTools(id, modelId) {
+      await ready()
+      if (!views.some((p) => p.id === id && p.enabled)) throw notFound('provider profile', id)
+      let model: LanguageModel
+      try {
+        model = manager.resolve({ profile: id, model: modelId })
+      } catch (error) {
+        const e = error as { message?: string }
+        throw invalid(e.message ?? 'unknown model', 'MODEL_UNAVAILABLE')
+      }
+      return probeModelTools(options.observeProbe?.(model) ?? model)
     },
     async models(id, o) {
       await ready()

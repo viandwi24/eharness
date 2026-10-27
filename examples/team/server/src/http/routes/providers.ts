@@ -5,6 +5,7 @@ import {
   deleteProfile,
   describeProviders,
   listProfileModels,
+  probeProfileTools,
   testProfile,
   updateProfile,
 } from '../../app/providers.ts'
@@ -18,6 +19,8 @@ import {
   ProfileSchema,
   ProvidersSchema,
   TestResultSchema,
+  ToolProbeResultSchema,
+  ToolProbeSchema,
 } from '../schemas/providers.ts'
 
 const security = [{ Bearer: [] }]
@@ -106,6 +109,25 @@ const test = createRoute({
   },
 })
 
+const probe = createRoute({
+  method: 'post',
+  path: '/providers/profiles/{id}/probe',
+  tags: ['providers'],
+  summary: 'Check that a model can call tools',
+  description:
+    'Sends the model one small request with one tool and checks it calls the tool with the right input. Agents need that: a model that answers in text instead (or a server without tool calling turned on) cannot run an agent. Costs one model call (on the Logs page). A model error is `ok: false`, never an error status.',
+  security,
+  request: {
+    params: ProfileIdParam,
+    body: { required: true, content: content(ToolProbeSchema) },
+  },
+  responses: {
+    200: { description: 'Result', content: content(ToolProbeResultSchema) },
+    404: jsonError('Unknown or disabled profile'),
+    ...errorResponses,
+  },
+})
+
 const models = createRoute({
   method: 'get',
   path: '/providers/profiles/{id}/models',
@@ -134,6 +156,12 @@ export function providerRoutes(deps: Deps): OpenAPIHono {
       return c.body(null, 204)
     })
     .openapi(test, async (c) => c.json(await testProfile(deps, c.req.valid('param').id), 200))
+    .openapi(probe, async (c) =>
+      c.json(
+        await probeProfileTools(deps, c.req.valid('param').id, c.req.valid('json').modelId),
+        200,
+      ),
+    )
     .openapi(models, async (c) => {
       const query = c.req.valid('query')
       return c.json(

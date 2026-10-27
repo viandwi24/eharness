@@ -194,6 +194,21 @@ export const TestResultSchema = z
   })
   .openapi('ProviderTestResult')
 
+export const ToolProbeSchema = z
+  .object({ modelId: z.string().min(1).openapi({ example: 'qwen3:8b' }) })
+  .openapi('ToolProbe')
+
+export const ToolProbeResultSchema = z
+  .object({
+    ok: z.boolean().openapi({ description: 'The model was reached and answered.' }),
+    tools: z
+      .boolean()
+      .openapi({ description: 'It called the tool with the right input: agents can use it.' }),
+    message: z.string().openapi({ description: 'What happened, in one sentence.' }),
+    latencyMs: z.number(),
+  })
+  .openapi('ToolProbeResult')
+
 export const ProfileIdParam = z.object({
   id: z
     .string()

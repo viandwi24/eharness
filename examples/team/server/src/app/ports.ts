@@ -118,6 +118,7 @@ import type {
   ProviderDefinitionView,
   ProviderFieldView,
   TestResultView,
+  ToolProbeView,
 } from '../domain/providers.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { ScriptManifest } from '../domain/script-manifest.ts'
@@ -1363,6 +1364,8 @@ export interface ProvidersPort {
   update(id: string, patch: ProfilePatch): Promise<ProfileView>
   remove(id: string): Promise<void>
   test(id: string): Promise<TestResultView>
+  /** One small tool call to `modelId` of the profile: can agents use it? Never throws for a model error. */
+  probeTools(id: string, modelId: string): Promise<ToolProbeView>
   models(id: string, options: { refresh: boolean; all?: boolean }): Promise<ModelView[]>
   /**
    * Where the model a profile uses when nothing picks one comes from: `env` (`TEAM_MODEL` on the

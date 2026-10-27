@@ -46,12 +46,23 @@ ask -> subagents -> task index. MCP servers are the root `mcp` option. Static te
 `instructions`; the date and the roster go in a turn reminder.
 
 **Providers and profiles.** `infra/eh/providers.ts` wires the `eharness/providers` manager:
-OpenRouter and the AI Gateway as definitions, environment variables as read-only `env` profiles, and
+OpenRouter, the AI Gateway, the local servers Ollama, LM Studio, vLLM and llama.cpp, and a custom
+OpenAI-compatible endpoint (base URL, headers, optional key) as definitions, environment variables
+as read-only `env` profiles, and
 profiles saved from the web in `config_profiles` with the whole settings object AES-GCM encrypted
 (`secret-box.ts`, key from `TEAM_SECRET_KEY`). An agent's model is `{ modelProfile, model }`; a plain
 model id (old rows) means the default profile. The manager's `catalog()` feeds cost and context window
 into the agent. A change appends `providers-changed`; other instances tail the feed and reload.
 The public catalogs are cached in `catalog_cache`.
+Local servers and custom endpoints list their models live; a local server reports the context it
+**runs** each model with (Ollama `/api/ps` and Modelfile `num_ctx`, LM Studio's loaded instance,
+vLLM `max_model_len`, llama.cpp `n_ctx`), else the profile's "Context length", else 4K. Those
+listings are warmed at boot and after a profile change, because the catalog (and so compaction)
+reads them: a model run past its server's context is cut silently. Settings lists a model added by
+hand (`models.extra`: id, name, context length), flags windows under 16K as too small for an agent,
+and "Test tools" (`POST /providers/profiles/{id}/probe`) sends one request with one tool to tell a
+model that calls tools from one that answers in text (a `kind: 'other'` row on the Logs page).
+`localhost` in a base URL is the machine the server runs on, not the browser's.
 
 **DM sessions and task sessions.** Each agent has one DM session `dm:<agentId>`. Delegated work
 runs in a **child session** (`<leadSession>:agent:<toolCallId>`), so a task has its own history and

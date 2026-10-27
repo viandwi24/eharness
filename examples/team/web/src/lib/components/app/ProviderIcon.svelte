@@ -1,11 +1,15 @@
 <script lang="ts">
 	import CloudIcon from 'phosphor-svelte/lib/Cloud';
+	import HardDrivesIcon from 'phosphor-svelte/lib/HardDrives';
+	import PlugsIcon from 'phosphor-svelte/lib/Plugs';
 	import { cn } from '#lib/utils.js';
 
 	/**
 	 * The mark of a provider definition in a softly tinted tile. OpenRouter, Vercel (AI Gateway) and
 	 * Anthropic show their plain monochrome mark, for identification only (paths from simple-icons,
-	 * CC0); other providers get a generic cloud glyph. Marks follow `currentColor`.
+	 * CC0); local servers (Ollama, LM Studio, vLLM, llama.cpp) a server glyph, a custom
+	 * OpenAI-compatible endpoint a plug, other providers a generic cloud glyph. Marks follow
+	 * `currentColor`.
 	 */
 	let { definitionId, size = 'md', class: className }: { definitionId: string; size?: 'sm' | 'md' | 'lg'; class?: string } = $props();
 
@@ -25,12 +29,20 @@
 	const FALLBACK_TINT = 'bg-sky-500/12 text-sky-700 dark:bg-sky-400/15 dark:text-sky-300';
 	const SIZE = { sm: 'size-8 rounded-lg', md: 'size-10 rounded-xl', lg: 'size-14 rounded-2xl' } as const;
 	const GLYPH = { sm: 'size-4', md: 'size-5', lg: 'size-7' } as const;
+	const LOCAL = new Set(['ollama', 'lmstudio', 'vllm', 'llamacpp']);
+	const LOCAL_TINT = 'bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300';
 	const mark = $derived(MARKS[definitionId]);
+	const local = $derived(LOCAL.has(definitionId));
+	const custom = $derived(definitionId === 'openai-compatible');
 </script>
 
-<span aria-hidden="true" data-provider-mark={mark ? definitionId : 'generic'} class={cn('flex shrink-0 items-center justify-center', SIZE[size], mark?.tint ?? FALLBACK_TINT, className)}>
+<span aria-hidden="true" data-provider-mark={mark ? definitionId : local ? 'local' : custom ? 'custom' : 'generic'} class={cn('flex shrink-0 items-center justify-center', SIZE[size], mark?.tint ?? (local ? LOCAL_TINT : FALLBACK_TINT), className)}>
 	{#if mark}
 		<svg viewBox="0 0 24 24" fill="currentColor" class={GLYPH[size]} focusable="false"><path d={mark.path} /></svg>
+	{:else if local}
+		<HardDrivesIcon class={GLYPH[size]} />
+	{:else if custom}
+		<PlugsIcon class={GLYPH[size]} />
 	{:else}
 		<CloudIcon class={GLYPH[size]} />
 	{/if}
