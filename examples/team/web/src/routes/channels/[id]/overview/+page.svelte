@@ -64,19 +64,22 @@
 	const breaker = $derived(breakerText(conn, Date.now()));
 
 	let recent = $state<ChannelActivity[] | null>(null);
+	let recentError = $state('');
 	let reading = $state<ChannelChat[]>([]);
 	let busy = $state(false);
 	let reconnectOpen = $state(false);
 
 	const warning = $derived(privacyWarning(conn, reading));
 
+	// a connection without an answering agent records too (ADR-0066): its activity loads the same way
 	async function loadRecent(): Promise<void> {
-		if (!conn.binding) return;
 		try {
 			recent = (await api.get('/channels/connections/{id}/activity/table', { params: { id }, query: { limit: 8 } })).items;
+			recentError = '';
 			if (!account) reading = (await api.get('/channels/connections/{id}/chats/table', { params: { id }, query: { allowed: 'yes', limit: 100 } })).items;
-		} catch {
-			// the overview still shows; the next look retries
+		} catch (e) {
+			// the overview still shows; the next look retries (a first failure is said, not a forever skeleton)
+			if (recent === null) recentError = e instanceof Error ? e.message : 'Could not load the activity';
 		}
 	}
 	onMount(() => {
@@ -182,7 +185,9 @@
 					<h2 class="text-sm font-medium">Recent activity</h2>
 					<Button size="sm" variant="ghost" href={channelHref(id, 'activity')}>All activity</Button>
 				</div>
-				{#if recent === null}
+				{#if recent === null && recentError}
+					<p class="text-sm text-destructive-text" role="alert">{recentError} <button class="underline underline-offset-4" onclick={() => void loadRecent()}>Retry</button></p>
+				{:else if recent === null}
 					<div class="flex flex-col gap-2" aria-busy="true">{#each [0, 1, 2] as i (i)}<Skeleton class="h-10 w-full rounded-lg" />{/each}</div>
 				{:else if recent.length === 0}
 					<p class="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">Nothing yet. Events appear when somebody writes to this channel or the agent sends something.</p>
