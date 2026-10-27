@@ -175,9 +175,29 @@ Each takes the provider package factory and optional `id` / `label`; settings fi
 |---|---|---|---|
 | `openRouterProvider` | `createOpenRouter` | `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` | `catalog.kind: 'openrouter'`; `live: true` lists from `GET <baseURL>/models` instead |
 | `gatewayProvider` | `createGateway?` (none: plain id strings, key from the AI SDK environment) | `AI_GATEWAY_API_KEY` (the AI SDK gateway has no base-URL environment variable: set `baseURL` on the profile) | models.dev providers (a fixed internal list); with `createGateway`, live `getAvailableModels()` with prices |
-| `openAICompatibleProvider` | `createOpenAICompatible` | none | live `GET <baseURL>/models`; `baseURL` required, `apiKeyOptional`, `defaultBaseURL`, `id` for presets |
+| `openAICompatibleProvider` | `createOpenAICompatible` | none | live `GET <baseURL>/models`; `baseURL` required, `apiKeyOptional`, `defaultBaseURL`, `id` for presets; vLLM's `max_model_len` becomes the context window; optional `contextWindow` setting fills unknown windows |
+| `ollamaProvider`, `lmStudioProvider`, `vllmProvider`, `llamaCppProvider` | `createOpenAICompatible` | none | OpenAI-compatible presets for local servers (below) |
 | `openAIProvider` | `createOpenAI` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` | models.dev `openai` + live `GET /models` (embedding/audio/image ids dropped) |
 | `anthropicProvider` | `createAnthropic` | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | models.dev `anthropic` + live `GET /v1/models` |
+
+**Local servers.** The four presets are `openAICompatibleProvider` with the API key optional, the
+server's usual address as the `baseURL` default (`http://localhost:11434/v1`, `:1234/v1`,
+`:8000/v1`, `:8080/v1`), ids `ollama`, `lmstudio`, `vllm`, `llamacpp`, and listings that add what
+the server knows to the ids of `GET <baseURL>/models` (native endpoints at the URL without `/v1`,
+with the profile's headers; any failure keeps the plain ids, never throws):
+
+- the context window is the one the server **runs** the model with, never the trained maximum: a
+  local server cuts a longer prompt silently, so compaction must happen before it. Order: what the
+  server reports for the model (Ollama `GET /api/ps` `context_length` of a loaded model, LM Studio
+  `loaded_instances[0].config.context_length` of `GET /api/v1/models` (else `/api/v0/models`),
+  vLLM `max_model_len`, llama.cpp `default_generation_settings.n_ctx` of `GET /props`), then the
+  model's own setting (an Ollama Modelfile `num_ctx` from `POST /api/show`), then the profile's
+  `contextWindow` setting, then 4096 (Ollama's and LM Studio's default on small GPUs), capped at the
+  trained maximum when known. The model's `description` says which applied;
+- Ollama `capabilities` (`/api/show`) set `tools`, `reasoning` (`thinking`) and
+  `inputModalities` (`vision` adds `image`); LM Studio `capabilities` set `tools` and vision, its
+  `display_name` the name, and embedding models are left out;
+- the price is zero (`{ input: 0, output: 0 }`), except Ollama cloud models (`*-cloud`).
 
 `openRouterProvider` also has three optional `advanced` settings and always turns usage accounting
 on (`usage: { include: true }` on the model, so the response carries the billed cost,

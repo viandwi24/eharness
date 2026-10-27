@@ -371,8 +371,11 @@
     "gatewayProvider",
     "inMemoryCatalogCache",
     "inMemoryProfileStore",
+    "llamaCppProvider",
+    "lmStudioProvider",
     "loadModelsDev",
     "loadOpenRouterModels",
+    "ollamaProvider",
     "openAICompatibleProvider",
     "openAIProvider",
     "openRouterProvider",
@@ -383,6 +386,7 @@
     "sealedProfileStore",
     "secretStatus",
     "validateSettings",
+    "vllmProvider",
     "webCryptoVault"
   ],
   "eharness/scheduler": [

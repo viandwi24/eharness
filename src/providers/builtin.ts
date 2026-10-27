@@ -9,6 +9,13 @@ import { z } from 'zod/v4'
 import { HarnessError } from '../index.ts'
 import { parseOpenRouterModels } from './catalog-loader.ts'
 import { ehMeta } from './form.ts'
+import {
+  describeLlamaCpp,
+  describeLmStudio,
+  describeOllama,
+  describeVllm,
+  type LocalServer,
+} from './local.ts'
 import type {
   ListedModel,
   ProviderContext,
@@ -42,16 +49,21 @@ function instanceOf(provider: ReturnType<ProviderFactory<never>>): ProviderInsta
   }
 }
 
-const apiKeyField = (required: boolean, envHint: string, placeholder?: string) => {
+const apiKeyField = (
+  required: boolean,
+  envHint: string | undefined,
+  placeholder?: string,
+  description = 'Stored encrypted by the app; never shown again after saving.',
+) => {
   const base = z.string().min(1)
   return (required ? base : base.optional()).meta({
     title: 'API key',
-    description: 'Stored encrypted by the app; never shown again after saving.',
+    description,
     ...ehMeta({
       secret: true,
       group: 'auth',
       widget: 'password',
-      envHint,
+      ...(envHint ? { envHint } : {}),
       ...(placeholder ? { placeholder } : {}),
     }),
   })
@@ -485,24 +497,88 @@ export interface OpenAICompatibleProviderOptions {
   apiKeyOptional?: boolean
 }
 
-/** Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, a proxy). */
+/** Any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, a proxy, a hosted API). */
 export function openAICompatibleProvider(
   options: OpenAICompatibleProviderOptions,
 ): ProviderDefinition {
+  return compatibleDefinition(options)
+}
+
+/** Adds what a server knows beyond the ids (`local.ts`); never throws. */
+type DescribeModels = (
+  models: ListedModel[],
+  server: LocalServer,
+  ctx: ProviderContext,
+) => Promise<ListedModel[]> | ListedModel[]
+
+/** `GET <baseURL>/models` ids, with vLLM's `max_model_len` as the context window when present. */
+function parseCompatibleList(data: unknown): ListedModel[] {
+  const raw = (data as { data?: unknown } | null)?.data
+  const lengths = new Map<string, number>()
+  if (Array.isArray(raw)) {
+    for (const item of raw as Array<{ id?: unknown; max_model_len?: unknown } | null>) {
+      const n = item?.max_model_len
+      if (typeof item?.id === 'string' && typeof n === 'number' && Number.isFinite(n) && n > 0)
+        lengths.set(item.id, Math.floor(n))
+    }
+  }
+  return parseIdList(data).map((m) => {
+    const n = lengths.get(m.id)
+    return n === undefined ? m : { ...m, info: { contextWindow: n } }
+  })
+}
+
+function compatibleDefinition(
+  options: OpenAICompatibleProviderOptions,
+  describe?: DescribeModels,
+): ProviderDefinition {
   const settings = z.object({
-    baseURL: z.url().meta({
+    // a preset's usual address applies when the field is left empty
+    baseURL: (options.defaultBaseURL ? z.url().default(options.defaultBaseURL) : z.url()).meta({
       title: 'Base URL',
       description: 'Endpoint root, for example http://localhost:11434/v1.',
-      ...(options.defaultBaseURL ? { default: options.defaultBaseURL } : {}),
       ...ehMeta({ group: 'endpoint', placeholder: options.defaultBaseURL ?? 'https://host/v1' }),
     }),
-    apiKey: apiKeyField(options.apiKeyOptional !== true, 'API_KEY'),
+    // no environment variable maps to it (`envMap` is empty): no hint
+    apiKey:
+      options.apiKeyOptional === true
+        ? apiKeyField(
+            false,
+            undefined,
+            undefined,
+            'Only when the server asks for one (a proxy, or a server started with an API key). Stored encrypted.',
+          )
+        : apiKeyField(true, undefined),
     headers: headersField,
+    contextWindow: z
+      .number()
+      .int()
+      .min(256)
+      .optional()
+      .meta({
+        title: 'Context length',
+        description:
+          'Tokens the server runs a model with, used when the server does not report it. A model added by hand can set its own.',
+        ...ehMeta({ group: 'advanced', placeholder: 'e.g. 32768' }),
+      }),
   })
   type S = z.output<typeof settings>
   const id = options.id ?? 'openai-compatible'
-  const list = async (s: S, ctx: ProviderContext): Promise<ListedModel[]> =>
-    parseIdList(await getJson(`${trimSlash(s.baseURL)}/models`, bearer(s.apiKey, s.headers), ctx))
+  const list = async (s: S, ctx: ProviderContext): Promise<ListedModel[]> => {
+    const headers = bearer(s.apiKey, s.headers)
+    let models = parseCompatibleList(await getJson(`${trimSlash(s.baseURL)}/models`, headers, ctx))
+    if (describe !== undefined) {
+      const server: LocalServer = { baseURL: s.baseURL, headers, contextWindow: s.contextWindow }
+      models = await describe(models, server, ctx)
+    }
+    const fallback = s.contextWindow
+    if (fallback === undefined) return models
+    return models.map((m) =>
+      m.info?.contextWindow === undefined
+        ? { ...m, info: { ...m.info, contextWindow: fallback } }
+        : m,
+    )
+  }
   return defineProvider({
     id,
     label: options.label ?? 'OpenAI-compatible',
@@ -519,6 +595,79 @@ export function openAICompatibleProvider(
     listModels: list,
     test: (s: S, ctx) => listTest(list(s, ctx)),
   })
+}
+
+// ---------------------------------------------------------- Local servers
+
+/** Options of the local server presets ({@link ollamaProvider}, {@link lmStudioProvider}, ...). */
+export interface LocalProviderOptions {
+  /** `createOpenAICompatible` of `@ai-sdk/openai-compatible`. */
+  createOpenAICompatible: OpenAICompatibleProviderOptions['createOpenAICompatible']
+  /** Definition id. Default: the preset's (`ollama`, `lmstudio`, `vllm`, `llamacpp`). */
+  id?: string
+  label?: string
+  /** Pre-filled base URL. Default: the server's usual local address. */
+  defaultBaseURL?: string
+}
+
+const localPreset = (
+  options: LocalProviderOptions,
+  preset: { id: string; label: string; baseURL: string },
+  describe: DescribeModels,
+): ProviderDefinition =>
+  compatibleDefinition(
+    {
+      createOpenAICompatible: options.createOpenAICompatible,
+      id: options.id ?? preset.id,
+      label: options.label ?? preset.label,
+      defaultBaseURL: options.defaultBaseURL ?? preset.baseURL,
+      apiKeyOptional: true,
+    },
+    describe,
+  )
+
+/**
+ * Ollama (`http://localhost:11434/v1`). Models list with the context they run with (`/api/ps`, a
+ * Modelfile `num_ctx`, the profile's "Context length", else Ollama's 4K default), capabilities
+ * (`/api/show`: tools, vision, thinking) and a zero price (not for `*-cloud` models).
+ */
+export function ollamaProvider(options: LocalProviderOptions): ProviderDefinition {
+  return localPreset(
+    options,
+    { id: 'ollama', label: 'Ollama', baseURL: 'http://localhost:11434/v1' },
+    describeOllama,
+  )
+}
+
+/**
+ * LM Studio (`http://localhost:1234/v1`). Models list with the context of the loaded instance
+ * (`/api/v1/models`, else `/api/v0/models`; the profile's "Context length", else 4K when not
+ * loaded), tools and vision support, display names, a zero price; embedding models are left out.
+ */
+export function lmStudioProvider(options: LocalProviderOptions): ProviderDefinition {
+  return localPreset(
+    options,
+    { id: 'lmstudio', label: 'LM Studio', baseURL: 'http://localhost:1234/v1' },
+    describeLmStudio,
+  )
+}
+
+/** vLLM (`http://localhost:8000/v1`): the context window is `max_model_len`; a zero price. */
+export function vllmProvider(options: LocalProviderOptions): ProviderDefinition {
+  return localPreset(
+    options,
+    { id: 'vllm', label: 'vLLM', baseURL: 'http://localhost:8000/v1' },
+    describeVllm,
+  )
+}
+
+/** llama.cpp server (`http://localhost:8080/v1`): the context window is `n_ctx` of `/props`; a zero price. */
+export function llamaCppProvider(options: LocalProviderOptions): ProviderDefinition {
+  return localPreset(
+    options,
+    { id: 'llamacpp', label: 'llama.cpp', baseURL: 'http://localhost:8080/v1' },
+    describeLlamaCpp,
+  )
 }
 
 // ------------------------------------------------------------------- OpenAI

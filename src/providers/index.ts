@@ -19,13 +19,18 @@ export {
   defineProvider,
   type GatewayProviderOptions,
   gatewayProvider,
+  type LocalProviderOptions,
+  llamaCppProvider,
+  lmStudioProvider,
   type OpenAICompatibleProviderOptions,
   type OpenAIProviderOptions,
   type OpenRouterProviderOptions,
+  ollamaProvider,
   openAICompatibleProvider,
   openAIProvider,
   openRouterProvider,
   type ProviderFactory,
+  vllmProvider,
 } from './builtin.ts'
 export {
   type CatalogCache,
