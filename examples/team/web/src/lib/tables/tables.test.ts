@@ -135,3 +135,12 @@ describe('aggregates and files', () => {
 		expect(withFormat('/library/data/x', 'ndjson')).toBe('/library/data/x.ndjson');
 	});
 });
+
+describe('unique fields', () => {
+	test('a unique field is indexed too; json fields cannot be unique', () => {
+		const ok = schemaOf([{ name: 'ref', type: 'string', required: false, indexed: false, unique: true, default: '' }], false);
+		expect(ok).toEqual({ ok: true, schema: { columns: [{ name: 'ref', type: 'string', indexed: true, unique: true }] } });
+		const bad = schemaOf([{ name: 'tags', type: 'json', required: false, indexed: false, unique: true, default: '' }], false);
+		expect(bad.ok).toBe(false);
+	});
+});

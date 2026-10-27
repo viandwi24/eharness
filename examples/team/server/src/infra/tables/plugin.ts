@@ -31,6 +31,7 @@ import {
   updateRow,
   updateRows,
   updateTable,
+  upsertRows,
 } from '../../app/tables.ts'
 import { DomainError } from '../../domain/errors.ts'
 import { originOfSession } from '../../domain/run-profiles.ts'
@@ -87,11 +88,22 @@ const columnSchema = z.object({
   required: z.boolean().optional(),
   default: z.unknown().optional(),
   indexed: z.boolean().optional(),
+  unique: z.boolean().optional(),
   description: z.string().optional(),
 })
 
 const writeSchema = z.object({
-  action: z.enum(['create', 'alter', 'insert', 'update', 'delete', 'import', 'export', 'drop']),
+  action: z.enum([
+    'create',
+    'alter',
+    'insert',
+    'upsert',
+    'update',
+    'delete',
+    'import',
+    'export',
+    'drop',
+  ]),
   table: z.string().describe('Table name.'),
   description: z.string().max(2000).optional().describe('create, alter.'),
   columns: z
@@ -105,7 +117,11 @@ const writeSchema = z.object({
     .array(z.record(z.string(), z.unknown()))
     .max(1000)
     .optional()
-    .describe('insert: the rows.'),
+    .describe('insert, upsert: the rows.'),
+  key: z
+    .string()
+    .optional()
+    .describe('upsert: the column that identifies a row (rows with a stored key are merged).'),
   id: z.string().optional().describe('update, delete: one row by id (else use filter).'),
   ifVersion: z.number().int().optional().describe('update by id: the version you read.'),
   filter: filterField,
@@ -130,7 +146,7 @@ function describe(t: DataTable): string {
       : t.schema.columns
           .map(
             (c) =>
-              `  - ${c.name}: ${c.type}${c.required ? ', required' : ''}${c.indexed ? ', indexed' : ''}${c.default === undefined ? '' : `, default ${JSON.stringify(c.default)}`}${c.description ? ` — ${c.description}` : ''}`,
+              `  - ${c.name}: ${c.type}${c.required ? ', required' : ''}${c.unique ? ', unique' : c.indexed ? ', indexed' : ''}${c.default === undefined ? '' : `, default ${JSON.stringify(c.default)}`}${c.description ? ` — ${c.description}` : ''}`,
           )
           .join('\n')
   return [
@@ -264,6 +280,11 @@ export function tablesTools(options: TablesPluginOptions): HarnessPlugin<'tables
             const r = insertRows(d, actor, a.table, a.rows)
             return `Inserted ${r.inserted.length} row(s): ${r.inserted.slice(0, 20).join(', ')}${r.inserted.length > 20 ? ', …' : ''}`
           }
+          case 'upsert': {
+            if (a.rows === undefined || a.rows.length === 0) return 'ERROR: rows is needed'
+            const r = upsertRows(d, actor, a.table, need(a.key, 'key'), a.rows)
+            return `Upserted: ${r.inserted.length} inserted, ${r.updated.length} updated.`
+          }
           case 'update': {
             const change = {
               ...(a.set === undefined ? {} : { set: a.set }),
@@ -321,7 +342,7 @@ export function tablesTools(options: TablesPluginOptions): HarnessPlugin<'tables
           }),
           [TABLES_WRITE_TOOL]: tool({
             description:
-              "Change the team's document tables. Actions: create (name, columns with type string|number|boolean|date|json, required, default, indexed; strict), alter (rename, description, columns), insert (rows, up to 1000), update (one row by id with ifVersion, or many by filter: set/unset/inc), delete (by id or filter), import (a library .csv/.json/.ndjson file, optional upsertKey), export (to a library file), drop (needs confirm: true after the person agreed). Rows are validated against the columns; errors say what to fix.",
+              "Change the team's document tables. Actions: create (name, columns with type string|number|boolean|date|json, required, default, indexed, unique; strict), alter (rename, description, columns), insert (rows, up to 1000), upsert (key: a column, rows: insert new keys, merge into stored ones), update (one row by id with ifVersion, or many by filter: set/unset/inc), delete (by id or filter), import (a library .csv/.json/.ndjson file, optional upsertKey), export (to a library file), drop (needs confirm: true after the person agreed). Rows are validated against the columns; errors say what to fix.",
             inputSchema: writeSchema,
             metadata: { risk: 'write', idempotent: false },
             execute: (input): Promise<string> => guard(() => write(input)),

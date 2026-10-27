@@ -29,7 +29,7 @@
 			? 'Kept by the table'
 			: col.kind === 'extra'
 				? 'Not in the schema: some rows have this field'
-				: `${TYPE_LABELS[col.type]}${col.column?.required ? ' · required' : ''}${col.column?.indexed ? ' · indexed' : ''}${col.column?.description ? ` — ${col.column.description}` : ''}`
+				: `${TYPE_LABELS[col.type]}${col.column?.required ? ' · required' : ''}${col.column?.unique ? ' · unique' : col.column?.indexed ? ' · indexed' : ''}${col.column?.description ? ` — ${col.column.description}` : ''}`
 	);
 </script>
 

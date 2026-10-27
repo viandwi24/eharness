@@ -12141,6 +12141,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tables/{table}/upsert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Insert or update rows by a key column (at most 1000) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Table name or id. */
+                    table: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TableRowsUpsert"];
+                };
+            };
+            responses: {
+                /** @description Ids of the new and the changed rows */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TableRowsUpserted"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown table */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description A unique column would repeat a value, or a size limit would be passed */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tables/{table}/rows/{rowId}": {
         parameters: {
             query?: never;
@@ -24408,6 +24487,8 @@ export interface components {
             default?: unknown;
             /** @description Queries on this column use an index. */
             indexed?: boolean;
+            /** @description No two rows share a value (absent and null do not count); text, number or date; implies indexed. A write that repeats a value answers 409 DUPLICATE_KEY. */
+            unique?: boolean;
             description?: string;
         };
         TableCreate: {
@@ -24425,6 +24506,18 @@ export interface components {
             inserted: string[];
         };
         TableRowsInsert: {
+            rows: {
+                [key: string]: unknown;
+            }[];
+        };
+        TableRowsUpserted: {
+            inserted: string[];
+            /** @description Rows whose key existed: fields merged. */
+            updated: string[];
+        };
+        TableRowsUpsert: {
+            /** @description The column that identifies a row (best a unique one); every row must have it. */
+            key: string;
             rows: {
                 [key: string]: unknown;
             }[];

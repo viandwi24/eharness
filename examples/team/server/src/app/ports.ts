@@ -142,6 +142,7 @@ import type {
 import type {
   Compiled as CompiledSql,
   DataTable,
+  RowDiff,
   TableRecord,
   TableRowsChange,
   TableSchema,
@@ -687,15 +688,51 @@ export interface TableStore {
   drop(id: string): boolean
   /** Rows and bytes of every table together (the workspace cap). */
   totals(): { rows: number; bytes: number }
-  /** Adds rows in one transaction and keeps the counters in step. */
-  insert(tableId: string, rows: readonly TableRowWrite[], by: string, now: number): void
+  /** Adds rows in one transaction and keeps the counters in step; throws `UniqueViolation`. */
+  insert(
+    tableId: string,
+    rows: readonly TableRowWrite[],
+    by: string,
+    now: number,
+    unique?: readonly string[],
+  ): void
   /** Replaces documents; a row whose version moved on is reported, not written. */
   replace(
     tableId: string,
     rows: readonly TableRowWrite[],
     by: string,
     now: number,
+    unique?: readonly string[],
   ): { written: string[]; conflicts: string[] }
+  /**
+   * Insert or update by a key column in one transaction: `build` gets the stored row with that key
+   * (or nothing) and returns the document to write (it may throw to cancel the whole write).
+   */
+  upsert(
+    tableId: string,
+    key: string,
+    items: ReadonlyArray<{
+      key: unknown
+      build(cur: TableRecord | undefined): Record<string, unknown>
+    }>,
+    by: string,
+    now: number,
+    unique: readonly string[],
+    nextId: () => string,
+  ): { inserted: RowDiff[]; updated: RowDiff[] }
+  /** A value of a column held by more than one row (before making it unique). */
+  duplicate(tableId: string, column: string): { value: unknown; count: number } | undefined
+  /** Whether a document matches a compiled filter (evaluated by the database, nothing stored). */
+  matches(
+    where: CompiledSql,
+    rec: {
+      id: string
+      data: Record<string, unknown>
+      version?: number
+      createdAt?: number
+      updatedAt?: number
+    },
+  ): boolean
   delete(tableId: string, ids: readonly string[]): number
   getRow(tableId: string, rowId: string): TableRecord | undefined
   query(

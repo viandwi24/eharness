@@ -156,8 +156,14 @@
 				</label>
 				<label class="flex items-center justify-between gap-3 text-sm">
 					<span class="flex flex-col"><span>Indexed</span><span class="text-xs text-muted-foreground">Faster filters and sorts on big tables.</span></span>
-					<Switch bind:checked={d.indexed} />
+					<Switch bind:checked={d.indexed} disabled={d.unique === true} />
 				</label>
+				{#if d.type === 'string' || d.type === 'number' || d.type === 'date'}
+					<label class="flex items-center justify-between gap-3 text-sm">
+						<span class="flex flex-col"><span>Unique</span><span class="text-xs text-muted-foreground">No two rows share a value (empty does not count). Upserts use it as the key.</span></span>
+						<Switch checked={d.unique === true} onCheckedChange={(v) => { d.unique = v; if (v) d.indexed = true; }} />
+					</label>
+				{/if}
 			</div>
 
 			{#if error}<p class="text-sm text-destructive-text" role="alert">{error}</p>{/if}

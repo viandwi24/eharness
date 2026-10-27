@@ -11,6 +11,10 @@ export const ColumnSchema = z
       .boolean()
       .optional()
       .openapi({ description: 'Queries on this column use an index.' }),
+    unique: z.boolean().optional().openapi({
+      description:
+        'No two rows share a value (absent and null do not count); text, number or date; implies indexed. A write that repeats a value answers 409 DUPLICATE_KEY.',
+    }),
     description: z.string().optional(),
   })
   .openapi('TableColumn')
@@ -102,6 +106,21 @@ export const RowsInsertSchema = z
 export const RowsInsertedSchema = z
   .object({ inserted: z.array(z.string()) })
   .openapi('TableRowsInserted')
+
+export const RowsUpsertSchema = z
+  .object({
+    key: z.string().openapi({
+      description: 'The column that identifies a row (best a unique one); every row must have it.',
+    }),
+    rows: z.array(z.record(z.string(), z.unknown())).min(1).max(1000),
+  })
+  .openapi('TableRowsUpsert')
+export const RowsUpsertedSchema = z
+  .object({
+    inserted: z.array(z.string()),
+    updated: z.array(z.string()).openapi({ description: 'Rows whose key existed: fields merged.' }),
+  })
+  .openapi('TableRowsUpserted')
 
 export const RowPatchSchema = z
   .object({

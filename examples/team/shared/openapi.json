@@ -13026,6 +13026,10 @@
             "type": "boolean",
             "description": "Queries on this column use an index."
           },
+          "unique": {
+            "type": "boolean",
+            "description": "No two rows share a value (absent and null do not count); text, number or date; implies indexed. A write that repeats a value answers 409 DUPLICATE_KEY."
+          },
           "description": {
             "type": "string"
           }
@@ -13108,6 +13112,50 @@
           }
         },
         "required": [
+          "rows"
+        ]
+      },
+      "TableRowsUpserted": {
+        "type": "object",
+        "properties": {
+          "inserted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rows whose key existed: fields merged."
+          }
+        },
+        "required": [
+          "inserted",
+          "updated"
+        ]
+      },
+      "TableRowsUpsert": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The column that identifies a row (best a unique one); every row must have it."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {}
+            },
+            "minItems": 1,
+            "maxItems": 1000
+          }
+        },
+        "required": [
+          "key",
           "rows"
         ]
       },
@@ -34935,6 +34983,94 @@
           },
           "409": {
             "description": "A size limit of Settings would be passed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tables/{table}/upsert": {
+      "post": {
+        "tags": [
+          "tables"
+        ],
+        "summary": "Insert or update rows by a key column (at most 1000)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Table name or id."
+            },
+            "required": true,
+            "description": "Table name or id.",
+            "name": "table",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableRowsUpsert"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ids of the new and the changed rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableRowsUpserted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown table",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A unique column would repeat a value, or a size limit would be passed",
             "content": {
               "application/json": {
                 "schema": {

@@ -100,7 +100,7 @@ Rules for the source:
 |---|---|
 | `channel` | `events` (required: `message.created`, `message.edited`, `message.deleted`, `reaction.added`, `reaction.removed`, `member.joined`, `member.left`, `member.updated`, `member.join_requested`, `member.join_request_resolved`, `node.*`, `action`), and optional filters: `connections` (ids), `chats` (title, platform id or node id), `actorRoles` (`owner`, `admin`, `member`, `guest`), `actors` (platform id, name or `@username`), `textContains` (any of the words, ignoring case), `textRegex` (bounded: at most 200 characters, no nested quantifiers; both must match when both are set), `messageKinds` (`text`, `photo`, `video`, `animation`, `video_note`, `voice`, `audio`, `document`, `sticker`, `album`, `location`, `venue`, `contact`, `poll`, `dice`: any of them), `isReply`, `isForward`, `hasLink` (`true` = only, `false` = never), `forwardFrom` (forwarded from a name, chat or user id) |
 | `schedule` | `spec`: `{ "kind": "cron", "expr": "0 9 * * *", "timezone": "Asia/Jakarta" }` (timezone defaults to the team's), `{ "kind": "every", "everyMs": 3600000 }` (at least one minute), or `{ "kind": "at", "at": "2026-12-01T09:00:00Z" }` |
-| `table` | `table` and `events` (`row.created`, `row.updated`, `row.deleted`) |
+| `table` | `table` and `events` (`row.created`, `row.updated`, `row.deleted`); optional `fields` (updates: only when one of these columns changed), `where` (a [filter](tables.md#queries): only rows that match after the change, a deleted row as it was) and `startsToMatch` (updates with `where`: only rows that did not match before, e.g. a signal that becomes `closed`) |
 | `app` | `events`: what the app does (`task-changed`, `program-changed`, `routine-fired`, `decision-changed`, `alarm-raised`, `file-changed`, `message-added`, `turn-started`, `pending-changed`, `approval-decided`, `settings-changed`, …); optional `agents` (id or slug) and `match` (`{ "status": "done" }`: payload fields that must equal these values; dots reach nested fields) |
 | `webhook` | none. A `POST` to the script's secret URL (`GET /scripts/{script}/webhook`, shown in the editor) runs the active version; the answer is `{ ok, result, runId }` |
 
@@ -151,7 +151,7 @@ Every method takes one object and returns a promise.
 | `channels.inviteLink({ connection, chat, name?, expireSec?, memberLimit?, joinRequest? })` → `{ link }`, `channels.member({ connection, chat, user })` → `{ status, until?, allow? }` | invite links and a person's standing (`owner`, `admin`, `member`, `restricted`, `left`, `banned`) |
 | `library.read({ path })`, `library.list({ prefix })`, `library.write({ path, content })` | library text files |
 | `tables.query({ table, filter?, sort?, fields?, limit?, cursor? })`, `tables.get({ table, id })`, `tables.aggregate({ table, filter?, groupBy?, metrics })` | read [tables](tables.md) |
-| `tables.insert({ table, rows })`, `tables.update({ table, id?, filter?, set?, unset?, inc?, ifVersion? })`, `tables.delete({ table, id?, filter? })` | change tables; rows record `script:<name>` as author |
+| `tables.insert({ table, rows })`, `tables.upsert({ table, key, rows })`, `tables.update({ table, id?, filter?, set?, unset?, inc?, ifVersion? })`, `tables.delete({ table, id?, filter? })` | change tables; rows record `script:<name>` as author; upsert merges into the row with the same key or inserts |
 | `kv.get({ key })` → `{ value }`, `kv.set({ key, value, ttlSec? })`, `kv.delete({ key })`, `kv.keys({ prefix? })` | the script's own JSON state (1 000 keys, 100 000 characters a value; `ttlSec` forgets the key after that long) |
 | `kv.incr({ key, by?, ttlSec? })` → `{ value }`, `kv.once({ key, ttlSec })` → `{ first }`, `kv.rateLimit({ key, limit, windowSec })` → `{ allowed, remaining, resetAt }` | atomic counters, duplicate skipping, a sliding-window limiter (per person: `'warn:' + event.actor.id`); a dry run answers without writing |
 | `later({ in?, at?, data?, key? })` → `{ id, at }`, `cancelLater({ id?, key? })`, `listLater()` | run this script again later (at most 30 days ahead; survives restarts; a `key` replaces the pending run with that key); the run gets `{ type: 'later', data, key, timerId }` |
@@ -245,7 +245,9 @@ Media and other message kinds:
 webhook event: `{ "type": "webhook", "at", "method", "query", "headers" (content type, user agent
 and `x-*` headers without tokens or secrets), "body" (JSON when it parses, else text, at most
 256 KB) }`. A table event: `{ "type": "row.created", "table", "rowIds", "rows":
-[{ id, version, data }] (up to 20; none for deletions), "by" }`. A schedule event: `{ "type":
+[{ id, version, data }] (up to 20; none for deletions), "changes": [{ id, before, after, changed }]
+(up to 20: the document before and after and the fields that changed), "by" }`; with row filters
+on the trigger it carries only the rows that matched. A schedule event: `{ "type":
 "schedule", "slot", "firedAt" }`. A run started by hand gets `{ "type": "manual", "at" }` or the
 event given.
 

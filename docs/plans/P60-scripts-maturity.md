@@ -1,6 +1,6 @@
 # P60 — Team example: scripts and tables, mature
 
-Status: in progress (W1–W4 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
+Status: in progress (W1–W5 done) · Owner: agent · Branch: `main` (local commits, one gate per step)
 
 ## Goal
 
@@ -80,9 +80,13 @@ Inputs: the scenario catalog and capability checklist in
   Simple editor now covers the read, moderate, native action and notify grants.
 
 ### W5 — Tables
-- [ ] Unique keys and `upsert` in `ctx.tables` and the API.
-- [ ] Table triggers on field changes and "starts to match", with old and new values.
+- [x] Unique keys and `upsert` in `ctx.tables` and the API.
+- [x] Table triggers on field changes and "starts to match", with old and new values.
 - [ ] Nice-to-have: relations and rollups, saved views.
+- Notes: uniqueness is checked inside the write transaction (no partial index per table), so a
+  refused write keeps nothing. Trigger filters use the same query language as `tables.query`,
+  evaluated by SQLite against the before/after documents. Relations, rollups and saved views stay
+  open (nice-to-have).
 
 ### W6 — Safety, observability, UX
 - [ ] Chain loop detection across scripts; caps on sends per run and per chat; a "log only" mode.

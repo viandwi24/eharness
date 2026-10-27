@@ -18,6 +18,8 @@ export interface Column {
   default?: unknown
   /** Queries on this column use an index. */
   indexed?: boolean
+  /** No two rows share a value (absent and null are not counted); implies `indexed`. Text, number or date. */
+  unique?: boolean
   description?: string
 }
 
@@ -58,6 +60,42 @@ export interface TableRowsChange {
   rowIds: string[]
   /** Who changed them (an agent's or a script's name, `web owner`). */
   by: string
+  /** The documents before and after, per row (created: after only; deleted: before only). */
+  changes?: RowDiff[]
+}
+
+export interface RowDiff {
+  id: string
+  before?: Record<string, unknown>
+  after?: Record<string, unknown>
+}
+
+/** A write would give two rows the same value of a unique column. */
+export class UniqueViolation extends Error {
+  constructor(
+    readonly column: string,
+    readonly value: unknown,
+    readonly existingId: string | undefined,
+  ) {
+    super(
+      `"${column}" must be unique: ${JSON.stringify(value)} is taken${existingId === undefined ? ' twice in this write' : ` by row ${existingId}`}`,
+    )
+  }
+}
+
+/** The unique columns of a schema. */
+export const uniqueColumns = (schema: TableSchema): string[] =>
+  schema.columns.filter((c) => c.unique === true).map((c) => c.name)
+
+/** Fields whose values differ between two documents (top level, compared as JSON). */
+export function changedFields(
+  before: Record<string, unknown> | undefined,
+  after: Record<string, unknown> | undefined,
+): string[] {
+  const keys = new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])
+  return [...keys].filter(
+    (k) => JSON.stringify((before ?? {})[k] ?? null) !== JSON.stringify((after ?? {})[k] ?? null),
+  )
 }
 
 // --- limits ------------------------------------------------------------------------------------
@@ -152,6 +190,12 @@ export function parseSchema(
     const out: Column = { name, type }
     if (col.required === true) out.required = true
     if (col.indexed === true) out.indexed = true
+    if (col.unique === true) {
+      if (type !== 'string' && type !== 'number' && type !== 'date')
+        errors.push(`column "${name}": only text, number and date columns can be unique`)
+      out.unique = true
+      out.indexed = true
+    }
     if (typeof col.description === 'string' && col.description !== '')
       out.description = col.description.slice(0, 500)
     if (col.default !== undefined) {

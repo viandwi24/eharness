@@ -39,6 +39,7 @@ import {
   type ScriptManifest,
   type ScriptStructured,
   type SkipReason,
+  type TableTrigger,
 } from '../../domain/script-manifest.ts'
 import {
   type HostMethodDoc,
@@ -49,6 +50,7 @@ import {
   scriptTypes,
 } from '../../domain/scripts.ts'
 import type { TableRowsChange } from '../../domain/tables.ts'
+import { changedFields, compileFilter } from '../../domain/tables.ts'
 import type { HandleResult } from '../channels/gateway/types.ts'
 import { type ChannelGateway, OWN_TYPED } from '../channels/gateway.ts'
 import { type RemoteEvent, SCRIPT_BUTTON } from '../channels/types.ts'
@@ -763,25 +765,76 @@ export function createScriptEngine(o: ScriptEngineOptions): ScriptEngine {
         )
         if (scripts.length === 0) return
         const d = app()
-        const rows =
-          change.kind === 'row.deleted'
-            ? []
-            : change.rowIds.slice(0, TABLE_EVENT_ROWS).flatMap((id) => {
-                try {
-                  const r = getRow(d, change.tableId, id)
-                  return [{ id: r.id, version: r.version, data: r.data }]
-                } catch {
-                  return []
-                }
-              })
-        const event = {
-          type: change.kind,
-          table: change.table,
-          rowIds: change.rowIds,
-          rows,
-          by: change.by,
+        const diffs = new Map((change.changes ?? []).map((x) => [x.id, x]))
+        const matchesFilter = (
+          where: Record<string, unknown>,
+          id: string,
+          data: Record<string, unknown> | undefined,
+        ): boolean => data !== undefined && d.tables.matches(compileFilter(where), { id, data })
+        /** The rows of this change a trigger is about (all of them when it has no row filters). */
+        const rowsFor = (t: TableTrigger): string[] => {
+          if (t.fields.length === 0 && t.where === undefined) return change.rowIds
+          return change.rowIds.filter((id) => {
+            const x = diffs.get(id)
+            if (x === undefined) return false
+            if (change.kind === 'row.updated' && t.fields.length > 0) {
+              const changed = changedFields(x.before, x.after)
+              if (!t.fields.some((f) => changed.includes(f))) return false
+            }
+            if (t.where !== undefined) {
+              const now = change.kind === 'row.deleted' ? x.before : x.after
+              if (!matchesFilter(t.where, id, now)) return false
+              if (
+                t.startsToMatch === true &&
+                change.kind === 'row.updated' &&
+                matchesFilter(t.where, id, x.before)
+              )
+                return false
+            }
+            return true
+          })
         }
         for (const a of scripts) {
+          const triggers = a.manifest.triggers.filter(
+            (t): t is TableTrigger =>
+              t.kind === 'table' && t.table === change.table && t.events.includes(change.kind),
+          )
+          const ids = [...new Set(triggers.flatMap((t) => rowsFor(t)))]
+          if (ids.length === 0) continue
+          const keep = new Set(ids)
+          const rowIds = change.rowIds.filter((id) => keep.has(id))
+          const rows =
+            change.kind === 'row.deleted'
+              ? []
+              : rowIds.slice(0, TABLE_EVENT_ROWS).flatMap((id) => {
+                  try {
+                    const r = getRow(d, change.tableId, id)
+                    return [{ id: r.id, version: r.version, data: r.data }]
+                  } catch {
+                    return []
+                  }
+                })
+          const changes = rowIds.slice(0, TABLE_EVENT_ROWS).flatMap((id) => {
+            const x = diffs.get(id)
+            return x === undefined
+              ? []
+              : [
+                  {
+                    id,
+                    ...(x.before === undefined ? {} : { before: x.before }),
+                    ...(x.after === undefined ? {} : { after: x.after }),
+                    changed: changedFields(x.before, x.after),
+                  },
+                ]
+          })
+          const event = {
+            type: change.kind,
+            table: change.table,
+            rowIds,
+            rows,
+            ...(changes.length === 0 ? {} : { changes }),
+            by: change.by,
+          }
           const skip = gate(
             a.script,
             a.manifest,

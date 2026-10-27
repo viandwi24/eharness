@@ -11,8 +11,10 @@ import {
   type DataTable,
   fieldSql,
   indexName,
+  type RowDiff,
   type TableRecord,
   type TableSchema,
+  UniqueViolation,
 } from '../../domain/tables.ts'
 
 interface TableRow {
@@ -84,6 +86,50 @@ export function sqliteTableStore(sqlite: Database): TableStore {
       .run(rows, bytes, now, tableId)
   }
 
+  /** A value as SQLite compares it with `json_extract` (booleans are 0/1). */
+  const keyOf = (v: unknown): SQLQueryBindings | undefined =>
+    v === undefined || v === null
+      ? undefined
+      : typeof v === 'boolean'
+        ? v
+          ? 1
+          : 0
+        : typeof v === 'number' || typeof v === 'string'
+          ? v
+          : JSON.stringify(v)
+  const holder = (tableId: string, column: string, value: SQLQueryBindings, except: string) => {
+    const f = fieldSql(column)
+    if ('error' in f) return undefined
+    return (
+      sqlite
+        .query<{ id: string }, SQLQueryBindings[]>(
+          `SELECT id FROM data_rows WHERE table_id = ? AND ${f.sql} = ? AND id <> ? LIMIT 1`,
+        )
+        .get(tableId, value, except)?.id ?? undefined
+    )
+  }
+  /** Refuses a write that repeats a unique value (in the write itself or against stored rows). */
+  const checkUnique = (
+    tableId: string,
+    unique: readonly string[],
+    rows: ReadonlyArray<{ id: string; data: Record<string, unknown> }>,
+  ): void => {
+    for (const column of unique) {
+      const seen = new Map<string, string>()
+      for (const r of rows) {
+        const v = keyOf(r.data[column])
+        if (v === undefined) continue
+        const k = `${typeof v}:${String(v)}`
+        if (seen.has(k) && seen.get(k) !== r.id)
+          throw new UniqueViolation(column, r.data[column], undefined)
+        seen.set(k, r.id)
+        const other = holder(tableId, column, v, r.id)
+        if (other !== undefined && !rows.some((x) => x.id === other))
+          throw new UniqueViolation(column, r.data[column], other)
+      }
+    }
+  }
+
   return {
     list() {
       return sqlite
@@ -139,13 +185,14 @@ export function sqliteTableStore(sqlite: Database): TableStore {
       return { rows: r?.rows ?? 0, bytes: r?.bytes ?? 0 }
     },
 
-    insert(tableId, rows, by, now) {
+    insert(tableId, rows, by, now, unique = []) {
       if (rows.length === 0) return
       const stmt = sqlite.query(
         `INSERT INTO data_rows (table_id, ${ROW_COLUMNS}) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
       )
       sqlite
         .transaction(() => {
+          if (unique.length > 0) checkUnique(tableId, unique, rows)
           let bytes = 0
           for (const r of rows) {
             const text = JSON.stringify(r.data)
@@ -157,7 +204,7 @@ export function sqliteTableStore(sqlite: Database): TableStore {
         .immediate()
     },
 
-    replace(tableId, rows: readonly TableRowWrite[], by, now) {
+    replace(tableId, rows: readonly TableRowWrite[], by, now, unique = []) {
       const written: string[] = []
       const conflicts: string[] = []
       const read = sqlite.query<{ version: number; size: number }, [string, string]>(
@@ -168,6 +215,7 @@ export function sqliteTableStore(sqlite: Database): TableStore {
       )
       sqlite
         .transaction(() => {
+          if (unique.length > 0) checkUnique(tableId, unique, rows)
           let delta = 0
           for (const r of rows) {
             const cur = read.get(tableId, r.id)
@@ -209,6 +257,81 @@ export function sqliteTableStore(sqlite: Database): TableStore {
           return n
         })
         .immediate()
+    },
+
+    upsert(tableId, key, items, by, now, unique, nextId) {
+      const f = fieldSql(key)
+      if ('error' in f) throw new Error(`not a key column: ${key}`)
+      const find = sqlite.query<DataRowRow, SQLQueryBindings[]>(
+        `SELECT ${ROW_COLUMNS} FROM data_rows WHERE table_id = ? AND ${f.sql} = ? ORDER BY id LIMIT 1`,
+      )
+      const ins = sqlite.query(
+        `INSERT INTO data_rows (table_id, ${ROW_COLUMNS}) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+      )
+      const upd = sqlite.query(
+        'UPDATE data_rows SET data = ?, version = version + 1, updated_at = ?, updated_by = ? WHERE table_id = ? AND id = ?',
+      )
+      return sqlite
+        .transaction(() => {
+          const inserted: RowDiff[] = []
+          const updated: RowDiff[] = []
+          let rowsAdded = 0
+          let bytes = 0
+          for (const item of items) {
+            const v = keyOf(item.key)
+            const cur = v === undefined ? null : find.get(tableId, v)
+            const before = cur === null ? undefined : toRow(cur)
+            const data = item.build(before)
+            const id = before?.id ?? nextId()
+            if (unique.length > 0) checkUnique(tableId, unique, [{ id, data }])
+            const text = JSON.stringify(data)
+            if (before === undefined) {
+              ins.run(tableId, id, text, now, now, by, by)
+              rowsAdded++
+              bytes += sizeOf(text)
+              inserted.push({ id, after: data })
+            } else {
+              upd.run(text, now, by, tableId, id)
+              bytes += sizeOf(text) - sizeOf(JSON.stringify(before.data))
+              updated.push({ id, before: before.data, after: data })
+            }
+          }
+          if (rowsAdded > 0 || bytes !== 0) bump(tableId, rowsAdded, bytes, now)
+          return { inserted, updated }
+        })
+        .immediate()
+    },
+
+    duplicate(tableId, column) {
+      const f = fieldSql(column)
+      if ('error' in f) return undefined
+      const r = sqlite
+        .query<{ v: unknown; n: number }, [string]>(
+          `SELECT ${f.sql} AS v, COUNT(*) AS n FROM data_rows WHERE table_id = ? AND ${f.sql} IS NOT NULL
+           GROUP BY ${f.sql} HAVING COUNT(*) > 1 LIMIT 1`,
+        )
+        .get(tableId)
+      return r === null ? undefined : { value: r.v, count: r.n }
+    },
+
+    matches(where, rec) {
+      return (
+        sqlite
+          .query<{ ok: number }, SQLQueryBindings[]>(
+            `SELECT 1 AS ok FROM (SELECT ? AS id, ? AS data, ? AS version, ? AS created_at, ? AS updated_at,
+               ? AS created_by, ? AS updated_by) WHERE (${where.sql})`,
+          )
+          .get(
+            rec.id,
+            JSON.stringify(rec.data),
+            rec.version ?? 1,
+            rec.createdAt ?? 0,
+            rec.updatedAt ?? 0,
+            '',
+            '',
+            ...bind(where.params),
+          ) !== null
+      )
     },
 
     getRow(tableId, rowId) {

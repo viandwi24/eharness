@@ -70,6 +70,16 @@ describe('manifest model', () => {
 		expect(simpleCanShow(m)).toBe(true);
 	});
 
+	test('table triggers keep fields, a filter and starts-to-match; a broken filter stays out', () => {
+		const m = { triggers: [{ kind: 'table', table: 'sig', events: ['row.updated'], fields: ['status'], where: { status: 'closed' }, startsToMatch: true }], grants: {} };
+		expect(toManifest(fromManifest(m))).toEqual(m);
+		const [t] = fromManifest(m).triggers;
+		expect(describeTrigger(t!)).toBe('row changed in table sig when status changes becoming {"status":"closed"}');
+		const broken = fromManifest(m);
+		(broken.triggers[0] as { where: string }).where = '{ status: ';
+		expect(toManifest(broken).triggers).toEqual([{ kind: 'table', table: 'sig', events: ['row.updated'], fields: ['status'] }]);
+	});
+
 	test('message filters survive a round trip and read as a line', () => {
 		const m = {
 			triggers: [{ kind: 'channel', events: ['message.created'], messageKinds: ['photo', 'album'], forwardFrom: ['Signals HQ'], isReply: false, isForward: true, hasLink: true }],

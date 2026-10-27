@@ -92,6 +92,7 @@ function grantProblem(method: string, m: ScriptManifest): string | undefined {
     case 'tables.aggregate':
       return has(g.tablesRead) || has(g.tablesWrite) ? undefined : 'grants.tablesRead is empty'
     case 'tables.insert':
+    case 'tables.upsert':
     case 'tables.update':
     case 'tables.delete':
       return has(g.tablesWrite) ? undefined : 'grants.tablesWrite is empty'
@@ -253,7 +254,12 @@ export async function checkScript(input: {
             })
           const table = method.startsWith('tables.') ? literalProp(ts, node, 'table') : undefined
           if (table !== undefined) {
-            const write = ['tables.insert', 'tables.update', 'tables.delete'].includes(method)
+            const write = [
+              'tables.insert',
+              'tables.upsert',
+              'tables.update',
+              'tables.delete',
+            ].includes(method)
             const list = write
               ? input.manifest.grants.tablesWrite
               : [...input.manifest.grants.tablesRead, ...input.manifest.grants.tablesWrite]

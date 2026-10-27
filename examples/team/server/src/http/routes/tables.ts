@@ -16,6 +16,7 @@ import {
   updateRow,
   updateRows,
   updateTable,
+  upsertRows,
 } from '../../app/tables.ts'
 import { errorResponses, jsonError } from '../schemas/common.ts'
 import {
@@ -36,6 +37,8 @@ import {
   RowsInsertSchema,
   RowsUpdatedSchema,
   RowsUpdateSchema,
+  RowsUpsertedSchema,
+  RowsUpsertSchema,
   TableCreateSchema,
   TableListSchema,
   TableParam,
@@ -127,6 +130,21 @@ const insertRoute = createRoute({
     201: { description: 'Ids of the new rows', content: json(RowsInsertedSchema) },
     404: unknownTable,
     409: jsonError('A size limit of Settings would be passed'),
+    ...errorResponses,
+  },
+})
+
+const upsertRoute = createRoute({
+  method: 'post',
+  path: '/tables/{table}/upsert',
+  tags,
+  summary: 'Insert or update rows by a key column (at most 1000)',
+  security,
+  request: { params: TableParam, body: { required: true, content: json(RowsUpsertSchema) } },
+  responses: {
+    200: { description: 'Ids of the new and the changed rows', content: json(RowsUpsertedSchema) },
+    404: unknownTable,
+    409: jsonError('A unique column would repeat a value, or a size limit would be passed'),
     ...errorResponses,
   },
 })
@@ -278,6 +296,13 @@ export function tableRoutes(deps: Deps): OpenAPIHono {
     .openapi(insertRoute, (c) => {
       const body = c.req.valid('json')
       return c.json(insertRows(deps, OWNER, c.req.valid('param').table, body.rows) as never, 201)
+    })
+    .openapi(upsertRoute, (c) => {
+      const body = c.req.valid('json')
+      return c.json(
+        upsertRows(deps, OWNER, c.req.valid('param').table, body.key, body.rows) as never,
+        200,
+      )
     })
     .openapi(getRowRoute, (c) => {
       const p = c.req.valid('param')

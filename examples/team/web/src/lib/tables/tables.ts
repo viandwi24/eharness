@@ -126,7 +126,7 @@ export const idsFilter = (ids: readonly string[]): Filter => ({ _id: { $in: [...
 // ---------------------------------------------------------------- schema drafts
 
 /** One column in the schema editor; `default` is the text typed for it. */
-export type ColumnDraft = { name: string; type: ColumnType; required: boolean; indexed: boolean; default: string; description?: string };
+export type ColumnDraft = { name: string; type: ColumnType; required: boolean; indexed: boolean; unique?: boolean; default: string; description?: string };
 
 export const emptyColumn = (): ColumnDraft => ({ name: '', type: 'string', required: false, indexed: false, default: '' });
 
@@ -136,6 +136,7 @@ export function draftOf(c: TableColumn): ColumnDraft {
 		type: c.type,
 		required: c.required === true,
 		indexed: c.indexed === true,
+		...(c.unique === true ? { unique: true } : {}),
 		default: c.default === undefined ? '' : editText(c.default, c.type),
 		...(c.description ? { description: c.description } : {})
 	};
@@ -158,6 +159,11 @@ export function schemaOf(drafts: readonly ColumnDraft[], strict: boolean): { ok:
 		const col: TableColumn = { name, type: d.type };
 		if (d.required) col.required = true;
 		if (d.indexed) col.indexed = true;
+		if (d.unique) {
+			if (d.type !== 'string' && d.type !== 'number' && d.type !== 'date') errors.push(`${name}: only text, number and date fields can be unique`);
+			col.unique = true;
+			col.indexed = true;
+		}
 		if (d.description) col.description = d.description;
 		if (d.default.trim() !== '' || (d.type === 'string' && d.default !== '')) {
 			const p = parseValue(d.default, d.type);

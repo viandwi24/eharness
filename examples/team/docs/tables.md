@@ -40,6 +40,9 @@ A table name is lowercase letters, digits and `_`, starting with a letter. The s
 - Types: `string`, `number`, `boolean`, `date` (stored as an ISO 8601 string), `json` (anything).
 - `required` refuses a row without the field (after defaults); `default` fills a missing field on
   insert; `indexed` gives the column an index so filters and sorts on it stay fast.
+- `unique: true` (text, number or date; implies `indexed`): no two rows share a value (absent and
+  null do not count). A write that would repeat one is refused whole (`409 DUPLICATE_KEY`, naming
+  the row that holds it); a column turns unique only when the stored rows already agree.
 - `strict: true` refuses fields that are not columns. Without it, a row may carry extra fields.
 - Changing the schema does not rewrite existing rows: a new type or a new required column applies
   to writes from then on.
@@ -105,6 +108,9 @@ metric. The answer is `{ "groups": [{ "city": "Jakarta", "members": 9, "points":
   was read.
 - Many rows: `POST /tables/{table}/update` with `{ "filter", "change" }` (at most 10 000 rows).
 - Delete: one row by id, or `POST /tables/{table}/delete` with a non-empty filter (at most 10 000).
+- Upsert: `POST /tables/{table}/upsert` with `{ "key": "ref", "rows": [...] }`: a row whose key is
+  stored gets the given fields merged in, the others are inserted, in one transaction (with a
+  unique key column two writers never add the same key twice). Every row needs the key.
 - Every change is validated against the schema; one bad row refuses the whole request with the
   reason per row.
 
@@ -138,6 +144,7 @@ All routes are in the OpenAPI document (`/openapi.json`, `shared/openapi.json`).
 | `GET /tables`, `POST /tables` | list, create |
 | `GET/PATCH/DELETE /tables/{table}` | read, rename/describe/change schema, drop (with its rows) |
 | `POST /tables/{table}/rows` | insert rows |
+| `POST /tables/{table}/upsert` | insert or merge by a key column |
 | `GET/PATCH/DELETE /tables/{table}/rows/{rowId}` | one row |
 | `POST /tables/{table}/query`, `/aggregate` | read |
 | `POST /tables/{table}/update`, `/delete` | change or remove by filter |

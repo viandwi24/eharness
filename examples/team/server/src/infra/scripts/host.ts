@@ -17,6 +17,7 @@ import {
   queryRows,
   updateRow,
   updateRows,
+  upsertRows,
 } from '../../app/tables.ts'
 import { createThread, listThreads } from '../../app/threads.ts'
 import {
@@ -252,6 +253,13 @@ export const HOST_METHODS: readonly HostMethodDoc[] = [
     args: '{ table: string; rows: Array<Record<string, unknown>> }',
     returns: '{ ids: string[] }',
     doc: 'Insert rows (grants.tablesWrite), validated against the columns.',
+    sideEffect: true,
+  },
+  {
+    name: 'tables.upsert',
+    args: '{ table: string; key: string; rows: Array<Record<string, unknown>> }',
+    returns: '{ inserted: string[]; updated: string[] }',
+    doc: 'Insert or update by a key column (grants.tablesWrite): a row whose key is stored gets these fields merged in, the others are inserted, in one step (make the key column unique so two runs never add it twice).',
     sideEffect: true,
   },
   {
@@ -598,6 +606,7 @@ export function dryRunRefusal(
           ? undefined
           : `this script may not move ${s(o.from)} to ${s(o.to)}: both must be in grants.libraryWrite`
       case 'tables.insert':
+      case 'tables.upsert':
       case 'tables.update':
       case 'tables.delete':
         return canWriteTable(g, s(o.table))
@@ -1611,6 +1620,13 @@ export function buildHost(c: HostContext): Record<string, HostHandler> {
       writable(t)
       if (!Array.isArray(o.rows)) return refuse('ctx.tables.insert: rows is a list')
       return { ids: insertRows(c.deps, by, t, o.rows).inserted }
+    },
+    'tables.upsert': async (args) => {
+      const o = obj(args, 'tables.upsert')
+      const t = tableName(o, 'tables.upsert')
+      writable(t)
+      if (!Array.isArray(o.rows)) return refuse('ctx.tables.upsert: rows is a list')
+      return upsertRows(c.deps, by, t, str(o, 'key', 'tables.upsert', 64), o.rows)
     },
     'tables.update': async (args) => {
       const o = obj(args, 'tables.update')

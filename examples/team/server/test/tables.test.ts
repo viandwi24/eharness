@@ -276,6 +276,84 @@ describe('tables over HTTP', () => {
   })
 })
 
+describe('unique keys and upsert', () => {
+  test('a unique column refuses repeats (in one write and against stored rows); upsert inserts or merges', async () => {
+    const { api } = instance()
+    await api('POST', '/tables', {
+      name: 'signals',
+      schema: {
+        columns: [
+          { name: 'ref', type: 'string', unique: true },
+          { name: 'pair', type: 'string' },
+          { name: 'status', type: 'string', default: 'open' },
+        ],
+      },
+    })
+    const ins = await api('POST', '/tables/signals/rows', { rows: [{ ref: 'S1', pair: 'BTC' }] })
+    expect(ins.status).toBe(201)
+    const dup = await api('POST', '/tables/signals/rows', { rows: [{ ref: 'S1', pair: 'ETH' }] })
+    expect(dup.status).toBe(409)
+    expect(dup.json.error.code).toBe('DUPLICATE_KEY')
+    expect(dup.json.error.message).toContain('"ref" must be unique')
+    const twice = await api('POST', '/tables/signals/rows', {
+      rows: [
+        { ref: 'S2', pair: 'SOL' },
+        { ref: 'S2', pair: 'XRP' },
+      ],
+    })
+    expect(twice.status).toBe(409)
+    // nothing of a refused write is kept
+    expect((await api('GET', '/tables/signals')).json.rowCount).toBe(1)
+    // an update to a taken value is refused too
+    await api('POST', '/tables/signals/rows', { rows: [{ ref: 'S3', pair: 'ADA' }] })
+    const s3 = (await api('POST', '/tables/signals/query', { filter: { ref: 'S3' } })).json.rows[0]
+    const clash = await api('PATCH', `/tables/signals/rows/${s3.id}`, {
+      change: { set: { ref: 'S1' } },
+    })
+    expect(clash.status).toBe(409)
+
+    const up = await api('POST', '/tables/signals/upsert', {
+      key: 'ref',
+      rows: [
+        { ref: 'S1', status: 'tp1' },
+        { ref: 'S9', pair: 'DOGE' },
+      ],
+    })
+    expect(up.status).toBe(200)
+    expect(up.json.inserted).toHaveLength(1)
+    expect(up.json.updated).toHaveLength(1)
+    const s1 = (await api('POST', '/tables/signals/query', { filter: { ref: 'S1' } })).json.rows[0]
+    expect(s1.data).toEqual({ ref: 'S1', pair: 'BTC', status: 'tp1' })
+    expect(s1.version).toBe(2)
+    const s9 = (await api('POST', '/tables/signals/query', { filter: { ref: 'S9' } })).json.rows[0]
+    expect(s9.data).toEqual({ ref: 'S9', pair: 'DOGE', status: 'open' })
+    const missing = await api('POST', '/tables/signals/upsert', {
+      key: 'ref',
+      rows: [{ pair: 'X' }],
+    })
+    expect(missing.status).toBe(400)
+  })
+
+  test('a column becomes unique only when the stored rows agree; unique needs text, number or date', async () => {
+    const { api } = instance()
+    await api('POST', '/tables', {
+      name: 'm',
+      schema: { columns: [{ name: 'email', type: 'string' }] },
+    })
+    await api('POST', '/tables/m/rows', { rows: [{ email: 'a@x' }, { email: 'a@x' }, {}] })
+    const r = await api('PATCH', '/tables/m', {
+      schema: { columns: [{ name: 'email', type: 'string', unique: true }] },
+    })
+    expect(r.status).toBe(409)
+    expect(r.json.error.message).toContain('2 rows hold "a@x"')
+    const bad = await api('POST', '/tables', {
+      name: 'n',
+      schema: { columns: [{ name: 'tags', type: 'json', unique: true }] },
+    })
+    expect(bad.status).toBe(400)
+  })
+})
+
 describe('upgrading an older database', () => {
   test('a database at migration 0046 keeps every row and gains the tables', async () => {
     const DRIZZLE = new URL('../drizzle', import.meta.url).pathname

@@ -99,7 +99,8 @@ export type Schedule =
 	| { mode: 'at'; at: string };
 
 export type ScheduleTrigger = { kind: 'schedule'; schedule: Schedule };
-export type TableTrigger = { kind: 'table'; table: string; events: string[] };
+/** `where` is the filter as JSON text (what the field shows); invalid text is kept out of the manifest. */
+export type TableTrigger = { kind: 'table'; table: string; events: string[]; fields: string[]; where: string; startsToMatch: boolean };
 export type AppTrigger = { kind: 'app'; events: string[]; agents: string[]; match: { key: string; value: string }[] };
 export type WebhookTrigger = { kind: 'webhook' };
 export type Trigger = ChannelTrigger | ScheduleTrigger | TableTrigger | AppTrigger | WebhookTrigger;
@@ -137,6 +138,16 @@ export const DEFAULT_RUNS_PER_HOUR = 60;
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+/** A table trigger's filter text as an object, or undefined when empty or not a JSON object. */
+export function whereOf(text: string): Record<string, unknown> | undefined {
+	if (!text.trim()) return undefined;
+	try {
+		const v = JSON.parse(text) as unknown;
+		return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
+	} catch {
+		return undefined;
+	}
+}
 const tri = (v: unknown): TriState => (v === true ? 'yes' : v === false ? 'no' : 'any');
 const int = (v: unknown, dflt: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : dflt);
 
@@ -148,7 +159,7 @@ export const newTrigger = (kind: Trigger['kind']): Trigger =>
 		: kind === 'schedule'
 			? { kind, schedule: { mode: 'daily', time: '09:00', timezone: '' } }
 			: kind === 'table'
-				? { kind, table: '', events: ['row.created'] }
+				? { kind, table: '', events: ['row.created'], fields: [], where: '', startsToMatch: false }
 				: kind === 'app'
 					? { kind, events: ['task-changed'], agents: [], match: [] }
 					: { kind };
@@ -231,7 +242,15 @@ export function fromManifest(input: unknown): SimpleManifest {
 				hasLink: tri(r.hasLink)
 			});
 		else if (r.kind === 'schedule') triggers.push({ kind: 'schedule', schedule: scheduleFromSpec(r.spec) });
-		else if (r.kind === 'table') triggers.push({ kind: 'table', table: typeof r.table === 'string' ? r.table : '', events: strings(r.events) });
+		else if (r.kind === 'table')
+			triggers.push({
+				kind: 'table',
+				table: typeof r.table === 'string' ? r.table : '',
+				events: strings(r.events),
+				fields: strings(r.fields),
+				where: r.where !== undefined && r.where !== null ? JSON.stringify(r.where) : '',
+				startsToMatch: r.startsToMatch === true
+			});
 		else if (r.kind === 'app')
 			triggers.push({ kind: 'app', events: strings(r.events), agents: strings(r.agents), match: Object.entries(obj(r.match)).map(([key, value]) => ({ key, value: String(value) })) });
 		else if (r.kind === 'webhook') triggers.push({ kind: 'webhook' });
@@ -298,7 +317,15 @@ export function toManifest(m: SimpleManifest): Record<string, unknown> {
 			if (Object.keys(match).length) out.match = match;
 			return out;
 		}
-		return { kind: 'table', table: t.table.trim(), events: clean(t.events) };
+		const out: Record<string, unknown> = { kind: 'table', table: t.table.trim(), events: clean(t.events) };
+		const fields = clean(t.fields);
+		if (fields.length) out.fields = fields;
+		const where = whereOf(t.where);
+		if (where !== undefined) {
+			out.where = where;
+			if (t.startsToMatch) out.startsToMatch = true;
+		}
+		return out;
 	});
 	const g = m.grants;
 	const grants: Record<string, unknown> = {};
@@ -369,7 +396,10 @@ export function describeTrigger(t: Trigger): string {
 	}
 	if (t.kind === 'table') {
 		const ev = t.events.map((e) => TABLE_EVENTS.find((x) => x.value === e)?.label.toLowerCase() ?? e);
-		return `${ev.join(', ') || 'No event'} in table ${t.table || '?'}`;
+		const parts = [`${ev.join(', ') || 'No event'} in table ${t.table || '?'}`];
+		if (t.fields.length) parts.push(`when ${t.fields.join(' or ')} changes`);
+		if (whereOf(t.where)) parts.push(`${t.startsToMatch ? 'becoming' : 'matching'} ${t.where.trim()}`);
+		return parts.join(' ');
 	}
 	const s = t.schedule;
 	if (s.mode === 'every') return `Every ${s.every} ${s.every === 1 ? s.unit.replace(/s$/, '') : s.unit}`;

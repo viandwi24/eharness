@@ -182,6 +182,8 @@ export function scriptTypes(methods: readonly HostMethodDoc[]): string {
     '  table?: string',
     '  rowIds?: string[]',
     '  rows?: Array<{ id: string; version: number; data: Record<string, unknown> }>',
+    '  /** Table events: each row before and after (created: after; deleted: before) and the fields that changed (up to 20). */',
+    '  changes?: Array<{ id: string; before?: Record<string, unknown>; after?: Record<string, unknown>; changed: string[] }>',
     '  by?: string',
     '  /** Schedule events: the slot (epoch ms) and when it fired. */',
     '  slot?: number',

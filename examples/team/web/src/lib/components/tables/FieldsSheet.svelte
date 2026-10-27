@@ -58,7 +58,7 @@
 									<span class="truncate text-sm font-medium">{c.name}</span>
 									<span class="text-xs text-muted-foreground">{TYPE_LABELS[c.type]}</span>
 									{#if c.required}<Badge variant="warning" class="h-4 px-1.5 text-[10px]">required</Badge>{/if}
-									{#if c.indexed}<Badge variant="info" class="h-4 px-1.5 text-[10px]">indexed</Badge>{/if}
+									{#if c.unique}<Badge variant="info" class="h-4 px-1.5 text-[10px]">unique</Badge>{:else if c.indexed}<Badge variant="info" class="h-4 px-1.5 text-[10px]">indexed</Badge>{/if}
 								</div>
 								{#if c.description}<p class="line-clamp-2 text-xs text-muted-foreground">{c.description}</p>{/if}
 								{#if c.default !== undefined}<p class="truncate text-xs text-muted-foreground">Default: <span class="font-mono">{show(c.default)}</span></p>{/if}

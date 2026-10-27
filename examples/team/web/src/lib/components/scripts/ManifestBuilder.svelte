@@ -25,7 +25,7 @@
 	import TagInput from './TagInput.svelte';
 	import { cn } from '#lib/utils.js';
 	import type { Lookups } from '#lib/scripts/lookups.svelte.js';
-	import { APP_EVENTS, CHANNEL_EVENTS, describeTrigger, MESSAGE_KINDS, newTrigger, ROLES, type Schedule, type SimpleManifest, TABLE_EVENTS, type Trigger, WEEKDAYS } from '#lib/scripts/manifest-model.js';
+	import { APP_EVENTS, CHANNEL_EVENTS, describeTrigger, MESSAGE_KINDS, newTrigger, ROLES, type Schedule, type SimpleManifest, TABLE_EVENTS, type Trigger, WEEKDAYS, whereOf } from '#lib/scripts/manifest-model.js';
 
 	let { manifest = $bindable(), lookups, webhookUrl = '' }: { manifest: SimpleManifest; lookups: Lookups; webhookUrl?: string } = $props();
 
@@ -335,6 +335,25 @@
 										{/each}
 									</div>
 								</div>
+							</div>
+							<div class="grid gap-4 md:grid-cols-2">
+								{#if t.events.includes('row.updated')}
+									<div class="flex flex-col gap-1.5">
+										<span class="text-xs font-medium">Only when these fields change <span class="font-normal text-muted-foreground">(updates; empty = any change)</span></span>
+										<TagInput label="Fields" bind:values={t.fields} placeholder="status" mono />
+									</div>
+								{/if}
+								<div class="flex flex-col gap-1.5">
+									<span class="text-xs font-medium">Only rows matching <span class="font-normal text-muted-foreground">(a filter, optional)</span></span>
+									<Input bind:value={t.where} class="font-mono text-xs" placeholder={'{ "status": "paid" }'} autocomplete="off" aria-invalid={t.where.trim() !== '' && !whereOf(t.where)} />
+									{#if t.where.trim() !== '' && !whereOf(t.where)}<p class="text-xs text-destructive-text">Write a JSON object, e.g. {'{ "status": "paid", "total": { "$gt": 100 } }'}.</p>{/if}
+								</div>
+								{#if t.events.includes('row.updated') && whereOf(t.where)}
+									<label class="flex items-center gap-3 md:col-span-2">
+										<Switch bind:checked={t.startsToMatch} size="sm" />
+										<span class="text-xs">Only when a row starts to match <span class="text-muted-foreground">(it did not before the change: "becomes paid")</span></span>
+									</label>
+								{/if}
 							</div>
 							<p class="text-xs text-muted-foreground">Changes the script itself makes never start it again.</p>
 						{/if}

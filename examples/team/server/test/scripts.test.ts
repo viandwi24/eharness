@@ -1357,6 +1357,100 @@ describe('moderation and buttons', () => {
   })
 })
 
+describe('table triggers on field changes', () => {
+  test('a script runs when a signal becomes closed (not on other edits), sees before and after, and upserts a summary', async () => {
+    const r = rig()
+    rigs.push(r)
+    await r.api('POST', '/tables', {
+      name: 'sig',
+      schema: {
+        columns: [
+          { name: 'ref', type: 'string', unique: true },
+          { name: 'status', type: 'string' },
+          { name: 'note', type: 'string' },
+        ],
+      },
+    })
+    await r.api('POST', '/tables', {
+      name: 'stats',
+      schema: {
+        columns: [
+          { name: 'day', type: 'string', unique: true },
+          { name: 'closed', type: 'number' },
+        ],
+      },
+    })
+    const src = `export default async function (event, ctx) {
+  const c = event.changes[0]
+  const prev = (await ctx.tables.query({ table: 'stats', filter: { day: 'today' } })).rows[0]
+  await ctx.tables.upsert({ table: 'stats', key: 'day', rows: [{ day: 'today', closed: (prev?.data.closed ?? 0) + event.rowIds.length }] })
+  return { from: c.before.status, to: c.after.status, changed: c.changed }
+}`
+    await r.api('POST', '/scripts', {
+      name: 'closer',
+      source: src,
+      manifest: {
+        triggers: [
+          {
+            kind: 'table',
+            table: 'sig',
+            events: ['row.updated'],
+            fields: ['status'],
+            where: { status: 'closed' },
+            startsToMatch: true,
+          },
+        ],
+        grants: { tablesRead: ['stats'], tablesWrite: ['stats'] },
+      },
+    })
+    await r.api('POST', '/scripts/closer/activate', {})
+    const ins = await r.api('POST', '/tables/sig/rows', {
+      rows: [
+        { ref: 'A', status: 'open' },
+        { ref: 'B', status: 'open' },
+      ],
+    })
+    const [a, b] = ins.json.inserted as string[]
+    // a note edit: status did not change, no run
+    await r.api('PATCH', `/tables/sig/rows/${a}`, { change: { set: { note: 'tp1 hit' } } })
+    // open -> closed: runs
+    await r.api('PATCH', `/tables/sig/rows/${a}`, { change: { set: { status: 'closed' } } })
+    // closed again with another field: still closed, did not start to match: no run
+    await r.api('PATCH', `/tables/sig/rows/${a}`, {
+      change: { set: { status: 'closed', note: 'x' } },
+    })
+    // a bulk change closes B
+    await r.api('POST', '/tables/sig/update', {
+      filter: { ref: 'B' },
+      change: { set: { status: 'closed' } },
+    })
+    const runs = async () =>
+      (
+        (await r.api('GET', '/scripts/closer/runs')).json.runs as Array<{
+          outcome: string
+          result: unknown
+          trigger: string
+        }>
+      ).filter((x) => x.trigger === 'table')
+    await until('two runs', async () => (await runs()).length === 2, 5000)
+    await sleep(200)
+    const all = await runs()
+    expect(all).toHaveLength(2)
+    expect(all.map((x) => x.outcome)).toEqual(['ok', 'ok'])
+    expect(all.map((x) => x.result)).toContainEqual({
+      from: 'open',
+      to: 'closed',
+      changed: ['status'],
+    })
+    const stats = (await r.api('POST', '/tables/stats/query', {})).json.rows as Array<{
+      data: Record<string, unknown>
+    }>
+    expect(stats).toHaveLength(1)
+    expect(stats[0]?.data).toEqual({ day: 'today', closed: 2 })
+    void b
+  }, 15_000)
+})
+
 describe('more inputs and the team API', () => {
   test('an app event starts a script; ctx.api reads and changes through the API; its own events do not loop', async () => {
     const r = rig()

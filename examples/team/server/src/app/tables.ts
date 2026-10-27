@@ -17,11 +17,14 @@ import {
   pageSize,
   parseCursor,
   parseSchema,
+  type RowDiff,
   SYSTEM_FIELDS,
   type TableRecord,
   type TableRowsChange,
   type TableSchema,
   tableNameProblem,
+  UniqueViolation,
+  uniqueColumns,
 } from '../domain/tables.ts'
 import {
   cellText,
@@ -84,10 +87,33 @@ function rowsChanged(
   kind: TableRowsChange['kind'],
   rowIds: readonly string[],
   by: TableActor,
+  changes?: readonly RowDiff[],
 ): void {
   if (rowIds.length === 0) return
   tableChanged(deps, t, kind, by, rowIds.length)
-  deps.onTableRows?.({ tableId: t.id, table: t.name, kind, rowIds: [...rowIds], by })
+  const ids = new Set(rowIds)
+  deps.onTableRows?.({
+    tableId: t.id,
+    table: t.name,
+    kind,
+    rowIds: [...rowIds],
+    by,
+    ...(changes === undefined ? {} : { changes: changes.filter((c) => ids.has(c.id)) }),
+  })
+}
+
+/** A write that repeats a unique value, as a 409 the caller can read. */
+function uniquely<T>(fn: () => T): T {
+  try {
+    return fn()
+  } catch (error) {
+    if (error instanceof UniqueViolation)
+      throw conflict(error.message, 'DUPLICATE_KEY', {
+        column: error.column,
+        ...(error.existingId === undefined ? {} : { rowId: error.existingId }),
+      })
+    throw error
+  }
 }
 
 function schemaOf(input: unknown): TableSchema {
@@ -141,7 +167,21 @@ export function updateTable(
       throw conflict(`a table named "${patch.name}" exists already`, 'TABLE_EXISTS')
   }
   const schema = patch.schema === undefined ? undefined : schemaOf(patch.schema)
-  if (schema !== undefined) indexColumns(deps, schema)
+  if (schema !== undefined) {
+    // a column turns unique only when the stored rows already agree
+    const was = new Set(uniqueColumns(t.schema))
+    for (const column of uniqueColumns(schema)) {
+      if (was.has(column)) continue
+      const dup = deps.tables.duplicate(t.id, column)
+      if (dup !== undefined)
+        throw conflict(
+          `"${column}" cannot be unique: ${dup.count} rows hold ${JSON.stringify(dup.value)}; fix them first`,
+          'DUPLICATE_KEY',
+          { column },
+        )
+    }
+    indexColumns(deps, schema)
+  }
   const next = deps.tables.update(
     t.id,
     {
@@ -206,10 +246,65 @@ export function insertRows(
   const bytes = docs.reduce((n, d) => n + encoder.encode(JSON.stringify(d)).length, 0)
   checkCaps(deps, t, docs.length, bytes)
   const writes = docs.map((data) => ({ id: deps.ids.next(), data }))
-  deps.tables.insert(t.id, writes, by, deps.clock.now())
+  uniquely(() => deps.tables.insert(t.id, writes, by, deps.clock.now(), uniqueColumns(t.schema)))
   const inserted = writes.map((w) => w.id)
-  rowsChanged(deps, t, 'row.created', inserted, by)
+  rowsChanged(
+    deps,
+    t,
+    'row.created',
+    inserted,
+    by,
+    writes.map((w) => ({ id: w.id, after: w.data })),
+  )
   return { inserted }
+}
+
+/**
+ * Insert or update by a key column (`key`: one column; a unique one keeps it to one row per value).
+ * A row whose key is stored gets the given fields merged into it; the rest are inserted. One
+ * transaction: two writers never insert the same key twice when the column is unique.
+ */
+export function upsertRows(
+  deps: Deps,
+  by: TableActor,
+  ref: string,
+  key: string,
+  rows: readonly unknown[],
+): { inserted: string[]; updated: string[] } {
+  const t = getTable(deps, ref)
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))
+    throw invalid(`"${key}" is not a column name`, 'INVALID_QUERY')
+  if (rows.length === 0) return { inserted: [], updated: [] }
+  if (rows.length > LIMITS.insertBatch)
+    throw invalid(`upsert at most ${LIMITS.insertBatch} rows at a time`, 'TOO_MANY_ROWS')
+  const items = rows.map((raw, i) => {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+      throw invalid(`row ${i + 1}: a row must be an object of field: value`, 'INVALID_ROW')
+    const rec = raw as Record<string, unknown>
+    const k = rec[key]
+    if (k === undefined || k === null)
+      throw invalid(`row ${i + 1}: "${key}" (the key) is needed`, 'INVALID_ROW')
+    return {
+      key: k,
+      build(cur: TableRecord | undefined): Record<string, unknown> {
+        const c = checkRow(t.schema, cur === undefined ? rec : { ...cur.data, ...rec }, 'insert')
+        if (!c.ok) throw invalid(`row ${i + 1}: ${c.errors.join('; ')}`, 'INVALID_ROW')
+        return c.data
+      },
+    }
+  })
+  const bytes = rows.reduce<number>((n, d) => n + encoder.encode(JSON.stringify(d)).length, 0)
+  checkCaps(deps, t, rows.length, bytes)
+  const res = uniquely(() =>
+    deps.tables.upsert(t.id, key, items, by, deps.clock.now(), uniqueColumns(t.schema), () =>
+      deps.ids.next(),
+    ),
+  )
+  const inserted = res.inserted.map((x) => x.id)
+  const updated = res.updated.map((x) => x.id)
+  rowsChanged(deps, t, 'row.created', inserted, by, res.inserted)
+  rowsChanged(deps, t, 'row.updated', updated, by, res.updated)
+  return { inserted, updated }
 }
 
 export function getRow(deps: Deps, ref: string, rowId: string): TableRecord {
@@ -243,15 +338,20 @@ export function updateRow(
     encoder.encode(JSON.stringify(checked.data)).length -
     encoder.encode(JSON.stringify(cur.data)).length
   if (grow > 0) checkCaps(deps, t, 0, grow)
-  const res = deps.tables.replace(
-    t.id,
-    [{ id: rowId, data: checked.data, ifVersion: cur.version }],
-    by,
-    deps.clock.now(),
+  const res = uniquely(() =>
+    deps.tables.replace(
+      t.id,
+      [{ id: rowId, data: checked.data, ifVersion: cur.version }],
+      by,
+      deps.clock.now(),
+      uniqueColumns(t.schema),
+    ),
   )
   if (res.conflicts.length > 0)
     throw conflict(`row ${rowId} changed meanwhile: read it again`, 'STALE_ROW')
-  rowsChanged(deps, t, 'row.updated', [rowId], by)
+  rowsChanged(deps, t, 'row.updated', [rowId], by, [
+    { id: rowId, before: cur.data, after: checked.data },
+  ])
   return getRow(deps, ref, rowId)
 }
 
@@ -262,9 +362,17 @@ export function deleteRow(
   rowId: string,
 ): { deleted: number } {
   const t = getTable(deps, ref)
+  const before = deps.tables.getRow(t.id, rowId)
   const n = deps.tables.delete(t.id, [rowId])
   if (n === 0) throw notFound(`Row of table ${t.name}`, rowId)
-  rowsChanged(deps, t, 'row.deleted', [rowId], by)
+  rowsChanged(
+    deps,
+    t,
+    'row.deleted',
+    [rowId],
+    by,
+    before === undefined ? undefined : [{ id: rowId, before: before.data }],
+  )
   return { deleted: n }
 }
 
@@ -383,8 +491,18 @@ export function updateRows(
   }
   if (errors.length > 0) throw invalid(errors.slice(0, 20).join(' | '), 'INVALID_ROW')
   if (grow > 0) checkCaps(deps, t, 0, grow)
-  const res = deps.tables.replace(t.id, writes, by, deps.clock.now())
-  rowsChanged(deps, t, 'row.updated', res.written, by)
+  const res = uniquely(() =>
+    deps.tables.replace(t.id, writes, by, deps.clock.now(), uniqueColumns(t.schema)),
+  )
+  const old = new Map(rows.map((x) => [x.id, x.data]))
+  rowsChanged(
+    deps,
+    t,
+    'row.updated',
+    res.written,
+    by,
+    writes.map((w) => ({ id: w.id, before: old.get(w.id) ?? {}, after: w.data })),
+  )
   return { matched, updated: res.written.length, conflicts: res.conflicts.length }
 }
 
@@ -411,11 +529,17 @@ export function deleteRows(
       `${matched} rows match; delete at most ${LIMITS.bulkChange} at a time`,
       'TOO_MANY_ROWS',
     )
-  const ids = deps.tables
-    .query(t.id, { where, orderBy: 'id ASC', limit: LIMITS.bulkChange })
-    .map((r) => r.id)
+  const gone = deps.tables.query(t.id, { where, orderBy: 'id ASC', limit: LIMITS.bulkChange })
+  const ids = gone.map((r) => r.id)
   const deleted = deps.tables.delete(t.id, ids)
-  rowsChanged(deps, t, 'row.deleted', ids, by)
+  rowsChanged(
+    deps,
+    t,
+    'row.deleted',
+    ids,
+    by,
+    gone.map((r) => ({ id: r.id, before: r.data })),
+  )
   return { deleted }
 }
 
@@ -492,16 +616,24 @@ export async function importRows(
   checkCaps(deps, t, inserts.length, bytes)
   const now = deps.clock.now()
   const insertedIds: string[] = []
+  const diffs: RowDiff[] = []
+  const existingById = new Map([...existing.values()].map((r) => [r.id, r.data]))
   for (let i = 0; i < inserts.length; i += LIMITS.insertBatch) {
     const batch = inserts
       .slice(i, i + LIMITS.insertBatch)
       .map((data) => ({ id: deps.ids.next(), data }))
-    deps.tables.insert(t.id, batch, by, now)
+    uniquely(() => deps.tables.insert(t.id, batch, by, now, uniqueColumns(t.schema)))
     insertedIds.push(...batch.map((b) => b.id))
+    for (const b of batch) diffs.push({ id: b.id, after: b.data })
   }
-  const res = replaces.length > 0 ? deps.tables.replace(t.id, replaces, by, now) : { written: [] }
-  rowsChanged(deps, t, 'row.created', insertedIds, by)
-  rowsChanged(deps, t, 'row.updated', res.written, by)
+  const res =
+    replaces.length > 0
+      ? uniquely(() => deps.tables.replace(t.id, replaces, by, now, uniqueColumns(t.schema)))
+      : { written: [] }
+  for (const x of replaces)
+    diffs.push({ id: x.id, before: existingById.get(x.id) ?? {}, after: x.data })
+  rowsChanged(deps, t, 'row.created', insertedIds, by, diffs)
+  rowsChanged(deps, t, 'row.updated', res.written, by, diffs)
   const skipped = parsed.records.length - inserts.length - replaces.length
   return { inserted: inserts.length, updated: res.written.length, skipped, errors }
 }

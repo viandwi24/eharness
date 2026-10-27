@@ -4,6 +4,7 @@
  * every `ctx` call, and whether a new version widens its grants (which needs a new approval).
  */
 import { DEFAULT_SCRIPT_LIMITS, type ScriptLimits } from './scripts.ts'
+import { compileFilter } from './tables.ts'
 
 // --- shapes ------------------------------------------------------------------------------------
 
@@ -89,6 +90,12 @@ export interface TableTrigger {
   kind: 'table'
   table: string
   events: TableEventType[]
+  /** row.updated: only when one of these fields changed (top-level names); empty = any change. */
+  fields: string[]
+  /** Only rows matching this filter (after the change; a deleted row as it was). */
+  where?: Record<string, unknown>
+  /** row.updated with `where`: only rows that match now and did not before ("becomes paid"). */
+  startsToMatch?: boolean
 }
 
 /**
@@ -334,7 +341,34 @@ export function parseManifest(input: unknown): Result<ScriptManifest> {
         const events = oneOf(r.events, TABLE_EVENT_TYPES, `${where} events`, errors)
         if (events.length === 0)
           errors.push(`${where}: name at least one of ${TABLE_EVENT_TYPES.join(', ')}`)
-        triggers.push({ kind: 'table', table, events })
+        const trig: TableTrigger = {
+          kind: 'table',
+          table,
+          events,
+          fields: strings(r.fields, `${where} fields`, errors),
+        }
+        for (const f of trig.fields)
+          if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(f))
+            errors.push(`${where} fields: "${f.slice(0, 64)}" is not a column name`)
+        if (r.where !== undefined && r.where !== null) {
+          if (typeof r.where !== 'object' || Array.isArray(r.where))
+            errors.push(`${where} where is a filter object ({ status: "paid" })`)
+          else {
+            try {
+              compileFilter(r.where)
+              trig.where = r.where as Record<string, unknown>
+            } catch (error) {
+              errors.push(
+                `${where} where: ${error instanceof Error ? error.message : String(error)}`,
+              )
+            }
+          }
+        }
+        if (r.startsToMatch === true) {
+          if (trig.where === undefined) errors.push(`${where}: startsToMatch needs where`)
+          else trig.startsToMatch = true
+        }
+        triggers.push(trig)
       } else if (r.kind === 'app') {
         const events = oneOf(r.events, APP_TRIGGER_TYPES, `${where} events`, errors)
         if (events.length === 0) errors.push(`${where}: name at least one app event`)
@@ -1044,6 +1078,17 @@ export function manifestJsonSchema(): Record<string, unknown> {
                 kind: { const: 'table', description: 'A change in a table.' },
                 table: { type: 'string', description: 'Table name.' },
                 events: list({ enum: [...TABLE_EVENT_TYPES] }, 'Row events (at least one).'),
+                fields: list(text, 'row.updated: only when one of these columns changed.'),
+                where: {
+                  type: 'object',
+                  description:
+                    'Only rows matching this filter (the table query language: { status: "paid", total: { $gt: 100 } }); a deleted row as it was.',
+                },
+                startsToMatch: {
+                  type: 'boolean',
+                  description:
+                    'row.updated with where: only rows that match now and did not before.',
+                },
               },
               required: ['kind', 'table', 'events'],
               additionalProperties: false,
