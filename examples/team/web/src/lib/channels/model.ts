@@ -105,6 +105,8 @@ export type Tri = Inherit<'on' | 'off'>;
 /** The form of one node's own settings as typed. Everything starts as what the node itself sets; '' = inherit. */
 export interface PolicyForm {
 	allowed: Tri;
+	/** The agent that handles this chat (an agent id); '' = inherit (the connection's agent). */
+	agentId: string;
 	wake: Inherit<Wake>;
 	delivery: Inherit<Delivery>;
 	/** Days, as typed; empty = inherit. A number input bound by Svelte holds a number (or null when empty). */
@@ -142,6 +144,7 @@ const boolOf = (t: Tri): boolean | null => (t === '' ? null : t === 'on');
 export const formOfChat = (c: ChannelChat): PolicyForm => ({
 	// `enabled` reads as true in a policy that only sets other fields: it is the node's own only when it says so
 	allowed: c.inherited.enabled?.from === 'node' ? triOf(c.policy?.enabled) : '',
+	agentId: c.policy?.agentId ?? '',
 	wake: c.policy?.wake ?? '',
 	delivery: c.policy?.delivery ?? '',
 	retention: c.policy?.retentionDays === undefined ? '' : String(c.policy.retentionDays),
@@ -184,6 +187,7 @@ export function retentionError(value: string | number | null): string | undefine
 export function policyBody(f: PolicyForm): ChannelPolicyBody {
 	return {
 		enabled: boolOf(f.allowed),
+		agentId: f.agentId === '' ? null : f.agentId,
 		wake: f.wake === '' ? null : f.wake,
 		delivery: f.delivery === '' ? null : f.delivery,
 		retentionDays: fieldText(f.retention) === '' ? null : Number(fieldText(f.retention)),
@@ -216,6 +220,7 @@ export function proactiveBody(f: PolicyForm): ChannelPolicyBody['proactive'] {
 
 export const formChanged = (a: PolicyForm, b: PolicyForm): boolean =>
 	a.allowed !== b.allowed ||
+	a.agentId !== b.agentId ||
 	a.wake !== b.wake ||
 	a.delivery !== b.delivery ||
 	fieldText(a.retention) !== fieldText(b.retention) ||
@@ -904,7 +909,7 @@ export const personName = (p: ChannelPerson): string => p.name ?? (p.username ? 
 
 // ---- navigation of the Channels pages ----
 
-export type SectionId = 'overview' | 'chats' | 'people' | 'inbox' | 'activity' | 'events' | 'reminders' | 'router' | 'delivery' | 'history' | 'admin-log' | 'settings';
+export type SectionId = 'overview' | 'chats' | 'people' | 'inbox' | 'activity' | 'events' | 'reminders' | 'delivery' | 'history' | 'admin-log' | 'settings';
 
 export interface Section {
 	id: SectionId;
@@ -927,7 +932,6 @@ export function sectionsOf(c: Pick<ChannelConnection, 'binding' | 'transport'> |
 		bound && { id: 'activity', label: 'Activity' },
 		bound && { id: 'events', label: 'Events' },
 		bound && !account && { id: 'reminders', label: 'Reminders' },
-		bound && { id: 'router', label: 'Router' },
 		bound && { id: 'delivery', label: account ? 'Send limits' : 'Delivery' },
 		bound && account && { id: 'history', label: 'History' },
 		bound && account && { id: 'admin-log', label: 'Admin log' },
@@ -944,7 +948,6 @@ export const SECTION_TITLE: Record<SectionId, string> = {
 	activity: 'Activity',
 	events: 'Events',
 	reminders: 'Reminders',
-	router: 'Router',
 	delivery: 'Delivery',
 	history: 'History',
 	'admin-log': 'Admin log',

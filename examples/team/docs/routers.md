@@ -1,8 +1,9 @@
 # Feeds and router agents
 
-A **feed** is a chat whose messages are input for an agent: nobody talks to the agent there. A
-**router** is an agent on a feed that shares posts out to other chats, for example trading signals
-posted in one channel and spread across several others so each gets different signals.
+A **feed** is a chat whose messages are input for an agent: nobody talks to the agent there. What
+the agent does with them is up to **its instructions**, which you write: share posts out to other
+chats, summarise them, keep a log in a library file or a table, alert someone. There is no special
+router feature: a router is just an agent of your own on a feed chat.
 
 ## A feed chat
 
@@ -38,24 +39,25 @@ messages of the current chat (or `conversation`) to another chat:
 `channel_copies({ messageId })` tells where a message went (trial rows too) or what a copy came
 from.
 
-## The Signal Router template
+## Setting one up
 
-Channels → a connection → **Router**, or `POST /channels/connections/{id}/signal-router` with
-`{ source, targets, name?, trial?, table?, rules? }`, sets up:
+1. **Agents → New agent.** Write its instructions in your own words, for example: "Every new
+   signal in this chat goes to VIP 1 or VIP 2, whichever got fewer today. Replies and follow-ups go
+   where their signal went. Skip greetings and promos. Track every signal in
+   /library/signals/log.md (id, direction, where it went, status)."
+2. On the agent page: **Connectors → Files**, edit on (for a library log file), and in
+   **Permissions** allow the tools it runs without asking (`channel_copy`, `channel_send`,
+   `write_file`, `edit_file`, `tables_write`…). Pick a fast model.
+3. **Channels → a connection → Chats → the source chat**: *Agent for this chat* = that agent,
+   *Feed for its agent* = a feed, *Copies from here* = trial to watch it first.
+4. Allow the target chats (the agent may post only where the agent is allowed).
+5. Check what it decided (its chat session in Inbox, `channel_copies`, its log file), then switch
+   *Copies from here* to sent.
 
-- an agent "Signal Router" with instructions for signal channels (what a new signal, an early entry
-  — "cicil", "cent akun buy dulu" — a follow-up — reply, "TP all", "cut loss", screenshots — and
-  other posts look like; default TP1/TP2/TP3 of 20/60/100 pips; send each new idea to the target
-  with the fewest ideas today; keep follow-ups with their idea; never copy reports or promos) and
-  allow rules for `channel_copy`, `channel_copies`, `channel_read`, `tables_read`, `tables_write`;
-- a table `trade_ideas` (idea, direction, channel, status, entry, sl, tp, opened_at, last_message,
-  reason; `idea` unique);
-- the source chat as a feed of the agent, **in trial mode**, and the target chats allowed.
+Any tool the agent has works on a feed: `channel_copy` / `channel_send` to post, the file tools or
+`tables_write` for its memory, `channel_read` to look back.
 
-Everything is ordinary afterwards: edit the agent's instructions, the table, or switch the source
-chat to live ("Copies from here: sent") in its chat settings.
-
-### What the analyst can do to help
+### Example: trading signals — what the analyst can do to help
 
 - send follow-ups as replies to their signal ("TP1 hit", "entry now", "cut loss");
 - start a new signal with a steady marker (`🟢 BUY` / `🔴 SELL`, or `#signal`);
@@ -68,7 +70,6 @@ chat to live ("Copies from here: sent") in its chat settings.
   downloaded by anyone: Telegram refuses it.
 - The connection must be an admin of each target channel, and a member (account) or admin (bot) of
   the source.
-- A message posted before the router existed has no copy: a reply to it is decided like a new
-  message.
-- Speed: a model turn per message (a few seconds; more with several tool calls). Use a fast model
-  for the router agent.
+- A message posted before the agent was on the feed has no copy: a reply to it is decided like a
+  new message.
+- Speed: a model turn per message (a few seconds; more with several tool calls). Use a fast model.

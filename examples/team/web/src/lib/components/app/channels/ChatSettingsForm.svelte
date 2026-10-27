@@ -24,6 +24,7 @@
 		type PolicyForm
 	} from '#lib/channels/model.js';
 	import { formatTime } from '#lib/format.js';
+	import { agentsStore } from '#lib/stores/agents.svelte.js';
 
 	// The settings of one chat or topic. The form edits what this node sets itself: every field can
 	// inherit from the node above it, the connection or the defaults, and says where the value in
@@ -52,6 +53,8 @@
 
 	const origin = (key: Parameters<typeof originText>[1]): string => originText(chat, key, titleOf);
 	const inheritLabel = (what: string): string => `Same as above: ${what}`;
+	const agents = $derived(agentsStore.state.agents.filter((a) => a.archivedAt === null || a.id === form.agentId));
+	const agentName = (agentId: string): string => agentsStore.state.agents.find((a) => a.id === agentId)?.name ?? agentId;
 
 	async function save(): Promise<void> {
 		if (retentionProblem || proactiveProblem) return;
@@ -96,13 +99,21 @@
 	{/if}
 	<div class="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2" data-testid="feed">
 		<label class="flex flex-col gap-1">
+			<span class="text-xs font-medium">Agent for this chat <span class="font-normal text-muted-foreground">· {origin('agentId')}</span></span>
+			<NativeSelect bind:value={form.agentId} aria-label="Agent for this chat">
+				<NativeSelectOption value="">{inheritLabel(chat.effective.agentId ? agentName(chat.effective.agentId) : 'the connection agent')}</NativeSelectOption>
+				{#each agents as a (a.id)}<NativeSelectOption value={a.id}>{a.name}</NativeSelectOption>{/each}
+			</NativeSelect>
+			<span class="text-xs text-muted-foreground">Its instructions decide what it does with this chat (write them on the agent page). Give it its own agent to process a chat differently.</span>
+		</label>
+		<label class="flex flex-col gap-1">
 			<span class="text-xs font-medium">Feed for its agent <span class="font-normal text-muted-foreground">· {origin('feed')}</span></span>
 			<NativeSelect bind:value={form.feed} aria-label="Feed for its agent">
 				<NativeSelectOption value="">{inheritLabel(chat.effective.feed ? 'a feed' : 'not a feed')}</NativeSelectOption>
 				<NativeSelectOption value="on">A feed: every message is input</NativeSelectOption>
 				<NativeSelectOption value="off">Not a feed</NativeSelectOption>
 			</NativeSelect>
-			<span class="text-xs text-muted-foreground">For a router or processing agent: it wakes on every message (also what this account posts itself), never answers here, and acts with its own tools and permissions.</span>
+			<span class="text-xs text-muted-foreground">The agent reads every message here (also what this account posts itself) and never answers here. It acts with its tools on its own permissions: post or copy to other chats, keep notes in library files or tables, as its instructions say.</span>
 		</label>
 		{#if form.feed === 'on' || (form.feed === '' && chat.effective.feed)}
 			<label class="flex flex-col gap-1">
@@ -112,7 +123,7 @@
 					<NativeSelectOption value="on">Trial: only recorded, nothing sent</NativeSelectOption>
 					<NativeSelectOption value="off">Sent for real</NativeSelectOption>
 				</NativeSelect>
-				<span class="text-xs text-muted-foreground">In trial the agent decides as usual and each decision is kept (its trade table, and the copy records); check them, then switch to sent.</span>
+				<span class="text-xs text-muted-foreground">In trial the agent decides as usual and each decision is kept (the copy records, and whatever it logs); check them, then switch to sent.</span>
 			</label>
 		{/if}
 	</div>

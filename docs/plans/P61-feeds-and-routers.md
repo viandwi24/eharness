@@ -21,11 +21,10 @@ without being a person's conversation partner. See [routers.md](../../examples/t
 - [x] Albums reach the agent as one turn (the inbox collect window) and carry an album id in the
       message header.
 - [x] Trial mode per source chat (`copyTrial`): decisions recorded, nothing sent.
-- [x] Signal Router template (`POST /channels/connections/{id}/signal-router`, Channels → Router):
-      agent with instructions for signal channels, `trade_ideas` table, feed in trial mode.
-- [x] Chat settings: feed and trial controls; Router section with the feeds of a connection.
+- [x] Chat settings: the agent for a chat, feed and trial controls. No router template: what an
+      agent does with a feed is its own instructions (a signal-specific template was built and
+      removed again: too specific for a generic harness).
 
 ## Open
 
-- Per-target daily reports from `trade_ideas` (needs outcomes written by the analyst as replies).
 - A connection-agnostic chat settings API for the web (the PATCH route is Telegram connector only).

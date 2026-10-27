@@ -69,7 +69,7 @@ Update this table in the same commit that changes a phase's status.
 | P57 | [Library structure](P57-library-structure.md) — the library is the source of truth: fixed folders (company, programs, knowledge, reports, data), program briefs and notes as library files, one-time memory reorganization (rules + index only), memory discipline guard | in progress | P55 | P55 |
 | P59 | [Scripts and tables](P59-scripts-and-tables.md) — team example: TypeScript scripts in a QuickJS sandbox (channel-event, schedule and manual triggers, capability API with grants, dry runs, owner approval, versions, run traces) and document tables (schema, MongoDB-like queries and aggregates, spreadsheet page, import/export), so repetitive work runs without a model call (ADR-0065) | done | P57 | — |
 | P60 | [Scripts and tables, mature](P60-scripts-maturity.md) — media model (stickers, voice, albums, file references), copy/forward with captions, copy map, trigger filters, delayed runs and state helpers, moderation and buttons, table upserts and change triggers, safety and recipes | done | P59 | — |
-| P61 | [Feed chats and router agents](P61-feeds-and-routers.md) — a chat as input for an agent, channel_copy with copy records and synced edits, the Signal Router template with trial mode | done | P60 | — |
+| P61 | [Feed chats and router agents](P61-feeds-and-routers.md) — a chat as input for an agent, channel_copy with copy records and synced edits, trial mode, the agent of a chat in chat settings | done | P60 | — |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

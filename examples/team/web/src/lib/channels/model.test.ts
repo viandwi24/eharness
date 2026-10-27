@@ -115,11 +115,15 @@ describe('chat policy form', () => {
 			inherited: { enabled: { from: 'node', nodeId: 'n-1' }, wake: { from: 'node', nodeId: 'n-1' }, delivery: { from: 'connection' } }
 		});
 		const f = formOfChat(c);
-		expect(f).toEqual({ allowed: 'on', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '', proactive: '', quietFrom: '', quietTo: '', digest: '', maxMentions: '', defaultRole: '', replyStyle: '', personaOverlay: '', feed: '', copyTrial: '' });
-		expect(policyBody(f)).toEqual({ enabled: true, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null, proactive: null, defaultRole: null, replyStyle: null, personaOverlay: null, feed: null, copyTrial: null });
+		expect(f).toEqual({ allowed: 'on', agentId: '', wake: 'never', delivery: '', retention: '7', observe: '', sessionScope: '', redactOnDelete: '', proactive: '', quietFrom: '', quietTo: '', digest: '', maxMentions: '', defaultRole: '', replyStyle: '', personaOverlay: '', feed: '', copyTrial: '' });
+		expect(policyBody(f)).toEqual({ enabled: true, agentId: null, wake: 'never', delivery: null, retentionDays: 7, observe: null, sessionScope: null, redactOnDelete: null, proactive: null, defaultRole: null, replyStyle: null, personaOverlay: null, feed: null, copyTrial: null });
 		// the trusted internal group switch writes the role of unknown people
 		expect(policyBody({ ...f, defaultRole: 'member' })).toMatchObject({ defaultRole: 'member' });
 		expect(formChanged(f, { ...f, defaultRole: 'member' })).toBe(true);
+		// a chat of its own agent (a feed for a processing agent, say)
+		expect(policyBody({ ...f, agentId: 'router' })).toMatchObject({ agentId: 'router' });
+		expect(formChanged(f, { ...f, agentId: 'router' })).toBe(true);
+		expect(formOfChat(chat({ policy: { enabled: true, agentId: 'router' } })).agentId).toBe('router');
 		expect(policyBody({ ...f, retention: '', allowed: '' }).retentionDays).toBeNull();
 		expect(policyBody({ ...f, allowed: 'off', observe: 'off' })).toMatchObject({ enabled: false, observe: false });
 		expect(formChanged(f, { ...f, wake: 'mention' })).toBe(true);

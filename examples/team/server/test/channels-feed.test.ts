@@ -193,77 +193,65 @@ describe('a feed chat for a router agent', () => {
     expect(rows).toHaveLength(1)
   }, 15_000)
 
-  test('the Signal Router template sets up the agent, the table and the feed; trial first, then live', async () => {
+  test('a chat of its own agent: its instructions decide; it posts elsewhere and keeps notes in a library file', async () => {
     const r = rig()
     rigs.push(r)
     const mock = await connectMock(r)
     const gw = r.server.channels
-    for (const [nativeId, title] of [
-      ['-2002', 'VIP'],
-      ['-3003', 'Desk'],
-    ] as const)
-      gw.settings.ensureNode('c1', { nativeId, kind: 'room', title })
-    const bad = await r.api('POST', '/channels/connections/c1/signal-router', {
-      source: 'Ops',
-      targets: ['Nowhere'],
+    const vip = gw.settings.ensureNode('c1', { nativeId: '-2002', kind: 'room', title: 'VIP' })
+    const source = gw.nodes.list('c1').find((n) => n.nativeId === CHAT)
+    // an agent of the user's own, with instructions of the user's own
+    const created = await r.api('POST', '/agents', {
+      name: 'Splitter',
+      instructions: 'Share new posts out to VIP. Track them in /library/splitter/log.md.',
+      // Files: read and edit (agent page, Connectors), sends and file writes without approval
+      connectors: {
+        'builtin:files': {
+          enabled: 'on',
+          capabilities: { read: 'allow', edit: 'allow', delete: 'off' },
+        },
+      },
+      rules: { allow: ['channel_send', 'write_file'] },
     })
-    expect(bad.status).toBe(400)
-    const res = await r.api('POST', '/channels/connections/c1/signal-router', {
-      source: 'Ops',
-      targets: ['VIP', 'Desk'],
-      rules: 'Skip posts that start with #promo.',
-    })
-    expect(res.status).toBe(201)
-    const out = res.json as {
-      agent: { id: string; slug: string }
-      table: string
-      trial: boolean
-      source: { effective: Record<string, unknown> }
-      targets: Array<{ effective: { allowed: boolean } }>
-    }
-    expect(out).toMatchObject({ table: 'trade_ideas', trial: true })
-    expect(out.source.effective).toMatchObject({
+    expect(created.status).toBe(201)
+    const agentId = (created.json as { id: string }).id
+    updateAgent(r.server.deps, agentId, { model: 'm-splitter' })
+    // the chat settings: this chat goes to that agent as a feed (what the web form sends)
+    const port = r.server.deps.channelSettings?.()
+    if (port === undefined || source === undefined) throw new Error('no settings port')
+    port.setChatPolicy('c1', vip.id, { enabled: true })
+    const view = port.setChatPolicy('c1', source.id, { agentId, feed: true })
+    expect(view.effective).toMatchObject({
+      agentId,
       feed: true,
-      copyTrial: true,
       wake: 'always',
       delivery: 'message_tool',
-      agentId: out.agent.id,
     })
-    expect(out.targets.every((t) => t.effective.allowed)).toBe(true)
-    const agent = r.server.deps.agents.get(out.agent.id)
-    expect(agent?.instructions).toContain('"VIP"')
-    expect(agent?.instructions).toContain('TP1 = entry +/- 20 pips')
-    expect(agent?.instructions).toContain('Skip posts that start with #promo.')
-    expect(agent?.rules.allow).toContain('channel_copy')
-    expect((await r.api('GET', '/tables/trade_ideas')).status).toBe(200)
-    // a second router on the same source is refused
-    expect(
-      (
-        await r.api('POST', '/channels/connections/c1/signal-router', {
-          source: 'Ops',
-          targets: ['VIP'],
-        })
-      ).status,
-    ).toBe(409)
-
-    // live: the agent copies on its own allow rules, no approval asked
-    const source = gw.nodes.list('c1').find((n) => n.nativeId === CHAT)
-    gw.settings.set(source?.id as string, { copyTrial: false } as never)
-    updateAgent(r.server.deps, out.agent.id, { model: 'm-router' })
-    r.models.router = scriptedModel([
-      toolCall('channel_copy', { messageIds: ['301'], to: 'VIP', note: 'signal' }),
-      { text: '301: new buy idea -> VIP' },
+    r.models.splitter = scriptedModel([
+      toolCall('channel_send', { action: 'send', conversation: 'VIP', text: 'BUY GOLD 4010' }),
+      toolCall('write_file', { path: '/library/splitter/log.md', content: '- 501 -> VIP\n' }),
+      { text: '501 -> VIP' },
     ])
     await mock.say({
       chat: CHAT,
       kind: 'group',
       from: { id: '55', name: 'Analyst' },
-      id: '301',
-      text: 'Stnby buy zone E: 4010 - 4008 SL 4006',
+      id: '501',
+      text: 'BUY GOLD 4010',
     })
-    await until('copied live', () => mock.copies.length === 1)
-    expect(mock.copies[0]).toMatchObject({ ids: ['301'], to: '-2002' })
-    expect(JSON.stringify(r.models.router.prompts[0])).toContain('You route trading signals')
+    await until('posted', () => mock.sent.some((s) => s.conversationId === '-2002'))
+    await until(
+      'noted',
+      async () => (await r.server.deps.library.read('/library/splitter/log.md')) !== undefined,
+    )
+    expect((await r.server.deps.library.read('/library/splitter/log.md'))?.text).toContain(
+      '501 -> VIP',
+    )
+    expect(JSON.stringify(r.models.splitter.prompts[0])).toContain(
+      'Track them in /library/splitter/log.md',
+    )
+    // nothing answered in the source chat
+    expect(mock.sent.filter((s) => s.conversationId === CHAT)).toHaveLength(0)
   }, 15_000)
 
   test('via resend: we download the files and post text and files again; replies still thread', async () => {
