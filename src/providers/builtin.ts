@@ -232,6 +232,8 @@ const upstreamOf = (metadata: unknown): string | undefined => {
  * App-side sticky routing: remembers which upstream provider served the previous call of a
  * conversation and sends it first in `provider.order` of the next one (OpenRouter's prompt cache
  * only works within one provider). The conversation is told apart by its first two prompt messages.
+ * A failed call (rejected, an `error` stream part, a broken stream) forgets the remembered provider,
+ * so the next call is routed by OpenRouter again instead of returning to a failing upstream.
  */
 function stickyRouting(
   model: LanguageModel,
@@ -278,27 +280,63 @@ function stickyRouting(
     learned.set(key, slugOf(name))
     if (learned.size > 500) learned.delete(learned.keys().next().value as string)
   }
+  // An abort is the caller stopping, not the upstream failing: keep the provider then.
+  const forget = (key: string, error?: unknown): void => {
+    if ((error as { name?: unknown } | null)?.name === 'AbortError') return
+    learned.delete(key)
+  }
   const middleware: LanguageModelMiddleware = {
     specificationVersion: 'v4',
     wrapGenerate: async ({ params }: { params: unknown }) => {
       const next = withOrder(params as Record<string, unknown>)
-      const result = await m.doGenerate(next.params)
+      let result: Record<string, unknown>
+      try {
+        result = await m.doGenerate(next.params)
+      } catch (error) {
+        forget(next.key, error)
+        throw error
+      }
       learn(next.key, result.providerMetadata)
       return result
     },
     wrapStream: async ({ params }: { params: unknown }) => {
       const next = withOrder(params as Record<string, unknown>)
-      const result = await m.doStream(next.params)
-      const stream = (
+      let result: Record<string, unknown>
+      try {
+        result = await m.doStream(next.params)
+      } catch (error) {
+        forget(next.key, error)
+        throw error
+      }
+      const reader = (
         result.stream as ReadableStream<{ type: string; providerMetadata?: unknown }>
-      ).pipeThrough(
-        new TransformStream({
-          transform(part, controller) {
-            if (part.type === 'finish') learn(next.key, part.providerMetadata)
-            controller.enqueue(part)
-          },
-        }),
-      )
+      ).getReader()
+      let failed = false
+      const stream = new ReadableStream<{ type: string; providerMetadata?: unknown }>({
+        async pull(controller) {
+          let read: Awaited<ReturnType<typeof reader.read>>
+          try {
+            read = await reader.read()
+          } catch (error) {
+            forget(next.key, error)
+            controller.error(error)
+            return
+          }
+          if (read.done) {
+            controller.close()
+            return
+          }
+          const part = read.value
+          if (part.type === 'error') {
+            failed = true
+            forget(next.key)
+          } else if (part.type === 'finish' && !failed) learn(next.key, part.providerMetadata)
+          controller.enqueue(part)
+        },
+        cancel(reason) {
+          return reader.cancel(reason)
+        },
+      })
       return { ...result, stream }
     },
   } as unknown as LanguageModelMiddleware

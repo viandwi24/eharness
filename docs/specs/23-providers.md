@@ -210,8 +210,10 @@ spec 12 §3):
   one upstream provider, so the provider that served the previous call of a conversation
   (`providerMetadata.openrouter.provider`, lowercased and dashed to a slug) is sent first in
   `provider.order` of the next call. A conversation is told apart by its first two prompt messages;
-  the memory is per provider instance (bounded). A wrong slug is only skipped by OpenRouter while
-  fallbacks are allowed.
+  the memory is per provider instance (bounded). A failed call (rejected, an `error` stream part,
+  a broken stream) forgets the conversation's provider, so the next call is routed by OpenRouter
+  again instead of returning to a failing upstream; an abort forgets nothing. A wrong slug is only
+  skipped by OpenRouter while fallbacks are allowed.
 
 With none of them set, no `provider` key is sent: behaviour is unchanged.
 

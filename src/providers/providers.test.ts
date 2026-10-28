@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { generateText } from 'ai'
+import { generateText, streamText } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent, isHarnessError, lookupModel } from '../index.ts'
 import { profileStoreConformance } from '../testing/profile-store.conformance.ts'
@@ -932,5 +932,70 @@ describe('openRouterProvider routing and usage accounting', () => {
     expect(providerOf(0)).toBeUndefined()
     expect(providerOf(1)).toEqual({ order: ['amazon-bedrock', 'anthropic'] })
     expect(providerOf(2)).toBeUndefined()
+  })
+
+  const stickySetup = (steps: Parameters<typeof scriptedModel>[0]) => {
+    const model = scriptedModel(steps, { provider: 'openrouter.chat', modelId: 'm' })
+    const def = openRouterProvider({ createOpenRouter: () => () => model })
+    const instance = def.create(
+      validateSettings(def.settings, { apiKey: KEY, stickyProvider: true }),
+    )
+    const providerOf = (calls: Array<{ providerOptions?: unknown }>, i: number): unknown =>
+      (calls[i]?.providerOptions as { openrouter?: { provider?: unknown } } | undefined)?.openrouter
+        ?.provider
+    return { model, wrapped: instance.languageModel('m'), providerOf }
+  }
+  const bedrock = { openrouter: { provider: 'Amazon Bedrock' } }
+
+  test('sticky provider: a failed call forgets the provider, the next is routed normally', async () => {
+    const { model, wrapped, providerOf } = stickySetup([
+      { text: 'a', providerMetadata: bedrock },
+      { text: 'b', throws: new Error('Upstream error: Internal server error') },
+      { text: 'c', providerMetadata: bedrock },
+    ])
+    const call = () => generateText({ model: wrapped, messages: [{ role: 'user', content: 'hi' }] })
+    await call()
+    await expect(call()).rejects.toThrow('Internal server error')
+    await call()
+    expect(providerOf(model.doGenerateCalls, 1)).toEqual({ order: ['amazon-bedrock'] })
+    expect(providerOf(model.doGenerateCalls, 2)).toBeUndefined()
+  })
+
+  test('sticky provider: a stream error part forgets the provider', async () => {
+    const { model, wrapped, providerOf } = stickySetup([
+      { text: 'a', providerMetadata: bedrock },
+      {
+        text: 'b',
+        streamError: new Error('Upstream returned HTTP 502'),
+        providerMetadata: bedrock,
+      },
+      { text: 'c', providerMetadata: bedrock },
+    ])
+    const call = async () => {
+      const result = streamText({
+        model: wrapped,
+        messages: [{ role: 'user', content: 'hi' }],
+        onError: () => {},
+      })
+      await result.consumeStream()
+    }
+    await call()
+    await call()
+    await call()
+    expect(providerOf(model.doStreamCalls, 1)).toEqual({ order: ['amazon-bedrock'] })
+    expect(providerOf(model.doStreamCalls, 2)).toBeUndefined()
+  })
+
+  test('sticky provider: an abort keeps the provider', async () => {
+    const { model, wrapped, providerOf } = stickySetup([
+      { text: 'a', providerMetadata: bedrock },
+      { text: 'b', throws: Object.assign(new Error('aborted'), { name: 'AbortError' }) },
+      { text: 'c', providerMetadata: bedrock },
+    ])
+    const call = () => generateText({ model: wrapped, messages: [{ role: 'user', content: 'hi' }] })
+    await call()
+    await expect(call()).rejects.toThrow('aborted')
+    await call()
+    expect(providerOf(model.doGenerateCalls, 2)).toEqual({ order: ['amazon-bedrock'] })
   })
 })
