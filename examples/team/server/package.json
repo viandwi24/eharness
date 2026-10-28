@@ -20,9 +20,9 @@
     "@grammyjs/runner": "2.0.3",
     "@hono/zod-openapi": "1.6.3",
     "@jitl/quickjs-ng-wasmfile-release-sync": "0.32.0",
-    "@mtcute/bun": "0.32.4",
+    "@mtcute/bun": "0.32.7",
     "@openrouter/ai-sdk-provider": "3.1.0",
-    "@scalar/hono-api-reference": "0.12.11",
+    "@scalar/hono-api-reference": "0.12.14",
     "ai": "^7.0.127",
     "croner": "10.0.1",
     "drizzle-orm": "0.45.4",
@@ -33,7 +33,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/bun": "1.4.2",
+    "@types/bun": "1.4.4",
     "drizzle-kit": "0.31.11",
     "typescript": "7.0.2"
   }
