@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `thinking` text DEFAULT 'default' NOT NULL;

@@ -170,6 +170,17 @@ export const ModelSchema = z
       .optional()
       .openapi({ description: 'USD per 1M tokens.' }),
     reasoning: z.boolean().optional(),
+    thinking: z
+      .object({
+        levels: z.array(z.string()).optional(),
+        mandatory: z.boolean().optional(),
+        defaultLevel: z.string().optional(),
+      })
+      .optional()
+      .openapi({
+        description:
+          "Reasoning levels the model takes (AI SDK `reasoning` values; `none` = it can be turned off), when the catalog lists them; `mandatory` = it always thinks; `defaultLevel` = the provider's own.",
+      }),
     tools: z.boolean().optional().openapi({ description: 'Supports tool calling.' }),
     source: z.enum(['extra', 'live', 'catalog']).openapi({
       description:

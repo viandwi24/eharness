@@ -21,6 +21,7 @@
 	import { costAtThreshold, DEFAULT_COMPACT_AT, effectiveWindow, windowPresets, windowProblem } from '#lib/context-window.js';
 	import { effectiveModel, type ModelPick } from '#lib/providers/effective.js';
 	import { formatContext, type ProviderModel } from '#lib/providers/models.js';
+	import { THINKING_LABEL, thinkingChoices, type Thinking } from '#lib/thinking.js';
 
 	/** Without `agent` the editor creates one; with it, it edits (the lead cannot be archived). */
 	let {
@@ -70,6 +71,8 @@
 	let customWindow = $state(agent?.contextWindow == null ? '' : String(agent.contextWindow));
 	// svelte-ignore state_referenced_locally
 	let compactAt = $state(String(agent?.compactAtPercent ?? DEFAULT_COMPACT_AT));
+	// svelte-ignore state_referenced_locally
+	let thinking = $state<Thinking>((agent?.thinking ?? 'default') as Thinking);
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
 
@@ -80,7 +83,7 @@
 
 	$effect(() => {
 		dirty = agent
-			? name !== agent.name || color !== agent.color || description !== agent.description || (model || null) !== (agent.model ?? null) || (modelProfile || null) !== (agent.modelProfile ?? null) || modeChoice !== agentChoiceOf(agent.permissionMode) || taskConcurrency !== String(agent.taskConcurrency ?? 1) || windowValue() !== (agent.contextWindow ?? null) || compactAt !== String(agent.compactAtPercent ?? DEFAULT_COMPACT_AT)
+			? name !== agent.name || color !== agent.color || description !== agent.description || (model || null) !== (agent.model ?? null) || (modelProfile || null) !== (agent.modelProfile ?? null) || modeChoice !== agentChoiceOf(agent.permissionMode) || taskConcurrency !== String(agent.taskConcurrency ?? 1) || windowValue() !== (agent.contextWindow ?? null) || compactAt !== String(agent.compactAtPercent ?? DEFAULT_COMPACT_AT) || thinking !== (agent.thinking ?? 'default')
 			: !!name.trim() || !!instructions.trim();
 	});
 
@@ -128,6 +131,9 @@
 	const clamped = $derived(modelWindow !== undefined && (windowValue() ?? 0) > modelWindow);
 	const pct = $derived(Math.min(95, Math.max(50, Number.parseInt(compactAt, 10) || DEFAULT_COMPACT_AT)));
 	const callCost = $derived(costAtThreshold(effWindow, pct, modelInfo?.pricing?.input));
+	const thinkingInfo = $derived(thinkingChoices(modelInfo));
+	/** A stored level the current model does not list: still shown, the server sends the nearest one. */
+	const thinkingOff = $derived(thinking !== 'default' && !thinkingInfo.levels.includes(thinking));
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -143,7 +149,8 @@
 			permissionMode: storedOfChoice(modeChoice) as Agent['permissionMode'],
 			taskConcurrency: Number.parseInt(taskConcurrency, 10) || 1,
 			contextWindow: windowValue(),
-			compactAtPercent: pct
+			compactAtPercent: pct,
+			thinking
 		};
 		try {
 			if (agent) {
@@ -226,6 +233,21 @@
 		<ModelPicker bind:profileId={modelProfile} bind:modelId={model} id="agent-model" />
 		{#if errors.model || errors.modelProfile}<span class="text-xs text-destructive-text">{errors.model ?? errors.modelProfile}</span>{/if}
 	</div>
+
+	<label class="flex flex-col gap-1" data-testid="thinking-setting">
+		<span class="font-medium">Thinking</span>
+		<NativeSelect bind:value={thinking} aria-label="Thinking" data-testid="thinking">
+			<NativeSelectOption value="default">{THINKING_LABEL.default}{thinkingInfo.defaultLevel ? ` (${THINKING_LABEL[thinkingInfo.defaultLevel]})` : ''}</NativeSelectOption>
+			{#each thinkingInfo.levels as l (l)}<NativeSelectOption value={l}>{THINKING_LABEL[l]}</NativeSelectOption>{/each}
+			{#if thinkingOff}<NativeSelectOption value={thinking}>{THINKING_LABEL[thinking]} (not offered by this model)</NativeSelectOption>{/if}
+		</NativeSelect>
+		{#if errors.thinking}<span class="text-xs text-destructive-text">{errors.thinking}</span>{/if}
+		<span class="text-xs text-muted-foreground" data-testid="thinking-hint">
+			How long the model thinks before it answers. Off or Low answers faster and cheaper; higher levels help hard problems.
+			{thinkingInfo.hint}
+			{#if thinkingOff}This model does not take {THINKING_LABEL[thinking]}: the nearest level it takes is used{thinking === 'none' && thinkingInfo.mandatory ? ' (it always thinks, so its own level is used)' : ''}.{/if}
+		</span>
+	</label>
 
 	<label class="flex flex-col gap-1">
 		<span class="font-medium">Permission mode</span>

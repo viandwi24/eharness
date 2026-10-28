@@ -21237,6 +21237,11 @@ export interface components {
             contextWindow: number | null;
             /** @description History is summarized when the context reaches this percent of the effective window. Default 80. */
             compactAtPercent: number;
+            /**
+             * @description How much the model thinks before it answers: `default` = the model's own setting, `none` = off, or a level. A level the current model does not take is sent as the nearest one it does (the model list says which: `thinking.levels`).
+             * @enum {string}
+             */
+            thinking: "default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
             /** @description This agent's own choices per connection id (on / off / inherit, capability modes). Use `GET /agents/{id}/connectors` for the effective view. */
             connectors: {
                 [key: string]: components["schemas"]["ConnectionChoices"];
@@ -21295,6 +21300,11 @@ export interface components {
             contextWindow?: number | null;
             /** @description See `Agent.compactAtPercent`. Default 80. */
             compactAtPercent?: number;
+            /**
+             * @description See `Agent.thinking`. Default `default`.
+             * @enum {string}
+             */
+            thinking?: "default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
             skills?: string[];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
@@ -21333,6 +21343,11 @@ export interface components {
             contextWindow?: number | null;
             /** @description See `Agent.compactAtPercent`. Default 80. */
             compactAtPercent?: number;
+            /**
+             * @description See `Agent.thinking`. Default `default`.
+             * @enum {string}
+             */
+            thinking?: "default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
             skills?: string[];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
@@ -23532,6 +23547,12 @@ export interface components {
                 cacheWrite?: number;
             };
             reasoning?: boolean;
+            /** @description Reasoning levels the model takes (AI SDK `reasoning` values; `none` = it can be turned off), when the catalog lists them; `mandatory` = it always thinks; `defaultLevel` = the provider's own. */
+            thinking?: {
+                levels?: string[];
+                mandatory?: boolean;
+                defaultLevel?: string;
+            };
             /** @description Supports tool calling. */
             tools?: boolean;
             /**

@@ -157,6 +157,7 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     taskConcurrency: draft.taskConcurrency ?? DEFAULT_TASK_CONCURRENCY,
     contextWindow: draft.contextWindow ?? null,
     compactAtPercent: draft.compactAtPercent ?? DEFAULT_COMPACT_AT_PERCENT,
+    thinking: draft.thinking ?? 'default',
     skills: draft.skills ?? [],
     permissionMode: draft.permissionMode ?? 'default',
     connectors:
@@ -216,6 +217,7 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
     taskConcurrency: patch.taskConcurrency ?? current.taskConcurrency,
     contextWindow: patch.contextWindow === undefined ? current.contextWindow : patch.contextWindow,
     compactAtPercent: patch.compactAtPercent ?? current.compactAtPercent,
+    thinking: patch.thinking ?? current.thinking,
     skills: patch.skills ?? current.skills,
     connectors:
       patch.connectors === undefined ? current.connectors : normalizeConnectors(patch.connectors),

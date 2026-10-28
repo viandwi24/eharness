@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi'
-import { AGENT_ROLES, PERMISSION_MODES, TOOL_ACCESS } from '../../app/catalog.ts'
+import { AGENT_ROLES, AGENT_THINKING, PERMISSION_MODES, TOOL_ACCESS } from '../../app/catalog.ts'
 import { ConnectionChoicesSchema } from './connectors.ts'
 import { ActivitySchema } from './tasks.ts'
 
@@ -47,6 +47,10 @@ export const AgentSchema = z
     compactAtPercent: z.number().int().min(50).max(95).openapi({
       description:
         'History is summarized when the context reaches this percent of the effective window. Default 80.',
+    }),
+    thinking: z.enum(AGENT_THINKING).openapi({
+      description:
+        "How much the model thinks before it answers: `default` = the model's own setting, `none` = off, or a level. A level the current model does not take is sent as the nearest one it does (the model list says which: `thinking.levels`).",
     }),
     connectors: z.record(z.string(), ConnectionChoicesSchema).openapi({
       description:
@@ -99,6 +103,9 @@ export const AgentCreateSchema = z
     }),
     compactAtPercent: z.number().int().min(50).max(95).optional().openapi({
       description: 'See `Agent.compactAtPercent`. Default 80.',
+    }),
+    thinking: z.enum(AGENT_THINKING).optional().openapi({
+      description: 'See `Agent.thinking`. Default `default`.',
     }),
     skills: z.array(z.string()).optional(),
     permissionMode: z.enum(PERMISSION_MODES).optional(),

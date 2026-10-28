@@ -23,7 +23,13 @@
  *  - Every apply first takes a verified safety backup and records a restore point; undo is an
  *    import of that safety backup (see `restoreImport` and `app/backups.ts`).
  */
-import { AGENT_ROLES, type AgentDef, PERMISSION_MODES, TOOL_ACCESS } from '../domain/agents.ts'
+import {
+  AGENT_ROLES,
+  AGENT_THINKING,
+  type AgentDef,
+  PERMISSION_MODES,
+  TOOL_ACCESS,
+} from '../domain/agents.ts'
 import { COVERAGE_BY_TABLE } from '../domain/backup-coverage.ts'
 import { beforeReason, type RestorePoint, restorePointId } from '../domain/backups.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
@@ -252,6 +258,12 @@ const num = (v: unknown, what: string): number => {
 }
 const numOrNull = (v: unknown, what: string): number | null =>
   v === null || v === undefined ? null : num(v, what)
+const thinkingOf = (v: unknown): AgentDef['thinking'] => {
+  if (typeof v !== 'string' || !(AGENT_THINKING as readonly string[]).includes(v)) {
+    throw new Error(`thinking must be one of ${AGENT_THINKING.join(', ')}`)
+  }
+  return v as AgentDef['thinking']
+}
 
 function parseAgentDoc(raw: unknown, slug: string): AgentDoc {
   if (!isObject(raw)) throw new Error('agent.json must be an object')
@@ -292,6 +304,7 @@ function parseAgentDoc(raw: unknown, slug: string): AgentDoc {
     taskConcurrency: num(raw.taskConcurrency, 'taskConcurrency'),
     contextWindow: numOrNull(raw.contextWindow, 'contextWindow'),
     compactAtPercent: num(raw.compactAtPercent, 'compactAtPercent'),
+    ...(raw.thinking === undefined ? {} : { thinking: thinkingOf(raw.thinking) }),
     skills: raw.skills === undefined ? [] : strings(raw.skills, 'skills'),
     permissionMode,
     rules: {
@@ -2016,6 +2029,7 @@ async function applyAgent(
     taskConcurrency: doc.taskConcurrency,
     contextWindow: doc.contextWindow,
     compactAtPercent: doc.compactAtPercent,
+    ...(doc.thinking === undefined ? {} : { thinking: doc.thinking as AgentDef['thinking'] }),
     skills: doc.skills,
     permissionMode: doc.permissionMode as AgentDef['permissionMode'],
     rules: doc.rules,

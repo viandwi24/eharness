@@ -39,6 +39,7 @@ import {
   type SessionLock,
   type SessionPeek,
   type SessionStateSnapshot,
+  type ThinkingLevel,
 } from 'eharness'
 import { type ActivityStore, activity } from 'eharness/activity'
 import { clock, nowLine } from 'eharness/clock'
@@ -63,7 +64,7 @@ import {
 } from 'eharness/permissions'
 import { subagent } from 'eharness/subagent'
 import type { Deps, EventAppender, PersonaStore, ProgramStore } from '../../app/ports.ts'
-import type { AgentDef } from '../../domain/agents.ts'
+import { type AgentDef, thinkingFor } from '../../domain/agents.ts'
 import {
   isAllowedMediaType,
   isDmSession,
@@ -1495,6 +1496,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       // check credits for) the model maximum on every call
       settings: {
         maxOutputTokens: outputCapOf(modelInfoOf(def, settings).maxOutputTokens),
+        // the agent's thinking level, mapped onto what its current model takes (the catalog lists it)
+        ...((): { reasoning?: ThinkingLevel } => {
+          const level = thinkingFor(def.thinking, modelInfoOf(def, settings).thinking)
+          return level === undefined ? {} : { reasoning: level }
+        })(),
         timeout: { firstChunkMs: MODEL_IDLE_TIMEOUT_MS, chunkMs: MODEL_IDLE_TIMEOUT_MS },
         ...(deps.tuning?.modelMaxRetries === undefined
           ? {}

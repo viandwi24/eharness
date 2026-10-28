@@ -24,6 +24,8 @@ export interface AgentDoc {
   taskConcurrency: number
   contextWindow: number | null
   compactAtPercent: number
+  /** Absent in exports made before it existed (= `default`). */
+  thinking?: string
   skills: string[]
   permissionMode: string
   rules: { allow: string[]; ask: string[]; deny: string[] }

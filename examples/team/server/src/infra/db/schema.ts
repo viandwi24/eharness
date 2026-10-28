@@ -55,6 +55,8 @@ export const agents = sqliteTable(
     contextWindow: integer('context_window'),
     /** Summarize history at this percent of the effective window. */
     compactAtPercent: integer('compact_at_percent').notNull().default(80),
+    /** Reasoning level: `default` (the model's own), `none` or a level (domain `AgentThinking`). */
+    thinking: text('thinking').notNull().default('default'),
     /** Legacy tool checklist (before connectors): read by the boot migration only, never written. */
     tools: json<string[]>('tools').notNull(),
     skills: json<string[]>('skills').notNull(),

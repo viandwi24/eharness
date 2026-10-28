@@ -318,7 +318,12 @@ export function createProviderService(options: ProviderServiceOptions): Provider
     ...(m.info?.contextWindow === undefined ? {} : { contextWindow: m.info.contextWindow }),
     ...(m.info?.maxOutputTokens === undefined ? {} : { maxOutputTokens: m.info.maxOutputTokens }),
     ...(m.info?.pricing === undefined ? {} : { pricing: { ...m.info.pricing } }),
-    ...(m.reasoning === undefined ? {} : { reasoning: m.reasoning }),
+    ...(m.reasoning === undefined
+      ? m.info?.thinking === undefined
+        ? {}
+        : { reasoning: true }
+      : { reasoning: m.reasoning }),
+    ...(m.info?.thinking === undefined ? {} : { thinking: structuredClone(m.info.thinking) }),
     ...(m.tools === undefined ? {} : { tools: m.tools }),
     source: m.source,
     ...(m.enabled === undefined ? {} : { enabled: m.enabled }),

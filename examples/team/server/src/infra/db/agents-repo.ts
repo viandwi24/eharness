@@ -23,6 +23,7 @@ const toDef = (row: Row, connectors: AgentDef['connectors']): AgentDef => ({
   taskConcurrency: row.taskConcurrency,
   contextWindow: row.contextWindow,
   compactAtPercent: row.compactAtPercent,
+  thinking: (row.thinking ?? 'default') as AgentDef['thinking'],
   skills: row.skills,
   permissionMode: row.permissionMode as PermissionMode,
   rules: row.rules,

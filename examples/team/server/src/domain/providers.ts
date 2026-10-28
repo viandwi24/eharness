@@ -76,6 +76,8 @@ export interface ModelView {
   /** USD per 1M tokens. */
   pricing?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
   reasoning?: boolean
+  /** Reasoning levels the model takes, when its catalog entry lists them (`none` = it can be off). */
+  thinking?: { levels?: string[]; mandatory?: boolean; defaultLevel?: string }
   tools?: boolean
   source: 'extra' | 'live' | 'catalog'
   /** Only with `all`: false when the profile's allow / deny hides the model. */

@@ -359,6 +359,20 @@
             "maximum": 95,
             "description": "History is summarized when the context reaches this percent of the effective window. Default 80."
           },
+          "thinking": {
+            "type": "string",
+            "enum": [
+              "default",
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "description": "How much the model thinks before it answers: `default` = the model's own setting, `none` = off, or a level. A level the current model does not take is sent as the nearest one it does (the model list says which: `thinking.levels`)."
+          },
           "connectors": {
             "type": "object",
             "additionalProperties": {
@@ -420,6 +434,7 @@
           "taskConcurrency",
           "contextWindow",
           "compactAtPercent",
+          "thinking",
           "connectors",
           "skills",
           "permissionMode",
@@ -546,6 +561,20 @@
             "minimum": 50,
             "maximum": 95,
             "description": "See `Agent.compactAtPercent`. Default 80."
+          },
+          "thinking": {
+            "type": "string",
+            "enum": [
+              "default",
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "description": "See `Agent.thinking`. Default `default`."
           },
           "skills": {
             "type": "array",
@@ -674,6 +703,20 @@
             "minimum": 50,
             "maximum": 95,
             "description": "See `Agent.compactAtPercent`. Default 80."
+          },
+          "thinking": {
+            "type": "string",
+            "enum": [
+              "default",
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "description": "See `Agent.thinking`. Default `default`."
           },
           "skills": {
             "type": "array",
@@ -9014,6 +9057,24 @@
           },
           "reasoning": {
             "type": "boolean"
+          },
+          "thinking": {
+            "type": "object",
+            "properties": {
+              "levels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mandatory": {
+                "type": "boolean"
+              },
+              "defaultLevel": {
+                "type": "string"
+              }
+            },
+            "description": "Reasoning levels the model takes (AI SDK `reasoning` values; `none` = it can be turned off), when the catalog lists them; `mandatory` = it always thinks; `defaultLevel` = the provider's own."
           },
           "tools": {
             "type": "boolean",

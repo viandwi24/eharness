@@ -110,6 +110,7 @@ export function agentDoc(def: AgentDef, index: ConnectionIndex): AgentDoc {
     taskConcurrency: def.taskConcurrency,
     contextWindow: def.contextWindow,
     compactAtPercent: def.compactAtPercent,
+    thinking: def.thinking,
     skills: def.skills,
     permissionMode: def.permissionMode,
     rules: def.rules,
