@@ -210,6 +210,36 @@ describe('channel types and the account card', () => {
 		expect('error' in m.limitsBody({ dmDailyMax: 'x', dailyMax: '40', adminLogHours: '2' })).toBe(true);
 		expect('error' in m.limitsBody({ dmDailyMax: '5', dailyMax: '40', adminLogHours: '' })).toBe(true);
 	});
+	test('pace: the form shows seconds and per-minute rates, the body milliseconds over one minute', async () => {
+		const m = await import('./model');
+		const limits = {
+			dmDailyMax: 30,
+			dailyMax: 300,
+			adminLogEveryMs: 14_400_000,
+			chatMinIntervalMs: 3000,
+			groupMax: 10,
+			groupWindowMs: 60_000,
+			connectionMax: 15,
+			connectionWindowMs: 30_000,
+			gapAdminMinMs: 3000,
+			gapAdminMaxMs: 8000,
+			gapEditMinMs: 1200,
+			gapEditMaxMs: 3500,
+			adminPerMinute: 6,
+			adminBurst: 2,
+			editPerMinute: 15,
+			readPerMinute: 30,
+			globalPerMinute: 45,
+			parkWaitMs: 10_000
+		};
+		const form = m.paceFormOf(limits);
+		expect(form).toMatchObject({ chatGapS: '3', accountPerMinute: '30', adminPauseMinS: '3', editPauseMinS: '1.2', waitS: '10' });
+		const r = m.paceBody(form);
+		expect('body' in r && r.body).toMatchObject({ chatMinIntervalMs: 3000, connectionMax: 30, connectionWindowMs: 60_000, gapAdminMaxMs: 8000, gapEditMinMs: 1200, adminBurst: 2, parkWaitMs: 10_000 });
+		expect(m.paceBody({ ...form, adminPauseMinS: '9' })).toEqual({ error: 'Pause between chat changes: the shortest must not exceed the longest' });
+		expect('error' in m.paceBody({ ...form, adminBurst: '0' })).toBe(true);
+		expect('error' in m.paceBody({ ...form, readPerMinute: '' })).toBe(true);
+	});
 	test('lastWindowDays', async () => {
 		const m = await import('./model');
 		expect(m.lastWindowDays('')).toBeNull();

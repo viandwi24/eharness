@@ -389,6 +389,122 @@ export function limitsBody(f: LimitsForm): { body: { dmDailyMax: number; dailyMa
 	return { body: { dmDailyMax: dm, dailyMax: all, adminLogEveryMs: Math.round(hours * 3_600_000) } };
 }
 
+/**
+ * The pace of a user account: how fast it sends, the natural pause between two changes and the API
+ * limits per minute. Seconds in the form, milliseconds on the wire; per-minute send rates are saved
+ * over a one minute window.
+ */
+export interface PaceForm {
+	chatGapS: string;
+	groupPerMinute: string;
+	accountPerMinute: string;
+	adminPauseMinS: string;
+	adminPauseMaxS: string;
+	editPauseMinS: string;
+	editPauseMaxS: string;
+	adminPerMinute: string;
+	adminBurst: string;
+	editPerMinute: string;
+	readPerMinute: string;
+	globalPerMinute: string;
+	waitS: string;
+}
+
+export interface PaceBody {
+	chatMinIntervalMs: number;
+	groupMax: number;
+	groupWindowMs: number;
+	connectionMax: number;
+	connectionWindowMs: number;
+	gapAdminMinMs: number;
+	gapAdminMaxMs: number;
+	gapEditMinMs: number;
+	gapEditMaxMs: number;
+	adminPerMinute: number;
+	adminBurst: number;
+	editPerMinute: number;
+	readPerMinute: number;
+	globalPerMinute: number;
+	parkWaitMs: number;
+}
+
+const secondsText = (ms: number): string => String(Math.round(ms / 100) / 10);
+const perMinute = (max: number, windowMs: number): string => String(Math.round(((max * 60_000) / Math.max(1, windowMs)) * 10) / 10);
+
+export const paceFormOf = (l: AccountLimits): PaceForm => ({
+	chatGapS: secondsText(l.chatMinIntervalMs),
+	groupPerMinute: perMinute(l.groupMax, l.groupWindowMs),
+	accountPerMinute: perMinute(l.connectionMax, l.connectionWindowMs),
+	adminPauseMinS: secondsText(l.gapAdminMinMs),
+	adminPauseMaxS: secondsText(l.gapAdminMaxMs),
+	editPauseMinS: secondsText(l.gapEditMinMs),
+	editPauseMaxS: secondsText(l.gapEditMaxMs),
+	adminPerMinute: String(l.adminPerMinute),
+	adminBurst: String(l.adminBurst),
+	editPerMinute: String(l.editPerMinute),
+	readPerMinute: String(l.readPerMinute),
+	globalPerMinute: String(l.globalPerMinute),
+	waitS: secondsText(l.parkWaitMs)
+});
+
+export function paceBody(f: PaceForm): { body: PaceBody } | { error: string } {
+	const num = (v: string): number | undefined => {
+		const t = fieldText(v);
+		const n = Number(t);
+		return t !== '' && Number.isFinite(n) ? n : undefined;
+	};
+	const seconds = (v: string, label: string, max: number): number | string => {
+		const n = num(v);
+		return n === undefined || n < 0 || n > max ? `${label}: seconds, 0 to ${max}` : Math.round(n * 1000);
+	};
+	const rate = (v: string, label: string, max: number): number | string => {
+		const n = num(v);
+		return n === undefined || n <= 0 || n > max ? `${label}: more than 0, at most ${max} a minute` : n;
+	};
+	const whole = (v: string, label: string, min: number, max: number): number | string => {
+		const n = num(v);
+		return n === undefined || !Number.isInteger(n) || n < min || n > max ? `${label}: a whole number, ${min} to ${max}` : n;
+	};
+	const fields = {
+		chatMinIntervalMs: seconds(f.chatGapS, 'Gap between messages to one chat', 600),
+		group: whole(f.groupPerMinute, 'Messages to one group a minute', 1, 600),
+		account: whole(f.accountPerMinute, 'Messages a minute (all chats)', 1, 1200),
+		gapAdminMinMs: seconds(f.adminPauseMinS, 'Pause between chat changes (shortest)', 600),
+		gapAdminMaxMs: seconds(f.adminPauseMaxS, 'Pause between chat changes (longest)', 600),
+		gapEditMinMs: seconds(f.editPauseMinS, 'Pause between edits (shortest)', 600),
+		gapEditMaxMs: seconds(f.editPauseMaxS, 'Pause between edits (longest)', 600),
+		adminPerMinute: rate(f.adminPerMinute, 'Chat changes', 600),
+		adminBurst: whole(f.adminBurst, 'Chat changes at once', 1, 100),
+		editPerMinute: rate(f.editPerMinute, 'Edits, deletes and pins', 600),
+		readPerMinute: rate(f.readPerMinute, 'Reads', 600),
+		globalPerMinute: rate(f.globalPerMinute, 'All calls', 1200),
+		parkWaitMs: seconds(f.waitS, 'Longest a tool waits', 300)
+	};
+	for (const v of Object.values(fields)) if (typeof v === 'string') return { error: v };
+	const n = fields as Record<keyof typeof fields, number>;
+	if (n.gapAdminMinMs > n.gapAdminMaxMs) return { error: 'Pause between chat changes: the shortest must not exceed the longest' };
+	if (n.gapEditMinMs > n.gapEditMaxMs) return { error: 'Pause between edits: the shortest must not exceed the longest' };
+	return {
+		body: {
+			chatMinIntervalMs: n.chatMinIntervalMs,
+			groupMax: n.group,
+			groupWindowMs: 60_000,
+			connectionMax: n.account,
+			connectionWindowMs: 60_000,
+			gapAdminMinMs: n.gapAdminMinMs,
+			gapAdminMaxMs: n.gapAdminMaxMs,
+			gapEditMinMs: n.gapEditMinMs,
+			gapEditMaxMs: n.gapEditMaxMs,
+			adminPerMinute: n.adminPerMinute,
+			adminBurst: n.adminBurst,
+			editPerMinute: n.editPerMinute,
+			readPerMinute: n.readPerMinute,
+			globalPerMinute: n.globalPerMinute,
+			parkWaitMs: n.parkWaitMs
+		}
+	};
+}
+
 /** Today's sends against the caps. */
 export const usageText = (a: ChannelAccount): string =>
 	`Today: ${a.today.dm}/${a.limits.dmDailyMax} direct messages · ${a.today.all}/${a.limits.dailyMax} in all`;

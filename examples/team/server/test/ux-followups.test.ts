@@ -13,6 +13,8 @@ import { updateAgent } from '../src/app/agents.ts'
 import { createEscalation } from '../src/app/decisions.ts'
 import { withoutCenterHints } from '../src/domain/decisions.ts'
 import { LEAD_PLAYBOOK } from '../src/domain/prompts.ts'
+import { USER_GOVERNOR } from '../src/infra/channels/governor.ts'
+import { RateLimitsSchema } from '../src/infra/channels/policy.ts'
 import { webReminderSession } from '../src/infra/channels/reminders.ts'
 import { openDatabase } from '../src/infra/db/client.ts'
 import {
@@ -25,7 +27,12 @@ import { autoAllowedVia, markAutoAllowed } from '../src/infra/eh/permission-plug
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
 import { sqliteMessages } from '../src/infra/eh/storage.ts'
 import { describeErrorTitled, errorTitle } from '../src/infra/telegram-user/errors.ts'
-import { accountLimitDefaults, USER_RATE_DEFAULTS } from '../src/infra/telegram-user/service.ts'
+import {
+  accountLimitDefaults,
+  paceOf,
+  paceOverrides,
+  USER_RATE_DEFAULTS,
+} from '../src/infra/telegram-user/service.ts'
 import { compose, type Server } from '../src/main.ts'
 import { postAs, userMessage } from './support/http.ts'
 
@@ -276,5 +283,30 @@ describe('telegram account copy', () => {
     const d = accountLimitDefaults()
     expect(d.dmDailyMax).toBe(30)
     expect(d.groupMax).toBe(USER_RATE_DEFAULTS.groupMax)
+    // the pace defaults are the user account governor's
+    expect(d.gapAdminMinMs).toBe(USER_GOVERNOR.gap.admin.minMs)
+    expect(d.adminPerMinute).toBe(USER_GOVERNOR.admin.perMinute)
+    expect(d.parkWaitMs).toBe(USER_GOVERNOR.parkWaitMs)
+  })
+
+  test('the pace form writes only what it gives, over what is stored', () => {
+    const stored = { read: { burst: 9 }, gap: { edit: { minMs: 500, maxMs: 900 } } }
+    const g = paceOverrides(stored, { gapAdminMinMs: 5000, gapAdminMaxMs: 12_000, adminBurst: 1 })
+    expect(g).toEqual({
+      read: { burst: 9 },
+      gap: { edit: { minMs: 500, maxMs: 900 }, admin: { minMs: 5000, maxMs: 12_000 } },
+      admin: { burst: 1 },
+    })
+    // the stored object is not touched
+    expect(stored).toEqual({ read: { burst: 9 }, gap: { edit: { minMs: 500, maxMs: 900 } } })
+    expect(RateLimitsSchema.safeParse({ governor: g }).success).toBe(true)
+    const view = paceOf(g)
+    expect(view).toMatchObject({
+      gapAdminMinMs: 5000,
+      gapAdminMaxMs: 12_000,
+      gapEditMinMs: 500,
+      adminBurst: 1,
+      adminPerMinute: USER_GOVERNOR.admin.perMinute,
+    })
   })
 })

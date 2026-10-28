@@ -117,6 +117,16 @@ const AccountLimitsSchema = z.object({
   groupWindowMs: z.number().int(),
   connectionMax: z.number().int(),
   connectionWindowMs: z.number().int(),
+  gapAdminMinMs: z.number().int(),
+  gapAdminMaxMs: z.number().int(),
+  gapEditMinMs: z.number().int(),
+  gapEditMaxMs: z.number().int(),
+  adminPerMinute: z.number(),
+  adminBurst: z.number().int(),
+  editPerMinute: z.number(),
+  readPerMinute: z.number(),
+  globalPerMinute: z.number(),
+  parkWaitMs: z.number().int(),
 })
 
 export const ChannelAccountSchema = z
@@ -650,6 +660,16 @@ export const ChannelLimitsBodySchema = z
     groupWindowMs: z.number().int().min(1).optional(),
     connectionMax: z.number().int().min(1).optional(),
     connectionWindowMs: z.number().int().min(1).optional(),
+    gapAdminMinMs: z.number().int().min(0).max(600_000).optional(),
+    gapAdminMaxMs: z.number().int().min(0).max(600_000).optional(),
+    gapEditMinMs: z.number().int().min(0).max(600_000).optional(),
+    gapEditMaxMs: z.number().int().min(0).max(600_000).optional(),
+    adminPerMinute: z.number().positive().max(600).optional(),
+    adminBurst: z.number().int().min(1).max(100).optional(),
+    editPerMinute: z.number().positive().max(600).optional(),
+    readPerMinute: z.number().positive().max(600).optional(),
+    globalPerMinute: z.number().positive().max(1200).optional(),
+    parkWaitMs: z.number().int().min(0).max(300_000).optional(),
   })
   .openapi('ChannelLimitsBody')
 

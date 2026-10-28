@@ -184,6 +184,18 @@ export interface ChannelAccountView {
     groupWindowMs: number
     connectionMax: number
     connectionWindowMs: number
+    /** The natural pause between two chat changes / two edits (ms), and the API limits per minute. */
+    gapAdminMinMs: number
+    gapAdminMaxMs: number
+    gapEditMinMs: number
+    gapEditMaxMs: number
+    adminPerMinute: number
+    adminBurst: number
+    editPerMinute: number
+    readPerMinute: number
+    globalPerMinute: number
+    /** Longest a tool call waits for a pause or a limit before it answers "rate limited". */
+    parkWaitMs: number
   }
   /** What a new account starts with, per limit (the card says "default N"). */
   limitDefaults: ChannelAccountView['limits']
@@ -379,6 +391,16 @@ export interface ChannelLimitsInput {
   groupWindowMs?: number
   connectionMax?: number
   connectionWindowMs?: number
+  gapAdminMinMs?: number
+  gapAdminMaxMs?: number
+  gapEditMinMs?: number
+  gapEditMaxMs?: number
+  adminPerMinute?: number
+  adminBurst?: number
+  editPerMinute?: number
+  readPerMinute?: number
+  globalPerMinute?: number
+  parkWaitMs?: number
 }
 
 /** Somebody who wrote to the connection and is not linked yet (who and how often, never what). */

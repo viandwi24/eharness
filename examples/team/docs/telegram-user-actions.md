@@ -56,14 +56,19 @@ topics, contacts, kicks, deletions) are `admin` calls of the API governor, whate
 
 - **Natural pause.** Two chat changes of one account start 3 to 8 s apart (a random pause, like a
   person clicking through the Telegram app); edits, deletes and pins 1.2 to 3.5 s apart. Calls that
-  arrive together queue. A bot has no pause. `rate.governor.gap.{admin,edit}.{minMs,maxMs}` on the
-  connection overrides it.
+  arrive together queue. A bot has no pause.
 - **Strict bucket.** A user account allows 2 chat changes at once, then 6 per minute.
 - **Flood waits.** mtcute reports `FLOOD_WAIT_%d` with the seconds in a separate field; the app reads
   both. A wait of up to 30 s is sat out inside the call, which is then tried once more. A longer wait
   parks the chat changes of the account only (sends and reads go on), and the tool answers until when,
   telling the model not to retry earlier or sleep in code. These waits never count toward the flood
   storm breaker that pauses sending, and they never park the chat for sends.
+
+All of it is set on the account's **Send limits** page, section **Pace** (natural pause ranges, send
+rate per chat, per group and in all, API limits per minute, how long a tool waits), each field with
+its default beside it and a "Use defaults" button. It saves through
+`PUT /channels/connections/{id}/account/limits` into the connection's `rate` (`rate.governor` for
+the pause and the API limits).
 
 ### Ownership transfer
 

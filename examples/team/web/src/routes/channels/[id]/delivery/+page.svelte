@@ -9,7 +9,7 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { useConnection } from '#lib/channels/connection.svelte.js';
-	import { breakerText, HELD_HELP, HELD_LABEL, limitsBody, limitsFormOf, outboxSummary, usageText, type LimitsForm } from '#lib/channels/model.js';
+	import { breakerText, HELD_HELP, HELD_LABEL, limitsBody, limitsFormOf, outboxSummary, paceBody, paceFormOf, usageText, type LimitsForm, type PaceForm } from '#lib/channels/model.js';
 	import { formatTime } from '#lib/format.js';
 
 	// How messages leave: the queue, the pause after errors, and for a user account the daily caps.
@@ -28,6 +28,32 @@
 			if (l && !dirty) limits = limitsFormOf(l);
 		});
 	});
+
+	// the pace: send rate, the natural pause between changes, API limits per minute
+	let pace = $state<PaceForm | undefined>(untrack(() => (cs.conn?.account ? paceFormOf(cs.conn.account.limits) : undefined)));
+	let paceDirty = $state(false);
+	$effect(() => {
+		const l = conn.account?.limits;
+		untrack(() => {
+			if (l && !paceDirty) pace = paceFormOf(l);
+		});
+	});
+	const paceDefaults = $derived(account ? paceFormOf(account.limitDefaults) : undefined);
+	const isDefault = $derived(pace !== undefined && paceDefaults !== undefined && (Object.keys(pace) as Array<keyof PaceForm>).every((k) => Number(pace?.[k]) === Number(paceDefaults[k])));
+	function useDefaults(): void {
+		if (!paceDefaults) return;
+		pace = { ...paceDefaults };
+		paceDirty = true;
+	}
+	async function savePace(): Promise<void> {
+		if (!pace) return;
+		const r = paceBody(pace);
+		if ('error' in r) {
+			toast.error(r.error);
+			return;
+		}
+		if (await run('save the pace', () => api.put('/channels/connections/{id}/account/limits', { params: { id }, body: r.body }), 'Pace saved')) paceDirty = false;
+	}
 
 	async function run(what: string, fn: () => Promise<unknown>, ok: string): Promise<boolean> {
 		busy = true;
@@ -87,6 +113,73 @@
 					<label class="flex flex-col gap-1"><span class="text-xs font-medium">Admin log every (hours)</span><Input inputmode="decimal" bind:value={limits.adminLogHours} oninput={() => (dirty = true)} /></label>
 				</div>
 				<div class="flex justify-end"><Button size="sm" onclick={() => void saveLimits()} disabled={busy || !dirty} data-testid="save-limits">Save limits</Button></div>
+			</section>
+		{/if}
+
+		{#if account && pace && paceDefaults}
+			<section class="flex flex-col gap-4 rounded-xl border border-border bg-card p-4" aria-label="Pace" data-testid="pace">
+				<div class="flex flex-col gap-1">
+					<h2 class="text-sm font-medium">Pace</h2>
+					<p class="text-xs text-muted-foreground">How fast the account acts. Changes to chats (titles, usernames, members, invite links) wait a random pause between each other, like a person clicking through the app. A short flood wait from Telegram is waited out by itself; a long one pauses only chat changes, sending goes on.</p>
+				</div>
+
+				{#snippet field(label: string, key: keyof PaceForm, unit: string, mode: 'numeric' | 'decimal' = 'decimal')}
+					<label class="flex min-w-0 flex-col gap-1">
+						<span class="text-xs leading-4 font-medium sm:min-h-8">{label}</span>
+						<div class="flex items-center gap-2">
+							<Input inputmode={mode} class="min-w-0" bind:value={pace![key]} oninput={() => (paceDirty = true)} data-testid={`pace-${key}`} />
+							<span class="shrink-0 text-xs text-muted-foreground">{unit}</span>
+						</div>
+						<span class="text-[11px] text-muted-foreground">default {paceDefaults[key]}</span>
+					</label>
+				{/snippet}
+
+				{#snippet range(label: string, min: keyof PaceForm, max: keyof PaceForm)}
+					<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+						<span class="w-full text-xs font-medium sm:w-44">{label}</span>
+						<Input inputmode="decimal" class="w-20" aria-label={`${label}, shortest (seconds)`} bind:value={pace![min]} oninput={() => (paceDirty = true)} data-testid={`pace-${min}`} />
+						<span class="text-xs text-muted-foreground">to</span>
+						<Input inputmode="decimal" class="w-20" aria-label={`${label}, longest (seconds)`} bind:value={pace![max]} oninput={() => (paceDirty = true)} data-testid={`pace-${max}`} />
+						<span class="text-xs text-muted-foreground">s</span>
+						<span class="text-[11px] text-muted-foreground">default {paceDefaults[min]}–{paceDefaults[max]} s</span>
+					</div>
+				{/snippet}
+
+				<fieldset class="flex flex-col gap-2">
+					<legend class="mb-1 text-xs font-medium text-muted-foreground">Natural pause</legend>
+					<div class="flex flex-col gap-3">
+						{@render range('Between chat changes', 'adminPauseMinS', 'adminPauseMaxS')}
+						{@render range('Between edits and pins', 'editPauseMinS', 'editPauseMaxS')}
+					</div>
+					<p class="text-xs text-muted-foreground">Each pause is picked at random in the range. 0 to 0 turns it off.</p>
+				</fieldset>
+
+				<fieldset class="flex flex-col gap-2">
+					<legend class="mb-1 text-xs font-medium text-muted-foreground">Sending</legend>
+					<div class="grid gap-3 sm:grid-cols-3">
+						{@render field('Gap between messages to one chat', 'chatGapS', 's')}
+						{@render field('Messages to one group', 'groupPerMinute', '/min', 'numeric')}
+						{@render field('Messages in all chats', 'accountPerMinute', '/min', 'numeric')}
+					</div>
+				</fieldset>
+
+				<fieldset class="flex flex-col gap-2">
+					<legend class="mb-1 text-xs font-medium text-muted-foreground">Telegram API</legend>
+					<div class="grid gap-3 sm:grid-cols-3">
+						{@render field('Chat changes', 'adminPerMinute', '/min')}
+						{@render field('Chat changes at once', 'adminBurst', 'calls', 'numeric')}
+						{@render field('Edits, deletes, pins', 'editPerMinute', '/min')}
+						{@render field('Reads', 'readPerMinute', '/min')}
+						{@render field('All calls', 'globalPerMinute', '/min')}
+						{@render field('Longest a tool waits', 'waitS', 's')}
+					</div>
+					<p class="text-xs text-muted-foreground">A tool that would wait longer than that answers "rate limited, retry in N s" so the agent can say when it will be done.</p>
+				</fieldset>
+
+				<div class="flex flex-wrap items-center justify-end gap-2">
+					<Button size="sm" variant="ghost" onclick={useDefaults} disabled={busy || isDefault} data-testid="pace-defaults">Use defaults</Button>
+					<Button size="sm" onclick={() => void savePace()} disabled={busy || !paceDirty} data-testid="save-pace">Save pace</Button>
+				</div>
 			</section>
 		{/if}
 

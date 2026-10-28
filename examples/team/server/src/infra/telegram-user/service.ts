@@ -26,6 +26,7 @@ import type {
 } from '../../domain/channels.ts'
 import type { Collector } from '../../domain/collectors.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
+import { governorLimitsOf } from '../channels/governor.ts'
 import { localTime } from '../channels/header.ts'
 import type { ChannelGateway } from '../channels/index.ts'
 import { sqliteJoinRequestStore } from '../channels/join-requests.ts'
@@ -33,6 +34,7 @@ import { listNodeViews, nodeView, pageNodeViews, writePolicy } from '../channels
 import {
   type ConnectionConfig,
   NO_OWNER,
+  type RateLimits,
   RateLimitsSchema,
   type ScopePolicy,
 } from '../channels/policy.ts'
@@ -90,7 +92,68 @@ export function accountLimitDefaults(): ChannelAccountView['limits'] {
     groupWindowMs: USER_RATE_DEFAULTS.groupWindowMs,
     connectionMax: USER_RATE_DEFAULTS.connectionMax,
     connectionWindowMs: USER_RATE_DEFAULTS.connectionWindowMs,
+    ...paceOf(undefined),
   }
+}
+
+/** The natural pause and API limits in force for a user account (its overrides over the defaults). */
+export function paceOf(overrides: RateLimits['governor']): PaceView {
+  const l = governorLimitsOf('user', overrides)
+  return {
+    gapAdminMinMs: l.gap.admin.minMs,
+    gapAdminMaxMs: l.gap.admin.maxMs,
+    gapEditMinMs: l.gap.edit.minMs,
+    gapEditMaxMs: l.gap.edit.maxMs,
+    adminPerMinute: l.admin.perMinute,
+    adminBurst: l.admin.burst,
+    editPerMinute: l.edit.perMinute,
+    readPerMinute: l.read.perMinute,
+    globalPerMinute: l.global.perMinute,
+    parkWaitMs: l.parkWaitMs,
+  }
+}
+export type PaceView = Pick<
+  ChannelAccountView['limits'],
+  | 'gapAdminMinMs'
+  | 'gapAdminMaxMs'
+  | 'gapEditMinMs'
+  | 'gapEditMaxMs'
+  | 'adminPerMinute'
+  | 'adminBurst'
+  | 'editPerMinute'
+  | 'readPerMinute'
+  | 'globalPerMinute'
+  | 'parkWaitMs'
+>
+
+/** The governor overrides of a limits form: only the values given, over what is stored. */
+export function paceOverrides(
+  stored: RateLimits['governor'],
+  input: ChannelLimitsInput,
+): RateLimits['governor'] {
+  const g = structuredClone(stored ?? {})
+  const set = <T extends object>(obj: T | undefined, key: keyof T, v: number | undefined): T => {
+    const o = { ...(obj ?? {}) } as T
+    if (v !== undefined) (o as Record<keyof T, number>)[key] = v
+    return o
+  }
+  if (input.gapAdminMinMs !== undefined || input.gapAdminMaxMs !== undefined) {
+    g.gap = { ...(g.gap ?? {}) }
+    g.gap.admin = set(set(g.gap.admin, 'minMs', input.gapAdminMinMs), 'maxMs', input.gapAdminMaxMs)
+  }
+  if (input.gapEditMinMs !== undefined || input.gapEditMaxMs !== undefined) {
+    g.gap = { ...(g.gap ?? {}) }
+    g.gap.edit = set(set(g.gap.edit, 'minMs', input.gapEditMinMs), 'maxMs', input.gapEditMaxMs)
+  }
+  if (input.adminPerMinute !== undefined || input.adminBurst !== undefined) {
+    g.admin = set(set(g.admin, 'perMinute', input.adminPerMinute), 'burst', input.adminBurst)
+  }
+  if (input.editPerMinute !== undefined) g.edit = set(g.edit, 'perMinute', input.editPerMinute)
+  if (input.readPerMinute !== undefined) g.read = set(g.read, 'perMinute', input.readPerMinute)
+  if (input.globalPerMinute !== undefined)
+    g.global = set(g.global, 'perMinute', input.globalPerMinute)
+  if (input.parkWaitMs !== undefined) g.parkWaitMs = input.parkWaitMs
+  return g
 }
 
 export interface TelegramUserOptions {
@@ -820,6 +883,7 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         groupWindowMs: rate.groupWindowMs,
         connectionMax: rate.connectionMax,
         connectionWindowMs: rate.connectionWindowMs,
+        ...paceOf(rate.governor),
       },
       limitDefaults: accountLimitDefaults(),
       today: { dm: counters.get(id, 'dm', now()), all: counters.get(id, 'all', now()) },
@@ -1171,10 +1235,34 @@ export function createTelegramUserChannels(options: TelegramUserOptions): Telegr
         'connectionMax',
         'connectionWindowMs',
       ] as const
-      const rate: Record<string, number> = {}
+      const rate: Record<string, unknown> = {}
       for (const k of rateKeys) if (input[k] !== undefined) rate[k] = input[k] as number
-      if (Object.keys(rate).length > 0) {
+      const paceKeys = [
+        'gapAdminMinMs',
+        'gapAdminMaxMs',
+        'gapEditMinMs',
+        'gapEditMaxMs',
+        'adminPerMinute',
+        'adminBurst',
+        'editPerMinute',
+        'readPerMinute',
+        'globalPerMinute',
+        'parkWaitMs',
+      ] as const
+      const pace = paceKeys.some((k) => input[k] !== undefined)
+      if (pace) {
+        const gapOk = (min?: number, max?: number): boolean =>
+          min === undefined || max === undefined || min <= max
+        if (
+          !gapOk(input.gapAdminMinMs, input.gapAdminMaxMs) ||
+          !gapOk(input.gapEditMinMs, input.gapEditMaxMs)
+        ) {
+          throw invalid('a pause needs its shortest value at or below its longest')
+        }
+      }
+      if (Object.keys(rate).length > 0 || pace) {
         const config = requireConfig(id)
+        if (pace) rate.governor = paceOverrides(config.rate.governor, input)
         const merged = RateLimitsSchema.safeParse({ ...config.rate, ...rate })
         if (!merged.success) throw invalid('a rate limit is out of range')
         gateway.configure({ ...config, rate: merged.data })

@@ -26048,6 +26048,16 @@ export interface components {
                 groupWindowMs: number;
                 connectionMax: number;
                 connectionWindowMs: number;
+                gapAdminMinMs: number;
+                gapAdminMaxMs: number;
+                gapEditMinMs: number;
+                gapEditMaxMs: number;
+                adminPerMinute: number;
+                adminBurst: number;
+                editPerMinute: number;
+                readPerMinute: number;
+                globalPerMinute: number;
+                parkWaitMs: number;
             };
             /** @description The values a new account starts with, for "default N" beside each limit. */
             limitDefaults: {
@@ -26059,6 +26069,16 @@ export interface components {
                 groupWindowMs: number;
                 connectionMax: number;
                 connectionWindowMs: number;
+                gapAdminMinMs: number;
+                gapAdminMaxMs: number;
+                gapEditMinMs: number;
+                gapEditMaxMs: number;
+                adminPerMinute: number;
+                adminBurst: number;
+                editPerMinute: number;
+                readPerMinute: number;
+                globalPerMinute: number;
+                parkWaitMs: number;
             };
             today: {
                 dm: number;
@@ -26117,6 +26137,16 @@ export interface components {
             groupWindowMs?: number;
             connectionMax?: number;
             connectionWindowMs?: number;
+            gapAdminMinMs?: number;
+            gapAdminMaxMs?: number;
+            gapEditMinMs?: number;
+            gapEditMaxMs?: number;
+            adminPerMinute?: number;
+            adminBurst?: number;
+            editPerMinute?: number;
+            readPerMinute?: number;
+            globalPerMinute?: number;
+            parkWaitMs?: number;
         };
         ChannelConnectionList: {
             items: components["schemas"]["ChannelConnection"][];

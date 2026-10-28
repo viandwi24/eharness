@@ -18135,6 +18135,36 @@
               },
               "connectionWindowMs": {
                 "type": "integer"
+              },
+              "gapAdminMinMs": {
+                "type": "integer"
+              },
+              "gapAdminMaxMs": {
+                "type": "integer"
+              },
+              "gapEditMinMs": {
+                "type": "integer"
+              },
+              "gapEditMaxMs": {
+                "type": "integer"
+              },
+              "adminPerMinute": {
+                "type": "number"
+              },
+              "adminBurst": {
+                "type": "integer"
+              },
+              "editPerMinute": {
+                "type": "number"
+              },
+              "readPerMinute": {
+                "type": "number"
+              },
+              "globalPerMinute": {
+                "type": "number"
+              },
+              "parkWaitMs": {
+                "type": "integer"
               }
             },
             "required": [
@@ -18145,7 +18175,17 @@
               "groupMax",
               "groupWindowMs",
               "connectionMax",
-              "connectionWindowMs"
+              "connectionWindowMs",
+              "gapAdminMinMs",
+              "gapAdminMaxMs",
+              "gapEditMinMs",
+              "gapEditMaxMs",
+              "adminPerMinute",
+              "adminBurst",
+              "editPerMinute",
+              "readPerMinute",
+              "globalPerMinute",
+              "parkWaitMs"
             ]
           },
           "limitDefaults": {
@@ -18174,6 +18214,36 @@
               },
               "connectionWindowMs": {
                 "type": "integer"
+              },
+              "gapAdminMinMs": {
+                "type": "integer"
+              },
+              "gapAdminMaxMs": {
+                "type": "integer"
+              },
+              "gapEditMinMs": {
+                "type": "integer"
+              },
+              "gapEditMaxMs": {
+                "type": "integer"
+              },
+              "adminPerMinute": {
+                "type": "number"
+              },
+              "adminBurst": {
+                "type": "integer"
+              },
+              "editPerMinute": {
+                "type": "number"
+              },
+              "readPerMinute": {
+                "type": "number"
+              },
+              "globalPerMinute": {
+                "type": "number"
+              },
+              "parkWaitMs": {
+                "type": "integer"
               }
             },
             "required": [
@@ -18184,7 +18254,17 @@
               "groupMax",
               "groupWindowMs",
               "connectionMax",
-              "connectionWindowMs"
+              "connectionWindowMs",
+              "gapAdminMinMs",
+              "gapAdminMaxMs",
+              "gapEditMinMs",
+              "gapEditMaxMs",
+              "adminPerMinute",
+              "adminBurst",
+              "editPerMinute",
+              "readPerMinute",
+              "globalPerMinute",
+              "parkWaitMs"
             ],
             "description": "The values a new account starts with, for \"default N\" beside each limit."
           },
@@ -18400,6 +18480,56 @@
           "connectionWindowMs": {
             "type": "integer",
             "minimum": 1
+          },
+          "gapAdminMinMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600000
+          },
+          "gapAdminMaxMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600000
+          },
+          "gapEditMinMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600000
+          },
+          "gapEditMaxMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600000
+          },
+          "adminPerMinute": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 600
+          },
+          "adminBurst": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "editPerMinute": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 600
+          },
+          "readPerMinute": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 600
+          },
+          "globalPerMinute": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1200
+          },
+          "parkWaitMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 300000
           }
         }
       },
