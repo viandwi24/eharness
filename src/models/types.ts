@@ -46,6 +46,25 @@ export interface ModelInfo {
    * stored (`EH_INVALID_INPUT`, `details.reason: 'unsupported-modality'`; spec 12 §1.1).
    */
   inputModalities?: string[]
+  /**
+   * Whether and how the model thinks (reasons) before it answers. Absent = unknown. Present = the
+   * model can reason; `levels` lists the AI SDK `reasoning` values it accepts when the catalog
+   * knows them (spec 12 §1.2).
+   */
+  thinking?: ModelThinking
+}
+
+/** An AI SDK `reasoning` call option value other than `'provider-default'`. */
+export type ThinkingLevel = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** What the catalog knows about a model's reasoning (spec 12 §1.2). */
+export interface ModelThinking {
+  /** Levels the model accepts, strongest first as the catalog lists them; `none` = it can be turned off. Absent = unknown. */
+  levels?: ThinkingLevel[]
+  /** The model always reasons: `none` is refused. */
+  mandatory?: boolean
+  /** The level the provider uses when none is asked for. */
+  defaultLevel?: ThinkingLevel
 }
 
 /**

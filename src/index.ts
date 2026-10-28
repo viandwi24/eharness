@@ -228,7 +228,14 @@ export type {
   ModelCallToolCall,
 } from './models/observe.ts'
 export { observeModel } from './models/observe.ts'
-export type { ModelCatalog, ModelInfo, ModelPricing, TokenRates } from './models/types.ts'
+export type {
+  ModelCatalog,
+  ModelInfo,
+  ModelPricing,
+  ModelThinking,
+  ThinkingLevel,
+  TokenRates,
+} from './models/types.ts'
 export type { OutputSpec } from './output/types.ts'
 export { definePlugin } from './plugin/define-plugin.ts'
 export type {

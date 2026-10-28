@@ -218,6 +218,8 @@ describe('OpenRouter catalog (<userDir>/openrouter-models.json)', () => {
       contextWindow: 1_000_000,
       maxOutputTokens: 128_000,
       pricing: { input: 2, output: 10, cacheRead: 0.1 },
+      // the fixture lists the `reasoning` parameter: it thinks, levels unknown
+      thinking: {},
     })
   })
 

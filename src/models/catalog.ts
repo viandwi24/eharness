@@ -5,7 +5,14 @@
  */
 import type { LanguageModel } from 'ai'
 import { describeModel, providerOf } from '../internal/model.ts'
-import type { ModelCatalog, ModelInfo, ModelPricing, TokenRates } from './types.ts'
+import type {
+  ModelCatalog,
+  ModelInfo,
+  ModelPricing,
+  ModelThinking,
+  ThinkingLevel,
+  TokenRates,
+} from './types.ts'
 
 /** Lookup keys of a model, most specific first. */
 function keysOf(model: LanguageModel): string[] {
@@ -115,6 +122,7 @@ export function modelsDevCatalog(data: unknown): Record<string, ModelInfo> {
         limit?: Record<string, unknown>
         cost?: unknown
         modalities?: { input?: unknown }
+        reasoning?: unknown
       }
       const info: ModelInfo = {}
       const context = num(m.limit?.context)
@@ -125,6 +133,8 @@ export function modelsDevCatalog(data: unknown): Record<string, ModelInfo> {
       if (pricing !== undefined) info.pricing = pricing
       const modalities = modalitiesOf(m.modalities?.input)
       if (modalities !== undefined) info.inputModalities = modalities
+      // models.dev only says whether the model reasons, not which levels it takes
+      if (m.reasoning === true) info.thinking = {}
       catalog[`${providerId}/${modelId}`] = info
       if (!Object.hasOwn(catalog, modelId)) catalog[modelId] = info
     }
@@ -261,7 +271,41 @@ export function openRouterCatalog(data: unknown): Record<string, ModelInfo> {
       (raw.architecture as { input_modalities?: unknown } | null)?.input_modalities,
     )
     if (modalities !== undefined) info.inputModalities = modalities
+    const thinking = openRouterThinking(raw)
+    if (thinking !== undefined) info.thinking = thinking
     catalog[raw.id] = info
   }
   return catalog
+}
+
+const THINKING_LEVELS: readonly ThinkingLevel[] = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+]
+const isLevel = (v: unknown): v is ThinkingLevel =>
+  typeof v === 'string' && (THINKING_LEVELS as readonly string[]).includes(v)
+
+/** `reasoning` of an OpenRouter model (`supported_efforts`, `mandatory`, `default_effort`), or the `reasoning` parameter alone. */
+function openRouterThinking(raw: Record<string, unknown>): ModelThinking | undefined {
+  const r = raw.reasoning as
+    | { mandatory?: unknown; supported_efforts?: unknown; default_effort?: unknown }
+    | null
+    | undefined
+  const params = Array.isArray(raw.supported_parameters) ? raw.supported_parameters : []
+  if ((r === null || typeof r !== 'object') && !params.includes('reasoning')) return undefined
+  const out: ModelThinking = {}
+  if (r !== null && typeof r === 'object') {
+    if (Array.isArray(r.supported_efforts)) {
+      const levels = r.supported_efforts.filter(isLevel)
+      if (levels.length > 0) out.levels = levels
+    }
+    if (r.mandatory === true) out.mandatory = true
+    if (isLevel(r.default_effort)) out.defaultLevel = r.default_effort
+  }
+  return out
 }

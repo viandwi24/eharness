@@ -20,6 +20,14 @@ export interface ModelInfo {
   maxOutputTokens?: number
   pricing?: ModelPricing         // §2
   inputModalities?: string[]     // §1.1: 'text' | 'image' | 'pdf' | 'audio' | 'video' (absent = unknown)
+  thinking?: ModelThinking       // §1.2 (absent = unknown)
+}
+
+export type ThinkingLevel = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export interface ModelThinking {
+  levels?: ThinkingLevel[]       // the AI SDK `reasoning` values the model accepts (absent = unknown)
+  mandatory?: boolean            // it always reasons: 'none' is refused
+  defaultLevel?: ThinkingLevel   // what the provider uses when nothing is asked
 }
 ```
 
@@ -43,6 +51,16 @@ cached by the application): keys are the OpenRouter ids; `context_length` → `c
 `top_provider.max_completion_tokens` → `maxOutputTokens`, `pricing.prompt` / `completion` /
 `input_cache_read` (USD per token, strings) → rates per 1M tokens. A negative price (variable
 pricing) leaves the model unpriced. Like `modelsDevCatalog` it is pure: no fetching or caching.
+
+### 1.2 Thinking
+
+`openRouterCatalog` maps `reasoning.supported_efforts` (unknown values dropped) → `levels`,
+`reasoning.mandatory: true` → `mandatory`, `reasoning.default_effort` → `defaultLevel`; a model with
+a `reasoning` object or the `reasoning` supported parameter gets `thinking` (possibly `{}`).
+`modelsDevCatalog` maps `reasoning: true` → `thinking: {}` (levels unknown). The core does not act on
+it: it tells an application which values of `settings.reasoning` (the AI SDK call option) make sense
+for a model. The OpenRouter provider definition (spec 23) turns `settings.reasoning` into
+`providerOptions.openrouter.reasoning.effort`, since its AI SDK provider reads only that.
 
 ### 1.1 Input modalities (0.9.0)
 

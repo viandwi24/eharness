@@ -215,6 +215,13 @@ spec 12 §3):
 
 With none of them set, no `provider` key is sent: behaviour is unchanged.
 
+Reasoning: `@openrouter/ai-sdk-provider` ignores the AI SDK `reasoning` call option, so every
+OpenRouter model translates it: `settings.reasoning: 'high'` is sent as
+`providerOptions.openrouter.reasoning: { effort: 'high' }` (`'none'` turns reasoning off where the
+model allows it); `'provider-default'` sends nothing, and reasoning options the caller put in
+`providerOptions.openrouter.reasoning` win. Which levels a model takes is in its catalog entry
+(`ModelInfo.thinking`, spec 12 §1.2).
+
 `eharness/testing` adds `scriptedProvider({ id?, models: { id: steps }, info? })`
 and `profileStoreConformance`.
 

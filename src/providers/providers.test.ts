@@ -891,6 +891,30 @@ describe('openRouterProvider routing and usage accounting', () => {
     expect(byPath.stickyProvider).toMatchObject({ kind: 'boolean', default: false })
   })
 
+  test('the AI SDK reasoning option becomes OpenRouter reasoning effort; provider-default sends none', async () => {
+    const { instance, model } = setupRouting({})
+    const wrapped = instance.languageModel('m')
+    const messages = [{ role: 'user' as const, content: 'hi' }]
+    await generateText({ model: wrapped, messages, reasoning: 'none' })
+    await generateText({ model: wrapped, messages, reasoning: 'provider-default' })
+    await generateText({
+      model: wrapped,
+      messages,
+      reasoning: 'high',
+      providerOptions: { openrouter: { reasoning: { max_tokens: 2000 } } },
+    })
+    const call = (i: number) =>
+      model.doGenerateCalls[i] as {
+        reasoning?: unknown
+        providerOptions?: { openrouter?: { reasoning?: unknown } }
+      }
+    expect(call(0).providerOptions?.openrouter?.reasoning).toEqual({ effort: 'none' })
+    expect(call(0).reasoning).toBeUndefined()
+    expect(call(1).providerOptions?.openrouter?.reasoning).toBeUndefined()
+    // OpenRouter's own options win
+    expect(call(2).providerOptions?.openrouter?.reasoning).toEqual({ max_tokens: 2000 })
+  })
+
   test('sticky provider: the upstream of the previous call leads the next order', async () => {
     const { instance, model } = setupRouting({ stickyProvider: true, providerOrder: 'anthropic' })
     const wrapped = instance.languageModel('m')

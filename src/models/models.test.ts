@@ -155,6 +155,45 @@ describe('catalog', () => {
   })
 })
 
+describe('thinking in catalogs', () => {
+  test('OpenRouter: supported efforts, mandatory and default; reasoning parameter alone', () => {
+    const c = openRouterCatalog({
+      data: [
+        {
+          id: 'a/flash',
+          supported_parameters: ['reasoning', 'tools'],
+          reasoning: {
+            mandatory: false,
+            supported_efforts: ['max', 'high', 'low', 'none', 'turbo'],
+            default_effort: 'high',
+          },
+        },
+        {
+          id: 'b/opus',
+          reasoning: { mandatory: true, supported_efforts: ['xhigh', 'low'] },
+        },
+        { id: 'c/plain', supported_parameters: ['reasoning'] },
+        { id: 'd/none', supported_parameters: ['tools'] },
+      ],
+    })
+    expect(c['a/flash']?.thinking).toEqual({
+      levels: ['max', 'high', 'low', 'none'],
+      defaultLevel: 'high',
+    })
+    expect(c['b/opus']?.thinking).toEqual({ levels: ['xhigh', 'low'], mandatory: true })
+    expect(c['c/plain']?.thinking).toEqual({})
+    expect(c['d/none']?.thinking).toBeUndefined()
+  })
+
+  test('models.dev: reasoning true means it thinks, levels unknown', () => {
+    const c = modelsDevCatalog({
+      p: { models: { r: { reasoning: true }, n: { reasoning: false, limit: { context: 1000 } } } },
+    })
+    expect(c['p/r']?.thinking).toEqual({})
+    expect(c['p/n']?.thinking).toBeUndefined()
+  })
+})
+
 describe('openRouterCatalog', () => {
   test('maps limits and per-token prices to rates per 1M tokens', () => {
     const catalog = openRouterCatalog({

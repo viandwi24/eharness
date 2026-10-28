@@ -309,6 +309,40 @@ function stickyRouting(
 }
 
 /**
+ * `@openrouter/ai-sdk-provider` reads reasoning only from `providerOptions.openrouter.reasoning`:
+ * the AI SDK `reasoning` call option (`settings.reasoning`) becomes `{ effort }` there, unless the
+ * caller set OpenRouter's own reasoning options. `'provider-default'` sends nothing.
+ */
+function openRouterReasoning(model: LanguageModel): LanguageModel {
+  if (typeof model === 'string' || typeof model !== 'object' || model === null) return model
+  const middleware = {
+    specificationVersion: 'v4',
+    transformParams: async ({ params }: { params: Record<string, unknown> }) => {
+      const level = params.reasoning
+      if (typeof level !== 'string') return params
+      const { reasoning: _taken, ...rest } = params
+      if (level === 'provider-default') return rest
+      const providerOptions = (params.providerOptions ?? {}) as Record<
+        string,
+        Record<string, unknown>
+      >
+      if (providerOptions.openrouter?.reasoning !== undefined) return rest
+      return {
+        ...rest,
+        providerOptions: {
+          ...providerOptions,
+          openrouter: { ...providerOptions.openrouter, reasoning: { effort: level } },
+        },
+      }
+    },
+  } as unknown as LanguageModelMiddleware
+  return wrapLanguageModel({
+    model: model as Parameters<typeof wrapLanguageModel>[0]['model'],
+    middleware,
+  }) as LanguageModel
+}
+
+/**
  * OpenRouter. Models and prices come from the public OpenRouter list (cached 24 h by the
  * manager's catalog loader); `live: true` lists from the configured endpoint instead.
  */
@@ -348,9 +382,11 @@ export function openRouterProvider(options: OpenRouterProviderOptions): Provider
               ? provider(id, modelSettings)
               : provider.languageModel(id, modelSettings)
           ) as LanguageModel
-          return s.stickyProvider === true
-            ? stickyRouting(model, learned, hasRouting ? routing : undefined)
-            : model
+          const routed =
+            s.stickyProvider === true
+              ? stickyRouting(model, learned, hasRouting ? routing : undefined)
+              : model
+          return openRouterReasoning(routed)
         },
       }
     },
