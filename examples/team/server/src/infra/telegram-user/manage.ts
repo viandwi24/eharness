@@ -17,9 +17,15 @@
  *
  * Failures are answered as readable text (never thrown); a refusal calls `reportRefusal`, so the
  * activity log records it as refused.
+ *
+ * Pacing: changes to a chat or its members are `admin` calls of the API governor (a strict bucket,
+ * a random pause between two of them, like a person clicking through the app). A flood wait of a few
+ * seconds is waited out and the call tried once more; a longer one parks the chat changes only
+ * (`reportRateLimit`), never sending, and never counts toward the flood storm breaker.
  */
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { z } from 'zod'
-import { reportRefusal } from '../channels/governor.ts'
+import { reportRateLimit, reportRefusal } from '../channels/governor.ts'
 import { neutralizeHandles } from '../channels/mentions.ts'
 import type { NativeAction } from '../channels/types.ts'
 import type { AccountActionDeps } from './actions.ts'
@@ -63,6 +69,32 @@ export const ADMIN_RIGHTS = [
 
 const PRIVACY_CODES = ['USER_PRIVACY_RESTRICTED', 'USER_NOT_MUTUAL_CONTACT']
 const STOP_KINDS = new Set(['flood', 'peer-flood', 'auth-lost', 'duplicated'])
+/** A flood wait up to this long is waited out inside the call, then the call is tried once more. */
+export const AUTO_FLOOD_WAIT_S = 30
+
+/** Changes to a chat or its members: the governor's `admin` class (bucket, pause, own park). */
+const ADMIN_ACTIONS = new Set([
+  'create_group',
+  'create_channel',
+  'add_members',
+  'set_chat_info',
+  'set_chat_visibility',
+  'set_default_permissions',
+  'manage_chat_settings',
+  'answer_join_request',
+  'edit_invite_link',
+  'revoke_invite_link',
+  'add_contact',
+  'manage_topic',
+  'delete_chat',
+  'transfer_ownership',
+  'delete_forum_topic',
+  'kick_member',
+  'clear_history',
+])
+
+/** Set while an admin action runs: its flood waits stay out of the storm breaker. */
+const adminRun = new AsyncLocalStorage<true>()
 const TTL_SECONDS: Record<string, number> = { off: 0, '1d': 86_400, '1w': 604_800, '1m': 2_678_400 }
 const SLOW_MODES = [0, 10, 30, 60, 300, 900, 3600] as const
 
@@ -139,33 +171,55 @@ export function manageActions(d: AccountActionDeps, h: ManageHelpers): NativeAct
    * whole batch must stop (a flood wait, a flagged or logged out account).
    */
   async function attempt<T>(chatId: string | undefined, fn: () => Promise<T>): Promise<Attempt<T>> {
-    let raw: unknown
-    try {
-      const value = await d.call(chatId, async () => {
-        try {
-          return await fn()
-        } catch (error) {
-          raw = error
-          throw error
+    const admin = adminRun.getStore() === true
+    for (let retried = false; ; retried = true) {
+      let raw: unknown
+      try {
+        const value = await d.call(
+          chatId,
+          async () => {
+            try {
+              return await fn()
+            } catch (error) {
+              raw = error
+              throw error
+            }
+          },
+          admin ? { storm: false } : undefined,
+        )
+        return { ok: true, value }
+      } catch (error) {
+        if (raw === undefined) {
+          // refused before the call: parked, paused, limited
+          return {
+            ok: false,
+            code: 'HELD',
+            sentence: error instanceof Error ? error.message : String(error),
+            stop: true,
+          }
         }
-      })
-      return { ok: true, value }
-    } catch (error) {
-      if (raw === undefined) {
-        // refused before the call: parked, paused, limited
+        const k = classifyError(raw)
+        if (k.kind === 'flood' && admin) {
+          const waitMs = (error as { retryAfterMs?: number }).retryAfterMs ?? k.seconds * 1000 + 500
+          // a short wait: sit it out like a person would, then try once more
+          if (!retried && k.seconds <= AUTO_FLOOD_WAIT_S) {
+            await sleep(waitMs)
+            continue
+          }
+          reportRateLimit(waitMs, describeError(k))
+          return {
+            ok: false,
+            code: k.text.split(/\W/)[0] ?? k.text,
+            sentence: `Telegram asked this account to wait ${k.seconds} s before more chat changes (${k.text}). Chat changes are paused until ${h.when(d.now() + waitMs)}; sending and reading go on. Do not retry earlier and do not sleep in code: try again after that time, or tell the person when it will be done.`,
+            stop: true,
+          }
+        }
         return {
           ok: false,
-          code: 'HELD',
-          sentence: error instanceof Error ? error.message : String(error),
-          stop: true,
+          code: k.text.split(/\W/)[0] ?? k.text,
+          sentence: describeError(k),
+          stop: STOP_KINDS.has(k.kind),
         }
-      }
-      const k = classifyError(raw)
-      return {
-        ok: false,
-        code: k.text.split(/\W/)[0] ?? k.text,
-        sentence: describeError(k),
-        stop: STOP_KINDS.has(k.kind),
       }
     }
   }
@@ -1765,7 +1819,11 @@ export function manageActions(d: AccountActionDeps, h: ManageHelpers): NativeAct
       },
     },
   ]
-  return actions
+  return actions.map((a) =>
+    ADMIN_ACTIONS.has(a.name)
+      ? { ...a, rate: 'admin', run: (input) => adminRun.run(true, () => a.run(input)) }
+      : a,
+  )
 }
 
 /** A member as text: status, exact admin rights, limits, who promoted them. */

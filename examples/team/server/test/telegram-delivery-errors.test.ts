@@ -186,6 +186,16 @@ describe('error classification', () => {
   test('account and transport problems keep their kinds', () => {
     expect(classifyError(new TgRpcError('FLOOD_WAIT_30')).kind).toBe('flood')
     expect(classifyError(new TgRpcError('PEER_FLOOD')).kind).toBe('peer-flood')
+    // mtcute cuts the number out of the text and keeps it in a field
+    const mt = Object.assign(new Error('Telegram API error 420: FLOOD_WAIT_%d'), {
+      text: 'FLOOD_WAIT_%d',
+      seconds: 42,
+    })
+    expect(classifyError(mt)).toEqual({ kind: 'flood', seconds: 42, text: 'FLOOD_WAIT_42' })
+    const slow = Object.assign(new Error('x'), { text: 'SLOWMODE_WAIT_%d', seconds: 30 })
+    expect(classifyError(slow)).toMatchObject({ kind: 'flood', seconds: 30 })
+    const premium = Object.assign(new Error('x'), { text: 'FLOOD_PREMIUM_WAIT_%d', seconds: 5 })
+    expect(classifyError(premium)).toMatchObject({ kind: 'flood', seconds: 5 })
     expect(classifyError(new TgRpcError('AUTH_KEY_INVALID')).kind).toBe('auth-lost')
     expect(classifyError(new TgRpcError('SESSION_REVOKED')).kind).toBe('auth-lost')
     expect(classifyError(new Error('socket hang up')).kind).toBe('transient')

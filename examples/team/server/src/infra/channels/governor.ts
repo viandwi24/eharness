@@ -13,6 +13,11 @@
  *    `connection\nnode`), the one the library outbox worker parks and defers by.
  *  - **the flood storm** is the library outbox's: every park is reported to `onPark` (the gateway
  *    passes it to `outbox.noteRateLimit`), so rate limits of ANY call count toward one storm.
+ *  - **the natural pause**: a user account spaces its edit and admin calls by a random gap (a
+ *    person needs a few seconds between two changes; a script does not), so a run of changes never
+ *    leaves at machine speed. A bot has none.
+ *  - **class parks**: a rate limit on an admin call parks only the admin calls of the connection
+ *    (Telegram limits per method), so sends and reads go on while chat changes wait.
  *  - **the audit**: one record per governed call (what, where, who asked, result, duration); ids
  *    and targets only, never a message body or a secret.
  *
@@ -38,14 +43,24 @@ export interface BucketLimit {
   perMinute: number
 }
 
+/** A random pause between two calls of a class on one connection (0/0 = none). */
+export interface GapLimit {
+  minMs: number
+  maxMs: number
+}
+
 export interface GovernorLimits {
   read: BucketLimit
   edit: BucketLimit
   admin: BucketLimit
   global: BucketLimit
+  /** The natural pause between two edit calls and two admin calls. */
+  gap: { edit: GapLimit; admin: GapLimit }
   parkWaitMs: number
   floodStorm: { count: number; windowMs: number }
 }
+
+const NO_GAP: GapLimit = { minMs: 0, maxMs: 0 }
 
 /** A bot may do what the platform allows a bot. */
 export const BOT_GOVERNOR: GovernorLimits = {
@@ -53,6 +68,7 @@ export const BOT_GOVERNOR: GovernorLimits = {
   edit: { burst: 10, perMinute: 60 },
   admin: { burst: 5, perMinute: 30 },
   global: { burst: 30, perMinute: 600 },
+  gap: { edit: NO_GAP, admin: NO_GAP },
   parkWaitMs: 5000,
   floodStorm: { count: 5, windowMs: 3_600_000 },
 }
@@ -63,6 +79,7 @@ export const USER_GOVERNOR: GovernorLimits = {
   edit: { burst: 3, perMinute: 15 },
   admin: { burst: 2, perMinute: 6 },
   global: { burst: 8, perMinute: 45 },
+  gap: { edit: { minMs: 1200, maxMs: 3500 }, admin: { minMs: 3000, maxMs: 8000 } },
   parkWaitMs: 10_000,
   floodStorm: { count: 3, windowMs: 3_600_000 },
 }
@@ -77,11 +94,16 @@ export function governorLimitsOf(
     burst: p?.burst ?? b.burst,
     perMinute: p?.perMinute ?? b.perMinute,
   })
+  const gap = (g: GapLimit, p: Partial<GapLimit> | undefined): GapLimit => {
+    const minMs = p?.minMs ?? g.minMs
+    return { minMs, maxMs: Math.max(minMs, p?.maxMs ?? g.maxMs) }
+  }
   return {
     read: bucket(base.read, o.read),
     edit: bucket(base.edit, o.edit),
     admin: bucket(base.admin, o.admin),
     global: bucket(base.global, o.global),
+    gap: { edit: gap(base.gap.edit, o.gap?.edit), admin: gap(base.gap.admin, o.gap?.admin) },
     parkWaitMs: o.parkWaitMs ?? base.parkWaitMs,
     floodStorm: {
       count: o.floodStorm?.count ?? base.floodStorm.count,
@@ -168,6 +190,8 @@ export interface GovernorState {
   /** The whole connection is parked until this moment. */
   parkedUntil?: number
   parkedReason?: string
+  /** Calls of one class (admin, edit) are parked until this moment; the others go on. */
+  classes: Array<{ cls: 'edit' | 'admin'; until: number; reason: string }>
   chats: Array<{ chatKey: string; until: number }>
   /** Rate limits seen within the storm window. */
   floods: number
@@ -180,13 +204,15 @@ export interface GovernorOptions {
   limitsOf: (connectionId: string) => GovernorLimits
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  /** Picks the natural pause within its range (default Math.random). */
+  random?: () => number
   audit?: (record: AuditRecord) => void
   /** A park started: the activity log, and the flood storm counter (`parkKey` is the key that was parked). */
   onPark?: (event: {
     connectionId: string
     parkKey: string
     until: number
-    scope: 'connection' | 'chat'
+    scope: 'connection' | 'chat' | 'class'
     reason: string
     ms: number
   }) => void
@@ -201,7 +227,7 @@ export interface Governor {
   park(
     connectionId: string,
     ms: number,
-    options?: { chatKey?: string; reason?: string; error?: unknown },
+    options?: { chatKey?: string; cls?: 'edit' | 'admin'; reason?: string; error?: unknown },
   ): void
   /** Park state from an error, when it is a rate limit the governor has not seen yet. */
   noteError(connectionId: string, error: unknown, chatKey?: string): void
@@ -252,11 +278,14 @@ export function auditArgs(input: unknown): Record<string, string | number | bool
   return out
 }
 
-const store = new AsyncLocalStorage<{
+interface Slot {
   context?: CallContext
   failed?: string
   refused?: string
-}>()
+  limited?: { retryAfterMs: number; reason: string }
+}
+
+const store = new AsyncLocalStorage<Slot>()
 
 const SECRET_KEY = /pass|token|secret|session|hash|key|code/i
 /** Free text people wrote: the audit keeps its length, never the words. */
@@ -328,10 +357,29 @@ export function reportFailure(text: string): void {
   if (s !== undefined) s.failed = text.slice(0, 160)
 }
 
+/**
+ * Called by a native action that answers a platform rate limit as text instead of throwing it: the
+ * governed call parks its class (or the connection) as if the error had been thrown, so the next
+ * calls wait instead of running into the same limit. No-op outside a governed call.
+ */
+export function reportRateLimit(retryAfterMs: number, reason: string): void {
+  const s = store.getStore()
+  if (s === undefined) return
+  const prev = s.limited?.retryAfterMs ?? 0
+  if (retryAfterMs > prev) s.limited = { retryAfterMs, reason: reason.slice(0, 160) }
+}
+
+/** The park key of one class of calls of a connection (node ids never start with `@`). */
+const classKeyOf = (connectionId: string, cls: 'edit' | 'admin'): string =>
+  `${connectionId}\n@${cls}`
+
 export function createGovernor(options: GovernorOptions): Governor {
   const now = options.now ?? Date.now
+  const random = options.random ?? Math.random
   const sleep =
     options.sleep ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)))
+  /** When the next edit / admin call of a connection may start (`connection\ncls`). */
+  const nextAt = new Map<string, number>()
   type BucketClass = 'read' | 'edit' | 'admin' | 'global'
   const bucketRule =
     (cls: BucketClass) =>
@@ -364,6 +412,28 @@ export function createGovernor(options: GovernorOptions): Governor {
       chatKey === undefined ? 0 : parks.parkedFor(chatKey),
     )
   }
+  const gapClass = (cls: CallClass): 'edit' | 'admin' | undefined =>
+    cls === 'edit' || cls === 'admin' ? cls : undefined
+  const classParkedFor = (connectionId: string, cls: CallClass): number => {
+    const g = gapClass(cls)
+    return g === undefined ? 0 : Math.max(0, parks.parkedFor(classKeyOf(connectionId, g)))
+  }
+  /**
+   * Reserve the start of an edit / admin call: the previous one's start plus a random pause. Calls
+   * that arrive together queue one after the other. Returns how long to wait.
+   */
+  const reserveGap = (connectionId: string, cls: CallClass): number => {
+    const g = gapClass(cls)
+    if (g === undefined) return 0
+    const limit = options.limitsOf(connectionId).gap[g]
+    if (limit.maxMs <= 0) return 0
+    const key = `${connectionId}\n${g}`
+    const t = now()
+    const start = Math.max(t, nextAt.get(key) ?? 0)
+    const pause = limit.minMs + Math.round(random() * (limit.maxMs - limit.minMs))
+    nextAt.set(key, start + pause)
+    return start - t
+  }
 
   const park: Governor['park'] = (connectionId, ms, opts = {}) => {
     if (opts.error !== null && typeof opts.error === 'object') {
@@ -373,14 +443,15 @@ export function createGovernor(options: GovernorOptions): Governor {
     const wait = Math.max(1, Math.ceil(ms))
     const until = now() + wait
     const reason = opts.reason ?? 'rate limited by the platform'
-    const parkKey = opts.chatKey ?? connectionId
+    const parkKey =
+      opts.chatKey ?? (opts.cls === undefined ? connectionId : classKeyOf(connectionId, opts.cls))
     // a park only extends; it expires by itself
     parks.park(parkKey, until, reason)
     options.onPark?.({
       connectionId,
       parkKey,
       until,
-      scope: opts.chatKey === undefined ? 'connection' : 'chat',
+      scope: opts.chatKey !== undefined ? 'chat' : opts.cls !== undefined ? 'class' : 'connection',
       reason,
       ms: wait,
     })
@@ -463,7 +534,10 @@ export function createGovernor(options: GovernorOptions): Governor {
       for (;;) {
         // a send (the outbox waited already) and the gateway's own lookups are charged, never held
         if (meta.noWait === true) break
-        const parked = parkedFor(meta.connectionId, meta.chatKey)
+        const parked = Math.max(
+          parkedFor(meta.connectionId, meta.chatKey),
+          classParkedFor(meta.connectionId, meta.cls),
+        )
         // a patient background job leaves tokens behind, so a tool call is never starved by a backfill
         const patient = meta.patient === true ? { reserve: 2 } : undefined
         const need = Math.max(
@@ -473,11 +547,20 @@ export function createGovernor(options: GovernorOptions): Governor {
         )
         if (need <= 0) break
         if (waited + need > bound) {
-          const chatOnly = parkedFor(meta.connectionId) <= 0
+          const chatOnly =
+            parkedFor(meta.connectionId) <= 0 && classParkedFor(meta.connectionId, meta.cls) <= 0
+          const classPark = gapClass(meta.cls)
+          const classReason =
+            classPark === undefined
+              ? undefined
+              : parks.state().parks.find((p) => p.key === classKeyOf(meta.connectionId, classPark))
+                  ?.reason
           const limited = new GovernorLimited(
             `rate limited, retry in ${seconds(need)} s (${
               parked > 0
-                ? (parkOf(meta.connectionId)?.reason ?? 'the platform asked to slow down')
+                ? (parkOf(meta.connectionId)?.reason ??
+                  classReason ??
+                  'the platform asked to slow down')
                 : `too many ${meta.cls === 'read' ? 'reads' : meta.cls === 'send' ? 'sends' : `${meta.cls} calls`} for this connection`
             })`,
             need,
@@ -489,12 +572,37 @@ export function createGovernor(options: GovernorOptions): Governor {
         await sleep(Math.ceil(need))
         waited += need
       }
+      // the natural pause of a person between two changes (background jobs pace themselves)
+      if (meta.noWait !== true && meta.patient !== true) {
+        const pause = reserveGap(meta.connectionId, meta.cls)
+        if (pause > 0) await sleep(pause)
+      }
       parks.charge('global', meta.connectionId)
       if (own !== undefined) parks.charge(own, meta.connectionId)
-      const slot: { context?: CallContext; failed?: string; refused?: string } =
-        context === undefined ? {} : { context }
+      const slot: Slot = context === undefined ? {} : { context }
+      /** Where a rate limit of this call parks: its chat, its class (admin), or the connection. */
+      const parkScope = (scope: 'connection' | 'chat'): { chatKey?: string; cls?: 'admin' } =>
+        scope === 'chat' && meta.chatKey !== undefined
+          ? { chatKey: meta.chatKey }
+          : meta.cls === 'admin'
+            ? { cls: 'admin' }
+            : {}
       try {
         const result = await store.run(slot, op)
+        if (slot.limited !== undefined) {
+          park(meta.connectionId, slot.limited.retryAfterMs, {
+            ...parkScope('connection'),
+            reason: slot.limited.reason,
+          })
+          audit(
+            meta,
+            context,
+            'rate_limited',
+            startedAt,
+            `retry in ${seconds(slot.limited.retryAfterMs)} s`,
+          )
+          return result
+        }
         audit(
           meta,
           context,
@@ -507,7 +615,7 @@ export function createGovernor(options: GovernorOptions): Governor {
         const rl = rateLimitOf(error, meta.classify)
         if (rl !== undefined) {
           park(meta.connectionId, rl.retryAfterMs, {
-            ...(rl.scope === 'chat' && meta.chatKey !== undefined ? { chatKey: meta.chatKey } : {}),
+            ...parkScope(rl.scope),
             reason: error instanceof Error ? error.message : String(error),
             error,
           })
@@ -535,9 +643,18 @@ export function createGovernor(options: GovernorOptions): Governor {
       const p = parkOf(connectionId)
       return {
         ...(p !== undefined && p.until > t ? { parkedUntil: p.until, parkedReason: p.reason } : {}),
+        classes: (['edit', 'admin'] as const).flatMap((cls) => {
+          const k = parks.state().parks.find((x) => x.key === classKeyOf(connectionId, cls))
+          return k !== undefined && k.until > t ? [{ cls, until: k.until, reason: k.reason }] : []
+        }),
         chats: parks
           .state()
-          .parks.filter((k) => k.key.startsWith(`${connectionId}\n`) && k.until > t)
+          .parks.filter(
+            (k) =>
+              k.key.startsWith(`${connectionId}\n`) &&
+              !k.key.startsWith(`${connectionId}\n@`) &&
+              k.until > t,
+          )
           .map((k) => ({ chatKey: k.key, until: k.until })),
         floods: options.floodsOf?.(connectionId) ?? 0,
         buckets: {
@@ -558,6 +675,11 @@ export function createGovernor(options: GovernorOptions): Governor {
           `API calls are parked for ${seconds(s.parkedUntil - t)} more seconds (the platform asked to slow down)`,
         )
       }
+      for (const c of s.classes) {
+        parts.push(
+          `${c.cls === 'admin' ? 'Chat and member changes' : 'Edits, deletes and pins'} are paused for ${seconds(c.until - t)} more seconds (Telegram asked to wait; sends and reads go on). Do not retry them earlier`,
+        )
+      }
       if (s.chats.length > 0) {
         parts.push(
           `${s.chats.length} chat${s.chats.length === 1 ? ' is' : 's are'} parked by a per-chat flood wait (up to ${seconds(Math.max(...s.chats.map((c) => c.until)) - t)} s)`,
@@ -565,8 +687,13 @@ export function createGovernor(options: GovernorOptions): Governor {
       }
       const l = s.limits
       parts.push(
-        `API limits: reads ${l.read.perMinute}/min, edits/deletes/pins ${l.edit.perMinute}/min, moderation ${l.admin.perMinute}/min, all calls ${l.global.perMinute}/min; a call that would wait over ${seconds(l.parkWaitMs)} s answers "rate limited" instead`,
+        `API limits: reads ${l.read.perMinute}/min, edits/deletes/pins ${l.edit.perMinute}/min, chat and member changes ${l.admin.perMinute}/min, all calls ${l.global.perMinute}/min; a call that would wait over ${seconds(l.parkWaitMs)} s answers "rate limited" instead`,
       )
+      if (l.gap.admin.maxMs > 0 || l.gap.edit.maxMs > 0) {
+        parts.push(
+          `changes are spaced like a person makes them (a pause of ${seconds(l.gap.admin.minMs)} to ${seconds(l.gap.admin.maxMs)} s between chat changes): the tools wait by themselves, never add sleeps`,
+        )
+      }
       if (s.floods > 0)
         parts.push(`${s.floods} rate limit${s.floods === 1 ? '' : 's'} seen recently`)
       return `${parts.join('. ')}.`
@@ -591,6 +718,8 @@ export function createGovernor(options: GovernorOptions): Governor {
       for (const p of parks.state().parks)
         if (p.key === connectionId || p.key.startsWith(`${connectionId}\n`)) parks.unpark(p.key)
       parks.resetBuckets(connectionId)
+      for (const key of [...nextAt.keys()])
+        if (key.startsWith(`${connectionId}\n`)) nextAt.delete(key)
     },
   }
 }
@@ -741,7 +870,7 @@ export function governAdapter<A extends ChannelAdapter>(
         try {
           return await run(
             {
-              cls: CLASS_OF_RISK[a.risk],
+              cls: a.rate ?? CLASS_OF_RISK[a.risk],
               action: a.name,
               ...detail,
               kind,

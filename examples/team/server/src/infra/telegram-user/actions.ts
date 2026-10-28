@@ -40,8 +40,12 @@ export interface AccountActionDeps {
   selfId: string
   /** The live dialogs (cached briefly; `true` reads Telegram again). */
   dialogs(refresh?: boolean): Promise<TgChat[]>
-  /** Park check and error mapping of one call (flood waits become rate limits the governor sees). */
-  call<T>(chatId: string | undefined, fn: () => Promise<T>): Promise<T>
+  /**
+   * Park check and error mapping of one call (flood waits become rate limits the governor sees).
+   * `storm: false`: a flood wait of this call does not count toward the flood storm breaker that
+   * pauses sending (chat changes, which Telegram limits per method).
+   */
+  call<T>(chatId: string | undefined, fn: () => Promise<T>, opts?: { storm?: boolean }): Promise<T>
   /** A reason to refuse every post (the account is flagged); undefined = fine. */
   blocked(): string | undefined
   /** Titles learned from Telegram (forum topics) go to the gateway. */

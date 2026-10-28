@@ -112,6 +112,11 @@ const BucketOverrideSchema = z.object({
  * the whole connection. Absent = the defaults of the account kind (a user account is stricter
  * than a bot).
  */
+const GapOverrideSchema = z.object({
+  minMs: z.number().int().min(0).max(600_000).optional(),
+  maxMs: z.number().int().min(0).max(600_000).optional(),
+})
+
 export const GovernorOverridesSchema = z.object({
   /** Platform reads: history, members, chat info, downloads. */
   read: BucketOverrideSchema.optional(),
@@ -121,6 +126,13 @@ export const GovernorOverridesSchema = z.object({
   admin: BucketOverrideSchema.optional(),
   /** Every call of the connection, sends included. */
   global: BucketOverrideSchema.optional(),
+  /** The natural pause between two edit calls and two admin calls of a user account (ms). */
+  gap: z
+    .object({
+      edit: GapOverrideSchema.optional(),
+      admin: GapOverrideSchema.optional(),
+    })
+    .optional(),
   /** Longest a tool call waits for a park or a bucket before it answers "rate limited". */
   parkWaitMs: z.number().int().min(0).optional(),
   /** Flood waits within the window that open the circuit breaker. */

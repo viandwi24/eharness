@@ -457,6 +457,12 @@ export interface NativeAction {
    * else is refused in code before it runs; a turn without a chat requester (the web app) is the client.
    */
   ownerOnly?: boolean
+  /**
+   * The API governor class of the call when the risk says too little: `admin` for changes to a chat
+   * or its members (they share the strict admin bucket, the natural pause and a park of their own).
+   * Default by risk: read → read, write → edit, external → send, destructive → admin.
+   */
+  rate?: 'read' | 'edit' | 'admin' | 'send'
   run(input: Record<string, unknown>): Promise<string>
 }
 

@@ -583,15 +583,24 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
   }
 
   /** Map a client error to a ChannelError, parking the chat on a flood and tripping on the bad ones. */
-  function toChannelError(error: unknown, chatId?: string): ChannelError {
+  function toChannelError(
+    error: unknown,
+    chatId?: string,
+    opts: { storm?: boolean } = {},
+  ): ChannelError {
     if (error instanceof ChannelError) return error
     const k: TgErrorKind = classifyError(error)
     switch (k.kind) {
       case 'flood': {
         const ms = k.seconds * 1000 + jitterMs()
         const until = now() + ms
-        if (chatId !== undefined) parkChat(chatId, until)
         hooks.onFlood?.({ chatId, seconds: k.seconds, until, text: k.text })
+        // a chat change limited per method (a username, a title) parks only the chat changes (the
+        // governor's admin class park): sending to that chat goes on, the storm breaker ignores it
+        if (opts.storm === false) {
+          return new ChannelError('rate_limit', describeError(k), ms, 'connection')
+        }
+        if (chatId !== undefined) parkChat(chatId, until)
         floods.push(now())
         while (floods.length > 0 && (floods[0] as number) < now() - floodBreaker.windowMs)
           floods.shift()
@@ -820,7 +829,11 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
   }
 
   /** Park check and error mapping for a platform action (a flood wait parks the chat and is seen by the governor). */
-  const callFor = async <T>(chatId: string | undefined, fn: () => Promise<T>): Promise<T> => {
+  const callFor = async <T>(
+    chatId: string | undefined,
+    fn: () => Promise<T>,
+    opts: { storm?: boolean } = {},
+  ): Promise<T> => {
     const parked = chatId === undefined ? undefined : parkedUntil(chatId)
     if (parked !== undefined) {
       throw new ChannelError(
@@ -833,7 +846,7 @@ export function createTelegramUserAdapter(options: UserAdapterOptions): Telegram
     try {
       return await fn()
     } catch (error) {
-      throw toChannelError(error, chatId)
+      throw toChannelError(error, chatId, opts)
     }
   }
 

@@ -12,7 +12,7 @@ import { createOutbox, memoryOutboxStore } from 'eharness/channels'
 import { webCryptoVault } from 'eharness/providers'
 import { scriptedModel } from 'eharness/testing'
 import { z } from 'zod'
-import { auditArgs, reportFailure } from '../src/infra/channels/governor.ts'
+import { auditArgs, reportFailure, reportRateLimit } from '../src/infra/channels/governor.ts'
 import {
   type AuditRecord,
   BOT_GOVERNOR,
@@ -49,6 +49,7 @@ const LIMITS: GovernorLimits = {
   edit: { burst: 2, perMinute: 60 },
   admin: { burst: 1, perMinute: 6 },
   global: { burst: 100, perMinute: 6000 },
+  gap: { edit: { minMs: 0, maxMs: 0 }, admin: { minMs: 0, maxMs: 0 } },
   parkWaitMs: 3000,
   floodStorm: { count: 3, windowMs: 60_000 },
 }
@@ -578,5 +579,117 @@ describe('gateway: native actions and reads are audited, and a flood parks every
     expect(
       i.gw.activity.list('c1', { direction: 'out', action: 'history', limit: 10 }).items,
     ).toHaveLength(1)
+  })
+})
+
+describe('governor: natural pause and class parks', () => {
+  const PACED: GovernorLimits = {
+    ...LIMITS,
+    admin: { burst: 50, perMinute: 6000 },
+    edit: { burst: 50, perMinute: 6000 },
+    gap: { edit: { minMs: 1000, maxMs: 3000 }, admin: { minMs: 3000, maxMs: 8000 } },
+  }
+  function paced(random: () => number, limits: GovernorLimits = PACED) {
+    const c = clock()
+    const parks: Array<{ scope: string; ms: number; parkKey: string }> = []
+    const governor = createGovernor({
+      limitsOf: () => limits,
+      now: c.now,
+      sleep: c.sleep,
+      random,
+      onPark: (e) => void parks.push({ scope: e.scope, ms: e.ms, parkKey: e.parkKey }),
+    })
+    return { c, governor, parks }
+  }
+
+  test('admin calls are spaced by a random pause in the range; reads and sends are not', async () => {
+    const { c, governor } = paced(() => 0.5)
+    const t0 = c.now()
+    const starts: number[] = []
+    const admin = () =>
+      governor.call({ connectionId: 'c1', cls: 'admin', action: 'set_chat_info' }, async () => {
+        starts.push(c.now())
+        return 'ok'
+      })
+    await admin()
+    await admin()
+    await admin()
+    // 3 s + 0.5 * 5 s = 5.5 s between two starts
+    expect(starts).toEqual([t0, t0 + 5500, t0 + 11_000])
+    const before = c.now()
+    await governor.call({ connectionId: 'c1', cls: 'read', action: 'history' }, ok)
+    await governor.call({ connectionId: 'c1', cls: 'send', action: 'post' }, ok)
+    expect(c.now()).toBe(before)
+    // another connection has its own pace
+    await governor.call({ connectionId: 'c2', cls: 'admin', action: 'x' }, ok)
+    expect(c.now()).toBe(before)
+  })
+
+  test('calls that arrive together queue one pause apart', async () => {
+    // a frozen clock: what each call is told to wait is the queue
+    const waits: number[] = []
+    const governor = createGovernor({
+      limitsOf: () => PACED,
+      now: () => 1_000_000,
+      sleep: async (ms) => void waits.push(ms),
+      random: () => 0,
+    })
+    await Promise.all(
+      [1, 2, 3].map(() => governor.call({ connectionId: 'c1', cls: 'edit', action: 'pin' }, ok)),
+    )
+    expect(waits.sort((a, b) => a - b)).toEqual([1000, 2000])
+  })
+
+  test('a bot has no pause; the override sets one', () => {
+    expect(governorLimitsOf('bot').gap.admin).toEqual({ minMs: 0, maxMs: 0 })
+    expect(governorLimitsOf('user').gap.admin.minMs).toBeGreaterThan(0)
+    const o = governorLimitsOf('user', { gap: { admin: { minMs: 10_000 } } })
+    // a max below the min is lifted to it
+    expect(o.gap.admin).toEqual({ minMs: 10_000, maxMs: 10_000 })
+    expect(
+      RateLimitsSchema.parse({ governor: { gap: { edit: { minMs: 0, maxMs: 0 } } } }),
+    ).toBeTruthy()
+  })
+
+  test('a rate limit answered as text parks only the admin class: sends and reads go on', async () => {
+    const { c, governor, parks } = paced(() => 0, {
+      ...PACED,
+      gap: { edit: { minMs: 0, maxMs: 0 }, admin: { minMs: 0, maxMs: 0 } },
+    })
+    const text = await governor.call(
+      { connectionId: 'c1', cls: 'admin', action: 'set_chat_visibility' },
+      async () => {
+        reportRateLimit(120_000, 'Telegram asked the account to slow down (FLOOD_WAIT_120)')
+        return 'ERROR: wait'
+      },
+    )
+    expect(text).toBe('ERROR: wait')
+    expect(parks).toEqual([{ scope: 'class', ms: 120_000, parkKey: 'c1\n@admin' }])
+    const refused = await governor
+      .call({ connectionId: 'c1', cls: 'admin', action: 'set_chat_info' }, ok)
+      .catch((e: unknown) => e)
+    expect(refused).toBeInstanceOf(GovernorLimited)
+    expect((refused as Error).message).toContain('FLOOD_WAIT_120')
+    const t = c.now()
+    expect(await governor.call({ connectionId: 'c1', cls: 'send', action: 'post' }, ok)).toBe('ok')
+    expect(await governor.call({ connectionId: 'c1', cls: 'read', action: 'history' }, ok)).toBe(
+      'ok',
+    )
+    expect(c.now()).toBe(t)
+    const s = governor.state('c1')
+    expect(s.parkedUntil).toBeUndefined()
+    expect(s.chats).toEqual([])
+    expect(s.classes.map((x) => x.cls)).toEqual(['admin'])
+    expect(governor.describe('c1')).toContain('Chat and member changes are paused')
+    // a thrown platform limit on an admin call parks the class too
+    c.advance(121_000)
+    await governor
+      .call({ connectionId: 'c1', cls: 'admin', action: 'kick' }, async () => {
+        throw new ChannelError('rate_limit', 'FLOOD_WAIT_9', 9000)
+      })
+      .catch(() => undefined)
+    expect(parks.at(-1)).toMatchObject({ scope: 'class', parkKey: 'c1\n@admin' })
+    governor.reset('c1')
+    expect(governor.state('c1').classes).toEqual([])
   })
 })

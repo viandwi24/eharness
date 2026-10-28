@@ -32,11 +32,22 @@ export class TgRpcError extends Error {
   }
 }
 
-/** The RPC text of an error (`FLOOD_WAIT_30`), or its message when it has none. */
+/** Fields where mtcute keeps the number it cut out of an RPC text (`FLOOD_WAIT_%d` + `seconds`). */
+const NUMBER_FIELDS = ['seconds', 'duration', 'newDc', 'dc', 'codeLength', 'which'] as const
+
+/**
+ * The RPC text of an error (`FLOOD_WAIT_30`), or its message when it has none. mtcute rewrites
+ * `FLOOD_WAIT_30` to `FLOOD_WAIT_%d` and keeps the 30 in `seconds`: the number is put back.
+ */
 export function rpcText(error: unknown): string {
   if (error !== null && typeof error === 'object') {
     const t = (error as { text?: unknown }).text
-    if (typeof t === 'string' && t !== '') return t
+    if (typeof t === 'string' && t !== '') {
+      if (!t.includes('%d')) return t
+      const o = error as Record<string, unknown>
+      const n = NUMBER_FIELDS.map((k) => o[k]).find((v) => typeof v === 'number')
+      return n === undefined ? t : t.replace('%d', String(n))
+    }
     const m = (error as { message?: unknown }).message
     if (typeof m === 'string') return m
   }

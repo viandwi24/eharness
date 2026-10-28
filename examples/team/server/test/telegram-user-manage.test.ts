@@ -20,6 +20,7 @@ import type {
   TgUserClient,
 } from '../src/infra/telegram-user/client.ts'
 import { classifyError, describeError, TgRpcError } from '../src/infra/telegram-user/errors.ts'
+import { AUTO_FLOOD_WAIT_S } from '../src/infra/telegram-user/manage.ts'
 import { nodeChatStore } from '../src/infra/telegram-user/store.ts'
 
 const CONN = 'c1'
@@ -49,6 +50,8 @@ function build(
   opts: {
     dialogs?: TgChat[]
     files?: Record<string, { bytes: Uint8Array; mediaType: string }>
+    sleep?: (ms: number) => Promise<void>
+    callOpts?: Array<{ storm?: boolean } | undefined>
   } = {},
 ): Rig {
   const conn = openDatabase(':memory:')
@@ -99,7 +102,8 @@ function build(
     settings: () => ({ dmDailyMax: 30, dailyMax: 300, adminLogEveryMs: 4 * 3_600_000 }),
     selfId: '1',
     dialogs: async () => list,
-    call: async (_c, fn) => {
+    call: async (_c, fn, callOpts) => {
+      opts.callOpts?.push(callOpts)
       try {
         return await fn()
       } catch (error) {
@@ -110,7 +114,7 @@ function build(
     learnTopics: () => undefined,
     timezone: () => 'UTC',
     now: () => NOW,
-    sleep: async () => undefined,
+    sleep: opts.sleep ?? (async () => undefined),
     ...(opts.files === undefined ? {} : { readFile: async (p: string) => opts.files?.[p] }),
     hooks: {
       chatCreated: async (chat) => {
@@ -737,41 +741,42 @@ describe('roles and readable errors', () => {
   })
 })
 
-describe('audit trail', () => {
-  function governed(client: Partial<TgUserClient>) {
-    const r = build(client)
-    const rows: Array<{
-      action: string
-      result: string
-      kind: string
-      target?: unknown
-      summary?: string
-      note?: string
-      context?: { role?: string; requester?: string }
-    }> = []
-    const governor = createGovernor({
-      limitsOf: () => ({
-        read: { burst: 50, perMinute: 6000 },
-        edit: { burst: 50, perMinute: 6000 },
-        admin: { burst: 50, perMinute: 6000 },
-        global: { burst: 100, perMinute: 6000 },
-        parkWaitMs: 1000,
-        floodStorm: { count: 3, windowMs: 60_000 },
-      }),
-      audit: (a) => void rows.push(a as never),
-    })
-    const adapter = governAdapter(
-      { connectionId: CONN, actions: r.all } as unknown as ChannelAdapter,
-      { governor },
-    )
-    const act = (name: string): NativeAction => {
-      const a = adapter.actions?.find((x) => x.name === name)
-      if (a === undefined) throw new Error(name)
-      return a
-    }
-    return { rows, governor, act }
+function governed(client: Partial<TgUserClient>, opts: Parameters<typeof build>[1] = {}) {
+  const r = build(client, opts)
+  const rows: Array<{
+    action: string
+    result: string
+    kind: string
+    target?: unknown
+    summary?: string
+    note?: string
+    context?: { role?: string; requester?: string }
+  }> = []
+  const governor = createGovernor({
+    limitsOf: () => ({
+      read: { burst: 50, perMinute: 6000 },
+      edit: { burst: 50, perMinute: 6000 },
+      admin: { burst: 50, perMinute: 6000 },
+      global: { burst: 100, perMinute: 6000 },
+      gap: { edit: { minMs: 0, maxMs: 0 }, admin: { minMs: 0, maxMs: 0 } },
+      parkWaitMs: 1000,
+      floodStorm: { count: 3, windowMs: 60_000 },
+    }),
+    audit: (a) => void rows.push(a as never),
+  })
+  const adapter = governAdapter(
+    { connectionId: CONN, actions: r.all } as unknown as ChannelAdapter,
+    { governor },
+  )
+  const act = (name: string): NativeAction => {
+    const a = adapter.actions?.find((x) => x.name === name)
+    if (a === undefined) throw new Error(name)
+    return a
   }
+  return { rows, governor, act }
+}
 
+describe('audit trail', () => {
   test('every action leaves a row: who, what, target, parameters, result, duration', async () => {
     const g = governed({
       listContacts: async () => [],
@@ -833,5 +838,72 @@ describe('schemas', () => {
     for (const a of r.all) expect(a.schema).toBeInstanceOf(z.ZodObject)
     const names = r.all.map((a) => a.name)
     expect(new Set(names).size).toBe(names.length)
+  })
+})
+
+describe('pacing of chat changes', () => {
+  /** An error shaped like mtcute's: the number cut out of the text, kept in `seconds`. */
+  const flood = (seconds: number): Error =>
+    Object.assign(new Error(`Telegram API error 420: FLOOD_WAIT_%d`), {
+      text: 'FLOOD_WAIT_%d',
+      seconds,
+    })
+
+  test('chat changes are admin calls; posts and reads keep their class', () => {
+    const r = build({})
+    for (const name of ['set_chat_visibility', 'set_chat_info', 'add_members', 'kick_member'])
+      expect(r.by(name).rate).toBe('admin')
+    for (const name of ['copy_message', 'send_album', 'list_contacts', 'pin_message'])
+      expect(r.by(name).rate).toBeUndefined()
+  })
+
+  test('a short flood wait is sat out and the change tried once more', async () => {
+    const sleeps: number[] = []
+    const callOpts: Array<{ storm?: boolean } | undefined> = []
+    let n = 0
+    const r = build(
+      {
+        setChatUsername: async () => {
+          n++
+          if (n === 1) throw flood(5)
+        },
+      },
+      { sleep: async (ms) => void sleeps.push(ms), callOpts },
+    )
+    const out = await r
+      .by('set_chat_visibility')
+      .run({ chat: CHANNEL, visibility: 'public', username: 'newsroom_five' })
+    expect(out).toContain('public at https://t.me/newsroom_five')
+    expect(n).toBe(2)
+    expect(sleeps).toHaveLength(1)
+    expect(sleeps[0]).toBeGreaterThanOrEqual(5000)
+    // a chat change never counts toward the flood storm that pauses sending
+    expect(callOpts.every((o) => o?.storm === false)).toBe(true)
+  })
+
+  test('a long flood wait parks chat changes only and says until when, never retried tight', async () => {
+    let n = 0
+    const g = governed({
+      setChatUsername: async () => {
+        n++
+        throw flood(AUTO_FLOOD_WAIT_S + 270)
+      },
+      setChatTitle: async () => undefined,
+      listContacts: async () => [],
+    })
+    const out = await g
+      .act('set_chat_visibility')
+      .run({ chat: CHANNEL, visibility: 'public', username: 'newsroom_five' })
+    expect(n).toBe(1)
+    expect(out).toContain('FLOOD_WAIT_300')
+    expect(out).toContain('Chat changes are paused until')
+    expect(out).toContain('do not sleep in code')
+    expect(g.rows.at(-1)).toMatchObject({ action: 'set_chat_visibility', result: 'rate_limited' })
+    expect(g.governor.state(CONN).classes.map((c) => c.cls)).toEqual(['admin'])
+    // the next chat change waits for the park instead of hitting Telegram again
+    const next = await g.act('set_chat_info').run({ chat: GROUP, title: 'X' })
+    expect(next).toMatch(/^ERROR: rate limited, retry in \d+ s/)
+    // reads go on
+    expect(await g.act('list_contacts').run({})).not.toContain('rate limited')
   })
 })

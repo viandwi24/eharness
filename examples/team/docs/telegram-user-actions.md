@@ -48,6 +48,23 @@ otherwise the link is returned and must be shared by somebody who can message th
 `PEER_FLOOD` stops the batch. Adding someone as a contact helps only if they also have the account in
 their contacts.
 
+### Pacing and flood waits
+
+Changes to a chat or its members (`create_group`, `create_channel`, `add_members`, `set_chat_info`,
+`set_chat_visibility`, `set_default_permissions`, `manage_chat_settings`, invite links, join requests,
+topics, contacts, kicks, deletions) are `admin` calls of the API governor, whatever their approval risk:
+
+- **Natural pause.** Two chat changes of one account start 3 to 8 s apart (a random pause, like a
+  person clicking through the Telegram app); edits, deletes and pins 1.2 to 3.5 s apart. Calls that
+  arrive together queue. A bot has no pause. `rate.governor.gap.{admin,edit}.{minMs,maxMs}` on the
+  connection overrides it.
+- **Strict bucket.** A user account allows 2 chat changes at once, then 6 per minute.
+- **Flood waits.** mtcute reports `FLOOD_WAIT_%d` with the seconds in a separate field; the app reads
+  both. A wait of up to 30 s is sat out inside the call, which is then tried once more. A longer wait
+  parks the chat changes of the account only (sends and reads go on), and the tool answers until when,
+  telling the model not to retry earlier or sleep in code. These waits never count toward the flood
+  storm breaker that pauses sending, and they never park the chat for sends.
+
 ### Ownership transfer
 
 The app never handles the two-step verification password, so `transfer_ownership` only explains how

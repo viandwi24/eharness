@@ -422,8 +422,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
         reason: clip(reason, 160),
         detail: { scope, seconds: Math.max(1, Math.ceil(ms / 1000)) },
       })
-      // rate limits of every call (reads, edits, sends) count toward the one flood storm
-      workerOf(connectionId).noteRateLimit(parkKey, ms)
+      // rate limits of reads, edits and sends count toward the one flood storm; a limit on chat
+      // changes (a class park) only pauses those: Telegram limits them per method, sends go on
+      if (scope !== 'class') workerOf(connectionId).noteRateLimit(parkKey, ms)
     },
     floodsOf: (connectionId) => queues.get(connectionId)?.worker.floods(connectionId) ?? 0,
   })
