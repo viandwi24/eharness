@@ -1,5 +1,28 @@
 # eharness
 
+## 0.10.0
+
+### Minor Changes
+
+- [`042ea1c`](https://github.com/viandwi24/eharness/commit/042ea1cc8e69314bcc65457d3a0a2407a644d141) Thanks [@viandwi24](https://github.com/viandwi24)! - `followSessionStream` stays fast on long turns. Consecutive text and reasoning deltas of the same part are merged before the AI SDK folds them (`deltaHoldMs`, default 50 ms; `0` keeps one message state per delta), so a turn of hundreds of steps no longer produces one full copy of the message per chunk. The built message is unchanged. The new `clip` option replaces big tool inputs/outputs and data payloads with `?clip=` previews (`isClippedPart`) while following.
+
+- [`9153d34`](https://github.com/viandwi24/eharness/commit/9153d34f6820d3dcb39034067c98c5d82534312f) Thanks [@viandwi24](https://github.com/viandwi24)! - `eharness/providers`: presets for local model servers — `ollamaProvider`, `lmStudioProvider`,
+  `vllmProvider` and `llamaCppProvider` (OpenAI-compatible, no API key needed, the usual local
+  address as default). Their model lists carry the context window the server really runs each model
+  with (Ollama `/api/ps` and Modelfile `num_ctx`, LM Studio's loaded instance, vLLM `max_model_len`,
+  llama.cpp `n_ctx`), tools/vision/thinking support where the server reports it, and a zero price.
+  `openAICompatibleProvider` gains an optional `contextWindow` setting for servers that report none,
+  reads vLLM's `max_model_len`, and a preset's `defaultBaseURL` now applies when the field is empty.
+
+- [`1af9b12`](https://github.com/viandwi24/eharness/commit/1af9b12a80180528e26a3a32f3069e816a1367f7) Thanks [@viandwi24](https://github.com/viandwi24)! - `ModelInfo.thinking` tells which reasoning levels a model accepts (`levels`, `mandatory`,
+  `defaultLevel`; new types `ModelThinking` and `ThinkingLevel`): filled from OpenRouter's
+  `reasoning.supported_efforts` and from models.dev's `reasoning` flag. OpenRouter models now honour
+  the AI SDK `reasoning` call option (`settings.reasoning`), sent as OpenRouter's `reasoning.effort`.
+
+### Patch Changes
+
+- [`f53e6ba`](https://github.com/viandwi24/eharness/commit/f53e6baf6a6afa33c268b99c8b3cd7d035fb6856) Thanks [@viandwi24](https://github.com/viandwi24)! - OpenRouter `stickyProvider` forgets a conversation's provider when a call fails (rejected, a stream `error` part or a broken stream), so the next call is routed normally instead of going back to a failing upstream.
+
 ## 0.9.0
 
 ### Minor Changes
