@@ -19,6 +19,7 @@
 	import ModeControl from '#lib/components/app/config/ModeControl.svelte';
 	import AccessControl from '#lib/components/app/AccessControl.svelte';
 	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
+	import EditCustomConnectorDialog from '#lib/components/app/EditCustomConnectorDialog.svelte';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -140,6 +141,20 @@
 		}
 	}
 
+	// --- edit a custom connector (URL, auth, headers) ------------------------------------------
+	let editOpen = $state(false);
+	let editingId = $state<string | null>(null);
+	const editing = $derived(editingId ? store.connections.find((c) => c.id === editingId) : undefined);
+	function edit(c: Connection): void {
+		editingId = c.id;
+		editOpen = true;
+	}
+	// an old test result describes the settings before the edit
+	const edited = (c: Connection): void => {
+		delete results[c.id];
+		drifts[c.id] = undefined;
+	};
+
 	let renaming = $state<string | null>(null);
 	let renameValue = $state('');
 	async function rename(c: Connection): Promise<void> {
@@ -237,6 +252,7 @@
 									renameValue = c.label;
 								}}>Rename</DropdownMenu.Item
 							>
+							{#if c.custom}<DropdownMenu.Item onSelect={() => edit(c)}>Edit</DropdownMenu.Item>{/if}
 							{#if !c.custom || c.settings.authMode === 'oauth'}<DropdownMenu.Item onSelect={() => reconnect(c)}>{c.custom ? 'Sign in again' : 'Reconnect'}</DropdownMenu.Item>{/if}
 							{#if c.custom}<DropdownMenu.Item onSelect={() => acceptDefinitions(c)}>Accept new definitions in all chats</DropdownMenu.Item>{/if}
 							<DropdownMenu.Separator />
@@ -488,6 +504,8 @@
 	defaultEnabled={makeDefault}
 	onDone={flowDone}
 />
+
+<EditCustomConnectorDialog bind:open={editOpen} connection={editing} {connector} onSaved={edited} />
 
 <AlertDialog.Root open={confirmRemove !== null} onOpenChange={(o) => !o && (confirmRemove = null)}>
 	<AlertDialog.Content elevation="floating">

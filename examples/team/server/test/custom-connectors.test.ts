@@ -354,3 +354,97 @@ describe('private endpoints (SSRF guard)', () => {
     }
   })
 })
+
+describe('edit custom connector', () => {
+  const addWithKey = async (server: Server, url: string) => {
+    const made = await call(server, 'POST', '/connectors/custom', {
+      name: 'Edit me',
+      url,
+      signIn: 'none',
+      headers: { 'X-Api-Key': 'OLDKEY111' },
+      availableToAll: true,
+    })
+    expect(made.status).toBe(201)
+    return made.json.connection.id as string
+  }
+
+  test('a blank stored header keeps its value; new headers, URL and auth apply and are tested', async () => {
+    const first = plain()
+    const server = await boot()
+    const id = await addWithKey(server, first.url)
+
+    // keep X-Api-Key (sent as ''), add a header: the test runs again with both
+    first.seen.headers.length = 0
+    const kept = await call(server, 'PATCH', `/connections/${id}`, {
+      settings: {
+        url: first.url,
+        authMode: 'headers',
+        headers: { 'X-Api-Key': '', 'X-Team': 'NEWVAL222' },
+      },
+    })
+    expect(kept.status).toBe(200)
+    expect(kept.json).toMatchObject({ status: 'connected' })
+    expect(kept.json.settings.headers).toMatchObject({
+      'X-Api-Key': { set: true },
+      'X-Team': { set: true },
+    })
+    expect(
+      first.seen.headers.some((h) => h['x-api-key'] === 'OLDKEY111' && h['x-team'] === 'NEWVAL222'),
+    ).toBe(true)
+    expect(kept.text).not.toContain('OLDKEY111')
+    expect(kept.text).not.toContain('NEWVAL222')
+
+    // a new URL with the key resent: the new server gets it and lists the tools
+    const second = plain()
+    const moved = await call(server, 'PATCH', `/connections/${id}`, {
+      settings: { url: second.url, headers: { 'X-Api-Key': 'NEWKEY333' } },
+    })
+    expect(moved.json).toMatchObject({ status: 'connected', settings: { url: second.url } })
+    expect(second.seen.headers.some((h) => h['x-api-key'] === 'NEWKEY333')).toBe(true)
+
+    // switching to OAuth waits for a sign in instead of testing
+    const toOAuth = await call(server, 'PATCH', `/connections/${id}`, {
+      settings: { authMode: 'oauth' },
+    })
+    expect(toOAuth.json).toMatchObject({ status: 'needs-auth' })
+  })
+
+  test('an unreachable new URL keeps the edit and shows the error on the connection', async () => {
+    const m = plain()
+    const server = await boot()
+    const id = await addWithKey(server, m.url)
+    const dead = await call(server, 'PATCH', `/connections/${id}`, {
+      settings: { url: 'http://localhost:9/mcp', headers: { 'X-Api-Key': 'K' } },
+    })
+    expect(dead.status).toBe(200)
+    expect(dead.json).toMatchObject({
+      status: 'error',
+      settings: { url: 'http://localhost:9/mcp' },
+    })
+  })
+
+  test('an edit can not point it at a private host (SSRF guard)', async () => {
+    const m = plain()
+    const env: Record<string, string> = { TEAM_SECRET_KEY: key, TEAM_ALLOW_PRIVATE_MCP: '1' }
+    const server = compose({
+      dbFile: ':memory:',
+      models: scriptedModelConfig(scriptedModel([]) as never),
+      env,
+      changePollMs: 0,
+      seed: true,
+      publicUrl: 'http://api.test',
+      webUrl: 'http://web.test',
+      reconcile: { onBoot: false, everyMs: 0 },
+      routines: { tickMs: 0 },
+    })
+    servers.push(server)
+    await server.connectorsReady
+    const id = await addWithKey(server, m.url)
+    env.TEAM_ALLOW_PRIVATE_MCP = '0'
+    const refused = await call(server, 'PATCH', `/connections/${id}`, {
+      settings: { url: 'http://127.0.0.1:8080/mcp', headers: { 'X-Api-Key': 'K' } },
+    })
+    expect(refused.status).toBe(400)
+    expect(refused.text).toContain('private or local host')
+  })
+})

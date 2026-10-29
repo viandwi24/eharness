@@ -1194,6 +1194,11 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         if (d.source === 'builtin' && (patch.settings !== undefined || patch.scope !== undefined)) {
           throw conflict('built-in connections have no settings and keep their scope', 'BUILTIN')
         }
+        const custom = current.definitionId === CUSTOM_DEFINITION
+        // the same SSRF guard as adding one: an edit must not point it at a private host
+        if (custom && typeof patch.settings?.url === 'string') {
+          await assertPublicEndpoint(patch.settings.url)
+        }
         await service.update(id, {
           ...(patch.label === undefined ? {} : { label: patch.label }),
           ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
@@ -1217,6 +1222,12 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
           }
           record.updatedAt = Date.now()
           await connections.put(record)
+        }
+        // new URL, headers or auth: list the tools again and refresh the status (an error stays on
+        // the connection for the person to see; the edit is kept). A sign in still pending waits.
+        if (custom && patch.settings !== undefined) {
+          const after = await service.get(id)
+          if (after !== undefined && after.status !== 'needs-auth') await service.test(id)
         }
         return (
           await withAccess([
