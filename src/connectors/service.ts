@@ -397,13 +397,25 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
         const rebind = endpointChanged(schema, record.settings, patch.settings)
         const merged = mergeSecretPatch(schema, record.settings, patch.settings)
         next.settings = validateSettings(schema, merged, `settings of '${record.label}'`)
+        // whether the connector authorizes with these settings (`auth.when`, e.g. a custom MCP
+        // server in `oauth` mode only)
+        const authorizes = (settings: Record<string, unknown>): boolean =>
+          (def.auth.type === 'oauth2' || def.auth.type === 'deviceCode') &&
+          (def.auth.when?.(settings) ?? true)
+        const authorizesNow = authorizes(next.settings)
         if (rebind) {
           // tokens were issued for the old endpoint: never present them to the new one
           await options.credentials.delete(id)
-          if (def.auth.type === 'oauth2' || def.auth.type === 'deviceCode') {
-            next.status = 'needs-auth'
-            next.statusMessage = 'The endpoint changed: authorize the connection again.'
-          }
+        }
+        if (authorizesNow && (rebind || !authorizes(record.settings))) {
+          next.status = 'needs-auth'
+          next.statusMessage = rebind
+            ? 'The endpoint changed: authorize the connection again.'
+            : 'Sign in to finish the connection.'
+        } else if (!authorizesNow && record.status === 'needs-auth') {
+          // it no longer signs in: the next test decides
+          next.status = 'connected'
+          delete next.statusMessage
         }
       }
       await options.connections.put(next)

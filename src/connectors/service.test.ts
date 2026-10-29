@@ -107,6 +107,40 @@ describe('connector service', () => {
     })
   })
 
+  test('update sets needs-auth only when the connector signs in with the new settings', async () => {
+    const { service } = make()
+    const started = await service.startConnect({ definitionId: 'mcp-remote', scope: 'workspace' })
+    const done = await service.advance(started.flow.id, {
+      viewId: started.flow.view.viewId,
+      action: 'submit',
+      data: {
+        url: 'https://mcp.example.com/mcp',
+        authMode: 'headers',
+        headers: { Authorization: 'Bearer t-1' },
+      },
+    })
+    if (!done.ok || done.connection === undefined) throw new Error('not connected')
+    const id = done.connection.id
+    expect(done.connection.status).toBe('connected')
+    // a header-auth server moved to a new URL does not ask for a sign in
+    const moved = await service.update(id, {
+      settings: { url: 'https://mcp.example.com/v2', headers: { Authorization: 'Bearer t-2' } },
+    })
+    expect(moved.status).toBe('connected')
+    // switching to OAuth needs a sign in, even on the same URL
+    const oauth = await service.update(id, { settings: { authMode: 'oauth' } })
+    expect(oauth).toMatchObject({
+      status: 'needs-auth',
+      statusMessage: 'Sign in to finish the connection.',
+    })
+    // and back to headers: no sign in pending any more
+    const back = await service.update(id, {
+      settings: { authMode: 'headers', headers: { Authorization: 'Bearer t-3' } },
+    })
+    expect(back.status).toBe('connected')
+    expect(back.statusMessage).toBeUndefined()
+  })
+
   test('update keeps secrets that the patch does not resend and rejects invalid settings', async () => {
     const { service } = make()
     const started = await service.startConnect({

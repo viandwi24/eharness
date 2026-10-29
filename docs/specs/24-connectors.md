@@ -309,8 +309,9 @@ the asking flow (an app may keep one per scope or hand out one entered earlier i
 a dedicated "enter the OAuth app" flow step is not part of the library: apps save the client
 before connecting, see ADR-0053). `catalog()`, `list`, `get`, `startConnect`, `reconnect`, `getFlow`, `advance`, `completeOAuth`
 (the callback route), `update` (secret patch + validation; a changed endpoint field, e.g. the custom MCP `url`, drops every stored
-secret the patch does not resend, deletes the stored OAuth credentials and sets `needs-auth` for `oauth2` / `deviceCode`
-connectors: spec 23 §2, endpoint-bound secrets), `remove` (connection, credentials,
+secret the patch does not resend and deletes the stored OAuth credentials: spec 23 §2, endpoint-bound secrets; the status follows
+`auth.when` of the new settings: `needs-auth` when the connector signs in with them and the endpoint changed or it did not sign in
+before (a custom MCP server switched to `oauth`), and a pending `needs-auth` is cleared to `connected` when it no longer signs in), `remove` (connection, credentials,
 every agent's entry), `enablement`, `setEnablement`, `test` (records status, account, discovered
 capabilities; only a missing or rejected credential answers "Reconnect required.", any other failure (provider outage, network, store error) answers "Temporarily unavailable (<reason>)", is reported to `onError` (default `console.warn`) and leaves the stored status untouched), `accessToken`, `credentials` and `markNeedsAuth` (server side only; §4), `activate`, `sweep`. A finished flow saves the
 connection and credentials, stays for 5 minutes (a polling tab gets `finished` with the
