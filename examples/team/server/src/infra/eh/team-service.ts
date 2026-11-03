@@ -277,16 +277,14 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
 
   async function reconcileWaits(): Promise<ReconcileReport['waits']> {
     const out: ReconcileReport['waits'] = []
+    // any agent can park a foreground child: every thread (DM, chat, channel) of every agent, and
+    // the parents of active tasks; a parent whose waits are all resolved but whose turn never
+    // continued is continued here too (its child task is done by then)
     const parents = new Map<string, AgentDef>()
     for (const def of allAgents()) {
-      if (def.role === 'lead')
-        for (const sessionId of threadSessions(def)) parents.set(sessionId, def)
+      for (const sessionId of threadSessions(def)) parents.set(sessionId, def)
     }
-    for (const task of deps.tasks.active()) {
-      if (task.parentSessionId === null) continue
-      const owner = dmOwner(task.parentSessionId)
-      if (owner !== undefined) parents.set(task.parentSessionId, owner)
-    }
+    for (const [sessionId, def] of parentSessions()) parents.set(sessionId, def)
     for (const [sessionId, def] of parents) {
       try {
         await factory.prepare(def)
