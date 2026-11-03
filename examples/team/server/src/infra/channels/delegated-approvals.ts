@@ -16,6 +16,11 @@ export interface DelegatedApprovalsOptions {
   agentOf: (slug: string) => { id: string; name: string } | undefined
 }
 
+/** A turn the launcher's call started directly (not from the inbox): the launcher waits for it. */
+export function isForegroundTurn(ctx: Pick<HarnessContext, 'turn'>): boolean {
+  return (ctx.turn as { source?: unknown } | undefined)?.source === undefined
+}
+
 export function delegatedApprovals(
   options: DelegatedApprovalsOptions,
 ): HarnessPlugin<'delegated-approvals'> {
@@ -23,16 +28,17 @@ export function delegatedApprovals(
     name: 'delegated-approvals',
     setup: () => ({
       hooks: {
-        // a turn the launcher did not start in the background (`subagent-bg:` key) is foreground:
-        // the launcher's turn waits for it
+        // only a turn the launcher's `agent` call started directly is foreground (the launcher's turn
+        // waits for it). A turn from the inbox never is: a background start (`subagent-bg:` key), a
+        // resume by `send_message`, a wake. Treating those as foreground let every new chat message
+        // abort a running worker.
         'turn.start': (ctx: HarnessContext): void => {
           const parent = ctx.session.parent?.sessionId
           if (parent === undefined || !parent.startsWith('channel:')) return
-          const key = (ctx.turn as { source?: { key?: string } } | undefined)?.source?.key
           options.gateway()?.delegatedTurnStarted({
             parentSessionId: parent,
             childSessionId: ctx.session.id,
-            foreground: key === undefined,
+            foreground: isForegroundTurn(ctx),
           })
         },
         'turn.end': async (
