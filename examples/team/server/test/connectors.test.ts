@@ -207,6 +207,27 @@ async function offeredTools(
   return (model.calls[0]?.tools ?? []).map((t: { name: string }) => t.name).sort()
 }
 
+describe('sleep (ADR-0067)', () => {
+  test('a background worker can sleep; the chat of the same agent cannot', async () => {
+    const dbFile = tmpDb()
+    const first = await boot({ dbFile, seed: false })
+    insertLegacy(first, [{ slug: 'reader', role: 'role', tools: ['library_read'] }])
+    await first.close()
+    servers.pop()
+    const model = scriptedModel([{ text: 'chat ok' }, { text: 'job ok' }])
+    const server = await boot({ dbFile, model, seed: false })
+    const chat = await offeredTools(server, 'reader', model)
+    expect(chat).toContain('datetime')
+    expect(chat).not.toContain('sleep')
+    const def = server.deps.agents.getBySlug('reader')
+    if (def === undefined) throw new Error('no reader')
+    await server.factory.openSession(def, `dm:${def.id}:worker:job1`).send('do the job').result
+    const job = (model.calls[1]?.tools ?? []).map((t: { name: string }) => t.name)
+    expect(job).toContain('sleep')
+    expect(job).toContain('datetime')
+  })
+})
+
 describe('migration of the tool checklist and MCP servers', () => {
   test('every legacy agent exposes the same tools and keeps its rules', async () => {
     const dbFile = tmpDb()

@@ -577,6 +577,10 @@ const WORKER_PLAYBOOK = [
   'Tell the person in one short sentence that you started it, then end your turn. When its report',
   'wakes you, check it and answer the person who asked (in a chat, your reply goes to that chat).',
   'One worker per job; do not start the same job twice; `agent_stop` stops one when the person cancels.',
+  'Work that must be spread over hours (follow-ups in batches, a check every 15 minutes until something',
+  'is done) also goes to a worker: brief it with the whole plan (what, how many per batch, the pause,',
+  'until when, where to keep progress) and let it pace itself with its `sleep` tool. Your heartbeat',
+  'cannot do such work: it only reads and reports.',
 ].join('\n')
 
 /** What a worker should know (static: part of the worker variant's instructions). */
@@ -592,6 +596,10 @@ const WORKER_NOTE = [
   'A big job runs in chunks: at the end of a chunk you are asked for a checkpoint note (what is done with',
   'ids and counts, what remains, the exact next step); write it completely, it is all you keep. Never write',
   'the final report before the whole job is done.',
+  'Pacing: when the brief spreads the work over time (batches, a check every N minutes), do one batch,',
+  'save progress to the tracker file named in the brief (or /library/notes), then call `sleep` with the',
+  "pause; you wake up in this same job and continue. Repeat until everything is done or the brief's",
+  'end time is reached, then report once. Never sleep when nothing is left, and never to wait for a person.',
 ].join('\n')
 
 /**
@@ -1212,6 +1220,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         timezone: () => currentSettings().timezone,
         label: 'Team',
         description: TEAM_DATETIME_DESCRIPTION,
+        // a background worker paces long work (send a batch, sleep, the next batch, ADR-0067);
+        // a chat never sleeps: it would park the conversation
+        ...(worker ? { sleep: { maxMinutes: 240 } } : {}),
       }),
       // memory holds durable facts only: no system state, no style notes (hook only)
       memoryDiscipline(() => currentSettings().companyRoot ?? null),
