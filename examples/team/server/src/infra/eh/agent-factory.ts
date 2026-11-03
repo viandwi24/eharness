@@ -135,6 +135,7 @@ import { capText } from './budget-cap-text.ts'
 import { chatTools } from './chat-tools-plugin.ts'
 import { DATETIME_TOOL, MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
+import { cutAnswer } from './cut-answer-plugin.ts'
 import { DECISION_TOOLS, type DecisionIntake, decisions } from './decisions-plugin.ts'
 import { fileGrant } from './file-grant-plugin.ts'
 import { createHeartbeatGate } from './gates/heartbeat-gate.ts'
@@ -1226,6 +1227,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       }),
       // memory holds durable facts only: no system state, no style notes (hook only)
       memoryDiscipline(() => currentSettings().companyRoot ?? null),
+      cutAnswer(),
       // a path of a reorganized library that moved: the result tells the model the new path
       movedPaths(sqlite),
       // a mistyped or dead public share link in the reply is repaired or marked before it is stored
