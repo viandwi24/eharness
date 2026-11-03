@@ -626,6 +626,14 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           if ('error' in r) return `ERROR: ${r.error}`
           mentions = r.ids
         }
+        // an @username of a known person without `mention` pings nobody: say so before anything
+        // is sent, so the model sends once, with the tag (or without the @ when no tag was meant)
+        const untagged = gw.unmentionedHandles(t.config.connectionId, input.text, mentions)
+        if (untagged.length > 0) {
+          const list = untagged.map((u) => `@${u.handle} (${u.name}, id ${u.nativeId})`).join(', ')
+          const ids = [...(input.mention ?? []), ...untagged.map((u) => u.nativeId)]
+          return `Not sent: ${list} ${untagged.length === 1 ? 'is' : 'are'} written in the text but not in \`mention\`, so nobody would be tagged (a handle in plain text never pings). To tag them, send again with mention: ${JSON.stringify(ids)} and keep the @username in the text where the tag belongs. If you did not mean to tag them, write the name without @.`
+        }
         // a post nobody asked for (a routine, the heartbeat, a program) follows the proactive policy of the place
         const requester = await gw.requesterOf(sessionId)
         if (requester === undefined && unattended) {

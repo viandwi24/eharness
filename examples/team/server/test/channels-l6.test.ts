@@ -568,6 +568,34 @@ describe('mentions', () => {
     expect(reply.message.text).toBe('Thanks @​budi and @​everyone')
   })
 
+  test('a known @username without mention is not sent; the model is told the id and resends with the tag', async () => {
+    const i = instance([
+      call(
+        'channel_send',
+        { action: 'send', conversation: 'room', text: 'live is up, @budi' },
+        'x1',
+      ),
+      call(
+        'channel_send',
+        { action: 'send', conversation: 'room', text: 'live is up, @budi', mention: [budi.id] },
+        'x2',
+      ),
+      text('done'),
+    ])
+    const mock = await connect(i)
+    i.gw.people.setRole('c1', ceo.id, { role: 'admin' }, 'owner')
+    await mock.say({ from: budi, text: 'hello', id: 'seen' })
+    await mock.say({ from: ceo, text: '@team_bot tell budi', id: 'c1m', mentionSelf: true })
+    await until('reply', () => mock.sent.some((s) => s.message.text === 'done'))
+    const w = wire(i.lead)
+    expect(w).toContain('Not sent: @budi (Budi, id')
+    expect(w).toContain(`mention: [\\"${budi.id}\\"]`)
+    const posts = mock.sent.filter((s) => s.message.text.includes('live is up'))
+    // sent once, with the tag in place
+    expect(posts).toHaveLength(1)
+    expect(parseMentions(posts[0]?.message.text ?? '')).toMatchObject([{ id: budi.id }])
+  })
+
   test('an unknown person cannot be mentioned; the model is told how to find them', async () => {
     const i = instance([
       call(

@@ -1044,6 +1044,37 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   }
 
   /**
+   * The `@username`s of the text that belong to people known on this connection but are not in
+   * `identityIds`: written as text they would ping nobody (the text is neutralized), which is
+   * almost always a forgotten `mention`. Handles inside links are left alone; the connection's
+   * own account is never listed.
+   */
+  function unmentionedHandles(
+    connectionId: string,
+    text: string,
+    identityIds: readonly string[],
+  ): Array<{ handle: string; nativeId: string; name: string }> {
+    const out: Array<{ handle: string; nativeId: string; name: string }> = []
+    const seen = new Set<string>()
+    const parts = text.split(/((?:https?:\/\/|www\.|t\.me\/)[^\s<>"]+)/iu)
+    for (const [i, part] of parts.entries()) {
+      if (i % 2 === 1) continue
+      for (const m of part.matchAll(/(?:^|[^\p{L}\p{N}_])[@＠]([\p{L}\p{N}_]+)/gu)) {
+        const handle = m[1] as string
+        const key = handle.toLowerCase()
+        if (seen.has(key)) continue
+        seen.add(key)
+        const row = identities
+          .search(connectionId, `@${handle}`, 5)
+          .find((r) => r.username?.toLowerCase() === key)
+        if (row === undefined || row.isSelf || identityIds.includes(row.id)) continue
+        out.push({ handle, nativeId: row.nativeId, name: row.displayName ?? handle })
+      }
+    }
+    return out
+  }
+
+  /**
    * The text with its mentions. Free text can never mention by itself (it is neutralized), except
    * the people of `identityIds`: their `@username` in the text becomes the mention where it is
    * written. Whoever the text does not name that way is mentioned in front, as before.
@@ -6382,6 +6413,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     },
     canRead,
     resolveMentions,
+    unmentionedHandles,
     expireApprovals,
     notifyOwners,
     settings: {

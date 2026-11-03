@@ -845,6 +845,12 @@ export interface ChannelGateway {
     connectionId: string,
     refs: readonly string[],
   ): { ids: string[] } | { error: string }
+  /** `@username`s of the text that belong to known people not in `identityIds` (a forgotten mention). */
+  unmentionedHandles(
+    connectionId: string,
+    text: string,
+    identityIds: readonly string[],
+  ): Array<{ handle: string; nativeId: string; name: string }>
   /** Approvals nobody answered within `approvalTtlMs` are declined ("not answered"). Returns how many. */
   expireApprovals(at?: number): Promise<number>
   /**
