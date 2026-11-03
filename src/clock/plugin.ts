@@ -12,6 +12,7 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import { definePlugin, type HarnessPlugin } from '../index.ts'
+import { type SleepOptions, sleepTool } from './sleep.ts'
 import {
   addToMoment,
   diffMoments,
@@ -32,6 +33,11 @@ export interface ClockOptions {
   description?: string
   /** Test seam: epoch milliseconds. Default `Date.now`. */
   now?: () => number
+  /**
+   * Also offer the `sleep` tool (ADR-0067): `true`, or its options (the zone is the clock's).
+   * Off by default: only agents that pace long work need it.
+   */
+  sleep?: boolean | (Omit<SleepOptions, 'timezone' | 'now'> & { toolName?: string })
 }
 
 /** Input of the datetime tool. */
@@ -154,6 +160,12 @@ export function runDatetime(
 export function clock(options: ClockOptions): HarnessPlugin<'clock'> {
   const now = options.now ?? Date.now
   const toolName = options.toolName ?? 'datetime'
+  const sleep =
+    options.sleep === undefined || options.sleep === false
+      ? undefined
+      : options.sleep === true
+        ? {}
+        : options.sleep
   return definePlugin({
     name: 'clock',
     setup: () => ({
@@ -172,6 +184,16 @@ export function clock(options: ClockOptions): HarnessPlugin<'clock'> {
             }
           },
         }),
+        ...(sleep === undefined
+          ? {}
+          : {
+              [sleep.toolName ?? 'sleep']: sleepTool({
+                timezone: options.timezone,
+                now,
+                ...(sleep.maxMinutes === undefined ? {} : { maxMinutes: sleep.maxMinutes }),
+                ...(sleep.description === undefined ? {} : { description: sleep.description }),
+              }),
+            }),
       },
     }),
   })

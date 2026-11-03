@@ -15,6 +15,7 @@ import {
   type BackgroundStatus,
   deliverReport,
   type MessageLike,
+  onlyWaits,
   reportKey,
   reportOf,
   specialHead,
@@ -301,6 +302,11 @@ export async function reconcileBackgroundChildren(
       const eh = last.metadata?.eharness
       const endedAt = (eh?.createdAt ?? 0) + (eh?.durationMs ?? 0)
 
+      // parked on waits only (asleep, a job): nobody has to act; it reports when it finishes
+      if (onlyWaits(stats.pending)) {
+        out.push({ sessionId: id, outcome: 'running' })
+        continue
+      }
       // waiting for a person
       if (stats.pending !== null) {
         if (waitingMs > 0 && now() - (eh?.createdAt ?? now()) > waitingMs) {

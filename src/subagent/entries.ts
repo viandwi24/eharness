@@ -2,7 +2,7 @@ import { errorText } from '../index.ts'
 import { drain } from './child-run.ts'
 import type { Scope } from './env.ts'
 import type { AgentEntry } from './messaging.ts'
-import type { MessageLike } from './report.ts'
+import { type MessageLike, onlyWaits } from './report.ts'
 import type { AnyRun, AnySession, SubagentRunData } from './types.ts'
 
 /** Register an addressable child of this session. */
@@ -291,7 +291,7 @@ export async function rootOf(scope: Scope): Promise<string | undefined> {
 export async function parkStatus(
   scope: Scope,
   entry: AgentEntry,
-): Promise<{ status: AgentEntry['status']; waiting: boolean }> {
+): Promise<{ status: AgentEntry['status']; waiting: boolean; parked?: boolean }> {
   const def = scope.defs()[entry.agent]
   if (def === undefined) return { status: entry.status, waiting: false }
   // a read: peek never opens (and so never resumes) the child
@@ -303,11 +303,17 @@ export async function parkStatus(
   const stats = await child.stats()
   if (stats.activeTurn !== null || stats.pending !== null) {
     entry.status = 'running'
-    return { status: 'running', waiting: stats.pending !== null }
+    // parked on waits only (a sleep, a job): nobody has to answer, so it is not "waiting"
+    const parked = onlyWaits(stats.pending)
+    return { status: 'running', waiting: stats.pending !== null && !parked, parked }
   }
   entry.status = await storedOutcome(child)
   return { status: entry.status, waiting: false }
 }
+
+/** The result a paused child's waits get from `agent_stop`. */
+const PARKED_STOP =
+  'Stopped: the agent that started this work stopped it. Do not continue the work and do not sleep again; reply with a short summary of what is done and what is left.'
 
 /** `'park'`: `agent_stop` asks the child's session to abort, wherever it runs (spec 05 §9.1). */
 export async function stopPark(
@@ -329,6 +335,23 @@ export async function stopPark(
   if (state.status !== 'running') return ended(label, entry.status)
   if (state.waiting) {
     return `${label} is waiting for an answer to a permission request; it cannot be stopped from here. It continues when the request is answered.`
+  }
+  if (state.parked === true) {
+    // asleep (or waiting for a job): end its waits with a stop notice; it wakes, wraps up and reports
+    try {
+      const child = def.agent.session(
+        entry.childSessionId,
+        scope.env.entryOptions(entry),
+      ) as AnySession
+      for (const wait of await child.pendingWaits()) {
+        if (wait.result !== undefined) continue
+        const out = await child.resolveWait(wait.waitId, { errorText: PARKED_STOP })
+        if (out.status === 'continued') drain(out.run as AnyRun)
+      }
+    } catch (error) {
+      return `ERROR: could not stop ${label}: ${errorText(error)}`
+    }
+    return `Stopped ${label}: it was paused (asleep or waiting for a job) and now wraps up with a short report.`
   }
   try {
     const out = await (

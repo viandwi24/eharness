@@ -1,5 +1,5 @@
 /**
- * `eharness/clock`: the `datetime` tool and zone arithmetic (spec 34).
+ * `eharness/clock`: the `datetime` tool, the `sleep` tool and zone arithmetic (spec 34).
  *
  * **Draft:** every symbol of this subpath is experimental and may change in a minor release
  * (docs/engineering/api-stability.md).
@@ -13,6 +13,13 @@ export {
   type DatetimeInput,
   runDatetime,
 } from './plugin.ts'
+export {
+  SLEEP_DESCRIPTION,
+  SLEEP_MAX_MINUTES,
+  type SleepInput,
+  type SleepOptions,
+  sleepTool,
+} from './sleep.ts'
 export {
   addDays,
   addToMoment,

@@ -163,6 +163,8 @@
   ],
   "eharness/clock": [
     "DATETIME_DESCRIPTION",
+    "SLEEP_DESCRIPTION",
+    "SLEEP_MAX_MINUTES",
     "addDays",
     "addToMoment",
     "clock",
@@ -176,6 +178,7 @@
     "parseDate",
     "parseMoment",
     "runDatetime",
+    "sleepTool",
     "zonedParts"
   ],
   "eharness/code": [

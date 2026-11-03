@@ -410,7 +410,9 @@ the call a **background start**; a call without it stays the foreground external
   already running (limit M). …` instead of starting; not enforceable across instances without a
   shared counter (best effort). The child's usage is not added to the lead's turn.
 - **Tools.** `agent_output`, `agent_stop` (`abort('stopped')`, cross-process; a child waiting
-  for an approval refuses) and `send_message` work as in §5.9.
+  for an approval refuses; a child parked on external waits only, e.g. asleep, gets each wait
+  resolved with a `Stopped: …` error text, so it wakes, wraps up and reports, ADR-0067) and
+  `send_message` work as in §5.9.
 - **New user input.** Foreground waits are still cancelled by a new user message under
   `onNewInput: 'deny'` (spec 11 §4.1); delegate in the background to keep the lead free.
 
@@ -423,6 +425,9 @@ those texts) and reports like a durable background child: the same `eh.event` (`
 finished after its call was cancelled.`, and it sets the background flag in its plugin state so a
 `tool-pending` stop sends the `waiting` status event and later turns report too. A wait that was
 resolved normally (or by `reconcileSubagentWaits`) does not report again.
+A background child whose turn parks on **external waits only** (a `sleep`, a foreground grandchild,
+a job; no approval or question a person must answer) does not report: nobody has to act, so the
+parent is not woken for every pause (ADR-0067). It reports when it finishes.
 
 ### 3.6 Reconciling background children (ADR-0056)
 

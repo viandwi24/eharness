@@ -71,3 +71,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0064](0064-browser-module.md) | `eharness/browser` (proposed): adapters over an operation-level connection, own CDP client in core, manual and managed modes, no evasion features, Camoufox as a separate package |
 | [0065](0065-scripts-and-tables.md) | Scripts and tables in the team app (proposed): QuickJS-in-a-Worker sandbox with a grant-checked capability API, dry runs and owner approval; document tables with MongoDB-like queries, no raw SQL |
 | [0066](0066-channels-without-an-owner.md) | Team app chat connections run without an owning agent (observe-only); the answering agent is optional and tool access follows the Connectors page access |
+| [0067](0067-sleep-is-an-external-wait.md) | `sleep` (in `eharness/clock`) parks the turn as an external wait until the wake-up time; background children parked only on waits do not wake their parent |

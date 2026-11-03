@@ -3,7 +3,7 @@
  * idempotent delivery (spec 20 §3.6).
  */
 
-import type { HarnessSession } from '../index.ts'
+import type { HarnessSession, PendingState } from '../index.ts'
 import { errorText } from '../index.ts'
 
 // biome-ignore lint/suspicious/noExplicitAny: a session of a loosely typed agent
@@ -133,4 +133,17 @@ export function specialHead(
     default:
       return `Background subagent ${who} ${what} has been waiting for the user for ${o.minutes ?? '?'} minutes (a permission request or a question). Remind the user; it continues once that is answered.`
   }
+}
+
+/**
+ * A pending state with external waits only (a `sleep`, a foreground grandchild, a job): no approval
+ * or client call a person must answer.
+ */
+export function onlyWaits(pending: PendingState | null | undefined): boolean {
+  if (pending === undefined || pending === null) return false
+  return (
+    (pending.externals ?? []).length > 0 &&
+    pending.approvals.every((a) => a.granted === true || a.answer !== undefined) &&
+    pending.clientTools.every((c) => c.result !== undefined || c.answer !== undefined)
+  )
 }

@@ -25,6 +25,7 @@ import { parseAgentFrame } from './messaging.ts'
 import {
   deliverReport,
   type MessageLike,
+  onlyWaits,
   reportKey,
   reportOf,
   statusOfStop,
@@ -461,6 +462,9 @@ export function createParkHook(options: {
     // a long-run chunk end is a checkpoint, not the end of the job (spec 33 §3)
     if (isLongRunCheckpoint(e.stop)) return
     if (ctx.state.get(BACKGROUND_STATE) !== undefined) {
+      // parked only on waits (a `sleep`, a grandchild, a job): nobody has to act, so the parent is
+      // not woken; the report comes when the child finishes
+      if (e.stop === 'tool-pending' && onlyWaits(e.pending)) return
       const frame = launcherFrame(e)
       // a turn the launcher started with send_message reports as a resume (ADR-0041)
       if (frame?.relation === 'launcher' && frame.to !== undefined && e.stop !== 'tool-pending') {
