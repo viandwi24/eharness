@@ -15,6 +15,12 @@ export const SEARCH_MODEL = {
   gateway: 'anthropic/claude-haiku-4.5',
 } as const
 
+/**
+ * Output cap of one search call. Without one OpenRouter reserves the model's maximum (65k tokens
+ * for Gemini Flash) and refuses the call when the credit left cannot cover it.
+ */
+export const SEARCH_MAX_OUTPUT_TOKENS = 4_096
+
 const PROMPT = (query: string): string =>
   `Search the web for: ${query}\n\nAnswer with the facts the search found, concisely, and name the sources you used. Do not invent anything that the results do not say.`
 
@@ -38,7 +44,12 @@ export function createSearchFn(opts: CreateSearchOptions): SearchFn {
   return async (query, { allowedDomains, blockedDomains, signal } = {}) => {
     const { provider, model: picked } = opts.target()
     const model = opts.observe?.(picked) ?? picked
-    const common = { model, prompt: PROMPT(query), ...(signal ? { abortSignal: signal } : {}) }
+    const common = {
+      model,
+      prompt: PROMPT(query),
+      maxOutputTokens: SEARCH_MAX_OUTPUT_TOKENS,
+      ...(signal ? { abortSignal: signal } : {}),
+    }
     const result =
       provider === 'openrouter'
         ? await generateText({
