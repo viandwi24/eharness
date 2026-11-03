@@ -1106,4 +1106,26 @@ describe('a forum named for reading', () => {
       /only holds topics\): name one of its topics with `topic`: "Billing" \(forum\/Billing\), "Chat" \(forum\/Chat\)/,
     )
   })
+
+  test('named from one of its own topics, the post goes to that topic', async () => {
+    const i = instance([text('x')])
+    await connect(i, { forum: { label: 'Crew', ack: false, topics: { Billing: {}, Chat: {} } } })
+    i.gw.settings.ensureNode('c1', {
+      nativeId: 'forum',
+      kind: 'room',
+      traits: { postable: false },
+    } as never)
+    const topic = i.gw.nodes.byNative('c1', 'forum/Billing')
+    expect(topic).toBeDefined()
+    const row = i.gw.sessions.ensure(
+      { connectionId: 'c1', nodeId: topic?.id as string, agentId: i.leadId, label: null },
+      Date.now(),
+    )
+    const target = i.gw.resolveTarget(i.leadId, row.sessionId, { conversation: 'forum' })
+    expect(target.node.id).toBe(topic?.id as string)
+    // a chat outside the forum still gets the list of topics
+    expect(() => i.gw.resolveTarget(i.leadId, undefined, { conversation: 'forum' })).toThrow(
+      /only holds topics/,
+    )
+  })
 })

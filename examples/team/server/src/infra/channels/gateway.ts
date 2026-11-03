@@ -4846,6 +4846,17 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       throw new ChannelUserError(
         `Name the conversation (or a member to message).${chatsHint(connectionId)}`,
       )
+    // a forum named without a topic while this chat is one of its topics: the agent means its own
+    // chat (it calls the group by name), so post there instead of refusing
+    if (
+      !node.traits.postable &&
+      input.topic === undefined &&
+      current !== undefined &&
+      current.connectionId === connectionId &&
+      current.node.parentId === node.id
+    ) {
+      node = current.node
+    }
     const scope = scopeOf(node)
     if (scope === undefined)
       throw new ChannelUserError(`The connection "${connectionId}" is not one of yours.`)
