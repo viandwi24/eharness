@@ -493,6 +493,10 @@ export const STANDING_ORDER_DESCRIPTION =
   '(a reminder, a routine or a program) or for a rule about how to talk (memory/persona). ' +
   'If the instruction is about what an existing program\'s runs do ("put it in the daily report"), ' +
   "save it as that program's note (program_note) instead: one instruction lives in ONE place, never both. " +
+  'The heartbeat ONLY WATCHES AND REPORTS: it reads, then posts a report. It never sends messages to ' +
+  'customers or other chats, never calls write tools and never acts for you, so an order like "send ' +
+  'the follow-ups", "reply to them" or "post X every hour" is never carried out. Do such work in this ' +
+  'turn, and for repeated sending use a scheduled script or program instead; tell the person so. ' +
   'By default it reports exactly where the person asked ("chat saya disini"): this chat. Set ' +
   '`connection`/`chat`/`topic` only when the person explicitly names another chat of yours. ' +
   '`mention` defaults to true in a group (the asker is tagged); pass false when they did not want it. ' +

@@ -79,7 +79,7 @@ import {
 import { supervisorSteps } from '../domain/supervisor.ts'
 import { boardColumn, type Task } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
-import { postAlerts, postDigest } from './briefings.ts'
+import { postAlerts, postDigest, postNotice } from './briefings.ts'
 import { healthSummary } from './health.ts'
 import {
   beatReadScope,
@@ -979,8 +979,13 @@ export interface BeatEnd {
   stop: string
   /** The validated final answer, when the turn produced one. */
   output: unknown
+  /** Set when the turn stopped `error`: its code and text (e.g. `EH_CONTEXT_OVERFLOW`). */
+  error?: { code: string; message: string } | undefined
   at: number
 }
+
+/** Failed beats in a row before the owners get a bell alert (once a day per agent). */
+export const FAILING_BEATS_ALERT = 3
 
 /** The turn of a beat ended: record it, queue what is new for the digest, interrupt for urgent. */
 export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord | undefined> {
@@ -995,7 +1000,12 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
   const edits = memoryEditItems(deps, takeMemoryChanges(deps, agentId, at), parsed?.items ?? [], at)
   if (parsed === undefined) {
     status = 'failed'
-    reason = end.stop === 'complete' ? 'no valid final answer' : `stopped: ${end.stop}`
+    reason =
+      end.stop === 'complete'
+        ? 'no valid final answer'
+        : end.error === undefined
+          ? `stopped: ${end.stop}`
+          : `stopped: ${end.stop} (${end.error.code}: ${end.error.message})`.slice(0, 300)
     if (edits.length > 0) {
       const state = deps.heartbeat.store.state(agentId)
       fresh = splitNew(edits, state.fingerprints, at).fresh
@@ -1078,8 +1088,37 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
   if (fresh.length > 0) {
     await journalBeat(deps, deps.agents.get(agentId)?.name ?? 'agent', fresh, at)
   }
+  if (status === 'failed') alertFailingBeats(deps, agentId, at)
   changed(deps, agentId, 'beat')
   return record
+}
+
+/**
+ * Several beats in a row failed (a context overflow, a provider error, no valid answer): the
+ * monitor is silently not working, so the owners get one bell alert per agent and day.
+ */
+function alertFailingBeats(deps: Deps, agentId: string, at: number): void {
+  const ended = deps.heartbeat.store
+    .state(agentId)
+    .beats.filter((b) => b.status !== 'running' && b.status !== 'skipped')
+    .sort((a, b) => (a.endedAt ?? a.at) - (b.endedAt ?? b.at))
+  const last = ended.slice(-FAILING_BEATS_ALERT)
+  if (last.length < FAILING_BEATS_ALERT || last.some((b) => b.status !== 'failed')) return
+  const name = deps.agents.get(agentId)?.name ?? 'An agent'
+  const reason = last.at(-1)?.reason ?? 'unknown'
+  const overflow = /CONTEXT_OVERFLOW|context window/i.test(reason)
+  postNotice(deps, {
+    key: `heartbeat-failing:${agentId}:${localDay(at, deps.settings.get().timezone)}`,
+    title: `${name}'s heartbeat keeps failing`,
+    body: `The last ${FAILING_BEATS_ALERT} beats failed, so standing orders and monitoring are not running. Last reason: ${reason}.${
+      overflow
+        ? ' Raise the heartbeat context window in Settings, or shorten the agent memory and standing orders.'
+        : ''
+    }`,
+    link: null,
+    agentId,
+    at,
+  })
 }
 
 /** One item per memory file the beat changed; the beat's own item for a file carries the reason. */

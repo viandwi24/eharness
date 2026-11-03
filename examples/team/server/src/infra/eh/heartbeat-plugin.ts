@@ -33,7 +33,12 @@ import type { StandingOrderApi } from './standing-order-plugin.ts'
 /** What the plugin needs from the app (`app/heartbeat.ts` over the deps, built in `main.ts`). */
 export interface HeartbeatIntake {
   status(agentId: string): Promise<string>
-  ended(end: { agentId: string; stop: string; output: unknown }): Promise<void>
+  ended(end: {
+    agentId: string
+    stop: string
+    output: unknown
+    error?: { code: string; message: string } | undefined
+  }): Promise<void>
   /** Append a line to today's notes of the agent (fixed path, append-only). */
   note(
     agentId: string,
@@ -330,10 +335,17 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
           },
           'turn.end': async (
             hookCtx: HarnessContext,
-            e: { stop: string; output?: unknown },
+            e: { stop: string; output?: unknown; error?: { code: string; message: string } },
           ): Promise<void> => {
             try {
-              await intake().ended({ agentId, stop: e.stop, output: e.output })
+              await intake().ended({
+                agentId,
+                stop: e.stop,
+                output: e.output,
+                ...(e.error === undefined
+                  ? {}
+                  : { error: { code: e.error.code, message: e.error.message } }),
+              })
             } catch (error) {
               hookCtx.log.warn(`heartbeat: could not record the beat: ${errorText(error)}`)
             }

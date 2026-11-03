@@ -258,6 +258,9 @@ describe('standing_order in a chat channel', () => {
     expect(text).toContain(`report:chat:c1/${rooms.internal}`)
     expect(text).toContain('mention:yes')
     expect(wire(i.model)).toContain('Standing order saved')
+    // the real schedule (default: every 30 minutes, 08:00-20:00) and the read-only rule
+    expect(wire(i.model)).toContain('looks at it every 30 minutes, 08:00-20:00')
+    expect(wire(i.model)).toContain('The heartbeat only reads and reports')
     // the same words from the same person to the same place are not stacked
     await ask(rooms, admin, WATCH, 'ok, again')
     expect(wire(i.model)).toContain('Already ongoing')

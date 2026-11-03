@@ -866,6 +866,28 @@ describe('a beat', () => {
     expect((await view(i.app, i.leadId)).beats.map((b) => b.status)).toEqual(['ok', 'failed'])
   })
 
+  test('three failed beats in a row raise one bell alert with the reason', async () => {
+    const down = { throws: new Error('provider down') }
+    const i = instance({ lead: [down, down, down, down] })
+    await setUp(i)
+    for (let n = 1; n <= 2; n++) {
+      await fire(i)
+      await beatEnds(i, n)
+    }
+    const title = (x: { title: string }) => x.title.includes('heartbeat keeps failing')
+    expect((await notifications(i)).filter(title)).toEqual([])
+    await fire(i)
+    await beatEnds(i, 3)
+    const failed = (await view(i.app, i.leadId)).beats[0]
+    expect(failed?.reason).toContain('stopped: error (EH_')
+    const alerts = (await notifications(i)).filter(title)
+    expect(alerts).toHaveLength(1)
+    // once a day: a fourth failure adds no second alert
+    await fire(i)
+    await beatEnds(i, 4)
+    expect((await notifications(i)).filter(title)).toHaveLength(1)
+  })
+
   test('the heartbeat cannot write: a call outside its read-only authority is refused', async () => {
     const i = instance({
       lead: [

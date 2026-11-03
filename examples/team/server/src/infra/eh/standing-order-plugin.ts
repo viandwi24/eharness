@@ -66,7 +66,28 @@ export interface StandingOrderApi {
   ): Array<{ connectionId: string; nodeId: string; label: string; proactive: boolean }>
   /** A destination named for a person. */
   label(agentId: string, d: OrderDestination): string
+  /** When the agent's heartbeat runs: minutes between beats and the active hours in `zone`. */
+  schedule?(
+    agentId: string,
+  ): { everyMinutes: number; activeFrom: string; activeTo: string; zone: string } | undefined
 }
+
+/** "every 2 hours, 06:00-22:00 (Asia/Jakarta)" for the add answer. */
+export function beatEvery(s: {
+  everyMinutes: number
+  activeFrom: string
+  activeTo: string
+  zone: string
+}): string {
+  const m = s.everyMinutes
+  const every =
+    m % 60 === 0 ? (m === 60 ? 'every hour' : `every ${m / 60} hours`) : `every ${m} minutes`
+  return `${every}, ${s.activeFrom}-${s.activeTo} (${s.zone})`
+}
+
+/** Said with every new order: the heartbeat cannot do work that sends or changes things. */
+export const READ_ONLY_NOTE =
+  'The heartbeat only reads and reports: it cannot send messages to customers or other chats, call write tools or act for you. If this order asks for sending or changing anything, that part is never done by the heartbeat: do it in a chat turn, or use a scheduled script or program for repeated work, and tell the person plainly.'
 
 export interface StandingOrderPluginOptions {
   /** Late-bound: the plugin is built before the gateway. */
@@ -342,12 +363,13 @@ export function standingOrders(
           chat !== undefined && !chat.proactive
             ? ' Note: that chat does not allow unasked posts yet (its settings), so a report there is refused until an owner allows "proactive" posts for it; tell the person.'
             : ''
+        const schedule = api().schedule?.(agentId)
         const when =
           out.order.kind === 'deadline' && out.order.due !== undefined
             ? `A beat runs for it at exactly ${new Date(out.order.due).toISOString().slice(0, 16).replace('T', ' ')} UTC, ends it with an outcome, and reports ${where}.`
-            : `The heartbeat looks at it about every 30 minutes (and early when the chats I watch get new messages) and reports ${where}.`
+            : `The heartbeat looks at it ${schedule === undefined ? 'on its schedule' : beatEvery(schedule)} and reports ${where}. Say this schedule to the person exactly; never promise a shorter one.`
         const ledger = out.order.ledger === undefined ? '' : ` Its tracker is ${out.order.ledger}.`
-        return `Standing order saved (id ${out.order.id}, ${out.order.kind}): "${clip(out.order.text, 200)}". ${when}${ledger} It is a readable line in my HEARTBEAT.md. To end it, say "stop" and I remove it.${warn} Tell the person, in one plain sentence, what you will watch and where you will report.`
+        return `Standing order saved (id ${out.order.id}, ${out.order.kind}): "${clip(out.order.text, 200)}". ${when}${ledger} It is a readable line in my HEARTBEAT.md. To end it, say "stop" and I remove it.${warn} ${READ_ONLY_NOTE} Tell the person, in one plain sentence, what you will watch and where you will report.`
       }
 
       const run = async (input: z.infer<typeof schema>): Promise<string> => {

@@ -105,6 +105,7 @@ import {
   effectiveConfig,
   ensureHeartbeats,
   finishBeat,
+  heartbeatTimezone,
   reportToWeb,
   reservePost,
   teamStatus,
@@ -1503,6 +1504,17 @@ export function compose(config: ServerConfig): Server {
           proactive: d.proactive,
         })),
       label: (agentId, d) => destinationLabel(deps, agentId, d),
+      schedule: (agentId) => {
+        const def = agents.get(agentId)
+        if (def === undefined) return undefined
+        const config = effectiveConfig(deps, def)
+        return {
+          everyMinutes: config.everyMinutes,
+          activeFrom: config.activeFrom,
+          activeTo: config.activeTo,
+          zone: heartbeatTimezone(deps, config),
+        }
+      },
     },
   }
   // bell alerts of the channels (breaker opened, outbox failure, a bot token rejected)
