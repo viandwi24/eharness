@@ -63,30 +63,122 @@ function waitResultFor(
   return { output: stoppedText(stop, text) }
 }
 
-/** `resolveWait()` plus the continuation run handling; `'busy'` when the parent runs a turn. */
+/** How long the parent of a finished child is retried until its turn continues (15 minutes). */
+export const PARENT_CONTINUE_WINDOW_MS: number = 15 * 60_000
+/** Longest pause between two tries to continue the parent. */
+const PARENT_RETRY_MAX_DELAY_MS = 5_000
+/** Continuations that failed for another reason than a busy session, before the retries stop. */
+const PARENT_FAILED_RUNS_MAX = 3
+
+type ParentLog = { warn(message: string, data?: Record<string, unknown>): void }
+
+interface SettleOptions {
+  onParentRun: ((run: AnyRun, parentSessionId: string) => void) | undefined
+  parentSessionId: string
+  log: ParentLog
+  /** Tests: shorter retry window. */
+  windowMs?: number
+}
+
+const isBusy = (error: unknown): boolean =>
+  isHarnessError(error) && error.code === 'EH_SESSION_BUSY'
+
+/** One try: `'retry'` when the parent is busy, `{ run }` when its continuation started. */
+type Attempt = 'done' | 'retry' | { run: AnyRun }
+
+/**
+ * Hand a continuation to `onParentRun` (or drain it) and wait for its end. `'retry'` when it
+ * failed: a failure before the commit point (lock held by another instance, storage) left the
+ * waits resolved but the turn not continued, and a later `expireWaits()` continues it; after a
+ * committed turn that call finds nothing to continue.
+ */
+async function watchRun(
+  run: AnyRun,
+  o: SettleOptions,
+): Promise<'done' | { retry: true; busy: boolean }> {
+  if (o.onParentRun !== undefined) o.onParentRun(run, o.parentSessionId)
+  else drain(run)
+  const result = (await run.result) as TurnResult
+  if (result.stop !== 'error') return 'done'
+  const busy = result.error?.code === 'EH_SESSION_BUSY'
+  if (!busy) {
+    o.log.warn('subagent: the parent continuation failed', {
+      parent: o.parentSessionId,
+      code: result.error?.code,
+      error: result.error?.message,
+    })
+  }
+  return { retry: true, busy }
+}
+
+/**
+ * Resolve the parent's wait and make sure its turn continues (spec 20 §3 step 5). The first try
+ * runs now; when the parent is busy, or its continuation did not start or failed before it
+ * stored anything, a background loop keeps trying (backoff up to 5 s, for 15 minutes): it resolves
+ * the wait if that did not happen yet, else continues the parent through `expireWaits()`, which
+ * starts the turn once every wait has a result. Returns `'busy'` when the wait is not recorded yet.
+ */
 async function settleWait(
   parentSession: AnySession,
   waitId: string,
-  result: { output: unknown } | { errorText: string },
-  o: {
-    onParentRun: ((run: AnyRun, parentSessionId: string) => void) | undefined
-    parentSessionId: string
-    log: { warn(message: string, data?: Record<string, unknown>): void }
-  },
+  result: { output: unknown } | { errorText: string } | undefined,
+  o: SettleOptions,
 ): Promise<'done' | 'busy'> {
-  try {
-    const out = await parentSession.resolveWait(waitId, result)
-    if (out.status === 'continued') {
-      const run = out.run as AnyRun
-      if (o.onParentRun !== undefined) o.onParentRun(run, o.parentSessionId)
-      else drain(run)
+  // `undefined`: the waits are resolved already, only the continuation is missing
+  let recorded = result === undefined
+  const attempt = async (): Promise<Attempt> => {
+    try {
+      if (!recorded && result !== undefined) {
+        const out = await parentSession.resolveWait(waitId, result)
+        recorded = true
+        if (out.status === 'continued') return { run: out.run as AnyRun }
+        // all waits resolved but the parent was busy at the continuation: continue it later
+        if (out.status === 'recorded' && out.remaining === 0) return 'retry'
+        return 'done'
+      }
+      const out = await parentSession.expireWaits()
+      return out.run === undefined ? 'done' : { run: out.run as AnyRun }
+    } catch (error) {
+      if (isBusy(error)) return 'retry'
+      o.log.warn('subagent: resolving the parent wait failed', {
+        parent: o.parentSessionId,
+        waitId,
+        error: errorText(error),
+      })
+      return 'done'
     }
-    return 'done'
-  } catch (error) {
-    if (isHarnessError(error) && error.code === 'EH_SESSION_BUSY') return 'busy'
-    o.log.warn('subagent: resolving the parent wait failed', { error: errorText(error) })
-    return 'done'
   }
+  const first = await attempt()
+  if (first === 'done') return 'done'
+  void (async () => {
+    const deadline = Date.now() + (o.windowMs ?? PARENT_CONTINUE_WINDOW_MS)
+    let next: Attempt = first
+    let failed = 0
+    for (let delay = 20; ; delay = Math.min(delay * 2, PARENT_RETRY_MAX_DELAY_MS)) {
+      if (next === 'done') return
+      if (next !== 'retry') {
+        const end = await watchRun(next.run, o)
+        if (end === 'done') return
+        if (!end.busy && ++failed >= PARENT_FAILED_RUNS_MAX) return
+      }
+      if (Date.now() >= deadline) {
+        o.log.warn('subagent: the parent was not continued after its child finished', {
+          parent: o.parentSessionId,
+          waitId,
+          recorded,
+        })
+        return
+      }
+      await sleep(delay)
+      next = await attempt()
+    }
+  })().catch((error: unknown) => {
+    o.log.warn('subagent: continuing the parent failed', {
+      parent: o.parentSessionId,
+      error: errorText(error),
+    })
+  })
+  return recorded ? 'done' : 'busy'
 }
 
 /** Outcome of one wait in {@link reconcileSubagentWaits}. */
@@ -107,6 +199,10 @@ export interface SubagentReconcileEntry {
  * `childSessionId` or the `correlationId`); the child is opened with `openChild`. It is skipped
  * while the child has pending approvals, an active turn, no assistant message yet, or its last
  * turn stopped `tool-pending`.
+ *
+ * When every wait of the parent has a result but its turn never continued (the continuation
+ * failed before it stored anything, or its instance stopped), the turn is continued instead and
+ * no entries are returned.
  */
 export async function reconcileSubagentWaits(
   parentSession: AnySession,
@@ -119,6 +215,19 @@ export async function reconcileSubagentWaits(
   const log = options.log ?? { warn() {} }
   const out: SubagentReconcileEntry[] = []
   const waits = await parentSession.pendingWaits()
+  // every wait has a result but the turn never continued (the continuation failed before it
+  // stored anything, or its instance stopped): continue it now
+  if (waits.length > 0 && waits.every((w) => w.result !== undefined)) {
+    const parked = waits.find((w) => w.waitId.startsWith('w_'))
+    if (parked !== undefined) {
+      await settleWait(parentSession, parked.waitId, undefined, {
+        onParentRun: options.onParentRun,
+        parentSessionId: parentSession.id,
+        log,
+      })
+    }
+    return out
+  }
   const children = await parentSession.children()
   for (const wait of waits) {
     if (wait.result !== undefined || !wait.waitId.startsWith('w_')) continue
@@ -392,25 +501,11 @@ export function createParkHook(options: {
       return
     }
     const result = waitResultFor(e.stop, finalText(e), e.error?.message)
-    const settle = (): Promise<'done' | 'busy'> =>
-      settleWait(parentSession, waitId, result, {
-        onParentRun: options.onParentRun,
-        parentSessionId: parent.sessionId,
-        log: ctx.log,
-      })
-    if ((await settle()) === 'busy') {
-      // the parent turn that started this child is still running here: retry after it ended
-      void (async () => {
-        for (let delay = 20, tries = 0; tries < 60; tries++, delay = Math.min(delay * 2, 1000)) {
-          await sleep(delay)
-          if ((await settle()) === 'done') return
-        }
-        ctx.log.warn('subagent: the parent stayed busy; its wait was not resolved', {
-          parent: parent.sessionId,
-          waitId,
-        })
-      })()
-    }
+    await settleWait(parentSession, waitId, result, {
+      onParentRun: options.onParentRun,
+      parentSessionId: parent.sessionId,
+      log: ctx.log,
+    })
   }
   return { start, end }
 }

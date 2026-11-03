@@ -307,6 +307,17 @@ the user, or let it run: by default it is drained and stored; read it with `sess
   `reconcileSubagentWaits` (§3.4); without it the wait stays parked until `parkTimeoutMs` or a manual
   `resolveWait`, so set `parkTimeoutMs` in production anyway.
 - The concurrency slot is held while `start` awaits the child's first turn, not while parked.
+- **The parent always continues.** The hook resolves the wait, then makes sure the parent's turn
+  continues. When the parent is busy (its own turn still runs here), when the continuation could not
+  start (`resolveWait()` gave `recorded` with nothing left), or when the continuation run ended
+  `error` before it stored anything (the session lock held by another instance, a storage failure),
+  a detached loop keeps trying with backoff (20 ms doubling, at most 5 s) for 15 minutes: it resolves
+  the wait if that did not happen yet, else calls `expireWaits()`, which continues a parent whose
+  waits all have results. After a committed turn that call finds nothing to continue, so the loop
+  ends by itself. A continuation that fails for another reason is logged
+  (`subagent: the parent continuation failed`, with the parent session id and error code) and
+  retried at most three times; giving up is logged as well. The run is still handed to
+  `onParentRun` (or drained) first, each try.
 
 ### 3.3 Server recipe
 
@@ -339,6 +350,12 @@ active turn and its last assistant message has a `metadata.eharness.stop` other 
 `[subagent stopped: …]`). Otherwise the entry is `skipped`. A parent that runs a turn gives `busy`
 (retry later). Idempotent: the result is recorded with the wait's compare-and-set, so racing the
 hook, another instance or a second call is harmless.
+
+A parent whose waits **all have results but whose turn never continued** (its continuation failed
+before it stored anything and its instance stopped retrying, or stopped) is continued instead,
+through `expireWaits()` with the same retry rules as the hook (§3.2); the call then returns no
+entries. Run it on a timer over every session that can park a child, not only while a child task
+is active: by then the child is done.
 
 Automatic: with `approvals: 'park'` and `subagent({ selfAgent: () => parentAgent })` the plugin's
 `session.start` hook starts a reconcile **detached**: opening the session never waits for it and
