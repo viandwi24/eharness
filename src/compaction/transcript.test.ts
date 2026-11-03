@@ -125,7 +125,7 @@ describe('transcript (spec 06 §5.3)', () => {
 })
 
 describe('summarize', () => {
-  test('an explicit output cap (the agent maxOutputTokens) is used, never below the summary budget', async () => {
+  test('the agent output cap only lowers the summarizer cap, never below the summary budget', async () => {
     const model = summarizerModel(['brief', 'brief'])
     const base = {
       model,
@@ -138,7 +138,7 @@ describe('summarize', () => {
     }
     await summarize({ ...base, maxOutputTokens: 32_768 })
     await summarize({ ...base, maxOutputTokens: 1_000 })
-    expect(model.calls.map((c) => c.maxOutputTokens)).toEqual([32_768, 4_000])
+    expect(model.calls.map((c) => c.maxOutputTokens)).toEqual([16_000, 4_000])
   })
 
   test('one call: instructions, transcript and hook context, maxOutputTokens', async () => {

@@ -19,6 +19,17 @@ export const CHUNK_SHARE = 0.6
  */
 export const SUMMARY_REASONING_HEADROOM = 12_000
 
+/**
+ * `maxOutputTokens` of a summarizer call: `maxSummaryTokens` plus the reasoning headroom, lowered
+ * to the agent's own output cap when that is smaller (the provider accepts it), never below
+ * `maxSummaryTokens`. The agent cap never raises it: a larger cap only let a model write a summary
+ * as long as the transcript (spec 06 §5.3).
+ */
+export function summaryOutputCap(maxSummaryTokens: number, agentCap?: number): number {
+  const own = maxSummaryTokens + SUMMARY_REASONING_HEADROOM
+  return Math.max(maxSummaryTokens, agentCap === undefined ? own : Math.min(own, agentCap))
+}
+
 /** Input of {@link summarize}. */
 export interface SummarizeInput {
   model: LanguageModel
@@ -30,8 +41,9 @@ export interface SummarizeInput {
   context: readonly string[]
   maxSummaryTokens: number
   /**
-   * `maxOutputTokens` of each call. Default `maxSummaryTokens + SUMMARY_REASONING_HEADROOM`; never
-   * below `maxSummaryTokens`. The summary text itself is still asked to fit `maxSummaryTokens`.
+   * The agent's output cap: lowers `maxOutputTokens` of each call below its default
+   * `maxSummaryTokens + SUMMARY_REASONING_HEADROOM`, never raises it ({@link summaryOutputCap}).
+   * The summary text itself is asked to fit `maxSummaryTokens`.
    */
   maxOutputTokens?: number
   /** Summarizer context window (tokens). */
@@ -121,11 +133,12 @@ export async function summarize(input: SummarizeInput): Promise<SummarizeResult>
     const result = await generateText({
       model: input.model,
       instructions: input.prompt,
-      prompt: summarizerInput(entries.join('\n\n'), last ? input.context : []),
-      maxOutputTokens: Math.max(
+      prompt: summarizerInput(
+        entries.join('\n\n'),
+        last ? input.context : [],
         input.maxSummaryTokens,
-        input.maxOutputTokens ?? input.maxSummaryTokens + SUMMARY_REASONING_HEADROOM,
       ),
+      maxOutputTokens: summaryOutputCap(input.maxSummaryTokens, input.maxOutputTokens),
       ...(input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal }),
     })
     usage.push(result.usage)

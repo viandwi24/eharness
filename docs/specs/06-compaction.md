@@ -393,10 +393,13 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    state that lives in them across the compaction). `out.instructions` is the focus text of a
    manual `compact({ instructions })`; the core appends it to `context` after the hooks.
 3. `generateText({ model, instructions: prompt, prompt: transcript + context, maxOutputTokens })`,
-   `maxOutputTokens` = the agent's `settings.maxOutputTokens`, else `maxSummaryTokens + 12_000`
-   (`SUMMARY_REASONING_HEADROOM`), never below `maxSummaryTokens`: reasoning models count their
-   thinking against the output limit, and a summary cut by it is a failure (§5.5). The prompt still
-   asks for a summary of at most `maxSummaryTokens`;
+   `maxOutputTokens` = `maxSummaryTokens + 12_000` (`SUMMARY_REASONING_HEADROOM`: reasoning models
+   count their thinking against the output limit), lowered to the agent's `settings.maxOutputTokens`
+   when that is smaller, never below `maxSummaryTokens`; the agent cap never raises it (a high cap
+   let a model write a summary as long as the transcript, which compacted again on the next turn).
+   A summary cut by it is a failure (§5.5). The user prompt states the length limit after the
+   transcript ("the brief must fit `maxSummaryTokens` tokens (about N words)", N = 0.7 × the
+   budget), also with a custom prompt;
    the prompt wraps the transcript in `<transcript>…</transcript>` and lists the context lines
    after it. The summarizer window is `config.contextWindow` of `CompactionConfig`, else the agent
    window of the summarizer model.
@@ -452,7 +455,7 @@ on any chunk: a truncated brief would silently lose the end of the work state, s
 used — no retry) → warning `W_COMPACTION_FAILED` (`details: { trigger, reason? }`, `reason:
 'length' | 'empty'`), no marker, continue with the guard. Manual `compact()` rejects with
 `EH_COMPACTION_FAILED` (same `details.reason`). Raise `settings.maxOutputTokens` (the summarizer's
-output cap) or `maxSummaryTokens` when this happens.
+output cap, which can lower the summarizer cap) or `maxSummaryTokens` when this happens.
 
 ## 6. Guard (always on, not configurable away)
 

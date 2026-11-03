@@ -29,8 +29,18 @@ Rules:
 - Do not invent anything that is not in the transcript.
 - Write plain text. Do not write tool calls, XML or any other markup.`
 
-/** Build the summarizer user prompt for one (chunk of a) transcript. */
-export function summarizerInput(transcript: string, context: readonly string[]): string {
+/** About this many words fit one token budget of the summary (English prose; other languages use fewer). */
+const WORDS_PER_TOKEN = 0.7
+
+/**
+ * Build the summarizer user prompt for one (chunk of a) transcript. `maxSummaryTokens` is stated
+ * as the length limit of the brief (spec 06 §5.3): without it a model tends to copy the transcript.
+ */
+export function summarizerInput(
+  transcript: string,
+  context: readonly string[],
+  maxSummaryTokens?: number,
+): string {
   const parts = [
     'Summarize the following conversation transcript as instructed.',
     `<transcript>\n${transcript}\n</transcript>`,
@@ -39,6 +49,12 @@ export function summarizerInput(transcript: string, context: readonly string[]):
   if (lines.length > 0) {
     parts.push(
       `Additional context to keep in the summary:\n${lines.map((l) => `- ${l}`).join('\n')}`,
+    )
+  }
+  if (maxSummaryTokens !== undefined) {
+    const words = Math.max(50, Math.floor(maxSummaryTokens * WORDS_PER_TOKEN))
+    parts.push(
+      `Length limit: the brief must fit ${maxSummaryTokens} tokens (about ${words} words). Condense: keep what the agent needs to continue, leave out the rest; never copy the transcript.`,
     )
   }
   return parts.join('\n\n')

@@ -358,8 +358,8 @@ export function createSessionCompaction(deps: {
         entries,
         context,
         maxSummaryTokens,
-        // the agent's output cap is known to be accepted by the provider and leaves room for a
-        // reasoning model's thinking; without one the summarizer default headroom applies
+        // the agent's output cap is known to be accepted by the provider: it may lower the
+        // summarizer cap, never raise it (a high cap let a model copy the transcript)
         ...(config.settings?.maxOutputTokens === undefined
           ? {}
           : { maxOutputTokens: config.settings.maxOutputTokens }),
