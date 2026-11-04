@@ -882,11 +882,24 @@ describe('openRouterProvider routing and usage accounting', () => {
     })
   })
 
+  test('excluded providers are sent as provider.ignore and dropped from the order', () => {
+    const { seen, instance } = setupRouting({
+      providerOrder: 'morph, deepinfra',
+      ignoreProviders: ' Morph ,',
+    })
+    instance.languageModel('m')
+    expect(seen[0]?.settings).toEqual({
+      usage: { include: true },
+      provider: { order: ['deepinfra'], ignore: ['morph'] },
+    })
+  })
+
   test('the form describes the routing fields with their defaults', () => {
     const def = openRouterProvider({ createOpenRouter: () => () => 'x' })
     const fields = formSpec(def.settings as never).fields
     const byPath = Object.fromEntries(fields.map((f) => [f.path, f]))
     expect(byPath.providerOrder?.group).toBe('advanced')
+    expect(byPath.ignoreProviders?.group).toBe('advanced')
     expect(byPath.allowFallbacks).toMatchObject({ kind: 'boolean', default: true })
     expect(byPath.stickyProvider).toMatchObject({ kind: 'boolean', default: false })
   })
@@ -946,6 +959,32 @@ describe('openRouterProvider routing and usage accounting', () => {
     return { model, wrapped: instance.languageModel('m'), providerOf }
   }
   const bedrock = { openrouter: { provider: 'Amazon Bedrock' } }
+
+  test('sticky provider: an excluded upstream is never put first', async () => {
+    const model = scriptedModel(
+      [
+        { text: 'a', providerMetadata: { openrouter: { provider: 'Morph' } } },
+        { text: 'b', providerMetadata: { openrouter: { provider: 'Morph' } } },
+      ],
+      { provider: 'openrouter.chat', modelId: 'm' },
+    )
+    const def = openRouterProvider({ createOpenRouter: () => () => model })
+    const instance = def.create(
+      validateSettings(def.settings, {
+        apiKey: KEY,
+        stickyProvider: true,
+        ignoreProviders: 'morph',
+      }),
+    )
+    const wrapped = instance.languageModel('m')
+    const call = () => generateText({ model: wrapped, messages: [{ role: 'user', content: 'hi' }] })
+    await call()
+    await call()
+    const second = model.doGenerateCalls[1]?.providerOptions as
+      | { openrouter?: { provider?: unknown } }
+      | undefined
+    expect(second?.openrouter?.provider).toBeUndefined()
+  })
 
   test('sticky provider: a failed call forgets the provider, the next is routed normally', async () => {
     const { model, wrapped, providerOf } = stickySetup([

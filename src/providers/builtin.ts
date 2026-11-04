@@ -151,6 +151,15 @@ const openRouterSettings = z.object({
         'Comma-separated OpenRouter provider slugs tried in this order, e.g. "anthropic, amazon-bedrock". Empty: OpenRouter chooses (and may switch provider between calls, which breaks the prompt cache).',
       ...ehMeta({ group: 'advanced', placeholder: 'anthropic, amazon-bedrock' }),
     }),
+  ignoreProviders: z
+    .string()
+    .optional()
+    .meta({
+      title: 'Never use these upstream providers',
+      description:
+        'Comma-separated OpenRouter provider slugs that are never used, e.g. "morph" for an upstream that keeps failing. Empty: none is excluded.',
+      ...ehMeta({ group: 'advanced', placeholder: 'morph' }),
+    }),
   allowFallbacks: z
     .boolean()
     .optional()
@@ -238,7 +247,7 @@ const upstreamOf = (metadata: unknown): string | undefined => {
 function stickyRouting(
   model: LanguageModel,
   learned: Map<string, string>,
-  base: { order?: string[]; allow_fallbacks?: boolean } | undefined,
+  base: { order?: string[]; allow_fallbacks?: boolean; ignore?: string[] } | undefined,
 ): LanguageModel {
   if (typeof model === 'string' || typeof model !== 'object' || model === null) return model
   const m = model as unknown as {
@@ -251,7 +260,8 @@ function stickyRouting(
   ): { params: Record<string, unknown>; key: string } => {
     const key = conversationKey(m.modelId, params.prompt)
     const sticky = learned.get(key)
-    if (sticky === undefined) return { params, key }
+    // an excluded upstream is never preferred (it was learned before the setting changed)
+    if (sticky === undefined || base?.ignore?.includes(sticky) === true) return { params, key }
     const providerOptions = (params.providerOptions ?? {}) as Record<
       string,
       Record<string, unknown>
@@ -401,9 +411,11 @@ export function openRouterProvider(options: OpenRouterProviderOptions): Provider
         ...(s.baseURL ? { baseURL: s.baseURL } : {}),
         ...(s.headers ? { headers: s.headers } : {}),
       })
-      const order = slugList(s.providerOrder)
-      const routing: { order?: string[]; allow_fallbacks?: boolean } = {
+      const ignore = slugList(s.ignoreProviders)
+      const order = slugList(s.providerOrder).filter((slug) => !ignore.includes(slug))
+      const routing: { order?: string[]; allow_fallbacks?: boolean; ignore?: string[] } = {
         ...(order.length > 0 ? { order } : {}),
+        ...(ignore.length > 0 ? { ignore } : {}),
         ...(s.allowFallbacks === false ? { allow_fallbacks: false } : {}),
       }
       const hasRouting = Object.keys(routing).length > 0

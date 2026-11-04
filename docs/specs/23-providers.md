@@ -199,12 +199,15 @@ with the profile's headers; any failure keeps the plain ids, never throws):
   `display_name` the name, and embedding models are left out;
 - the price is zero (`{ input: 0, output: 0 }`), except Ollama cloud models (`*-cloud`).
 
-`openRouterProvider` also has three optional `advanced` settings and always turns usage accounting
+`openRouterProvider` also has four optional `advanced` settings and always turns usage accounting
 on (`usage: { include: true }` on the model, so the response carries the billed cost,
 `providerMetadata.openrouter.usage.cost`, which the core settles instead of the catalog estimate,
 spec 12 §3):
 
 - `providerOrder`: comma-separated OpenRouter provider slugs, sent as `provider.order`;
+- `ignoreProviders`: comma-separated OpenRouter provider slugs that are never used, sent as
+  `provider.ignore` (e.g. an upstream that keeps failing mid-stream); an excluded slug is dropped
+  from `provider.order` and is never put first by `stickyProvider`;
 - `allowFallbacks` (default on): `false` sends `provider.allow_fallbacks: false`;
 - `stickyProvider` (default off): app-side stickiness. OpenRouter's prompt cache only works within
   one upstream provider, so the provider that served the previous call of a conversation
