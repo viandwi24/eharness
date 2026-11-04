@@ -606,6 +606,14 @@ different mechanism, because a park child may run, wait or be answered in anothe
   a live turn (next step, stored as `data-eh.input` with `source: 'user'`, the body is the frame);
   `'queue'` for an idle / finished child (a new turn on the same session, by whichever instance
   holds it) and for a child waiting for an approval (held until it is answered, rule 8).
+  A child parked on external waits only whose waits include a `sleep` (payload `sleep: true`,
+  spec 34 §1.1) is **woken** instead of queued: each unanswered sleep is resolved through
+  `resolveWait()`, the first with `Woke up early: a new message arrived for you.\n\n<frame>\n\nAct
+  on it first, …` (a user message is prefixed `From the user: `), so the model reads the message
+  in the continuation at once instead of after the sleep (the inbox is held while it is parked);
+  the tool answers `Message delivered to <label>. It was asleep; the message woke it and it reads
+  it now. …`. When no sleep takes the message (none, a turn runs here, or the sleep just ended) it
+  is enqueued as above. Other waits (a job, a foreground grandchild) keep waiting.
   `resumable: false` refuses a finished child. The frame carries `to="<receiver label>"`
   (`relation="launcher"`: only a launcher messages its children).
 - **Report of a resumed child.** The child's `turn.end` hook (`subagent()` with `parentAgent`, or

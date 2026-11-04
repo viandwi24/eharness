@@ -7,7 +7,7 @@
 import { type FlexibleSchema, tool } from 'ai'
 import { z } from 'zod/v4'
 import { errorText, isHarnessError, type ToolInput } from '../index.ts'
-import { closeChild } from './child-run.ts'
+import { closeChild, drain } from './child-run.ts'
 import { messageDescription } from './descriptions.ts'
 import { parkStatus, rebuildEntries, rebuildPark, rootOf, selfNameOf, stopPark } from './entries.ts'
 import type { Env, Reporter, Scope } from './env.ts'
@@ -21,7 +21,7 @@ import {
   throttle,
 } from './messaging.ts'
 import { type MessageLike, textOf } from './report.ts'
-import { AGENT_OUTPUT_PAGE_CHARS, type AnySession, type Ctx } from './types.ts'
+import { AGENT_OUTPUT_PAGE_CHARS, type AnyRun, type AnySession, type Ctx } from './types.ts'
 
 export function reporterOf(ctx: Ctx): Reporter {
   return async (text, data) => {
@@ -36,7 +36,7 @@ export function reporterOf(ctx: Ctx): Reporter {
 export type Routed =
   | { kind: 'error'; text: string }
   | { kind: 'dropped'; text: string }
-  | { kind: 'delivered'; label: string; id: string }
+  | { kind: 'delivered'; label: string; id: string; woke?: true }
   | { kind: 'resumed'; label: string; id: string }
 
 function fail(text: string): Routed {
@@ -210,6 +210,8 @@ export function messageTool(scope: Scope, name: string): ToolInput {
         case 'dropped':
           return routed.text
         case 'delivered':
+          if (routed.woke === true)
+            return `Message delivered to ${routed.label}. It was asleep; the message woke it and it reads it now. Its answer, if any, comes back as a message.`
           return routed.label === 'main'
             ? 'Message sent to main. It sees it at its next step, or now if it is idle.'
             : `Message delivered to ${routed.label}. It sees it at its next step; its answer, if any, comes back as a message.`
@@ -528,16 +530,50 @@ async function routePark(
     sender.kind === 'agent'
       ? frameAgentMessage(text, { label: sender.label, id: sender.id }, 'launcher', label)
       : text
+  let woken = false
   try {
     // the handle stays open: it drains the inbox when no other instance holds the session
-    await (def.agent.session(entry.childSessionId, env.entryOptions(entry)) as AnySession).enqueue(
-      payload,
-      {
-        mode: running ? 'steer' : 'queue',
-      },
-    )
+    const child = def.agent.session(entry.childSessionId, env.entryOptions(entry)) as AnySession
+    // the inbox is held while the child is parked: a sleep ends early and carries the message, so
+    // it is read now and not hours later (ADR-0067). Other waits (a job) keep waiting.
+    woken =
+      state.parked === true &&
+      (await wakeSleeps(child, sender.kind === 'agent' ? payload : `From the user: ${payload}`))
+    if (!woken) await child.enqueue(payload, { mode: running ? 'steer' : 'queue' })
   } catch (error) {
     return fail(`could not deliver the message to ${label}: ${errorText(error)}`)
   }
+  if (woken) return { kind: 'delivered', label, id: label, woke: true }
   return running ? { kind: 'delivered', label, id: label } : { kind: 'resumed', label, id: label }
+}
+
+/** The result of a second sleep the same message ends (the first one carries the message). */
+const WOKEN_EARLY =
+  'Woke up early: a new message arrived for you (it is in the result of your other sleep call).'
+
+/** The result of a sleep that a message ends early: the message itself, read at once. */
+export function wokenByMessage(message: string): string {
+  return `Woke up early: a new message arrived for you.\n\n${message}\n\nAct on it first, then go on with the work from your saved progress; sleep again only if more pacing is needed.`
+}
+
+/**
+ * End the unanswered `sleep` waits of a parked child (ADR-0067: new input ends a sleep early); the
+ * first one carries `message`. False when no sleep took it (none, or one that just ended).
+ */
+async function wakeSleeps(child: AnySession, message: string): Promise<boolean> {
+  let carried = false
+  for (const wait of await child.pendingWaits()) {
+    if (wait.result !== undefined) continue
+    const payload = wait.payload as { sleep?: unknown } | undefined
+    if (payload?.sleep !== true) continue
+    const output = carried ? WOKEN_EARLY : wokenByMessage(message)
+    try {
+      const out = await child.resolveWait(wait.waitId, { output })
+      if (out.status === 'continued') drain(out.run as AnyRun)
+      if (out.status === 'continued' || out.status === 'recorded') carried = true
+    } catch {
+      // a turn runs or the wait just ended: the message goes through the inbox instead
+    }
+  }
+  return carried
 }

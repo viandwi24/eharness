@@ -24,6 +24,10 @@ keep a lock, a stream and memory alive, and a restart would lose it.
   session, not by a sleep counter.
 - New input to the session ends a sleep early (the usual rule for parked waits: the wait is
   cancelled, the model sees the new message).
+  **Amendment (2026-11-04):** that rule holds for an explicit `send()` only; queued and inbox input
+  is held while a session is parked, so a `send_message` to a sleeping park child waited for the
+  whole sleep (hours in production, while the lead kept being told "delivered"). `send_message`
+  now resolves the child's sleeps with a wake-up text that carries the message (spec 20 §5.9).
 - A durable background child (ADR-0046) parked only on external waits (no approval or question a
   person must answer) no longer reports "waiting" to its parent: nobody has to act, so the parent is
   not woken for every sleep. It reports when it finishes, as before.

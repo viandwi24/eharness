@@ -47,7 +47,9 @@ sleep, repeat". It is an `externalTool()` (spec 11 §4.2) with `metadata.risk: '
   `session.expireWaits()` does. The tool's own `timeoutMs` is `maxMinutes`, so a wait whose
   `start` never ran (a crash right after the commit) still wakes.
 - `minutes` outside 1..`maxMinutes` is an input error the model reads; nothing parks.
-- New input to the session cancels the wait like any parked wait (the sleep ends early).
+- An explicit `send()` to the session cancels the wait like any parked wait (the sleep ends
+  early). Queued and inbox input is held while the session is parked (spec 11 §6.2); for a park
+  child, `send_message` wakes a sleep and hands it the message (spec 20 §5.9).
 - A durable background child parked only on external waits does not report to its parent
   (spec 20); it reports when it finishes.
 - Nothing bounds the number of sleeps: use step or cost budgets (`eharness/limits`) and

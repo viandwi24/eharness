@@ -162,6 +162,48 @@ describe('sleep', () => {
     expect(mainModel.calls).toHaveLength(2)
   })
 
+  test('a message to a sleeping worker ends the sleep early; the worker reads it', async () => {
+    const { main, worker, workerModel } = pair(
+      [
+        { toolCalls: [spawnCall] },
+        { text: 'started the worker' },
+        {
+          toolCalls: [
+            {
+              toolName: 'send_message',
+              toolCallId: 'm1',
+              input: { to: 'followups', message: 'status please' },
+            },
+          ],
+        },
+        { text: 'asked for status' },
+        { text: 'the worker reported' },
+      ],
+      [
+        {
+          text: 'batch 1',
+          toolCalls: [{ toolName: 'sleep', toolCallId: 'w1', input: { minutes: 60 } }],
+        },
+        { text: 'woke for the message, batch 2 sent' },
+      ],
+      60 * 60_000,
+    )
+    await main.session('p').send('follow up everybody').result
+    await until(
+      'worker asleep',
+      async () => (await worker.session('p:agent:c1').pendingWaits()).length === 1,
+    )
+    await main.session('p').send('how is it going?').result
+    expect(await text(main, 'p')).toContain('It was asleep; the message woke it')
+    await until(
+      'worker woke',
+      async () => (await text(worker, 'p:agent:c1')).includes('woke for the message'),
+      5_000,
+    )
+    expect(JSON.stringify(workerModel.calls.at(-1))).toContain('status please')
+    expect(await worker.session('p:agent:c1').pendingWaits()).toEqual([])
+  })
+
   test('agent_stop ends a sleeping worker: it wakes with a stop notice, wraps up and reports', async () => {
     const { main, worker, workerModel } = pair(
       [
