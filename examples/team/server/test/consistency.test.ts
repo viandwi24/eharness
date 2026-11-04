@@ -405,6 +405,8 @@ describe('memory', () => {
       'The todo list tool is useful.',
       'to be decided by the owner later',
       'Use <b>bold</b>',
+      '- Per bulan: /library/finance/<YYYY-MM>/ (slice CSV + berkas/<ID>.md + bukti/)',
+      'GET /items/<id>/history',
     ]) {
       expect(kinds(base({ memory: [mem('ok.md', ok)] }))).toEqual([])
     }
@@ -434,6 +436,7 @@ describe('memory', () => {
 
   test('fenced code is not judged for placeholders', () => {
     expect(kinds(base({ memory: [mem('t.md', '```\nid: <id>\n```')] }))).toEqual([])
+    expect(kinds(base({ memory: [mem('t.md', 'id: <id>')] }))).toEqual(['memory-placeholder'])
   })
 
   test('two files on one topic: by name and by content', () => {

@@ -573,7 +573,8 @@ const PLACEHOLDER: ReadonlyArray<RegExp> = [
   /<\s*isi\b[^>\n]*>?/i,
   /\(\s*isi\s+setelah[^)\n]*\)?/i,
   /<\s*fill\b[^>\n]*>?/i,
-  /<\s*id\s*>/i,
+  // `<id>` alone, not a path template such as `berkas/<ID>.md` or `/items/<id>/`
+  /(?<![/\w])<\s*id\s*>(?![./\w])/i,
   /<\s*(?:todo|tbd|placeholder)\b[^>\n]*>?/i,
   /\[\s*isi\b[^\]\n]*\]?/i,
   /\bTODO\b\s*[:(-]/,
