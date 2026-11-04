@@ -1,5 +1,40 @@
 # eharness
 
+## 0.10.0
+
+### Minor Changes
+
+- [`042ea1c`](https://github.com/viandwi24/eharness/commit/042ea1cc8e69314bcc65457d3a0a2407a644d141) Thanks [@viandwi24](https://github.com/viandwi24)! - `followSessionStream` stays fast on long turns. Consecutive text and reasoning deltas of the same part are merged before the AI SDK folds them (`deltaHoldMs`, default 50 ms; `0` keeps one message state per delta), so a turn of hundreds of steps no longer produces one full copy of the message per chunk. The built message is unchanged. The new `clip` option replaces big tool inputs/outputs and data payloads with `?clip=` previews (`isClippedPart`) while following.
+
+- [`9153d34`](https://github.com/viandwi24/eharness/commit/9153d34f6820d3dcb39034067c98c5d82534312f) Thanks [@viandwi24](https://github.com/viandwi24)! - `eharness/providers`: presets for local model servers — `ollamaProvider`, `lmStudioProvider`,
+  `vllmProvider` and `llamaCppProvider` (OpenAI-compatible, no API key needed, the usual local
+  address as default). Their model lists carry the context window the server really runs each model
+  with (Ollama `/api/ps` and Modelfile `num_ctx`, LM Studio's loaded instance, vLLM `max_model_len`,
+  llama.cpp `n_ctx`), tools/vision/thinking support where the server reports it, and a zero price.
+  `openAICompatibleProvider` gains an optional `contextWindow` setting for servers that report none,
+  reads vLLM's `max_model_len`, and a preset's `defaultBaseURL` now applies when the field is empty.
+
+- [`1af9b12`](https://github.com/viandwi24/eharness/commit/1af9b12a80180528e26a3a32f3069e816a1367f7) Thanks [@viandwi24](https://github.com/viandwi24)! - `ModelInfo.thinking` tells which reasoning levels a model accepts (`levels`, `mandatory`,
+  `defaultLevel`; new types `ModelThinking` and `ThinkingLevel`): filled from OpenRouter's
+  `reasoning.supported_efforts` and from models.dev's `reasoning` flag. OpenRouter models now honour
+  the AI SDK `reasoning` call option (`settings.reasoning`), sent as OpenRouter's `reasoning.effort`.
+
+- [`b687472`](https://github.com/viandwi24/eharness/commit/b6874725ba46e6149f9d105fb7de5d1064ae7311) Thanks [@viandwi24](https://github.com/viandwi24)! - `openRouterProvider` has a new advanced setting, `ignoreProviders`: comma-separated upstream provider slugs that OpenRouter never routes to (`provider.ignore`). An excluded slug is dropped from `providerOrder` and is never put first by `stickyProvider`. Use it for an upstream that keeps failing, for example `morph`.
+
+- [`d827f8a`](https://github.com/viandwi24/eharness/commit/d827f8a08c7f2bd0a33ffb6ba82fdcd72cc3f2da) Thanks [@viandwi24](https://github.com/viandwi24)! - New `sleep` tool in `eharness/clock` (`sleepTool()`, or `clock({ sleep: true })`): it pauses a turn for whole minutes without holding a process, as an external wait that the session's wait timer (or `expireWaits()` after a restart) continues at the wake-up time. A worker can loop "do a batch, sleep, repeat" and costs nothing in between. A durable background subagent parked only on external waits no longer reports "waiting" to its parent; it reports when it finishes.
+
+### Patch Changes
+
+- [`9c46dd3`](https://github.com/viandwi24/eharness/commit/9c46dd314056da6d67309a89e7fbd93d50bedd34) Thanks [@viandwi24](https://github.com/viandwi24)! - Connector `update` follows `auth.when`: a changed endpoint asks for a sign in only when the connector signs in with the new settings, switching a custom MCP server to OAuth sets `needs-auth`, and leaving OAuth clears a pending sign in.
+
+- [`6bd9e3d`](https://github.com/viandwi24/eharness/commit/6bd9e3d240de7d373938b31c4451dbb9af4f7983) Thanks [@viandwi24](https://github.com/viandwi24)! - Subagent park mode: the parent of a finished child always continues. A continuation that could not start, or that failed before it stored anything (the session lock held by another instance, a storage failure), is retried with backoff for 15 minutes instead of being dropped silently; failed continuations are logged with the parent session id. `reconcileSubagentWaits()` now also continues a parent whose waits are all resolved but whose turn never continued.
+
+- [`f53e6ba`](https://github.com/viandwi24/eharness/commit/f53e6baf6a6afa33c268b99c8b3cd7d035fb6856) Thanks [@viandwi24](https://github.com/viandwi24)! - OpenRouter `stickyProvider` forgets a conversation's provider when a call fails (rejected, a stream `error` part or a broken stream), so the next call is routed normally instead of going back to a failing upstream.
+
+- [`949aaa0`](https://github.com/viandwi24/eharness/commit/949aaa07cf9afd72e827f743d30f3513f884d621) Thanks [@viandwi24](https://github.com/viandwi24)! - Compaction asks for a brief of at most `maxSummaryTokens` (the limit is now in the summarizer prompt) and the agent's `maxOutputTokens` no longer raises the summarizer output cap. A model given a 32k cap wrote summaries as long as the transcript, so a small context window compacted again on almost every turn.
+
+- [`1b124d4`](https://github.com/viandwi24/eharness/commit/1b124d4db35e8f10d7d8854672784e519722321b) Thanks [@viandwi24](https://github.com/viandwi24)! - subagent: `send_message` to a park-mode child that is asleep (`sleep` tool) now wakes it and hands it the message at once. Before, the message was queued behind the sleep and read only when the sleep ended, while the sender was told it was delivered.
+
 ## 0.9.0
 
 ### Minor Changes
