@@ -617,7 +617,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           return `Uploaded ${name} (message ${ids.join(', ')}).`
         }
         if (input.text === undefined || input.text.trim() === '')
-          return 'ERROR: send and reply need text.'
+          return `ERROR: this ${input.action} call has no \`text\`, so nothing was posted. Call channel_send again with the whole message in the \`text\` field (the same call without it fails the same way).`
         if (input.action === 'reply' && input.replyTo === undefined)
           return 'ERROR: reply needs replyTo (a platform message id).'
         let mentions: string[] = []

@@ -204,6 +204,32 @@ describe('sleep', () => {
     expect(await worker.session('p:agent:c1').pendingWaits()).toEqual([])
   })
 
+  test('a worker that fails after a sleep wakes its parent with the failure', async () => {
+    const { main, worker, mainModel } = pair(
+      [{ toolCalls: [spawnCall] }, { text: 'started the worker' }, { text: 'saw the failure' }],
+      [
+        {
+          text: 'batch 1',
+          toolCalls: [{ toolName: 'sleep', toolCallId: 'w1', input: { minutes: 1 } }],
+        },
+        { streamError: new Error('Upstream error from provider: Internal server error') },
+      ],
+      400,
+    )
+    await main.session('p').send('follow up everybody').result
+    await until(
+      'worker asleep',
+      async () => (await worker.session('p:agent:c1').pendingWaits()).length === 1,
+    )
+    await until(
+      'parent woke',
+      async () => (await text(main, 'p')).includes('saw the failure'),
+      5_000,
+    )
+    expect(await text(main, 'p')).toContain('failed')
+    expect(mainModel.calls).toHaveLength(3)
+  })
+
   test('agent_stop ends a sleeping worker: it wakes with a stop notice, wraps up and reports', async () => {
     const { main, worker, workerModel } = pair(
       [

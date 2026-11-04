@@ -21,6 +21,7 @@ import {
   willRetryText,
 } from '../src/domain/turn-retry.ts'
 import type { ModelConfig } from '../src/infra/eh/provider.ts'
+import { isRetryableSession } from '../src/infra/eh/turn-retry-service.ts'
 import { compose, type Server } from '../src/main.ts'
 
 const servers: Server[] = []
@@ -172,6 +173,14 @@ const notices = (server: Server) =>
 
 describe('classification and policy', () => {
   const fail = (code: string, message: string) => ({ stop: 'error', error: { code, message } })
+  test('chat, program and worker sessions are retried; role agent delegations are not', () => {
+    expect(isRetryableSession('channel:conn_1:node_1')).toBe(true)
+    expect(isRetryableSession('channel:conn_1:node_1:worker:call_1')).toBe(true)
+    expect(isRetryableSession('program:p1:run_1:worker:call_2')).toBe(true)
+    expect(isRetryableSession('channel:conn_1:node_1:agent:writer:1')).toBe(false)
+    expect(isRetryableSession('dm:agent_1')).toBe(false)
+  })
+
   test('transient failures are retried', () => {
     for (const message of [
       'Provider unavailable: Upstream error from Sail Research: no capacity available',

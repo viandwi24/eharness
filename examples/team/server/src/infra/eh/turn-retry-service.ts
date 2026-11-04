@@ -119,9 +119,14 @@ export interface TurnRetryDeps {
 
 const ELIGIBLE = /^(program|routine|task|channel):/
 
-/** Whether a turn of this session is retried when it fails transiently. */
+/**
+ * Whether a turn of this session is retried when it fails transiently. A background worker is
+ * retried too: nobody watches it, and one 502 in the middle of a long send loop would otherwise end
+ * the whole job (its lead only reads the failure report). A delegation to a role agent (`:agent:`)
+ * is not: its lead waits for its answer and decides.
+ */
 export const isRetryableSession = (sessionId: string): boolean =>
-  ELIGIBLE.test(sessionId) && !sessionId.includes(':worker:') && !sessionId.includes(':agent:')
+  ELIGIBLE.test(sessionId) && !sessionId.includes(':agent:')
 
 export function createTurnRetryService(
   factory: AgentFactory,
