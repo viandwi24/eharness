@@ -19,6 +19,7 @@ import {
 } from './deliverables.ts'
 import { invalid } from './errors.ts'
 import type { RoutineSpec } from './routines.ts'
+import { globMatch } from './script-manifest.ts'
 import { SESSION_CONTEXT_TOOLS } from './session-context.ts'
 import type { TaskReport, TaskStatus } from './tasks.ts'
 
@@ -451,21 +452,47 @@ export function budgetWarnings(
   return out
 }
 
+const WRITE_VERB = /\b(update|simpan|save|catat|tulis|write|perbarui|store|record)\b/i
+/** A library or memory file path named in a brief (no wildcards, no `<placeholders>`). */
+const BRIEF_PATH = /\/(?:library|memories)\/[^\s,;:()"'`*<>]+/g
+
+/** Paths a brief asks to write that no write rule covers (at most 3, in brief order). */
+function unwritablePaths(brief: string, write: readonly string[]): string[] {
+  const out: string[] = []
+  // a clause ends at a newline, `;` or a sentence dot; the write verb must come before the path
+  for (const clause of brief.split(/\n|;|\.\s/)) {
+    for (const match of clause.matchAll(BRIEF_PATH)) {
+      if (!WRITE_VERB.test(clause.slice(0, match.index))) continue
+      const path = match[0].replace(/[.]+$/, '')
+      if (path.endsWith('/') || out.includes(path)) continue
+      if (write.some((glob) => globMatch(glob, path))) continue
+      out.push(path)
+      if (out.length === 3) return out
+    }
+  }
+  return out
+}
+
 /**
  * A brief that asks for something the authority does not grant (a heuristic, never a block): saving
  * memory without a memory write tool, running a script or calculation without `run_python`.
  */
 export function briefWarnings(
   brief: string,
-  authority: Pick<ProgramAuthority, 'tools' | 'connectors'>,
+  authority: Pick<ProgramAuthority, 'tools' | 'connectors'> &
+    Partial<Pick<ProgramAuthority, 'write'>>,
 ): ProgramWarning[] {
   const out: ProgramWarning[] = []
   const names = authority.tools.map(baseName)
   const granted = (...tools: string[]): boolean => tools.some((t) => names.includes(t))
+  const write = authority.write ?? []
   const text = brief.toLowerCase()
+  // memory files are also written with write_file when a write rule covers /memories/
+  const memoryWritable = write.some((glob) => glob.startsWith('/memories/'))
   if (
     /\b(memori|memory|memories)\b/.test(text) &&
-    /\b(update|simpan|save|catat|tulis|write|perbarui|store|record)\b/.test(text) &&
+    WRITE_VERB.test(text) &&
+    !memoryWritable &&
     !granted(
       'memory_create',
       'memory_str_replace',
@@ -479,6 +506,14 @@ export function briefWarnings(
       field: 'authority.tools',
       message:
         'The brief asks to update or save memory, but no memory write tool is granted (memory_view is read-only): the run cannot write it. Add memory_create / memory_str_replace to the tools, or take it out of the brief.',
+    })
+  }
+  const unwritable = unwritablePaths(brief, write)
+  if (unwritable.length > 0) {
+    out.push({
+      code: 'brief-needs-tool',
+      field: 'authority.write',
+      message: `The brief asks to write ${unwritable.join(', ')}, but no write rule of the authority covers ${unwritable.length === 1 ? 'it' : 'them'}: the run cannot write ${unwritable.length === 1 ? 'it' : 'them'}. Add the path to the write rules, or take it out of the brief.`,
     })
   }
   if (

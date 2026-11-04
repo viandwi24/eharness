@@ -266,6 +266,31 @@ describe('program domain', () => {
     expect(codes('Write the script of the task.')).toBe(0)
   })
 
+  test('memory written through a write rule, and named paths the write rules do not cover', () => {
+    const tools: string[] = []
+    const connectors: string[] = []
+    const messages = (brief: string, write: string[]): string[] =>
+      briefWarnings(brief, { tools, connectors, write }).map((w) => w.message)
+    const write = ['/memories/agents/a1/*.md', '/library/programs/audit/**']
+    // the audit program in production: memory is writable, one named file is not
+    const brief =
+      '7. Update memori agen: /library/acme/profile.md (profil) dan /library/programs/audit/notes.md (pola). Jangan simpan kesimpulan lemah.'
+    const out = messages(brief, write)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toContain('/library/acme/profile.md')
+    expect(out[0]).not.toContain('notes.md')
+    expect(messages(brief, [...write, '/library/acme/**'])).toEqual([])
+    // a path that is only read, before the write verb, is not flagged
+    expect(
+      messages(
+        'Baca /library/acme/data.csv lalu catat hasilnya di /library/programs/audit/log.md',
+        write,
+      ),
+    ).toEqual([])
+    // templates and folders are not files
+    expect(messages('Tulis ke /library/acme/<YYYY-MM>/ setiap hari', write)).toEqual([])
+  })
+
   test('a granted directory can be listed, globbed and grepped, siblings stay out', () => {
     const rules = programRules(program)
     const roots = { roots: [{ virtual: '/', real: '/' }], polarity: 'allow' as const }
