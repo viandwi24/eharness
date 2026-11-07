@@ -87,9 +87,12 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
 
 - `subagent({ agents })`: the catalog function receives `ctx` (today it is `() => Record`). It is
   evaluated per turn of the parent, so the cache that holds it "once per session" goes away.
-- `permissions({ rules, roots })`: `rules` and `roots` take `ctx`. Rules added with
-  `scope: 'session'` move from the engine-wide `Set` (`engine.ts` `sessionRules`) into session
-  state (`state.plugins.permissions`). **This is a bug fix:** today they leak across sessions.
+- `permissions`: **bug fix only, no `ctx` option** (ADR-0070 point 3). The engine is one
+  session-agnostic object, so rules added with `scope: 'session'` (the engine-wide `sessionRules`
+  `Set`, `engine.ts`) are kept per session id instead: `allow`/`addRule`/`removeRule` take
+  `{ session }`, `decide`/`decideAsync` take the id, the plugin passes `ctx.session.id`. Without an
+  id the old engine-wide behavior stays, with a one-time warning. `rules(ctx)` and `roots(ctx)` on
+  the engine moved to the follow-up candidates: no second consumer yet (rule of two).
 - `clock({ timezone })`: `(ctx) => string`.
 - `webFetch({ allow, deny })`: `allow(host, ctx)` and `deny` as a function.
 - `compaction.model`, `keepLast`, `summarizeAt` and the flush model take `(ctx)`, so a per-person or
@@ -128,8 +131,7 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
   grant applies at once to every call **except** the call ids that `respond()` answered (their
   AI SDK re-validation stays unaffected, which is the original reason for the delay). The default
   flips at 1.0.
-- `permissions` session rules (B) move into session state and follow the same `by` setting; the
-  scoping fix itself ships without an option.
+- `permissions` session rules are fixed in B (per session id); `grants.by` does not apply to them.
 
 ### E. Turn lifecycle (core, spec changes)
 
@@ -157,13 +159,14 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
 - [x] ADR-0068 to ADR-0070 accepted (2026-11-08); ADR-0068 amended before acceptance: the driver
       interface is synchronous
 - [x] Spec 36 written as a Draft contract (the package does not exist yet)
-- [ ] Spec 36 written; specs 05, 06, 11, 12, 14, 18, 20, 22, 34 updated
-- [ ] W1 (in parallel, independent files):
+- [ ] Specs 05, 11, 12, 14, 18 updated with their code (06, 20, 22, 34 done with B)
+- [ ] W1 (A and B ran in parallel; E waits for B because both touch `src/agent`):
   - [ ] A: package scaffolded with official commands, drivers, adapters, migrations
-  - [ ] B: every `ctx` option, plus the session-rules bug fix with a regression test
+  - [ ] B: `ctx` options: subagent catalog, clock, webFetch, compaction done (2b983ff5 to
+        fa7c4f3f); permissions session-rules fix per session id open
   - [ ] E: `close` mode, `activeTurn()`, lock `owner`, constants
 - [ ] W2: C, the turn principal through send, inbox, activeTurn, waits, wake, scheduler and children
-- [ ] W3: D, grants by principal and the grant timing change, plus permissions session rules
+- [ ] W3: D, grants by principal and the grant timing change
 - [ ] Conformance: every A adapter passes every existing suite on Bun and on Node; new cases for lock
       `owner`, principal durability across instances, and grants by principal
 - [ ] The team example moves to `@eharness/sqlite` (proof of the package, no behavior change)
@@ -202,6 +205,8 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
 Each one also met the rule of two in the audit of 2026-11-02. Each needs its own phase.
 
 - `@eharness/postgres` on the A layout.
+- `rules(ctx)` and `roots(ctx)` on the permission engine (and per-principal session rules). The
+  engine is process-wide and `decide` is synchronous; needs a second consumer first.
 - A `RateLimitStore` port for `pairingGuard`, governor, subagent throttle and `budgetNotice`, which
   today are in-memory and multiply by N replicas.
 - Span-based observe: a start event, span and parent ids, and trace context through inbox and

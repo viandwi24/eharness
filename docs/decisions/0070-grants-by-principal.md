@@ -34,9 +34,22 @@ people had to share one approval path.
      same `respond()` answered**. Those stay unaffected, which keeps the reason for the delay.
    - The default flips at 1.0, after one minor with the option and the notes in
      `docs/guides/upgrading.md`.
-3. **`permissions` session rules move into session state** (`state.plugins.permissions`) and follow
-   the same `by` setting. This ships without an option, as a bug fix with a regression test: a rule
-   added in session S1 does not apply in S2.
+3. **`permissions` session rules are kept per session id.** The engine is one process-wide,
+   session-agnostic object (`createPermissionEngine`), so the fix is an id, not a move into session
+   state (first draft of this ADR, corrected on 2026-11-08 after reading the engine):
+   - `allow`, `addRule` and `removeRule` take an optional `{ session: string }`; `decide` and
+     `decideAsync` take the session id (`DecideOptions.session`; the plugin passes
+     `ctx.session.id`).
+   - A rule added with scope `'session'` and a session id applies only to decisions for that id. It
+     stays memory-only exactly as spec 18 §2 documents (not stored, `persist` is not called), in a
+     bounded map (oldest session dropped), so a restart still forgets it.
+   - Scope `'session'` without a session id keeps today's engine-wide behavior and warns once per
+     engine (`W_PERMISSION_SESSION_RULE_GLOBAL`); it is deprecated and removed at 1.0. This keeps
+     every existing caller (the coder example, the team program gate) working.
+   - `grants.by` does not apply to rules. Per-principal rules and `rules(ctx)`/`roots(ctx)` on the
+     engine have no second consumer yet (ADR-0062 rule of two) and are not part of P62.
+   It ships without an option, as a bug fix with a regression test: a rule added for session S1
+   does not apply in S2.
 4. **No new approval concepts.** Expiry, quorum and "who may answer" are separate follow-ups.
 
 ## Consequences
