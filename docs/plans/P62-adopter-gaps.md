@@ -45,7 +45,7 @@ owner transfer, its brain events, the team's persona and scripts).
 - `src/subagent/types.ts`, `src/subagent/env.ts`; `src/permissions/plugin.ts`, `src/permissions/engine.ts`;
   `src/clock/plugin.ts`; `src/web/fetch.ts`; compaction settings in `src/agent/types/*`
 - `src/testing/*.conformance.ts` (new cases only)
-- The specs above, ADR-0067 to ADR-0069, `docs/plans/roadmap.md`, `docs/plans/README.md`, changesets
+- The specs above, ADR-0068 to ADR-0070, `docs/plans/roadmap.md`, `docs/plans/README.md`, changesets
 
 ## Scope
 
@@ -58,7 +58,7 @@ owner transfer, its brain events, the team's persona and scripts).
 
 ## Workstreams
 
-### A. `@eharness/sqlite` (Ring 2 package, ADR-0067)
+### A. `@eharness/sqlite` (Ring 2 package, ADR-0068)
 
 - A workspace package `packages/sqlite`, published as `@eharness/sqlite`. It is never a dependency
   of `eharness` (ADR-0008 holds); `eharness` is its peer.
@@ -95,10 +95,11 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
 - `compaction.model`, `keepLast`, `summarizeAt` and the flush model take `(ctx)`, so a per-person or
   per-tenant model reaches the summarizer without a proxy model.
 
-### C. Turn principal (core, ADR-0068)
+### C. Turn principal (core, ADR-0069)
 
-- A serializable type `Principal = { id: string; kind?: string; attrs?: Record<string, string> }`.
-  Core never interprets `kind` or `attrs`.
+- A serializable type `Principal` with the shape of `ApprovalActor`
+  (`{ id: string; name?: string; …JSON }`); `ApprovalActor` becomes an alias, so asker and answerer
+  share one type. Core never interprets it.
 - Who the principal is:
   - `agent.session(id, { principal })` sets the session's default principal, stored in
     `state.core.principal` on first open;
@@ -110,11 +111,11 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
   continuation therefore see the same principal.
 - Child sessions (`subagent`, `fork`) inherit the parent turn's principal unless the parent passes
   another one.
-- `ApprovalActor` stays as is: it records who answered. `principal` records who asked.
+- `respond({ approvals: [{ actor }] })` keeps recording who answered; `principal` records who asked.
 - Budget `scopes(ctx)` and `memory.roots(ctx)` can key on `ctx.principal.id`. That replaces parsing
   session ids, which is the pattern Keith uses today.
 
-### D. Actor-scoped grants (core and permissions, ADR-0069)
+### D. Actor-scoped grants (core and permissions, ADR-0070)
 
 - New option `grants: { by: 'session' | 'principal' }`, default `'session'`, which is today's
   behavior.
@@ -122,10 +123,13 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
     allow" never answers B's call in a shared session.
   - A call without a principal uses the session key.
 - Grant timing (spec 11 §3.1). Today a grant recorded by `respond()` applies only after the first
-  step of its continuation, so a second call to the same tool in that step asks again. Change: the
+  step of its continuation, so a second call to the same tool in that step asks again. New option
+  `grants: { applyAt: 'continuation' | 'now' }`, default `'continuation'` (today). With `'now'` the
   grant applies at once to every call **except** the call ids that `respond()` answered (their
-  AI SDK re-validation stays unaffected, which is the original reason for the delay).
-- `permissions` session rules (B) follow the same `by` setting.
+  AI SDK re-validation stays unaffected, which is the original reason for the delay). The default
+  flips at 1.0.
+- `permissions` session rules (B) move into session state and follow the same `by` setting; the
+  scoping fix itself ships without an option.
 
 ### E. Turn lifecycle (core, spec changes)
 
@@ -145,8 +149,12 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
 
 ## Checklist
 
-- [ ] ADR-0067 (SQLite package as Ring 2, driver interface, migrations), ADR-0068 (turn principal),
-      ADR-0069 (actor-scoped grants and grant timing): written and accepted before code
+- [x] ADRs written (Proposed, 2026-11-08): [ADR-0068](../decisions/0068-sqlite-adapter-package.md)
+      (SQLite package as Ring 2, driver interface, migrations),
+      [ADR-0069](../decisions/0069-turn-principal.md) (turn principal),
+      [ADR-0070](../decisions/0070-grants-by-principal.md) (grants by principal, grant timing).
+      ADR-0067 is taken by `sleep`; the numbers in the first draft of this plan moved up by one.
+- [ ] ADR-0068 to ADR-0070 accepted before code
 - [ ] Spec 36 written; specs 05, 06, 11, 12, 14, 18, 20, 22, 34 updated
 - [ ] W1 (in parallel, independent files):
   - [ ] A: package scaffolded with official commands, drivers, adapters, migrations
@@ -184,9 +192,8 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
   reserved on npm before the first publish.
 - Should `Principal` be generic (`HarnessAgent<…, P>`) like `runtime`? Conservative pick: a fixed
   serializable shape now; generics with the typed-runtime roadmap item.
-- Grant timing (D) changes behavior that apps may rely on: ship it behind
-  `grants: { applyAt: 'continuation' | 'now' }` for one minor, default `'continuation'`? Conservative
-  pick: yes, default stays, flip at 1.0.
+- Resolved by ADR-0070: grant timing ships behind `grants: { applyAt }`, default `'continuation'`,
+  the default flips at 1.0.
 
 ## Follow-up candidates (not in P62)
 
