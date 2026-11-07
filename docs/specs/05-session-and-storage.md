@@ -1384,6 +1384,12 @@ no inbox drain, no lock, no write, no cache (create one per read; it holds nothi
 agent's plugins, tools and instructions resolved by `session.start`, which is exactly what peek
 must not run, and they are not stored), `busy()` (`local` when a live handle of this agent runs a turn, `remote` for a live
 foreign `activeTurn`, else `null`), `pending()`, `pendingWaits()`, `children()`, `parentInfo()`.
+**The active turn is a public read** (P62 E2; no separate `activeTurn()` method): `stats().activeTurn`
+(on `peek()` and on `session`) is the stored `ActiveTurn` of §9, exported from `eharness`:
+`{ turnId, kind, messageId, userMessageId?, owner, startedAt, heartbeatAt }`, or `null` when idle.
+`busy()` adds whether this process runs it (`scope: 'local' | 'remote'`). Apps need not read
+`state.get(id).core.activeTurn`. (The turn principal, ADR-0069, will add `principal` to `ActiveTurn`.)
+
 There are no turn operations: from JS, `send`, `respond`, `regenerate`, `edit`, `enqueue`,
 `inject` and `compact` throw `EH_INVALID_INPUT` (`details.reason: 'peek-read-only'`) naming
 `agent.session(id)`. A missing session reads as empty (`stats()` zero, `children()` `[]`).

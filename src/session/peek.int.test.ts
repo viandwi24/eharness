@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { defineHarnessAgent, definePlugin } from '../index.ts'
+import { tool } from 'ai'
+import { z } from 'zod/v4'
+import { type ActiveTurn, defineHarnessAgent, definePlugin } from '../index.ts'
 import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 
@@ -89,5 +91,40 @@ describe('agent.peek', () => {
     await run.result
     expect(await agent.peek('p').busy()).toBeNull()
     await agent.close()
+  })
+})
+
+describe('the active turn read (P62 E2: peek().stats().activeTurn is the public read)', () => {
+  test('a running turn shows id, kind, owner and start time to another reader, and busy() says where it runs', async () => {
+    const storage = { messages: inMemoryMessages(), state: inMemoryState() }
+    let started!: () => void
+    const toolStarted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const hold = tool({
+      inputSchema: z.object({}),
+      execute: () =>
+        new Promise<string>(() => {
+          started()
+        }),
+    })
+    const agent = defineHarnessAgent({
+      model: scriptedModel([{ toolCalls: [{ toolName: 'hold', input: {} }] }]),
+      contextWindow: 100_000,
+      tools: { hold },
+      storage,
+      recovery: { instanceId: 'srv-1' },
+      logger: silent,
+    })
+    const run = agent.session('p').send('go')
+    await toolStarted
+    const stats = await agent.peek('p').stats()
+    const active: ActiveTurn | null = stats.activeTurn
+    expect(active).toMatchObject({ kind: 'send', owner: 'srv-1' })
+    expect(typeof active?.turnId).toBe('string')
+    expect(typeof active?.startedAt).toBe('number')
+    expect(await agent.peek('p').busy()).toMatchObject({ scope: 'local', turnId: active?.turnId })
+    await agent.close()
+    await run.result
   })
 })
