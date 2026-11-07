@@ -27,8 +27,14 @@ people had to share one approval path.
    `'session'`, which is today's behavior.
    - With `'principal'`, the stored key is `<principal id>\u0000<tool key>` where `tool key` is the
      existing tool or `tool.grantScope` key. A call with no principal uses the session key.
-   - A grant answered by person A never satisfies a request that carries principal B, and the other
-     way round. `clearGrants()` takes an optional principal.
+   - **The principal in the key is the one that ASKED** (the turn's principal, `ctx.principal`; after
+     a park, the principal stored on the pending state, ADR-0069), never the one that answered
+     (`actor`). So a grant recorded for requests of A never satisfies a request that carries principal
+     B, and the other way round. When an owner answers a member's request with `remember: 'session'`,
+     the grant belongs to the member's key: it covers that member's later calls, not other people's.
+     (Corrected on 2026-11-08: the first draft said "answered by", which read as the answerer.)
+   - A principal id that contains `\u0000` is rejected by the principal validation, so the key
+     cannot be forged. `clearGrants()` takes an optional principal.
 2. **`grants: { applyAt: 'continuation' | 'now' }`**, default `'continuation'` (today).
    - With `'now'`, a recorded grant applies at once to every call **except the call ids that the
      same `respond()` answered**. Those stay unaffected, which keeps the reason for the delay.
