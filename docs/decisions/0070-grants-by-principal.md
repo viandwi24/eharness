@@ -1,6 +1,6 @@
 # ADR-0070: Grants can be scoped to the person who asked, and apply at once
 
-Status: **Proposed** · Date: 2026-11-08 · Plan: [P62](../plans/P62-adopter-gaps.md) · Builds on: [ADR-0069](0069-turn-principal.md) · Amends: spec 11 §3.1
+Status: **Accepted** · Date: 2026-11-08 · Plan: [P62](../plans/P62-adopter-gaps.md) · Builds on: [ADR-0069](0069-turn-principal.md) · Amends: spec 11 §3.1
 
 ## Context
 

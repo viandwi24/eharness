@@ -1,6 +1,6 @@
 # ADR-0068: SQLite adapters ship as a separate package (`@eharness/sqlite`)
 
-Status: **Proposed** · Date: 2026-11-08 · Plan: [P62](../plans/P62-adopter-gaps.md) · Builds on: [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0062](0062-platform-rings-and-rule-of-two.md)
+Status: **Accepted** · Date: 2026-11-08 · Plan: [P62](../plans/P62-adopter-gaps.md) · Builds on: [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0062](0062-platform-rings-and-rule-of-two.md)
 
 ## Context
 
@@ -21,18 +21,25 @@ publish.
 
 1. **A workspace package `packages/sqlite`, published as `@eharness/sqlite`.** `eharness` is its peer
    dependency; the core never imports it (ADR-0008 holds). It follows ADR-0062 rule 1, Ring 2.
-2. **Driver interface.** The adapters talk to a small `SqlDriver` (`exec`, `query`, `run`,
-   `transaction`) instead of one SQLite binding. Drivers for `bun:sqlite` and `node:sqlite` live on
-   their own subpaths, so the root entry imports neither runtime. Other drivers (better-sqlite3,
-   libsql) are third-party packages that implement the same interface.
+2. **Driver interface: small and synchronous.** The adapters talk to a `SqlDriver` (`exec`,
+   `query`, `run`, `transaction`) instead of one SQLite binding. It is synchronous on purpose:
+   `bun:sqlite`, `node:sqlite` and better-sqlite3 are, and both existing copies of these adapters
+   rely on it. Every read-modify-write runs in one `transaction(fn)` that takes the write lock up
+   front (`BEGIN IMMEDIATE`) with no `await` inside, so two processes on one WAL file serialize and a
+   statement sequence is atomic within a process. Drivers for `bun:sqlite` and `node:sqlite` live on
+   their own subpaths, so the root entry imports neither runtime. Another synchronous binding is a
+   third-party package that implements the same interface. Async drivers (libsql, D1) cannot give
+   that atomicity and are out of scope; they need their own port and package.
 3. **One adapter per existing port**, each passing its conformance suite: `MessageAdapter`,
    `StateAdapter` (with `setIf`), `SessionLock` (lease), `InboxAdapter`, `StreamLogAdapter`,
    `BudgetLedger`, `ActivityStore`, `ScheduleStore`, `OutboxStore`, `HandoffStore`, `PersonStore`,
    `ProfileStore` and `SealedProfileStore`. `createSqliteStorage(driver)` returns the bundle that
    `createAgent` takes.
 4. **Schema is owned by the package.** Versioned migrations run from code (`migrate(driver)`), tables
-   carry a configurable prefix (default `eh_`) and a `schema_version` row. An app with existing
-   tables can pass table names instead.
+   carry a configurable prefix (default `eh_`) and a `schema_version` row. An app that manages its
+   own migrations (the team example and Keith use Drizzle) takes the same DDL from
+   `schemaSql({ prefix })` and runs it itself; the adapters never create tables behind its back
+   unless `migrate` is called.
 5. **Cross-process wake-up is polling** with a configurable `pollMs`. SQLite has no notification
    channel, and the specs allow polling for every port that has `subscribe`.
 6. **Where the two copies differ, the stricter behavior wins** (the longer inbox dedupe window, the
@@ -58,3 +65,5 @@ publish.
   ties the core's release to a database binding.
 - **Postgres first.** Rejected for this phase: SQLite is what both products run on, and it needs no
   server to test.
+- **An async `SqlDriver`** so libsql and D1 fit. Rejected: an `await` between the read and the write
+  of one adapter call breaks the atomicity the current adapters get for free.

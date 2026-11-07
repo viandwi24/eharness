@@ -67,6 +67,7 @@ is needed and what breaks without it, pointing at real code.
 | 33 | [limits](specs/33-limits.md) | `eharness/limits` (Draft): `stepBudget`, `budgetNotice` |
 | 34 | [clock](specs/34-clock.md) | `eharness/clock` (Draft): datetime tool and time-zone arithmetic |
 | 35 | [browser](specs/35-browser.md) | `eharness/browser` (Draft): browser adapters and registry, profiles, CDP connection (snapshot refs, act, screenshots, read), manager with leases, live view and takeover; `eharness/browser/node` runtimes |
+| 36 | [sqlite adapters](specs/36-sqlite-adapters.md) | `@eharness/sqlite` (Draft, planned 0.10; separate package): SQLite implementation of every storage port over a synchronous driver, schema and migrations, conformance |
 
 ## Status vocabulary
 

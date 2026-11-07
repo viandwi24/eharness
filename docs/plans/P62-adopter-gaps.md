@@ -154,7 +154,9 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
       [ADR-0069](../decisions/0069-turn-principal.md) (turn principal),
       [ADR-0070](../decisions/0070-grants-by-principal.md) (grants by principal, grant timing).
       ADR-0067 is taken by `sleep`; the numbers in the first draft of this plan moved up by one.
-- [ ] ADR-0068 to ADR-0070 accepted before code
+- [x] ADR-0068 to ADR-0070 accepted (2026-11-08); ADR-0068 amended before acceptance: the driver
+      interface is synchronous
+- [x] Spec 36 written as a Draft contract (the package does not exist yet)
 - [ ] Spec 36 written; specs 05, 06, 11, 12, 14, 18, 20, 22, 34 updated
 - [ ] W1 (in parallel, independent files):
   - [ ] A: package scaffolded with official commands, drivers, adapters, migrations

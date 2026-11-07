@@ -1,6 +1,6 @@
 # ADR-0069: A turn knows who asked for it (`principal`)
 
-Status: **Proposed** · Date: 2026-11-08 · Plan: [P62](../plans/P62-adopter-gaps.md) · Builds on: [ADR-0056](0056-restart-recovery-and-background-reconcile.md)
+Status: **Accepted** · Date: 2026-11-08 · Plan: [P62](../plans/P62-adopter-gaps.md) · Builds on: [ADR-0056](0056-restart-recovery-and-background-reconcile.md)
 
 ## Context
 
