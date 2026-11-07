@@ -9,8 +9,8 @@
  * @see docs/specs/22-web-plugin.md
  */
 export {
-  WEB_FETCH_TOOL,
   type HostPredicate,
+  WEB_FETCH_TOOL,
   type WebFetchOptions,
   webFetch,
 } from './fetch.ts'
