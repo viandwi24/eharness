@@ -1,0 +1,6 @@
+{
+  // Extends the root config: `eharness` and `eharness/*` map to the repo source (see root `paths`),
+  // so the adapters are type-checked and tested against the library they are built beside.
+  "extends": "../../tsconfig.json",
+  "include": ["src", "scripts"]
+}

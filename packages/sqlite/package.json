@@ -1,0 +1,49 @@
+{
+  "name": "@eharness/sqlite",
+  "type": "module",
+  "peerDependencies": {
+    "eharness": ">=0.9.0 <1.0.0",
+    "ai": "^7.0.137"
+  },
+  "version": "0.0.0",
+  "description": "SQLite adapters for every eharness storage port (bun:sqlite and node:sqlite drivers)",
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/viandwi24/eharness.git",
+    "directory": "packages/sqlite"
+  },
+  "homepage": "https://github.com/viandwi24/eharness/tree/main/packages/sqlite#readme",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "ai",
+    "eharness",
+    "sqlite",
+    "storage"
+  ],
+  "devDependencies": {
+    "ai": "^7.0.137"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./bun": "./dist/bun.js",
+    "./node": "./dist/node.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "bun test .",
+    "typecheck": "tsc --noEmit",
+    "check:entry": "bun scripts/check-entry.ts",
+    "check:package": "bun scripts/check-entry.ts && publint && d=$(mktemp -d) && bun pm pack --quiet --destination \"$d\" >/dev/null && attw \"$d\"/*.tgz --profile esm-only && rm -r \"$d\""
+  }
+}
