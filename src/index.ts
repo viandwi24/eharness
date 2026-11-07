@@ -92,6 +92,12 @@ export type {
   ToolSourcesConfig,
 } from './agent/types.ts'
 export {
+  type KnownStopReason,
+  NOTICE_CODES,
+  type NoticeCode,
+  STOP_REASONS,
+} from './codes.ts'
+export {
   HarnessError,
   type HarnessErrorCode,
   type HarnessErrorOptions,

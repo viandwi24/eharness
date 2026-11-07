@@ -112,3 +112,72 @@ export type HarnessNoticeCode = (typeof HARNESS_NOTICE_CODES)[number]
  * @see docs/specs/10-errors-and-stop-reasons.md#2-warnings-non-fatal
  */
 export type WarningCode = (typeof WARNING_CODES)[number]
+
+/**
+ * Every stop reason that is a fixed string, as constants, so UIs and apps stop matching string
+ * literals: `result.stop === STOP_REASONS.INTERRUPTED`. `StopReason` also admits
+ * `` `plugin:${string}` `` (a `step.end` hook stop), which has no constant. A test keeps this
+ * object equal to the list of spec 10 §4.
+ *
+ * @see docs/specs/10-errors-and-stop-reasons.md#4-stop-reasons
+ */
+export const STOP_REASONS = {
+  COMPLETE: 'complete',
+  TOOL_PENDING: 'tool-pending',
+  LENGTH: 'length',
+  CONTENT_FILTER: 'content-filter',
+  ERROR: 'error',
+  ABORTED: 'aborted',
+  TIMEOUT: 'timeout',
+  BLOCKED: 'blocked',
+  STUCK: 'stuck',
+  CONTEXT_THRASH: 'context-thrash',
+  INTERRUPTED: 'interrupted',
+  MAX_STEPS: 'max-steps',
+  COST_CAP: 'cost-cap',
+  OUTPUT_INVALID: 'output-invalid',
+} as const
+
+/** A stop reason with a constant in {@link STOP_REASONS} (`StopReason` without the plugin form). */
+export type KnownStopReason = (typeof STOP_REASONS)[keyof typeof STOP_REASONS]
+
+/**
+ * Every library code an `eh.notice` message can carry (`NoticePayload.code`): the notice codes
+ * (`EH_TURN_INTERRUPTED`, `EH_TURN_TIMEOUT`, `EH_CONTEXT_THRASH`, `EH_INPUT_BLOCKED`,
+ * `EH_COST_CAP`) and the error codes a failed turn stores as its notice (`EH_RUN_FAILED`,
+ * `EH_PROVIDER`, `EH_STORAGE`, ...). Each key equals its value. A test keeps it equal to
+ * `HARNESS_NOTICE_CODES` plus `HARNESS_ERROR_CODES`. Apps may also store codes of their own.
+ *
+ * @see docs/specs/10-errors-and-stop-reasons.md#1-errors-thrown
+ */
+export const NOTICE_CODES = {
+  EH_TURN_INTERRUPTED: 'EH_TURN_INTERRUPTED',
+  EH_INPUT_BLOCKED: 'EH_INPUT_BLOCKED',
+  EH_TURN_TIMEOUT: 'EH_TURN_TIMEOUT',
+  EH_CONTEXT_THRASH: 'EH_CONTEXT_THRASH',
+  EH_COST_CAP: 'EH_COST_CAP',
+  EH_CONFIG_INVALID: 'EH_CONFIG_INVALID',
+  EH_MCP_TIMEOUT: 'EH_MCP_TIMEOUT',
+  EH_DUPLICATE_TOOL: 'EH_DUPLICATE_TOOL',
+  EH_DUPLICATE_SKILL: 'EH_DUPLICATE_SKILL',
+  EH_DUPLICATE_DATA_PART: 'EH_DUPLICATE_DATA_PART',
+  EH_SERVICE_CONFLICT: 'EH_SERVICE_CONFLICT',
+  EH_SERVICE_MISSING: 'EH_SERVICE_MISSING',
+  EH_PLUGIN_ORDER: 'EH_PLUGIN_ORDER',
+  EH_SESSION_BUSY: 'EH_SESSION_BUSY',
+  EH_SESSION_CLOSED: 'EH_SESSION_CLOSED',
+  EH_INVALID_INPUT: 'EH_INVALID_INPUT',
+  EH_PENDING_RESPONSE: 'EH_PENDING_RESPONSE',
+  EH_INVALID_MESSAGE: 'EH_INVALID_MESSAGE',
+  EH_STORAGE: 'EH_STORAGE',
+  EH_COMPACTION_FAILED: 'EH_COMPACTION_FAILED',
+  EH_CONTEXT_OVERFLOW: 'EH_CONTEXT_OVERFLOW',
+  EH_LOCK_UNAVAILABLE: 'EH_LOCK_UNAVAILABLE',
+  EH_EVENTS_OVERFLOW: 'EH_EVENTS_OVERFLOW',
+  EH_PROVIDER_AUTH: 'EH_PROVIDER_AUTH',
+  EH_PROVIDER: 'EH_PROVIDER',
+  EH_RUN_FAILED: 'EH_RUN_FAILED',
+} as const
+
+/** A library code of an `eh.notice` message: a notice code or an error code (see {@link NOTICE_CODES}). */
+export type NoticeCode = (typeof NOTICE_CODES)[keyof typeof NOTICE_CODES]

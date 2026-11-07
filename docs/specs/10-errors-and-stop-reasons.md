@@ -82,6 +82,14 @@ spec. Where codes appear in types:
   open string carries codes an app returns from `authorize`. See
   [errors.md](../engineering/errors.md) for the full map and stability.
 
+**Constants** (P62 E4): `STOP_REASONS` (`STOP_REASONS.INTERRUPTED === 'interrupted'`, one key per fixed
+stop reason of §4, upper-snake) and `NOTICE_CODES` (every library code an `eh.notice` can carry: the
+notice codes above plus the error codes a failed turn stores, key equal to value) are exported from the
+package root with the types `KnownStopReason` and `NoticeCode`, so UIs compare against constants, not
+string literals. `StopReason`'s `` `plugin:${string}` `` form has no constant. Tests keep both objects
+equal to the lists in this spec and to `src/codes.ts`; a type test keeps the derived types equal to
+`StopReason` (without the plugin form) and `HarnessErrorCode | HarnessNoticeCode`.
+
 Named factories in `src/errors.ts` build the errors raised in more than one place (internal, not
 exported from the package): `sessionClosedError`, `sessionBusyError`, `lockFailure` /
 `lockUnavailableError`, `storageError(kind, what, cause)` (a `HarnessError` cause passes through),
@@ -247,6 +255,8 @@ export type StopReason =
   | 'output-invalid'  // SendOptions.output: no valid final answer within maxRetries (spec 05 §3.3; 0.4.0)
   | `plugin:${string}` // a step.end hook stopped the turn: 'plugin:<plugin>:<reason>'
 ```
+
+`STOP_REASONS` (package root) holds the fixed values as constants (§1.2).
 
 The stop reason is stored in `metadata.eharness.stop` of the assistant message and returned in
 `TurnResult`:

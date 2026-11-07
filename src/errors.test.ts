@@ -1,6 +1,12 @@
 import { describe, expect, spyOn, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
-import { HARNESS_ERROR_CODES, HARNESS_NOTICE_CODES, WARNING_CODES } from './codes.ts'
+import {
+  HARNESS_ERROR_CODES,
+  HARNESS_NOTICE_CODES,
+  NOTICE_CODES,
+  STOP_REASONS,
+  WARNING_CODES,
+} from './codes.ts'
 import {
   asInvalidInputError,
   configError,
@@ -247,5 +253,35 @@ describe('code lists (one source of truth, documented in spec 10)', () => {
     }
     walk(new URL('./', import.meta.url))
     expect(unknown).toEqual([])
+  })
+})
+
+describe('STOP_REASONS and NOTICE_CODES (P62 E4)', () => {
+  const spec = readFileSync(
+    new URL('../docs/specs/10-errors-and-stop-reasons.md', import.meta.url),
+    'utf8',
+  )
+
+  test('STOP_REASONS equals the list of spec 10 section 4, without the plugin form', () => {
+    const block = spec.slice(spec.indexOf('export type StopReason ='))
+    const listed = [...block.slice(0, block.indexOf('```')).matchAll(/\| '([a-z-]+)'/g)].map(
+      (m) => m[1],
+    )
+    expect([...Object.values(STOP_REASONS)].sort() as string[]).toEqual(
+      [...(listed as string[])].sort(),
+    )
+  })
+
+  test('every key of both objects equals its value (NOTICE_CODES) or its upper-snake form (STOP_REASONS)', () => {
+    for (const [key, value] of Object.entries(NOTICE_CODES)) expect(key).toBe(value)
+    for (const [key, value] of Object.entries(STOP_REASONS)) {
+      expect(key).toBe(value.toUpperCase().replaceAll('-', '_'))
+    }
+  })
+
+  test('NOTICE_CODES is the notice codes plus the error codes', () => {
+    expect(Object.values(NOTICE_CODES).sort()).toEqual(
+      [...HARNESS_NOTICE_CODES, ...HARNESS_ERROR_CODES].sort(),
+    )
   })
 })
