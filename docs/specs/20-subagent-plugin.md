@@ -20,7 +20,7 @@ import {
 
 subagent({
   agents: Record<string, { agent: HarnessAgent; description: string; maxTurns?: number; resumable?: boolean }>
-        | (() => Record<string, …>),          // evaluated once per session
+        | ((ctx: HarnessContext) => Record<string, …>),   // evaluated with the ctx before every turn of the parent (a function of no arguments works)
   toolName?: string                            // 'agent'
   maxDepth?: number                            // 2: the root is depth 0; a session at maxDepth has no tool
   maxConcurrent?: number                       // 8, per nesting depth and plugin instance
@@ -76,8 +76,11 @@ pattern, the wait id helper and the message instructions text are internal. The 
 
 Input `{ subagent_type, description, prompt, files?, run_in_background? }`. `subagent_type` is an enum of the
 catalog keys, so an unknown type is an invalid tool call the model corrects. `run_in_background`
-exists only with `background`, `files` only with the `files` option (§2.5). The description lists the types (resolved once per session, so
-the prompt-cache prefix is stable).
+exists only with `background`, `files` only with the `files` option (§2.5). The description lists the types. A record is fixed for the session
+(stable prompt-cache prefix). A catalog function is called with the turn's `ctx` before every turn of
+the parent (tool source with `refresh: 'turn'`), so the enum and the description follow the person or
+tenant; it is synchronous, and outside a turn (reconcile on open, stopping a foreign child) the last
+result is used, or a call with the session `ctx` when there is none yet.
 
 - The child session id is deterministic (`childSessionId`). It is opened on `def.agent` with
   `SessionOptions.parent = { sessionId, turnId, toolCallId, depth: callerDepth + 1 }`. The child agent

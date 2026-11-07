@@ -5,7 +5,7 @@
  * @see docs/specs/20-subagent-plugin.md
  */
 import { type JSONValue, readUIMessageStream } from 'ai'
-import type { PendingState, TurnResult } from '../index.ts'
+import type { HarnessContext, PendingState, TurnResult } from '../index.ts'
 import { errorText } from '../index.ts'
 import { type MessageLike, textOf } from './report.ts'
 import {
@@ -95,9 +95,12 @@ export function inspect(message: MessageLike): { steps: number; lastTool?: strin
 /** Start of the result of a foreground subagent the user moved to the background. */
 export const SUBAGENT_BACKGROUNDED_PREFIX = 'Subagent moved to the background as task'
 
-/** Resolve the catalog once. */
-export function resolveCatalog(catalog: SubagentCatalog): Record<string, SubagentDefinition> {
-  return typeof catalog === 'function' ? catalog() : catalog
+/** Resolve the catalog: a record as is, a function with the context of the turn (or session). */
+export function resolveCatalog(
+  catalog: SubagentCatalog,
+  ctx: HarnessContext,
+): Record<string, SubagentDefinition> {
+  return typeof catalog === 'function' ? catalog(ctx) : catalog
 }
 // ─── driving a child turn (inline / policy) ───────────────────────────────────────────────
 

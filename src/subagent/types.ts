@@ -109,10 +109,13 @@ export interface SubagentDefinition {
   resumable?: boolean
 }
 
-/** Subagent types by name, or a function evaluated once per session. */
+/**
+ * Subagent types by name, or a function evaluated with the context before every turn of the
+ * parent (so the catalog may vary per session, person or tenant). A function of no arguments works.
+ */
 export type SubagentCatalog =
   | Record<string, SubagentDefinition>
-  | (() => Record<string, SubagentDefinition>)
+  | ((ctx: HarnessContext) => Record<string, SubagentDefinition>)
 
 /** What the `answer` callback is asked (`approvals: 'inline'`). */
 export type SubagentApprovalRequest =

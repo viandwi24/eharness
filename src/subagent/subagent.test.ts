@@ -17,6 +17,7 @@ import {
   reconcileSubagentWaits,
   SUBAGENT_NO_USER,
   type SubagentApprovalRequest,
+  type SubagentDefinition,
   type SubagentOptions,
   type SubagentTasks,
   subagent,
@@ -809,5 +810,72 @@ describe('moving a running foreground subagent to the background', () => {
     )
     expect(JSON.stringify(await session.messages())).toContain('late report')
     await main.close()
+  })
+})
+
+describe('catalog function with ctx', () => {
+  test('is evaluated with the ctx before every turn of the parent', async () => {
+    const storage = shared()
+    const one = childAgent(storage, { steps: [{ text: 'report one' }] })
+    const two = childAgent(storage, { steps: [{ text: 'report two' }] })
+    const seen: unknown[] = []
+    let which: 'one' | 'two' = 'one'
+    const call = (type: string, id: string) => ({
+      toolName: 'agent',
+      toolCallId: id,
+      input: { subagent_type: type, description: 'task', prompt: 'go' },
+    })
+    const main = defineHarnessAgent({
+      model: scriptedModel([
+        { toolCalls: [call('one', 'c1')] },
+        { text: 'done 1' },
+        { toolCalls: [call('two', 'c2')] },
+        { text: 'done 2' },
+      ]),
+      contextWindow: 100_000,
+      storage,
+      logger: silent,
+      plugins: [
+        subagent({
+          approvals: 'policy',
+          agents: (ctx): Record<string, SubagentDefinition> => {
+            seen.push(ctx.session.id)
+            return which === 'one'
+              ? { one: { agent: one, description: 'first' } }
+              : { two: { agent: two, description: 'second' } }
+          },
+        }),
+      ] as never,
+    }) as Agent
+    const session = main.session('p1')
+    expect((await session.send('a').result).stop).toBe('complete')
+    which = 'two'
+    expect((await session.send('b').result).stop).toBe('complete')
+    const messages = await session.messages()
+    expect(agentOutput(messages, 'c1')?.output).toBe('report one')
+    expect(agentOutput(messages, 'c2')?.output).toBe('report two')
+    expect(seen.length).toBeGreaterThanOrEqual(2)
+  })
+
+  test('a function of no arguments still works', async () => {
+    const storage = shared()
+    const worker = childAgent(storage, { steps: [{ text: 'child report' }] })
+    const main = parentAgent(storage, worker, { approvals: 'policy' })
+    const withFn = defineHarnessAgent({
+      model: scriptedModel([{ toolCalls: [spawn()] }, { text: 'ok' }]),
+      contextWindow: 100_000,
+      storage,
+      logger: silent,
+      plugins: [
+        subagent({
+          approvals: 'policy',
+          agents: () => ({ worker: { agent: worker, description: 'w' } }),
+        }),
+      ] as never,
+    }) as Agent
+    void main
+    const session = withFn.session('p2')
+    expect((await session.send('a').result).stop).toBe('complete')
+    expect(agentOutput(await session.messages())?.output).toBe('child report')
   })
 })

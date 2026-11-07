@@ -13,9 +13,11 @@
  *
  * @see docs/specs/20-subagent-plugin.md
  */
+import type { Tool } from 'ai'
 import { z } from 'zod/v4'
 import {
   definePlugin,
+  defineToolSource,
   errorText,
   type HarnessPlugin,
   type SessionContribution,
@@ -151,7 +153,7 @@ function reconcileOnOpen(
       ctx.session.id,
       env.parentOptions(ctx.session.id),
     ) as AnySession
-    const catalog = resolveCatalog(options.agents)
+    const catalog = scope.defs()
     const openChild = openChildOf(scope, catalog)
     await reconcileSubagentWaits(parentSession, {
       openChild,
@@ -220,16 +222,18 @@ export function subagent(options: SubagentOptions): HarnessPlugin<'subagent'> {
       const depth = ctx.session.parent?.depth ?? 0
       const isRoot = ctx.session.parent === undefined
       const dir = directoryFor(env, ctx)
+      // a record is fixed; a function is evaluated with the turn's ctx before every turn of this
+      // session (the tool source below), and with the session ctx when read outside a turn
       let defsCache: Record<string, SubagentDefinition> | undefined
       const getDefs = (): Record<string, SubagentDefinition> => {
-        defsCache ??= resolveCatalog(options.agents)
+        defsCache ??= resolveCatalog(options.agents, ctx)
         return defsCache
       }
       let scope: Scope | undefined
       const registry = createSubagentTaskRegistry({
         foreign: async (childSessionId) => {
           // not a task of this process: ask the child session to abort, wherever it runs
-          for (const [agentKey, def] of Object.entries(resolveCatalog(options.agents))) {
+          for (const [agentKey, def] of Object.entries(getDefs())) {
             const child = def.agent.session(
               childSessionId,
               env.childOptions({
@@ -284,12 +288,10 @@ export function subagent(options: SubagentOptions): HarnessPlugin<'subagent'> {
         hooks['session.start'] = () => reconcileOnOpen(current, self)
       }
       const tools: Record<string, ToolInput> = {}
-      if (depth < env.maxDepth && Object.keys(getDefs()).length > 0) {
-        const defs = getDefs()
-        // resolved once per session so the description (and the prompt-cache prefix) stays stable
+      const canBackground =
+        env.backgroundOn && (ctx.session.parent === undefined || env.backgroundInChildren)
+      const agentTool = (defs: Record<string, SubagentDefinition>): ToolInput => {
         const description = toolDescription(defs, env.messaging ? env.messageToolName : undefined)
-        const canBackground =
-          env.backgroundOn && (ctx.session.parent === undefined || env.backgroundInChildren)
         const inputSchema = z.object({
           subagent_type: z
             .enum(Object.keys(defs) as [string, ...string[]])
@@ -311,14 +313,25 @@ export function subagent(options: SubagentOptions): HarnessPlugin<'subagent'> {
             ? { name: z.string().regex(AGENT_NAME_PATTERN).optional().describe(NAME_FIELD) }
             : {}),
         })
+        return env.park
+          ? parkTool(current, description, inputSchema, canBackground)
+          : runTool(current, description, inputSchema)
+      }
+      const dynamicCatalog = typeof options.agents === 'function'
+      if (dynamicCatalog) {
+        // the description is built from the turn's catalog and stays stable within the turn
+        if (env.park) {
+          hooks['step.end'] = (hctx: never, e: never) =>
+            parkMarkers(current, getDefs(), canBackground)(hctx, e)
+        }
+      } else if (depth < env.maxDepth && Object.keys(getDefs()).length > 0) {
+        const defs = getDefs()
         if (env.park) {
           // the run marker of every call, written while the step still streams: the park tool
           // starts its child after the step ended, when nothing can be written to the message
           hooks['step.end'] = parkMarkers(current, defs, canBackground)
         }
-        tools[env.toolName] = env.park
-          ? parkTool(current, description, inputSchema, canBackground)
-          : runTool(current, description, inputSchema)
+        tools[env.toolName] = agentTool(defs)
       }
       if (env.messaging) tools[env.messageToolName] = messageTool(current, env.messageToolName)
       if (env.outputEnabled) tools[env.outputToolName] = outputTool(current, env.outputToolName)
@@ -337,8 +350,18 @@ export function subagent(options: SubagentOptions): HarnessPlugin<'subagent'> {
         void registry.stopAll()
         if (dir !== undefined && isRoot) dropDirectory(dir)
       }
+      const agentSource = defineToolSource({
+        id: 'subagent:agents',
+        refresh: 'turn',
+        list: (turnCtx) => {
+          defsCache = resolveCatalog(options.agents, turnCtx)
+          const defs = defsCache
+          if (depth >= env.maxDepth || Object.keys(defs).length === 0) return {}
+          return { [env.toolName]: agentTool(defs) as Tool }
+        },
+      })
       return {
-        tools,
+        tools: dynamicCatalog ? [tools, agentSource] : tools,
         hooks,
         services: { subagentTasks: registry as SubagentTasks },
         dispose,
