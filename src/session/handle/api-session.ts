@@ -379,7 +379,7 @@ export async function apiClearGrants(s: SessionCtx, principal?: { id: string }):
   if (principal === undefined) {
     delete core.grants
   } else {
-    const prefix = `${principal.id}\u0000`
+    const prefix = `${principal.id}\u001f`
     const kept = Object.entries(core.grants).filter(([key]) => !key.startsWith(prefix))
     if (kept.length === Object.keys(core.grants).length) return
     if (kept.length === 0) delete core.grants

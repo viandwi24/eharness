@@ -18,6 +18,7 @@ const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const A: Principal = { id: 'a' }
 const B: Principal = { id: 'b' }
 const NUL = '\u0000'
+const US = '\u001f'
 
 type Grants = { by?: 'session' | 'principal'; applyAt?: 'continuation' | 'now' }
 
@@ -89,7 +90,7 @@ describe('grants.by x grants.applyAt: a shared session', () => {
         }).result
         expect(log).toEqual(['pay:1'])
         expect((await state.get('shared'))?.core.grants).toEqual(
-          by === 'session' ? { pay: 'always' } : { [`a${NUL}pay`]: 'always' },
+          by === 'session' ? { pay: 'always' } : { [`a${US}pay`]: 'always' },
         )
 
         const r2 = await s.send('pay', { principal: B }).result
@@ -143,7 +144,7 @@ describe('the principal in the key is the one that asked', () => {
         },
       ],
     }).result
-    expect((await state.get('chat'))?.core.grants).toEqual({ [`member${NUL}pay`]: 'always' })
+    expect((await state.get('chat'))?.core.grants).toEqual({ [`member${US}pay`]: 'always' })
     const r2 = await s.send('pay', { principal: M }).result
     expect(r2.stop).toBe('complete')
     expect(log).toEqual(['pay:1', 'pay:2'])
@@ -242,7 +243,7 @@ describe('keys', () => {
     await s.respond({
       approvals: [{ id: approvalIds(r1)[0] as string, approved: true, remember: 'session' }],
     }).result
-    expect((await state.get('s'))?.core.grants).toEqual({ [`a${NUL}pay${NUL}x`]: 'always' })
+    expect((await state.get('s'))?.core.grants).toEqual({ [`a${US}pay${NUL}x`]: 'always' })
     // same principal, other scope: asks; the granted scope does not
     const r2 = await s.send('pay', { principal: A }).result
     expect(r2.stop).toBe('tool-pending')
@@ -301,6 +302,71 @@ describe('keys', () => {
     await two.close()
   })
 
+  test('principal `pay` asking tool x does not collide with tool pay scoped x', async () => {
+    const PAY: Principal = { id: 'pay' }
+    const { agent, log, state } = setup(
+      [
+        call(1, 'z1', 'x'), // principal `pay`, tool pay scope x
+        { text: 'ok' },
+        call(2, 'z2', 'x'), // no principal, tool pay scope x
+        { text: 'ok' },
+        call(3, 'z3', 'x'), // principal `pay` again: granted
+        { text: 'ok' },
+      ],
+      { by: 'principal' },
+      { plugins: [scope] },
+    )
+    const s = agent.session('s')
+    const r1 = await s.send('pay', { principal: PAY }).result
+    await s.respond({
+      approvals: [{ id: approvalIds(r1)[0] as string, approved: true, remember: 'session' }],
+    }).result
+    expect(Object.keys((await state.get('s'))?.core.grants ?? {})).toEqual([`pay${US}pay${NUL}x`])
+    const r2 = await s.send('pay').result
+    expect(r2.stop).toBe('tool-pending')
+    await s.respond({ approvals: [{ id: approvalIds(r2)[0] as string, approved: false }] }).result
+    const r3 = await s.send('pay', { principal: PAY }).result
+    expect(r3.stop).toBe('complete')
+    expect(log).toEqual(['pay:1', 'pay:3'])
+    await agent.close()
+  })
+
+  test('a scoped no-principal grant does not satisfy principal `pay`', async () => {
+    const PAY: Principal = { id: 'pay' }
+    const { agent, log, state } = setup(
+      [call(1, 'y1', 'x'), { text: 'ok' }, call(2, 'y2', 'x')],
+      { by: 'principal' },
+      { plugins: [scope] },
+    )
+    const s = agent.session('s')
+    const r1 = await s.send('pay').result
+    await s.respond({
+      approvals: [{ id: approvalIds(r1)[0] as string, approved: true, remember: 'session' }],
+    }).result
+    expect(Object.keys((await state.get('s'))?.core.grants ?? {})).toEqual([`pay${NUL}x`])
+    const r2 = await s.send('pay', { principal: PAY }).result
+    expect(r2.stop).toBe('tool-pending')
+    expect(log).toEqual(['pay:1'])
+    await agent.close()
+  })
+
+  test('clearGrants({ id: a }) leaves the grants of principal ab', async () => {
+    const AB: Principal = { id: 'ab' }
+    const { agent, state } = setup([call(1, 'p1'), { text: 'ok' }, call(2, 'p2'), { text: 'ok' }], {
+      by: 'principal',
+    })
+    const s = agent.session('s')
+    for (const p of [A, AB]) {
+      const r = await s.send('pay', { principal: p }).result
+      await s.respond({
+        approvals: [{ id: approvalIds(r)[0] as string, approved: true, remember: 'session' }],
+      }).result
+    }
+    await s.clearGrants({ id: 'a' })
+    expect((await state.get('s'))?.core.grants).toEqual({ [`ab${US}pay`]: 'always' })
+    await agent.close()
+  })
+
   test('clearGrants(principal) clears only that principal', async () => {
     const { agent, state } = setup([call(1, 'g1'), { text: 'ok' }, call(2, 'g2'), { text: 'ok' }], {
       by: 'principal',
@@ -313,11 +379,11 @@ describe('keys', () => {
       }).result
     }
     expect(Object.keys((await state.get('s'))?.core.grants ?? {}).sort()).toEqual([
-      `a${NUL}pay`,
-      `b${NUL}pay`,
+      `a${US}pay`,
+      `b${US}pay`,
     ])
     await s.clearGrants(A)
-    expect((await state.get('s'))?.core.grants).toEqual({ [`b${NUL}pay`]: 'always' })
+    expect((await state.get('s'))?.core.grants).toEqual({ [`b${US}pay`]: 'always' })
     await s.clearGrants(B)
     expect((await state.get('s'))?.core.grants).toBeUndefined()
     await agent.close()
@@ -325,19 +391,25 @@ describe('keys', () => {
 })
 
 describe('validation', () => {
-  test('a principal id with NUL is rejected', async () => {
-    const { agent } = setup([{ text: 'x' }], { by: 'principal' })
-    expect(() => agent.session('s', { principal: { id: `a${NUL}b` } })).toThrow()
-    try {
-      agent.session('s', { principal: { id: `a${NUL}b` } })
-    } catch (error) {
-      expect(isHarnessError(error, 'EH_INVALID_INPUT')).toBe(true)
-    }
-    const r = await agent.session('s2').send('hi', { principal: { id: `a${NUL}b` } }).result
-    expect(r.stop).toBe('error')
-    expect(r.error?.code).toBe('EH_INVALID_INPUT')
-    await agent.close()
-  })
+  for (const [name, sep] of [
+    ['NUL', NUL],
+    ['U+001F', US],
+  ] as const) {
+    test(`a principal id with ${name} is rejected`, async () => {
+      const { agent } = setup([{ text: 'x' }], { by: 'principal' })
+      const id = `a${sep}b`
+      expect(() => agent.session('s', { principal: { id } })).toThrow()
+      try {
+        agent.session('s', { principal: { id } })
+      } catch (error) {
+        expect(isHarnessError(error, 'EH_INVALID_INPUT')).toBe(true)
+      }
+      const r = await agent.session('s2').send('hi', { principal: { id } }).result
+      expect(r.stop).toBe('error')
+      expect(r.error?.code).toBe('EH_INVALID_INPUT')
+      await agent.close()
+    })
+  }
 
   test('an unknown grants option is EH_CONFIG_INVALID', () => {
     for (const grants of [{ by: 'user' }, { applyAt: 'later' }]) {

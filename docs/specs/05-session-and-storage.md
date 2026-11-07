@@ -865,7 +865,7 @@ export interface SessionStateSnapshot {
     /**
      * Session approval grants (spec 11 §3.1). Keys: the tool key (`pay`, or `bash\u0000git commit`
      * with `tool.grantScope`); with `grants.by: 'principal'` and a principal,
-     * `<principal id>\u0000<tool key>`. A principal `id` never contains `\u0000` (§2.3).
+     * `<principal id>\u001f<tool key>`. A principal `id` never contains `\u0000` or `\u001f` (§2.3).
      */
     grants?: Record<string, 'always' | 'never'>
     /** Default principal of the session, stored by the first open that had one; never replaced (§2.3). */

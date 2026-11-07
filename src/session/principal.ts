@@ -53,8 +53,8 @@ export function principalProblem(value: unknown): string | undefined {
   if (typeof value.id !== 'string' || value.id.length === 0) {
     return 'needs a non-empty string `id`'
   }
-  if (value.id.includes('\u0000')) {
-    return 'has an `id` with a NUL character (it is part of the grant key)'
+  if (value.id.includes('\u0000') || value.id.includes('\u001f')) {
+    return 'has an `id` with a U+0000 or U+001F character (they separate grant keys)'
   }
   if (value.name !== undefined && typeof value.name !== 'string') {
     return 'has a `name` that is not a string'

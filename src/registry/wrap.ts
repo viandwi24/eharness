@@ -541,6 +541,13 @@ function normalizeStatus(status: ToolApprovalStatus | undefined): Normalized {
 export const GRANT_SCOPE_SEPARATOR = '\u0000'
 
 /**
+ * Separator between a principal id and the tool key in a principal grant key. A tool name matches
+ * `[a-zA-Z0-9_-]+`, so a plain or scoped key's first special character is U+0000 (or none) and a
+ * principal key's is U+001F: the shapes cannot collide. Principal ids never contain either.
+ */
+export const GRANT_PRINCIPAL_SEPARATOR = '\u001f'
+
+/**
  * The key a session grant of this call is stored under and looked up by (spec 11 §3.1): the tool
  * name, or `<tool>\u0000<scope>` when a `tool.grantScope` hook scopes the tool; `null` when a hook
  * says the call cannot be remembered (or throws: fail closed). First non-void hook result wins.
@@ -582,7 +589,7 @@ export interface ApprovalGrants {
 
 /**
  * The stored grant key: the tool key, prefixed with the asking principal's id when grants are
- * keyed `by: 'principal'` and there is one (`<principal id>\u0000<tool key>`, ADR-0070).
+ * keyed `by: 'principal'` and there is one (`<principal id>\u001f<tool key>`, ADR-0070).
  */
 export function principalGrantKey(
   by: 'session' | 'principal' | undefined,
@@ -590,7 +597,7 @@ export function principalGrantKey(
   toolKey: string,
 ): string {
   return by === 'principal' && principalId !== undefined
-    ? `${principalId}${GRANT_SCOPE_SEPARATOR}${toolKey}`
+    ? `${principalId}${GRANT_PRINCIPAL_SEPARATOR}${toolKey}`
     : toolKey
 }
 

@@ -169,8 +169,8 @@ auto-approves later `git commit …`, not `curl …`. Other tools keep one grant
 
 **Grants by principal (`grants.by`, ADR-0070).** Agent option `grants: { by: 'session' | 'principal' }`,
 default `'session'` (the behavior above). With `'principal'` the stored key is
-`<principal id>\u0000<tool key>`, where the tool key is the tool name or the scoped key above
-(`state.core.grants['ana\u0000bash\u0000git commit']`).
+`<principal id>\u001f<tool key>`, where the tool key is the tool name or the scoped key above
+(`state.core.grants['ana\u001fbash\u0000git commit']`).
 - The principal in the key is the one that **asked**, never the `actor` that answered. At lookup it is
   the running turn's principal (`ctx.principal`, spec 05 §2.3); at record time it is the principal
   stored on the pending state (ADR-0069). An owner answering a member's request with
@@ -180,9 +180,11 @@ default `'session'` (the behavior above). With `'principal'` the stored key is
 - Keys of the other mode are ignored on lookup: a plain key never satisfies a call that has a
   principal, and a principal key is never read in `'session'` mode. Switching the mode on a stored
   session reads as "no grant", never as a wider one.
-- A principal `id` containing `\u0000` is rejected (`EH_INVALID_INPUT`), so a key cannot be forged.
+- A principal `id` containing `\u0000` or `\u001f` is rejected (`EH_INVALID_INPUT`), so a key cannot be
+  forged. Tool names match `[a-zA-Z0-9_-]+`, so a plain or scoped key's first special character is
+  `\u0000` (or none) and a principal key's is `\u001f`: the shapes never collide.
 - `session.clearGrants(principal?)`: with a principal (`{ id }`), clears only the keys that start with
-  `<id>\u0000`; without, every grant.
+  `<id>\u001f` (principal `a` never clears `ab`); without, every grant.
 - `grants.by` does not apply to `permissions` rules (spec 18).
 
 **Grant timing (`grants.applyAt`, ADR-0070).** `'continuation'` (default) is the delay above.

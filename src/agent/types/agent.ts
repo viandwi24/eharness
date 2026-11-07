@@ -222,7 +222,7 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   /**
    * Session approval grants (spec 11 §3.1, ADR-0070). `by`: `'session'` (default) keys a grant by
    * the tool (or its `tool.grantScope`); `'principal'` keys it by the principal that asked
-   * (`<principal id>\u0000<tool key>`, a call with no principal uses the session key).
+   * (`<principal id>\u001f<tool key>`, a call with no principal uses the session key).
    * `applyAt`: `'continuation'` (default; planned to flip at 1.0) applies a grant recorded by
    * `respond()` only after the first step of its continuation; `'now'` applies it at once to every
    * call except the ones that same `respond()` answered.
