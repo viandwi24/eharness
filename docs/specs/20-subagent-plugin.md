@@ -225,6 +225,16 @@ the parent / root sessions opened from a child or by the plugin (`parentAgent`, 
 `agent.peek()` (spec 05 §2.2): they never run `session.start` hooks of the session they read.
 `pendingSubagentApprovals` entries carry `agent`, `name`, `description` of the child when stored.
 
+**Principal (ADR-0069, spec 05 §2.3).** The plugin records the principal of the delegating turn
+(`ctx.principal`) as `ParentInfo.principal`, which the parent's `core.children` entry
+(`ChildSessionInfo.principal`) keeps. A child with no `principal` option of its own takes it as its
+session default, so its hooks and tools see the same `ctx.principal` as the turn that delegated;
+`childSession` may return another `principal` for the child. Every report a child sends to its
+launcher (background and park reports, resume reports, the reconcile of §3.6) is injected with the
+delegating turn's principal, so the **wake turn** it starts runs for that principal, also after a
+restart or on another instance (a durable wake item carries it). A park child continued after its
+launcher's wait resolved runs with the principal stored in the launcher's pending state, the same one.
+
 ### 2.5 Files for the child (`files`)
 
 The child starts with no context, so it never sees the attachments of the user's message. With

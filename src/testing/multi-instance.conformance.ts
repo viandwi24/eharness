@@ -14,6 +14,8 @@ import { tool } from 'ai'
 import { z } from 'zod/v4'
 import {
   defineHarnessAgent,
+  definePlugin,
+  type HarnessPlugin,
   type HarnessUIMessage,
   type HarnessWarning,
   type InboxAdapter,
@@ -99,6 +101,7 @@ function instanceOf(
     tools: NonNullable<Parameters<typeof defineHarnessAgent>[0]['tools']>
     instanceId?: string
     lock?: boolean
+    plugins?: HarnessPlugin[]
     warnings: HarnessWarning[]
   },
 ) {
@@ -110,6 +113,7 @@ function instanceOf(
     contextWindow: 100_000,
     tools: config.tools,
     approval: { policy: { pay: 'user-approval' } },
+    ...(config.plugins === undefined ? {} : { plugins: config.plugins }),
     storage: {
       messages: deadable(storage.messages, gate),
       state: deadable(storage.state, gate),
@@ -155,6 +159,21 @@ function tools(
     }),
     ask: tool({ inputSchema: z.object({ q: z.string() }) }),
   }
+}
+
+/** Records `ctx.principal?.id` in the start, step and end of every turn (ADR-0069). */
+function principalRecorder(seen: string[]): HarnessPlugin {
+  const id = (ctx: { principal?: { id: string } | undefined }) => ctx.principal?.id ?? 'none'
+  return definePlugin({
+    name: 'principal-recorder',
+    setup: () => ({
+      hooks: {
+        'turn.start': (ctx) => void seen.push(id(ctx)),
+        'step.prepare': (ctx) => void seen.push(id(ctx)),
+        'turn.end': (ctx) => void seen.push(id(ctx)),
+      },
+    }),
+  }) as unknown as HarnessPlugin
 }
 
 function holdGate() {
@@ -240,6 +259,7 @@ export function multiInstanceConformance(
       tools: NonNullable<Parameters<typeof defineHarnessAgent>[0]['tools']>
       instanceId?: string
       lock?: boolean
+      plugins?: HarnessPlugin[]
     }): Instance
     stored(): Promise<HarnessUIMessage[]>
     invariants(quiescent: boolean): Promise<void>
@@ -290,6 +310,68 @@ export function multiInstanceConformance(
           .respond({ approvals: [{ id: approvalId, approved: true }] }).result
         assertTrue(again.stop === 'error', 'a second answer must be rejected')
         assertTrue(log.paid === 1, 'the tool ran again on a second answer')
+        await ctx.invariants(true)
+      }),
+    },
+    {
+      name: 'multi-instance: the principal that asked reaches the continuation B runs after answering',
+      run: withStorage({}, async (ctx) => {
+        const log = { paid: 0, slow: 0 }
+        const seen: string[] = []
+        const plugins = [principalRecorder(seen)]
+        const a = ctx.open({
+          model: scriptedModel([payCall, { text: 'unused' }]),
+          tools: tools(log),
+          plugins,
+        })
+        const b = ctx.open({
+          model: scriptedModel([{ text: 'paid, done' }]),
+          tools: tools(log),
+          plugins,
+        })
+        const first = await a
+          .session(ctx.sessionId)
+          .send('pay please', { principal: { id: 'ana' } }).result
+        assertTrue(first.stop === 'tool-pending', `A stopped ${first.stop}`)
+        const approvalId = first.pending?.approvals[0]?.approvalId as string
+        // B answers as another principal: the continuation still runs for the one that asked
+        const answered = await b
+          .session(ctx.sessionId)
+          .respond(
+            { approvals: [{ id: approvalId, approved: true }] },
+            { principal: { id: 'boss' } },
+          ).result
+        assertTrue(answered.stop === 'complete', `B stopped ${answered.stop}`)
+        assertTrue(seen.length >= 4, `the recorder ran ${seen.length} times`)
+        assertTrue(
+          seen.every((who) => who === 'ana'),
+          `ctx.principal was ${seen.join(',')}, expected ana everywhere`,
+        )
+        await ctx.invariants(true)
+      }),
+    },
+    {
+      name: 'multi-instance: a principal enqueued by B runs the turn, wherever it is drained (inbox)',
+      run: withStorage({ inbox: true }, async (ctx) => {
+        const log = { paid: 0, slow: 0 }
+        const seen: string[] = []
+        const plugins = [principalRecorder(seen)]
+        const model = scriptedModel([{ text: 'one' }, { text: 'two' }])
+        const a = ctx.open({ model, tools: tools(log), plugins })
+        const b = ctx.open({ model, tools: tools(log), plugins })
+        await a.session(ctx.sessionId).ready()
+        await b.session(ctx.sessionId).enqueue('as ana', { principal: { id: 'ana' } })
+        await until(
+          'the input ran',
+          async () => texts(await ctx.stored()).includes('as ana'),
+          ctx.timeout,
+        )
+        await until('the turn ended', () => seen.length >= 3, ctx.timeout)
+        await sleep(40 + (options.latencyMs ?? 0) * 4)
+        assertTrue(
+          seen.length === 3 && seen.every((who) => who === 'ana'),
+          `ctx.principal was ${seen.join(',')}, expected ana (3 records)`,
+        )
         await ctx.invariants(true)
       }),
     },

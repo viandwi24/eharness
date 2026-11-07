@@ -78,6 +78,17 @@ slot is retried on the next tick. Slots already fired in that tick fire again wi
 `session.enqueue(prompt, { id: fireId, availableAt: scheduledAt })` (ADR-0040), so a retried or
 recovered tick enqueues each slot at most once (within the inbox dedupe horizon).
 
+### 4.1 Who a fire acts for (ADR-0069)
+
+The scheduler never enqueues into a session itself (the app's `fire` callback does), and
+`Schedule` has no principal field. By convention the app stores the asker in `payload`
+(`payload: { text: 'daily summary', principal: { id: 'ana' } }`) and `fire` passes it on:
+`session.enqueue(text, { id: fireId, availableAt: scheduledAt, principal: payload.principal })`
+(spec 05 §2.3). The principal is stored in the inbox item, so the instance that drains it runs the
+turn with `ctx.principal` set. A fire without `payload.principal` uses the session default
+(`SessionOptions.principal`); an invalid one makes `enqueue` reject with `EH_INVALID_INPUT` (the app
+decides whether to fall back to the default).
+
 ## 5. Overlap
 
 A row claimed with a live lease is invisible to `due`, so while one instance is still inside a slow

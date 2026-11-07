@@ -167,6 +167,7 @@ export async function reconcileBackgroundChildren(
         },
         key,
         wake,
+        ...(info.principal === undefined ? {} : { principal: info.principal }),
       },
       log,
     )

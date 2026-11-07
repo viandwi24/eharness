@@ -178,7 +178,14 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
         lock case is not exercised there (the case itself passed against the sqlite lock in a throwaway
         source-import test). The interrupt test compares with a hand-built crash state, not a killed
         process.
-- [ ] W2: C, the turn principal through send, inbox, activeTurn, waits, wake, scheduler and children
+- [x] W2: C, the turn principal through send, inbox, activeTurn, waits, wake, scheduler and children
+      (22e103df and the follow-up `feat(subagent)` commit). Decisions: a later open with another principal
+      keeps the stored default and warns `W_SESSION_OPTIONS_IGNORED`; `respond()` keeps the asker's
+      principal (its own `principal` applies only when the pending state has none); a wake turn takes
+      `inject({ principal })`, else the running turn's, else the session default (carried by the inbox
+      `wake` item and, for subagents, by `ParentInfo.principal`); the scheduler never enqueues itself,
+      so `payload.principal` is an app convention (spec 29 §4.1). Open: the http `authorize` result is
+      not wired to it yet.
 - [ ] W3: D, grants by principal and the grant timing change
 - [ ] Conformance: every A adapter passes every existing suite on Bun and on Node; new cases for lock
       `owner`, principal durability across instances, and grants by principal

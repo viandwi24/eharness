@@ -382,6 +382,7 @@ export function runTool(scope: Scope, description: string, inputSchema: unknown)
         agent: subagent_type,
         description: label,
         ...(name === undefined ? {} : { name }),
+        ...(ctx.principal === undefined ? {} : { principal: ctx.principal }),
       }
       const canDetach = backgroundOn && (ctx.session.parent === undefined || backgroundInChildren)
       if ((run_in_background ?? backgroundDefault) && canDetach) {
@@ -752,6 +753,7 @@ export function parkTool(
         agent: subagent_type,
         description: label,
         ...(name === undefined ? {} : { name }),
+        ...(ctx.principal === undefined ? {} : { principal: ctx.principal }),
       }
       if (messaging && scope.dir !== undefined) {
         // the directory comes from storage: names are unique across instances and restarts

@@ -24,11 +24,13 @@ import { type MessageLike, textOf } from './report.ts'
 import { AGENT_OUTPUT_PAGE_CHARS, type AnyRun, type AnySession, type Ctx } from './types.ts'
 
 export function reporterOf(ctx: Ctx): Reporter {
+  // the principal of the delegating turn, read now: the child may report after that turn ended
+  const principal = ctx.principal
   return async (text, data) => {
     await ctx.session.inject(
       'eh.event',
       { name: 'subagent', text, data },
-      { deliver: 'next-step', wake: true },
+      { deliver: 'next-step', wake: true, ...(principal === undefined ? {} : { principal }) },
     )
   }
 }

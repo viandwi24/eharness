@@ -3,7 +3,7 @@
  * idempotent delivery (spec 20 §3.6).
  */
 
-import type { HarnessSession, PendingState } from '../index.ts'
+import type { HarnessSession, PendingState, Principal } from '../index.ts'
 import { errorText } from '../index.ts'
 
 // biome-ignore lint/suspicious/noExplicitAny: a session of a loosely typed agent
@@ -83,6 +83,8 @@ export async function deliverReport(
     data: Record<string, unknown>
     key: string
     wake: boolean
+    /** Principal of the delegating turn: the wake turn this report starts runs for them (ADR-0069). */
+    principal?: Principal
     /** `'next-step'` (default) also reaches a running parent at its next step; `'next-turn'` only stores it. */
     deliver?: 'next-step' | 'next-turn'
   },
@@ -96,7 +98,12 @@ export async function deliverReport(
       await (parent as AnySession).inject(
         'eh.event',
         { name: 'subagent', text: event.text, data: event.data as never },
-        { deliver: event.deliver ?? 'next-step', wake: event.wake, key: event.key },
+        {
+          deliver: event.deliver ?? 'next-step',
+          wake: event.wake,
+          key: event.key,
+          ...(event.principal === undefined ? {} : { principal: event.principal }),
+        },
       )
       return true
     } catch (error) {

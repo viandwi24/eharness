@@ -153,6 +153,7 @@ export async function rebuildEntries(scope: Scope, miss = false): Promise<void> 
           depth: scope.depth + 1,
           agent: marker.agent,
           ...(marker.name === undefined ? {} : { name: marker.name }),
+          ...(info.principal === undefined ? {} : { principal: info.principal }),
         },
       })
       const n = Number(/^agent-(\d+)$/.exec(marker.taskId ?? '')?.[1] ?? 0)
@@ -240,6 +241,7 @@ export async function rebuildPark(scope: Scope, miss: boolean): Promise<void> {
           depth: scope.depth + 1,
           agent: type,
           ...(input?.name === undefined ? {} : { name: input.name }),
+          ...(info.principal === undefined ? {} : { principal: info.principal }),
         },
       })
     }

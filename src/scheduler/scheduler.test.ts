@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { isHarnessError } from '../index.ts'
+import { defineHarnessAgent, definePlugin, isHarnessError, type Principal } from '../index.ts'
 import { scheduleStoreConformance } from '../testing/scheduler.conformance.ts'
+import { scriptedModel } from '../testing/scripted-model.ts'
 import { memoryScheduleStore } from './memory.ts'
 import { type CronNext, createScheduler } from './scheduler.ts'
 import type { FireContext, ScheduleStore } from './types.ts'
@@ -324,5 +325,55 @@ describe('scheduler', () => {
     await scheduler.create({ id: 'c', sessionId: 'x', spec: { kind: 'interval', everyMs: 1000 } })
     const err = await scheduler.pause('c').catch((e: unknown) => e)
     expect(isHarnessError(err, 'EH_INVALID_INPUT')).toBe(true)
+  })
+})
+
+describe('scheduler and the turn principal (spec 29 §4.1)', () => {
+  test('a fire enqueues with payload.principal; the turn runs for that principal, else the session default', async () => {
+    const seen: string[] = []
+    const agent = defineHarnessAgent({
+      model: scriptedModel([{ text: 'one' }, { text: 'two' }]),
+      contextWindow: 100_000,
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+      plugins: [
+        definePlugin({
+          name: 'rec',
+          setup: () => ({
+            hooks: { 'turn.start': (ctx) => void seen.push(ctx.principal?.id ?? '-') },
+          }),
+        }),
+      ],
+    })
+    const session = agent.session('x', { principal: { id: 'default' } })
+    const clock = { t: 0 }
+    const scheduler = createScheduler({
+      store: memoryScheduleStore(),
+      now: () => clock.t,
+      fire: async ({ schedule, fireId, scheduledAt }) => {
+        const payload = schedule.payload as { text: string; principal?: Principal }
+        await session.enqueue(payload.text, {
+          id: fireId,
+          availableAt: scheduledAt,
+          ...(payload.principal === undefined ? {} : { principal: payload.principal }),
+        })
+      },
+    })
+    await scheduler.create({
+      id: 'a',
+      sessionId: 'x',
+      spec: { kind: 'interval', everyMs: 1000 },
+      payload: { text: 'report', principal: { id: 'ana' } },
+    })
+    await scheduler.create({
+      id: 'b',
+      sessionId: 'x',
+      spec: { kind: 'interval', everyMs: 1000 },
+      payload: { text: 'plain' },
+    })
+    clock.t = 1000
+    await scheduler.tick()
+    for (let i = 0; i < 200 && seen.length < 2; i++) await new Promise((r) => setTimeout(r, 5))
+    expect(seen.sort()).toEqual(['ana', 'default'])
+    await agent.close()
   })
 })

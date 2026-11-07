@@ -14,6 +14,7 @@ import {
   isLongRunCheckpoint,
   neutralizeTags,
   type PendingState,
+  type Principal,
   type SessionContribution,
   type SessionOptions,
   type SessionPeek,
@@ -371,7 +372,7 @@ export function createParkHook(options: {
   const reportBackground = async (
     ctx: HarnessContext,
     e: TurnResult,
-    parent: { sessionId: string },
+    parent: { sessionId: string; principal?: Principal },
     cancelled = false,
   ): Promise<void> => {
     if (options.parentAgent === undefined) return
@@ -417,6 +418,7 @@ export function createParkHook(options: {
         },
         key: reportKey(ctx.session.id, waiting ? `waiting:${e.turnId}` : e.turnId),
         wake: !waiting,
+        ...(parent.principal === undefined ? {} : { principal: parent.principal }),
         // a park notice in 'notice' mode is only stored: it never gives a running parent an extra step
         ...(waiting && options.onPark === 'notice' ? { deliver: 'next-turn' as const } : {}),
       },
@@ -430,7 +432,7 @@ export function createParkHook(options: {
   const reportResume = async (
     ctx: HarnessContext,
     e: TurnResult,
-    parent: { sessionId: string },
+    parent: { sessionId: string; principal?: Principal },
   ): Promise<void> => {
     if (!options.reportResumes || options.parentAgent === undefined) return
     const frame = launcherFrame(e)
@@ -451,6 +453,7 @@ export function createParkHook(options: {
         },
         key: reportKey(ctx.session.id, e.turnId),
         wake: true,
+        ...(parent.principal === undefined ? {} : { principal: parent.principal }),
       },
       ctx.log,
     )
