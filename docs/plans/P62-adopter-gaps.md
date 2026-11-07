@@ -139,8 +139,10 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
    ends a running turn exactly as recovery would: `stop: 'interrupted'`, an `eh.notice` with code
    `EH_TURN_INTERRUPTED`, and `activeTurn` cleared. UIs then have one code path for "the server
    stopped" and "the server crashed".
-2. `session.activeTurn(): Promise<ActiveTurnInfo | null>`, a public read of
-   `{ turnId, kind, startedAt, owner, principal }`. Apps stop casting the state snapshot.
+2. ~~`session.activeTurn()`~~ **Dropped, already exists:** `ActiveTurn` is exported and
+   `peek().stats().activeTurn` / `session.stats().activeTurn` return `{ turnId, kind, messageId,
+   owner, startedAt, heartbeatAt, … }` (spec 05 §2.2; documented and tested in 4a5a0383). `principal`
+   joins `ActiveTurn` with workstream C. The audit that proposed it missed `stats()`.
 3. `SessionLock.acquire(sessionId, { signal, owner })` receives `recovery.instanceId`.
    - A lease lock may treat a lease held by the same `owner` as stale, matching what §9.2 already
      does for `activeTurn`.
@@ -169,7 +171,13 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
         id (10f18fcc). Subagent catalog functions must stay synchronous. The engine `rules(ctx)` /
         `roots(ctx)` moved to the follow-ups. Not run: the examples' own permission tests (they now
         take the no-id fallback and print one warning).
-  - [ ] E: `close` mode, `activeTurn()`, lock `owner`, constants
+  - [x] E: `close({ inFlight: 'interrupt' })` (fbc42396, reuses `recoverInterruptedTurn`), lock
+        `owner` with the opt-in conformance case `leaseOwnerTakeover` (b4818c1b), `STOP_REASONS` and
+        `NOTICE_CODES` (b655853d); `activeTurn()` dropped (4a5a0383). Open: the sqlite suites resolve
+        `eharness` from `dist`, so run `bun run build` before `bun test ./packages/sqlite` or the new
+        lock case is not exercised there (the case itself passed against the sqlite lock in a throwaway
+        source-import test). The interrupt test compares with a hand-built crash state, not a killed
+        process.
 - [ ] W2: C, the turn principal through send, inbox, activeTurn, waits, wake, scheduler and children
 - [ ] W3: D, grants by principal and the grant timing change
 - [ ] Conformance: every A adapter passes every existing suite on Bun and on Node; new cases for lock
