@@ -25,16 +25,21 @@ people had to share one approval path.
 
 1. **`grants: { by: 'session' | 'principal' }`** on the agent (and session) options, default
    `'session'`, which is today's behavior.
-   - With `'principal'`, the stored key is `<principal id>\u0000<tool key>` where `tool key` is the
-     existing tool or `tool.grantScope` key. A call with no principal uses the session key.
+   - With `'principal'`, the stored key is `<principal id>\u001f<tool key>` where `tool key` is the
+     existing tool or `tool.grantScope` key. A call with no principal uses the session key. The
+     separator is `\u001f` (not `\u0000`) so the two key shapes can never collide: tool names match
+     `^[a-zA-Z0-9_-]{1,64}$` and a scoped key is `<tool>\u0000<scope>`, so its first special
+     character is `\u0000`; a principal key's first special character is `\u001f` (corrected on
+     2026-11-08 after a review found that `\u0000` let principal `pay` + tool `x` equal tool `pay`
+     scoped `x`).
    - **The principal in the key is the one that ASKED** (the turn's principal, `ctx.principal`; after
      a park, the principal stored on the pending state, ADR-0069), never the one that answered
      (`actor`). So a grant recorded for requests of A never satisfies a request that carries principal
      B, and the other way round. When an owner answers a member's request with `remember: 'session'`,
      the grant belongs to the member's key: it covers that member's later calls, not other people's.
      (Corrected on 2026-11-08: the first draft said "answered by", which read as the answerer.)
-   - A principal id that contains `\u0000` is rejected by the principal validation, so the key
-     cannot be forged. `clearGrants()` takes an optional principal.
+   - A principal id that contains `\u0000` or `\u001f` is rejected by the principal validation, so a
+     key cannot be forged. `clearGrants()` takes an optional principal.
 2. **`grants: { applyAt: 'continuation' | 'now' }`**, default `'continuation'` (today).
    - With `'now'`, a recorded grant applies at once to every call **except the call ids that the
      same `respond()` answered**. Those stay unaffected, which keeps the reason for the delay.
