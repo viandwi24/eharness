@@ -22,8 +22,8 @@ constants `WEB_FETCH_TOOL` (`'web_fetch'`) and `WEB_SEARCH_TOOL` (`'web_search'`
 
 ```ts
 webFetch({
-  allow?: string[] | ((host: string) => boolean)   // trusted hosts
-  deny?: string[]                                   // never fetched; wins over allow
+  allow?: string[] | ((host: string, ctx: HarnessContext) => boolean | Promise<boolean>)   // trusted hosts
+  deny?: string[] | ((host: string, ctx: HarnessContext) => boolean | Promise<boolean>)    // never fetched; wins over allow
   onlyAllowed?: boolean                             // strict allow-list (default false)
   maxBytes?: number         // 5 MiB
   maxChars?: number         // 30 000
@@ -44,7 +44,7 @@ Host patterns (internal matcher): `example.com` (exact), `*.example.com` (subdom
 Tool input `{ url, prompt? }`. Rules, in order:
 
 1. Only `http`/`https`; URLs with credentials are refused.
-2. `deny` match → `ERROR: <host> is not allowed`.
+2. `deny` match → `ERROR: <host> is not allowed`. `allow` and `deny` functions get the host (and `host:port`) and the session `ctx`, so the policy can follow the person or tenant; they fail closed: a function that throws or rejects does not trust the host (`allow`) and refuses it (`deny`).
 3. A host not trusted by `allow` (or any host when `onlyAllowed` and not in `allow`: `ERROR: <host> is not in the allow list`):
    - IP literals and local names (`localhost`, `*.localhost`, `*.local`, `*.internal`, `*.lan`,
      single-label names; one trailing dot is stripped first: `localhost.`) in private, loopback, link-local, CGNAT

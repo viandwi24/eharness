@@ -70,6 +70,7 @@ async function callTool(
   toolName: string,
   input: unknown,
   signal?: AbortSignal,
+  runtime?: Record<string, unknown>,
 ): Promise<string> {
   const model = scriptedModel([{ toolCalls: [{ toolName, input }] }, { text: 'ok' }])
   const agent = defineHarnessAgent({
@@ -78,7 +79,7 @@ async function callTool(
     plugins: [plugin],
     onWarning: () => {},
   })
-  const session = agent.session('s')
+  const session = agent.session('s', runtime === undefined ? undefined : { runtime })
   await session.send('go', signal ? { abortSignal: signal } : undefined).result
   const messages = await session.messages()
   await agent.close()
@@ -226,6 +227,26 @@ describe('web_fetch', () => {
     await fetchTool({ fetch: fake }, { url: 'http://example.com/a?b=1' })
     await fetchTool({ fetch: fake }, { url: 'http://example.com:80/c' })
     expect(seen).toEqual(['https://example.com/a?b=1', 'https://example.com/c'])
+  })
+
+  test('allow and deny may be functions of the host and the ctx (sync or async, fail closed)', async () => {
+    const asTenant = (opts: WebFetchOptions, tenant: string) =>
+      callTool(webFetch(opts), 'web_fetch', { url: `${base}/text` }, undefined, { tenant })
+    const allow: WebFetchOptions['allow'] = async (host, ctx) =>
+      host === '127.0.0.1' && ctx.runtime.tenant === 'a'
+    expect(await asTenant({ allow, wrapUntrusted: false }, 'a')).toContain('plain text')
+    expect(await asTenant({ allow, wrapUntrusted: false }, 'b')).toContain('private or local host')
+    const deny: WebFetchOptions['deny'] = (host, ctx) =>
+      host === '127.0.0.1' && ctx.runtime.tenant === 'b'
+    const both = { allow: ['127.0.0.1'], deny, wrapUntrusted: false }
+    expect(await asTenant(both, 'a')).toContain('plain text')
+    expect(await asTenant(both, 'b')).toContain('is not allowed')
+    // a throwing predicate fails closed: allow does not trust, deny refuses
+    const boom = (): boolean => {
+      throw new Error('boom')
+    }
+    expect(await asTenant({ allow: boom }, 'a')).toContain('private or local host')
+    expect(await asTenant({ allow: ['127.0.0.1'], deny: boom }, 'a')).toContain('is not allowed')
   })
 
   test('abort', async () => {

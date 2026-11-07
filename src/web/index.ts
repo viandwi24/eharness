@@ -10,6 +10,7 @@
  */
 export {
   WEB_FETCH_TOOL,
+  type HostPredicate,
   type WebFetchOptions,
   webFetch,
 } from './fetch.ts'

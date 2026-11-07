@@ -10,11 +10,18 @@ import { z } from 'zod/v4'
 import {
   definePlugin,
   errorText,
+  type HarnessContext,
   HarnessError,
   type HarnessPlugin,
   isPrivateHost,
   untrustedContent,
 } from '../index.ts'
+
+/**
+ * A host policy as a function (spec 22): called with the host (and `host:port` for a URL with a
+ * port) and the session context, so the answer can depend on the person or tenant.
+ */
+export type HostPredicate = (host: string, ctx: HarnessContext) => boolean | Promise<boolean>
 
 /** Options of {@link webFetch}. */
 export interface WebFetchOptions {
@@ -22,9 +29,12 @@ export interface WebFetchOptions {
    * Trusted hosts (patterns, see {@link matchHost}) or a predicate: private hosts, unusual ports
    * and plain `http` are accepted for them. Default: none.
    */
-  allow?: string[] | ((host: string) => boolean)
-  /** Hosts that are never fetched (wins over `allow`). */
-  deny?: string[]
+  allow?: string[] | HostPredicate
+  /**
+   * Hosts that are never fetched (wins over `allow`): patterns or a predicate. A predicate that
+   * throws denies the host; an `allow` predicate that throws does not trust it (fail closed).
+   */
+  deny?: string[] | HostPredicate
   /** Only hosts matching `allow` can be fetched (a strict allow-list). Default `false`. */
   onlyAllowed?: boolean
   /** Default 5 MiB. */
@@ -224,11 +234,26 @@ export function webFetch(options: WebFetchOptions = {}): HarnessPlugin<'web-fetc
   const convert = options.toMarkdown ?? ((html: string) => htmlToText(html))
   const doFetch = options.fetch ?? fetch
   const allow = options.allow
-  const isAllowed = (host: string): boolean =>
-    typeof allow === 'function' ? allow(host) : (allow ?? []).some((p) => matchHost(p, host))
-  const isDenied = (host: string): boolean => (options.deny ?? []).some((p) => matchHost(p, host))
+  const deny = options.deny
+  const failClosed = async (
+    policy: string[] | HostPredicate | undefined,
+    host: string,
+    ctx: HarnessContext,
+    onError: boolean,
+  ): Promise<boolean> => {
+    if (typeof policy !== 'function') return (policy ?? []).some((p) => matchHost(p, host))
+    try {
+      return (await policy(host, ctx)) === true
+    } catch {
+      return onError
+    }
+  }
+  const isAllowed = (host: string, ctx: HarnessContext): Promise<boolean> =>
+    failClosed(allow, host, ctx, false)
+  const isDenied = (host: string, ctx: HarnessContext): Promise<boolean> =>
+    failClosed(deny, host, ctx, true)
 
-  async function checkUrl(raw: string): Promise<Checked> {
+  async function checkUrl(raw: string, ctx: HarnessContext): Promise<Checked> {
     let url: URL
     try {
       url = new URL(raw)
@@ -243,8 +268,10 @@ export function webFetch(options: WebFetchOptions = {}): HarnessPlugin<'web-fetc
     }
     const host = url.hostname
     const hostPort = url.port === '' ? host : `${host}:${url.port}`
-    if (isDenied(host) || isDenied(hostPort)) return { error: `ERROR: ${host} is not allowed` }
-    const allowed = isAllowed(host) || isAllowed(hostPort)
+    if ((await isDenied(host, ctx)) || (await isDenied(hostPort, ctx))) {
+      return { error: `ERROR: ${host} is not allowed` }
+    }
+    const allowed = (await isAllowed(host, ctx)) || (await isAllowed(hostPort, ctx))
     if (!allowed) {
       if (options.onlyAllowed === true) return { error: `ERROR: ${host} is not in the allow list` }
       if (isPrivateHost(host)) {
@@ -302,7 +329,7 @@ export function webFetch(options: WebFetchOptions = {}): HarnessPlugin<'web-fetc
                 AbortSignal.timeout(timeoutMs),
                 ...(abortSignal ? [abortSignal] : []),
               ])
-              let checked = await checkUrl(raw.trim())
+              let checked = await checkUrl(raw.trim(), ctx as HarnessContext)
               try {
                 for (let hop = 0; hop <= maxRedirects; hop++) {
                   if ('error' in checked) return checked.error
@@ -330,7 +357,7 @@ export function webFetch(options: WebFetchOptions = {}): HarnessPlugin<'web-fetc
                     if (next.hostname.toLowerCase() !== url.hostname.toLowerCase()) {
                       return `REDIRECT: ${next.href} — call ${toolName} again with this URL`
                     }
-                    checked = await checkUrl(next.href)
+                    checked = await checkUrl(next.href, ctx as HarnessContext)
                     // a redirect never downgrades to http for a host that was fetched over https
                     if (
                       'url' in checked &&
