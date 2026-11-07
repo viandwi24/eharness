@@ -149,8 +149,9 @@ count as an open item of the wait machinery (`remaining`, `expireWaits()`).
 `always` turns a `user-approval` into `approved` but never overrides `denied`. Grants are
 per session, cleared by `session.clearGrants()`, and the grants recorded by a `respond()` take
 effect **after the first step of its continuation** (so AI SDK's re-validation of the calls just
-answered is not affected by them; grants recorded earlier apply from step 0). A grant is recorded
-in the commit-point state write of the `respond()` that carries it.
+answered is not affected by them; grants recorded earlier apply from step 0), unless
+`grants.applyAt: 'now'` (below). A grant is recorded in the commit-point state write of the
+`respond()` that carries it.
 A grant that can never apply (the policy or a hook returns `denied` for that tool) raises
 `W_GRANT_IGNORED` once.
 
@@ -165,6 +166,31 @@ that `suggestRule` offers; never a wrapper or interpreter, never a compound, com
 command, never one with a risky flag such as `rm -rf` or `git push -f`, never one touching a
 protected path). Approving `git commit -m a` for the session
 auto-approves later `git commit …`, not `curl …`. Other tools keep one grant per tool name.
+
+**Grants by principal (`grants.by`, ADR-0070).** Agent option `grants: { by: 'session' | 'principal' }`,
+default `'session'` (the behavior above). With `'principal'` the stored key is
+`<principal id>\u0000<tool key>`, where the tool key is the tool name or the scoped key above
+(`state.core.grants['ana\u0000bash\u0000git commit']`).
+- The principal in the key is the one that **asked**, never the `actor` that answered. At lookup it is
+  the running turn's principal (`ctx.principal`, spec 05 §2.3); at record time it is the principal
+  stored on the pending state (ADR-0069). An owner answering a member's request with
+  `remember: 'session'` therefore stores the grant under the member's key: it covers that member's
+  later calls, not the owner's or anyone else's.
+- A call with no principal uses the plain session key (the same key as `by: 'session'`).
+- Keys of the other mode are ignored on lookup: a plain key never satisfies a call that has a
+  principal, and a principal key is never read in `'session'` mode. Switching the mode on a stored
+  session reads as "no grant", never as a wider one.
+- A principal `id` containing `\u0000` is rejected (`EH_INVALID_INPUT`), so a key cannot be forged.
+- `session.clearGrants(principal?)`: with a principal (`{ id }`), clears only the keys that start with
+  `<id>\u0000`; without, every grant.
+- `grants.by` does not apply to `permissions` rules (spec 18).
+
+**Grant timing (`grants.applyAt`, ADR-0070).** `'continuation'` (default) is the delay above.
+`'now'`: a grant recorded by a `respond()` applies at once, in step 0 of its continuation, to every
+call **except** the tool call ids that same `respond()` answered (including answers stored by earlier
+partial `respond()` calls of the same pending state). Those calls keep the grants of before, which is
+the reason for the delay: AI SDK's re-validation of an answered call must not change its outcome.
+`W_GRANT_IGNORED` works in both modes. The default of `applyAt` is planned to flip to `'now'` at 1.0.
 
 *Compatibility.* The state shape is unchanged (`Record<string, 'always' | 'never'>`); old and new
 keys coexist. An old per-tool grant (`grants.bash`) is still honoured for tools no hook scopes. For

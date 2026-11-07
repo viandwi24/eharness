@@ -348,6 +348,8 @@ never cover a high-risk flag: `--force*`, `-f` of `git push`, `--hard`, `--privi
 command carrying one gets no grant (`grantScope` returns `null`, so it asks every time) and only an
 exact rule is suggested.
 
+With the agent option `grants.by: 'principal'` the stored grant key is prefixed with the asking principal's id (spec 11 §3.1); the scope itself is unchanged. Session *rules* are not affected by `grants.by`.
+
 **acceptEdits** additionally approves `mkdir`, `touch`, `mv`, `cp` whose paths are inside writable
 roots, outside protected paths, with no `-t`/`--target*`/`--`, no `$`, no redirect.
 

@@ -467,7 +467,12 @@ export async function manualFlushEnv(args: {
     contextOf: rt.contextOf,
     warn: rt.warn,
     status: () => {},
-    grants: { current: () => rt.state.core().grants },
+    grants: {
+      current: () => rt.state.core().grants,
+      by: rt.agent.config.grants?.by ?? 'session',
+      // same order as `principalOf` (session/principal.ts; not imported: it would close a cycle)
+      principal: () => rt.turn?.principal ?? rt.state.core().principal ?? rt.options.principal,
+    },
   })
   const wire = await project(rt.view ?? [], {
     registry: rt.agent.messages,

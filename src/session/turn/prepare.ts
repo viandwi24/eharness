@@ -20,7 +20,7 @@ import {
 import { createRewind, type RewindTarget, resolveRewindTarget } from '../interaction/rewind.ts'
 import { validateExternalAnswers } from '../interaction/waits.ts'
 import { isOwnLeftover, lockAcquireOptions } from '../local-turns.ts'
-import { clonePrincipal } from '../principal.ts'
+import { clonePrincipal, principalOf } from '../principal.ts'
 import type { Prepared, TurnCtx } from './ctx.ts'
 import { validateWith } from './helpers.ts'
 import { currentGrants, write, writeStart } from './output.ts'
@@ -247,7 +247,11 @@ export async function prepare(t: TurnCtx): Promise<Prepared> {
       turnId: t.turnId,
       status: (tool) =>
         write(t, { type: 'data-eh.status', data: { state: 'tool', tool }, transient: true }),
-      grants: { current: () => currentGrants(t) },
+      grants: {
+        current: (toolCallId) => currentGrants(t, toolCallId),
+        by: t.config.grants?.by ?? 'session',
+        principal: () => principalOf(t.rt),
+      },
     }),
   )
   // request-scoped tools change the cached prefix (tools → system → messages): warn once per

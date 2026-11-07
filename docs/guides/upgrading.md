@@ -1,8 +1,23 @@
 # Upgrading
 
+- [Unreleased: grants options](#unreleased-grants-options)
 - [0.8 → 0.9](#upgrading-to-09)
 - [0.7 → 0.8](#upgrading-to-08)
 - [0.6 → 0.7](#upgrading-to-07)
+
+## Unreleased: grants options
+
+New agent option `grants: { by?: 'session' | 'principal'; applyAt?: 'continuation' | 'now' }`
+(spec 11 §3.1, ADR-0070). Both defaults keep today's behavior, so nothing changes unless you set it.
+
+- `by: 'principal'` keys a `remember: 'session'` grant by the principal that asked
+  (`<principal id>\u0000<tool key>`). Use it in a shared session (group chat, workspace) so one
+  person's "always allow" does not answer another person's request. Grants stored in the other mode
+  are ignored; `session.clearGrants(principal)` clears one principal. A principal `id` may not
+  contain `\u0000`.
+- `applyAt: 'now'` applies a recorded grant at once to every call except the ones the same
+  `respond()` answered. The default `'continuation'` is planned to flip to `'now'` at 1.0; set it
+  explicitly if you depend on the delay.
 
 ## Upgrading to 0.9
 

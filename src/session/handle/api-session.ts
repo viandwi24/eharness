@@ -371,12 +371,20 @@ export async function apiFork(s: SessionCtx, options: ForkOptions = {}): Promise
   return forked as never
 }
 
-export async function apiClearGrants(s: SessionCtx): Promise<void> {
+export async function apiClearGrants(s: SessionCtx, principal?: { id: string }): Promise<void> {
   assertOpen(s)
   await ensureOpen(s)
   const core = s.rt.state.core()
   if (core.grants === undefined) return
-  delete core.grants
+  if (principal === undefined) {
+    delete core.grants
+  } else {
+    const prefix = `${principal.id}\u0000`
+    const kept = Object.entries(core.grants).filter(([key]) => !key.startsWith(prefix))
+    if (kept.length === Object.keys(core.grants).length) return
+    if (kept.length === 0) delete core.grants
+    else core.grants = Object.fromEntries(kept)
+  }
   s.rt.state.markDirty()
   await s.rt.state.writeIfDirty()
 }

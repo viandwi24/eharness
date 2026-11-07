@@ -572,8 +572,26 @@ export async function grantKeyOf(
 
 /** Session approval grants, read at every approval decision (spec 11 §3.1). */
 export interface ApprovalGrants {
-  /** The grants in effect right now (`undefined` = none). */
-  current(): Readonly<Record<string, 'always' | 'never'>> | undefined
+  /** The grants in effect for this call right now (`undefined` = none). */
+  current(toolCallId: string): Readonly<Record<string, 'always' | 'never'>> | undefined
+  /** Who a grant is keyed by (`'session'`: the tool only). */
+  by?: 'session' | 'principal'
+  /** The principal of the running turn (the one that asked; `by: 'principal'`). */
+  principal?(): { id: string } | undefined
+}
+
+/**
+ * The stored grant key: the tool key, prefixed with the asking principal's id when grants are
+ * keyed `by: 'principal'` and there is one (`<principal id>\u0000<tool key>`, ADR-0070).
+ */
+export function principalGrantKey(
+  by: 'session' | 'principal' | undefined,
+  principalId: string | undefined,
+  toolKey: string,
+): string {
+  return by === 'principal' && principalId !== undefined
+    ? `${principalId}${GRANT_SCOPE_SEPARATOR}${toolKey}`
+    : toolKey
 }
 
 /**
@@ -681,7 +699,12 @@ export function buildApproval(
         : deps.hooks.list('tool.grantScope').length === 0
           ? toolCall.toolName
           : await grantKeyOf(deps, toolCall.toolName, toolCall.input)
-    const grant = grantKey === null ? undefined : grants?.current()?.[grantKey]
+    const grant =
+      grantKey === null || grants === undefined
+        ? undefined
+        : grants.current(toolCall.toolCallId)?.[
+            principalGrantKey(grants.by, grants.principal?.()?.id, grantKey)
+          ]
     if (grant === 'never') {
       if (winner.type !== 'denied') {
         winner = { type: 'denied' }

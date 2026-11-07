@@ -219,6 +219,15 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * `staleMs`. Must be unique among the live instances of one storage (spec 05 §9.2).
    */
   recovery?: { staleMs?: number; abortPollMs?: number; instanceId?: string } | false
+  /**
+   * Session approval grants (spec 11 §3.1, ADR-0070). `by`: `'session'` (default) keys a grant by
+   * the tool (or its `tool.grantScope`); `'principal'` keys it by the principal that asked
+   * (`<principal id>\u0000<tool key>`, a call with no principal uses the session key).
+   * `applyAt`: `'continuation'` (default; planned to flip at 1.0) applies a grant recorded by
+   * `respond()` only after the first step of its continuation; `'now'` applies it at once to every
+   * call except the ones that same `respond()` answered.
+   */
+  grants?: { by?: 'session' | 'principal'; applyAt?: 'continuation' | 'now' }
   telemetry?: TelemetryOptions
   /**
    * Operational signals for metrics and tracing (spec 10 §8): phase durations (`span` events: lock

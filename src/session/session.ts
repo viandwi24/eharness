@@ -330,8 +330,8 @@ export function createSessionHandle(args: SessionHandleArgs): SessionHandle {
     parentInfo() {
       return apiParentInfo(s)
     },
-    clearGrants() {
-      return apiClearGrants(s)
+    clearGrants(principal) {
+      return apiClearGrants(s, principal)
     },
     messages(q) {
       return apiMessages(s, q)

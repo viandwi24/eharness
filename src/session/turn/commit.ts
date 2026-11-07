@@ -9,7 +9,12 @@ import type { HarnessUIMessage, PendingState } from '../../messages/types.ts'
 import { armExternals } from '../../registry/external.ts'
 import type { ToolOutputSink } from '../../registry/output-limits.ts'
 import type { TurnRegistry } from '../../registry/turn.ts'
-import { finishToolOutput, grantKeyOf, reportDecision } from '../../registry/wrap.ts'
+import {
+  finishToolOutput,
+  grantKeyOf,
+  principalGrantKey,
+  reportDecision,
+} from '../../registry/wrap.ts'
 import { approvalNoteData } from '../interaction/notes.ts'
 import { patchForNewInput, patchForRespond, type RespondPlan } from '../interaction/pending.ts'
 import { hiddenByRewind } from '../load-context.ts'
@@ -163,7 +168,11 @@ export async function commit(t: TurnCtx, prep: Extract<Prepared, { kind: 'turn' 
                 a.toolName,
                 t.plan.pending.approvals.find((p) => p.approvalId === a.approvalId)?.input,
               )
-        if (key !== null) core.grants[key] = a.approved ? 'always' : 'never'
+        // the principal that ASKED (stored on the pending state), never the actor that answered
+        if (key !== null) {
+          const stored = principalGrantKey(t.config.grants?.by, t.plan.pending.principal?.id, key)
+          core.grants[stored] = a.approved ? 'always' : 'never'
+        }
       }
       t.grantsRecorded = true
       needWrite = true

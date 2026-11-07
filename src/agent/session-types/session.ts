@@ -262,8 +262,11 @@ export interface HarnessSession<
    * `EH_SESSION_BUSY` only when a turn of this process runs.
    */
   recover(): Promise<RecoverResult>
-  /** Forget session approval grants. */
-  clearGrants(): Promise<void>
+  /**
+   * Forget session approval grants. With a `principal` (`grants.by: 'principal'`), forget only the
+   * grants recorded for that principal's requests.
+   */
+  clearGrants(principal?: { id: string }): Promise<void>
   /**
    * Create a new session from the messages of this one (before `beforeMessageId`, default all) and
    * the state that stays valid for them; the lineage is stored in the new state's

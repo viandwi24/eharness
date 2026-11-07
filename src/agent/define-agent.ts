@@ -234,6 +234,26 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('recovery.abortPollMs', recovery?.abortPollMs, 'non-negative', {
     max: MAX_DURATION_MS,
   })
+  const grants = config.grants as { by?: unknown; applyAt?: unknown } | undefined
+  if (grants !== undefined) {
+    if (typeof grants !== 'object' || grants === null) {
+      invalid('defineHarnessAgent: `grants` must be an object.', { option: 'grants' })
+    }
+    if (grants.by !== undefined && grants.by !== 'session' && grants.by !== 'principal') {
+      invalid("defineHarnessAgent: `grants.by` must be 'session' or 'principal'.", {
+        option: 'grants.by',
+      })
+    }
+    if (
+      grants.applyAt !== undefined &&
+      grants.applyAt !== 'continuation' &&
+      grants.applyAt !== 'now'
+    ) {
+      invalid("defineHarnessAgent: `grants.applyAt` must be 'continuation' or 'now'.", {
+        option: 'grants.applyAt',
+      })
+    }
+  }
   const streams = config.streams
   checkNumber('streams.flushMs', streams?.flushMs, 'positive', { max: 60_000 })
   checkNumber('streams.batchSize', streams?.batchSize, 'positive-int', { max: 10_000 })

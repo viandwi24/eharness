@@ -9,10 +9,21 @@ import { pendingCallIds } from '../interaction/waits.ts'
 import type { TurnCtx } from './ctx.ts'
 import { metaError, withoutUndefined } from './helpers.ts'
 
+/**
+ * The grants in effect for one call (spec 11 §3.1). A grant recorded by this turn's `respond()`
+ * applies from step 1 (`applyAt: 'continuation'`), or at once to every call except the ones that
+ * `respond()` answered (`'now'`; AI SDK re-validates exactly those in step 0).
+ */
 export function currentGrants(
   t: TurnCtx,
+  toolCallId: string,
 ): Readonly<Record<string, 'always' | 'never'>> | undefined {
-  if (t.grantsRecorded && (t.turnState.step?.index ?? 0) === 0) return t.grantsBefore
+  if (t.grantsRecorded && (t.turnState.step?.index ?? 0) === 0) {
+    const now = t.config.grants?.applyAt === 'now'
+    if (!now || (t.plan?.approvals.some((a) => a.toolCallId === toolCallId) ?? false)) {
+      return t.grantsBefore
+    }
+  }
   return t.rt.state.core().grants
 }
 export function barrier(t: TurnCtx): Promise<void> {

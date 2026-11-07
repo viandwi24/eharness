@@ -148,8 +148,8 @@ export interface HarnessSession<
    * EH_INVALID_INPUT for an invalid option (turn operations are unaffected, §2).
    */
   compact(options?: CompactOptions): Promise<M | null>
-  /** Forget session approval grants (spec 11 §3.1). */
-  clearGrants(): Promise<void>
+  /** Forget session approval grants; with a principal, only the ones recorded for it (spec 11 §3.1). */
+  clearGrants(principal?: { id: string }): Promise<void>
   /** Create a new session from (a prefix of) this one (§14). */
   fork(options?: ForkOptions): Promise<HarnessSession<M, Kinds>>
   /** Repair an interrupted turn now, without a new turn (§9.2). */
@@ -862,7 +862,11 @@ export interface SessionStateSnapshot {
     activeTurn?: ActiveTurn
     /** Approvals / client tool calls / external waits waiting for respond() or resolveWait() (spec 11 §2, §4.2). */
     pending?: PendingState
-    /** Session approval grants (spec 11 §3.1). */
+    /**
+     * Session approval grants (spec 11 §3.1). Keys: the tool key (`pay`, or `bash\u0000git commit`
+     * with `tool.grantScope`); with `grants.by: 'principal'` and a principal,
+     * `<principal id>\u0000<tool key>`. A principal `id` never contains `\u0000` (§2.3).
+     */
     grants?: Record<string, 'always' | 'never'>
     /** Default principal of the session, stored by the first open that had one; never replaced (§2.3). */
     principal?: Principal

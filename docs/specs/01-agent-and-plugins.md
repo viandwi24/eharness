@@ -98,6 +98,8 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * turns its previous run left active at once. Unique among live instances of one storage.
    */
   recovery?: { staleMs?: number; abortPollMs?: number; instanceId?: string } | false
+  /** Session approval grants: key by principal, and when a recorded grant applies (spec 11 §3.1). */
+  grants?: { by?: 'session' | 'principal'; applyAt?: 'continuation' | 'now' }
   telemetry?: TelemetryOptions                                   // passed through to AI SDK
   observe?: (event: ObserveEvent) => void                        // spans + counters (spec 10 §8): sync, cheap, a throw is ignored, zero cost when unset
   warnings?: { dedupeWindowMs?: number }                         // default handler: once per code+key per window (default 60 000, 0 = every time, max 86 400 000)
