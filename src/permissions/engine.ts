@@ -23,6 +23,7 @@ import {
   errorText,
   type GuardTranscriptEntry,
   HarnessError,
+  type HarnessWarning,
   type JudgeCoordinator,
 } from '../index.ts'
 import { parseCommand, restrictiveForms } from './command.ts'
@@ -147,6 +148,10 @@ export interface PermissionEngineOptions {
    */
   persist?: (rules: PermissionRules, change: RuleChange) => void | Promise<void>
   /**
+   * Receives the engine's warnings (`W_PERMISSION_SESSION_RULE_GLOBAL`). Default: `console.warn`.
+   */
+  onWarning?: (warning: HarnessWarning) => void
+  /**
    * Resolves a real (OS) path through symlinks, `undefined` when it cannot (spec 18 §5). With it
    * `decideAsync` matches protected paths and Read/Edit rules against the resolved path as well,
    * so a committed symlink (`g -> .git`, `x -> .env`) does not hide its target. Without it matching
@@ -172,6 +177,15 @@ export interface PermissionEngineOptions {
   containsProtected?: (realDir: string, patterns: readonly string[]) => Promise<boolean>
 }
 
+/** Which session a session rule belongs to (`allow`, `addRule`, `removeRule`, `rules`). */
+export interface RuleTarget {
+  /** Session id (`ctx.session.id`). With scope `'session'` the rule applies to that session only. */
+  session?: string
+}
+
+/** Most sessions that keep session rules; the oldest session is dropped beyond it. */
+export const MAX_SESSION_RULE_SESSIONS = 1000
+
 /** Options of {@link PermissionEngine.decideAsync}. */
 export interface DecideOptions {
   /** Mode of this call instead of the engine's (as `decide`'s second argument). */
@@ -188,6 +202,8 @@ export interface DecideOptions {
   coordinator?: JudgeCoordinator
   /** Passed to the classifier (`AutoClassifierContext.risk`). */
   risk?: string
+  /** Session id of the call: its `session` rules apply, other sessions' do not (spec 18 §2). */
+  session?: string
 }
 
 /** The permission engine. */
@@ -204,7 +220,7 @@ export interface PermissionEngine {
    * the rules and read-only checks cannot settle comes back as `user-approval` with
    * `auto: 'classify'`; `decideAsync` runs the classifier.
    */
-  decide(call: PermissionCall, mode?: PermissionMode): PermissionDecision
+  decide(call: PermissionCall, mode?: PermissionMode, session?: string): PermissionDecision
   /**
    * `decide`, plus the `auto` classifier: a `classify` result becomes approved (`auto: 'allowed'`),
    * denied with a reason the model reads (`auto: 'blocked'`, a classifier error included), or, while
@@ -234,23 +250,31 @@ export interface PermissionEngine {
    */
   grantScope(call: PermissionCall): string | null | undefined
   /** Add an allow rule (scope `project` by default). Resolves when `persist` finished. */
-  allow(rule: string, scope?: RuleScope): Promise<void>
+  allow(rule: string, scope?: RuleScope, target?: RuleTarget): Promise<void>
   /**
    * Add a rule of any kind. `session` rules live in memory only (not stored, `persist` is not
    * called); `project` (default) rules call `persist`. Throws `EH_CONFIG_INVALID` for an invalid
    * rule. Resolves when `persist` finished.
    */
-  addRule(kind: keyof PermissionRules, rule: string, scope?: RuleScope): Promise<void>
+  addRule(
+    kind: keyof PermissionRules,
+    rule: string,
+    scope?: RuleScope,
+    target?: RuleTarget,
+  ): Promise<void>
   /** Remove a rule; resolves with whether it existed. Removing a session rule does not call `persist`. */
-  removeRule(kind: keyof PermissionRules, rule: string): Promise<boolean>
-  /** A copy of the rules. */
-  rules(): PermissionRules
+  removeRule(kind: keyof PermissionRules, rule: string, target?: RuleTarget): Promise<boolean>
+  /**
+   * A copy of the rules: the project rules and the engine-wide session rules, plus the session
+   * rules of `target.session` when given (other sessions' rules are never included).
+   */
+  rules(target?: RuleTarget): PermissionRules
   /**
    * Tools a mode makes unavailable (plan mode: everything that writes or is unknown; every other
    * mode: the plan-exit tool) plus the tools a deny rule without specifier removes. Pass the
    * tool names of the request to also cover tools the tool map does not know.
    */
-  inactiveTools(mode?: PermissionMode, toolNames?: readonly string[]): string[]
+  inactiveTools(mode?: PermissionMode, toolNames?: readonly string[], session?: string): string[]
   /** Listen to mode changes; returns the unsubscribe function. */
   subscribe(listener: ModeListener): () => void
   /** The kind of a tool (`other` when unknown). */
@@ -265,7 +289,7 @@ export interface PermissionEngine {
    * True when a `Read` deny or ask rule (the built-in `.env*` ask included, unless an allow rule
    * names the path) matches a virtual path: the plugin hides such paths from listing outputs.
    */
-  readBlocked(virtualPath: string): boolean
+  readBlocked(virtualPath: string, session?: string): boolean
   /** The mode that was active before plan mode was entered (`default` when unknown). */
   modeBeforePlan(): PermissionMode
   /**
@@ -716,6 +740,32 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     ask: [...(options.rules?.ask ?? [])],
     deny: [...(options.rules?.deny ?? [])],
   }
+  // session rules of a session id (ADR-0070): memory only, bounded, oldest session dropped
+  const bySession = new Map<string, PermissionRules>()
+  const rulesFor = (session: string | undefined): PermissionRules => {
+    const own = session === undefined ? undefined : bySession.get(session)
+    return own === undefined
+      ? rules
+      : {
+          allow: [...rules.allow, ...own.allow],
+          ask: [...rules.ask, ...own.ask],
+          deny: [...rules.deny, ...own.deny],
+        }
+  }
+  // the session of the call `decide` is deciding (set around one sync `decide`)
+  let activeSession: string | undefined
+  let warnedGlobal = false
+  const warnGlobalSessionRule = (): void => {
+    if (warnedGlobal) return
+    warnedGlobal = true
+    const warning: HarnessWarning = {
+      code: 'W_PERMISSION_SESSION_RULE_GLOBAL',
+      message:
+        "A permission rule was added with scope 'session' and no session id, so it applies to every session of this engine. Pass { session: ctx.session.id } to allow(), addRule() and removeRule().",
+    }
+    if (options.onWarning !== undefined) options.onWarning(warning)
+    else console.warn(`[eharness] ${warning.code}: ${warning.message}`)
+  }
   const listeners = new Set<ModeListener>()
   const parsedCache = new Map<string, ParsedRule>()
   const parsed = (list: readonly string[]): ParsedRule[] =>
@@ -869,7 +919,8 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     const readOnly = bash !== undefined && isReadOnlyCommand(bash, e.ro)
 
     // 1. deny rules
-    const denies = parsed(rules.deny)
+    const live = rulesFor(activeSession)
+    const denies = parsed(live.deny)
     const denied =
       denies.find((rule) => ruleMatchesCall(rule, call, 'restrict', e)) ??
       (bash !== undefined ? (editRules(denies) ?? readRule(denies)) : undefined)
@@ -939,12 +990,12 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       // a `sh -c` / `eval` payload we cannot read could hide anything a rule is there to stop
       if (
         bash !== undefined &&
-        rules.deny.length + rules.ask.length > 0 &&
+        live.deny.length + live.ask.length > 0 &&
         restrictiveForms(bash).unparseable
       ) {
         return { status: 'user-approval', reason: 'runs a shell payload that cannot be analysed' }
       }
-      const asks = parsed(rules.ask)
+      const asks = parsed(live.ask)
       const ask =
         asks.find((rule) => ruleMatchesCall(rule, call, 'restrict', e)) ??
         (bash !== undefined ? (editRules(asks) ?? readRule(asks)) : undefined)
@@ -958,7 +1009,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     }
 
     // 6. allow rules (never for a command that writes outside the working directories)
-    const allow = parsed(rules.allow).find(
+    const allow = parsed(live.allow).find(
       (rule) =>
         !(m === 'auto' && broadAutoAllow(rule, e)) && ruleMatchesCall(rule, call, 'allow', e),
     )
@@ -1020,7 +1071,11 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     return modeDefault(call, kind, m, e)
   }
 
-  const inactive = (m: PermissionMode, names: readonly string[] | undefined): string[] => {
+  const inactive = (
+    m: PermissionMode,
+    names: readonly string[] | undefined,
+    session: string | undefined,
+  ): string[] => {
     const out = new Set<string>()
     for (const name of new Set([...tools.names(), ...(names ?? [])])) {
       const kind = tools.kindOf(name)
@@ -1030,7 +1085,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
         out.add(name)
       }
     }
-    for (const rule of parsed(rules.deny)) {
+    for (const rule of parsed(rulesFor(session).deny)) {
       if (rule.specifier === undefined) for (const t of tools.expand(rule.tool)) out.add(t)
     }
     return [...out]
@@ -1199,6 +1254,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
   const lookIntoRecursiveReads = async (
     call: PermissionCall,
     resolved: ReadonlyMap<string, string>,
+    session: string | undefined,
   ): Promise<Map<string, RecursiveHit>> => {
     const hits = new Map<string, RecursiveHit>()
     const look = options.containsProtected
@@ -1220,7 +1276,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
         return true // could not look: fail closed
       }
     }
-    const denyRules = readRulesOf(parsed(rules.deny), e).filter(
+    const denyRules = readRulesOf(parsed(rulesFor(session).deny), e).filter(
       (r) => relativeSpecifiers([r]).length > 0,
     )
     const askPatterns = [...relativeSpecifiers(readRulesOf(e.builtinAsk, e)), ...protectedPatterns]
@@ -1242,7 +1298,19 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     return hits
   }
 
-  const decide = (call: PermissionCall, modeOverride?: PermissionMode): PermissionDecision => {
+  const decide = (
+    call: PermissionCall,
+    modeOverride?: PermissionMode,
+    session?: string,
+  ): PermissionDecision => {
+    activeSession = session
+    try {
+      return decideNow(call, modeOverride)
+    } finally {
+      activeSession = undefined
+    }
+  }
+  const decideNow = (call: PermissionCall, modeOverride?: PermissionMode): PermissionDecision => {
     const m = modeOverride ?? mode
     const decision = evaluate(call, m)
     // the global dontAsk also turns the asks of a per-agent mode override into denials
@@ -1284,9 +1352,24 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     kind: keyof PermissionRules,
     rule: string,
     scope: RuleScope = 'project',
+    target: RuleTarget = {},
   ): Promise<void> => {
     const clean = rule.trim()
     checkedRule(clean, home)
+    if (scope === 'session' && target.session !== undefined) {
+      let own = bySession.get(target.session)
+      if (own === undefined) {
+        own = { allow: [], ask: [], deny: [] }
+        bySession.set(target.session, own)
+        if (bySession.size > MAX_SESSION_RULE_SESSIONS) {
+          const oldest = bySession.keys().next().value
+          if (oldest !== undefined) bySession.delete(oldest)
+        }
+      }
+      if (!own[kind].includes(clean)) own[kind].push(clean)
+      return
+    }
+    if (scope === 'session') warnGlobalSessionRule()
     const key = sessionKey(kind, clean)
     if (!rules[kind].includes(clean)) {
       rules[kind].push(clean)
@@ -1338,14 +1421,14 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       const m = opts.mode ?? mode
       let decision: PermissionDecision
       if (options.realpath === undefined && options.containsProtected === undefined) {
-        decision = decide(call, opts.mode)
+        decision = decide(call, opts.mode, opts.session)
       } else {
         const found = await resolveCallPaths(call)
-        const hits = await lookIntoRecursiveReads(call, found)
+        const hits = await lookIntoRecursiveReads(call, found, opts.session)
         resolvedPaths = found
         recursiveHits = hits
         try {
-          decision = decide(call, opts.mode)
+          decision = decide(call, opts.mode, opts.session)
         } finally {
           resolvedPaths = undefined
           recursiveHits = undefined
@@ -1369,7 +1452,8 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       }
       const result = await run
       // the mode changed while the classifier ran: a verdict the new mode would not have asked for is dropped
-      if (opts.mode === undefined && m === 'auto' && mode !== 'auto') return decide(call)
+      if (opts.mode === undefined && m === 'auto' && mode !== 'auto')
+        return decide(call, undefined, opts.session)
       return result
     },
     cycleMode(): PermissionMode {
@@ -1416,12 +1500,23 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
           return call.toolName
       }
     },
-    allow(rule: string, scope?: RuleScope): Promise<void> {
-      return addRule('allow', rule, scope)
+    allow(rule: string, scope?: RuleScope, target?: RuleTarget): Promise<void> {
+      return addRule('allow', rule, scope, target)
     },
     addRule,
-    async removeRule(kind: keyof PermissionRules, rule: string): Promise<boolean> {
+    async removeRule(
+      kind: keyof PermissionRules,
+      rule: string,
+      target: RuleTarget = {},
+    ): Promise<boolean> {
       const clean = rule.trim()
+      if (target.session !== undefined) {
+        const own = bySession.get(target.session)?.[kind]
+        const at = own?.indexOf(clean) ?? -1
+        if (own === undefined || at === -1) return false
+        own.splice(at, 1)
+        return true
+      }
       const index = rules[kind].indexOf(clean)
       if (index === -1) return false
       rules[kind].splice(index, 1)
@@ -1429,11 +1524,20 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       await persist({ op: 'remove', kind, rule: clean, scope: 'project' })
       return true
     },
-    rules(): PermissionRules {
-      return { allow: [...rules.allow], ask: [...rules.ask], deny: [...rules.deny] }
+    rules(target: RuleTarget = {}): PermissionRules {
+      const own = target.session === undefined ? undefined : bySession.get(target.session)
+      return {
+        allow: [...rules.allow, ...(own?.allow ?? [])],
+        ask: [...rules.ask, ...(own?.ask ?? [])],
+        deny: [...rules.deny, ...(own?.deny ?? [])],
+      }
     },
-    inactiveTools(modeOverride?: PermissionMode, toolNames?: readonly string[]): string[] {
-      return inactive(modeOverride ?? mode, toolNames)
+    inactiveTools(
+      modeOverride?: PermissionMode,
+      toolNames?: readonly string[],
+      session?: string,
+    ): string[] {
+      return inactive(modeOverride ?? mode, toolNames, session)
     },
     subscribe(listener: ModeListener): () => void {
       listeners.add(listener)
@@ -1445,7 +1549,8 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     toolsOfKind: (kind) => tools.namesOfKind(kind),
     toolSpec: (name) => tools.spec(name),
     expandRuleTool: (ruleTool) => tools.expand(ruleTool),
-    readBlocked(virtualPath: string): boolean {
+    readBlocked(virtualPath: string, session?: string): boolean {
+      const live = rulesFor(session)
       const e = env()
       const target = toRealPath(virtualPath, e.roots)
       if (target === undefined) return false
@@ -1456,11 +1561,11 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
           rule.specifier !== undefined &&
           pathMatchesSpecifier(rule.specifier, target.real, e, insensitive)
       const reads = (list: readonly string[]): ParsedRule[] => readRulesOf(parsed(list), e)
-      if (reads(rules.deny).some(matchesWith(true)) || reads(rules.ask).some(matchesWith(true)))
+      if (reads(live.deny).some(matchesWith(true)) || reads(live.ask).some(matchesWith(true)))
         return true
       return (
         readRulesOf(e.builtinAsk, e).some(matchesWith(true)) &&
-        !reads(rules.allow).some(matchesWith(false))
+        !reads(live.allow).some(matchesWith(false))
       )
     },
   }

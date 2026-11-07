@@ -187,6 +187,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_TOOL_ORDER` | `config.toolOrder` names tools that do not exist in the session (`details: { tools }`); ignored, reported once per session per name (spec 02 §6) |
 | `W_PAGE_CONTEXT_LIMITED` | (0.5.0) the page context of a request was cut to `maxChars` (`details: { maxChars, entries, limited }`, spec 11 §7.1 rule 6) |
 | `W_OVERFLOW_RETRY` | the provider rejected the context as too long; compacting and retrying once (spec 06 §7) |
+| `W_PERMISSION_SESSION_RULE_GLOBAL` | a `permissions` engine got a rule with scope `'session'` and no session id (`allow`, `addRule`): it applies to every session of the engine; once per engine (spec 18 §2). Deprecated, removed at 1.0 |
 | `W_CONTEXT_THRASH` | a second automatic compaction within `compaction.thrash.withinSteps` steps of the previous one ran (or was skipped as no-gain) and left the context above `summarizeAt`; the turn stops with `'context-thrash'` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`, `tokens` = the context after the second compaction, `lastCompaction` = step index of the previous compaction, spec 06 §4) |
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
 | `W_ABORT_UNSUPPORTED` | `abort()` found a turn running in another instance but cannot reach it: the `StateAdapter` has no `setIf`, or `recovery: false` (spec 05 §9.1) |

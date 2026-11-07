@@ -89,6 +89,7 @@ export const WARNING_CODES = [
   'W_PAGE_CONTEXT_LIMITED',
   'W_TOOL_ORDER',
   'W_WEB_NO_RESOLVER',
+  'W_PERMISSION_SESSION_RULE_GLOBAL',
 ] as const
 
 /**

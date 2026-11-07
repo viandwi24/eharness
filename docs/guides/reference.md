@@ -257,7 +257,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | API use | `W_HOOK_FAILED`, `W_HOOK_TIMEOUT`, `W_DEPRECATED`, `W_SESSION_OPTIONS_IGNORED` |
 | Sessions | `W_ABORT_UNSUPPORTED`, `W_INBOX_FAILED` (operations incl. `deadLetter`), `W_INBOX_DEAD_LETTER`, `W_STREAM_LOG_FAILED` |
 | Tools | `W_TOOL_ORDER` (`toolOrder` names no tool) |
-| Plugins | `W_GUARD_UNAVAILABLE` (`eharness/guard`: the judge failed and the call went to a person), `W_WEB_NO_RESOLVER` (`webFetch()` without `resolveHost`; once per session) |
+| Plugins | `W_GUARD_UNAVAILABLE` (`eharness/guard`: the judge failed and the call went to a person), `W_WEB_NO_RESOLVER` (`webFetch()` without `resolveHost`; once per session), `W_PERMISSION_SESSION_RULE_GLOBAL` (a session rule added without a session id; once per engine) |
 
 ## Request-scoped client tools and page context
 

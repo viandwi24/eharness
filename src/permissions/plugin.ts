@@ -73,12 +73,13 @@ function filterListing(
   engine: PermissionEngine,
   format: ListingFormat,
   output: string,
+  session: string,
 ): string | undefined {
   let hidden = 0
   const kept: string[] = []
   for (const line of output.split('\n')) {
     const path = linePath(format, line)
-    if (path !== undefined && engine.readBlocked(path)) hidden++
+    if (path !== undefined && engine.readBlocked(path, session)) hidden++
     else kept.push(line)
   }
   if (hidden === 0) return undefined
@@ -132,7 +133,11 @@ export function permissions(options: PermissionsOptions): HarnessPlugin<'permiss
         'tool.approve': async (ctx, e) => {
           const own = await modeOf(ctx as HarnessContext)
           const turn = (ctx as HarnessContext).turn
-          const options: DecideOptions = { toolCallId: e.toolCallId, transcript: e.transcript }
+          const options: DecideOptions = {
+            toolCallId: e.toolCallId,
+            transcript: e.transcript,
+            session: ctx.session.id,
+          }
           // the guard of this session (if any) may share the classifier's model call (spec 15 §7)
           options.coordinator = judgeCoordinator(ctx.signal)
           options.risk = e.risk ?? 'unknown'
@@ -167,6 +172,7 @@ export function permissions(options: PermissionsOptions): HarnessPlugin<'permiss
             engine.inactiveTools(
               leavingPlan ? (engine.planExitMode() ?? engine.modeBeforePlan()) : own,
               e.toolNames,
+              ctx.session.id,
             ),
           )
           const active = e.toolNames.filter(
@@ -177,11 +183,11 @@ export function permissions(options: PermissionsOptions): HarnessPlugin<'permiss
           )
           return active.length === e.toolNames.length ? undefined : { activeTools: active }
         },
-        'tool.after': (_ctx, e) => {
+        'tool.after': (ctx, e) => {
           if (!filterOutputs || typeof e.output !== 'string') return
           const format = engine.toolSpec(e.toolName)?.listing
           if (format === undefined) return
-          const output = filterListing(engine, format, e.output)
+          const output = filterListing(engine, format, e.output, ctx.session.id)
           return output === undefined ? undefined : { output }
         },
         'approval.decided': async (_ctx, e) => {

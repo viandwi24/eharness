@@ -39,19 +39,22 @@ export interface PermissionEngineOptions {
   classifier?: AutoClassifier                           // enables `auto` mode, §12
   realpath?: (real: string) => Promise<string | undefined>   // symlink-aware matching in decideAsync, §5
   persist?: (rules: PermissionRules, change: RuleChange) => void | Promise<void>
+  onWarning?: (warning: HarnessWarning) => void         // W_PERMISSION_SESSION_RULE_GLOBAL; default console.warn
 }
 
 export interface PermissionEngine {
   readonly mode: PermissionMode
   setMode(mode): void;  cycleMode(): PermissionMode;  subscribe(listener): () => void
-  decide(call: PermissionCall, mode?: PermissionMode): PermissionDecision
+  decide(call: PermissionCall, mode?: PermissionMode, session?: string): PermissionDecision
   decideAsync(call, options?: DecideOptions): Promise<PermissionDecision>   // decide + the auto classifier (§12)
   autoAvailable: boolean;  autoState(): AutoState;  noteApproval(toolCallId?);  resumeAuto();  subscribeAuto(listener): () => void
   suggestRule(call): string | undefined;  grantScope(call): string | null | undefined   // §7
-  allow(rule): Promise<void>;  addRule(kind, rule): Promise<void>;  removeRule(kind, rule): Promise<boolean>
-  rules(): PermissionRules
-  inactiveTools(mode?, toolNames?): string[]
-  readBlocked(virtualPath): boolean
+  allow(rule, scope?, target?: { session?: string }): Promise<void>
+  addRule(kind, rule, scope?, target?: { session?: string }): Promise<void>
+  removeRule(kind, rule, target?: { session?: string }): Promise<boolean>
+  rules(target?: { session?: string }): PermissionRules
+  inactiveTools(mode?, toolNames?, session?): string[]
+  readBlocked(virtualPath, session?): boolean
   kindOf(tool): ToolKind;  toolsOfKind(kind): string[];  toolSpec(tool);  expandRuleTool(ruleTool)
   modeBeforePlan();  setPlanExitMode(mode);  planExitMode();  leavePlanMode()
 }
@@ -126,7 +129,21 @@ after `allow(rule, scope?)`, `addRule(kind, rule, scope?)` and `removeRule` chan
 rules; the returned promise is what those methods return. The library stores nothing. `scope`
 defaults to `'project'`. A rule added with scope `'session'` takes effect at once but is not
 stored: `persist` is not called and later copies leave it out (adding it again at `'project'`
-scope promotes it). `removeRule` of a session rule does not call `persist` either. 
+scope promotes it). `removeRule` of a session rule does not call `persist` either.
+
+**Session rules are per session id** (ADR-0070). `allow(rule, scope?, { session? })`,
+`addRule(kind, rule, scope?, { session? })` and `removeRule(kind, rule, { session? })` take the id of
+the session (`ctx.session.id`). A `'session'` rule added with an id applies only to decisions for
+that id (`DecideOptions.session`, `decide(call, mode?, session?)`, `readBlocked(path, session?)`,
+`inactiveTools(mode?, toolNames?, session?)`); other sessions of the same engine never see it. They
+stay memory-only (a restart forgets them) in a bounded map of 1000 sessions, the oldest dropped
+beyond it. `removeRule` with an id removes only that session's rule. `rules()` returns the project
+rules and the id-less session rules; `rules({ session })` adds that session's rules (never another
+session's). A `'session'` rule **without** an id keeps the old engine-wide behavior, warns
+`W_PERMISSION_SESSION_RULE_GLOBAL` once per engine (`onWarning`, default `console.warn`) and is
+removed at 1.0. The plugin passes `ctx.session.id` in `tool.approve`, `step.prepare` (tool hiding)
+and `tool.after` (listing filter); the CLI-style callers that have one session keep working.
+
 
 ## 3. Tool map
 

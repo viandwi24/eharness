@@ -70,7 +70,7 @@ All are stable and delivered through `onWarning` (default: `console.warn`). Grou
 | Compaction and context | `W_COMPACTION_FAILED`, `W_COMPACTION_FLUSH_SKIPPED`, `W_CONTEXT_TRUNCATED`, `W_OVERFLOW_RETRY`, `W_CONTEXT_THRASH`, `W_CACHE_BUST` |
 | Loop, budget, output | `W_CONTINUE_LIMIT`, `W_LOOP_STUCK`, `W_BUDGET`, `W_BUDGET_LEDGER_FAILED`, `W_MODEL_UNPRICED`, `W_DEFAULT_CONTEXT_WINDOW`, `W_OUTPUT_INVALID` |
 | Hooks, sessions, inbox | `W_HOOK_FAILED`, `W_HOOK_TIMEOUT`, `W_SESSION_OPTIONS_IGNORED`, `W_ABORT_UNSUPPORTED`, `W_INBOX_FAILED`, `W_INBOX_DEAD_LETTER` |
-| Shipped plugins | `W_GUARD_UNAVAILABLE` (`eharness/guard`, deprecated module), `W_WEB_NO_RESOLVER` (`eharness/web`) |
+| Shipped plugins | `W_GUARD_UNAVAILABLE` (`eharness/guard`, deprecated module), `W_WEB_NO_RESOLVER` (`eharness/web`), `W_PERMISSION_SESSION_RULE_GLOBAL` (`eharness/permissions`) |
 
 ## Codes outside `codes.ts`
 
