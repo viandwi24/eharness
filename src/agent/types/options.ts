@@ -278,18 +278,32 @@ export interface ToolCallsConfig {
   maxIdenticalResults?: number
 }
 
+/** A compaction setting: a value, or a function of the ctx read once per turn. */
+export type CompactionOption<T> = T | ((ctx: HarnessContext) => T | Promise<T>)
+
 /**
  * Compaction configuration.
  *
  * @see docs/specs/06-compaction.md#1-configuration
  */
 export interface CompactionConfig {
-  /** Summarize when projected context exceeds this ratio of `contextWindow`. Default 0.75. */
-  summarizeAt?: number
-  /** Most recent completed turns kept verbatim. Default 4. */
-  keepLast?: number
-  /** Summarizer model. Default: agent model. */
-  model?: LanguageModel
+  /**
+   * Summarize when projected context exceeds this ratio of `contextWindow` (0 to 1, exclusive).
+   * Default 0.75. A function is read once per turn with the ctx; an invalid or throwing result
+   * falls back to the default.
+   */
+  summarizeAt?: CompactionOption<number>
+  /**
+   * Most recent completed turns kept verbatim. Default 4. A function is read once per turn with
+   * the ctx; an invalid or throwing result falls back to the default.
+   */
+  keepLast?: CompactionOption<number>
+  /**
+   * Summarizer model (also the default model of the pre-compaction flush). Default: agent model.
+   * A function is read once per turn with the ctx, so a person or tenant can have its own model;
+   * a throwing result falls back to the agent model.
+   */
+  model?: CompactionOption<LanguageModel>
   /** Summarizer context window. */
   contextWindow?: number
   /** Replace the default summarizer instructions. */

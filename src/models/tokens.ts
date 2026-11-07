@@ -334,12 +334,15 @@ export interface ContextLimits {
 export function contextLimits(
   config: Pick<HarnessAgentConfig, 'compaction' | 'guard' | 'settings'>,
   window: number,
-  options: { maxOutputTokens?: number; ratioFactor?: number } = {},
+  options: { maxOutputTokens?: number; ratioFactor?: number; summarizeAt?: number } = {},
 ): ContextLimits {
-  const summarizeAt =
+  const configured =
     config.compaction === false || config.compaction === undefined
-      ? DEFAULT_SUMMARIZE_AT
-      : (config.compaction.summarizeAt ?? DEFAULT_SUMMARIZE_AT)
+      ? undefined
+      : config.compaction.summarizeAt
+  // a function form is resolved per turn by the caller and passed in `options.summarizeAt`
+  const summarizeAt =
+    options.summarizeAt ?? (typeof configured === 'number' ? configured : DEFAULT_SUMMARIZE_AT)
   const ratio =
     (config.guard?.maxContextRatio ?? DEFAULT_MAX_CONTEXT_RATIO) * (options.ratioFactor ?? 1)
   const reserve =

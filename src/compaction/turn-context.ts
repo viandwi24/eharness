@@ -292,6 +292,8 @@ export function createTurnCompaction(args: {
     build,
     async preTurn(built) {
       if (!engine.enabled) return built
+      // the function forms of compaction.summarizeAt / keepLast / model, once per turn
+      await engine.refresh()
       const tokens = engine.calibration.apply(
         (await fixed()) + wireTokens(built.wire, engine.count),
       )

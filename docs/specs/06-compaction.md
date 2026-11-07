@@ -15,12 +15,19 @@ export interface CompactionConfig {
    * Summarize when projected context exceeds this ratio of contextWindow. Default 0.75. The
    * effective threshold is at most 95% of the guard's hard limit (§6), so a large output reserve
    * never leaves the guard trimming every request while the summary never triggers.
+   * A function `(ctx) => number | Promise<number>` is read once per turn (below).
    */
-  summarizeAt?: number
-  /** Most recent COMPLETED turns kept verbatim (the current turn is always kept). Default 4. */
-  keepLast?: number
-  /** Summarizer model. Default: agent model. A cheaper model is recommended. */
-  model?: LanguageModel
+  summarizeAt?: number | ((ctx: HarnessContext) => number | Promise<number>)
+  /**
+   * Most recent COMPLETED turns kept verbatim (the current turn is always kept). Default 4.
+   * A function is read once per turn (below).
+   */
+  keepLast?: number | ((ctx: HarnessContext) => number | Promise<number>)
+  /**
+   * Summarizer model, also the default model of the pre-compaction flush (§5.2a). Default: agent
+   * model. A cheaper model is recommended. A function is read once per turn (below).
+   */
+  model?: LanguageModel | ((ctx: HarnessContext) => LanguageModel | Promise<LanguageModel>)
   /** Summarizer context window. Default: agent contextWindow for the summarizer model. */
   contextWindow?: number
   /** Replace the default summarizer instructions. Hooks can still add context. */
@@ -36,7 +43,20 @@ export interface CompactionConfig {
   /** Thrash detection (§4). Default { withinSteps: 2 }; false = compact again (0.3). (0.4.0) */
   thrash?: { withinSteps?: number } | false
 }
+```
 
+**Function forms (0.10).** `summarizeAt`, `keepLast` and `model` may be functions of the session
+`ctx` (`ctx.runtime`, `ctx.session`), so a person or tenant gets its own threshold, window of kept
+turns or summarizer without a proxy model. They are read once per turn, at the pre-turn step (mid-turn
+and overflow compactions of that turn reuse the values), and at the start of a manual `compact()`.
+An invalid result (`summarizeAt` outside 0 to 1, a non-integer or negative `keepLast`, no model) or a
+throw keeps the default (the agent model for `model`) and warns `W_HOOK_FAILED`
+(`hook: 'compaction.<name>'`). A function is not checked at `defineHarnessAgent`, a number still is.
+The flush model needs no extra option: `flush.model` of a `compaction.before` hook already runs with
+the `ctx`, and without it the flush uses the resolved `compaction.model`. `contextWindow`,
+`prompt`, `maxSummaryTokens` stay static.
+
+```ts
 export interface PruneConfig {
   /** Completed turns (newest first) whose tool outputs are never pruned. Default 2. The current turn is never pruned. */
   keepTurns?: number

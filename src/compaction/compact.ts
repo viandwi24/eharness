@@ -118,6 +118,12 @@ export interface SessionCompaction {
     model: LanguageModel,
     options?: { maxOutputTokens?: number | undefined; ratioFactor?: number },
   ): ContextLimits
+  /**
+   * Read the function forms of `compaction.summarizeAt`, `keepLast` and `model` with the session
+   * ctx (once per turn: the pre-turn step, and a manual compaction). Never throws: an invalid or
+   * throwing result keeps the default and warns `W_HOOK_FAILED`.
+   */
+  refresh(): Promise<void>
   /** Set `metadata.eharness.tokens` on a message about to be saved. */
   annotate(message: HarnessUIMessage): Promise<HarnessUIMessage>
   /** Uncalibrated tokens of a view (`partial` applied, prune savings subtracted). */
@@ -156,6 +162,49 @@ export function createSessionCompaction(deps: {
   const config = rt.agent.config
   const registry = rt.agent.messages
   const settings: CompactionConfig = config.compaction === false ? {} : (config.compaction ?? {})
+  // the effective values: static ones from the start, function ones after `refresh()`
+  const effective: { summarizeAt?: number; keepLast?: number; model?: LanguageModel } = {
+    ...(typeof settings.summarizeAt === 'number' ? { summarizeAt: settings.summarizeAt } : {}),
+    ...(typeof settings.keepLast === 'number' ? { keepLast: settings.keepLast } : {}),
+    ...(typeof settings.model === 'function' || settings.model === undefined
+      ? {}
+      : { model: settings.model }),
+  }
+  async function refresh(): Promise<void> {
+    const read = async <T>(
+      name: string,
+      option: unknown,
+      valid: (value: unknown) => value is T,
+    ): Promise<T | undefined> => {
+      if (typeof option !== 'function') return undefined
+      try {
+        const value: unknown = await option(rt.contextOf('app'))
+        if (valid(value)) return value
+        throw new Error(`\`compaction.${name}\` returned an invalid value; the default applies.`)
+      } catch (error) {
+        hookFailed(rt, `compaction.${name}`, 'app', error)
+        return undefined
+      }
+    }
+    const summarizeAt = await read(
+      'summarizeAt',
+      settings.summarizeAt,
+      (v): v is number => typeof v === 'number' && v > 0 && v < 1,
+    )
+    const keepLast = await read(
+      'keepLast',
+      settings.keepLast,
+      (v): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0,
+    )
+    const model = await read(
+      'model',
+      settings.model,
+      (v): v is LanguageModel => v !== undefined && v !== null,
+    )
+    if (typeof settings.summarizeAt === 'function') effective.summarizeAt = summarizeAt
+    if (typeof settings.keepLast === 'function') effective.keepLast = keepLast
+    if (typeof settings.model === 'function') effective.model = model
+  }
   const enabled = config.compaction !== false
   const custom = settings.countTokens
   const count: CountTokens =
@@ -235,6 +284,7 @@ export function createSessionCompaction(deps: {
     })
   const limits: SessionCompaction['limits'] = (model, options = {}) =>
     contextLimits(config, window(model), {
+      ...(effective.summarizeAt === undefined ? {} : { summarizeAt: effective.summarizeAt }),
       ...(options.maxOutputTokens === undefined
         ? {}
         : { maxOutputTokens: options.maxOutputTokens }),
@@ -254,6 +304,8 @@ export function createSessionCompaction(deps: {
   }
 
   async function run(request: CompactRequest): Promise<CompactOutcome> {
+    // a manual compaction has no pre-turn step: read the function forms now
+    if (request.turnId === undefined) await refresh()
     const view = rt.view ?? []
     const limit = limits(request.model)
     // kept completed turns are measured as the next wire sees them: pruned (spec 06 §5.0)
@@ -268,7 +320,7 @@ export function createSessionCompaction(deps: {
       mode: request.mode,
       currentStartId: request.currentStartId,
       ...(request.assistantId === undefined ? {} : { assistantId: request.assistantId }),
-      keepLast: request.keepLast ?? settings.keepLast ?? DEFAULT_KEEP_LAST,
+      keepLast: request.keepLast ?? effective.keepLast ?? DEFAULT_KEEP_LAST,
       maxKeptTokens: Math.floor(limit.window * KEEP_SHARE),
       tokensOf: async (m) =>
         calibration.apply(
@@ -316,7 +368,7 @@ export function createSessionCompaction(deps: {
         trigger: request.overflow === true ? 'overflow' : request.trigger,
       },
       turnId: request.turnId,
-      defaultModel: settings.model,
+      defaultModel: effective.model,
       turnModel: request.model,
       tokensOf: (text) => calibration.apply(count(text) + 4),
       window,
@@ -349,7 +401,7 @@ export function createSessionCompaction(deps: {
       hookTimeoutMs: hookTimeoutOf(config),
       signal: request.signal,
     })
-    const summarizer = settings.model ?? config.model
+    const summarizer = effective.model ?? config.model
     let summary: string
     try {
       const result = await summarize({
@@ -462,6 +514,7 @@ export function createSessionCompaction(deps: {
     calibration,
     count,
     window,
+    refresh,
     limits,
     annotate: (message) => withTokens(message, registry, count),
     async viewTokens(view) {

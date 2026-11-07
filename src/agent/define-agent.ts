@@ -159,6 +159,11 @@ interface NumberBounds {
   max?: number
 }
 
+/** A function option is checked when it is read (per turn), not at definition. */
+function staticOnly(value: unknown): unknown {
+  return typeof value === 'function' ? undefined : value
+}
+
 function checkNumber(
   path: string,
   value: unknown,
@@ -257,8 +262,8 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('loop.progress.toolErrorStreak', progress?.toolErrorStreak, 'positive-int')
   checkNumber('loop.progress.nudges', progress?.nudges, 'non-negative-int')
   const compaction = config.compaction === false ? undefined : config.compaction
-  checkNumber('compaction.summarizeAt', compaction?.summarizeAt, 'ratio-open')
-  checkNumber('compaction.keepLast', compaction?.keepLast, 'non-negative-int')
+  checkNumber('compaction.summarizeAt', staticOnly(compaction?.summarizeAt), 'ratio-open')
+  checkNumber('compaction.keepLast', staticOnly(compaction?.keepLast), 'non-negative-int')
   checkNumber('compaction.maxSummaryTokens', compaction?.maxSummaryTokens, 'positive-int')
   checkNumber('compaction.contextWindow', compaction?.contextWindow, 'positive')
   const prune = compaction?.prune === false ? undefined : compaction?.prune
