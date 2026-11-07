@@ -180,6 +180,7 @@ export function createSessionCompaction(deps: {
       try {
         const value: unknown = await option(rt.contextOf('app'))
         if (valid(value)) return value
+        // plain-error: caught right below, it only routes an invalid value to the W_HOOK_FAILED warning
         throw new Error(`\`compaction.${name}\` returned an invalid value; the default applies.`)
       } catch (error) {
         hookFailed(rt, `compaction.${name}`, 'app', error)
