@@ -186,7 +186,10 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
       `wake` item and, for subagents, by `ParentInfo.principal`); the scheduler never enqueues itself,
       so `payload.principal` is an app convention (spec 29 §4.1). Open: the http `authorize` result is
       not wired to it yet.
-- [ ] W3: D, grants by principal and the grant timing change
+- [x] W3: D, grants by principal and the grant timing change (7bc984b7; key collision fixed in
+      bb5b1880 after ADR-0070 was amended: the principal key separator is U+001F). The key uses the
+      principal that ASKED. `grants` lives on the agent config only. Not tested: a multi-instance
+      continuation or `fork` with `by: 'principal'` (fork copies grant keys as they are).
 - [ ] Conformance: every A adapter passes every existing suite on Bun and on Node; new cases for lock
       `owner`, principal durability across instances, and grants by principal
 - [ ] The team example moves to `@eharness/sqlite` (proof of the package, no behavior change)
