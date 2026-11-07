@@ -22,6 +22,7 @@ import { createRun, failedRun } from '../../stream/run.ts'
 import { toSerialized } from '../inbox/serialize.ts'
 import { type NormalizedInput, normalizeInput, validateEnqueueMetadata } from '../input.ts'
 import { isOwnLeftover } from '../local-turns.ts'
+import { clonePrincipal, principalError, principalProblem } from '../principal.ts'
 import { DEFAULT_STALE_MS } from '../remote-abort.ts'
 import { REMOTE_START_GRACE_MS, type SessionCtx } from './ctx.ts'
 import { foreignTurn, injectOnce, notify, remoteAbort } from './inbox.ts'
@@ -43,12 +44,30 @@ export async function apiReady(s: SessionCtx): Promise<void> {
   await ensureOpen(s)
 }
 
+/** A run that failed because `SendOptions.principal` is invalid (ADR-0069), else `undefined`. */
+function invalidPrincipalRun(
+  s: SessionCtx,
+  kind: 'send' | 'respond' | 'regenerate' | 'edit',
+  options: SendOptions,
+): HarnessRun<UIMessage<unknown, UIDataTypes, UITools>, never> | undefined {
+  if (options.principal === undefined) return undefined
+  const problem = principalProblem(options.principal)
+  if (problem === undefined) return undefined
+  return failedRun(
+    kind,
+    () => s.internals.generateId(),
+    principalError(`${kind}(…, { principal })`, problem),
+  ) as never
+}
+
 export function apiSend(
   s: SessionCtx,
   input?: SendInput,
   options: SendOptions = {},
 ): HarnessRun<UIMessage<unknown, UIDataTypes, UITools>, never> {
   assertOpen(s)
+  const badPrincipal = invalidPrincipalRun(s, 'send', options)
+  if (badPrincipal !== undefined) return badPrincipal
   // a steer or a collected input joins another turn: it cannot ask for its own typed answer
   // (spec 05 §3.3 rule 9); a run error, whether the session is busy or not
   if (
@@ -106,6 +125,7 @@ export function apiSend(
       })
     }
     if (ifBusy === 'collect' && normalized !== undefined) {
+      if (options.principal !== undefined) normalized.principal = clonePrincipal(options.principal)
       return collectInput(s, normalized, options.collect, undefined, true) as HarnessRun<UIMessage>
     }
     if (ifBusy === 'steer') {
@@ -154,6 +174,8 @@ export function apiRespond(
   options: SendOptions = {},
 ): HarnessRun<UIMessage<unknown, UIDataTypes, UITools>, never> {
   assertOpen(s)
+  const badPrincipal = invalidPrincipalRun(s, 'respond', options)
+  if (badPrincipal !== undefined) return badPrincipal
   const ignoreUnknown =
     (options as SendOptions & { [RESPOND_IGNORE_UNKNOWN]?: boolean })[RESPOND_IGNORE_UNKNOWN] ===
     true
@@ -182,6 +204,8 @@ export function apiRegenerate(
   options: { messageId?: string } & SendOptions = {},
 ): HarnessRun<UIMessage<unknown, UIDataTypes, UITools>, never> {
   assertOpen(s)
+  const badPrincipal = invalidPrincipalRun(s, 'regenerate', options)
+  if (badPrincipal !== undefined) return badPrincipal
   if (s.rt.running) throw sessionBusyError(s.id)
   const { messageId, ...rest } = options
   return begin(s, {
@@ -198,6 +222,8 @@ export function apiEdit(
   { messageId, input, ...options }: { messageId: string; input: SendInput } & SendOptions,
 ): HarnessRun<UIMessage<unknown, UIDataTypes, UITools>, never> {
   assertOpen(s)
+  const badPrincipal = invalidPrincipalRun(s, 'edit', options)
+  if (badPrincipal !== undefined) return badPrincipal
   if (s.rt.running) throw sessionBusyError(s.id)
   return begin(s, { kind: 'edit', input, options, queued: false, target: messageId })
 }
@@ -398,6 +424,10 @@ export async function apiEnqueue(
       )
     }
   }
+  if (options.principal !== undefined) {
+    const problem = principalProblem(options.principal)
+    if (problem !== undefined) throw principalError('enqueue(…, { principal })', problem)
+  }
   touch(s)
   const normalized = normalizeInput(input, {
     acceptClientMetadata: s.rt.options.acceptClientMetadata === true,
@@ -406,6 +436,7 @@ export async function apiEnqueue(
   if (options.metadata !== undefined) {
     normalized.app = validateEnqueueMetadata(options.metadata)
   }
+  if (options.principal !== undefined) normalized.principal = clonePrincipal(options.principal)
   const inbox = s.args.inbox
   if (inbox === undefined || s.drain === undefined) {
     if (availableAt !== undefined && availableAt > Date.now()) {

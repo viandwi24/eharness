@@ -24,6 +24,7 @@ import { registerChild } from '../family.ts'
 import { createHookRunner } from '../hooks.ts'
 import { checkSessionInvariants } from '../invariants.ts'
 import { loadContext } from '../load-context.ts'
+import { clonePrincipal, samePrincipal } from '../principal.ts'
 import type { OpenSession, ResolvedTool } from '../runtime.ts'
 import type { SessionCtx } from './ctx.ts'
 
@@ -44,6 +45,7 @@ export async function doOpen(s: SessionCtx): Promise<OpenSession> {
   }
   await s.rt.state.load()
   s.stateFresh = true
+  await storeSessionPrincipal(s, parent)
   if (parent !== undefined) await linkParent(s, parent)
   const services = new Map<string, unknown>()
   pendingServices.set(s.rt, services)
@@ -197,6 +199,39 @@ export async function doOpen(s: SessionCtx): Promise<OpenSession> {
 }
 
 /**
+ * Store the session default principal (ADR-0069) when the session is first opened with one
+ * (`SessionOptions.principal`, else the one of `parent`): the first value wins. An explicit option
+ * that differs from the stored default is ignored with `W_SESSION_OPTIONS_IGNORED`. Best effort
+ * like `linkParent`: a failed write is retried by the next state write.
+ */
+async function storeSessionPrincipal(s: SessionCtx, parent: ParentInfo | undefined): Promise<void> {
+  const explicit = s.rt.options.principal
+  const wanted = explicit ?? parent?.principal
+  if (wanted === undefined) return
+  const core = s.rt.state.core()
+  if (core.principal === undefined) {
+    core.principal = clonePrincipal(wanted)
+    s.rt.state.markDirty()
+    try {
+      await s.rt.state.writeIfDirty()
+    } catch (error) {
+      s.log.warn(`eharness: could not store the default principal of session '${s.id}'`, { error })
+    }
+    return
+  }
+  if (explicit !== undefined && !samePrincipal(core.principal, explicit)) {
+    s.rt.warn(
+      {
+        code: 'W_SESSION_OPTIONS_IGNORED',
+        message: `Session '${s.id}' already has a default principal; the \`principal\` option is ignored.`,
+        details: { sessionId: s.id, option: 'principal' },
+      },
+      `principal:${s.id}`,
+    )
+  }
+}
+
+/**
  * A child session records its parent in its own state and registers in the parent's
  * `core.children` (a foreign write through the state adapter, spec 05 §13). Best effort: a
  * failure is logged and retried by the next open (the child's `core.parent` is only recorded
@@ -221,6 +256,7 @@ export async function linkParent(s: SessionCtx, parent: ParentInfo): Promise<voi
       ...(parent.agent === undefined ? {} : { agent: parent.agent }),
       ...(parent.name === undefined ? {} : { name: parent.name }),
       ...(parent.description === undefined ? {} : { description: parent.description }),
+      ...(parent.principal === undefined ? {} : { principal: clonePrincipal(parent.principal) }),
       createdAt: Date.now(),
     })
     core.parent = { ...parent }

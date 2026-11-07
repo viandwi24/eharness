@@ -64,6 +64,15 @@ const FIXTURES: InboxItemInput[] = [
     collect: { quietMs: 500, maxWaitMs: 2_000, maxItems: 5 },
   }),
   send('steer me', { mode: 'steer' }),
+  // the turn principal (ADR-0069) and keys of newer versions inside `input` must survive
+  send('who asked', {
+    input: {
+      parts: [{ type: 'text', text: 'who asked' }],
+      principal: { id: 'ana', name: 'Ana', attrs: { team: ['a', 'b'], admin: false } },
+      futureKey: { nested: [1, null, 'x'] },
+    } as never,
+  }),
+  { kind: 'wake', messageId: 'm-2', at: 1_790_000_000_004, principal: { id: 'bo', name: 'Bo' } },
   { kind: 'wake', messageId: 'm-1', at: 1_790_000_000_001 },
   { kind: 'abort', turnId: 't-1', reason: 'user stop', at: 1_790_000_000_002 },
   { kind: 'abort', at: 1_790_000_000_003 },

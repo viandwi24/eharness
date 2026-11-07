@@ -10,6 +10,12 @@ import { uuidv7 } from '../messages/ids.ts'
 import type { SessionHandle } from '../session/handle/ctx.ts'
 import { defaultMemoryMessages, defaultMemoryState } from '../session/memory-storage.ts'
 import { createSessionPeek } from '../session/peek.ts'
+import {
+  clonePrincipal,
+  principalError,
+  principalProblem,
+  samePrincipal,
+} from '../session/principal.ts'
 import { DEFAULT_STALE_MS as DEFAULT_STALE } from '../session/remote-abort.ts'
 import { createSessionHandle } from '../session/session.ts'
 import type { AgentInternals } from './internals.ts'
@@ -70,6 +76,10 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
       if (typeof id !== 'string' || id.length === 0) {
         throw invalidInputError('agent.session(id): id must be a non-empty string.')
       }
+      if (options.principal !== undefined) {
+        const problem = principalProblem(options.principal)
+        if (problem !== undefined) throw principalError('agent.session(id, { principal })', problem)
+      }
       const cached = sessions.get(id)
       if (cached !== undefined && !cached.rt.closed) {
         const current = cached.rt.options
@@ -89,7 +99,12 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
             options.acceptClientMetadata !== current.acceptClientMetadata) ||
           (options.toolsContext !== undefined &&
             !sameJson(options.toolsContext, current.toolsContext)) ||
-          (options.parent !== undefined && !sameJson(options.parent, current.parent))
+          (options.parent !== undefined && !sameJson(options.parent, current.parent)) ||
+          (options.principal !== undefined &&
+            !samePrincipal(
+              options.principal,
+              cached.rt.state.core().principal ?? current.principal,
+            ))
         if (differs) {
           internals.emitWarning(
             {
@@ -117,7 +132,12 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
         owner,
         claimOwner,
         id,
-        options: { ...options },
+        options: {
+          ...options,
+          ...(options.principal === undefined
+            ? {}
+            : { principal: clonePrincipal(options.principal) }),
+        },
         openSession: (sessionId, sessionOptions) => agent.session(sessionId, sessionOptions),
         isLive: (sessionId) => {
           const live = sessions.get(sessionId)

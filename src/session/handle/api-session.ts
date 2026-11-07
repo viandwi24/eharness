@@ -18,6 +18,7 @@ import { costOf } from '../../models/cost.ts'
 import { copyMessages } from '../family.ts'
 import { liveForeignTurn } from '../inbox/driver.ts'
 import { isOwnLeftover, lockAcquireOptions } from '../local-turns.ts'
+import { clonePrincipal, principalError, principalProblem } from '../principal.ts'
 import { recoverInterruptedTurn } from '../recover.ts'
 import { DEFAULT_STALE_MS } from '../remote-abort.ts'
 import { budgetOverrun } from '../turn/helpers.ts'
@@ -252,6 +253,10 @@ export async function apiFork(s: SessionCtx, options: ForkOptions = {}): Promise
   if (copyState !== 'all' && copyState !== 'none') {
     throw invalid("fork({ copyState }) must be 'all' or 'none'.", 'copy-state')
   }
+  if (options.principal !== undefined) {
+    const problem = principalProblem(options.principal)
+    if (problem !== undefined) throw principalError('fork({ principal })', problem)
+  }
   const newId = options.id ?? s.internals.generateId()
   if (newId === s.id) throw invalid('A session cannot fork into itself.', 'same-id')
   if (s.rt.running) throw sessionBusyError(s.id)
@@ -295,10 +300,13 @@ export async function apiFork(s: SessionCtx, options: ForkOptions = {}): Promise
   })
   const all = copyState === 'all'
   const core = stored?.core
+  // the fork's default principal: the caller's, else the source session's (ADR-0069)
+  const forkPrincipal = options.principal ?? core?.principal ?? s.rt.options.principal
   const snapshot: SessionStateSnapshot = {
     v: 1,
     rev: 1,
     core: {
+      ...(forkPrincipal === undefined ? {} : { principal: clonePrincipal(forkPrincipal) }),
       ...(all && copied.compaction !== undefined ? { compaction: copied.compaction } : {}),
       ...(all && core?.usage !== undefined ? { usage: { ...core.usage } } : {}),
       ...(all && core?.grants !== undefined ? { grants: { ...core.grants } } : {}),
@@ -325,6 +333,7 @@ export async function apiFork(s: SessionCtx, options: ForkOptions = {}): Promise
   const { parent: _parent, runtime, ...inherited } = s.rt.options
   const forked = s.args.openSession(newId, {
     ...inherited,
+    ...(forkPrincipal === undefined ? {} : { principal: clonePrincipal(forkPrincipal) }),
     storage: {
       messages: s.args.messages,
       state: s.args.state,

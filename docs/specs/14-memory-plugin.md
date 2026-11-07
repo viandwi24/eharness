@@ -28,6 +28,10 @@ defineHarnessAgent({
   ],
 })
 
+// 0.10.0: `ctx.principal` is durable (wake turns, inbox drains and continuations keep it), so a
+// root can follow the asker without parsing the session id:
+//   roots: (ctx) => [{ path: `/memories/users/${ctx.principal?.id ?? 'anonymous'}`, write: true }]
+
 export interface MemoryOptions {
   roots: (ctx: HarnessContext) => MemoryRoot[] | Promise<MemoryRoot[]>   // once per turn (§3)
   pinned?: (ctx: HarnessContext) => string[] | Promise<string[]>         // §4

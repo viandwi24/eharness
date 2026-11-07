@@ -35,6 +35,7 @@ export interface PendingState {
   approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk; idempotent?: boolean; granted?: true; answer?: PendingApprovalAnswer }>  // input/risk since 0.3, idempotent since 0.5 (§3.2); granted: approved already, waits for parked calls (§3.5); answer: recorded by a partial respond() (§4.3)
   clientTools: PendingClientTool[]                    // calls of tools without execute (spec 09 §6); timeout fields: request-scoped client tools (§7.1)
   externals?: PendingExternal[]                       // 0.5.0, §4.2
+  principal?: Principal                               // 0.10.0: who asked, stored when the turn parks (spec 05 §2.3); the continuation runs for them
 }
 export interface PendingClientTool {
   toolCallId: string; toolName: string
@@ -348,6 +349,10 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
    message whose `metadata.eharness.pending` is set although `state.core.pending` does not name it
    and heals it at its commit point: open calls → `INTERRUPTED_CRASH`, `pending: null`,
    `stop: 'interrupted'` (same for the `onNewInput: 'deny'` patch).
+3a. **Principal (ADR-0069).** The continuation's `ctx.principal` is `state.core.pending.principal`,
+   the principal of the turn that asked, on whichever instance runs it (`respond()`,
+   `resolveWait()`, `expireWaits()`); a `principal` in the `respond()` options applies only when the
+   pending state has none. `approvals[].actor` still records who answered (`approval.decided`).
 4. **Continue the same message**: `createUIMessageStream({ originalMessages: [A'], … })`, `start`
    with `messageId: A.id` and no metadata (so `run.messageId` resolves to A's id and A's
    `createdAt`/`turnId` are kept), then one `tool-approval-response` chunk per approval consumed by

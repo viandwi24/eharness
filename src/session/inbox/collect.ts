@@ -65,6 +65,9 @@ export function mergeInputs(inputs: readonly NormalizedInput[]): NormalizedInput
   if (texts.length > 0) parts.push({ type: 'text', text: texts.join('\n\n') })
   parts.push(...files)
   const out: NormalizedInput = { parts }
+  // callers merge only inputs of one principal: the first one that has one speaks for the turn
+  const principal = inputs.find((i) => i.principal !== undefined)?.principal
+  if (principal !== undefined) out.principal = structuredClone(principal)
   if (appMetadata !== undefined) out.appMetadata = structuredClone(appMetadata)
   if (app !== undefined) out.app = structuredClone(app)
   return out

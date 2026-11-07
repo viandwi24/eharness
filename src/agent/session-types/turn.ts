@@ -30,6 +30,8 @@ export interface ActiveTurn {
   owner: string
   startedAt: number
   heartbeatAt: number
+  /** Who asked for the turn (ADR-0069); absent in state stored before it existed. */
+  principal?: Principal
 }
 
 /**
@@ -126,6 +128,14 @@ export interface SessionOptions {
     streams?: StreamLogAdapter
   }
   runtime?: Record<string, unknown>
+  /**
+   * Default principal of the session (ADR-0069): `ctx.principal` of every turn that has none of
+   * its own (`SendOptions.principal`). Stored in `state.core.principal` when the session is first
+   * opened with one; a later open with another value keeps the stored one and warns
+   * (`W_SESSION_OPTIONS_IGNORED`). A child session (`parent`) defaults to `parent.principal`.
+   * `agent.session()` throws `EH_INVALID_INPUT` when invalid.
+   */
+  principal?: Principal
   /** AI SDK `toolsContext`: map keyed by final tool name. */
   toolsContext?: Record<string, unknown>
   lock?: SessionLock
@@ -168,6 +178,14 @@ export interface SendOptions {
   maxSteps?: number
   abortSignal?: AbortSignal
   runtime?: Record<string, unknown>
+  /**
+   * Who asked for this turn (ADR-0069): `ctx.principal` for the turn, ahead of the session default
+   * (`SessionOptions.principal`). Durable: stored with the inbox item, `activeTurn` and the pending
+   * state, so another instance continues the turn with the same value. `EH_INVALID_INPUT`
+   * (`details.reason: 'principal'`) when invalid. A `respond()` continuation keeps the principal
+   * of the turn that asked; this one applies only when that turn had none (spec 05 §2.3).
+   */
+  principal?: Principal
   toolsContext?: Record<string, unknown>
   /**
    * Ask this turn for a typed final answer (0.4.0): validated against `output.schema`, retried on
@@ -226,17 +244,33 @@ export interface InjectOptions {
    * within the same few milliseconds can still both save (best effort, spec 11 §6.3).
    */
   key?: string
+  /**
+   * Principal of the wake turn this call starts or queues (`wake: true`, ADR-0069); default: the
+   * principal of the turn running the session, else the session default. Stored with a durable
+   * wake item so another instance runs the wake turn with it.
+   */
+  principal?: Principal
 }
 
 /**
- * Who answered an approval (spec 11 §3.2). `id` is the application's user id; the object is
- * passed to `approval.decided` hooks as given (JSON values only).
+ * A person or system acting (ADR-0069): who asked for a turn (`SessionOptions.principal`,
+ * `SendOptions.principal`, `ctx.principal`) or who answered an approval ({@link ApprovalActor}).
+ * `id` is the application's id (user, team, service); the core never interprets or checks it.
+ * JSON values only, at most 2 KiB serialized: store identifiers, never secrets.
+ *
+ * @see docs/specs/05-session-and-storage.md#23-turn-principal
  */
-export interface ApprovalActor {
+export interface Principal {
   id: string
   name?: string
   [key: string]: JSONValue | undefined
 }
+
+/**
+ * Who answered an approval (spec 11 §3.2). `id` is the application's user id; the object is
+ * passed to `approval.decided` hooks as given (JSON values only). Same shape as {@link Principal}.
+ */
+export type ApprovalActor = Principal
 
 /**
  * Answers to pending approvals / client tool calls.

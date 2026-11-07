@@ -5,7 +5,7 @@
  * @see docs/specs/11-interaction.md#61-steer
  * @see docs/specs/11-interaction.md#63-inject-delivery-and-wake
  */
-import type { SteerDelivery } from '../../agent/session-types.ts'
+import type { Principal, SteerDelivery } from '../../agent/session-types.ts'
 import { kindOf } from '../../messages/kinds.ts'
 import type { MessageRegistry } from '../../messages/registry.ts'
 import type { HarnessUIMessage, InputPartData } from '../../messages/types.ts'
@@ -21,6 +21,8 @@ export interface PendingInput {
   event?: HarnessUIMessage
   /** The injection asked for `wake`: if it is not delivered, a wake turn is queued. */
   wake?: boolean
+  /** Principal the wake turn runs with (`inject({ principal })`, ADR-0069). */
+  wakePrincipal?: Principal
   /** A steer claimed from the durable inbox: acked once its `data-eh.input` is saved. */
   inboxId?: string
   /** Reports where a steer went (`HarnessRun.delivery`); the first call wins. */

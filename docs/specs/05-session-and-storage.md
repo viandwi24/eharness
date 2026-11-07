@@ -19,6 +19,8 @@ export interface SessionOptions {
   }
   /** Developer runtime context, exposed as ctx.runtime (tenantId, userId, feature flags…). */
   runtime?: Record<string, unknown>
+  /** Default principal of the session: who asks, unless a turn says otherwise (§2.3, ADR-0069). */
+  principal?: Principal
   /** AI SDK toolsContext: map keyed by final tool name (spec 01 §4). */
   toolsContext?: Record<string, unknown>
   /** Cross-process mutual exclusion for turns (§8). */
@@ -40,7 +42,7 @@ export interface SessionOptions {
 
 `agent.session(id, options)` returns the cached live session when one exists; options passed to a
 cached session are merged (`runtime` replaced, others ignored with `W_SESSION_OPTIONS_IGNORED`
-when they differ). Cache eviction: `closeSession(id)`, `close()`, or idle eviction
+when they differ; `principal` is one of the ignored ones, §2.3). Cache eviction: `closeSession(id)`, `close()`, or idle eviction
 (`config.sessionIdleMs`, default 30 min) which is skipped while a turn runs, a turn is queued (and
 can start: a queue held by pending approvals, spec 11 §6.2, does not count), a `collect` burst or
 an inbox drain is pending (§12), or an `events()` reader is open. Idle close drops held queued turns like `close()` (`stop: 'aborted'`). After eviction, held references throw `EH_SESSION_CLOSED`; call
@@ -244,6 +246,8 @@ export interface SendOptions {
   maxSteps?: number
   abortSignal?: AbortSignal
   runtime?: Record<string, unknown>          // merged over session runtime for this turn
+  /** 0.10.0: who asked for this turn (§2.3, ADR-0069): `ctx.principal`, durable across instances. */
+  principal?: Principal
   toolsContext?: Record<string, unknown>     // merged over session toolsContext
   /** 0.4.0: ask the turn for a typed final answer (§3.3). Server-side only; not carried over 'tool-pending'. */
   output?: OutputSpec
@@ -272,12 +276,16 @@ export interface InjectOptions {
   wake?: boolean
   /** Idempotency key: a repeated key is a no-op (§9.2). */
   key?: string
+  /** 0.10.0: principal of the wake turn this call starts or queues (§2.3). */
+  principal?: Principal
 }
 
 export interface EnqueueOptions {
   /** 'queue' (default) | 'steer' | 'collect' (§12). */
   mode?: 'queue' | 'steer' | 'collect'
   collect?: CollectOptions
+  /** 0.10.0: who asked for the turn the item becomes (§2.3); stored in the inbox item. */
+  principal?: Principal
 }
 export interface EnqueueResult {
   inboxId: string
@@ -338,6 +346,67 @@ Serializable events are unchanged (`turn-start` carries no run): this is profile
 process** (ADR-0034). In multi-instance deployments a turn another instance starts is not
 announced here; observe it with `events()` and `attach()`.
 
+
+### 2.3 Turn principal
+
+ADR-0069. A turn knows who asked for it. `Principal` is the shape `ApprovalActor` always had
+(`ApprovalActor` is now an alias of it, so asker and answerer share one type):
+
+```ts
+export interface Principal { id: string; name?: string; [key: string]: JSONValue | undefined }
+```
+
+The core never interprets or checks it (authenticating a person is the app's job, spec 11 §7
+`authorize`); it only carries the value. Store identifiers (`id`, a role, a tenant), never secrets:
+the value is persisted.
+
+1. **Sources.** `agent.session(id, { principal })` is the session default;
+   `send` / `respond` / `regenerate` / `edit` / `enqueue` / `enqueueOnce` take `principal` for one
+   turn; `inject(…, { principal })` names the principal of the wake turn it starts (rule 7).
+2. **`ctx.principal`** (`Principal | undefined`, readonly) on every hook context and tool factory
+   context is, in this order: the turn's principal, the session default, `undefined`. Hooks and tool
+   `execute` functions that close over `ctx` read it live. Data stored before this feature has no
+   principal and reads as `undefined`. It is unrelated to `ctx.runtime`, which stays per process and
+   is not persisted.
+3. **Validation.** A plain object with a non-empty string `id`, a string `name` when present, JSON
+   values only (finite numbers, nested at most 8 levels), at most **2 048 bytes** serialized.
+   Invalid: `agent.session()`, `enqueue()`, `inject()` and `fork()` throw `EH_INVALID_INPUT`
+   (`details.reason: 'principal'`); `send` / `respond` / `regenerate` / `edit` return a failed run
+   with the same code (like every other invalid send option, §2 failure semantics). The value is
+   copied; later changes by the caller do not reach the session.
+4. **Session default and a later open.** The first open of a session with a principal stores it in
+   `state.core.principal` (written at once, like `core.parent`). The first value wins: opening the
+   same stored session again with a different `principal` (a new process, or a live handle asked
+   for another one) keeps the stored one and warns `W_SESSION_OPTIONS_IGNORED`, exactly like the
+   other options of an already live session (§1). The same value never warns. A child session
+   defaults to `parent.principal` (rule 6).
+5. **Durable paths.** The turn principal is stored wherever a turn can move to another instance:
+   - inbox `send` items: `SerializedInput.principal` (and `principal` of a `wake` item, rule 7); the
+     instance that drains the item runs the turn with it. An item whose stored principal is invalid
+     is run without one (session default);
+   - `state.core.activeTurn.principal`, written at the commit point (informational for `stats()`,
+     `peek().stats()` and recovery; `recover()` ends the turn, it never reruns it);
+   - `state.core.pending.principal`, written when the turn parks (approvals, client tool calls,
+     external waits). A `respond()` / `resolveWait()` / `expireWaits()` continuation, on any
+     instance, runs with the principal of the turn that **asked**, not of the one that answered;
+     `respond({ approvals: [{ actor }] })` keeps recording the answerer. A `principal` passed to
+     `respond()` applies only when the pending state has none.
+6. **Children.** `subagent` and `fork` children inherit the principal of the parent turn (for a fork:
+   of the source session unless `ForkOptions.principal`) as their session default.
+   `ParentInfo.principal` (child side) and `ChildSessionInfo.principal` (the parent's registry,
+   §13) record it. Open a child with another `principal` to override it.
+7. **Wake turns.** `inject(…, { wake: true, principal })` starts or queues a wake turn for that
+   principal; without it the wake turn uses the principal of the turn running the session at the
+   time, else the session default. A durable wake (`InboxItemInput` `wake`) carries it so the
+   holder instance runs the wake with it. One queued wake turn serves every undelivered event: when
+   several wakes with different principals are queued, the first one's principal runs it. The
+   `subagent` plugin passes the principal of the delegating turn with every background report
+   (spec 20).
+8. **Steer and collect.** `ifBusy: 'steer'` joins the input to the running turn, which keeps its own
+   principal. Collected inputs (`ifBusy: 'collect'`, `enqueue({ mode: 'collect' })`) are merged only
+   while they share one principal: another asker's input ends the burst and starts the next turn.
+9. **Schedulers** need no core support: the app's `onFire` passes `payload.principal` to
+   `enqueue(…, { principal })` (spec 29 §4).
 
 ## 3. Turn lifecycle (normative order)
 
@@ -795,6 +864,8 @@ export interface SessionStateSnapshot {
     pending?: PendingState
     /** Session approval grants (spec 11 §3.1). */
     grants?: Record<string, 'always' | 'never'>
+    /** Default principal of the session, stored by the first open that had one; never replaced (§2.3). */
+    principal?: Principal
     /** Mirror of eh.rewind markers (spec 11 §5); the markers are the source of truth. */
     rewinds?: Array<{ afterId: string | null; rewindId: string }>
     /** Cross-process abort request for the active turn (§9.1); written by another instance. */
@@ -908,6 +979,7 @@ export interface ActiveTurn {
   owner: string                     // random id of the agent instance (per process)
   startedAt: number                 // epoch ms
   heartbeatAt: number               // epoch ms
+  principal?: Principal             // who asked for the turn (§2.3); absent in state written before 0.10
 }
 ```
 
@@ -1114,7 +1186,7 @@ export interface InboxStats { ready: number; claimed: number; delayed: number; d
 
 export type InboxItemInput = (
   | { kind: 'send'; mode: 'queue' | 'steer' | 'collect'; input: SerializedInput; collect?: CollectOptions; at: number }
-  | { kind: 'wake'; messageId: string; at: number }     // inject(…, { wake }) the holder cannot run now: a live foreign turn, or items waiting for an answer (ADR-0054)
+  | { kind: 'wake'; messageId: string; at: number; principal?: Principal }     // principal: §2.3; inject(…, { wake }) the holder cannot run now: a live foreign turn, or items waiting for an answer (ADR-0054)
   | { kind: 'abort'; turnId?: string; reason?: string; at: number }
   | { kind: 'wait-timeout'; waitId: string; at: number }   // 0.5.0: durable timeout of an external wait (rule 16)
 ) & { availableAt?: number; dedupeKey?: string }   // availableAt: epoch ms, a durable timer (rule 14); dedupeKey: caller id (rule 17)
@@ -1125,6 +1197,7 @@ export interface SerializedInput {            // a normalized input (§3 step 7)
   clientId?: string
   appMetadata?: Record<string, JSONValue>     // only with acceptClientMetadata
   app?: Record<string, JSONValue>             // server-set by enqueue(…, { metadata }) → metadata.app (rule 18)
+  principal?: Principal                       // who asked for the turn (§2.3, ADR-0069)
 }
 export interface CollectOptions { quietMs?: number; maxWaitMs?: number; maxItems?: number }
 export interface EnqueueOptions {
@@ -1132,6 +1205,7 @@ export interface EnqueueOptions {
   availableAt?: number    // epoch ms: not claimable before it (rules 14, 17); not with 'collect'
   id?: string             // caller id, 1–256 chars, unique per session: a repeat is a no-op (rule 17)
   metadata?: Record<string, unknown>   // app metadata → metadata.app of the user message (rule 18)
+  principal?: Principal                // who asked for the turn (§2.3): stored in the item
 }
 export interface EnqueueResult { inboxId: string; target: 'local' | 'remote'; duplicate?: true }
 
@@ -1370,6 +1444,14 @@ without it releases carry only `owner` and rules 1–10 are the whole contract.
     - Not provided, by decision: mapping `pending()` session ids back to agents (the id carries
       no agent identity, so that is app code: see `docs/guides/multi-instance.md` sweeper).
 
+19. **Principal on the item (ADR-0069, §2.3).** `enqueue(input, { principal })` stores the principal
+    in `SerializedInput.principal` of the `send` item; a durable wake stores it as `principal` of the
+    `wake` item. The instance that drains the item runs the turn with `ctx.principal` set to it.
+    Adapters store items as JSON and must return every field unchanged, also keys they do not know
+    (inside `input` too); `inboxAdapterConformance` round-trips both fields. A `collect` burst
+    stops at the first item with another principal (so one turn has one asker); a wake unit uses the
+    principal of its first wake item that has one.
+
 At-least-once and dedupe (rule 5) are unchanged: a redelivered item already applied is acked by
 the stored-view dedupe before any attempt logic runs. With a 0.4 adapter (no new members,
 `release` ignoring the options) everything still works without `retry`; with `retry.maxAttempts`
@@ -1431,7 +1513,7 @@ index).
 2. **Parent side: `core.children`.** `{ sessionId, turnId, toolCallId?, createdAt, agent?, name?,
    description? }[]` (the identity fields come from `ParentInfo` when the opener set them: for
    `subagent()` the catalog key of the child's agent, the `name` and the `description` of the
-   `agent` call; entries without them, written before 0.8, read as before; `ParentInfo.agent` etc.
+   `agent` call, and `principal`, the principal of the delegating turn, §2.3; entries without them, written before 0.8, read as before; `ParentInfo.agent` etc.
    are also on `ctx.session.parent` inside the child),
    append-only, capped at 500 (the oldest are dropped), deduplicated by `sessionId`. It is a
    **foreign-writable** field (§7, like `abortRequest`, §9.1): the child's runtime writes the
@@ -1457,6 +1539,7 @@ export interface ForkOptions {
   beforeMessageId?: string            // copy the messages with id < beforeMessageId (default: all)
   id?: string                         // id of the new session (default: generated UUIDv7)
   runtime?: Record<string, unknown>   // SessionOptions.runtime of the new session (default: this session's)
+  principal?: Principal               // default principal of the new session (default: this session's, §2.3)
   copyState?: 'all' | 'none'          // default 'all'
 }
 session.fork(options?): Promise<HarnessSession<M, Kinds>>

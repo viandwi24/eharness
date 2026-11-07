@@ -9,6 +9,7 @@ import { toTurnError } from '../../stream/describe-error.ts'
 import { forgetDelivered, recordDelivered } from '../inbox/dedupe.ts'
 import { pendingCallIds, timedWaits } from '../interaction/waits.ts'
 import { unregisterLocalTurn } from '../local-turns.ts'
+import { clonePrincipal } from '../principal.ts'
 import { recoverInterruptedTurn } from '../recover.ts'
 import type { TurnCtx } from './ctx.ts'
 import { withoutUndefined } from './helpers.ts'
@@ -233,6 +234,9 @@ export async function endPhases(
     const core = t.rt.state.core()
     const parked = stop === 'tool-pending' ? t.outcome.pending : undefined
     if (parked !== undefined) {
+      // who asked travels with the wait: a continuation on any instance runs for them (ADR-0069)
+      const asker = t.turnState.principal ?? core.principal ?? t.rt.options.principal
+      if (asker !== undefined) parked.principal = clonePrincipal(asker)
       core.pending = parked
       t.rt.state.markDirty()
       t.rt.events.emit({ type: 'pending', pending: parked })

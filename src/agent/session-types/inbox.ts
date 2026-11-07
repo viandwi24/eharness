@@ -4,6 +4,7 @@
  * @see docs/specs/05-session-and-storage.md
  */
 import type { FileUIPart, JSONValue, TextUIPart } from 'ai'
+import type { Principal } from './turn.ts'
 
 /**
  * User input in the serialized (JSON) form an inbox stores: normalized `text` / `file` parts, the
@@ -17,6 +18,11 @@ export interface SerializedInput {
   appMetadata?: Record<string, JSONValue>
   /** Server-set app metadata of `enqueue(…, { metadata })`; becomes `metadata.app` as is. */
   app?: Record<string, JSONValue>
+  /**
+   * Who asked for the turn this input becomes (`enqueue(…, { principal })`, ADR-0069). Adapters
+   * must store and return it unchanged, like every other field of the item.
+   */
+  principal?: Principal
 }
 
 /**
@@ -54,7 +60,15 @@ export type InboxItemInput =
       availableAt?: number
       dedupeKey?: string
     }
-  | { kind: 'wake'; messageId: string; at: number; availableAt?: number; dedupeKey?: string }
+  | {
+      kind: 'wake'
+      messageId: string
+      at: number
+      availableAt?: number
+      dedupeKey?: string
+      /** Principal of the wake turn (ADR-0069); adapters store it unchanged. */
+      principal?: Principal
+    }
   | {
       kind: 'abort'
       turnId?: string
@@ -222,6 +236,13 @@ export interface EnqueueOptions {
    * `app` on the `data-eh.input` part of a `steer` delivered into a running turn.
    */
   metadata?: Record<string, unknown>
+  /**
+   * Who asked for the turn the item becomes (ADR-0069), stored with the item so the instance that
+   * drains it runs the turn with the same `ctx.principal`. `EH_INVALID_INPUT` when invalid. With
+   * `mode: 'steer'` into a running turn the input joins that turn, which keeps its own principal;
+   * `collect` merges only inputs with the same principal into one turn.
+   */
+  principal?: Principal
 }
 
 /**

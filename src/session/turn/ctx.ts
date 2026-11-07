@@ -3,6 +3,7 @@ import type {
   ActiveTurn,
   HarnessRun,
   PendingResponse,
+  Principal,
   SendInput,
   SendOptions,
   SteerDelivery,
@@ -87,7 +88,7 @@ export interface TurnHost {
    * durable inbox and a turn that stopped `tool-pending` the wake is stored as inbox items of
    * `messageIds` (any instance runs it once the pending items are answered, ADR-0054).
    */
-  enqueueWake(messageIds: string[], pending: boolean): Promise<void>
+  enqueueWake(messageIds: string[], pending: boolean, principal?: Principal): Promise<void>
   /** Drop queued turns like `session.abort()` (a cross-process abort, spec 05 §9.1). */
   dropQueue(): void
   /**
@@ -120,7 +121,12 @@ export interface RunningTurn {
    * Deliver a saved kind message into the running turn (`next-step`, spec 11 §6.3). With `wake`,
    * an undelivered event queues a wake turn. False when the turn no longer takes input.
    */
-  deliverEvent(message: HarnessUIMessage, text: string, wake?: boolean): boolean
+  deliverEvent(
+    message: HarnessUIMessage,
+    text: string,
+    wake?: boolean,
+    principal?: Principal,
+  ): boolean
 }
 
 export const DEFAULT_MAX_STEPS = 500

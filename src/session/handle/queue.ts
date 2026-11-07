@@ -15,6 +15,7 @@ import type { InboxUnit } from '../inbox/driver.ts'
 import type { NormalizedInput } from '../input.ts'
 import { pendingSignature } from '../interaction/pending.ts'
 import { createDeferredRun, type QueuedTurn } from '../interaction/queue.ts'
+import { samePrincipal } from '../principal.ts'
 import type { RunningTurn } from '../turn/ctx.ts'
 import { startTurn } from '../turn.ts'
 import type { CollectEntry, SessionCtx } from './ctx.ts'
@@ -73,6 +74,11 @@ export function enqueue(
   // the session may have gone idle meanwhile (e.g. a steer that arrived as its turn ended)
   queueMicrotask(() => startNext(s))
   return entry.handle.run
+}
+
+/** The `SendOptions` a stored input runs with: its principal (ADR-0069), when it has one. */
+function principalOptions(input: NormalizedInput | undefined): SendOptions {
+  return input?.principal === undefined ? {} : { principal: structuredClone(input.principal) }
 }
 
 /** Hold a direct send behind the older items of the durable inbox (spec 05 §12 rule 7). */
@@ -240,6 +246,11 @@ export function collectInput(
   withRun: boolean,
   key?: string,
 ): HarnessRun<UIMessage> | undefined {
+  // one collected turn has one principal: another asker's input flushes the open burst first
+  const open = s.collecting?.entries[0]
+  if (open !== undefined && !samePrincipal(open.input.principal, input.principal)) {
+    checkCollect(s, true)
+  }
   if (s.collecting === undefined) {
     s.collecting = {
       turnId: s.internals.generateId(),
@@ -275,22 +286,24 @@ export function collectInput(
 }
 
 /** Flush the burst when it is due (into the queue: it runs after the current turn), else wait. */
-export function checkCollect(s: SessionCtx): void {
+export function checkCollect(s: SessionCtx, force = false): void {
   const group = s.collecting
   if (group === undefined || s.rt.closed) return
   if (group.timer !== undefined) clearTimeout(group.timer)
   group.timer = undefined
   const first = group.entries[0]
   if (first === undefined) return
-  const due = collectDue(
-    {
-      firstAt: first.at,
-      lastAt: (group.entries.at(-1) as CollectEntry).at,
-      count: group.entries.length,
-    },
-    group.options,
-    Date.now(),
-  )
+  const due = force
+    ? { due: true as const }
+    : collectDue(
+        {
+          firstAt: first.at,
+          lastAt: (group.entries.at(-1) as CollectEntry).at,
+          count: group.entries.length,
+        },
+        group.options,
+        Date.now(),
+      )
   if (!due.due) {
     group.timer = setTimeout(() => checkCollect(s), Math.max(0, due.at - Date.now()) + 1)
     unref(group.timer)
@@ -313,11 +326,12 @@ export function checkCollect(s: SessionCtx): void {
       generateId: () => s.internals.generateId(),
       onAbort: () => {},
     })
+  const merged = mergeInputs(group.entries.map((e) => e.input))
   s.queue.push({
     kind: 'send',
     turnId: group.turnId,
-    input: mergeInputs(group.entries.map((e) => e.input)),
-    options: {},
+    input: merged,
+    options: principalOptions(merged),
     handle: head,
     extraHandles: handles.slice(1),
     inbox: {
@@ -473,10 +487,17 @@ export function enqueueLocal(
   }
   if (mode === 'steer' && s.current !== undefined && s.current.steer(normalized, inboxId)) return
   if (!s.rt.running && s.queue.length === 0) {
-    begin(s, { kind: 'send', input: undefined, normalized, options: {}, queued: false, inbox })
+    begin(s, {
+      kind: 'send',
+      input: undefined,
+      normalized,
+      options: principalOptions(normalized),
+      queued: false,
+      inbox,
+    })
     return
   }
-  enqueue(s, { input: normalized, options: {}, inbox })
+  enqueue(s, { input: normalized, options: principalOptions(normalized), inbox })
 }
 
 /** Start a unit of inbox items now (the drain checked that the session is free). */
@@ -487,7 +508,8 @@ export function startUnit(s: SessionCtx, unit: InboxUnit): boolean {
     kind: unit.kind,
     turnId,
     input: unit.input,
-    options: {},
+    options:
+      unit.principal !== undefined ? { principal: unit.principal } : principalOptions(unit.input),
     handle: createDeferredRun({
       turnId,
       kind: unit.kind,

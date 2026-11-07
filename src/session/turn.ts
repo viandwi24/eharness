@@ -18,6 +18,7 @@ import { type TurnError, toTurnError } from '../stream/describe-error.ts'
 import { createStreamLogWriter, resolveStreamLogOptions } from '../stream/log-writer.ts'
 import { createRun, createTurnBuffer } from '../stream/run.ts'
 import { createTurnInputQueue, type PendingInput } from './interaction/inbox.ts'
+import { clonePrincipal } from './principal.ts'
 import { DEFAULT_ABORT_POLL_MS } from './remote-abort.ts'
 import { body } from './turn/body.ts'
 import {
@@ -157,6 +158,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     info: t.info,
     step: undefined,
     runtime: { ...(t.rt.options.runtime ?? {}), ...(t.op.options.runtime ?? {}) },
+    principal:
+      t.op.options.principal === undefined ? undefined : clonePrincipal(t.op.options.principal),
     active: true,
     write: (chunk) => write(t, chunk),
   }
@@ -268,7 +271,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       if (!pushed && inboxId !== undefined) t.steerIds.delete(inboxId)
       return pushed
     },
-    deliverEvent(message, text, wake) {
+    deliverEvent(message, text, wake, principal) {
       if (!t.inbox.open || t.ended) return false
       t.inboxed.add(message.id)
       return t.inbox.push(
@@ -276,6 +279,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
           data: { source: 'event', text },
           event: message,
           ...(wake === true ? { wake: true } : {}),
+          ...(wake === true && principal !== undefined ? { wakePrincipal: principal } : {}),
         }),
       )
     },

@@ -17,7 +17,7 @@ import type {
   ToolChoice,
   ToolSet,
 } from 'ai'
-import type { ApprovalActor, HarnessRun, InjectOptions } from '../agent/session-types.ts'
+import type { ApprovalActor, HarnessRun, InjectOptions, Principal } from '../agent/session-types.ts'
 import type { ModelSettings } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { Awaitable, ProviderOptions } from '../internal/ai-types.ts'
@@ -229,6 +229,13 @@ export interface HarnessContext<DP extends DataPartMap = Record<never, never>> {
   readonly state: PluginState
   /** Developer runtime context (`SessionOptions.runtime` / send options). */
   readonly runtime: Readonly<Record<string, unknown>>
+  /**
+   * Who asked for the running turn (ADR-0069): the turn's `SendOptions.principal` (durable: it
+   * survives inbox drains, crash recovery, `respond()` and wake turns on any instance), else
+   * `SessionOptions.principal`, else `undefined`. The core never checks it; key per-person
+   * resources on `ctx.principal?.id` (`memory.roots`, `budget.scopes`).
+   */
+  readonly principal: Principal | undefined
   readonly log: HarnessLogger
   /**
    * Aborts on session close, and when the session open fails (release per-session resources on

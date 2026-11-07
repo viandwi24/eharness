@@ -195,7 +195,7 @@ whatever the app defines — are enforced inside the turn loop through an option
 ```ts
 export interface BudgetLedgerConfig {
   adapter: BudgetLedger
-  scopes: (ctx: HarnessContext) => string[] | Promise<string[]>   // once per turn
+  scopes: (ctx: HarnessContext) => string[] | Promise<string[]>   // once per turn; e.g. [`user:${ctx.principal?.id}`] (spec 05 §2.3)
   estimate?: (e: { ctx; model: LanguageModel; contextTokens: number; maxOutputTokens: number }) => number
   reservationTtlMs?: number          // default loop.turnTimeoutMs, else 600 000
   onError?: 'stop' | 'continue'      // default 'stop' (fail closed)

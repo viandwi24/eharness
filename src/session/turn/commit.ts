@@ -14,6 +14,7 @@ import { approvalNoteData } from '../interaction/notes.ts'
 import { patchForNewInput, patchForRespond, type RespondPlan } from '../interaction/pending.ts'
 import { hiddenByRewind } from '../load-context.ts'
 import { registerLocalTurn } from '../local-turns.ts'
+import { principalOf } from '../principal.ts'
 import { recoverInterruptedTurn } from '../recover.ts'
 import { createAbortPoll } from '../remote-abort.ts'
 import type { OpenSession } from '../runtime.ts'
@@ -36,6 +37,9 @@ export function planParking(t: TurnCtx, registry: TurnRegistry): void {
     messageId: t.plan.pending.messageId,
     approvals: [],
     clientTools: [],
+    ...(t.plan.pending.principal === undefined
+      ? {}
+      : { principal: structuredClone(t.plan.pending.principal) }),
   }
   for (const answer of parked) {
     if (registry.externals.has(answer.toolName)) {
@@ -126,6 +130,7 @@ export async function commit(t: TurnCtx, prep: Extract<Prepared, { kind: 'turn' 
       owner: t.rt.owner,
       startedAt: now,
       heartbeatAt: now,
+      principal: principalOf(t.rt),
     })
     needWrite = true
   }

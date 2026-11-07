@@ -5,7 +5,7 @@
  * @see docs/specs/05-session-and-storage.md#3-turn-lifecycle-normative-order
  */
 import type { FileUIPart, JSONValue, TextUIPart } from 'ai'
-import type { SendInput } from '../agent/session-types.ts'
+import type { Principal, SendInput } from '../agent/session-types.ts'
 import type { InputFilesConfig } from '../agent/types.ts'
 import { HarnessError } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
@@ -19,6 +19,8 @@ export interface NormalizedInput {
   appMetadata?: Record<string, unknown>
   /** Server-set `metadata.app` of `enqueue(…, { metadata })` (already validated JSON). */
   app?: Record<string, JSONValue>
+  /** Who asked for the turn this input becomes (`enqueue`, collect; ADR-0069). */
+  principal?: Principal
 }
 
 /** Largest serialized size of `EnqueueOptions.metadata`. */

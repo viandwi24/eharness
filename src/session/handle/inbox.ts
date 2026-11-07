@@ -1,11 +1,12 @@
 import { asSchema } from 'ai'
-import type { AbortRequestResult, StateAdapter } from '../../agent/session-types.ts'
+import type { AbortRequestResult, Principal, StateAdapter } from '../../agent/session-types.ts'
 import { HarnessError, storageError } from '../../errors.ts'
 import { errorText } from '../../internal/util.ts'
 import { createKindMessage } from '../../messages/kinds.ts'
 import type { HarnessUIMessage } from '../../messages/types.ts'
 import { liveForeignTurn } from '../inbox/driver.ts'
 import { kindText } from '../interaction/inbox.ts'
+import { clonePrincipal, principalError, principalProblem } from '../principal.ts'
 import { DEFAULT_STALE_MS, requestRemoteAbort } from '../remote-abort.ts'
 import type { SessionCtx } from './ctx.ts'
 import { ensureContext, ensureOpen, persist } from './open.ts'
@@ -94,11 +95,20 @@ export function wakeKey(_s: SessionCtx, messageId: string): string {
 }
 
 /** Store a `wake` item of an already saved kind message; false when the inbox failed. */
-export async function holdWakeDurably(s: SessionCtx, messageId: string): Promise<boolean> {
+export async function holdWakeDurably(
+  s: SessionCtx,
+  messageId: string,
+  principal?: Principal,
+): Promise<boolean> {
   if (s.args.inbox === undefined || s.drain === undefined) return false
   try {
     // one item per event, also when an app repairs a stranded one (`wake:<messageId>`, ADR-0054)
-    const item = { kind: 'wake' as const, messageId, at: Date.now() }
+    const item = {
+      kind: 'wake' as const,
+      messageId,
+      at: Date.now(),
+      ...(principal === undefined ? {} : { principal: clonePrincipal(principal) }),
+    }
     if (s.args.inbox.enqueueOnce !== undefined) {
       const stored = await s.args.inbox.enqueueOnce(s.id, {
         ...item,
@@ -172,7 +182,12 @@ export async function injectOnce(
   s: SessionCtx,
   kind: string,
   data: unknown,
-  options: { key?: string; wake?: boolean; deliver?: 'next-step' | 'end-of-turn' | string },
+  options: {
+    key?: string
+    wake?: boolean
+    deliver?: 'next-step' | 'end-of-turn' | string
+    principal?: Principal
+  },
 ): Promise<{ message: unknown; run?: unknown }> {
   assertOpen(s)
   const registered = s.internals.messages.kind(kind)
@@ -201,6 +216,12 @@ export async function injectOnce(
       'inject({ key }) must be a non-empty string of at most 200 characters.',
     )
   }
+  if (options.principal !== undefined) {
+    const problem = principalProblem(options.principal)
+    if (problem !== undefined) throw principalError('inject(…, { principal })', problem)
+  }
+  // the wake turn this call may start: the named principal, else the running turn's (ADR-0069)
+  const wakeFor = options.principal ?? s.rt.turn?.principal
   touch(s)
   await ensureOpen(s)
   if (key !== undefined) {
@@ -231,7 +252,7 @@ export async function injectOnce(
   // next-step delivery (wake while running implies it, spec 11 §6.3)
   if ((options.deliver === 'next-step' || wake) && s.current !== undefined) {
     const text = inlineText(s, out, kind)
-    if (text !== undefined && s.current.deliverEvent(out, text, wake)) return result
+    if (text !== undefined && s.current.deliverEvent(out, text, wake, wakeFor)) return result
   }
   if (!wake || s.rt.closed) return result
   // a turn of this session runs in another instance, or approvals / client tool calls wait for
@@ -246,20 +267,29 @@ export async function injectOnce(
     const foreign = await foreignTurn(s)
     const parked = foreign === undefined && (await storedPending(s))
     if (foreign !== undefined || parked) {
-      if (await holdWakeDurably(s, out.id)) {
+      if (await holdWakeDurably(s, out.id, wakeFor)) {
         if (foreign !== undefined) s.drain.foreign(foreign)
         return result
       }
     }
   }
   if (s.rt.closed) return result
+  const wakeOptions = wakeFor === undefined ? {} : { principal: clonePrincipal(wakeFor) }
   // wake an idle session now; otherwise (a turn is ending, compact() runs, or approvals wait
   // for an answer) a no-input wake turn is queued and runs when the session is free
   if (!s.rt.running && s.rt.state.core().pending === undefined) {
     return {
       ...result,
-      run: begin(s, { kind: 'wake', input: undefined, options: {}, queued: false }) as never,
+      run: begin(s, {
+        kind: 'wake',
+        input: undefined,
+        options: wakeOptions,
+        queued: false,
+      }) as never,
     }
   }
-  return { ...result, run: enqueue(s, { kind: 'wake', input: undefined, options: {} }) as never }
+  return {
+    ...result,
+    run: enqueue(s, { kind: 'wake', input: undefined, options: wakeOptions }) as never,
+  }
 }

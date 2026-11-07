@@ -38,6 +38,7 @@ export type {
   MessageAdapter,
   ParentInfo,
   PendingResponse,
+  Principal,
   RecoverResult,
   ResolveWaitResult,
   SendInput,

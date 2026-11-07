@@ -7,6 +7,7 @@ import type { AgentInternals } from '../agent/internals.ts'
 import type {
   InjectOptions,
   MessageAdapter,
+  Principal,
   SessionEvent,
   SessionOptions,
   StreamLogAdapter,
@@ -63,6 +64,12 @@ export interface TurnState {
   step: { index: number; model: LanguageModel } | undefined
   /** Session runtime merged with `SendOptions.runtime`. */
   runtime: Readonly<Record<string, unknown>>
+  /**
+   * Principal of this turn (ADR-0069): `SendOptions.principal`, the one a woken inbox item or
+   * wake carries, or the asker's of the pending state a `respond()` continues; `undefined` falls
+   * back to the session default.
+   */
+  principal: Principal | undefined
   /** True while the turn stream is open. */
   active: boolean
   /** Write one chunk to the turn stream (cloned into the turn buffer). */

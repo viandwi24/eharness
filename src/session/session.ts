@@ -222,7 +222,10 @@ export function createSessionHandle(args: SessionHandleArgs): SessionHandle {
       enqueue(s, {
         input: submitted.input,
         submitted,
-        options: {},
+        options:
+          submitted.input.principal === undefined
+            ? {}
+            : { principal: structuredClone(submitted.input.principal) },
         ...(inboxId === undefined
           ? {}
           : { inbox: { ids: [inboxId], meta: { inboxId }, durable: false } }),
@@ -242,15 +245,21 @@ export function createSessionHandle(args: SessionHandleArgs): SessionHandle {
     },
     dropQueue: () => dropQueue(s, false),
     waitsParked: (pending) => s.waits.parked(pending),
-    async enqueueWake(messageIds, pending) {
+    async enqueueWake(messageIds, pending, principal) {
       // approvals / client tool calls wait for an answer: the wake is durable when it can be
       // (it survives a restart and runs in whichever instance sees the answer, ADR-0054)
       if (pending && messageIds.length > 0) {
         let stored = 0
-        for (const messageId of messageIds) if (await holdWakeDurably(s, messageId)) stored++
+        for (const messageId of messageIds) {
+          if (await holdWakeDurably(s, messageId, principal)) stored++
+        }
         if (stored === messageIds.length) return
       }
-      enqueue(s, { kind: 'wake', input: undefined, options: {} })
+      enqueue(s, {
+        kind: 'wake',
+        input: undefined,
+        options: principal === undefined ? {} : { principal },
+      })
     },
   }
   s.revalidating = false

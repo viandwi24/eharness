@@ -381,6 +381,10 @@ export interface HarnessContext<DP extends DataPartMap = {}> {
   readonly state: PluginState
   /** Developer runtime context from SessionOptions.runtime / send options (tenantId, userId, …). */
   readonly runtime: Readonly<Record<string, unknown>>
+  /** 0.10.0 (ADR-0069): who asked for the running turn: the turn's `SendOptions.principal`, else
+   *  `SessionOptions.principal`, else `undefined`. Durable across instances (spec 05 §2.3). The core
+   *  never checks it; key per-person resources on `ctx.principal?.id`. */
+  readonly principal: Principal | undefined
   readonly log: HarnessLogger
   /** Aborts on session close and when the session open fails (a retried open gets a fresh
    *  signal, spec 05 §2). Turn-level abort is `turn.abortSignal`. */

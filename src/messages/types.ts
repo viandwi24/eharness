@@ -5,6 +5,7 @@
  */
 
 import type { FileUIPart, InferUITools, JSONValue, ToolSet, UIMessage } from 'ai'
+import type { Principal } from '../agent/session-types.ts'
 import type { HarnessErrorCode, HarnessNoticeCode } from '../codes.ts'
 
 /**
@@ -109,6 +110,12 @@ export interface PendingState {
    * outside. Each holds its recorded `result` once `resolveWait()` (or a timeout) recorded it.
    */
   externals?: PendingExternal[]
+  /**
+   * Principal of the turn that asked (ADR-0069), stored when the turn parks. A `respond()`
+   * continuation, wherever it runs, uses it as `ctx.principal`; `respond({ approvals: [{ actor }] })`
+   * still records who answered.
+   */
+  principal?: Principal
 }
 
 /** A recorded approval decision of a partial `respond()` (spec 11 §4.3, ADR-0044). */

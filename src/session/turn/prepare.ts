@@ -20,6 +20,7 @@ import {
 import { createRewind, type RewindTarget, resolveRewindTarget } from '../interaction/rewind.ts'
 import { validateExternalAnswers } from '../interaction/waits.ts'
 import { isOwnLeftover, lockAcquireOptions } from '../local-turns.ts'
+import { clonePrincipal } from '../principal.ts'
 import type { Prepared, TurnCtx } from './ctx.ts'
 import { validateWith } from './helpers.ts'
 import { currentGrants, write, writeStart } from './output.ts'
@@ -158,6 +159,9 @@ export async function prepare(t: TurnCtx): Promise<Prepared> {
       t.rt.state.discard()
       await t.rt.state.load()
     }
+    // the continuation runs for whoever asked, not for whoever answered (ADR-0069)
+    const asker = t.plan.pending.principal
+    if (asker !== undefined) t.turnState.principal = clonePrincipal(asker)
     // results of `respond({ externals })` are checked like `resolveWait()` results
     if (t.plan.externals.length > 0)
       await validateExternalAnswers(t.rt, await t.host.ensureOpen(), t.plan)

@@ -6,7 +6,7 @@
 import type { JSONValue, UIMessage } from 'ai'
 import type { HarnessUIMessage, PendingExternal, PendingState } from '../../messages/types.ts'
 import type { HarnessSession } from './session.ts'
-import type { AbortRequest, ActiveTurn, SessionBusy, SessionUsage } from './turn.ts'
+import type { AbortRequest, ActiveTurn, Principal, SessionBusy, SessionUsage } from './turn.ts'
 
 /**
  * Message storage contract (2 methods + optional `lastId`).
@@ -87,6 +87,11 @@ export interface SessionStateSnapshot {
     activeTurn?: ActiveTurn
     pending?: PendingState
     grants?: Record<string, 'always' | 'never'>
+    /**
+     * The session's default principal (`SessionOptions.principal`, ADR-0069), stored when the
+     * session is first opened with one; later opens never replace it (spec 05 §2.3).
+     */
+    principal?: Principal
     rewinds?: Array<{ afterId: string | null; rewindId: string }>
     /** A cross-process abort request for the active turn (spec 05 §9.1). */
     abortRequest?: AbortRequest
@@ -129,6 +134,11 @@ export interface ParentInfo {
   agent?: string
   name?: string
   description?: string
+  /**
+   * Principal of the parent turn that opened the child (ADR-0069); the child's session default.
+   * A wake turn started by this child's report uses it.
+   */
+  principal?: Principal
 }
 
 /**
@@ -148,6 +158,8 @@ export interface ChildSessionInfo {
   name?: string
   /** Short description of the child's task. */
   description?: string
+  /** Principal of the parent turn that opened the child (see {@link ParentInfo.principal}). */
+  principal?: Principal
 }
 
 /**
@@ -189,6 +201,8 @@ export interface ForkOptions {
   id?: string
   /** `SessionOptions.runtime` of the new session. */
   runtime?: Record<string, unknown>
+  /** Default principal of the new session (ADR-0069). Default: the source session's. */
+  principal?: Principal
   /** `'all'` (default): copy usage, grants, plugin state and the compaction/rewind pointers; `'none'`: copy no state. */
   copyState?: 'all' | 'none'
 }

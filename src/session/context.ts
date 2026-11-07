@@ -8,6 +8,7 @@ import { observeForSession } from '../models/model-calls.ts'
 import type { HarnessContext, HarnessLogger, HarnessServices } from '../plugin/types.ts'
 import { createPluginWriter } from '../stream/writer.ts'
 import { safeLogData } from './log-safe.ts'
+import { principalOf } from './principal.ts'
 import type { SessionRuntime } from './runtime.ts'
 
 /**
@@ -108,6 +109,9 @@ export function createContext(rt: SessionRuntime, plugin: string): HarnessContex
     state,
     get runtime() {
       return rt.turn?.runtime ?? rt.options.runtime ?? {}
+    },
+    get principal() {
+      return principalOf(rt)
     },
     log: rt.log,
     get signal() {

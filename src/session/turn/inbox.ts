@@ -1,3 +1,4 @@
+import type { Principal } from '../../agent/session-types.ts'
 import type { HarnessUIMessage, StopReason } from '../../messages/types.ts'
 import type { InboxSettle } from '../inbox/driver.ts'
 import type { TurnCtx } from './ctx.ts'
@@ -52,12 +53,14 @@ export async function settleInbox(t: TurnCtx, stop: StopReason): Promise<void> {
   const leftovers = await t.inbox.close()
   let wake = false
   const wakeIds: string[] = []
+  let wakePrincipal: Principal | undefined
   for (const item of leftovers) {
     const steer = item.steer
     if (steer === undefined) {
       // an undelivered event stays for the next turn; a wake starts that turn (not after aborts)
       if (item.wake === true && stop !== 'aborted' && stop !== 'timeout') {
         wake = true
+        if (wakePrincipal === undefined) wakePrincipal = item.wakePrincipal
         if (item.event !== undefined) wakeIds.push(item.event.id)
       }
       continue
@@ -82,5 +85,12 @@ export async function settleInbox(t: TurnCtx, stop: StopReason): Promise<void> {
       item.settle?.(t.rt.closed ? 'dropped' : 'turn')
     }
   }
-  if (wake) await t.host.enqueueWake(wakeIds, stop === 'tool-pending')
+  // the wake turn runs for whoever the event named, else for the asker of the turn that ends now
+  if (wake) {
+    await t.host.enqueueWake(
+      wakeIds,
+      stop === 'tool-pending',
+      wakePrincipal ?? t.turnState.principal,
+    )
+  }
 }

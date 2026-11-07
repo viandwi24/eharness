@@ -27,6 +27,7 @@ import type {
   InboxAdapter,
   InboxItem,
   InboxReleaseOptions,
+  Principal,
   SessionStateSnapshot,
 } from '../../agent/session-types.ts'
 import type { InboxRetryOptions } from '../../agent/types.ts'
@@ -34,6 +35,7 @@ import { HarnessError, type HarnessWarning } from '../../errors.ts'
 import { errorText, unref } from '../../internal/util.ts'
 import type { NormalizedInput } from '../input.ts'
 import { runsElsewhereHere } from '../local-turns.ts'
+import { isPrincipal, samePrincipal } from '../principal.ts'
 import type { SessionRuntime } from '../runtime.ts'
 import { collectDue, mergeInputs, resolveCollect } from './collect.ts'
 import { inboxIdsIn } from './dedupe.ts'
@@ -47,6 +49,8 @@ export const DEFAULT_INBOX_POLL_MS = 2_000
 export interface InboxUnit {
   kind: 'send' | 'wake'
   input: NormalizedInput | undefined
+  /** Principal of a wake unit (its first item that has one, ADR-0069); a send unit carries it in `input`. */
+  principal?: Principal
   /** Item ids (acked at the turn's commit point). */
   ids: string[]
   /** User message metadata: one item → `inboxId`, merged `collect` items → `collected`. */
@@ -649,15 +653,25 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     const head = rest[0] as InboxItem
     if (head.kind === 'wake') {
       const ids: string[] = []
+      let principal: Principal | undefined
       for (const item of rest) {
         if (item.kind !== 'wake') break
         if (seen.has(item.id)) done.push(item.id)
-        else ids.push(item.id)
+        else {
+          ids.push(item.id)
+          if (principal === undefined && isPrincipal(item.principal)) principal = item.principal
+        }
       }
       const first = ids[0]
       return first === undefined
         ? undefined
-        : { kind: 'wake', input: undefined, ids, meta: { inboxId: first } }
+        : {
+            kind: 'wake',
+            input: undefined,
+            ids,
+            meta: { inboxId: first },
+            ...(principal === undefined ? {} : { principal: structuredClone(principal) }),
+          }
     }
     if (head.kind !== 'send') return undefined
     if (head.mode !== 'collect') {
@@ -684,6 +698,9 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
         done.push(item.id)
         continue
       }
+      // one turn has one principal: a burst ends where the asker changes (ADR-0069)
+      const lead = burst[0]
+      if (lead !== undefined && !samePrincipal(lead.input.principal, item.input.principal)) break
       burst.push(item)
     }
     if (burst.length === 0) return undefined

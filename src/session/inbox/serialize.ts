@@ -8,6 +8,7 @@ import type { JSONValue, UIMessage } from 'ai'
 import type { SerializedInput } from '../../agent/session-types.ts'
 import type { InputFilesConfig } from '../../agent/types.ts'
 import { type NormalizedInput, normalizeInput } from '../input.ts'
+import { clonePrincipal, principalProblem } from '../principal.ts'
 
 /** The stored form of a normalized input. */
 export function toSerialized(input: NormalizedInput): SerializedInput {
@@ -17,6 +18,7 @@ export function toSerialized(input: NormalizedInput): SerializedInput {
     out.appMetadata = structuredClone(input.appMetadata) as Record<string, JSONValue>
   }
   if (input.app !== undefined) out.app = structuredClone(input.app)
+  if (input.principal !== undefined) out.principal = clonePrincipal(input.principal)
   return out
 }
 
@@ -34,5 +36,9 @@ export function fromSerialized(
   const normalized = normalizeInput(message, options)
   // `app` is server-set (enqueue), not client metadata: it survives `acceptClientMetadata: false`
   if (input.app !== undefined) normalized.app = structuredClone(input.app)
+  // a stored principal that is no longer valid is dropped (the session default applies), never trusted
+  if (input.principal !== undefined && principalProblem(input.principal) === undefined) {
+    normalized.principal = clonePrincipal(input.principal)
+  }
   return normalized
 }
