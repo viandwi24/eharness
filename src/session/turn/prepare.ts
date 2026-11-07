@@ -19,7 +19,7 @@ import {
 } from '../interaction/pending.ts'
 import { createRewind, type RewindTarget, resolveRewindTarget } from '../interaction/rewind.ts'
 import { validateExternalAnswers } from '../interaction/waits.ts'
-import { isOwnLeftover } from '../local-turns.ts'
+import { isOwnLeftover, lockAcquireOptions } from '../local-turns.ts'
 import type { Prepared, TurnCtx } from './ctx.ts'
 import { validateWith } from './helpers.ts'
 import { currentGrants, write, writeStart } from './output.ts'
@@ -55,7 +55,7 @@ export async function prepare(t: TurnCtx): Promise<Prepared> {
         t.rt.agent.observe,
         'lock.wait',
         { sessionId: t.rt.id, turnId: t.turnId },
-        () => lock.acquire(t.rt.id, { signal: t.controller.signal }),
+        () => lock.acquire(t.rt.id, lockAcquireOptions(t.rt, t.controller.signal)),
       )
     } catch (error) {
       // contention is EH_SESSION_BUSY, a failing lock service EH_LOCK_UNAVAILABLE (spec 05 §8)

@@ -866,9 +866,22 @@ export interface SessionLock {
    *  `HarnessError('EH_SESSION_BUSY')` if the session is locked elsewhere (contention → run error
    *  EH_SESSION_BUSY); any OTHER rejection means the lock service failed and is reported as
    *  `EH_LOCK_UNAVAILABLE` (run error, 503). Must not block indefinitely. */
-  acquire(sessionId: string, opts: { signal: AbortSignal }): Promise<() => Promise<void>>
+  acquire(
+    sessionId: string,
+    opts: { signal: AbortSignal; owner?: string },
+  ): Promise<() => Promise<void>>
 }
 ```
+
+`owner` is `recovery.instanceId` (§9.2) and is passed only when that id is set (never the random
+per-process owner), on every acquire: turns, `recover()`, compaction and the exactly-once `respond()`
+path. It is optional and additive: an adapter that ignores it stays valid. A lease lock may use it
+to treat a live lease held under the SAME `owner` by a holder it does not know (a previous process
+with the same instance id, which died without releasing) as stale at once, instead of waiting for
+the lease to expire: the lock-level twin of what §9.2 does for `activeTurn`. A lease held under
+another owner, or none, still rejects with `EH_SESSION_BUSY`. The id must be unique among the live
+instances of one storage (§9.2); two live agent objects of one process that share an id and a lock
+space would take each other's leases over, so they must share the lock object.
 
 Postgres example: `SELECT pg_try_advisory_lock(hashtextextended($1, 0))` on a dedicated
 connection; reject with `EH_SESSION_BUSY` when it returns `false` (a connection error is just
@@ -876,7 +889,9 @@ rethrown: it becomes `EH_LOCK_UNAVAILABLE`); release with `pg_advisory_unlock` i
 function. The library ships no lock implementation. `lockConformance` (`eharness/testing`) checks
 the contract: prompt rejection with `EH_SESSION_BUSY` while held, release frees only its own acquire (idempotent, a stale
 release never frees a newer holder), one winner among parallel acquires, cross-handle exclusion
-and, for lease locks, takeover of an expired holder.
+and, for lease locks, takeover of an expired holder. The opt-in option `leaseOwnerTakeover: true`
+(needs `peer`) adds the `owner` case above: a lease held under the same `owner` by another handle is taken
+over at once, a different or absent owner is still rejected, and the old holder's late release is a no-op.
 
 ## 9. Crash recovery
 

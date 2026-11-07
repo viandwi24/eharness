@@ -17,7 +17,7 @@ import { recordOutsideTurn } from '../../loop/ledger.ts'
 import { costOf } from '../../models/cost.ts'
 import { copyMessages } from '../family.ts'
 import { liveForeignTurn } from '../inbox/driver.ts'
-import { isOwnLeftover } from '../local-turns.ts'
+import { isOwnLeftover, lockAcquireOptions } from '../local-turns.ts'
 import { recoverInterruptedTurn } from '../recover.ts'
 import { DEFAULT_STALE_MS } from '../remote-abort.ts'
 import { budgetOverrun } from '../turn/helpers.ts'
@@ -52,7 +52,7 @@ export async function apiCompact(
     const lock = s.rt.options.lock
     if (lock !== undefined) {
       try {
-        release = await lock.acquire(s.id, { signal: s.closeController.signal })
+        release = await lock.acquire(s.id, lockAcquireOptions(s.rt, s.closeController.signal))
       } catch (error) {
         if (!isHarnessError(error, 'EH_SESSION_BUSY')) {
           s.log.warn('eharness: acquiring the session lock failed', { error })
@@ -184,7 +184,7 @@ export async function apiRecover(
     const lock = s.rt.options.lock
     if (lock !== undefined) {
       try {
-        release = await lock.acquire(s.id, { signal: s.closeController.signal })
+        release = await lock.acquire(s.id, lockAcquireOptions(s.rt, s.closeController.signal))
       } catch (error) {
         // contention is `locked`; a failing lock service must not read as a rival instance
         if (isHarnessError(error, 'EH_SESSION_BUSY')) {

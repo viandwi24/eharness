@@ -9,6 +9,19 @@
 /** Owner id (the stable instance id) -> turn id -> runtime. Different instance ids never see each other. */
 const running = new Map<string, Map<string, WeakRef<object>>>()
 
+/**
+ * Options of `SessionLock.acquire` (spec 05 §8): the abort signal and, when `recovery.instanceId`
+ * is set, that id as `owner`, so a lease lock can take over a lease its restarted self left behind.
+ */
+export function lockAcquireOptions(
+  rt: { agent: { config: { recovery?: false | { instanceId?: string } | undefined } } },
+  signal: AbortSignal,
+): { signal: AbortSignal; owner?: string } {
+  const recovery = rt.agent.config.recovery
+  const owner = recovery === false || recovery === undefined ? undefined : recovery.instanceId
+  return owner === undefined ? { signal } : { signal, owner }
+}
+
 /** Record `rt` as the runtime that runs `turnId`. */
 export function registerLocalTurn(rt: { owner: string }, turnId: string): void {
   const turns = running.get(rt.owner) ?? new Map<string, WeakRef<object>>()

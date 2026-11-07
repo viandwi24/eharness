@@ -65,7 +65,10 @@ export interface SessionLock {
    * session is locked elsewhere (contention); any other rejection is a failing lock service and
    * becomes `EH_LOCK_UNAVAILABLE`. Must not block indefinitely.
    */
-  acquire(sessionId: string, opts: { signal: AbortSignal }): Promise<() => Promise<void>>
+  acquire(
+    sessionId: string,
+    opts: { signal: AbortSignal; owner?: string },
+  ): Promise<() => Promise<void>>
 }
 
 /**

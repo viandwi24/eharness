@@ -64,18 +64,21 @@ export function suiteGroups(env: SuiteEnv): SuiteGroup[] {
     },
     {
       name: 'SessionLock',
-      cases: lockConformance(() => {
-        const path = env.newPath()
-        const own = env.file(path)
-        return {
-          lock: sqliteLock(own, { ms: 60_000 }),
-          peer: () => sqliteLock(env.file(path), { ms: 60_000 }),
-          // a crashed holder stops renewing: its lease runs out without a release
-          expire: (sessionId) => {
-            own.run('UPDATE eh_locks SET until = 0 WHERE session_id = ?', [sessionId])
-          },
-        }
-      }),
+      cases: lockConformance(
+        () => {
+          const path = env.newPath()
+          const own = env.file(path)
+          return {
+            lock: sqliteLock(own, { ms: 60_000 }),
+            peer: () => sqliteLock(env.file(path), { ms: 60_000 }),
+            // a crashed holder stops renewing: its lease runs out without a release
+            expire: (sessionId) => {
+              own.run('UPDATE eh_locks SET until = 0 WHERE session_id = ?', [sessionId])
+            },
+          }
+        },
+        { leaseOwnerTakeover: true },
+      ),
     },
     {
       name: 'InboxAdapter',

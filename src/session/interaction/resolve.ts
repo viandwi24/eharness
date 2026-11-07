@@ -9,6 +9,7 @@
  * @see docs/specs/11-interaction.md#42-external-waits
  * @see docs/decisions/0027-external-waits-park-at-the-tool-boundary.md
  */
+
 import type { UIMessage } from 'ai'
 import type {
   HarnessRun,
@@ -25,6 +26,7 @@ import type { PendingExternal, PendingState, WaitResult } from '../../messages/t
 import { externalOf, type WaitStart } from '../../registry/external.ts'
 import type { ToolOutputSink } from '../../registry/output-limits.ts'
 import { finishToolOutput } from '../../registry/wrap.ts'
+import { lockAcquireOptions } from '../local-turns.ts'
 import type { OpenSession, SessionRuntime } from '../runtime.ts'
 import {
   applyStart,
@@ -194,7 +196,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     let release: (() => Promise<void>) | undefined
     if (lock !== undefined && !rt.state.canCas) {
       try {
-        release = await lock.acquire(rt.id, { signal: rt.signal })
+        release = await lock.acquire(rt.id, lockAcquireOptions(rt, rt.signal))
       } catch (error) {
         if (!isHarnessError(error, 'EH_SESSION_BUSY')) {
           rt.log.warn('eharness: acquiring the session lock failed', { error })
@@ -372,7 +374,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     if (lock === undefined || rt.state.canCas) return fn()
     let release: () => Promise<void>
     try {
-      release = await lock.acquire(rt.id, { signal: rt.signal })
+      release = await lock.acquire(rt.id, lockAcquireOptions(rt, rt.signal))
     } catch (error) {
       if (!isHarnessError(error, 'EH_SESSION_BUSY')) {
         rt.log.warn('eharness: acquiring the session lock failed', { error })

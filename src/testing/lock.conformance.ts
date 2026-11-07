@@ -25,6 +25,13 @@ export interface LockConformanceOptions {
   concurrency?: number
   /** Longest an `acquire` may take to resolve or reject (ms); it must not block. Default 2 000. */
   maxAcquireMs?: number
+  /**
+   * Opt in to the `owner` case (spec 05 §8): `acquire(id, { signal, owner })` of a lease lock takes
+   * over a live lease held under the SAME `owner` by a handle other than the caller (a restarted
+   * instance), while a different or absent `owner` is still rejected. Needs `peer`. Default off:
+   * adapters that ignore `owner` stay valid.
+   */
+  leaseOwnerTakeover?: boolean
 }
 
 type Outcome = { ok: true; release: () => Promise<void> } | { ok: false; error: unknown }
@@ -55,7 +62,11 @@ export function lockConformance(
     return 'acquire' in made ? { lock: made } : made
   }
   /** Acquire, mapping a rejection to `{ ok: false }` and failing when it takes too long. */
-  const attempt = async (lock: SessionLock, sessionId: string): Promise<Outcome> => {
+  const attempt = async (
+    lock: SessionLock,
+    sessionId: string,
+    owner?: string,
+  ): Promise<Outcome> => {
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
@@ -64,7 +75,13 @@ export function lockConformance(
       )
     })
     try {
-      const release = await Promise.race([lock.acquire(sessionId, { signal: signal() }), timeout])
+      const release = await Promise.race([
+        lock.acquire(
+          sessionId,
+          owner === undefined ? { signal: signal() } : { signal: signal(), owner },
+        ),
+        timeout,
+      ])
       assertTrue(typeof release === 'function', 'acquire resolves with a release function')
       return { ok: true, release }
     } catch (error) {
@@ -74,13 +91,18 @@ export function lockConformance(
       clearTimeout(timer)
     }
   }
-  const mustAcquire = async (lock: SessionLock, id: string, what: string) => {
-    const got = await attempt(lock, id)
+  const mustAcquire = async (lock: SessionLock, id: string, what: string, owner?: string) => {
+    const got = await attempt(lock, id, owner)
     if (!got.ok) throw new Error(`${what}: the acquire must succeed`)
     return got.release
   }
-  const mustReject = async (lock: SessionLock, id: string, what: string): Promise<void> => {
-    const got = await attempt(lock, id)
+  const mustReject = async (
+    lock: SessionLock,
+    id: string,
+    what: string,
+    owner?: string,
+  ): Promise<void> => {
+    const got = await attempt(lock, id, owner)
     if (got.ok) {
       await got.release()
       throw new Error(`${what}: the acquire must be rejected`)
@@ -197,5 +219,25 @@ export function lockConformance(
         await taken()
       },
     },
+    ...(options.leaseOwnerTakeover === true
+      ? [
+          {
+            name: 'a live lease held under the same owner by another handle is taken over at once',
+            run: async () => {
+              const { lock, peer } = await make()
+              assertTrue(peer !== undefined, 'leaseOwnerTakeover needs a `peer` handle')
+              const restarted = (peer as () => SessionLock)()
+              const id = uniqueSessionId('lock')
+              const dead = await mustAcquire(lock, id, 'holder under owner a', 'instance-a')
+              await mustReject(restarted, id, 'no owner')
+              await mustReject(restarted, id, 'another owner', 'instance-b')
+              const taken = await mustAcquire(restarted, id, 'same owner, restarted', 'instance-a')
+              await dead() // the old holder wakes up: must not free the new holder's lease
+              await mustReject(lock, id, 'the new holder still holds it')
+              await taken()
+            },
+          },
+        ]
+      : []),
   ]
 }
