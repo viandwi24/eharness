@@ -27,6 +27,7 @@ import type {
   AbortRequestResult,
   ActiveTurn,
   ApprovalActor,
+  CloseOptions,
   InjectOptions,
   PendingResponse,
   RecoverResult,
@@ -337,5 +338,6 @@ export interface HarnessSession<
    * pending approvals keeps it waiting until `respond()` (or `abort()` drops the queue).
    */
   idle(): Promise<void>
-  close(): Promise<void>
+  /** Close the session; `inFlight` chooses how a running turn ends (spec 05 §1). */
+  close(options?: CloseOptions): Promise<void>
 }

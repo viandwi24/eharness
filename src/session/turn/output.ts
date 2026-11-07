@@ -80,7 +80,8 @@ export function trackToolCall(t: TurnCtx, chunk: UIMessageChunk): void {
  * the live UI and the stored message agree (spec 05 §3 step 16, ADR-0014).
  */
 export function answerOpenCalls(t: TurnCtx): void {
-  if (!t.committed) return
+  // `close({ inFlight: 'interrupt' })`: recovery answers them (`INTERRUPTED_CRASH`) when it repairs the message
+  if (!t.committed || t.interruptOnEnd) return
   const pending = t.outcome.stop === 'tool-pending' ? t.outcome.pending : undefined
   for (const toolCallId of [...t.openCalls]) {
     if (pending !== undefined && pendingCallIds(pending).has(toolCallId)) continue

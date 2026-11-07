@@ -173,6 +173,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   t.heartbeatInFlight = false
   // ─── end sequence (spec 05 §3 step 17) ────────────────────────────────────────────────────
   t.ended = false
+  t.interruptOnEnd = false
   t.rt.events.emit({ type: 'status', running: true })
   void (async () => {
     try {
@@ -212,6 +213,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     run: t.run,
     buffer: t.buffer,
     abort: t.abort,
+    interrupt: () => {
+      t.interruptOnEnd = true
+      t.abort('closed')
+    },
     steer(input, inboxId, settle) {
       if (!t.inbox.open || t.ended) return false
       // idempotent per inbox id: a redelivered steer this turn already holds is not delivered again

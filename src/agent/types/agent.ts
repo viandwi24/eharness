@@ -34,6 +34,7 @@ import type {
   ToolsInput,
 } from '../../registry/types.ts'
 import type {
+  CloseOptions,
   CollectOptions,
   DeadInboxItem,
   HarnessKindTypes,
@@ -308,9 +309,9 @@ export interface HarnessAgent<C = HarnessAgentConfig> {
    */
   peek(sessionId: string, options?: Pick<SessionOptions, 'storage'>): SessionPeek<AgentMessageOf<C>>
   /** Close and evict a cached session (runs plugin dispose). */
-  closeSession(sessionId: string): Promise<void>
+  closeSession(sessionId: string, options?: CloseOptions): Promise<void>
   /** Close all sessions. Call on shutdown. */
-  close(): Promise<void>
+  close(options?: CloseOptions): Promise<void>
   /** Type-only brand used by `InferHarnessUIMessage`. Undefined at runtime. */
   readonly '~types': { message: AgentMessageOf<C>; kinds: AgentKindTypes<C> }
 }

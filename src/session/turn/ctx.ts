@@ -103,6 +103,11 @@ export interface RunningTurn {
   buffer: TurnBuffer
   abort(reason?: string): void
   /**
+   * Abort for a graceful close that must read like a crash recovery (spec 05 §1): the turn ends
+   * `stop: 'interrupted'`, repaired by the recovery code. A turn that has not committed just aborts.
+   */
+  interrupt(): void
+  /**
    * Steer the running turn: `input.submit` (`via: 'steer'`) now, delivery at the next step
    * boundary (spec 11 §6.1). False when the turn no longer takes input.
    */
@@ -270,6 +275,8 @@ export interface TurnCtx {
   heartbeatInFlight: boolean
   // ─── end sequence (spec 05 §3 step 17) ────────────────────────────────────────────────────
   ended: boolean
+  /** `close({ inFlight: 'interrupt' })` asked for the recovery shape at the end of the turn. */
+  interruptOnEnd: boolean
   lastStepMessage?: HarnessUIMessage | undefined
   abort: (reason?: string | undefined) => void
   run: HarnessRun<UIMessage>

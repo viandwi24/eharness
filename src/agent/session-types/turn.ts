@@ -59,6 +59,19 @@ export type RecoverResult =
   | { recovered: false; reason: 'idle' | 'live' | 'locked' | 'lock-unavailable' | 'disabled' }
 
 /**
+ * Options of `close()` / `closeSession()` (spec 05 §1). `inFlight` decides what happens to a turn
+ * that runs while the session closes: `'abort'` (default) aborts it and saves it `stop: 'aborted'`;
+ * `'interrupt'` leaves it exactly as `session.recover()` leaves a crashed one (§9.2): `stop:
+ * 'interrupted'`, an `EH_TURN_INTERRUPTED` notice, `activeTurn` cleared, so one UI code path serves
+ * "the server stopped" and "the server crashed".
+ *
+ * @see docs/specs/05-session-and-storage.md#1-session-options
+ */
+export interface CloseOptions {
+  inFlight?: 'abort' | 'interrupt'
+}
+
+/**
  * A running turn as reported by `session.busy()`.
  *
  * @see docs/specs/05-session-and-storage.md#2-session-api

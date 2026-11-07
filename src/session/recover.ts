@@ -33,7 +33,7 @@ export async function recoverInterruptedTurn(
   rt: SessionRuntime,
   persist: (messages: HarnessUIMessage[]) => Promise<HarnessUIMessage[]>,
   stale: ActiveTurn,
-  options: { noticeId?: string; startedAt: number },
+  options: { noticeId?: string; startedAt: number; emitEnd?: boolean },
 ): Promise<HarnessUIMessage[]> {
   const message = rt.view?.find((m) => m.id === stale.messageId)
   if (message !== undefined) {
@@ -84,11 +84,13 @@ export async function recoverInterruptedTurn(
     },
   )
   const saved = await persist([notice])
-  rt.events.emit({
-    type: 'turn-end',
-    turnId: stale.turnId,
-    messageId: stale.messageId,
-    stop: 'interrupted',
-  })
+  if (options.emitEnd !== false) {
+    rt.events.emit({
+      type: 'turn-end',
+      turnId: stale.turnId,
+      messageId: stale.messageId,
+      stop: 'interrupted',
+    })
+  }
   return saved
 }

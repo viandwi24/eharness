@@ -532,8 +532,8 @@ export function defineHarnessAgent<
       runtime().session(sessionId, options) as unknown as ReturnType<HarnessAgent<C>['session']>,
     peek: (sessionId, options) =>
       runtime().peek(sessionId, options) as unknown as ReturnType<HarnessAgent<C>['peek']>,
-    closeSession: (sessionId) => runtime().closeSession(sessionId),
-    close: () => runtime().close(),
+    closeSession: (sessionId, options) => runtime().closeSession(sessionId, options),
+    close: (options) => runtime().close(options),
     '~types': undefined as unknown as { message: AgentMessageOf<C>; kinds: AgentKindTypes<C> },
   }
   setAgentInternals(agent, internals)

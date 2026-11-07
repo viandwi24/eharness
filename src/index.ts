@@ -17,6 +17,7 @@ export type {
   ActiveTurn,
   ApprovalActor,
   ChildSessionInfo,
+  CloseOptions,
   CollectOptions,
   CompactOptions,
   DeadInboxItem,

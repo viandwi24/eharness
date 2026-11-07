@@ -342,7 +342,7 @@ export function createSessionHandle(args: SessionHandleArgs): SessionHandle {
     idle() {
       return apiIdle(s)
     },
-    close: () => close(s),
+    close: (options) => close(s, options),
   }
   s.staleForDrain =
     s.config.recovery === false ? false : (s.config.recovery?.staleMs ?? DEFAULT_STALE_MS)
@@ -389,5 +389,5 @@ export function createSessionHandle(args: SessionHandleArgs): SessionHandle {
         })
   s.rt.inject = (kind, data, options) => s.session.inject(kind as never, data as never, options)
   touch(s)
-  return { session: s.session, rt: s.rt, close: () => close(s) }
+  return { session: s.session, rt: s.rt, close: (options) => close(s, options) }
 }

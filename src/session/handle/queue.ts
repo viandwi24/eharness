@@ -1,5 +1,10 @@
 import type { UIMessage } from 'ai'
-import type { CollectOptions, HarnessRun, SendOptions } from '../../agent/session-types.ts'
+import type {
+  CloseOptions,
+  CollectOptions,
+  HarnessRun,
+  SendOptions,
+} from '../../agent/session-types.ts'
 import { sessionClosedError } from '../../errors.ts'
 import { hookFailed, hookTimeoutOf, runHook } from '../../internal/hook-run.ts'
 import { unref } from '../../internal/util.ts'
@@ -393,7 +398,7 @@ export function touch(s: SessionCtx): void {
   unref(s.idleTimer)
 }
 
-export function close(s: SessionCtx): Promise<void> {
+export function close(s: SessionCtx, options?: CloseOptions): Promise<void> {
   if (s.closing !== undefined) return s.closing
   s.rt.closed = true
   if (s.idleTimer !== undefined) clearTimeout(s.idleTimer)
@@ -404,7 +409,8 @@ export function close(s: SessionCtx): Promise<void> {
   s.closing = (async () => {
     const running = s.current
     if (running !== undefined) {
-      running.abort('closed')
+      if (options?.inFlight === 'interrupt') running.interrupt()
+      else running.abort('closed')
       await running.run.result
     }
     s.closeController.abort('closed')

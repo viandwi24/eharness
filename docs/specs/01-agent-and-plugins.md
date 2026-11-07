@@ -201,9 +201,9 @@ export interface HarnessAgent<C = HarnessAgentConfig> {
    */
   peek(sessionId: string, options?: Pick<SessionOptions, 'storage'>): SessionPeek<AgentMessageOf<C>>
   /** Close and evict a cached session (runs plugin dispose). */
-  closeSession(sessionId: string): Promise<void>
-  /** Close all sessions. Call on shutdown. */
-  close(): Promise<void>
+  closeSession(sessionId: string, options?: CloseOptions): Promise<void>
+  /** Close all sessions. Call on shutdown. `{ inFlight: 'interrupt' }`: spec 05 §1. */
+  close(options?: CloseOptions): Promise<void>
   /**
    * Type-only brand used by InferHarnessUIMessage (undefined at runtime). `AgentMessageOf<C>` is
    * computed from the config type: core data parts + every plugin's namespaced parts/kinds + app

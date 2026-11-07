@@ -1,4 +1,5 @@
 import type { UIMessage } from 'ai'
+import type { ActiveTurn } from '../../agent/session-types.ts'
 import { hookFailed, runHook } from '../../internal/hook-run.ts'
 import { createKindMessage } from '../../messages/kinds.ts'
 import { INTERRUPTED_TURN } from '../../messages/texts.ts'
@@ -8,6 +9,7 @@ import { toTurnError } from '../../stream/describe-error.ts'
 import { forgetDelivered, recordDelivered } from '../inbox/dedupe.ts'
 import { pendingCallIds, timedWaits } from '../interaction/waits.ts'
 import { unregisterLocalTurn } from '../local-turns.ts'
+import { recoverInterruptedTurn } from '../recover.ts'
 import type { TurnCtx } from './ctx.ts'
 import { withoutUndefined } from './helpers.ts'
 import { markDelivered, settleInbox, settleOpInbox } from './inbox.ts'
@@ -116,45 +118,83 @@ export async function endPhases(
       )
       final.id = t.assistantId
       const pending = t.outcome.pending
-      final = answerDanglingToolParts(final, INTERRUPTED_TURN, (part) =>
-        pending === undefined ? false : pendingCallIds(pending).has(part.toolCallId),
-      )
-      // chunk-answered parts: same shape as answerDanglingToolParts (input {} fallback, no approval)
-      final = {
-        ...final,
-        parts: final.parts.map((part) => {
-          const tool = part as {
-            toolCallId?: string
-            input?: unknown
-            approval?: { approved?: boolean }
-            state?: string
-          }
-          if (tool.toolCallId === undefined) return part
-          // an automatically `approved` call of a tool without `execute` parks as its normal
-          // kind: the part is an open call again, without the (answered) approval (spec 11 §3)
-          if (
-            pending !== undefined &&
-            tool.state === 'approval-responded' &&
-            tool.approval?.approved === true &&
-            pendingCallIds(pending).has(tool.toolCallId)
-          ) {
-            const { approval: _approval, ...rest } = tool
-            return { ...rest, state: 'input-available' } as typeof part
-          }
-          if (!t.interrupted.has(tool.toolCallId)) return part
-          const { approval: _approval, ...rest } = tool
-          return { ...rest, input: tool.input ?? {} } as typeof part
-        }),
-      }
-
-      assistant = final
-      try {
-        assistant = (await t.host.persist([final]))[0] ?? final
-        await markDelivered(t, Number.POSITIVE_INFINITY)
-      } catch (saveError) {
-        stop = 'error'
-        error = toTurnError(saveError, t.log)
+      // `close({ inFlight: 'interrupt' })`: the recovery repair (spec 05 §1, §9.2) instead of the abort shape
+      const interrupting = t.interruptOnEnd && stop === 'aborted' && !t.timedOut
+      if (interrupting) {
+        // the abort stamped `stop: 'aborted'` on the message; recovery stamps its own
+        const stamped = final.metadata?.eharness
+        if (stamped !== undefined) {
+          const { stop: _aborted, ...rest } = stamped
+          final = { ...final, metadata: { ...final.metadata, eharness: rest } }
+        }
         t.rt.cacheMessage(final)
+        try {
+          const core = t.rt.state.core()
+          const active: ActiveTurn =
+            core.activeTurn?.turnId === t.turnId
+              ? core.activeTurn
+              : {
+                  turnId: t.turnId,
+                  kind: t.op.kind,
+                  messageId: t.assistantId,
+                  owner: t.rt.owner,
+                  startedAt: t.startedAt,
+                  heartbeatAt: t.startedAt,
+                }
+          after.push(
+            ...(await recoverInterruptedTurn(t.rt, t.host.persist, active, {
+              startedAt: t.startedAt,
+              emitEnd: false,
+            })),
+          )
+          assistant = t.rt.view?.find((m) => m.id === t.assistantId) ?? final
+          stop = 'interrupted'
+        } catch (saveError) {
+          stop = 'error'
+          error = toTurnError(saveError, t.log)
+        }
+      }
+      if (!interrupting) {
+        final = answerDanglingToolParts(final, INTERRUPTED_TURN, (part) =>
+          pending === undefined ? false : pendingCallIds(pending).has(part.toolCallId),
+        )
+        // chunk-answered parts: same shape as answerDanglingToolParts (input {} fallback, no approval)
+        final = {
+          ...final,
+          parts: final.parts.map((part) => {
+            const tool = part as {
+              toolCallId?: string
+              input?: unknown
+              approval?: { approved?: boolean }
+              state?: string
+            }
+            if (tool.toolCallId === undefined) return part
+            // an automatically `approved` call of a tool without `execute` parks as its normal
+            // kind: the part is an open call again, without the (answered) approval (spec 11 §3)
+            if (
+              pending !== undefined &&
+              tool.state === 'approval-responded' &&
+              tool.approval?.approved === true &&
+              pendingCallIds(pending).has(tool.toolCallId)
+            ) {
+              const { approval: _approval, ...rest } = tool
+              return { ...rest, state: 'input-available' } as typeof part
+            }
+            if (!t.interrupted.has(tool.toolCallId)) return part
+            const { approval: _approval, ...rest } = tool
+            return { ...rest, input: tool.input ?? {} } as typeof part
+          }),
+        }
+
+        assistant = final
+        try {
+          assistant = (await t.host.persist([final]))[0] ?? final
+          await markDelivered(t, Number.POSITIVE_INFINITY)
+        } catch (saveError) {
+          stop = 'error'
+          error = toTurnError(saveError, t.log)
+          t.rt.cacheMessage(final)
+        }
       }
       if (
         t.outcome.stop === 'error' ||

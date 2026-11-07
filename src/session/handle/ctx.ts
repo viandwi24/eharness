@@ -1,6 +1,7 @@
 import type { UIDataTypes, UIMessage, UITools } from 'ai'
 import type { AgentInternals } from '../../agent/internals.ts'
 import type {
+  CloseOptions,
   CollectOptions,
   HarnessRun,
   HarnessSession,
@@ -56,7 +57,7 @@ export const REMOTE_START_GRACE_MS = 3_000
 export interface SessionHandle {
   readonly session: HarnessSession<UIMessage, Record<string, unknown>>
   readonly rt: SessionRuntime
-  close(): Promise<void>
+  close(options?: CloseOptions): Promise<void>
 }
 
 /** One input of an open `collect` burst. */

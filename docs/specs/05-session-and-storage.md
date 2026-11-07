@@ -50,6 +50,19 @@ running turn is aborted and saved, `session.close` hooks run, state is written) 
 instance at once, but it opens — and so runs nothing — only after that close finished (no false
 crash recovery of the turn that was being closed).
 
+`close(options?)` exists on the agent, on `closeSession(id, options?)` and on the session:
+`{ inFlight: 'abort' | 'interrupt' }`, default `'abort'` (the behaviour above: the turn ends
+`stop: 'aborted'`). `'interrupt'` leaves a running turn exactly as `session.recover()` leaves a
+crashed one (§9.2), by the same repair code: its stream is aborted, tool calls that had no result
+are answered `INTERRUPTED_CRASH` (not `INTERRUPTED_TURN`; no `tool-output-error` chunk is written for
+them), open `text` / `reasoning` parts are closed, the assistant message gets `stop: 'interrupted'`,
+an `eh.notice` (`EH_TURN_INTERRUPTED`, `parentId` = the message) is saved, `activeTurn` is cleared and
+the lock is released. `run.result.stop`, the `turn-end` event and the `turn.end` hook report
+`'interrupted'`; the stream ends with an `abort` chunk. UIs therefore need one code path for "the
+server stopped" and "the server crashed". A turn that has not reached its commit point has nothing
+stored and ends as with `'abort'`; a turn that timed out keeps `'timeout'`. Idle eviction always
+uses `'abort'`. The first `close()` call of a session decides the mode.
+
 Numeric options named in this spec (`sessionIdleMs`, `recovery.*`, `inbox.*`, `streams.*`,
 `hooks.timeoutMs`, …) are bounds-checked when the agent is defined: a negative, non-finite or
 out-of-range value (durations above one day; `sessionIdleMs` above 30 days) throws
@@ -188,7 +201,7 @@ export interface HarnessSession<
    * by pending approvals keeps it waiting until respond() (or abort() drops the queue).
    */
   idle(): Promise<void>
-  close(): Promise<void>
+  close(options?: CloseOptions): Promise<void>   // { inFlight?: 'abort' | 'interrupt' }, §1
 }
 
 /**

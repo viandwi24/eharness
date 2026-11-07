@@ -14,6 +14,7 @@ import { DEFAULT_STALE_MS as DEFAULT_STALE } from '../session/remote-abort.ts'
 import { createSessionHandle } from '../session/session.ts'
 import type { AgentInternals } from './internals.ts'
 import type {
+  CloseOptions,
   HarnessSession,
   MessageAdapter,
   SessionOptions,
@@ -28,8 +29,8 @@ export const DEFAULT_SESSION_IDLE_MS: number = 30 * 60 * 1000
 export interface AgentSessions {
   session(id: string, options?: SessionOptions): HarnessSession<UIMessage, Record<string, unknown>>
   peek(id: string, options?: Pick<SessionOptions, 'storage'>): SessionPeek
-  closeSession(id: string): Promise<void>
-  close(): Promise<void>
+  closeSession(id: string, options?: CloseOptions): Promise<void>
+  close(options?: CloseOptions): Promise<void>
 }
 
 function sameJson(a: unknown, b: unknown): boolean {
@@ -154,11 +155,14 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
         },
       })
     },
-    async closeSession(id) {
-      await sessions.get(id)?.close()
+    async closeSession(id, options) {
+      await sessions.get(id)?.close(options)
     },
-    async close() {
-      await Promise.all([...[...sessions.values()].map((handle) => handle.close()), ...closing])
+    async close(options) {
+      await Promise.all([
+        ...[...sessions.values()].map((handle) => handle.close(options)),
+        ...closing,
+      ])
     },
   }
   return agent
