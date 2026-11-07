@@ -161,7 +161,7 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
 - [x] ADR-0068 to ADR-0070 accepted (2026-11-08); ADR-0068 amended before acceptance: the driver
       interface is synchronous
 - [x] Spec 36 written as a Draft contract (the package does not exist yet)
-- [ ] Specs 05, 11, 12, 14 updated with their code (06, 18, 20, 22, 34 done with B; 36 with A)
+- [x] Specs updated with their code: 01, 05, 10, 11, 12, 14, 18, 20, 22, 29, 34, 06; 36 with A
 - [ ] W1 (A and B ran in parallel; E waits for B because both touch `src/agent`):
   - [x] A: `packages/sqlite` (7d210cfe): drivers, adapters for every port, migrations; 150
         conformance cases pass on `bun:sqlite` and `node:sqlite` (Node 26 only; 22.5–22.12 untested).
@@ -190,12 +190,24 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
       bb5b1880 after ADR-0070 was amended: the principal key separator is U+001F). The key uses the
       principal that ASKED. `grants` lives on the agent config only. Not tested: a multi-instance
       continuation or `fork` with `by: 'principal'` (fork copies grant keys as they are).
-- [ ] Conformance: every A adapter passes every existing suite on Bun and on Node; new cases for lock
-      `owner`, principal durability across instances, and grants by principal
-- [ ] The team example moves to `@eharness/sqlite` (proof of the package, no behavior change)
-- [ ] Changesets: `eharness` minor (B, C, D, E), `@eharness/sqlite` initial minor; upgrade notes in
-      `docs/guides/upgrading.md`
-- [ ] Roadmap and board updated; release as 0.10.0
+- [x] Conformance: every A adapter passes every existing suite on Bun and on Node 26 (Node
+      22.5–22.12 untested); new cases for lock `owner` (`leaseOwnerTakeover`) and principal durability
+      (`multiInstanceConformance`); grants by principal are covered by integration tests, not by a
+      conformance suite
+- [ ] The team example moves to `@eharness/sqlite` (proof of the package, no behavior change).
+      **Not started on purpose:** the example keeps its own Drizzle tables and real data; diff
+      `schemaSql()` against them and test on a copy of the database first.
+- [x] Changesets: `eharness` minor (B, C, D, E), `@eharness/sqlite` initial minor, a patch for the
+      session-rules fix; upgrade notes in `docs/guides/upgrading.md` (grants options)
+- [ ] Roadmap (0.10.0 section) and board updated; release as 0.10.0 (needs the owner's go-ahead:
+      version PR, npm publish, CI and release flow for `@eharness/sqlite`, which only know the root)
+- [ ] Gate (2026-11-08, full run once): lint, test, build, `check:package`, `check:imports` pass
+      except: `check-throws` flagged `src/compaction/compact.ts:183` (fixed in 94d37bca, re-checked
+      alone, full lint not re-run); `bun run typecheck` stops at `svelte-check` of
+      `examples/team/web` (8 errors, `monaco-editor` types not installed, unrelated); one test fails,
+      `limits > a memory bomb is stopped by the memory limit` (QuickJS memory limit, team example,
+      times out at 5 s alone too, no P62 commit touches it, not checked against the baseline).
+      Also: `packages/sqlite` is not part of the root `typecheck` script.
 
 ## Acceptance criteria
 
