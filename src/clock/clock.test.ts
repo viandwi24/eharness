@@ -163,4 +163,30 @@ describe('clock plugin', () => {
     await agent.session('s').send('hi').result
     expect(model.calls[0]?.tools?.map((t) => t.name)).toEqual(['time'])
   })
+
+  test('timezone takes the ctx: each session sees its own zone', async () => {
+    const make = (): ReturnType<typeof defineHarnessAgent> =>
+      defineHarnessAgent({
+        model: scriptedModel([
+          { toolCalls: [{ toolName: 'datetime', input: { action: 'now' } }] },
+          { text: 'done' },
+        ]),
+        contextWindow: 100_000,
+        storage: { messages: inMemoryMessages(), state: inMemoryState() },
+        plugins: [
+          clock({
+            timezone: async (ctx) => String(ctx.runtime.zone),
+            now: () => utc('2026-10-13T02:41:07Z'),
+          }),
+        ],
+      })
+    const seen = async (zone: string): Promise<string> => {
+      const agent = make()
+      const session = agent.session('s', { runtime: { zone } })
+      await session.send('time?').result
+      return JSON.stringify(await session.messages())
+    }
+    expect(await seen(JKT)).toContain('Tuesday 2026-10-13 09:41:07 Asia/Jakarta')
+    expect(await seen(NY)).toContain('Monday 2026-10-12 22:41:07 America/New_York')
+  })
 })

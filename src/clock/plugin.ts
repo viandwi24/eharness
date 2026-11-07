@@ -11,7 +11,7 @@
  */
 import { tool } from 'ai'
 import { z } from 'zod'
-import { definePlugin, type HarnessPlugin } from '../index.ts'
+import { definePlugin, type HarnessContext, type HarnessPlugin } from '../index.ts'
 import { type SleepOptions, sleepTool } from './sleep.ts'
 import {
   addToMoment,
@@ -23,8 +23,11 @@ import {
 } from './time.ts'
 
 export interface ClockOptions {
-  /** The default IANA zone; a function is read on every call (a settings change applies at once). */
-  timezone: string | (() => string | Promise<string>)
+  /**
+   * The default IANA zone; a function is read on every call (a settings change applies at once)
+   * and receives the `ctx`, so the zone can follow the person (`ctx.runtime`, `ctx.principal`).
+   */
+  timezone: string | ((ctx: HarnessContext) => string | Promise<string>)
   /** Tool name. Default `'datetime'`. */
   toolName?: string
   /** Word used in the answer lines (`<label> time`, `<label> timezone`). Default `'Default'`. */
@@ -170,29 +173,37 @@ export function clock(options: ClockOptions): HarnessPlugin<'clock'> {
     name: 'clock',
     setup: () => ({
       tools: {
-        [toolName]: tool({
-          description: options.description ?? DATETIME_DESCRIPTION,
-          inputSchema,
-          metadata: { risk: 'read' },
-          execute: async (input): Promise<string> => {
-            try {
-              const zone =
-                typeof options.timezone === 'function' ? await options.timezone() : options.timezone
-              return runDatetime(input, zone, now(), options.label)
-            } catch (error) {
-              return `ERROR: the clock failed: ${String(error)}`
-            }
-          },
-        }),
+        [toolName]: (ctx: HarnessContext) =>
+          tool({
+            description: options.description ?? DATETIME_DESCRIPTION,
+            inputSchema,
+            metadata: { risk: 'read' },
+            execute: async (input): Promise<string> => {
+              try {
+                const zone =
+                  typeof options.timezone === 'function'
+                    ? await options.timezone(ctx)
+                    : options.timezone
+                return runDatetime(input, zone, now(), options.label)
+              } catch (error) {
+                return `ERROR: the clock failed: ${String(error)}`
+              }
+            },
+          }),
         ...(sleep === undefined
           ? {}
           : {
-              [sleep.toolName ?? 'sleep']: sleepTool({
-                timezone: options.timezone,
-                now,
-                ...(sleep.maxMinutes === undefined ? {} : { maxMinutes: sleep.maxMinutes }),
-                ...(sleep.description === undefined ? {} : { description: sleep.description }),
-              }),
+              [sleep.toolName ?? 'sleep']: (ctx: HarnessContext) =>
+                sleepTool({
+                  timezone:
+                    typeof options.timezone === 'function'
+                      ? () =>
+                          (options.timezone as (c: HarnessContext) => string | Promise<string>)(ctx)
+                      : options.timezone,
+                  now,
+                  ...(sleep.maxMinutes === undefined ? {} : { maxMinutes: sleep.maxMinutes }),
+                  ...(sleep.description === undefined ? {} : { description: sleep.description }),
+                }),
             }),
       },
     }),

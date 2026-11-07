@@ -10,7 +10,7 @@ date library, runtime-neutral, no Node-only code). Generalised from the team app
 
 ```ts
 clock({
-  timezone: string | (() => string | Promise<string>),  // IANA; a function is read on every call
+  timezone: string | ((ctx: HarnessContext) => string | Promise<string>),  // IANA; a function is read on every call with the ctx (per person: ctx.runtime, ctx.principal)
   toolName?: string,                                     // default 'datetime'
   now?: () => number,                                    // test seam
   sleep?: boolean | { toolName?, maxMinutes?, description? },  // also offer `sleep` (default off)
