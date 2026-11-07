@@ -159,11 +159,16 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
 - [x] ADR-0068 to ADR-0070 accepted (2026-11-08); ADR-0068 amended before acceptance: the driver
       interface is synchronous
 - [x] Spec 36 written as a Draft contract (the package does not exist yet)
-- [ ] Specs 05, 11, 12, 14, 18 updated with their code (06, 20, 22, 34 done with B)
+- [ ] Specs 05, 11, 12, 14 updated with their code (06, 18, 20, 22, 34 done with B; 36 with A)
 - [ ] W1 (A and B ran in parallel; E waits for B because both touch `src/agent`):
-  - [ ] A: package scaffolded with official commands, drivers, adapters, migrations
-  - [ ] B: `ctx` options: subagent catalog, clock, webFetch, compaction done (2b983ff5 to
-        fa7c4f3f); permissions session-rules fix per session id open
+  - [x] A: `packages/sqlite` (7d210cfe): drivers, adapters for every port, migrations; 150
+        conformance cases pass on `bun:sqlite` and `node:sqlite` (Node 26 only; 22.5–22.12 untested).
+        Open: CI and release flow only know the root package (publish needs a follow-up); lock
+        `owner` takeover and principal round-trip need conformance cases in `eharness/testing`.
+  - [x] B: `ctx` options (2b983ff5 to fa7c4f3f) and the permissions session-rules fix per session
+        id (10f18fcc). Subagent catalog functions must stay synchronous. The engine `rules(ctx)` /
+        `roots(ctx)` moved to the follow-ups. Not run: the examples' own permission tests (they now
+        take the no-id fallback and print one warning).
   - [ ] E: `close` mode, `activeTurn()`, lock `owner`, constants
 - [ ] W2: C, the turn principal through send, inbox, activeTurn, waits, wake, scheduler and children
 - [ ] W3: D, grants by principal and the grant timing change
