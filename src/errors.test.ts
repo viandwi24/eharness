@@ -233,8 +233,9 @@ describe('code lists (one source of truth, documented in spec 10)', () => {
 
   test('every code used in src (non-test) is declared', () => {
     const declared = new Set<string>(all)
-    // `EH_HTTP_*` are wire codes of eharness/http, `EH_INTERNAL` is the HTTP fallback
-    const wire = /^EH_(HTTP_|INTERNAL$)/
+    // `EH_HTTP_*` are wire codes of eharness/http, `EH_INTERNAL` is the HTTP fallback,
+    // `EH_SQLITE_SCHEMA_NEWER` belongs to SqliteSchemaError (spec 36 §4, not a HarnessErrorCode)
+    const wire = /^EH_(HTTP_|INTERNAL$|SQLITE_SCHEMA_NEWER$)/
     const unknown: string[] = []
     const walk = (dir: URL): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
