@@ -12,7 +12,7 @@ import type {
   HandoffRequest,
   HandoffStore,
   HandoffTransition,
-} from 'eharness/handoff'
+} from '../handoff/index.ts'
 import type { SqlDriver, SqlParam } from './driver.ts'
 import { type AdapterOptions, clock, one, placeholders, tables } from './util.ts'
 

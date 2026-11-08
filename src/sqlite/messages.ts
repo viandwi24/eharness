@@ -1,6 +1,6 @@
 /** `MessageAdapter` and `StateAdapter` (spec 05 §4, §7) on `<prefix>messages` and `<prefix>state`. */
 import type { UIMessage } from 'ai'
-import type { MessageAdapter, SessionStateSnapshot, StateAdapter } from 'eharness'
+import type { MessageAdapter, SessionStateSnapshot, StateAdapter } from '../index.ts'
 import type { SqlDriver } from './driver.ts'
 import { type AdapterOptions, clock, one, tables } from './util.ts'
 
@@ -26,6 +26,7 @@ export function sqliteMessages(driver: SqlDriver, options: AdapterOptions = {}):
   return {
     async load({ sessionId, fromId, beforeId, limit }) {
       if (fromId !== undefined && beforeId !== undefined) {
+        // plain-error: argument misuse, mirrors the MessageAdapter contract
         throw new TypeError('load: pass either fromId or beforeId, not both')
       }
       if (fromId !== undefined) {

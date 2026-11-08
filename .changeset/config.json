@@ -15,9 +15,7 @@
     "!src/**/*.int.test.ts",
     "!src/**/*.test-d.ts",
     "!src/**/__golden__/**",
-    "packages/*/src/**",
-    "!packages/*/src/**/*.test.ts",
-    "!packages/*/src/conformance*.ts",
+    "!src/sqlite/conformance*.ts",
     "package.json"
   ],
   "snapshot": {

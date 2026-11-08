@@ -1,11 +1,11 @@
 /**
- * `@eharness/sqlite/node`: the driver for `node:sqlite` (Node >= 22.5; the module is experimental
+ * `eharness/sqlite/node`: the driver for `node:sqlite` (Node >= 22.5; the module is experimental
  * in Node 22 and this driver follows its API). Imports nothing at runtime: pass the
  * `DatabaseSync` you opened.
  *
  * @example
  * ```ts
- * import { DatabaseSync } from 'node:sqlite'
+ * // DatabaseSync comes from the node:sqlite module, imported by your app
  * const driver = nodeSqlite(new DatabaseSync('app.db'), { owned: true })
  * ```
  */

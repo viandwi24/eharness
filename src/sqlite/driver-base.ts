@@ -77,6 +77,7 @@ export function createDriver(db: RawDatabase, options: DriverOptions = {}): SqlD
       try {
         const result = fn()
         if (result instanceof Promise) {
+          // plain-error: programmer error: a transaction callback must be synchronous
           throw new TypeError('transaction: fn must be synchronous (it returned a promise)')
         }
         db.exec('COMMIT')
@@ -108,7 +109,7 @@ export function createDriver(db: RawDatabase, options: DriverOptions = {}): SqlD
       db.exec(`PRAGMA busy_timeout = ${MIN_BUSY_TIMEOUT_MS}`)
       const warn = options.onWarn ?? ((m: string) => console.warn(m))
       warn(
-        `@eharness/sqlite: busy_timeout was ${current} ms; raised to ${MIN_BUSY_TIMEOUT_MS} ms so concurrent writers wait instead of failing`,
+        `eharness/sqlite: busy_timeout was ${current} ms; raised to ${MIN_BUSY_TIMEOUT_MS} ms so concurrent writers wait instead of failing`,
       )
     }
   }

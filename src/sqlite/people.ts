@@ -5,7 +5,7 @@
  * partial unique index), pairing codes are stored hashed and redeemed with one conditional
  * update, and every multi-statement change runs in one write transaction.
  */
-import { uuidv7 } from 'eharness'
+
 import {
   DEFAULT_CODE_TTL_MS,
   generatePairingCode,
@@ -16,7 +16,8 @@ import {
   type PersonAccount,
   type PersonEvent,
   type PersonStore,
-} from 'eharness/identity'
+} from '../identity/index.ts'
+import { uuidv7 } from '../index.ts'
 import type { SqlDriver, SqlParam } from './driver.ts'
 import { type AdapterOptions, one, tables } from './util.ts'
 

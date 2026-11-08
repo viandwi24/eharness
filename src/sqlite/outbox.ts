@@ -4,7 +4,7 @@
  * transition run in one write transaction, so two owners (also in two processes) never hold the
  * same item.
  */
-import type { ClaimOptions, OutboxRecord, OutboxState, OutboxStore } from 'eharness/channels'
+import type { ClaimOptions, OutboxRecord, OutboxState, OutboxStore } from '../channels/index.ts'
 import type { SqlDriver } from './driver.ts'
 import { type AdapterOptions, clock, one, tables } from './util.ts'
 

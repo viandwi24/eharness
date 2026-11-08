@@ -1,6 +1,6 @@
 # ADR-0068: SQLite adapters ship as a separate package (`@eharness/sqlite`)
 
-Status: **Accepted** · Date: 2026-11-08 · Plan: [P62](../plans/P62-adopter-gaps.md) · Builds on: [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0062](0062-platform-rings-and-rule-of-two.md)
+Status: **Superseded by [ADR-0071](0071-sqlite-adapters-as-subpaths.md)** · Date: 2026-11-08 · Plan: [P62](../plans/P62-adopter-gaps.md) · Builds on: [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0062](0062-platform-rings-and-rule-of-two.md)
 
 ## Context
 

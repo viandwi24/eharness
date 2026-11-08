@@ -412,6 +412,35 @@
     "scratchSandbox",
     "shell"
   ],
+  "eharness/sqlite": [
+    "SCHEMA_VERSION",
+    "SqliteSchemaError",
+    "createSqliteStorage",
+    "isSqliteSchemaError",
+    "migrate",
+    "schemaSql",
+    "setBudgetLimit",
+    "sqliteActivityStore",
+    "sqliteBudgetLedger",
+    "sqliteHandoffStore",
+    "sqliteInbox",
+    "sqliteLock",
+    "sqliteMessages",
+    "sqliteOutboxStore",
+    "sqlitePersonStore",
+    "sqliteProfileStore",
+    "sqliteScheduleStore",
+    "sqliteSealedProfileStore",
+    "sqliteState",
+    "sqliteStreamLog",
+    "utcMonthStart"
+  ],
+  "eharness/sqlite/bun": [
+    "bunSqlite"
+  ],
+  "eharness/sqlite/node": [
+    "nodeSqlite"
+  ],
   "eharness/storage/memory": [
     "inMemoryBudgetLedger",
     "inMemoryInbox",

@@ -1,7 +1,7 @@
 /**
- * `@eharness/sqlite`: one SQLite implementation of every storage port `eharness` defines (spec 36).
- * This entry imports no `bun:` or `node:` module; the drivers live on `@eharness/sqlite/bun` and
- * `@eharness/sqlite/node`.
+ * `eharness/sqlite`: one SQLite implementation of every storage port `eharness` defines (spec 36).
+ * This entry imports no `bun:` or `node:` module; the drivers live on `eharness/sqlite/bun` and
+ * `eharness/sqlite/node`.
  */
 
 export { sqliteActivityStore } from './activity.ts'

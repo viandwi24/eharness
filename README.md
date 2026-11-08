@@ -310,6 +310,9 @@ subpaths import `node:` built-ins; everything else is runtime-neutral.
 | `eharness/http` | Draft (0.8) | `createHarnessHttp()`: a `fetch(Request)` handler for chat, resume, sessions, attention and activity behind one `authorize` hook; `openAccess` |
 | `eharness/client` | Draft (0.8) | `createHarnessClient()`, `createHarnessTransport()`, `createChatSession()`, `createActivityFeed()`, `createAttentionList()` |
 | `eharness/client/react` | Draft (0.8) | `createReactBindings(React)`, `chatBridgeOf()` |
+| `eharness/sqlite` | Draft | `createSqliteStorage()`, `migrate()`, `schemaSql()`, one SQLite adapter per storage port (messages, state, lock, inbox, stream log, budget, activity, schedules, outbox, handoffs, people, profiles), `SqlDriver` type |
+| `eharness/sqlite/bun` | Draft | `bunSqlite(db)`: driver for a `bun:sqlite` handle (imports nothing) |
+| `eharness/sqlite/node` | Draft | `nodeSqlite(db)`: driver for a `node:sqlite` handle, Node >= 22.5 (imports nothing) |
 | `eharness/testing` | Accepted | `scriptedModel()`, `scriptedProvider()` and conformance suites for your adapters |
 
 The full table with source files is in [architecture](docs/architecture.md#2-package--exports).

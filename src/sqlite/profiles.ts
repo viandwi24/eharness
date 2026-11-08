@@ -11,7 +11,7 @@ import {
   type SealedProfileStore,
   type SealedProfileStoreOptions,
   sealedProfileStore,
-} from 'eharness/providers'
+} from '../providers/index.ts'
 import type { SqlDriver } from './driver.ts'
 import { type AdapterOptions, createWatcher, one, tables } from './util.ts'
 

@@ -61,6 +61,7 @@ const subpaths = [
   'limits',
   'clock',
   'browser',
+  'sqlite',
 ]
 /**
  * Documented exceptions (ADR-0049): `eharness/connectors` reuses the generic configuration
@@ -70,8 +71,19 @@ const allowedImports: Record<string, string[]> = {
   connectors: ['providers'],
   http: ['activity'],
   client: ['http', 'activity'],
-  testing: ['activity', 'http', 'scheduler', 'channels', 'identity', 'handoff', 'browser'],
+  testing: [
+    'activity',
+    'http',
+    'scheduler',
+    'channels',
+    'identity',
+    'handoff',
+    'browser',
+    'sqlite',
+  ],
   browser: ['providers'],
+  // ADR-0071: the SQLite adapters implement the ports of these subpaths (types, plus runtime helpers).
+  sqlite: ['activity', 'channels', 'handoff', 'identity', 'providers', 'scheduler'],
 }
 /** Node-only modules (ADR-0036): `node:` built-ins allowed. */
 const nodeOnly = [
@@ -130,7 +142,10 @@ const coreIndex = join(src, 'index.ts')
 
 const specifierPattern =
   /(?:^|[\s;])(?:import|export)\s[^'"`]*?from\s*['"]([^'"]+)['"]|(?:^|[^\w.])import\s*\(\s*['"]([^'"]+)['"]\s*\)|(?:^|[\s;])import\s*['"]([^'"]+)['"]/gm
-const testFile = /\.(?:int\.)?test(?:-d)?\.ts$|(?:^|\/)test-kit\.ts$/
+// `sqlite/conformance*.ts` are test support (ADR-0071): they run the conformance suites against a
+// real driver and are never part of a built entry.
+const testFile =
+  /\.(?:int\.)?test(?:-d)?\.ts$|(?:^|\/)test-kit\.ts$|^sqlite\/conformance[\w.-]*\.ts$/
 
 const violations: string[] = []
 

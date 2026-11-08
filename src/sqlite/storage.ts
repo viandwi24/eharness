@@ -1,4 +1,9 @@
 /** `createSqliteStorage`: every adapter on one driver (spec 36 §3). */
+
+import type { ActivityStore } from '../activity/index.ts'
+import type { OutboxStore } from '../channels/index.ts'
+import type { HandoffStore } from '../handoff/index.ts'
+import type { PersonStore } from '../identity/index.ts'
 import type {
   BudgetLedger,
   InboxAdapter,
@@ -6,13 +11,9 @@ import type {
   SessionLock,
   StateAdapter,
   StreamLogAdapter,
-} from 'eharness'
-import type { ActivityStore } from 'eharness/activity'
-import type { OutboxStore } from 'eharness/channels'
-import type { HandoffStore } from 'eharness/handoff'
-import type { PersonStore } from 'eharness/identity'
-import type { ProfileStore, SecretVault } from 'eharness/providers'
-import type { ScheduleStore } from 'eharness/scheduler'
+} from '../index.ts'
+import type { ProfileStore, SecretVault } from '../providers/index.ts'
+import type { ScheduleStore } from '../scheduler/index.ts'
 import { sqliteActivityStore } from './activity.ts'
 import { sqliteBudgetLedger } from './budget.ts'
 import type { SqlDriver } from './driver.ts'

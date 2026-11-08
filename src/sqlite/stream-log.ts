@@ -9,7 +9,7 @@
  * `expire(key, ttl)` shortens it; an expired log reads as `missing` and is purged lazily.
  * `subscribe` polls (`pollMs`).
  */
-import type { StreamLogAdapter, StreamLogKey, StreamLogStatus } from 'eharness'
+import type { StreamLogAdapter, StreamLogKey, StreamLogStatus } from '../index.ts'
 import type { SqlDriver } from './driver.ts'
 import { type AdapterOptions, clock, createWatcher, one, tables } from './util.ts'
 
@@ -101,6 +101,7 @@ export function sqliteStreamLog(
       const length = driver.transaction(() => {
         const existing = live(key)
         if (existing === undefined && opts?.at !== undefined && opts.at > 0) {
+          // plain-error: adapter contract: the same wording as the in-memory stream log
           throw new Error(`append at ${opts.at} leaves a gap: the log does not exist`)
         }
         const h = existing ?? create(key, 'streaming')
@@ -108,6 +109,7 @@ export function sqliteStreamLog(
         let fresh = batch
         if (opts?.at !== undefined) {
           if (opts.at > h.length) {
+            // plain-error: adapter contract: the same wording as the in-memory stream log
             throw new Error(`append at ${opts.at} leaves a gap: the log has ${h.length}`)
           }
           fresh = batch.slice(h.length - opts.at)

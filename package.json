@@ -30,7 +30,6 @@
   ],
   "workspaces": [
     ".",
-    "packages/sqlite",
     "examples/coder",
     "examples/team",
     "examples/team/server",
@@ -42,16 +41,17 @@
   "scripts": {
     "lint": "biome check . && bun scripts/check-throws.ts",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p examples && tsc --noEmit -p examples/coder && tsc --noEmit -p examples/team/server && tsc --noEmit -p examples/sandbox-server && bun run --cwd examples/team/web check && bun run --cwd packages/sqlite typecheck",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p examples && tsc --noEmit -p examples/coder && tsc --noEmit -p examples/team/server && tsc --noEmit -p examples/sandbox-server && bun run --cwd examples/team/web check",
     "test": "bun test",
     "test:fast": "bun test ./src --path-ignore-patterns '**/*.int.test.ts' --path-ignore-patterns 'src/shell/**'",
     "test:int": "bun test .int.test.ts --path-ignore-patterns 'examples/**'",
-    "build": "tsdown && bun run --cwd packages/sqlite build",
-    "check:package": "bun scripts/check-client-bundle.ts && bun scripts/exports-snapshot.ts --dist && publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz && bun run --cwd packages/sqlite check:package",
+    "build": "tsdown",
+    "check:package": "bun scripts/check-client-bundle.ts && bun scripts/exports-snapshot.ts --dist && publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz && bun scripts/check-sqlite-entry.ts",
     "check:imports": "bun scripts/check-imports.ts && bun scripts/check-cycles.ts",
     "check:throws": "bun scripts/check-throws.ts",
     "check:exports": "bun scripts/exports-snapshot.ts",
-    "release:version": "changeset version && bun scripts/sync-version.ts && bun install --lockfile-only"
+    "release:version": "changeset version && bun scripts/sync-version.ts && bun install --lockfile-only",
+    "test:node-sqlite": "node --test src/sqlite/conformance.node.ts"
   },
   "peerDependencies": {
     "@ai-sdk/mcp": "^2.0.73",
@@ -104,6 +104,9 @@
     "./providers": "./dist/providers/index.js",
     "./scheduler": "./dist/scheduler/index.js",
     "./shell": "./dist/shell/index.js",
+    "./sqlite": "./dist/sqlite/index.js",
+    "./sqlite/bun": "./dist/sqlite/bun.js",
+    "./sqlite/node": "./dist/sqlite/node.js",
     "./storage/memory": "./dist/storage/memory.js",
     "./subagent": "./dist/subagent/index.js",
     "./testing": "./dist/testing/index.js",

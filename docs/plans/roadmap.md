@@ -12,8 +12,8 @@ approvals combined with tools without `execute`), 0.7.0 (`eharness/permissions`,
 files, glob and multi-edit, `session.stats()` of the whole request, security defaults for MCP
 results and kind messages), 0.8.0 (published 2026-10-11, git tag `eharness@0.8.0`; see
 [0.8.0](#080)), 0.9.0 (published 2026-10-26, git tag `eharness@0.9.0`; see [0.9.0](#090)).
-**0.10.0 is next** (see [0.10.0](#0100-next)): the P62 adopter gaps and a new package,
-`@eharness/sqlite`. Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
+0.10.0 shipped the P62 adopter gaps without the SQLite adapters; **the next minor** adds them as
+the subpaths `eharness/sqlite`, `eharness/sqlite/bun` and `eharness/sqlite/node` (ADR-0071). Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
 
 ## Open items
 
@@ -60,7 +60,7 @@ final text. ADR-0068 to ADR-0070.
 
 | Area | Contents | Changesets |
 |---|---|---|
-| New package | `@eharness/sqlite` (`packages/sqlite`): SQLite adapters for every storage port over a synchronous driver (`bun:sqlite`, `node:sqlite`), migrations, conformance on both runtimes; a peer of `eharness`, never a dependency (spec 36, ADR-0068) | sqlite-adapters-package |
+| SQLite adapters (next minor, not in 0.10.0) | `eharness/sqlite`, `eharness/sqlite/bun`, `eharness/sqlite/node`: SQLite adapters for every storage port over a synchronous driver (`bun:sqlite`, `node:sqlite`), migrations, conformance on both runtimes; subpaths of `eharness`, no extra dependency (spec 36, ADR-0071, supersedes ADR-0068) | sqlite-subpaths |
 | Turn principal | `Principal` (same shape as `ApprovalActor`), `ctx.principal`, kept in the inbox, `activeTurn`, pending state and children; a wake turn keeps the delegating principal (ADR-0069) | turn-principal |
 | Grants | `grants: { by: 'session' or 'principal', applyAt: 'continuation' or 'now' }`; keys use the asking principal with a U+001F separator; `clearGrants(principal?)` (ADR-0070). `permissions` session rules are kept per session id (patch) | grants-by-principal, permissions-session-rules-per-session |
 | `ctx` options | The subagent catalog function, `clock({ timezone })`, `webFetch({ allow, deny })`, `compaction.model`, `keepLast` and `summarizeAt` also take `(ctx)` | ctx-policy-options |

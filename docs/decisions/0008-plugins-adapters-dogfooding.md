@@ -2,6 +2,8 @@
 
 Status: **Accepted** · Date: 2026-09-29
 
+> Note: relaxed by [ADR-0071](0071-sqlite-adapters-as-subpaths.md) for adapters that need no third-party npm dependency (they may ship as `eharness` subpaths).
+
 ## Context
 
 Earlier designs mixed "plugin" (capability) and "adapter" (storage backend). Making every

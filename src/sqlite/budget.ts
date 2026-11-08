@@ -6,7 +6,7 @@
  * actual cost). A new period's row inherits the limit of the scope's latest row. Usage the app did
  * not price is not counted: callers pass `amountUsd` only for priced usage (spec 12).
  */
-import { type BudgetLedger, uuidv7 } from 'eharness'
+import { type BudgetLedger, uuidv7 } from '../index.ts'
 import type { SqlDriver } from './driver.ts'
 import { type AdapterOptions, clock, one, tables } from './util.ts'
 

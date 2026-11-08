@@ -1,8 +1,8 @@
 /**
  * The conformance suites of `eharness/testing` against `node:sqlite` (spec 36 §7). Run from the repo
- * root with Node >= 22.5 after `bun run build` (Node resolves `eharness` to its built `dist/`):
+ * root with Node >= 22.5 (Node strips the types of the sources; no build needed):
  *
- *   node --experimental-sqlite --test packages/sqlite/src/conformance.node.ts
+ *   node --experimental-sqlite --test src/sqlite/conformance.node.ts   (or: bun run test:node-sqlite)
  *
  * (`--experimental-sqlite` is only needed on Node 22.5 to 22.12; Node 22.18+ strips the types.)
  * Not named `*.test.ts` on purpose: `bun test` must not pick it up.

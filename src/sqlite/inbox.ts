@@ -11,7 +11,7 @@ import {
   type InboxItemInput,
   type InboxStats,
   uuidv7,
-} from 'eharness'
+} from '../index.ts'
 import type { SqlDriver, SqlParam } from './driver.ts'
 import { type AdapterOptions, clock, createWatcher, one, placeholders, tables } from './util.ts'
 

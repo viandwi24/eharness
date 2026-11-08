@@ -2,6 +2,8 @@
 
 Status: **Accepted** · Date: 2026-10-14 · Plan: [P46](../plans/P46-platform-rings.md)
 
+> Note: relaxed by [ADR-0071](0071-sqlite-adapters-as-subpaths.md) for adapters that need no third-party npm dependency (they may ship as `eharness` subpaths).
+
 ## Context
 
 eharness is both an open-source library and the base of four products of its maintainer: a team

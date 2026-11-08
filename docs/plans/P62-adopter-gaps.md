@@ -40,7 +40,7 @@ owner transfer, its brain events, the team's persona and scripts).
 
 ## Owns
 
-- `packages/sqlite/**` (new workspace package, published separately)
+- `src/sqlite/**` (new subpaths of `eharness`, ADR-0071)
 - `src/agent/**` and `src/internal/**` for C, D and E only
 - `src/subagent/types.ts`, `src/subagent/env.ts`; `src/permissions/plugin.ts`, `src/permissions/engine.ts`;
   `src/clock/plugin.ts`; `src/web/fetch.ts`; compaction settings in `src/agent/types/*`
@@ -58,13 +58,14 @@ owner transfer, its brain events, the team's persona and scripts).
 
 ## Workstreams
 
-### A. `@eharness/sqlite` (Ring 2 package, ADR-0068)
+### A. `eharness/sqlite` (subpaths of `eharness`, ADR-0071; first planned as a package, ADR-0068)
 
-- A workspace package `packages/sqlite`, published as `@eharness/sqlite`. It is never a dependency
-  of `eharness` (ADR-0008 holds); `eharness` is its peer.
+- Three subpaths of `eharness`: `eharness/sqlite`, `eharness/sqlite/bun`, `eharness/sqlite/node`
+  (`src/sqlite`). ADR-0068 planned a separate package; the npm scope `@eharness` is unavailable and the
+  adapters need no dependency, so ADR-0071 moved them into `eharness`.
 - A small driver interface `SqlDriver`: `exec`, `query`, `run`, `transaction`. It ships drivers for
-  `bun:sqlite` and `node:sqlite` (Node ≥ 22.5), each on its own subpath, so the root entry imports
-  neither.
+  `bun:sqlite` and `node:sqlite` (Node ≥ 22.5), each on its own subpath, so `eharness/sqlite`
+  imports neither.
 - Adapters, one per port:
   - session core: `MessageAdapter`, `StateAdapter` with `setIf`, `SessionLock` (lease, see E3);
   - `InboxAdapter`, `StreamLogAdapter`, `BudgetLedger`;
@@ -194,17 +195,15 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
       22.5–22.12 untested); new cases for lock `owner` (`leaseOwnerTakeover`) and principal durability
       (`multiInstanceConformance`); grants by principal are covered by integration tests, not by a
       conformance suite
-- [ ] The team example moves to `@eharness/sqlite` (proof of the package, no behavior change).
+- [ ] The team example moves to `eharness/sqlite` (proof of the adapters, no behavior change).
       **Not started on purpose:** the example keeps its own Drizzle tables and real data; diff
       `schemaSql()` against them and test on a copy of the database first.
-- [x] Changesets: `eharness` minor (B, C, D, E), `@eharness/sqlite` initial minor, a patch for the
+- [x] Changesets: `eharness` minor (B, C, D, E), SQLite subpaths in a later changeset (`sqlite-subpaths`), a patch for the
       session-rules fix; upgrade notes in `docs/guides/upgrading.md` (grants options)
-- [x] Roadmap (0.10.0 section) and board updated; CI and the release workflows cover
-      `@eharness/sqlite` through the root `build`, `check:package` and `typecheck` scripts (no workflow
-      change); `docs/engineering/release.md` lists the maintainer steps for an additional package.
-- [ ] Release 0.10.0 (needs the owner's go-ahead): the version PR, the `@eharness` npm scope, the first
-      manual publish of `@eharness/sqlite` and its trusted publisher (release.md §4, "Additional
-      packages"). Nothing is published yet.
+- [x] Roadmap and board updated. 0.10.0 shipped without the SQLite adapters; ADR-0071 moved them into
+      `eharness` as subpaths for the next minor (the package, its release wiring and the "Additional
+      packages" section of `release.md` were removed).
+- [x] Release 0.10.0 (without the SQLite adapters, see ADR-0071).
 - [x] Gate (2026-11-08, one full run in a stop-on-failure chain, working tree = the commit that adds
       this line): `lint` (37 existing warnings), `typecheck` (every project, the team web and
       `packages/sqlite` included), `bun test` (7008 tests: 6941 pass, 67 skip, 0 fail, 495 s), `build`,
@@ -235,8 +234,7 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
 
 ## Open questions
 
-- Package name: `@eharness/sqlite` or `eharness-sqlite`? Conservative pick: the scoped name,
-  reserved on npm before the first publish.
+- Resolved by ADR-0071: no separate package; the adapters are `eharness` subpaths.
 - Should `Principal` be generic (`HarnessAgent<…, P>`) like `runtime`? Conservative pick: a fixed
   serializable shape now; generics with the typed-runtime roadmap item.
 - Resolved by ADR-0070: grant timing ships behind `grants: { applyAt }`, default `'continuation'`,

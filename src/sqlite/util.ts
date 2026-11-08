@@ -39,8 +39,9 @@ export interface Tables {
 /** Validate a prefix (a programmer error when it is not safe to splice into SQL). */
 export function checkPrefix(prefix: string): string {
   if (!/^[A-Za-z0-9_]*$/.test(prefix)) {
+    // plain-error: programmer error in the adapter options
     throw new TypeError(
-      `@eharness/sqlite: prefix "${prefix}" may contain only letters, digits and _`,
+      `eharness/sqlite: prefix "${prefix}" may contain only letters, digits and _`,
     )
   }
   return prefix

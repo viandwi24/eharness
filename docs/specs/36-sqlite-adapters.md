@@ -1,7 +1,8 @@
-# Spec 36 — SQLite adapters (`@eharness/sqlite`)
+# Spec 36 — SQLite adapters (`eharness/sqlite`)
 
-Status: **Implemented in `packages/sqlite` (unreleased; first version `0.1.0`)**. Package: `packages/sqlite` (published as `@eharness/sqlite`, never a
-dependency of `eharness`). Decision: [ADR-0068](../decisions/0068-sqlite-adapter-package.md). Plan:
+Status: **Implemented in `src/sqlite` (subpaths `eharness/sqlite`, `eharness/sqlite/bun`,
+`eharness/sqlite/node`; unreleased, ships in the next minor)**. Decision: [ADR-0071](../decisions/0071-sqlite-adapters-as-subpaths.md)
+(supersedes ADR-0068). Plan:
 [P62](../plans/P62-adopter-gaps.md) workstream A. Builds on spec 05 (storage ports), 12 §4.1
 (budget ledger), 25 (activity), 29 (scheduler), 30 (identity), 31 (channels), 32 (handoff), 23
 (providers).
@@ -11,19 +12,39 @@ adapters from `examples/`. This spec fixes the shape. Names marked *(contract)* 
 without a spec change; everything else is the implementer's choice, recorded here in the same
 commit that makes it.
 
-## 1. Packages and entries
+## 1. Entries
 
 | Entry | Contents | Runtime imports |
 |---|---|---|
-| `@eharness/sqlite` | `createSqliteStorage`, the adapters, `migrate`, `schemaSql`, `SqlDriver` type | none (no `bun:` or `node:` module) |
-| `@eharness/sqlite/bun` | `bunSqlite(db, options?)` driver | none |
-| `@eharness/sqlite/node` | `nodeSqlite(db, options?)` driver | none |
+| `eharness/sqlite` | `createSqliteStorage`, the adapters, `migrate`, `schemaSql`, `SqlDriver` type | none (no `bun:` or `node:` module) |
+| `eharness/sqlite/bun` | `bunSqlite(db, options?)` driver | none |
+| `eharness/sqlite/node` | `nodeSqlite(db, options?)` driver | none |
 
 No entry imports a `bun:` or `node:` module, not even for types: the drivers take the handle the app
 opened (`new Database(path)` / `new DatabaseSync(path)`) and describe it with a small structural
-type. `eharness` and `ai` are peer dependencies (`eharness` `>=0.9.0 <1.0.0`). The root entry loads
-on Node ≥ 22.5 and Bun without either binding; `packages/sqlite/scripts/check-entry.ts` proves it on
-the built output (no entry, directly or through a chunk, imports `bun:` or `node:`).
+type. The subpaths belong to the `eharness` package and add no dependency (`ai` is already a peer). The
+`eharness/sqlite` entry loads on Node ≥ 22.5 and Bun without either binding; `scripts/check-sqlite-entry.ts`
+proves it on the built output (no sqlite entry, directly or through a chunk, imports `bun:` or `node:`).
+`scripts/check-imports.ts` lets `src/sqlite` import the subpaths whose ports it implements (activity,
+channels, handoff, identity, providers, scheduler).
+
+```ts
+import { Database } from 'bun:sqlite' // or: import { DatabaseSync } from 'node:sqlite'
+import { createSqliteStorage, migrate } from 'eharness/sqlite'
+import { bunSqlite } from 'eharness/sqlite/bun' // or: nodeSqlite from 'eharness/sqlite/node'
+
+const driver = bunSqlite(new Database('app.db'), { owned: true }) // WAL, foreign_keys, busy_timeout
+migrate(driver) // creates what is missing, records the schema version
+const storage = createSqliteStorage(driver)
+// createAgent({ messages: storage.messages, state: storage.state, lock: storage.lock,
+//   inbox: storage.inbox, streams: storage.streams })
+// also: storage.budget, .activity, .schedules, .outbox, .handoffs, .people, .profiles
+```
+
+SQLite fits one machine: several processes on one local file are supported, a file on a network
+share is not. `prefix` (default `eh_`) names every table; `schemaSql({ prefix })` returns the DDL
+for apps that run their own migrations; pass `vault` to `createSqliteStorage` for a
+`SealedProfileStore`; `inbox.subscribe` and `streams.subscribe` poll every `pollMs` (default 250).
 
 ## 2. Driver *(contract)*
 
@@ -153,14 +174,13 @@ Every adapter passes its suite from `eharness/testing`: `messageAdapterConforman
 `outboxStoreConformance`, `handoffStoreConformance`, `personStoreConformance`,
 `profileStoreConformance`, plus `multiInstanceConformance` with two drivers on one file. The suites
 run against `bun:sqlite` under `bun test` and against `node:sqlite` with
-`node --test packages/sqlite/src/conformance.node.ts` (Node ≥ 22.5; the command and the build it
-needs are in the package README). A new case lands in `eharness/testing` first (lock `owner`
-takeover, principal round-trip), then here; until then `packages/sqlite/src/sqlite.test.ts` covers
+`node --test src/sqlite/conformance.node.ts` from the repo root (Node ≥ 22.5; `bun run test:node-sqlite`). A new case lands in `eharness/testing` first (lock `owner`
+takeover, principal round-trip), then here; until then `src/sqlite/sqlite.test.ts` covers
 the owner takeover, the dedupe window, polled wake-ups, the sealed profiles and schema rules.
 
 ## 8. Not in scope
 
-- A Postgres package (same layout, later).
+- A Postgres package (same layout, later; it needs a third-party npm dependency, so it is a separate package, ADR-0071).
 - Query helpers for app tables, an ORM, or migrations of app data.
 - Moving existing app data: an app that already has these tables keeps them and uses
   `schemaSql` to compare.

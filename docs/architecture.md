@@ -144,6 +144,9 @@ every entry are a committed snapshot, `scripts/exports.snapshot.json`, derived f
 | `eharness/clock` | `src/clock/index.ts` | `clock()` plugin (`datetime` tool) and time-zone helpers (spec 34) |
 | `eharness/browser` | `src/browser/index.ts` | `browser()` plugin (`browser_open`, `browser_snapshot`, `browser_act`, `browser_screenshot`, `browser_read`, `browser_tabs`, `browser_request_human`), `createBrowserManager()`, `chromeAdapter()`, `lightpandaAdapter()`, `defineBrowserAdapter()`, `createBrowserRegistry()`, `memoryBrowserProfileStore()`, `sealedBrowserProfiles()`, `publicProfile()`, `formatHandBack()`, the CDP client (spec 35, ADR-0064) |
 | `eharness/browser/node` | `src/browser/node.ts` | `chromeRuntime()`, `lightpandaRuntime()`, `processUsage()`, `systemMemory()` (Node-only, ADR-0036) |
+| `eharness/sqlite` | `src/sqlite/index.ts` | `createSqliteStorage()`, `migrate()`, `schemaSql()`, SQLite adapters for every storage port, `SqlDriver` (runtime-neutral, spec 36, ADR-0071) |
+| `eharness/sqlite/bun` | `src/sqlite/bun.ts` | `bunSqlite()`, driver for a `bun:sqlite` handle |
+| `eharness/sqlite/node` | `src/sqlite/node.ts` | `nodeSqlite()`, driver for a `node:sqlite` handle |
 | `eharness/testing` | `src/testing/index.ts` | `scriptedModel()`, `scriptedProvider()`, `schemaCheckedMessages()`, `assertValidUIMessage()`, `assertStoredSessionInvariants()`, and the conformance suites (`messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `lockConformance()`, `streamLogConformance()`, `multiInstanceConformance()`, `budgetLedgerConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `activityStoreConformance()`, `httpConformance()`, and the provider and connector store suites) |
 
 Peer dependencies: `ai@^7.0.137`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional

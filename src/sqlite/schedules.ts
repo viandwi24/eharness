@@ -9,7 +9,7 @@ import type {
   ScheduleListQuery,
   ScheduleListResult,
   ScheduleStore,
-} from 'eharness/scheduler'
+} from '../scheduler/index.ts'
 import type { SqlDriver, SqlParam } from './driver.ts'
 import { type AdapterOptions, one, tables } from './util.ts'
 

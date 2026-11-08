@@ -24,7 +24,7 @@ export class SqliteSchemaError extends Error {
   readonly supported: number
   constructor(found: number, supported: number) {
     super(
-      `@eharness/sqlite: the database is at schema version ${found}, this package supports up to ${supported}. Upgrade @eharness/sqlite.`,
+      `eharness/sqlite: the database is at schema version ${found}, this package supports up to ${supported}. Upgrade eharness.`,
     )
     this.name = 'SqliteSchemaError'
     this.found = found

@@ -19,7 +19,7 @@ import {
   scheduleStoreConformance,
   stateAdapterConformance,
   streamLogConformance,
-} from 'eharness/testing'
+} from '../testing/index.ts'
 import { sqliteActivityStore } from './activity.ts'
 import { setBudgetLimit, sqliteBudgetLedger } from './budget.ts'
 import type { SqlDriver } from './driver.ts'

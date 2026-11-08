@@ -1,5 +1,5 @@
 /** `SessionLock` (spec 05 §8): a row per session with a lease. */
-import { HarnessError, type SessionLock, uuidv7 } from 'eharness'
+import { HarnessError, type SessionLock, uuidv7 } from '../index.ts'
 import type { SqlDriver } from './driver.ts'
 import { type AdapterOptions, clock, one, tables } from './util.ts'
 

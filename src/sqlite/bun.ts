@@ -1,5 +1,5 @@
 /**
- * `@eharness/sqlite/bun`: the driver for `bun:sqlite`. Imports nothing at runtime: pass the
+ * `eharness/sqlite/bun`: the driver for `bun:sqlite`. Imports nothing at runtime: pass the
  * `Database` you opened.
  *
  * @example

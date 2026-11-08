@@ -4,7 +4,7 @@
  * mark lives in `<prefix>activity_meta`. Retention keeps the newest event (the head cursors compare
  * to) and, through `keepLatestOf`, the latest event of a type per agent or session.
  */
-import type { ActivityInput, ActivityRecord, ActivityStore } from 'eharness/activity'
+import type { ActivityInput, ActivityRecord, ActivityStore } from '../activity/index.ts'
 import type { SqlDriver, SqlParam } from './driver.ts'
 import { type AdapterOptions, clock, one, tables } from './util.ts'
 
