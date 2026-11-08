@@ -32,6 +32,7 @@ export default defineConfig({
     'handoff/index': 'src/handoff/index.ts',
     'limits/index': 'src/limits/index.ts',
     'clock/index': 'src/clock/index.ts',
+    'codes/index': 'src/codes/index.ts',
     'browser/index': 'src/browser/index.ts',
     'browser/node': 'src/browser/node.ts',
     'sqlite/index': 'src/sqlite/index.ts',

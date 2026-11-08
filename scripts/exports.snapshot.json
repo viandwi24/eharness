@@ -192,6 +192,10 @@
     "parseRequirement",
     "syncedSandbox"
   ],
+  "eharness/codes": [
+    "NOTICE_CODES",
+    "STOP_REASONS"
+  ],
   "eharness/connectors": [
     "CONNECTION_KIND",
     "CREDENTIALS_KIND",

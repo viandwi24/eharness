@@ -56,6 +56,7 @@ installed separately; unused subpaths cost nothing.
 | `eharness/channels` | delivery to chat platforms: rate governor, outbox with retries, mention safety. | experimental |
 | `eharness/handoff` | the agent asks a person and the turn parks until any instance records the answer. | experimental |
 | `eharness/limits` | step budgets, readable budget stops, long jobs as chained bounded turns. | experimental |
+| `eharness/codes` | a UI that renders stop reasons or `eh.notice` codes and must not import the runtime. | experimental |
 | `eharness/clock` | the model needs the current time or time-zone arithmetic (`datetime`). | experimental |
 | `eharness/code` | the model runs Python over the virtual file system. | experimental |
 | `eharness/browser` | the agent drives a real browser (snapshots, refs, screenshots, live view). | experimental |

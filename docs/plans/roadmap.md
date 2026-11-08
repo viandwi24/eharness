@@ -13,7 +13,7 @@ files, glob and multi-edit, `session.stats()` of the whole request, security def
 results and kind messages), 0.8.0 (published 2026-10-11, git tag `eharness@0.8.0`; see
 [0.8.0](#080)), 0.9.0 (published 2026-10-26, git tag `eharness@0.9.0`; see [0.9.0](#090)).
 0.10.0 shipped the P62 adopter gaps without the SQLite adapters; **the next minor** adds them as
-the subpaths `eharness/sqlite`, `eharness/sqlite/bun` and `eharness/sqlite/node` (ADR-0071). Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
+the subpaths `eharness/sqlite`, `eharness/sqlite/bun` and `eharness/sqlite/node` (ADR-0071) and `eharness/codes` (the stop reasons and notice codes without the runtime, ADR-0072). Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
 
 ## Open items
 

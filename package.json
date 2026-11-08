@@ -87,6 +87,7 @@
     "./client/react": "./dist/client/react.js",
     "./clock": "./dist/clock/index.js",
     "./code": "./dist/code/index.js",
+    "./codes": "./dist/codes/index.js",
     "./connectors": "./dist/connectors/index.js",
     "./filesystem": "./dist/filesystem/index.js",
     "./filesystem/memory": "./dist/filesystem/memory.js",

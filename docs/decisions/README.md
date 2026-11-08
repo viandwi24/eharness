@@ -76,3 +76,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0069](0069-turn-principal.md) | A turn carries a durable `principal` (same shape as `ApprovalActor`): session default, per-send override, kept across inbox, recovery, waits and children |
 | [0070](0070-grants-by-principal.md) | Grants can be scoped to the principal that asked and can apply at once; `permissions` session rules become per session; amends spec 11 §3.1 |
 | [0071](0071-sqlite-adapters-as-subpaths.md) | SQLite adapters ship inside `eharness` as the subpaths `eharness/sqlite`, `/sqlite/bun` and `/sqlite/node`; supersedes 0068; dependency-free adapters over runtime built-ins may be subpaths, an adapter with a third-party npm dependency stays a separate package |
+| [0072](0072-codes-subpath.md) | `eharness/codes` exports `STOP_REASONS` and `NOTICE_CODES` with no runtime import, for UIs that must not load the root and may not use `eharness/client` (ADR-0059) |

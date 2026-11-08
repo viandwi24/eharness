@@ -1,7 +1,7 @@
 /**
  * Import rules for `src/` (ADR-0008, ADR-0010, docs/engineering/conventions.md):
  *
- * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|activity|permissions|providers|connectors|code|shell|subagent|web|http|client`) import core only through the relative
+ * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|activity|permissions|providers|connectors|code|shell|subagent|web|http|client|codes`) import core only through the relative
  *    path to `src/index.ts`, never through other core files or the `eharness` self-reference.
  *    Non-test files never import another subpath; test files of a subpath may (e.g. a filesystem
  *    test running `fileSystemConformance` from `src/testing`), but still never core internals.
@@ -60,6 +60,7 @@ const subpaths = [
   'handoff',
   'limits',
   'clock',
+  'codes',
   'browser',
   'sqlite',
 ]
@@ -226,7 +227,15 @@ for await (const file of new Glob('**/*.{ts,mts,cts,js,mjs}').scan({ cwd: src })
       target.startsWith(`${join(src, name)}/`),
     )
     const isCoreIndex = target === coreIndex || target === join(src, 'index')
-    if (!insideOwnSubpath && !insideOtherSubpath && !insideAllowedSubpath && !isCoreIndex) {
+    // ADR-0072: `eharness/codes` re-exports the import-free `src/codes.ts` directly, not the root.
+    const isCodesSource = subpath === 'codes' && target === join(src, 'codes.ts')
+    if (
+      !insideOwnSubpath &&
+      !insideOtherSubpath &&
+      !insideAllowedSubpath &&
+      !isCoreIndex &&
+      !isCodesSource
+    ) {
       violations.push(`${shown}: imports '${specifier}'; core is reachable only via src/index.ts`)
     }
   }
