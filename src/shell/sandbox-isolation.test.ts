@@ -13,6 +13,18 @@ async function temp(): Promise<string> {
   dirs.push(dir)
   return dir
 }
+/**
+ * A temp directory that is not under `/tmp`. Bubblewrap mounts a private tmpfs over `/tmp` (the root
+ * may live there), so on Linux a file under `/tmp` outside the root is hidden whatever `denyRead`
+ * says. A test about `denyRead` being off must put its file somewhere else.
+ */
+async function tempOutsideTmp(): Promise<string> {
+  const base = join(process.cwd(), 'node_modules', '.cache')
+  await mkdir(base, { recursive: true })
+  const dir = await realpath(await mkdtemp(join(base, 'eh-iso-')))
+  dirs.push(dir)
+  return dir
+}
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
@@ -214,7 +226,7 @@ describe.skipIf(detectOsSandbox().kind === 'none')('denyRead (real runs)', () =>
   })
 
   test('off by default: the same file is readable', async () => {
-    const home = await temp()
+    const home = await tempOutsideTmp()
     const root = join(home, 'work')
     await mkdir(root)
     await writeFile(join(home, 'secret.txt'), 'top-secret')
