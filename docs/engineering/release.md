@@ -116,6 +116,24 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
 5. **Lock down tokens:** npmjs.com → package → Settings → Publishing access → "Require two-factor
    authentication and disallow tokens". From now on only the workflow can publish.
 6. Revoke any automation tokens you created for the first publish.
+
+### Additional packages (`packages/*`)
+
+`@eharness/sqlite` (`packages/sqlite`, ADR-0068) is a second public package in the same repo. The
+workflows need no change: the root `build`, `check:package` and `typecheck` scripts also run the
+package's own (`bun run --cwd packages/sqlite …`), so CI, the `pack` job and the canary job cover
+it, and `changeset` versions and publishes it with `eharness`. Repeat steps 3 to 6 once for each new
+package, with the same `release.yml` and environment `npm`:
+
+1. The npm scope `@eharness` must exist and be owned by the maintainer (an npm organization or
+   user named `eharness`).
+2. First publish by hand from the package folder: `cd packages/sqlite && bun run build && bun publish
+   --access public`. A new package starts at `0.0.0`, so its first changeset makes it `0.1.0`: publish
+   that version after `changeset version`, not the placeholder.
+3. Trusted publisher: `npm trust github @eharness/sqlite --repo OWNER/eharness --file release.yml
+   --env npm --allow-publish`, then lock down tokens as in step 5.
+4. A package here never becomes a dependency of `eharness`; it lists `eharness` as a peer.
+
 ## 5. Normal release
 
 1. Merge feature PRs with changesets into `main`.
