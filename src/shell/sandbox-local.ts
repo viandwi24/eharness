@@ -15,6 +15,7 @@ import {
   realpath,
   rm,
   stat,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
@@ -102,12 +103,33 @@ export interface SandboxState {
   denyRead: string[]
 }
 
-/** A {@link Sandbox} whose OS isolation can be inspected and toggled at runtime. */
+/** What {@link LocalSandbox.stat} returns (the AI SDK `SandboxFileStat`, declared here for older versions). */
+export type LocalFileStat = { type: 'file' | 'directory' | 'other'; size: number }
+
+/** An entry of {@link LocalSandbox.listDirectory} (the AI SDK `SandboxDirectoryEntry`). */
+export type LocalDirectoryEntry = {
+  name: string
+  type: 'file' | 'directory' | 'symlink' | 'other'
+}
+
+type PathOperation = { path: string; abortSignal?: AbortSignal }
+
+/**
+ * A {@link Sandbox} whose OS isolation can be inspected and toggled at runtime. `stat`,
+ * `listDirectory` and `deleteFile` are in the AI SDK sandbox contract from `ai@7.0.15x`; they are
+ * declared here too so the sandbox type-checks against older versions as well.
+ */
 export type LocalSandbox = Sandbox & {
   /** Current OS sandbox state. */
   state(): SandboxState
   /** Replace the OS sandbox settings; applies to commands started afterwards. */
   setOs(opts: OsSandboxOptions): void
+  /** Type and size of a path; `null` when it does not exist. Never follows a symlink out of the root. */
+  readonly stat: (options: PathOperation) => PromiseLike<LocalFileStat | null>
+  /** The entries of one directory (symlinks are reported, not followed); `null` when it is missing. */
+  readonly listDirectory: (options: PathOperation) => PromiseLike<LocalDirectoryEntry[] | null>
+  /** Delete one file (a symlink is deleted itself); `false` when it does not exist, rejects for a directory. */
+  readonly deleteFile: (options: PathOperation) => PromiseLike<boolean>
 }
 
 /** Names of `process.env` variables a command inherits by default (also `LC_*`), see {@link safeEnv}. */
@@ -308,8 +330,10 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
    * File operations never leave the root (or an `allowWrite` directory) and never follow a
    * symlink at the final component: a script that plants `ln -s ~/.ssh work/k` must not make
    * the host read or write through it. The nearest existing ancestor is resolved with `realpath`.
+   * `allowLink` is for deleting a link itself, which never touches its target: the parent
+   * directory is still checked.
    */
-  async function guard(path: string): Promise<string> {
+  async function guard(path: string, allowLink = false): Promise<string> {
     ensureLive()
     const target = abs(path)
     const allowed = await Promise.all(
@@ -322,10 +346,16 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
       }),
     )
     try {
-      if ((await lstat(target)).isSymbolicLink()) {
+      if (!allowLink && (await lstat(target)).isSymbolicLink()) {
         // plain-error: host-side refusal, surfaced to the caller as an I/O failure
         throw new Error(`refusing to follow a symbolic link: ${path}`)
       }
+    } catch (error) {
+      if (!isMissing(error)) throw error
+    }
+    // the root itself (`stat('.')`, `listDirectory('.')`): its parent is outside, it is not
+    try {
+      if (allowed.includes(await realpath(target))) return target
     } catch (error) {
       if (!isMissing(error)) throw error
     }
@@ -378,6 +408,15 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
     const signal = options.abortSignal
     ensureLive()
     throwIfAborted(signal)
+    // Newer AI SDK versions let a caller ask for a writable stdin; an implementation without one
+    // must reject before it starts the command. `ProcessOptions` has no `stdin` in older versions.
+    if ((options as { stdin?: boolean }).stdin === true) {
+      throw new HarnessError(
+        'EH_INVALID_INPUT',
+        'shell: the local sandbox does not support a writable stdin (`stdin: true`).',
+        { details: { plugin: 'shell', option: 'stdin' } },
+      )
+    }
     const command = limitsPrefix(opts.limits, shellBin) + options.command
     const [cmd, ...args] = active()
       ? wrapCommand(command, {
@@ -576,7 +615,60 @@ export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
       await writeBytes(options.path, bytes, options.abortSignal)
     },
 
-    spawn,
+    async stat(options) {
+      throwIfAborted(options.abortSignal)
+      const target = await guard(options.path)
+      try {
+        const info = await stat(target)
+        const type = info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other'
+        return { type, size: info.size }
+      } catch (error) {
+        if (isMissing(error)) return null
+        throw error
+      }
+    },
+
+    async listDirectory(options) {
+      throwIfAborted(options.abortSignal)
+      const target = await guard(options.path)
+      try {
+        const entries = await readdir(target, { withFileTypes: true })
+        return entries.map((entry) => ({
+          name: entry.name,
+          type: entry.isSymbolicLink()
+            ? 'symlink'
+            : entry.isFile()
+              ? 'file'
+              : entry.isDirectory()
+                ? 'directory'
+                : 'other',
+        }))
+      } catch (error) {
+        // only a missing directory is `null`: ENOTDIR (the path is a file) rejects, as the contract says
+        if ((error as { code?: string } | null)?.code === 'ENOENT') return null
+        throw error
+      }
+    },
+
+    async deleteFile(options) {
+      throwIfAborted(options.abortSignal)
+      const target = await guard(options.path, true) // a link is deleted itself, never its target
+      try {
+        if ((await lstat(target)).isDirectory()) {
+          // plain-error: host-side refusal, surfaced to the caller as an I/O failure
+          throw new Error(`refusing to delete a directory: ${options.path}`)
+        }
+        await unlink(target)
+        return true
+      } catch (error) {
+        if (isMissing(error)) return false
+        throw error
+      }
+    },
+
+    // From ai@7.0.15x `spawn` is overloaded on `stdin`; ours never returns a writable handle (it
+    // rejects `stdin: true` above), so the single signature below is the honest one for both shapes.
+    spawn: spawn as unknown as SandboxSession['spawn'],
 
     async run(options) {
       const proc = await spawn(options)

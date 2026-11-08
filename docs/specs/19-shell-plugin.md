@@ -212,12 +212,29 @@ Typical configurations:
 
 `localSandbox({ root })` implements the AI SDK `SandboxSession`: `spawn`, `run`, `readFile`,
 `readTextFile` (line ranges), `readBinaryFile`, `writeFile`, `writeTextFile`, `writeBinaryFile`,
-and a `description` that states whether commands are sandboxed. Relative file paths resolve against
-`root`; file operations run in the calling process (they are **not** covered by the OS sandbox),
-but they never leave the root: the nearest existing ancestor of the target is resolved with
-`realpath` and must lie inside the real root (or an `allowWrite` directory), and a symlink at the
-final component (`lstat`) is refused, for reads and writes; both throw. A command that plants a
-symlink therefore cannot make a later host-side read or write follow it.
+`stat`, `listDirectory`, `deleteFile`, and a `description` that states whether commands are
+sandboxed. Relative file paths resolve against `root`; file operations run in the calling process
+(they are **not** covered by the OS sandbox), but they never leave the root: the nearest existing
+ancestor of the target is resolved with `realpath` and must lie inside the real root (or an
+`allowWrite` directory), and a symlink at the final component (`lstat`) is refused, for reads and
+writes; both throw. The root itself is a valid target (`stat('.')`, `listDirectory('.')`). A command
+that plants a symlink therefore cannot make a later host-side read or write follow it.
+
+`stat`, `listDirectory` and `deleteFile` are part of the AI SDK sandbox contract from `ai@7.0.15x`
+(`@ai-sdk/provider-utils` 5.0.76) and are declared on `LocalSandbox` too, so the type also checks
+against older versions:
+
+- `stat` resolves to `{ type: 'file' | 'directory' | 'other', size }`, or `null` when the path does
+  not exist. A symlink at the final component is refused like for reads.
+- `listDirectory` resolves to the entries `{ name, type }` (`type` also `'symlink'`: a link is
+  reported, never followed), `null` when the directory does not exist, and rejects when the path is
+  not a directory.
+- `deleteFile` resolves to `true` when it removed the file and `false` when it does not exist, and
+  rejects for a directory. A symlink is deleted itself, never its target; its parent directory must
+  still lie inside the root.
+- `spawn` has no writable stdin. The newer contract overloads `spawn` on `stdin: true`; the local
+  sandbox rejects it with `EH_INVALID_INPUT` before starting the command, as the contract asks of an
+  implementation without stdin.
 
 - Each command runs in its own **process group** (`detached`); `kill()`, an abort or a timeout
   sends SIGTERM to the group and SIGKILL after 2 s. `wait()` rejects with the abort reason when the

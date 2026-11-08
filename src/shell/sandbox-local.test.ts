@@ -1,7 +1,7 @@
 /** The local sandbox: run, file access and process-group kill. */
 import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -49,6 +49,17 @@ describe('local sandbox run', () => {
     const sb = localSandbox({ root: await temp() })
     expect((await sb.run({ command: 'kill -TERM $$' })).exitCode).toBe(143)
   })
+
+  test('spawn rejects a writable stdin before it starts the command', async () => {
+    const root = await temp()
+    const sb = localSandbox({ root })
+    // `stdin` is an option of newer AI SDK versions only, so the older types do not have it
+    const options = { command: 'echo ran > marker', stdin: true } as unknown as Parameters<
+      typeof sb.spawn
+    >[0]
+    await expect(sb.spawn(options)).rejects.toMatchObject({ code: 'EH_INVALID_INPUT' })
+    expect(existsSync(join(root, 'marker'))).toBe(false)
+  })
 })
 
 describe('local sandbox files', () => {
@@ -85,6 +96,55 @@ describe('local sandbox files', () => {
       sb.writeTextFile({ path: 'n.txt', content: 'x', abortSignal: ac.signal }),
     ).rejects.toThrow(/abort/i)
     expect(existsSync(join(root, 'n.txt'))).toBe(false)
+  })
+
+  test('stat: file, directory, missing -> null, outside the root rejects', async () => {
+    const root = await temp()
+    await writeFile(join(root, 'a.txt'), 'abcd')
+    await mkdir(join(root, 'sub'))
+    const sb = localSandbox({ root })
+    expect(await sb.stat({ path: 'a.txt' })).toEqual({ type: 'file', size: 4 })
+    expect((await sb.stat({ path: 'sub' }))?.type).toBe('directory')
+    expect(await sb.stat({ path: 'missing' })).toBeNull()
+    await expect(sb.stat({ path: '../outside' })).rejects.toThrow(/outside the sandbox root/)
+  })
+
+  test('listDirectory: entries with types, symlinks reported, missing -> null, a file rejects', async () => {
+    const root = await temp()
+    await writeFile(join(root, 'a.txt'), 'x')
+    await mkdir(join(root, 'sub'))
+    await symlink(join(root, 'a.txt'), join(root, 'link'))
+    const sb = localSandbox({ root })
+    const entries = (await sb.listDirectory({ path: '.' })) ?? []
+    expect(entries.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: 'a.txt', type: 'file' },
+      { name: 'link', type: 'symlink' },
+      { name: 'sub', type: 'directory' },
+    ])
+    expect(await sb.listDirectory({ path: 'missing' })).toBeNull()
+    await expect(sb.listDirectory({ path: 'a.txt' })).rejects.toThrow()
+  })
+
+  test('deleteFile: true, false when missing, a directory rejects, a link is deleted itself', async () => {
+    const root = await temp()
+    const outside = await temp()
+    await writeFile(join(root, 'a.txt'), 'x')
+    await writeFile(join(outside, 'keep.txt'), 'keep')
+    await mkdir(join(root, 'sub'))
+    await symlink(join(outside, 'keep.txt'), join(root, 'link'))
+    const sb = localSandbox({ root })
+    expect(await sb.deleteFile({ path: 'a.txt' })).toBe(true)
+    expect(existsSync(join(root, 'a.txt'))).toBe(false)
+    expect(await sb.deleteFile({ path: 'a.txt' })).toBe(false)
+    await expect(sb.deleteFile({ path: 'sub' })).rejects.toThrow(/directory/)
+    expect(existsSync(join(root, 'sub'))).toBe(true)
+    // the link goes, the file it pointed to (outside the root) stays
+    expect(await sb.deleteFile({ path: 'link' })).toBe(true)
+    expect(existsSync(join(root, 'link'))).toBe(false)
+    expect(await readFile(join(outside, 'keep.txt'), 'utf8')).toBe('keep')
+    await expect(sb.deleteFile({ path: join(outside, 'keep.txt') })).rejects.toThrow(
+      /outside the sandbox root/,
+    )
   })
 })
 
