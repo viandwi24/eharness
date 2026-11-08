@@ -1,5 +1,11 @@
 # eharness
 
+## 0.11.0
+
+### Minor Changes
+
+- [`73c8392`](https://github.com/viandwi24/eharness/commit/73c839215c28d4f24d4bab3681f99305174a29d6) Thanks [@viandwi24](https://github.com/viandwi24)! - Add the SQLite adapters for every storage port as three subpaths of `eharness`: `eharness/sqlite` (adapters, `createSqliteStorage`, `migrate`, `schemaSql`, the `SqlDriver` types; runtime-neutral), `eharness/sqlite/bun` (driver for a `bun:sqlite` handle) and `eharness/sqlite/node` (driver for a `node:sqlite` handle, Node >= 22.5). The drivers take a handle and import no runtime module, so there is no extra npm dependency (ADR-0071).
+
 ## 0.10.0
 
 ### Minor Changes
