@@ -12,8 +12,8 @@ approvals combined with tools without `execute`), 0.7.0 (`eharness/permissions`,
 files, glob and multi-edit, `session.stats()` of the whole request, security defaults for MCP
 results and kind messages), 0.8.0 (published 2026-10-11, git tag `eharness@0.8.0`; see
 [0.8.0](#080)), 0.9.0 (published 2026-10-26, git tag `eharness@0.9.0`; see [0.9.0](#090)).
-0.10.0 shipped the P62 adopter gaps without the SQLite adapters; **the next minor** adds them as
-the subpaths `eharness/sqlite`, `eharness/sqlite/bun` and `eharness/sqlite/node` (ADR-0071) and `eharness/codes` (the stop reasons and notice codes without the runtime, ADR-0072). Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
+0.10.0 shipped the P62 adopter gaps without the SQLite adapters; 0.11.0 added them as
+the subpaths `eharness/sqlite`, `eharness/sqlite/bun` and `eharness/sqlite/node` (ADR-0071) and 0.12.0 added `eharness/codes` (the stop reasons and notice codes without the runtime, ADR-0072). Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
 
 ## Open items
 
@@ -52,7 +52,7 @@ before implementation.
 | ~~Compaction thrash detection~~ | Done in 0.4.0 (`compaction.thrash`, stop `'context-thrash'`). |
 | **Shared task lists** | Todos shared across subagents/sessions (`listId`, owners, dependencies). |
 
-## 0.10.0 (next)
+## 0.10.0 (shipped; P62 done, SQLite subpaths in 0.11.0)
 
 [P62](P62-adopter-gaps.md), found twice (the team example and Keith, a second product built on 0.9.0
 from npm). Pending in `.changeset/`; the generated `CHANGELOG.md` is the source of truth for the

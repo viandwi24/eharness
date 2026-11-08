@@ -1,6 +1,6 @@
 # P62 — Adopter gaps: SQLite adapters, ctx everywhere, turn principal, actor grants, turn lifecycle
 
-Status: todo · Owner: Riz · Branch: `main` (no phase branch, like P13–P20)
+Status: done (2026-11-08) · Owner: Riz · Branch: `main` (no phase branch, like P13–P20)
 
 ## Goal
 
@@ -195,9 +195,12 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
       22.5–22.12 untested); new cases for lock `owner` (`leaseOwnerTakeover`) and principal durability
       (`multiInstanceConformance`); grants by principal are covered by integration tests, not by a
       conformance suite
-- [ ] The team example moves to `eharness/sqlite` (proof of the adapters, no behavior change).
-      **Not started on purpose:** the example keeps its own Drizzle tables and real data; diff
-      `schemaSql()` against them and test on a copy of the database first.
+- [x] The team example moves to `eharness/sqlite` where its tables match (2026-11-08, per port, no
+      data migration, no behavior change). Messages, state, lock, inbox and budget run on the package
+      adapters over the existing Drizzle tables (identical DDL); the stream log (cursor column `idx`,
+      not `seq`), activity (`events`), schedules (`routines`), profiles (`config_profiles`), people,
+      outbox and handoffs stay app-owned because their tables differ. The comparison and the reason
+      per port: `examples/team/docs/storage-adapters.md`, spec 36 §9.
 - [x] Changesets: `eharness` minor (B, C, D, E), SQLite subpaths in a later changeset (`sqlite-subpaths`), a patch for the
       session-rules fix; upgrade notes in `docs/guides/upgrading.md` (grants options)
 - [x] Roadmap and board updated. 0.10.0 shipped without the SQLite adapters; ADR-0071 moved them into
@@ -215,22 +218,47 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
       default (it now declares a 30 s timeout; nothing in `examples/` or its dependencies changed since
       the base). `packages/sqlite` is now part of the root `typecheck`.
 
+- Closing note (2026-11-08): all work shipped in 0.10.0 (without the adapters), 0.11.0 (`eharness/sqlite*`) and
+  0.12.0 (`eharness/codes`). Historical notes above stay as written: "the sqlite suites resolve
+  `eharness` from `dist`" and "`packages/sqlite` included" no longer hold (ADR-0071 moved the
+  adapters to `src/sqlite`, which imports the sources). Closing gate: `lint` (37 warnings),
+  `typecheck` (all projects, team web 0 errors), `check:imports`, `build`, `check:package` pass;
+  `bun test` 7014 tests (6947 pass, 67 skip, 0 fail, 506 s); `node --test
+  src/sqlite/conformance.node.ts` 153 pass.
+
 ## Acceptance criteria
 
-- [ ] An app wires durable storage with `createSqliteStorage(bunSqlite(db))` and no copied adapter
-      code; the same tests pass under `node:sqlite`.
-- [ ] A multi-instance test: a turn sent with principal P on instance 1, drained on instance 2,
+Proven 2026-11-08 (each test run once; the bun suites together 219 pass, the node suite 153 pass).
+
+- [x] An app wires durable storage with `createSqliteStorage(bunSqlite(db))` and no copied adapter
+      code; the same tests pass under `node:sqlite`. `src/sqlite/sqlite.test.ts` and
+      `src/sqlite/conformance.bun.test.ts` (Bun); `node --test src/sqlite/conformance.node.ts`
+      (`bun run test:node-sqlite`, Node 26: 153 pass). The team example wires five ports through
+      `eharness/sqlite` (`examples/team/server/src/infra/eh/storage.ts`).
+- [x] A multi-instance test: a turn sent with principal P on instance 1, drained on instance 2,
       parked, woken and continued on instance 1 sees `ctx.principal.id === P` in every hook, and so
-      does its subagent child.
-- [ ] In a shared session with `grants: { by: 'principal' }`, A's `remember: 'session'` never
+      does its subagent child. `src/session/principal-multi-instance.int.test.ts` (hooks and tools);
+      `src/subagent/principal.test.ts` (child and wake on another instance);
+      `multiInstanceConformance` (principal durability).
+- [x] In a shared session with `grants: { by: 'principal' }`, A's `remember: 'session'` never
       approves B's call; with the default nothing changes (existing tests untouched).
-- [ ] A `permissions` session rule added in session S1 does not apply in S2 (regression test).
-- [ ] `close({ inFlight: 'interrupt' })` leaves the same stored message and notice as
-      `session.recover()` after a crash.
-- [ ] A restarted process with the same `instanceId` acquires its own stale lease at once.
-- [ ] Every existing test passes unchanged except where a spec change says otherwise.
-- [ ] `bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports` green
-- [ ] Changeset added; specs updated
+      `src/session/interaction/grants-principal.int.test.ts` (`by x applyAt` matrix: B asks again
+      under `principal`, is approved under `session`).
+- [x] A `permissions` session rule added in session S1 does not apply in S2 (regression test).
+      `src/permissions/session-rules.int.test.ts` ("a deny rule added for S1 does not apply in S2").
+- [x] `close({ inFlight: 'interrupt' })` leaves the same stored message and notice as
+      `session.recover()` after a crash. `src/session/close-interrupt.int.test.ts` (compares parts,
+      stop, notice and `activeTurn` with a crashed reference run).
+- [x] A restarted process with the same `instanceId` acquires its own stale lease at once.
+      `src/session/lock-owner.int.test.ts` (`recovery.instanceId` reaches `acquire` as `owner`),
+      `lockConformance({ leaseOwnerTakeover })` run on `bun:sqlite` and `node:sqlite`,
+      `src/sqlite/sqlite.test.ts` (lock owner takeover), and the team example's
+      `restart-recovery.test.ts`.
+- [x] Every existing test passes unchanged except where a spec change says otherwise (full run in
+      the gate below).
+- [x] `bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports` green (gate below, 2026-11-08 closing run).
+- [x] Changeset added; specs updated (`.changeset` entries consumed by 0.10.0, 0.11.0 and 0.12.0 in
+      `CHANGELOG.md`; specs 01, 05, 06, 10, 11, 12, 14, 18, 20, 22, 29, 34, 36).
 
 ## Open questions
 
