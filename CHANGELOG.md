@@ -1,5 +1,62 @@
 # eharness
 
+## 0.10.0
+
+### Minor Changes
+
+- [`fbc4239`](https://github.com/viandwi24/eharness/commit/fbc42396bab58ff357694e610b071b49f2fa73f4) Thanks [@viandwi24](https://github.com/viandwi24)! - `close({ inFlight: 'interrupt' })` on the agent, `closeSession(id, options)` and the session ends a running turn exactly as `session.recover()` repairs a crashed one: `stop: 'interrupted'`, dangling tool calls answered `INTERRUPTED_CRASH`, an `EH_TURN_INTERRUPTED` notice and `activeTurn` cleared. The default stays `'abort'`. New type `CloseOptions`.
+
+- [`2b983ff`](https://github.com/viandwi24/eharness/commit/2b983ff5a22c1e8b93da6dbfe5e8481423939c02) Thanks [@viandwi24](https://github.com/viandwi24)! - Policy options take `(ctx)` so they can vary per session, person or tenant: `subagent({ agents })` is evaluated with the ctx before every turn of the parent (it was once per session).
+  
+  `clock({ timezone })` receives the ctx (the zone of the `datetime` and `sleep` tools can follow the person).
+  
+  `webFetch({ allow, deny })`: `allow(host, ctx)` and `deny` may be functions (sync or async); a function that throws fails closed.
+  
+  `compaction.summarizeAt`, `keepLast` and `model` (also the default flush model) may be functions of the ctx, read once per turn; an invalid or throwing value keeps the default.
+
+- [`042ea1c`](https://github.com/viandwi24/eharness/commit/042ea1cc8e69314bcc65457d3a0a2407a644d141) Thanks [@viandwi24](https://github.com/viandwi24)! - `followSessionStream` stays fast on long turns. Consecutive text and reasoning deltas of the same part are merged before the AI SDK folds them (`deltaHoldMs`, default 50 ms; `0` keeps one message state per delta), so a turn of hundreds of steps no longer produces one full copy of the message per chunk. The built message is unchanged. The new `clip` option replaces big tool inputs/outputs and data payloads with `?clip=` previews (`isClippedPart`) while following.
+
+- [`7bc984b`](https://github.com/viandwi24/eharness/commit/7bc984b79f713ed32b6752c04213a5fa7f2525c9) Thanks [@viandwi24](https://github.com/viandwi24)! - New agent option `grants: { by: 'session' | 'principal'; applyAt: 'continuation' | 'now' }` (spec 11 §3.1, ADR-0070). `by: 'principal'` keys a session grant by the principal that asked (`<principal id>\u001f<tool key>`), so one person's `remember: 'session'` does not answer another person's request in a shared session; `session.clearGrants(principal?)` clears one principal's grants, and a principal `id` containing U+0000 or U+001F is rejected. `applyAt: 'now'` applies a recorded grant at once to every call except the ones the same `respond()` answered. Both defaults keep today's behavior; the default of `applyAt` is planned to flip at 1.0.
+
+- [`9153d34`](https://github.com/viandwi24/eharness/commit/9153d34f6820d3dcb39034067c98c5d82534312f) Thanks [@viandwi24](https://github.com/viandwi24)! - `eharness/providers`: presets for local model servers — `ollamaProvider`, `lmStudioProvider`,
+  `vllmProvider` and `llamaCppProvider` (OpenAI-compatible, no API key needed, the usual local
+  address as default). Their model lists carry the context window the server really runs each model
+  with (Ollama `/api/ps` and Modelfile `num_ctx`, LM Studio's loaded instance, vLLM `max_model_len`,
+  llama.cpp `n_ctx`), tools/vision/thinking support where the server reports it, and a zero price.
+  `openAICompatibleProvider` gains an optional `contextWindow` setting for servers that report none,
+  reads vLLM's `max_model_len`, and a preset's `defaultBaseURL` now applies when the field is empty.
+
+- [`33cc4db`](https://github.com/viandwi24/eharness/commit/33cc4dba61384bd5929b3a879577dd32e082872c) Thanks [@viandwi24](https://github.com/viandwi24)! - `localSandbox` follows the newer AI SDK sandbox contract (`ai@7.0.15x`, `@ai-sdk/provider-utils` 5.0.76): it implements `stat`, `listDirectory` and `deleteFile` (same root and symlink guard as the other file operations; the root itself is a valid target), and `spawn` rejects `stdin: true` with `EH_INVALID_INPUT` before it starts the command. The sandbox type-checks against both the old and the new `ai` types again (the `ai@latest` peer check was failing on it).
+
+- [`b4818c1`](https://github.com/viandwi24/eharness/commit/b4818c1b3485453d565d75ebf3050cbb851c8636) Thanks [@viandwi24](https://github.com/viandwi24)! - `SessionLock.acquire(sessionId, { signal, owner })` receives `recovery.instanceId` as `owner` (only when set), so a lease lock can take over a lease its restarted self left behind at once. The option is additive: locks that ignore it keep working. `lockConformance` gains the opt-in `leaseOwnerTakeover` case.
+
+- [`1af9b12`](https://github.com/viandwi24/eharness/commit/1af9b12a80180528e26a3a32f3069e816a1367f7) Thanks [@viandwi24](https://github.com/viandwi24)! - `ModelInfo.thinking` tells which reasoning levels a model accepts (`levels`, `mandatory`,
+  `defaultLevel`; new types `ModelThinking` and `ThinkingLevel`): filled from OpenRouter's
+  `reasoning.supported_efforts` and from models.dev's `reasoning` flag. OpenRouter models now honour
+  the AI SDK `reasoning` call option (`settings.reasoning`), sent as OpenRouter's `reasoning.effort`.
+
+- [`b687472`](https://github.com/viandwi24/eharness/commit/b6874725ba46e6149f9d105fb7de5d1064ae7311) Thanks [@viandwi24](https://github.com/viandwi24)! - `openRouterProvider` has a new advanced setting, `ignoreProviders`: comma-separated upstream provider slugs that OpenRouter never routes to (`provider.ignore`). An excluded slug is dropped from `providerOrder` and is never put first by `stickyProvider`. Use it for an upstream that keeps failing, for example `morph`.
+
+- [`d827f8a`](https://github.com/viandwi24/eharness/commit/d827f8a08c7f2bd0a33ffb6ba82fdcd72cc3f2da) Thanks [@viandwi24](https://github.com/viandwi24)! - New `sleep` tool in `eharness/clock` (`sleepTool()`, or `clock({ sleep: true })`): it pauses a turn for whole minutes without holding a process, as an external wait that the session's wait timer (or `expireWaits()` after a restart) continues at the wake-up time. A worker can loop "do a batch, sleep, repeat" and costs nothing in between. A durable background subagent parked only on external waits no longer reports "waiting" to its parent; it reports when it finishes.
+
+- [`b655853`](https://github.com/viandwi24/eharness/commit/b655853d98fb7c45846dd726b835bbe0cf5e7419) Thanks [@viandwi24](https://github.com/viandwi24)! - Export `STOP_REASONS` and `NOTICE_CODES` as constants (with the types `KnownStopReason` and `NoticeCode`) so UIs stop matching strings. No behavior change.
+
+- [`22e103d`](https://github.com/viandwi24/eharness/commit/22e103df72873603bcfca51dec298c8857940d86) Thanks [@viandwi24](https://github.com/viandwi24)! - A turn knows who asked for it (ADR-0069). New type `Principal` (the shape of `ApprovalActor`, which is now an alias). `agent.session(id, { principal })` sets the session default (stored in `state.core.principal`; the first value wins), `send` / `respond` / `enqueue` / `inject` / `fork` take `principal`, and `ctx.principal` is set in every hook and tool context (turn, else session, else `undefined`). The principal is durable: it is stored in inbox `send` and `wake` items (`SerializedInput.principal`), in `activeTurn` and in the pending state, so a turn drained, recovered or continued on another instance (including a `respond()` continuation, which keeps the principal of the turn that asked) sees the same value. Inbox adapters must round-trip the new optional fields (`inboxAdapterConformance` checks it). `subagent` children inherit the principal of the delegating turn (`ParentInfo.principal`, `ChildSessionInfo.principal`) and every report wakes the launcher for it; `fork()` takes `principal`. A scheduler fire passes `payload.principal` to `enqueue` (app convention, no core field).
+
+### Patch Changes
+
+- [`9c46dd3`](https://github.com/viandwi24/eharness/commit/9c46dd314056da6d67309a89e7fbd93d50bedd34) Thanks [@viandwi24](https://github.com/viandwi24)! - Connector `update` follows `auth.when`: a changed endpoint asks for a sign in only when the connector signs in with the new settings, switching a custom MCP server to OAuth sets `needs-auth`, and leaving OAuth clears a pending sign in.
+
+- [`6bd9e3d`](https://github.com/viandwi24/eharness/commit/6bd9e3d240de7d373938b31c4451dbb9af4f7983) Thanks [@viandwi24](https://github.com/viandwi24)! - Subagent park mode: the parent of a finished child always continues. A continuation that could not start, or that failed before it stored anything (the session lock held by another instance, a storage failure), is retried with backoff for 15 minutes instead of being dropped silently; failed continuations are logged with the parent session id. `reconcileSubagentWaits()` now also continues a parent whose waits are all resolved but whose turn never continued.
+
+- [`10f18fc`](https://github.com/viandwi24/eharness/commit/10f18fccd880b2076fa58cb1ceb3104319cc105b) Thanks [@viandwi24](https://github.com/viandwi24)! - Fix `permissions` rules added with `scope: 'session'` applying to every session that shares the engine. `allow`, `addRule` and `removeRule` take `{ session }`, the plugin decides with `ctx.session.id`, and a session rule applies only to its session. A session rule without an id keeps the engine-wide behavior and warns `W_PERMISSION_SESSION_RULE_GLOBAL` once per engine.
+
+- [`f53e6ba`](https://github.com/viandwi24/eharness/commit/f53e6baf6a6afa33c268b99c8b3cd7d035fb6856) Thanks [@viandwi24](https://github.com/viandwi24)! - OpenRouter `stickyProvider` forgets a conversation's provider when a call fails (rejected, a stream `error` part or a broken stream), so the next call is routed normally instead of going back to a failing upstream.
+
+- [`949aaa0`](https://github.com/viandwi24/eharness/commit/949aaa07cf9afd72e827f743d30f3513f884d621) Thanks [@viandwi24](https://github.com/viandwi24)! - Compaction asks for a brief of at most `maxSummaryTokens` (the limit is now in the summarizer prompt) and the agent's `maxOutputTokens` no longer raises the summarizer output cap. A model given a 32k cap wrote summaries as long as the transcript, so a small context window compacted again on almost every turn.
+
+- [`1b124d4`](https://github.com/viandwi24/eharness/commit/1b124d4db35e8f10d7d8854672784e519722321b) Thanks [@viandwi24](https://github.com/viandwi24)! - subagent: `send_message` to a park-mode child that is asleep (`sleep` tool) now wakes it and hands it the message at once. Before, the message was queued behind the sleep and read only when the sleep ended, while the sender was told it was delivered.
+
 ## 0.9.0
 
 ### Minor Changes

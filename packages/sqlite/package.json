@@ -2,10 +2,10 @@
   "name": "@eharness/sqlite",
   "type": "module",
   "peerDependencies": {
-    "eharness": ">=0.9.0 <1.0.0",
+    "eharness": ">=0.10.0 <1.0.0",
     "ai": "^7.0.137"
   },
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "SQLite adapters for every eharness storage port (bun:sqlite and node:sqlite drivers)",
   "license": "MIT",
   "sideEffects": false,
