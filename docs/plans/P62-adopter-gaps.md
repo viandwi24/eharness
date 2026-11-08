@@ -199,15 +199,22 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
       `schemaSql()` against them and test on a copy of the database first.
 - [x] Changesets: `eharness` minor (B, C, D, E), `@eharness/sqlite` initial minor, a patch for the
       session-rules fix; upgrade notes in `docs/guides/upgrading.md` (grants options)
-- [ ] Roadmap (0.10.0 section) and board updated; release as 0.10.0 (needs the owner's go-ahead:
-      version PR, npm publish, CI and release flow for `@eharness/sqlite`, which only know the root)
-- [ ] Gate (2026-11-08, full run once): lint, test, build, `check:package`, `check:imports` pass
-      except: `check-throws` flagged `src/compaction/compact.ts:183` (fixed in 94d37bca, re-checked
-      alone, full lint not re-run); `bun run typecheck` stops at `svelte-check` of
-      `examples/team/web` (8 errors, `monaco-editor` types not installed, unrelated); one test fails,
-      `limits > a memory bomb is stopped by the memory limit` (QuickJS memory limit, team example,
-      times out at 5 s alone too, no P62 commit touches it, not checked against the baseline).
-      Also: `packages/sqlite` is not part of the root `typecheck` script.
+- [x] Roadmap (0.10.0 section) and board updated; CI and the release workflows cover
+      `@eharness/sqlite` through the root `build`, `check:package` and `typecheck` scripts (no workflow
+      change); `docs/engineering/release.md` lists the maintainer steps for an additional package.
+- [ ] Release 0.10.0 (needs the owner's go-ahead): the version PR, the `@eharness` npm scope, the first
+      manual publish of `@eharness/sqlite` and its trusted publisher (release.md §4, "Additional
+      packages"). Nothing is published yet.
+- [x] Gate (2026-11-08, one full run in a stop-on-failure chain, working tree = the commit that adds
+      this line): `lint` (37 existing warnings), `typecheck` (every project, the team web and
+      `packages/sqlite` included), `bun test` (7008 tests: 6941 pass, 67 skip, 0 fail, 495 s), `build`,
+      `check:package` (both packages) and `check:imports` all pass. Three findings of the first run
+      were fixed: `check-throws` on `src/compaction/compact.ts` (94d37bca); `svelte-check` of the team
+      web, whose `monaco-editor` was declared in its `package.json` and lockfile but not installed on
+      this machine (`bun install --cwd examples/team/web`, no repo change); and the test `limits > a
+      memory bomb is stopped by the memory limit`, which passes in about 6 s and only exceeded the 5 s
+      default (it now declares a 30 s timeout; nothing in `examples/` or its dependencies changed since
+      the base). `packages/sqlite` is now part of the root `typecheck`.
 
 ## Acceptance criteria
 

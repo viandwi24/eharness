@@ -11,9 +11,9 @@ approvals combined with tools without `execute`), 0.7.0 (`eharness/permissions`,
 `eharness/subagent`, `eharness/ask`, `eharness/web`, `eharness/filesystem/node`, fork, binary
 files, glob and multi-edit, `session.stats()` of the whole request, security defaults for MCP
 results and kind messages), 0.8.0 (published 2026-10-11, git tag `eharness@0.8.0`; see
-[0.8.0](#080)). **0.9.0 is next** (see [0.9.0](#090-next)): 39 changesets are pending on `main`
-(18 minor, 21 patch) and the version PR has not been cut yet. Nothing after 0.8.0 is published.
-Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
+[0.8.0](#080)), 0.9.0 (published 2026-10-26, git tag `eharness@0.9.0`; see [0.9.0](#090)).
+**0.10.0 is next** (see [0.10.0](#0100-next)): the P62 adopter gaps and a new package,
+`@eharness/sqlite`. Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
 
 ## Open items
 
@@ -52,12 +52,26 @@ before implementation.
 | ~~Compaction thrash detection~~ | Done in 0.4.0 (`compaction.thrash`, stop `'context-thrash'`). |
 | **Shared task lists** | Todos shared across subagents/sessions (`listId`, owners, dependencies). |
 
-## 0.9.0 (next)
+## 0.10.0 (next)
 
-State on 2026-10-19: `package.json` and `CHANGELOG.md` say 0.8.0, which is on npm (published
-2026-10-11; `npm view eharness versions` ends at 0.8.0). Everything below is in pending changesets
-(`.changeset/`) and ships with the next `bun run release:version`; versions are not touched until
-then. Source of truth for the final text is the generated `CHANGELOG.md`.
+[P62](P62-adopter-gaps.md), found twice (the team example and Keith, a second product built on 0.9.0
+from npm). Pending in `.changeset/`; the generated `CHANGELOG.md` is the source of truth for the
+final text. ADR-0068 to ADR-0070.
+
+| Area | Contents | Changesets |
+|---|---|---|
+| New package | `@eharness/sqlite` (`packages/sqlite`): SQLite adapters for every storage port over a synchronous driver (`bun:sqlite`, `node:sqlite`), migrations, conformance on both runtimes; a peer of `eharness`, never a dependency (spec 36, ADR-0068) | sqlite-adapters-package |
+| Turn principal | `Principal` (same shape as `ApprovalActor`), `ctx.principal`, kept in the inbox, `activeTurn`, pending state and children; a wake turn keeps the delegating principal (ADR-0069) | turn-principal |
+| Grants | `grants: { by: 'session' or 'principal', applyAt: 'continuation' or 'now' }`; keys use the asking principal with a U+001F separator; `clearGrants(principal?)` (ADR-0070). `permissions` session rules are kept per session id (patch) | grants-by-principal, permissions-session-rules-per-session |
+| `ctx` options | The subagent catalog function, `clock({ timezone })`, `webFetch({ allow, deny })`, `compaction.model`, `keepLast` and `summarizeAt` also take `(ctx)` | ctx-policy-options |
+| Turn lifecycle | `close({ inFlight: 'interrupt' })`, `SessionLock.acquire(…, { owner })` with the opt-in conformance case `leaseOwnerTakeover`, `STOP_REASONS` and `NOTICE_CODES` | close-in-flight-interrupt, lock-owner, stop-reason-constants |
+
+Left out on purpose (follow-ups, end of P62): `rules(ctx)` and `roots(ctx)` on the permission engine,
+a Postgres package, a rate-limit port, span-based observability, approval expiry.
+
+## 0.9.0
+
+Published 2026-10-26 (tag `eharness@0.9.0`). The table is what the version PR collected.
 
 | Area | Contents | Changesets |
 |---|---|---|
