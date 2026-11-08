@@ -7,8 +7,8 @@ questions inline in the chat, and let agents run routines on a schedule.
 
 It is the reference for deployment profile "web + server" ([ADR-0034](../../docs/decisions/0034-deployment-profiles.md)):
 the web is only a UI, the server runs everything, survives `SIGKILL`, and can run as several
-instances over one database. It is an example: it is never published, and its SQLite adapters live
-here, not in the library. Plan and decisions: [P32](../../docs/plans/P32-team-example.md).
+instances over one database. It is an example: it is never published. Messages, state, lock, inbox and budget run on
+`eharness/sqlite`; the other adapters stay here ([storage-adapters](docs/storage-adapters.md)). Plan and decisions: [P32](../../docs/plans/P32-team-example.md).
 
 **Read the walkthrough:** [Building a multi-user agent server](../../docs/guides/walkthrough-server.md)
 follows one request through this code, piece by piece (storage, lock, stream log, inbox, recovery,

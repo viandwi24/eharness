@@ -177,7 +177,7 @@ days, Settings), pruned cheaply while writing (`TEAM_LOG_MAX_ROWS`, `TEAM_LOG_RE
 page opens on the last 30 days. Each call also appends a
 `model-call` event so the page live-updates. A write failure is logged and never breaks a turn.
 
-**Stream log.** `eh_stream_log` / `eh_stream_chunks` implement the `StreamLogAdapter` port
+**Stream log.** (App-owned: the cursor column is `idx`, see [storage-adapters](storage-adapters.md).) `eh_stream_log` / `eh_stream_chunks` implement the `StreamLogAdapter` port
 ([ADR-0039](../../../docs/decisions/0039-resumable-streams-stream-log.md)): cursor = chunk index,
 retention 10 min, readers poll. `GET /sessions/{id}/chat/stream?from=` resumes a turn running on
 another instance; a reload on the same instance replays the in-memory buffer.
@@ -273,7 +273,7 @@ stay in place and are never written again.
 ## Multi-instance guarantees and what survives a restart
 
 Instances share nothing but the database. Coordination uses the library's ports implemented on
-SQLite: a lease **lock** per session (30 s, heartbeat), `StateAdapter.setIf`, the durable **inbox**,
+SQLite (`eharness/sqlite` for most, see [storage-adapters](storage-adapters.md)): a lease **lock** per session (30 s, heartbeat), `StateAdapter.setIf`, the durable **inbox**,
 the stream log and the ledger.
 
 | Situation | Result |

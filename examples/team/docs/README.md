@@ -8,5 +8,6 @@
 - [tables.md](tables.md) - document tables: schemas, MongoDB-like queries and aggregates, changes with compare-and-set, import and export with the library, limits
 - [routers.md](routers.md) - feed chats for an agent, `channel_copy` with copy records and synced edits, setting up an agent of your own on a feed
 - [scripts.md](scripts.md) - scripts: sandboxed TypeScript run by chat events, schedules and table changes; manifest, grants, the `ctx` API, dry runs, approval, gates, examples
+- [storage-adapters.md](storage-adapters.md) - which storage ports run on `eharness/sqlite` and which stay in the app, port by port, with the reason
 - [operations.md](operations.md) - several instances, SQLite vs a networked database, tuning, backups
 - [../scripts/README.md](../scripts/README.md) - real-process checks
