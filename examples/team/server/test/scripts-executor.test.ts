@@ -180,7 +180,9 @@ describe('limits', () => {
       limits: { memoryMb: 16, cpuMs: 10_000 },
     })
     expect(r.outcome).toBe('memory')
-  })
+    // filling QuickJS up to its limit takes about 6 s on a laptop: more than the 5 s test default,
+    // far less than the 10 s CPU limit this test sets, so the limit that stops it is the memory one
+  }, 30_000)
 
   test('waiting forever is stopped by the wall time; time spent waiting is not CPU', async () => {
     const r = await runScript({
