@@ -191,6 +191,7 @@
 			{@render lines('read', 'May read', '/library/notes/**', 'Library folders or files, one per line.')}
 			{@render lines('write', 'May write', '/library/reports/**', 'Library folders or files; what it may write it may also read.')}
 		</div>
+		{@render warn(['authority.write'])}
 		<ToolPicker agentId={pickedAgent || proposed?.agentId || ''} bind:tools={form.tools} bind:connectors={form.connectors} />
 		{@render warn(['authority.tools'])}
 		{#each authorityErrors as message (message)}

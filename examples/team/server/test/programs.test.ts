@@ -287,6 +287,32 @@ describe('program domain', () => {
         write,
       ),
     ).toEqual([])
+    // memory tools granted by name cover memory paths too
+    expect(
+      briefWarnings('Update memori: /memories/agents/a1/notes.md', {
+        tools: ['memory_create', 'memory_str_replace'],
+        connectors,
+        write: [],
+      }),
+    ).toEqual([])
+    // a source after the verb is read, not written
+    expect(
+      messages(
+        'Tulis ringkasan dari /library/acme/sumber.md ke /library/programs/audit/ringkasan.md',
+        write,
+      ),
+    ).toEqual([])
+    // a plain folder rule covers the files below it, like the run's Edit rule
+    expect(messages('Update /library/acme/profile.md', ['/library/acme/'])).toEqual([])
+    expect(messages('Update /library/acme/profile.md', ['/library/acme'])).toEqual([])
+    expect(messages('Update /library/acmex/profile.md', ['/library/acme'])).toHaveLength(1)
+    // a wildcard or placeholder in a file name is not cut into a fake path
+    expect(messages('Tulis laporan ke /library/acme/report-<YYYY-MM>.md', write)).toEqual([])
+    expect(messages('Tulis ke /library/acme/notes_*.md', write)).toEqual([])
+    // the editor shows it next to the write rules
+    expect(briefWarnings('Update /library/acme/x.md', { tools, connectors, write })[0]?.field).toBe(
+      'authority.write',
+    )
     // templates and folders are not files
     expect(messages('Tulis ke /library/acme/<YYYY-MM>/ setiap hari', write)).toEqual([])
   })

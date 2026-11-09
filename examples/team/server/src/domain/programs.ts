@@ -453,19 +453,39 @@ export function budgetWarnings(
 }
 
 const WRITE_VERB = /\b(update|simpan|save|catat|tulis|write|perbarui|store|record)\b/i
-/** A library or memory file path named in a brief (no wildcards, no `<placeholders>`). */
-const BRIEF_PATH = /\/(?:library|memories)\/[^\s,;:()"'`*<>]+/g
+/** A library or memory path token in a brief, up to whitespace or punctuation that ends a path. */
+const BRIEF_PATH = /\/(?:library|memories)\/[^\s,;:()"'`]+/g
+/** Words before a path that make it a source, not the target of the write verb. */
+const SOURCE_WORD =
+  /\b(?:dari|from|berdasarkan|based on|baca|read|using|pakai|memakai|menggunakan|sumber)\s*:?\s*$/i
 
-/** Paths a brief asks to write that no write rule covers (at most 3, in brief order). */
-function unwritablePaths(brief: string, write: readonly string[]): string[] {
+/**
+ * Whether a write rule covers `path`, the way the run's `Edit(<rule>)` matches it: a glob as a glob,
+ * a plain rule (no `*`) as that file or a folder with everything below it.
+ */
+function writeCovers(rule: string, path: string): boolean {
+  if (rule.includes('*')) return globMatch(rule, path)
+  const base = rule.replace(/\/+$/, '')
+  return path === base || path.startsWith(`${base}/`)
+}
+
+/**
+ * Paths a brief asks to write that no write rule covers (at most 3, in brief order). A path is a
+ * write target when a write verb comes before it in the same clause and no source word ("dari",
+ * "from", "based on") stands right before it. Wildcards, `<placeholders>` and folders are skipped;
+ * memory paths are skipped when memory writes are granted.
+ */
+function unwritablePaths(brief: string, write: readonly string[], memory: boolean): string[] {
   const out: string[] = []
-  // a clause ends at a newline, `;` or a sentence dot; the write verb must come before the path
+  // a clause ends at a newline, `;` or a sentence dot
   for (const clause of brief.split(/\n|;|\.\s/)) {
     for (const match of clause.matchAll(BRIEF_PATH)) {
-      if (!WRITE_VERB.test(clause.slice(0, match.index))) continue
+      const before = clause.slice(0, match.index)
+      if (!WRITE_VERB.test(before) || SOURCE_WORD.test(before)) continue
       const path = match[0].replace(/[.]+$/, '')
-      if (path.endsWith('/') || out.includes(path)) continue
-      if (write.some((glob) => globMatch(glob, path))) continue
+      if (/[*<>{}]/.test(path) || path.endsWith('/') || out.includes(path)) continue
+      if (memory && path.startsWith('/memories/')) continue
+      if (write.some((rule) => writeCovers(rule, path))) continue
       out.push(path)
       if (out.length === 3) return out
     }
@@ -487,20 +507,18 @@ export function briefWarnings(
   const granted = (...tools: string[]): boolean => tools.some((t) => names.includes(t))
   const write = authority.write ?? []
   const text = brief.toLowerCase()
-  // memory files are also written with write_file when a write rule covers /memories/
-  const memoryWritable = write.some((glob) => glob.startsWith('/memories/'))
-  if (
-    /\b(memori|memory|memories)\b/.test(text) &&
-    WRITE_VERB.test(text) &&
-    !memoryWritable &&
-    !granted(
+  // memory tools are writes the gate checks against Edit rules (`MEMORY_TOOL_KINDS`): a write rule
+  // under /memories/ grants them as much as naming them (write_file never reaches /memories)
+  const memoryWritable =
+    write.some((rule) => rule.startsWith('/memories/')) ||
+    granted(
       'memory_create',
       'memory_str_replace',
       'memory_insert',
       'memory_delete',
       'memory_rename',
     )
-  ) {
+  if (/\b(memori|memory|memories)\b/.test(text) && WRITE_VERB.test(text) && !memoryWritable) {
     out.push({
       code: 'brief-needs-tool',
       field: 'authority.tools',
@@ -508,7 +526,7 @@ export function briefWarnings(
         'The brief asks to update or save memory, but no memory write tool is granted (memory_view is read-only): the run cannot write it. Add memory_create / memory_str_replace to the tools, or take it out of the brief.',
     })
   }
-  const unwritable = unwritablePaths(brief, write)
+  const unwritable = unwritablePaths(brief, write, memoryWritable)
   if (unwritable.length > 0) {
     out.push({
       code: 'brief-needs-tool',
