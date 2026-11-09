@@ -5,7 +5,7 @@
  * @example
  * ```ts
  * import { Database } from 'bun:sqlite'
- * const driver = bunSqlite(new Database('keith.db'), { owned: true })
+ * const driver = bunSqlite(new Database('app.db'), { owned: true })
  * ```
  */
 

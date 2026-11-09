@@ -18,7 +18,7 @@ result (spec 11 §3.1). Three things follow that surprise adopters:
    `Set` inside the engine object (`engine.ts` `sessionRules`), so they apply in every session that
    shares the agent. This is a bug, not a policy.
 
-Keith worked around (2) with its own per-session map in `motor/remote.ts`, and found (1) when two
+A second adopter application worked around (2) with its own per-session map, and found (1) when two
 people had to share one approval path.
 
 ## Decision

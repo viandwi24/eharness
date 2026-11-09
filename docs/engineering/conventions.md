@@ -98,4 +98,5 @@ Verified in P0 with TypeScript 7.0.2, tsdown 0.23.0 and attw 0.18.5: no pin need
   `refactor: …`. Scopes: `agent`, `plugin`, `registry`, `messages`, `stream`, `session`, `loop`,
   `compaction`, `skills`, `filesystem`, `storage`, `mcp`, `testing`, `ci`, `release`.
 - One changeset per user-facing change (release.md §3).
+- This repository documents eharness only: do not name downstream or sibling projects (such as private apps built on it) in docs, ADRs, plans, changesets, comments or commit messages.
 - PRs that change a spec or ADR say so in the title (`spec(05): …`).

@@ -73,6 +73,7 @@ bunx changeset              # add a changeset (required for every user-facing ch
    bun run check:package` before finishing a task that touches exports.
 5. Update the phase file checklist, the board, and any spec you changed. Add a changeset.
 6. Commit messages: Conventional Commits (`feat(session): …`, `fix(filesystem): …`, `docs: …`).
+7. This repository documents eharness only: do not name downstream or sibling projects (such as private apps built on it) in docs, ADRs, plans, changesets, comments or commit messages.
 
 ## Layout (target)
 

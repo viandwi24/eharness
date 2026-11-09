@@ -12,19 +12,19 @@ restart leaves a turn in the same readable state as a crash recovery.
 
 ## Why (rule of two, ADR-0062)
 
-Every item below was found twice: in `examples/team` (Ring 3) and in Keith
-(`viandwi24/keith`, Ring 3, built on 0.9.0 from npm), and matches what other harnesses expose
+Every item below was found twice: in `examples/team` (Ring 3) and in a second
+adopter application (Ring 3, built on 0.9.0 from npm), and matches what other harnesses expose
 (LangGraph checkpointers and `BaseStore` namespaces, Mastra `resourceId` and storage adapters,
-OpenAI Agents `Session`). Items that only one product needs were left out (Keith's usernames and
-owner transfer, its brain events, the team's persona and scripts).
+OpenAI Agents `Session`). Items that only one product needs were left out (the second application's usernames and
+owner transfer, its own events, the team's persona and scripts).
 
-| # | Gap | Team example | Keith | Kind of app that hits it |
+| # | Gap | Team example | Second adopter app | Kind of app that hits it |
 |---|---|---|---|---|
-| A | No persistent adapters ship; each app copies examples | `server/src/infra/eh/storage.ts`, `stream-log.ts`, `schedule-store.ts`, `profile-store.ts`, `infra/db/activity-store.ts` | `packages/db/src/eh/*` (9 adapters, ~2,000 lines, copied from the team example) | every production app |
-| B | Options that cannot vary per session (`ctx`) | API agents are built apart from the agent factory, with their own namespace (`infra/eh/api-agents.ts`) | compaction model proxy `roleSummarizer` (`providers/role-model.ts`), per-person timezone and catalog planned in P9 | multi-user, multi-tenant, bring-your-own-key |
-| C | No durable "who asked" on a turn; `runtime` is per process | only `workspaceId`/`agentId` in the session `runtime` set at open (`infra/eh/agent-factory.ts:754`); group chats (P41) share one session among many people | person derived from the session id `front:<id>` in hooks, wake turns and workers (P9) | group chats, multi-user sessions, schedulers, multi-replica |
-| D | Grants keyed by tool only; `permissions` session rules engine-wide | shared chat sessions | a member's approval must not grant the owner's session; `motor/remote.ts` keeps its own grant map | team chat, live chat, any shared session |
-| E | Shutdown aborts a turn silently; own stale lease cannot be taken over; no public "active turn" read | graceful stop in `main.ts` | `resume/resume.ts` casts `state.core.activeTurn` and rewrites stop metadata; lock adapter adds `takeOver` | every long-running server |
+| A | No persistent adapters ship; each app copies examples | `server/src/infra/eh/storage.ts`, `stream-log.ts`, `schedule-store.ts`, `profile-store.ts`, `infra/db/activity-store.ts` | 9 adapters (~2,000 lines), copied from the team example | every production app |
+| B | Options that cannot vary per session (`ctx`) | API agents are built apart from the agent factory, with their own namespace (`infra/eh/api-agents.ts`) | a compaction model proxy, per-person timezone and catalog planned in P9 | multi-user, multi-tenant, bring-your-own-key |
+| C | No durable "who asked" on a turn; `runtime` is per process | only `workspaceId`/`agentId` in the session `runtime` set at open (`infra/eh/agent-factory.ts:754`); group chats (P41) share one session among many people | person derived from the session id in hooks, wake turns and workers (P9) | group chats, multi-user sessions, schedulers, multi-replica |
+| D | Grants keyed by tool only; `permissions` session rules engine-wide | shared chat sessions | a member's approval must not grant the owner's session; keeps its own grant map | team chat, live chat, any shared session |
+| E | Shutdown aborts a turn silently; own stale lease cannot be taken over; no public "active turn" read | graceful stop in `main.ts` | casts `state.core.activeTurn` and rewrites stop metadata; lock adapter adds `takeOver` | every long-running server |
 
 ## Specs
 
@@ -78,8 +78,8 @@ owner transfer, its brain events, the team's persona and scripts).
   takes table names.
 - Cross-process notify: polling with a configurable `pollMs`. SQLite has no LISTEN, and the spec
   already allows polling.
-- Source: merge `examples/team/server/src/infra/eh/*` and Keith's `packages/db/src/eh/*`, keeping
-  the stricter behavior of the two where they differ (Keith's inbox dedupe window and dead letters,
+- Source: merge `examples/team/server/src/infra/eh/*` and the second application's adapters, keeping
+  the stricter behavior of the two where they differ (the second application's inbox dedupe window and dead letters,
   the team's activity `seq`).
 
 ### B. `ctx` for every policy option (spec changes, no ADR)
@@ -117,7 +117,7 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
   another one.
 - `respond({ approvals: [{ actor }] })` keeps recording who answered; `principal` records who asked.
 - Budget `scopes(ctx)` and `memory.roots(ctx)` can key on `ctx.principal.id`. That replaces parsing
-  session ids, which is the pattern Keith uses today.
+  session ids, which is the pattern the second application uses today.
 
 ### D. Actor-scoped grants (core and permissions, ADR-0070)
 
@@ -149,8 +149,8 @@ Each option also accepts `(ctx) => value | Promise<value>`, read once per turn l
      does for `activeTurn`.
    - `lockConformance` gains that case.
    - Adapters that ignore `owner` keep working.
-4. Export the stop reasons and notice codes as constants (`STOP_REASONS`, `NOTICE_CODES`). Keith
-   matches notice text and parses warning codes out of strings today.
+4. Export the stop reasons and notice codes as constants (`STOP_REASONS`, `NOTICE_CODES`). The second
+   application matches notice text and parses warning codes out of strings today.
 
 ## Checklist
 

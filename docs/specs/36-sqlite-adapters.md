@@ -155,7 +155,7 @@ current period on. The bundle never creates tables: call `migrate` first.
 - **Profiles.** `subscribe` fires at once after a local put or delete and, for another process on
   the same file, by polling `PRAGMA data_version` every `pollMs`.
 - **Where the two origins differ the stricter behavior applies** (the longer inbox de-duplication
-  window of the Keith adapter, the cross-process `seq` of the team adapter).
+  window of the second adopter's adapter, the cross-process `seq` of the team adapter).
 
 ## 6. Limits
 

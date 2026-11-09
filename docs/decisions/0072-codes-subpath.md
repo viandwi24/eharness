@@ -5,7 +5,7 @@ Status: **Accepted** · Date: 2026-11-08 · Related: [ADR-0059](0059-client-subp
 ## Context
 
 `STOP_REASONS` and `NOTICE_CODES` (0.10, `src/codes.ts`) were exported only from the package root. A
-second product, Keith (a TUI and server app on eharness), renders `eh.notice` messages and stop
+second product (a TUI and server app on eharness) renders `eh.notice` messages and stop
 reasons for people. Its UI talks to the core over HTTP, so it must not import the root, which pulls
 the whole runtime. It therefore re-typed `'tool-pending'`, `'EH_TURN_INTERRUPTED'` and the rest by
 hand, and hand-typed strings drift silently when a code is added or renamed.

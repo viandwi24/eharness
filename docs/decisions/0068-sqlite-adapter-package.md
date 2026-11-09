@@ -10,7 +10,7 @@ durable sessions copies the adapters from `examples/`:
 
 - `examples/team` carries its own stores for messages, state, lock, stream log, activity, schedules
   and profiles.
-- Keith (a second product, built on 0.9.0 from npm) copied nine of them into `packages/db/src/eh/`,
+- A second product, built on 0.9.0 from npm, copied nine of them into its own code,
   about 2,000 lines, and extended several (inbox dedupe window, budget status, lock takeover).
 
 The two copies already differ in behavior. Each fix has to be made twice, and a third app would make
@@ -37,7 +37,7 @@ publish.
    `createAgent` takes.
 4. **Schema is owned by the package.** Versioned migrations run from code (`migrate(driver)`), tables
    carry a configurable prefix (default `eh_`) and a `schema_version` row. An app that manages its
-   own migrations (the team example and Keith use Drizzle) takes the same DDL from
+   own migrations (the team example and the second product use Drizzle) takes the same DDL from
    `schemaSql({ prefix })` and runs it itself; the adapters never create tables behind its back
    unless `migrate` is called.
 5. **Cross-process wake-up is polling** with a configurable `pollMs`. SQLite has no notification

@@ -54,7 +54,7 @@ before implementation.
 
 ## 0.10.0 (shipped; P62 done, SQLite subpaths in 0.11.0)
 
-[P62](P62-adopter-gaps.md), found twice (the team example and Keith, a second product built on 0.9.0
+[P62](P62-adopter-gaps.md), found twice (the team example and a second adopter application built on 0.9.0
 from npm). Pending in `.changeset/`; the generated `CHANGELOG.md` is the source of truth for the
 final text. ADR-0068 to ADR-0070.
 

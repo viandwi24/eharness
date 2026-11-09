@@ -94,7 +94,7 @@ equal to the lists in this spec and to `src/codes.ts`; a type test keeps the der
 
 `STOP_REASONS`, `NOTICE_CODES`, `KnownStopReason` and `NoticeCode` are also exported from the subpath
 `eharness/codes` (ADR-0072): the same objects as the package root, with no runtime import. The reason:
-a product UI that renders `eh.notice` messages and stop reasons for people (Keith's TUI) talks to the
+a product UI that renders `eh.notice` messages and stop reasons for people (for example a TUI) talks to the
 core over HTTP and must not import the root, which pulls the whole runtime; it used to re-type the
 code strings by hand, and hand-typed strings drift silently when a code is added or renamed.
 `eharness/client` cannot re-export them, because ADR-0059 limits it to runtime imports from `ai` and

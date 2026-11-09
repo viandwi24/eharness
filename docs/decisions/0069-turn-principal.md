@@ -12,11 +12,11 @@ A turn has no durable notion of who asked for it. The nearest things are:
   recovered after a crash, or continued after a park runs with whatever runtime that instance holds.
 - `ApprovalActor` (`{ id, name?, … }`), which records who **answered** an approval, not who asked.
 
-Apps work around it by encoding the person in the session id (Keith derives the person from
-`front:<id>` in hooks that have no other source) or in app metadata. Both break for shared
+Apps work around it by encoding the person in the session id (one adopter derives the person from
+the session id in hooks that have no other source) or in app metadata. Both break for shared
 sessions (group chats, where one session has many people) and for work started by the system
 (wake turns, schedules), and they leave every plugin to parse ids. The same need appears in the
-team example's group chats and in Keith's multi-person isolation, and in other harnesses as the
+team example's group chats and in a second application's multi-person isolation, and in other harnesses as the
 `resourceId` of Mastra and the namespace of the LangGraph store.
 
 ## Decision
