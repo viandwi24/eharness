@@ -373,6 +373,16 @@ export function classifyError(error: unknown): TgErrorKind {
   if (/not found in local cache/i.test(text)) {
     return { kind: 'invalid', text: 'PEER_UNKNOWN', detail: unknownPeerDetail(text) }
   }
+  // mtcute's MtMessageNotFoundError ("Message to copy 40761 not found in -100…"): the message was
+  // deleted or never existed. A fault of this one request, never of the connection.
+  const missing = /^Message(?: to [a-z ]+)? (\d+) not found in (-?\d+)/i.exec(text)
+  if (missing !== null) {
+    return {
+      kind: 'invalid',
+      text: 'MESSAGE_NOT_FOUND',
+      detail: `Message ${missing[1]} is not in the chat ${missing[2]} any more (deleted, or the id is wrong), so it cannot be copied or forwarded. Skip it; do not retry it.`,
+    }
+  }
   const wait = /^(?:FLOOD_(?:PREMIUM_)?WAIT|SLOWMODE_WAIT)_(\d+)/.exec(upper)
   if (wait !== null) return { kind: 'flood', seconds: Number(wait[1]), text: upper }
   if (upper.startsWith('PEER_FLOOD')) return { kind: 'peer-flood', text: upper }

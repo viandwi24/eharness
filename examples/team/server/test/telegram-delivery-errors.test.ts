@@ -203,6 +203,14 @@ describe('error classification', () => {
     expect(classifyError(new TgRpcError('INTERDC_CALL_ERROR')).kind).toBe('transient')
   })
 
+  test('a message that is gone (mtcute MtMessageNotFoundError) fails only that request', () => {
+    const gone = new Error('Message to copy 40761 not found in -1002661092624')
+    const kind = classifyError(gone)
+    expect(kind).toMatchObject({ kind: 'invalid', text: 'MESSAGE_NOT_FOUND' })
+    expect(describeError(kind)).toContain('Message 40761 is not in the chat -1002661092624')
+    expect(classifyError(new Error('Message 12 not found in 34')).kind).toBe('invalid')
+  })
+
   test('a photo refusal reads as a sentence for the model', () => {
     const text = describeError(classifyError(new TgRpcError('PHOTO_EXT_INVALID')))
     expect(text).toContain('does not accept this file as a photo')
