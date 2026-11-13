@@ -3,7 +3,7 @@ import { APICallError, type LanguageModel, tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
-import type { HarnessWarning } from '../errors.ts'
+import { type HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
 import { coreMessageKinds, isKindMessage } from '../messages/kinds.ts'
 import { project } from '../messages/project.ts'
 import { createCoreMessageRegistry } from '../messages/registry.ts'
@@ -102,6 +102,7 @@ function setup(
     patch?: (e: CompactionBeforeEvent, flusher: LanguageModel) => CompactionBeforePatch | undefined
     config?: Partial<HarnessAgentConfig>
     noPlugin?: boolean
+    extraPlugins?: HarnessAgentConfig['plugins']
   } = {},
 ) {
   const h: Harness = { order: [], facts: [], events: [], decisions: [] }
@@ -125,7 +126,10 @@ function setup(
     logger: silent,
     onWarning: (w) => warnings.push(w),
     compaction: { model: summarizer, keepLast: 1, maxSummaryTokens: 100 },
-    plugins: options.noPlugin === true ? [] : [savingPlugin(h, (e) => patch(e, flusher))],
+    plugins: [
+      ...(options.noPlugin === true ? [] : [savingPlugin(h, (e) => patch(e, flusher))]),
+      ...(options.extraPlugins ?? []),
+    ],
     ...options.config,
   })
   return { agent, model, flusher, summarizer, messages, warnings, h }
@@ -517,5 +521,116 @@ describe('pre-compaction flush (spec 06 §5.2a)', () => {
     await fillTurns(agent.session('s1'), 5)
     expect(await markers(messages)).toHaveLength(1)
     expect(await flushRecords(messages)).toHaveLength(0)
+  })
+})
+
+describe('flush failure policy onFailure (spec 06 §5.2a rule 9a)', () => {
+  const failing = { throws: new Error('provider down'), streamError: new Error('provider down') }
+  const aborting = (_e: CompactionBeforeEvent, f: LanguageModel): CompactionBeforePatch => ({
+    flush: { prompt: 'FLUSH', tools: ['save_fact'], model: f, onFailure: 'abort' },
+  })
+
+  test("pre-turn: a failed flush with 'abort' → no summary, no marker, record with error, W_COMPACTION_FAILED reason flush", async () => {
+    const { agent, messages, warnings, h } = setup(fiveTurns(), {
+      flushSteps: [failing],
+      patch: aborting,
+    })
+    const session = agent.session('s1')
+    await fillTurns(session, 4)
+    const result = await session.send(big('Q5')).result
+    expect(result.stop).toBe('complete')
+    expect(h.events.map((e) => e.trigger)).toEqual(['turn'])
+    expect(h.order).not.toContain('summarize')
+    expect(await markers(messages)).toHaveLength(0)
+    const [record] = await flushRecords(messages)
+    expect(flushData(record).error).toContain('provider down')
+    expect(warnings.find((w) => w.code === 'W_HOOK_FAILED')?.details).toMatchObject({
+      phase: 'flush',
+    })
+    expect(warnings.find((w) => w.code === 'W_COMPACTION_FAILED')?.details).toMatchObject({
+      trigger: 'turn',
+      reason: 'flush',
+      flush: 'failed',
+    })
+  })
+
+  test("default 'continue' and an explicit 'continue' still summarize after a failed flush", async () => {
+    const { agent, messages } = setup(fiveTurns(), {
+      flushSteps: [failing],
+      patch: (_e, f) => ({
+        flush: { prompt: 'FLUSH', tools: ['save_fact'], model: f, onFailure: 'continue' },
+      }),
+    })
+    await fillTurns(agent.session('s1'), 5)
+    expect(await markers(messages)).toHaveLength(1)
+  })
+
+  test("manual compact(): a skipped flush with 'abort' rejects EH_COMPACTION_FAILED (reason flush)", async () => {
+    const { agent, messages, h } = setup([answer('A1'), answer('A2')], {
+      // a flush model with a tiny window: the flush is skipped (rule 5)
+      config: {
+        contextWindow: (m: LanguageModel) =>
+          typeof m === 'object' && m.modelId === 'flusher' ? 100 : 100_000,
+        compaction: { model: summarizerModel(['S']), keepLast: 0, maxSummaryTokens: 100 },
+      },
+      patch: aborting,
+    })
+    const session = agent.session('s1')
+    await fillTurns(session, 2)
+    const error = await session.compact().then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+    expect(isHarnessError(error)).toBe(true)
+    expect((error as HarnessError).code).toBe('EH_COMPACTION_FAILED')
+    expect((error as HarnessError).details).toMatchObject({ reason: 'flush', flush: 'skipped' })
+    expect(h.events.map((e) => e.trigger)).toEqual(['manual'])
+    expect(await markers(messages)).toHaveLength(0)
+    expect(await flushRecords(messages)).toHaveLength(0)
+  })
+
+  test("merged: a second hook asking 'abort' wins; an invalid onFailure is an invalid patch", async () => {
+    const extra = (name: string, onFailure: string) =>
+      definePlugin({
+        name,
+        setup: () => ({
+          hooks: {
+            'compaction.before': () =>
+              ({ flush: { prompt: name, onFailure } }) as unknown as CompactionBeforePatch,
+          },
+        }),
+      })
+    const { agent, messages, warnings, h } = setup(fiveTurns(), {
+      flushSteps: [failing],
+      extraPlugins: [extra('strict', 'abort'), extra('typo', 'later')],
+    })
+    await fillTurns(agent.session('s1'), 5)
+    expect(h.order).not.toContain('summarize')
+    expect(await markers(messages)).toHaveLength(0)
+    const hookFailures = warnings.filter((w) => w.code === 'W_HOOK_FAILED')
+    expect(hookFailures.map((w) => w.details?.owner)).toEqual(['typo', 'saver,strict'])
+    expect(flushData((await flushRecords(messages))[0]).prompt).toBe(
+      'FLUSH: save what matters.\n\nstrict',
+    )
+  })
+
+  test("overflow recovery ignores 'abort': the compaction still runs", async () => {
+    const overflow = new APICallError({
+      message: 'prompt is too long',
+      url: 'https://api.example.com',
+      requestBodyValues: {},
+      statusCode: 400,
+      isRetryable: false,
+    })
+    const { agent, messages, warnings, flusher } = setup(
+      [answer('A1'), answer('A2'), { throws: overflow }, answer('ok')],
+      { flushSteps: [{ text: 'x' }], config: { contextWindow: 2_000 }, patch: aborting },
+    )
+    await fillTurns(agent.session('s1'), 2)
+    expect((await agent.session('s1').send(big('Q3')).result).stop).toBe('complete')
+    expect(flusher.calls).toHaveLength(0)
+    expect(warnings.find((w) => w.code === 'W_COMPACTION_FLUSH_SKIPPED')).toBeDefined()
+    expect(warnings.find((w) => w.code === 'W_COMPACTION_FAILED')).toBeUndefined()
+    expect(await markers(messages)).toHaveLength(1)
   })
 })

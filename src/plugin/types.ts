@@ -563,6 +563,13 @@ export interface CompactionBeforePatch {
     maxSteps?: number
     /** Default: `compaction.model`, else the turn's model. */
     model?: LanguageModel
+    /**
+     * What happens when the flush fails or is skipped (spec 06 §5.2a rule 9a). `'continue'`
+     * (default): summarize anyway. `'abort'`: do not summarize this time (no marker; the guard
+     * keeps the request within the window; `compact()` rejects `EH_COMPACTION_FAILED` with
+     * `details.reason: 'flush'`). Ignored for overflow recovery. Merged: `'abort'` wins.
+     */
+    onFailure?: 'continue' | 'abort'
   }
 }
 

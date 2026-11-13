@@ -361,7 +361,7 @@ export function createSessionCompaction(deps: {
     request.write?.({ type: 'data-eh.status', data: { state: 'compacting' }, transient: true })
 
     // pre-compaction flush (spec 06 §5.2a): summarizing will happen; hooks may save facts first
-    const flushed = await runFlushStage({
+    const flush = await runFlushStage({
       rt,
       event: {
         messages: plan.drop,
@@ -379,8 +379,24 @@ export function createSessionCompaction(deps: {
       onUsage: request.onUsage,
       persist: deps.persist,
     })
+    const flushed = flush.outcome
     if (flushed === 'aborted' || isAborted(request.signal)) {
       return { status: 'skipped', reason: 'aborted' }
+    }
+    // rule 9a: a flush that did not save → no summary when a hook asked for it (not on overflow)
+    if (
+      flush.onFailure === 'abort' &&
+      (flushed === 'failed' || flushed === 'skipped') &&
+      request.overflow !== true
+    ) {
+      return {
+        status: 'failed',
+        error: new HarnessError(
+          'EH_COMPACTION_FAILED',
+          `Compaction was not run: the pre-compaction flush ${flushed === 'failed' ? 'failed' : 'was skipped'} and asked to abort on failure.`,
+          { details: { reason: 'flush', flush: flushed } },
+        ),
+      }
     }
     // the flush may have used up the budget: no summarizer call then
     if ((flushed === 'flushed' || flushed === 'failed') && overBudget()) {

@@ -46,6 +46,8 @@ export interface MergedFlush {
   tools: string[]
   maxSteps: number
   model: LanguageModel | undefined
+  /** `'abort'` when any hook asked for it (spec 06 §5.2a rule 9a). */
+  onFailure: 'continue' | 'abort'
   /** Plugins whose hook returned a flush. */
   owners: string[]
 }
@@ -86,6 +88,12 @@ export interface FlushStageInput {
 /** Outcome of the flush stage: `aborted` = the turn was aborted during the flush. */
 export type FlushOutcome = 'none' | 'skipped' | 'flushed' | 'failed' | 'aborted'
 
+/** Outcome of the flush stage and the merged failure policy of its hooks (rule 9a). */
+export interface FlushResult {
+  outcome: FlushOutcome
+  onFailure: 'continue' | 'abort'
+}
+
 function validPatch(value: unknown): CompactionBeforePatch['flush'] | 'invalid' | undefined {
   if (value === undefined || value === null) return undefined
   if (typeof value !== 'object') return 'invalid'
@@ -105,13 +113,21 @@ function validPatch(value: unknown): CompactionBeforePatch['flush'] | 'invalid' 
   ) {
     return 'invalid'
   }
+  if (
+    flush.onFailure !== undefined &&
+    flush.onFailure !== 'continue' &&
+    flush.onFailure !== 'abort'
+  ) {
+    return 'invalid'
+  }
   return flush
 }
 
 /**
  * Run the `compaction.before` hooks in plugin order and merge their flush requests: prompts
  * joined with a blank line, tools unioned (first appearance), `maxSteps` = max, `model` = last
- * defined. A throwing hook (or an invalid patch) is `W_HOOK_FAILED` and skipped.
+ * defined, `onFailure` = `'abort'` when any hook asked for it. A throwing hook (or an invalid
+ * patch) is `W_HOOK_FAILED` and skipped.
  */
 export async function runBeforeHooks(
   rt: SessionRuntime,
@@ -135,7 +151,7 @@ export async function runBeforeHooks(
       if (flush === 'invalid') {
         throw new HarnessError(
           'EH_CONFIG_INVALID',
-          'returned an invalid patch (flush.prompt must be a non-empty string, flush.tools an array of names, flush.maxSteps a positive integer)',
+          'returned an invalid patch (flush.prompt must be a non-empty string, flush.tools an array of names, flush.maxSteps a positive integer, flush.onFailure "continue" or "abort")',
         )
       }
     } catch (error) {
@@ -149,9 +165,11 @@ export async function runBeforeHooks(
         tools: [],
         maxSteps: flush.maxSteps ?? DEFAULT_FLUSH_MAX_STEPS,
         model: flush.model,
+        onFailure: flush.onFailure ?? 'continue',
         owners: [hook.owner],
       }
     } else {
+      if (flush.onFailure === 'abort') merged.onFailure = 'abort'
       merged.prompt = `${merged.prompt}\n\n${flush.prompt}`
       merged.maxSteps = Math.max(merged.maxSteps, flush.maxSteps ?? DEFAULT_FLUSH_MAX_STEPS)
       if (flush.model !== undefined) merged.model = flush.model
@@ -254,13 +272,18 @@ function sumUsage(usages: readonly LanguageModelUsage[]): {
 
 /**
  * The flush stage of one compaction (spec 06 §5.2a): hooks → checks → flush call → `eh.flush`
- * record. Never throws; a failing flush is `W_HOOK_FAILED` and compaction continues.
+ * record. Never throws; a failing flush is `W_HOOK_FAILED`. The caller applies the merged
+ * `onFailure` policy (rule 9a).
  */
-export async function runFlushStage(input: FlushStageInput): Promise<FlushOutcome> {
+export async function runFlushStage(input: FlushStageInput): Promise<FlushResult> {
+  const merged = await runBeforeHooks(input.rt, input.event)
+  if (merged === undefined) return { outcome: 'none', onFailure: 'continue' }
+  return { outcome: await flushStage(input, merged), onFailure: merged.onFailure }
+}
+
+async function flushStage(input: FlushStageInput, merged: MergedFlush): Promise<FlushOutcome> {
   const { rt } = input
   const aborted = (): boolean => input.signal?.aborted === true
-  const merged = await runBeforeHooks(rt, input.event)
-  if (merged === undefined) return 'none'
   if (aborted()) return 'aborted'
   const model = merged.model ?? input.defaultModel ?? input.turnModel
   const skip = (message: string, details: Record<string, unknown>): FlushOutcome => {

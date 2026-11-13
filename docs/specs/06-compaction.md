@@ -339,9 +339,10 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    `trigger`: `'turn'` (pre-turn), `'auto'` (mid-turn), `'manual'` (`compact()`) or `'overflow'`
    (§7; the marker's own `trigger` stays `'auto'`/`'turn'`). Hooks run in plugin order; their
    `flush` requests merge: prompts joined with a blank line, tool lists unioned (first
-   appearance), `maxSteps` = max (default 3 each), `model` = last defined. A hook that throws or
-   returns an invalid patch (`prompt` not a non-empty string, `tools` not an array of strings,
-   `maxSteps` not a positive integer) → `W_HOOK_FAILED`, skipped.
+   appearance), `maxSteps` = max (default 3 each), `model` = last defined, `onFailure` = `'abort'`
+   when any hook asked for it (rule 9a). A hook that throws or returns an invalid patch (`prompt`
+   not a non-empty string, `tools` not an array of strings, `maxSteps` not a positive integer,
+   `onFailure` neither `'continue'` nor `'abort'`) → `W_HOOK_FAILED`, skipped.
 3. **Run.** One `generateText` call with: `instructions` = block 1 + block 2 of the turn
    (the stable prefix; no turn or step reminder); `messages` = the **current wire** (the wire of
    the request that triggered the compaction, pre-compaction, guard-sanitized; manual: the
@@ -384,9 +385,31 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
 9. **Failure.** A flush error (provider error, failing environment) → `W_HOOK_FAILED` with
    `details: { hook: 'compaction.before', owner, phase: 'flush' }`, the `eh.flush` record carries
    `error` plus the `steps`, `toolCalls`, `usage` and `costUsd` of the steps that completed before
-   the error (rule 8), and compaction continues. A thrown tool error inside the flush is a tool error result
+   the error (rule 8), and compaction continues (unless the flush asked otherwise, rule 9a). A thrown tool error inside the flush is a tool error result
    (status `error`), as in a turn. An abort of the **turn** aborts the flush and the compaction:
    no record, no marker (tool side effects that already happened stay).
+9a. **Failure policy (0.13.0).** A hook that uses the flush to save facts before they are
+   summarized can refuse a summary without that save: `flush.onFailure: 'continue' | 'abort'`
+   (default `'continue'`, the behaviour of rule 9; merged: `'abort'` when any hook asked for it; any
+   other value is an invalid patch, rule 2). With `'abort'`, a flush that **failed** (rule 9) or
+   was **skipped** (rule 5, or no flush environment) does not summarize:
+   - no summarizer call, no marker, no state change; the stored history stays complete, so a later
+     compaction (whose flush succeeds) can still summarize it. The warning of the flush itself is
+     unchanged (`W_HOOK_FAILED` with `phase: 'flush'`, or `W_COMPACTION_FLUSH_SKIPPED`), and a
+     failed flush still saves its `eh.flush` record with `error` (rule 7).
+   - **Pre-turn and mid-turn** (`trigger: 'turn' | 'auto'`): the compaction counts as failed
+     (§5.5): `W_COMPACTION_FAILED` with `details: { trigger, reason: 'flush', flush: 'failed' |
+     'skipped' }`, no second attempt in the same turn, and the guard (§6) keeps the request within
+     the window (view-only; storage untouched). A pre-turn or mid-turn compaction is attempted
+     again in the next turn.
+   - **Manual** `compact()`: rejects `EH_COMPACTION_FAILED` with the same `details.reason: 'flush'`
+     and `details.flush`, so the caller can tell it apart from a summarizer failure.
+   - **Overflow recovery** (`trigger: 'overflow'`, §7): the policy is ignored and the compaction
+     continues as with `'continue'`. The provider has already rejected the context; the flush can
+     rarely run there at all (rule 5 skips it unless the flush model has a larger window), and
+     refusing the summary would only hand the turn to the tighter guard (§7 step 4), which drops
+     history from the request without any summary.
+   An aborted turn (rule 9) is not a flush failure: no record, no marker, no warning, as before.
 10. **Mid-turn.** The flush runs between two steps of the running turn (the step barrier has
     completed; nothing streams). Flush tool calls are not streamed to the UI (tools may still
     write the transient `data-eh.status { state: 'tool' }`); flush steps do not count toward the
@@ -476,6 +499,8 @@ used — no retry) → warning `W_COMPACTION_FAILED` (`details: { trigger, reaso
 'length' | 'empty'`), no marker, continue with the guard. Manual `compact()` rejects with
 `EH_COMPACTION_FAILED` (same `details.reason`). Raise `settings.maxOutputTokens` (the summarizer's
 output cap, which can lower the summarizer cap) or `maxSummaryTokens` when this happens.
+A flush with `onFailure: 'abort'` that did not save (§5.2a rule 9a) fails the compaction the same
+way with `details.reason: 'flush'` (no summarizer call).
 
 ## 6. Guard (always on, not configurable away)
 

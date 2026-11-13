@@ -541,7 +541,8 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
    * decided that summarizing will happen, before the summarizer (spec 06 §5.2a). A `flush` gives
    * the agent one bounded, internal turn to save facts before history is summarized. Patches
    * merge in plugin order: prompts joined with a blank line, tools unioned (first appearance),
-   * `maxSteps` = max, `model` = last defined. Throw / invalid patch = W_HOOK_FAILED, skipped.
+   * `maxSteps` = max, `model` = last defined, `onFailure` = 'abort' when any hook asked for it.
+   * Throw / invalid patch = W_HOOK_FAILED, skipped.
    */
   'compaction.before'?(ctx: HarnessContext<DP>, e: CompactionBeforeEvent): Awaitable<CompactionBeforePatch | void>
   /** Contribute context to / replace the summarizer prompt (spec 06 §5). */
@@ -566,6 +567,7 @@ export interface CompactionBeforePatch {
     tools?: string[]                 // final tool names the flush may call; default none
     maxSteps?: number                // positive integer; default 3
     model?: LanguageModel            // default compaction.model ?? the turn's model
+    onFailure?: 'continue' | 'abort' // 0.13.0; default 'continue'; 'abort' = no summary when the flush failed or was skipped (spec 06 §5.2a rule 9a)
   }
 }
 export interface StepPrepareEvent {
