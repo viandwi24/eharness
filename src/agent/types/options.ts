@@ -194,6 +194,13 @@ export interface ApprovalConfig {
 export interface CacheConfig {
   mode?: 'auto' | 'breakpoints'
   ttl?: '5m' | '1h'
+  /**
+   * Also send the Anthropic cache markers to models this returns true for, besides models whose
+   * provider id starts with `anthropic` (0.14.0). For Anthropic models reached through a provider
+   * that forwards `providerOptions.anthropic.cacheControl` per message, e.g. a router. Use it with
+   * `mode: 'breakpoints'`: `'auto'` sets only a call-level option such a provider may ignore.
+   */
+  include?: (model: LanguageModel) => boolean
 }
 
 /**

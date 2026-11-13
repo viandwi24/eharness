@@ -159,6 +159,71 @@ describe('prompt layout (spec 02 §5)', () => {
   })
 })
 
+describe('cache.include', () => {
+  const routed = { provider: 'openrouter.chat', modelId: 'anthropic/claude-sonnet-4.6' } as never
+  const prompt = {
+    system: [{ role: 'system' as const, content: 's' }],
+    messages: [{ role: 'user' as const, content: 'hi' }] as ModelMessage[],
+    tools: {},
+    providerOptions: undefined,
+  }
+
+  test('a non-Anthropic provider gets no markers by default', () => {
+    const result = applyCache({
+      config: { mode: 'breakpoints' },
+      model: routed,
+      prompt,
+      lastStable: 0,
+      lastStaticTool: undefined,
+    })
+    expect(result).toBe(prompt)
+  })
+
+  test('include adds the markers for the models it accepts', () => {
+    const result = applyCache({
+      config: {
+        mode: 'breakpoints',
+        include: (m) => typeof m !== 'string' && m.modelId.startsWith('anthropic/'),
+      },
+      model: routed,
+      prompt,
+      lastStable: 0,
+      lastStaticTool: undefined,
+    })
+    expect(result.system[0]?.providerOptions).toMatchObject({
+      anthropic: { cacheControl: { type: 'ephemeral' } },
+    })
+    expect(result.messages[0]?.providerOptions).toMatchObject({
+      anthropic: { cacheControl: { type: 'ephemeral' } },
+    })
+  })
+
+  test('include never removes Anthropic models, and a throwing predicate counts as false', () => {
+    const direct = applyCache({
+      config: { include: () => false },
+      model: 'anthropic/claude',
+      prompt,
+      lastStable: 0,
+      lastStaticTool: undefined,
+    })
+    expect(direct.providerOptions).toMatchObject({
+      anthropic: { cacheControl: { type: 'ephemeral' } },
+    })
+    const broken = applyCache({
+      config: {
+        include: () => {
+          throw new Error('boom')
+        },
+      },
+      model: routed,
+      prompt,
+      lastStable: 0,
+      lastStaticTool: undefined,
+    })
+    expect(broken).toBe(prompt)
+  })
+})
+
 describe('toolSearchNames', () => {
   test('reads tool names from tool_search outputs', () => {
     expect(

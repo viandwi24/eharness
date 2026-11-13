@@ -62,6 +62,15 @@ export function isAnthropicModel(model: LanguageModel): boolean {
   return model.provider.startsWith('anthropic')
 }
 
+/** True when `config.include` accepts the model; a predicate that throws counts as false. */
+function included(config: CacheConfig | undefined, model: LanguageModel): boolean {
+  try {
+    return config?.include?.(model) === true
+  } catch {
+    return false
+  }
+}
+
 /** Deep-merge plain objects (`b` wins; arrays and other values are replaced). */
 export function deepMerge<T extends Record<string, unknown>>(
   a: T | undefined,
@@ -110,8 +119,8 @@ export interface CachedPrompt {
 }
 
 /**
- * Apply prompt caching for Anthropic models (spec 02 §6.1); a no-op for other providers and for
- * `cache: false`.
+ * Apply prompt caching for Anthropic models and models `config.include` accepts (spec 02 §6.1); a
+ * no-op for other models and for `cache: false`.
  *
  * - `'auto'`: call-level `providerOptions.anthropic.cacheControl`.
  * - `'breakpoints'`: `cacheControl` on system block 1, the last static tool, the last stable
@@ -125,7 +134,8 @@ export function applyCache(args: {
   lastStaticTool: string | undefined
 }): CachedPrompt {
   const { config, prompt } = args
-  if (config === false || !isAnthropicModel(args.model)) return prompt
+  if (config === false) return prompt
+  if (!isAnthropicModel(args.model) && !included(config, args.model)) return prompt
   const mode = config?.mode ?? 'auto'
   const control = cacheControl(config ?? {})
   if (mode === 'auto') {

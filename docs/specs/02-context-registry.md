@@ -263,12 +263,25 @@ earlier in that order invalidates everything after it. Rules:
 ### 6.1 Cache configuration
 
 ```ts
-cache?: false | { mode?: 'auto' | 'breakpoints'; ttl?: '5m' | '1h' }   // default { mode: 'auto' }
+cache?: false | {
+  mode?: 'auto' | 'breakpoints'
+  ttl?: '5m' | '1h'
+  include?: (model: LanguageModel) => boolean   // 0.14.0
+}   // default { mode: 'auto' }
 ```
 
 Applied only when the step's model is an Anthropic model (provider id starts with `anthropic`, or a
-gateway id `anthropic/…`); for other providers the option is a no-op (they cache automatically or
-not at all). Never send `cacheControl` to other providers.
+gateway id `anthropic/…`) or `include` returns true for it; for other models the option is a no-op
+(they cache automatically or not at all). Never send `cacheControl` to other providers unless the
+app opts them in through `include`.
+
+`include` (0.14.0, opt-in) is for Anthropic models reached through a provider that is not
+Anthropic's own but forwards `providerOptions.anthropic.cacheControl` on messages, system blocks
+and tools to the upstream request (for example a router whose model ids look like
+`anthropic/…`). It is called with the step's model, after `turn.prepare`/`step.prepare` chose it.
+It only adds models: an Anthropic model is cached even when `include` returns false. A predicate
+that throws counts as false. Use it with `mode: 'breakpoints'`: `'auto'` sets only a call-level
+`providerOptions.anthropic` option, which such a provider may ignore.
 
 | Mode | What the core does |
 |---|---|

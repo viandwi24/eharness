@@ -168,7 +168,7 @@ export interface ApprovalConfig {                                // spec 11 §3
   secret?: string
   onNewInput?: 'deny' | 'reject'
 }
-export interface CacheConfig { mode?: 'auto' | 'breakpoints'; ttl?: '5m' | '1h' }            // spec 02 §6
+export interface CacheConfig { mode?: 'auto' | 'breakpoints'; ttl?: '5m' | '1h'; include?: (model: LanguageModel) => boolean } // spec 02 §6.1
 export interface ToolOutputConfig {                              // spec 09 §4
   maxChars?: number                                              // default 50_000 per result
   perTool?: Record<string, number | false>
