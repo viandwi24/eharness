@@ -1,6 +1,6 @@
 # P63 — Adopter gaps 2: flush failure policy, cache-stable turn reminder
 
-Status: in progress · Owner: Riz · Branch: `main` (no phase branch, like P62)
+Status: review (2026-11-13; awaiting push and release) · Owner: Riz · Branch: `main` (no phase branch, like P62)
 
 ## Goal
 
@@ -50,7 +50,7 @@ request of a turn that are not a prefix of the previous request:
 
 ## Acceptance criteria
 
-- [ ] `bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports` green
+- [x] `bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports` green (6956 pass, 0 fail)
 - [x] Changesets added; specs updated
 
 ## Open questions
