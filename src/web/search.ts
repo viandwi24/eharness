@@ -11,16 +11,24 @@ import {
   type AddUsageInput,
   definePlugin,
   errorText,
+  type HarnessContext,
   type HarnessPlugin,
   untrustedContent,
 } from '../index.ts'
 import { WEB_FETCH_TOOL } from './fetch.ts'
 
-/** Filters and abort signal passed to the app's `search` function. */
+/** Filters, abort signal and session context passed to the app's `search` function. */
 export interface SearchOptions {
   allowedDomains?: string[]
   blockedDomains?: string[]
   signal?: AbortSignal
+  /**
+   * The session context of the plugin (0.13.0), as `webFetch` policy functions get it: attribute,
+   * limit or key the search per person or tenant (`ctx.principal`, `ctx.session.id`,
+   * `ctx.runtime`). Always set by `webSearch()`; optional only so code that calls a `search`
+   * function directly keeps compiling.
+   */
+  ctx?: HarnessContext
 }
 
 /** What one search produced. */
@@ -82,6 +90,7 @@ export function webSearch(options: WebSearchOptions): HarnessPlugin<'web-search'
                 ...(allowed_domains?.length ? { allowedDomains: allowed_domains } : {}),
                 ...(blocked_domains?.length ? { blockedDomains: blocked_domains } : {}),
                 ...(abortSignal ? { signal: abortSignal } : {}),
+                ctx,
               })
               if (found.usage !== undefined) {
                 ctx.turn?.addUsage(found.usage, {

@@ -341,6 +341,30 @@ describe('helpers', () => {
 })
 
 describe('web_search', () => {
+  test('the search function gets the session ctx with the turn principal (spec 22 §3)', async () => {
+    const seen: unknown[] = []
+    const agent = defineHarnessAgent({
+      model: scriptedModel([
+        { toolCalls: [{ toolName: 'web_search', input: { query: 'abc' } }] },
+        { text: 'ok' },
+      ]),
+      contextWindow: 100_000,
+      plugins: [
+        webSearch({
+          search: async (_q, o) => {
+            seen.push([o.ctx?.principal?.id, o.ctx?.session.id, o.ctx?.runtime.tenant])
+            return { text: 'found', sources: [] }
+          },
+        }),
+      ],
+      onWarning: () => {},
+    })
+    const session = agent.session('s-ctx', { runtime: { tenant: 't1' } })
+    await session.send('go', { principal: { id: 'ana' } }).result
+    await agent.close()
+    expect(seen).toEqual([['ana', 's-ctx', 't1']])
+  })
+
   const run = (search: WebSearchOptions['search'], input: Record<string, unknown>) =>
     callTool(webSearch({ search, wrapUntrusted: false }), 'web_search', input)
 

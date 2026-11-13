@@ -16,6 +16,7 @@ prefix. Every change is opt-in; defaults keep 0.12.0 behaviour.
 |---|---|---|---|
 | A | Compaction summarizes even when the pre-compaction flush failed | accepted (feature) | Any app that uses the flush to persist facts (the memory plugin's `flushOnCompaction` pattern) loses them when the summary runs after a failed save. Generic, opt-in. |
 | B | Per-turn reminder appears to defeat provider prefix caching | accepted (bug in the cache layout, opt-in fix) | The turn reminder sits before the current turn's first message and is not re-sent in later turns, so from the next turn on the prefix diverges where that reminder was: the whole previous turn (its user message, tool calls and results) is billed as uncached input once more. This holds for every adopter that has turn-refresh instructions or page context. |
+| D | The app's `webSearch` `search` function gets no session context, so its own paid call cannot be attributed, limited or keyed per person or tenant | accepted (feature) | Any search function that does its own model or API call needs the asking person for audit logs, quotas or per-tenant keys. `webFetch` already passes `ctx` to its policy functions; `SearchOptions.ctx` follows that convention. `webFetch` needs no counterpart (its other callbacks are transforms and transport). |
 | C | Provider-executed tool calls (for example a provider web search) carry no principal | skipped (no library gap) | eharness never executes such calls, so `tool.before`/`tool.after` do not fire for them, but `step.end` lists them in `toolCalls`/`toolResults` (`event.step` keeps `providerExecuted: true`) and its `ctx.principal` is the turn principal, as in every hook. Per-call logs read them there. |
 
 ## Specs
@@ -35,6 +36,7 @@ prefix. Every change is opt-in; defaults keep 0.12.0 behaviour.
 
 - [x] A: `flush.onFailure`, merge rule, abort for pre-turn, mid-turn and manual, ignored on overflow; tests in `src/compaction/flush.int.test.ts`; changeset
 - [x] B: `reminders.turnPlacement: 'end'` (ADR-0073); `src/loop/reminder-placement.int.test.ts` proves turn N+1's request starts with the bytes of turn N's stable prefix (and that the default does not); changeset
+- [x] D: `SearchOptions.ctx` (spec 22 §3); test in `src/web/web.test.ts`; changeset
 - [x] C: verified with a probe (`step.end` carries the provider-executed call and `ctx.principal`); no change
 
 ## Evidence for B
@@ -50,7 +52,7 @@ request of a turn that are not a prefix of the previous request:
 
 ## Acceptance criteria
 
-- [x] `bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports` green (6956 pass, 0 fail)
+- [x] `bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports` green (A and B: 6956 pass, 0 fail)
 - [x] Changesets added; specs updated
 
 ## Open questions

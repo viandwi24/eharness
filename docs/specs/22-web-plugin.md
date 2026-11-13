@@ -90,7 +90,8 @@ The default `toMarkdown` is a dependency-free converter (internal, not exported)
 
 ```ts
 webSearch({
-  search: (query: string, o: { allowedDomains?: string[]; blockedDomains?: string[]; signal?: AbortSignal })
+  search: (query: string, o: { allowedDomains?: string[]; blockedDomains?: string[]; signal?: AbortSignal
+                               ctx?: HarnessContext /* 0.13.0; always set */ })
     => Promise<{ text: string; sources: { title?: string; url: string }[]; usage?: AddUsageInput; model?: LanguageModel }>
   wrapUntrusted?: boolean    // true: frame the findings and sources (spec 03 §10)
   toolName?: string          // WEB_SEARCH_TOOL = 'web_search'
@@ -105,3 +106,11 @@ abort → `ERROR: the search was aborted`. Unless `wrapUntrusted: false`, the an
 `No results found.` and `ERROR:` strings stay unwrapped. `usage` (with `model` or `costUsd`) is charged to the
 turn through `ctx.turn.addUsage(…, { source: 'web_search' })`. The library has no provider code;
 recipes are in the guide.
+
+`o.ctx` (0.13.0) is the plugin's session `HarnessContext`, the same object `webFetch` passes to its
+`allow` / `deny` functions. A `search` function that makes its own paid or audited call uses it to
+attribute, limit or key that call per person or tenant: `ctx.principal` (the turn principal, spec
+05 §2.3), `ctx.session.id`, `ctx.runtime`. `webSearch()` always sets it; the type marks it optional
+so code that calls a `search` function directly keeps compiling. `webFetch` needs no counterpart:
+its only per-call app callbacks with a person-dependent answer, `allow` and `deny`, already get
+`ctx`; `toMarkdown`, `resolveHost` and `fetch` are transforms and transport.
