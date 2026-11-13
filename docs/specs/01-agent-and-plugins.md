@@ -71,6 +71,8 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   approval?: ApprovalConfig
   /** Prompt caching (spec 02 §6). Default 'auto'. */
   cache?: CacheConfig | false
+  /** 0.13.0: where the turn reminder goes (spec 02 §5): 'turn-start' (default) or 'end' (after the last message; keeps the previous turn in the cached prefix, spec 02 §6 rule 2a). */
+  reminders?: { turnPlacement?: 'turn-start' | 'end' }
   /** Tool result size limits (spec 09 §4). */
   toolOutput?: ToolOutputConfig
   /**
@@ -663,6 +665,7 @@ declare module 'eharness' {
 | Required service has no provider | `EH_SERVICE_MISSING` |
 | Requirer ordered before provider | `EH_PLUGIN_ORDER` |
 | `callOptions` is not a schema, `settings.timeout.totalMs` set | `EH_CONFIG_INVALID` |
+| `reminders.turnPlacement` neither `'turn-start'` nor `'end'` (0.13.0) | `EH_CONFIG_INVALID` |
 | App data part / kind name contains `.` or starts with `eh` (plugin keys follow the same rule) | `EH_CONFIG_INVALID` |
 | Data part / kind without `schema`, kind without `role` `'user' \| 'assistant'` | `EH_CONFIG_INVALID` |
 | Static tool name not matching `^[a-zA-Z0-9_-]{1,64}$`, tool that is neither a `Tool` nor a function | `EH_CONFIG_INVALID` |

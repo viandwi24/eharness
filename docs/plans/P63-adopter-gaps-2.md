@@ -23,19 +23,30 @@ prefix. Every change is opt-in; defaults keep 0.12.0 behaviour.
 - `docs/specs/06-compaction.md` §5.2a rule 9a, §5.5 (A)
 - `docs/specs/01-agent-and-plugins.md` §5 `CompactionBeforePatch` (A)
 - `docs/specs/10-errors-and-stop-reasons.md` §1 (A)
-- `docs/specs/02-context-registry.md` §5, §6 (B)
+- `docs/specs/02-context-registry.md` §5, §6 rule 2a, `docs/specs/01-agent-and-plugins.md` §1, §7, ADR-0073 (B)
 
 ## Owns
 
 - `src/compaction/flush.ts`, `src/compaction/compact.ts`, `src/plugin/types.ts` (A)
-- `src/loop/prompt.ts`, `src/loop/step-build.ts`, agent config types (B)
+- `src/loop/prompt.ts`, `src/loop/step-build.ts`, `src/agent/types/agent.ts`, `src/agent/define-agent.ts` (B)
 - The specs above, changesets, this file and the board row
 
 ## Checklist
 
 - [x] A: `flush.onFailure`, merge rule, abort for pre-turn, mid-turn and manual, ignored on overflow; tests in `src/compaction/flush.int.test.ts`; changeset
-- [ ] B: opt-in turn reminder placement; test that turn N+1's request starts with turn N's stable prefix; changeset
+- [x] B: `reminders.turnPlacement: 'end'` (ADR-0073); `src/loop/reminder-placement.int.test.ts` proves turn N+1's request starts with the bytes of turn N's stable prefix (and that the default does not); changeset
 - [x] C: verified with a probe (`step.end` carries the provider-executed call and `ctx.principal`); no change
+
+## Evidence for B
+
+Measured with the scripted model: an 8 000 character system prompt, a 3 000 character turn
+reminder (about 750 tokens), one 20 000 character tool result per turn. Characters of the first
+request of a turn that are not a prefix of the previous request:
+
+| Turn | Default `'turn-start'` | `'end'` |
+|---|---|---|
+| 2 (request 32 151 chars) | 24 070 | 3 807 |
+| 3 (request 52 515 chars) | 23 472 | 3 209 |
 
 ## Acceptance criteria
 

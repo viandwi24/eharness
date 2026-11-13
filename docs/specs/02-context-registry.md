@@ -215,6 +215,13 @@ messages:     projection of the view (spec 03 §6)
   (a fixed preamble, neutralised tags, capped). It is never stored and never in `instructions`.
 - Reminder text format (model-visible): `<system-reminder>\n{text}\n</system-reminder>`; several
   `step.prepare` reminders of one step are joined with a blank line.
+- **Turn reminder placement (0.13.0, ADR-0073).** `config.reminders?: { turnPlacement?:
+  'turn-start' | 'end' }` (any other value: `EH_CONFIG_INVALID`). `'turn-start'` (default) is the
+  layout above. With `'end'` the turn reminder is appended after the last message of the wire,
+  directly before the step reminder (both trailing, turn reminder first), so no volatile text sits
+  inside what later becomes history. Exception: the first step of a `respond()` continuation keeps
+  `'turn-start'` (its wire must end with the `tool` message). Everything else (contents, token
+  accounting, `step.prepare` rewrites) is the same for both placements.
 
 ## 6. Prompt caching (normative)
 
@@ -239,6 +246,16 @@ earlier in that order invalidates everything after it. Rules:
 2. **Stable system prompt.** Blocks 1–2 stay identical for the whole session unless configuration
    or a session-refresh source changes. Volatile text goes to reminders (§5), which sit after the
    cached prefix.
+2a. **Across turns (0.13.0).** With the default `'turn-start'` placement the turn reminder of turn
+   N sits before turn N's first message and is not sent in turn N+1, so turn N+1's request diverges
+   there: the system blocks and older turns stay cached, but turn N itself (its input, tool calls,
+   tool results, answer) is uncached input again on turn N+1's first step. With
+   `reminders.turnPlacement: 'end'` the request of turn N+1 starts with the exact bytes of the
+   stable part of turn N's last request (everything before its trailing reminders), so only the new
+   input, the previous answer and the reminders are uncached. The cost moves: the reminder is
+   uncached on every step instead of only the first. For Anthropic use `cache: { mode:
+   'breakpoints' }` with `'end'`: its breakpoint (c) is the last stable message, before both
+   reminders.
 3. **Deterministic content.** Skills index sorted by name; no timestamps or counters in static or
    session instructions.
 4. **On-demand content is history.** Skill bodies/files are tool results, never system text.

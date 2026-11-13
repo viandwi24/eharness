@@ -36,6 +36,7 @@ specs in [`../specs`](../specs) are the full contracts.
 | `toolSources` | `{ timeoutMs: 30_000, retryAfterMs: 5_000 }` | a source `list()` that does not settle fails (`W_TOOL_SOURCE_FAILED`); a failed source is not asked again for `retryAfterMs`, doubling per consecutive failure up to 60 000 (`0` retries at the next turn). Sources are listed concurrently |
 | `approval` | `{ onNewInput: 'deny' }` | `policy`, `risk`, `secret`, `onNewInput` — [approvals](approvals-and-interaction.md) |
 | `cache` | `{ mode: 'auto' }` | `{ mode?: 'auto' \| 'breakpoints'; ttl?: '5m' \| '1h' }` or `false`; Anthropic models only |
+| `reminders` | `{ turnPlacement: 'turn-start' }` | `{ turnPlacement?: 'turn-start' \| 'end' }`; `'end'` puts the turn reminder after the newest message so the previous turn stays in the provider's cached prefix (spec 02 §5–6) |
 | `toolOutput` | `{ maxChars: 50_000, strategy: 'truncate' }` | plus `perTool` — [tools and MCP](tools-and-mcp.md#tool-output-limits) |
 | `toolErrorText` | `String(error)` | `(error, { toolName, toolCallId }) => string`: the text of a thrown tool error in UI, storage and wire (hide secrets) — [tools and MCP](tools-and-mcp.md#tools) |
 | `inputFiles` | `{ protocols: ['data:', 'https:'], maxBytes: 20 971 520 }` | allowed file URL protocols of user input and the decoded `data:` URL cap; others are `EH_INVALID_INPUT`. `resolve(url, { sessionId, mediaType, filename? })` maps a stored file reference (a custom protocol listed in `protocols`) to `{ data }` or `{ url }` at projection time; the stored message never changes |

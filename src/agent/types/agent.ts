@@ -192,6 +192,13 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   approval?: ApprovalConfig
   /** Prompt caching. Default `'auto'` mode. */
   cache?: CacheConfig | false
+  /**
+   * Where the turn reminder goes on the wire (spec 02 §5, 0.13.0). `'turn-start'` (default):
+   * directly before the current turn's first message. `'end'`: after the last message (before
+   * the step reminder), so the whole previous turn stays in the provider's cached prefix on the
+   * next turn; the reminder itself is then sent uncached on every step.
+   */
+  reminders?: { turnPlacement?: 'turn-start' | 'end' }
   toolOutput?: ToolOutputConfig
   /** Limits on the tool calls of one model step (spec 09 §4.1). */
   toolCalls?: ToolCallsConfig

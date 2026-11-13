@@ -30,22 +30,28 @@ export function systemBlocks(
 }
 
 /**
- * Insert the turn reminder directly before the current turn's first message (`turnStart`) and
- * append the step reminder at the very end. Returns the messages and the index of the last
- * stable message (the one before the step reminder), or -1.
+ * Place the reminders (spec 02 §5). `'turn-start'` (default): the turn reminder directly before
+ * the current turn's first message (`turnStart`). `'end'`: the turn reminder at the very end,
+ * before the step reminder, so the wire before it is byte-identical in the next turn. The step
+ * reminder is always last. Returns the messages and the index of the last stable message (the
+ * one before any trailing reminder), or -1.
  */
 export function layoutMessages(
   wire: readonly ModelMessage[],
   turnStart: number,
   turnReminder: string | undefined,
   stepReminder: string | undefined,
+  placement: 'turn-start' | 'end' = 'turn-start',
 ): { messages: ModelMessage[]; lastStable: number } {
   const messages = [...wire]
-  if (turnReminder !== undefined) {
+  if (turnReminder !== undefined && placement === 'turn-start') {
     const at = Math.min(Math.max(turnStart, 0), messages.length)
     messages.splice(at, 0, reminderMessage(turnReminder))
   }
   const lastStable = messages.length - 1
+  if (turnReminder !== undefined && placement === 'end') {
+    messages.push(reminderMessage(turnReminder))
+  }
   if (stepReminder !== undefined) messages.push(reminderMessage(stepReminder))
   return { messages, lastStable }
 }

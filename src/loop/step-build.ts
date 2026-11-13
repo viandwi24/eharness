@@ -131,12 +131,16 @@ export async function buildStep(st: StepsCtx): Promise<StepRequest | LoopResult>
     }
   }
 
-  // prompt layout: system blocks + reminders (spec 02 §5)
+  // prompt layout: system blocks + reminders (spec 02 §5); the first step of a respond()
+  // continuation must end with the tool message, so its turn reminder stays at the turn start
   const layout = layoutMessages(
     capped.messages,
     capped.turnStart,
     st.registry.turnReminder,
     stepReminder,
+    st.rt.agent.config.reminders?.turnPlacement === 'end' && !firstOfContinuation(st)
+      ? 'end'
+      : 'turn-start',
   )
   const system = systemBlocks(st.registry.block1, st.registry.block2)
   const prefix = `${JSON.stringify(system)}\u0000${toolNames.join(',')}`

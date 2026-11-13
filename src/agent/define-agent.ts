@@ -58,6 +58,12 @@ function validateConfig(config: HarnessAgentConfig): void {
   if (config.model === undefined || config.model === null || config.model === '') {
     invalid('defineHarnessAgent: `model` is required.')
   }
+  const turnPlacement = config.reminders?.turnPlacement
+  if (turnPlacement !== undefined && turnPlacement !== 'turn-start' && turnPlacement !== 'end') {
+    invalid("defineHarnessAgent: `reminders.turnPlacement` must be 'turn-start' or 'end'.", {
+      option: 'reminders.turnPlacement',
+    })
+  }
   if (config.id !== undefined && (typeof config.id !== 'string' || config.id.length === 0)) {
     invalid('defineHarnessAgent: `id` must be a non-empty string.')
   }

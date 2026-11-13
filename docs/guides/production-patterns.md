@@ -41,6 +41,13 @@ it is stored and whether the provider's prompt cache survives:
 | `step.end` → `{ context }` | after a step | **yes**: a `data-eh.input` part of the assistant message | where the model saw it, forever |
 | `session.inject(kind, data)` | when you call it | **yes**: a kind message | per the kind's `model` projection |
 
+The default turn reminder sits before the user message. The next turn does not send it again,
+so the provider's cache stops at that point and the whole previous turn (its tool results too) is
+billed as uncached input once more. When turns carry large tool results, set
+`reminders: { turnPlacement: 'end' }`: the turn reminder then follows the newest message and the
+previous turn stays cached, at the price of the reminder being uncached on every step (spec 02 §6
+rule 2a; with Anthropic also set `cache: { mode: 'breakpoints' }`).
+
 Use the first four for ephemeral context. The last three are **history**: they are stored, shown
 by `session.messages()`, summarized by compaction and replayed to the model in every later turn.
 Use them for facts that should stay, never for "now" values or for large retrieved documents.

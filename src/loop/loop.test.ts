@@ -101,6 +101,20 @@ describe('prompt layout (spec 02 §5)', () => {
     expect(layoutMessages(wire, 2, undefined, undefined).messages).toEqual(wire)
   })
 
+  test("placement 'end': turn reminder after the last message, before the step reminder", () => {
+    const { messages, lastStable } = layoutMessages(wire, 2, 'turn', 'step', 'end')
+    expect(messages.map((m) => (typeof m.content === 'string' ? m.content : m.content[0]))).toEqual(
+      [
+        'old',
+        'old answer',
+        'new',
+        { type: 'text', text: '<system-reminder>\nturn\n</system-reminder>' },
+        { type: 'text', text: '<system-reminder>\nstep\n</system-reminder>' },
+      ],
+    )
+    expect(lastStable).toBe(2)
+  })
+
   test('system blocks omit empty blocks', () => {
     expect(systemBlocks(undefined, undefined)).toEqual([])
     expect(systemBlocks('a', undefined)).toEqual([{ role: 'system', content: 'a' }])
