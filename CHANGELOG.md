@@ -1,5 +1,19 @@
 # eharness
 
+## 0.13.0
+
+### Minor Changes
+
+- [`b4a2402`](https://github.com/viandwi24/eharness/commit/b4a240233c3f079b8510581042111fdda1f9d2a9) Thanks [@viandwi24](https://github.com/viandwi24)! - Add `flush.onFailure: 'continue' | 'abort'` to the `compaction.before` patch (spec 06 §5.2a rule 9a). The default `'continue'` keeps today's behaviour. With `'abort'`, a pre-compaction flush that failed or was skipped does not summarize: no marker, the stored history stays complete, a failed flush still saves its `eh.flush` record with the error. Automatic compactions warn `W_COMPACTION_FAILED` with `details.reason: 'flush'` and the guard keeps the request in the window; a manual `compact()` rejects `EH_COMPACTION_FAILED` with the same `details.reason`. Overflow recovery ignores the policy.
+
+- [`907f11a`](https://github.com/viandwi24/eharness/commit/907f11abeaa9572072b6ebecb63fd55998fc0308) Thanks [@viandwi24](https://github.com/viandwi24)! - Add `reminders.turnPlacement: 'turn-start' | 'end'` to the agent config (spec 02 §5, §6 rule 2a, ADR-0073). The default `'turn-start'` keeps today's layout. With `'end'` the turn reminder goes after the last message (before the step reminder), so the next turn's request starts with the exact bytes of the previous turn's stable prefix and the whole previous turn stays in the provider's prompt cache; the reminder itself is then uncached on every step. For Anthropic, combine it with `cache: { mode: 'breakpoints' }`.
+
+- [`6ba9b81`](https://github.com/viandwi24/eharness/commit/6ba9b817e4af95d875bac8f148590c580e07188c) Thanks [@viandwi24](https://github.com/viandwi24)! - `webSearch()` now passes the plugin's session context to the app's `search` function as `options.ctx` (`SearchOptions.ctx`, spec 22 §3), like `webFetch` already does for its `allow`/`deny` functions. A search function that makes its own paid or audited call can attribute, limit or key it per person or tenant (`ctx.principal`, `ctx.session.id`, `ctx.runtime`). Existing search functions are unaffected.
+
+### Patch Changes
+
+- [`e5b2319`](https://github.com/viandwi24/eharness/commit/e5b2319364764f7c0092439fb758a6c75426eb94) Thanks [@viandwi24](https://github.com/viandwi24)! - Reword a doc comment example
+
 ## 0.12.0
 
 ### Minor Changes
