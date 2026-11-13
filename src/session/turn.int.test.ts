@@ -439,9 +439,13 @@ describe('scenario 31: tool errors', () => {
     const run = agent.session('s1').send('Go')
     const chunks = await collect(run.stream)
     const result = await run.result
-    const ui = chunks
-      .filter((c) => c.type === 'tool-output-error')
-      .map((c) => (c as { errorText: string }).errorText)
+    // the last error text of each call: AI SDK up to 7.0.137 writes `tool-input-error` then `tool-output-error`, later
+    // versions only `tool-input-error` (spec 04 §8); the text is the same either way
+    const byCall = new Map<string, string>()
+    for (const c of chunks)
+      if (c.type === 'tool-input-error' || c.type === 'tool-output-error')
+        byCall.set((c as { toolCallId: string }).toolCallId, (c as { errorText: string }).errorText)
+    const ui = [...byCall.values()]
     expect(ui).toHaveLength(2)
     expect(ui[0]).toStartWith('AI_InvalidToolInputError: Invalid input for tool typed:')
     // a short readable text, not AI SDK's list of every available tool (spec 02 §3.3)

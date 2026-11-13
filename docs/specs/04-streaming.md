@@ -403,7 +403,7 @@ Verified AI SDK v7 behaviour and what the core does with it:
 | Situation | What AI SDK does | Core |
 |---|---|---|
 | Tool `execute` throws | `tool-output-error` chunk; the wire gets `error-text` = `String(error)`; the step continues | UI text = the same `String(error)` (`uiErrorText`); the loop continues |
-| Tool input fails the tool's schema / unknown tool | `tool-input-error` + `tool-output-error` chunks; the wire gets `error-text` = `String(error)` (`AI_InvalidToolInputError: …` / `AI_NoSuchToolError: …`); `onError` is called with the error, then with that text | UI text = the same `String(error)` for both chunks; the loop continues |
+| Tool input fails the tool's schema / unknown tool | a `tool-input-error` chunk, followed by a `tool-output-error` chunk up to AI SDK 7.0.137 (later versions write only the first; a reader takes the last error text of the call); the wire gets `error-text` = `String(error)` (`AI_InvalidToolInputError: …` / `AI_NoSuchToolError: …`); `onError` is called with the error, then with that text | UI text = the same `String(error)` for both chunks; the loop continues |
 | Provider stream emits an `error` part | `error` chunk, stream continues, `finishReason: 'error'`, `responseMessages` resolves with the partial output | stop `'error'` after the step |
 | Provider call throws before streaming (`doStream`) | one `error` chunk, no `start-step`/`finish-step`, `responseMessages` rejects | stop `'error'`; nothing appended to the wire |
 | Invalid `toolsContext` for a tool | stream-level `error`, the tool call has **no result** | prevented by up-front validation (spec 01 §4); dangling calls are answered (spec 05 §3) |
