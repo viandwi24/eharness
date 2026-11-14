@@ -28,6 +28,46 @@ const model = scriptedModel([
 calls (eharness steps) and `generateText` calls (the compaction summarizer) take entries from the
 same script in call order, so one scripted model can drive a conversation that compacts.
 
+## Testing a plugin
+
+`resolvePlugin(plugin, options?)` (`eharness/testing`) resolves one plugin the way a session does,
+without opening a session or touching storage:
+
+- boot checks run through `defineHarnessAgent`, so a plugin the core refuses at boot (a missing
+  `requires` service, a duplicate tool, an invalid name) is refused here with the same error;
+- the setup phase runs with an agent setup context; the session phase runs with a fake context;
+- tool factories `(ctx) => Tool` are called with that context; instructions are evaluated; hooks
+  are collected, setup phase first.
+
+```ts
+import { resolvePlugin } from 'eharness/testing'
+
+const resolved = await resolvePlugin(audit({ log }), {
+  plugins: [store],                          // other plugins of the agent (services, data parts)
+  services: { store: fakeStore },            // what `ctx.services` answers
+  ctx: { principal: { id: 'ana' } },         // overrides of the context factories and hooks get
+})
+resolved.tools        // ToolSet: setup tools, then session tools (factories resolved)
+resolved.hooks        // hook names registered, setup phase first
+resolved.instructions // instruction texts, dynamic ones evaluated
+const verdict = await resolved.runHook('input.submit', { message, via: 'send' })
+const started = await resolved.runHook('session.start', undefined, { runtime: { mode: 'fast' } })
+```
+
+`runHook(name, event, overrides?)` calls `hook(ctx, event)` with the default context merged with
+`overrides` (any `HarnessContext` field: `principal`, `session`, `runtime`, `stream`, `state`,
+`services`, `turn`, `step`, `signal`). When the plugin registers the name in both phases, every
+registration runs in order and the last result is returned; it resolves to `undefined` when the
+plugin does not register the name. `resolved.ctx` is the default context.
+
+`fakeHarnessContext(plugin, overrides?)` is the context on its own: a no-op stream and logger, plugin
+state kept in memory, no principal and no turn. An unknown service throws `EH_SERVICE_MISSING`.
+`session.inject` rejects: a test that needs it passes its own `session`.
+
+Limits: the stream writer records nothing; `setup` data-part checks cover the plugin's and the
+`plugins` option's own parts (not the core's `data-eh.*`); session-phase contributions are not
+boot-validated, as in the core; `session()` dispose functions are not called.
+
 ## Which command to run
 
 | Command | Runs | Time (2026-10) |

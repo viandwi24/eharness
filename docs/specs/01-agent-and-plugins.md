@@ -330,6 +330,11 @@ plugin (it goes through §7 unchanged) with the inner plugin's `version`, `provi
 - `ctx.plugin.name` and the state namespace are those of the wrapper (its name). Keep the default
   name for plugins with stored state.
 
+Testing a plugin without a session: `resolvePlugin(plugin, options?)` in `eharness/testing` returns
+its tools (factories resolved), hooks, instructions and services as the core resolves them, and
+`runHook(name, event, overrides?)` calls a hook with a fake context (see `docs/engineering/testing.md`,
+"Testing a plugin").
+
 ## 3. Agent setup context
 
 ```ts

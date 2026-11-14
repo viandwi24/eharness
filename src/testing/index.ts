@@ -82,6 +82,15 @@ export {
   multiInstanceConformance,
 } from './multi-instance.conformance.ts'
 export {
+  fakeHarnessContext,
+  type HarnessContextOverrides,
+  type HookResult,
+  type ResolvedPlugin,
+  type ResolvePluginOptions,
+  type RunHookArgs,
+  resolvePlugin,
+} from './plugin-resolve.ts'
+export {
   type ProfileStoreConformanceOptions,
   type ProfileStoreUnderTest,
   profileStoreConformance,
