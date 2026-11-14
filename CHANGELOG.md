@@ -1,5 +1,11 @@
 # eharness
 
+## 0.14.1
+
+### Patch Changes
+
+- [`0229f16`](https://github.com/viandwi24/eharness/commit/0229f16883266a0582142125857abb44c7b981be) Thanks [@viandwi24](https://github.com/viandwi24)! - `session.flush()` now covers the whole model-visible history, as spec 06 §5.2a rule 11 states (the planning of `compact({ keepLast: 0 })`). In 0.14.0 it used `compaction.keepLast`, so a session with no more completed turns than `keepLast` flushed nothing and returned `skipped` with `nothing-to-flush`.
+
 ## 0.14.0
 
 ### Minor Changes
