@@ -1,6 +1,6 @@
 # P63 — Adopter gaps 2: flush failure policy, cache-stable turn reminder
 
-Status: review (2026-11-13; awaiting push and release) · Owner: Riz · Branch: `main` (no phase branch, like P62)
+Status: done (released in 0.13.0) · Owner: Riz · Branch: `main` (no phase branch, like P62)
 
 ## Goal
 
