@@ -189,7 +189,8 @@ export async function apiCompact(
  */
 export async function apiFlush(s: SessionCtx): Promise<SessionFlushResult> {
   assertOpen(s)
-  const outcome = await runManual(s, { flushOnly: true })
+  // the whole model-visible history, whatever compaction.keepLast says (spec 06 §5.2a rule 11)
+  const outcome = await runManual(s, { flushOnly: true, keepLast: 0 })
   switch (outcome.status) {
     case 'flushed':
       return { status: 'flushed' }

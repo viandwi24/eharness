@@ -72,7 +72,7 @@ Update this table in the same commit that changes a phase's status.
 | P61 | [Feed chats and router agents](P61-feeds-and-routers.md) — a chat as input for an agent, channel_copy with copy records and synced edits, trial mode, the agent of a chat in chat settings | done | P60 | — |
 | P62 | [Adopter gaps](P62-adopter-gaps.md) — `eharness/sqlite` (SQLite adapters for every port, subpaths of `eharness`, ADR-0071), `ctx` for every policy option, a durable turn principal, grants by principal, `close({ inFlight: 'interrupt' })` and lock owner; found twice (team example and a second adopter application), 0.10.0 (ADR-0068–0070) | done | 0.9.0 | — |
 | P63 | [Adopter gaps 2](P63-adopter-gaps-2.md) — opt-in flush failure policy (`flush.onFailure`), opt-in cache-stable turn reminder placement, session `ctx` for the `webSearch` search function; principal on provider-executed tool calls triaged as no gap | done | 0.12.0 | — |
-| P64 | [Adopter gaps 3](P64-adopter-gaps-3.md) — opt-in `cache.include` for Anthropic models behind a router, `session.flush()` without a summary, `resolvePlugin` for plugin unit tests; plugin casts and budget status triaged as no gap, session delete deferred | review | 0.13.0 | — |
+| P64 | [Adopter gaps 3](P64-adopter-gaps-3.md) — opt-in `cache.include` for Anthropic models behind a router, `session.flush()` without a summary, `resolvePlugin` for plugin unit tests; plugin casts and budget status triaged as no gap, session delete deferred | done | 0.13.0 | — |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

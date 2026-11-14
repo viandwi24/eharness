@@ -1,6 +1,6 @@
 # P64 — Adopter gaps 3: routed Anthropic caching, flush without a summary, plugin test helper
 
-Status: review (2026-11-14; awaiting push and release) · Owner: Riz · Branch: `main` (no phase branch, like P63)
+Status: done (released in 0.14.0; one fix in 0.14.1) · Owner: Riz · Branch: `main` (no phase branch, like P63)
 
 ## Goal
 
@@ -38,3 +38,11 @@ every accepted gap of this round, not several small ones.
 
 - [x] `bun run lint && bun run typecheck && bun run check:exports && bun run check:imports && bun run check:throws && bun run test:fast` green (2478 pass, 0 fail), plus `bun test ./src/session` (773 pass) and `./src/compaction` (132 pass)
 - [x] Changesets added; specs updated
+
+## Fix after release (0.14.1)
+
+`session.flush()` planned with `compaction.keepLast` instead of `keepLast: 0`, against rule 11: a
+session with no more completed turns than `keepLast` flushed nothing. Found by an adopter test that
+flushed after a single turn; the tests of this phase all used `keepLast: 1` with longer histories.
+Test: "covers every completed turn whatever compaction.keepLast says" in
+`src/compaction/flush-only.int.test.ts`.

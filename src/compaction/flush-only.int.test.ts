@@ -27,6 +27,7 @@ function setup(
     noPlugin?: boolean
     patch?: (e: CompactionBeforeEvent, flusher: LanguageModel) => CompactionBeforePatch | undefined
     contextWindow?: (m: LanguageModel) => number
+    keepLast?: number
   } = {},
 ) {
   const events: CompactionBeforeEvent[] = []
@@ -69,7 +70,7 @@ function setup(
     storage: { messages },
     logger: silent,
     onWarning: (w) => warnings.push(w),
-    compaction: { model: summarizer, keepLast: 1, maxSummaryTokens: 100 },
+    compaction: { model: summarizer, keepLast: options.keepLast ?? 1, maxSummaryTokens: 100 },
     plugins: options.noPlugin === true ? [] : [plugin],
   })
   return { agent, flusher, summarizer, messages, warnings, events, hookInputs, facts }
@@ -133,6 +134,19 @@ describe('session.flush() (spec 06 §5.2a rule 11)', () => {
 
     const after = (await stored(messages)).map((m) => JSON.stringify(m))
     expect(after.filter((m) => !m.includes('"eh.flush"'))).toEqual(before)
+  })
+
+  test('covers every completed turn whatever compaction.keepLast says (it plans like compact({ keepLast: 0 }))', async () => {
+    const { agent, events } = setup({
+      keepLast: 6,
+      flushSteps: [{ text: 'ok' }],
+    })
+    const session = agent.session('s1')
+    await fillTurns(session, 2)
+    expect(await session.flush()).toEqual({ status: 'flushed' })
+    expect(events).toHaveLength(1)
+    // both completed turns (two user and two assistant messages) reach the flush, although keepLast (6) would keep them all
+    expect(events[0]?.messages.filter((m) => m.role === 'user')).toHaveLength(2)
   })
 
   test('skipped (no-hook) when no compaction.before hook asks for a flush: no record, no hook call', async () => {
