@@ -1,5 +1,15 @@
 # eharness
 
+## 0.14.0
+
+### Minor Changes
+
+- [`7e08099`](https://github.com/viandwi24/eharness/commit/7e0809947060074066ff5c02fc0c9e66bf25a2c9) Thanks [@viandwi24](https://github.com/viandwi24)! - `cache.include` (spec 02 §6.1): an opt-in predicate that also sends the Anthropic prompt-cache markers to models whose provider id is not `anthropic`, for Anthropic models reached through a provider that forwards `providerOptions.anthropic.cacheControl` (for example a router with `anthropic/…` model ids). Use it with `mode: 'breakpoints'`. It only adds models; a predicate that throws counts as false. Without it nothing changes.
+
+- [`92d4159`](https://github.com/viandwi24/eharness/commit/92d4159552b0da546b56d9d977cf3062aa458d60) Thanks [@viandwi24](https://github.com/viandwi24)! - `eharness/testing` gains `resolvePlugin(plugin, options?)`, which resolves a plugin the way a session does (boot checks, setup and session phases, tool factories, instructions, hooks) so plugin code can be unit-tested without a session. The returned `runHook(name, event, overrides?)` calls a hook with a fake context. Also exports `fakeHarnessContext(plugin, overrides?)`, `HarnessContextOverrides`, `ResolvedPlugin`, `ResolvePluginOptions`, `RunHookArgs` and `HookResult`.
+
+- [`17abe91`](https://github.com/viandwi24/eharness/commit/17abe910a62d1b40c89370c51532ec39a8e2e734) Thanks [@viandwi24](https://github.com/viandwi24)! - `session.flush()` (spec 06 §5.2a rule 11): runs only the pre-compaction flush over the model-visible history (everything after the last compaction marker), with the same `compaction.before` hooks and flush patch as a manual compaction, then stops. No summarizer call, no marker, no change to stored messages besides the `eh.flush` record. It has the same guards as `compact()` (idle only, `EH_SESSION_BUSY` during a turn) and resolves `{ status: 'flushed' }`, `{ status: 'skipped', reason }` or `{ status: 'failed', reason: 'flush', error }` instead of throwing for a flush that failed. The `compaction.before` event gets an optional `flushOnly: true` field for this call; it is absent for every existing compaction, so existing hooks are unaffected. `onFailure` of a patch does not apply to `flush()`. Without the new method nothing changes.
+
 ## 0.13.0
 
 ### Minor Changes
