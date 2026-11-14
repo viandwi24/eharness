@@ -540,7 +540,8 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
 
   /**
    * Chainable (0.4.0). Once per compaction, after the split, the skip rule and the budget check
-   * decided that summarizing will happen, before the summarizer (spec 06 §5.2a). A `flush` gives
+   * decided that summarizing will happen, before the summarizer (spec 06 §5.2a). Also once per
+   * `session.flush()` (0.14.0), whose event has `flushOnly: true` and no summary follows. A `flush` gives
    * the agent one bounded, internal turn to save facts before history is summarized. Patches
    * merge in plugin order: prompts joined with a blank line, tools unioned (first appearance),
    * `maxSteps` = max, `model` = last defined, `onFailure` = 'abort' when any hook asked for it.
@@ -562,6 +563,7 @@ export interface CompactionBeforeEvent {
   messages: HarnessUIMessage[]       // copies of the part that will be summarized (`drop`, spec 06 §5.1)
   tokens: number                     // calibrated estimate of the current context
   trigger: 'auto' | 'manual' | 'turn' | 'overflow'   // mid-turn, compact(), pre-turn, overflow recovery
+  flushOnly?: true                   // 0.14.0: only for session.flush() (spec 06 §5.2a rule 11); absent otherwise
 }
 export interface CompactionBeforePatch {
   flush?: {

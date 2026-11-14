@@ -33,7 +33,7 @@ import {
   apiStats,
   apiTools,
 } from './handle/api-read.ts'
-import { apiClearGrants, apiCompact, apiFork, apiRecover } from './handle/api-session.ts'
+import { apiClearGrants, apiCompact, apiFlush, apiFork, apiRecover } from './handle/api-session.ts'
 import {
   apiAbort,
   apiAttach,
@@ -305,6 +305,9 @@ export function createSessionHandle(args: SessionHandleArgs): SessionHandle {
     },
     compact(options) {
       return apiCompact(s, options)
+    },
+    flush() {
+      return apiFlush(s)
     },
     recover() {
       return apiRecover(s)

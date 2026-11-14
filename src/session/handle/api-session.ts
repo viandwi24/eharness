@@ -1,8 +1,10 @@
 import type {
   CompactOptions,
   ForkOptions,
+  SessionFlushResult,
   SessionStateSnapshot,
 } from '../../agent/session-types.ts'
+import type { CompactOutcome } from '../../compaction/compact.ts'
 import { manualFlushEnv } from '../../compaction/flush.ts'
 import { currentTurnStartId } from '../../compaction/turns.ts'
 import {
@@ -26,23 +28,19 @@ import type { SessionCtx } from './ctx.ts'
 import { ensureContext, ensureOpen, persist, staticTokens } from './open.ts'
 import { assertOpen, checkCollect, checkIdle, startNext, touch } from './queue.ts'
 
-export async function apiCompact(
-  s: SessionCtx,
-  options: CompactOptions | undefined,
-): Promise<null> {
-  assertOpen(s)
-  const keepLast = options?.keepLast
-  if (keepLast !== undefined && !(Number.isInteger(keepLast) && keepLast >= 0)) {
-    throw new HarnessError(
-      'EH_INVALID_INPUT',
-      'compact({ keepLast }) must be a non-negative integer.',
-      { details: { keepLast } },
-    )
-  }
-  const instructions = options?.instructions
-  if (instructions !== undefined && typeof instructions !== 'string') {
-    throw new HarnessError('EH_INVALID_INPUT', 'compact({ instructions }) must be a string.')
-  }
+/** Options of the shared manual run (`compact()` and `flush()`). */
+interface ManualRun {
+  keepLast?: number | undefined
+  instructions?: string | undefined
+  flushOnly?: boolean
+}
+
+/**
+ * One manual compaction or flush-only call (spec 06 §4, §5.2a rule 11): exclusive like a turn,
+ * the session lock, the busy check, the state write and the budget ledger shared by both.
+ */
+async function runManual(s: SessionCtx, args: ManualRun): Promise<CompactOutcome> {
+  const { keepLast, instructions } = args
   if (s.rt.running) throw sessionBusyError(s.id)
   // exclusive like a turn (spec 05 §8): send() throws EH_SESSION_BUSY meanwhile
   s.rt.running = true
@@ -90,6 +88,7 @@ export async function apiCompact(
       trigger: 'manual',
       keepLast,
       instructions,
+      ...(args.flushOnly === true ? { flushOnly: true } : {}),
       // the pending message's turn is kept like a current turn (spec 06 §5.1)
       currentStartId:
         pending === undefined
@@ -144,8 +143,7 @@ export async function apiCompact(
         })
       }
     }
-    if (outcome.status === 'failed') throw outcome.error
-    return outcome.status === 'compacted' ? (structuredClone(outcome.marker) as never) : null
+    return outcome
   } finally {
     if (release !== undefined) {
       try {
@@ -160,6 +158,65 @@ export async function apiCompact(
     s.drain?.drain()
     touch(s)
     checkIdle(s)
+  }
+}
+
+export async function apiCompact(
+  s: SessionCtx,
+  options: CompactOptions | undefined,
+): Promise<null> {
+  assertOpen(s)
+  const keepLast = options?.keepLast
+  if (keepLast !== undefined && !(Number.isInteger(keepLast) && keepLast >= 0)) {
+    throw new HarnessError(
+      'EH_INVALID_INPUT',
+      'compact({ keepLast }) must be a non-negative integer.',
+      { details: { keepLast } },
+    )
+  }
+  const instructions = options?.instructions
+  if (instructions !== undefined && typeof instructions !== 'string') {
+    throw new HarnessError('EH_INVALID_INPUT', 'compact({ instructions }) must be a string.')
+  }
+  const outcome = await runManual(s, { keepLast, instructions })
+  if (outcome.status === 'failed') throw outcome.error
+  return outcome.status === 'compacted' ? (structuredClone(outcome.marker) as never) : null
+}
+
+/**
+ * `session.flush()` (spec 06 §5.2a rule 11): the pre-compaction flush over the model-visible
+ * history, without a summary. Same guards as `compact()`; never throws for a flush that failed.
+ */
+export async function apiFlush(s: SessionCtx): Promise<SessionFlushResult> {
+  assertOpen(s)
+  const outcome = await runManual(s, { flushOnly: true })
+  switch (outcome.status) {
+    case 'flushed':
+      return { status: 'flushed' }
+    case 'flush-failed':
+      return { status: 'failed', reason: 'flush', error: outcome.error }
+    case 'skipped':
+      switch (outcome.reason) {
+        case 'no-hook':
+        case 'window':
+        case 'budget':
+        case 'disabled':
+        case 'aborted':
+          return { status: 'skipped', reason: outcome.reason }
+        case 'nothing-to-drop':
+          return { status: 'skipped', reason: 'nothing-to-flush' }
+        case 'running':
+          throw sessionBusyError(s.id)
+        default:
+          // no-gain / failed-earlier cannot happen for a flush-only call
+          throw new HarnessError('EH_INVALID_INPUT', `flush() was skipped: ${outcome.reason}.`)
+      }
+    case 'failed':
+      // storage, lock or ledger errors before the flush stage: thrown like compact()
+      throw outcome.error
+    default:
+      // compacted cannot happen for a flush-only call
+      throw new HarnessError('EH_INVALID_INPUT', 'flush() ran a compaction.')
   }
 }
 

@@ -543,8 +543,13 @@ export interface CompactionBeforeEvent {
   messages: HarnessUIMessage[]
   /** Calibrated estimate of the current context in tokens. */
   tokens: number
-  /** `'turn'` = pre-turn, `'auto'` = mid-turn, `'manual'` = `compact()`, `'overflow'` = overflow recovery. */
+  /** `'turn'` = pre-turn, `'auto'` = mid-turn, `'manual'` = `compact()` or `flush()`, `'overflow'` = overflow recovery. */
   trigger: 'auto' | 'manual' | 'turn' | 'overflow'
+  /**
+   * `true` only for `session.flush()` (spec 06 §5.2a rule 11): the flush runs over the same
+   * `messages` and no summary follows. Absent for every compaction.
+   */
+  flushOnly?: true
 }
 
 /**

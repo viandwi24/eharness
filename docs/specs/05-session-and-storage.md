@@ -148,6 +148,14 @@ export interface HarnessSession<
    * EH_INVALID_INPUT for an invalid option (turn operations are unaffected, §2).
    */
   compact(options?: CompactOptions): Promise<M | null>
+  /**
+   * Pre-compaction flush only (spec 06 §5.2a rule 11, 0.14.0): the `compaction.before` hooks save
+   * facts from the history after the last compaction marker; no summary, no marker. Same guards as
+   * `compact()` (EH_SESSION_BUSY while a turn runs). Resolves `{ status: 'flushed' }`,
+   * `{ status: 'skipped', reason }` or `{ status: 'failed', reason: 'flush', error }`; never rejects
+   * for a flush that failed.
+   */
+  flush(): Promise<SessionFlushResult>
   /** Forget session approval grants; with a principal, only the ones recorded for it (spec 11 §3.1). */
   clearGrants(principal?: { id: string }): Promise<void>
   /** Create a new session from (a prefix of) this one (§14). */

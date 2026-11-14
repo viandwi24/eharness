@@ -39,6 +39,25 @@ export interface CompactOptions {
 }
 
 /**
+ * Outcome of {@link HarnessSession.flush} (spec 06 §5.2a, rule 11). It never throws for a flush
+ * that failed or was skipped: the caller decides what that means.
+ */
+export type SessionFlushResult =
+  /** The flush ran and its steps are saved (the `eh.flush` record). */
+  | { status: 'flushed' }
+  /**
+   * Nothing was flushed: `no-hook` (no `compaction.before` hook asked for a flush),
+   * `nothing-to-flush` (no model-visible history since the last compaction), `window` (the flush
+   * model cannot fit the history), `budget` (a used-up USD budget), `disabled` (`compaction: false`).
+   */
+  | {
+      status: 'skipped'
+      reason: 'no-hook' | 'nothing-to-flush' | 'window' | 'budget' | 'disabled' | 'aborted'
+    }
+  /** The flush model or environment failed (`W_HOOK_FAILED`, `phase: 'flush'`); `error` is its text. */
+  | { status: 'failed'; reason: 'flush'; error: string }
+
+/**
  * Session state storage contract.
  *
  * @see docs/specs/05-session-and-storage.md#7-state

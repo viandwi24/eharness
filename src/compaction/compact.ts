@@ -81,6 +81,11 @@ export interface CompactRequest {
   instructions?: string | undefined
   /** The USD budget that is used up, if any: the compaction is skipped before summarizing. */
   overBudget?: (() => BudgetOverrun | undefined) | undefined
+  /**
+   * `session.flush()` (spec 06 §5.2a rule 11): run the flush stage over the same `drop` and stop.
+   * No summarizer call, no `no-gain` check, no marker, no commit; `onFailure` is not applied.
+   */
+  flushOnly?: boolean | undefined
 }
 
 /** A used-up USD budget (spec 12 §4). */
@@ -93,6 +98,10 @@ export interface BudgetOverrun {
 /** Outcome of one compaction. */
 export type CompactOutcome =
   | { status: 'compacted'; marker: HarnessUIMessage; payload: CompactionPayload }
+  /** `flushOnly` requests only: the flush saved (no marker). */
+  | { status: 'flushed' }
+  /** `flushOnly` requests only: the flush model or environment failed; `error` is its text. */
+  | { status: 'flush-failed'; error: string }
   | {
       status: 'skipped'
       reason:
@@ -103,6 +112,10 @@ export type CompactOutcome =
         | 'aborted'
         | 'failed-earlier'
         | 'budget'
+        /** `flushOnly` requests only: no `compaction.before` hook asked for a flush. */
+        | 'no-hook'
+        /** `flushOnly` requests only: the flush model cannot fit the history. */
+        | 'window'
     }
   | { status: 'failed'; error: HarnessError }
 
@@ -336,10 +349,13 @@ export function createSessionCompaction(deps: {
     })
     // skip rule (no churn): nothing to summarize besides the previous summary …
     if (dropped.length === 0) return { status: 'skipped', reason: 'nothing-to-drop' }
-    // … or the result would not be below summarizeAt
+    // … or the result would not be below summarizeAt (a flush-only call writes no summary)
     const maxSummaryTokens = settings.maxSummaryTokens ?? DEFAULT_MAX_SUMMARY_TOKENS
     const fixed = calibration.apply(request.fixedTokens)
-    if (calibration.apply(maxSummaryTokens) + plan.keptTokens + fixed >= limit.summarizeAt) {
+    if (
+      request.flushOnly !== true &&
+      calibration.apply(maxSummaryTokens) + plan.keptTokens + fixed >= limit.summarizeAt
+    ) {
       return { status: 'skipped', reason: 'no-gain' }
     }
     // a used-up budget: no summarizer call (the guard keeps the request within the window)
@@ -367,6 +383,7 @@ export function createSessionCompaction(deps: {
         messages: plan.drop,
         tokens: request.beforeTokens,
         trigger: request.overflow === true ? 'overflow' : request.trigger,
+        ...(request.flushOnly === true ? { flushOnly: true as const } : {}),
       },
       turnId: request.turnId,
       defaultModel: effective.model,
@@ -382,6 +399,13 @@ export function createSessionCompaction(deps: {
     const flushed = flush.outcome
     if (flushed === 'aborted' || isAborted(request.signal)) {
       return { status: 'skipped', reason: 'aborted' }
+    }
+    if (request.flushOnly === true) {
+      // the only skip of the flush stage is the window check (spec 06 §5.2a rule 5)
+      if (flushed === 'flushed') return { status: 'flushed' }
+      if (flushed === 'failed') return { status: 'flush-failed', error: flush.error ?? 'failed' }
+      if (flushed === 'none') return { status: 'skipped', reason: 'no-hook' }
+      return { status: 'skipped', reason: 'window' }
     }
     // rule 9a: a flush that did not save → no summary when a hook asked for it (not on overflow)
     if (

@@ -19,7 +19,16 @@ import { liveForeignTurn } from './inbox/driver.ts'
 import { isKnownPending } from './interaction/waits.ts'
 import { hiddenByRewind, rewindsIn } from './load-context.ts'
 
-const TURN_OPERATIONS = ['send', 'respond', 'regenerate', 'edit', 'enqueue', 'inject', 'compact']
+const TURN_OPERATIONS = [
+  'send',
+  'respond',
+  'regenerate',
+  'edit',
+  'enqueue',
+  'inject',
+  'compact',
+  'flush',
+]
 
 /** Create the read handle of session `id`. `localTurn` reports a turn running in this process. */
 export function createSessionPeek(args: {

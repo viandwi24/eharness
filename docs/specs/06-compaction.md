@@ -170,6 +170,7 @@ by its `step-start` parts; step `n` = the parts after the `n`-th `step-start` (0
 | Pre-turn | inside the turn stream, after the user message is saved and context loaded, if tokens > summarizeAt | `turn` |
 | Mid-turn | before each step ≥ 1, if tokens > summarizeAt (at most once per step) | `auto` |
 | Manual | `session.compact()` (idle only) | `manual` |
+| Flush only | `session.flush()` (idle only, §5.2a rule 11) | `manual` (`flushOnly: true`) |
 
 During compaction the core writes `data-eh.status { state: 'compacting' }` (transient) and a
 transient `data-eh.compaction` part with the marker payload, so live UIs can show a divider.
@@ -224,6 +225,11 @@ a turn, and rejects `EH_SESSION_BUSY` when a live turn of another instance owns 
 (`activeTurn` with a fresh heartbeat). It resolves `null` when it was skipped or when
 `compaction: false`. Outside a turn the transient `data-eh.compaction` part is delivered as a
 session `data` event.
+
+**Flush only** `session.flush()` (0.14.0, §5.2a rule 11) runs the pre-compaction flush over the same
+`drop` as `compact({ keepLast: 0 })` and stops: no summary, no marker. It has the same guards as
+`compact()` (exclusive, `EH_SESSION_BUSY`, the session lock) and resolves a result instead of a
+marker.
 
 ## 5. Algorithm
 
@@ -333,7 +339,8 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    `compacting` status was written, before the summarizer. A used-up budget skips the
    compaction and with it the hook and the flush. Without a `compaction.before` hook nothing
    changes (0.3 behaviour and storage).
-2. **Hook.** `compaction.before` receives `{ messages, tokens, trigger }`: copies of `drop`
+2. **Hook.** `compaction.before` receives `{ messages, tokens, trigger }` (plus `flushOnly: true` for
+   `session.flush()`, rule 11; the key is absent for every compaction): copies of `drop`
    (§5.1, view messages, trimmed by a previous `partial`; not the previous summary, not the kept
    tail), the calibrated estimate of the current context (the payload's `tokens.before`) and
    `trigger`: `'turn'` (pre-turn), `'auto'` (mid-turn), `'manual'` (`compact()`) or `'overflow'`
@@ -414,6 +421,27 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
     completed; nothing streams). Flush tool calls are not streamed to the UI (tools may still
     write the transient `data-eh.status { state: 'tool' }`); flush steps do not count toward the
     turn's step count, `maxSteps`, progress guard or thrash window.
+11. **Flush only (0.14.0, `session.flush()`).** Runs rules 1–8 over `drop` and then stops:
+    - Same `drop` and same planning as `compact({ keepLast: 0 })` (the pending message's turn is
+      kept); the skip rule `nothing-to-drop` applies and the `compaction.before` hooks are not called
+      when it does. The `no-gain` check does not apply (no summary). The budget check (§5.3 item 5)
+      applies before the flush, as in a compaction.
+    - The hook event is `{ messages, tokens, trigger: 'manual', flushOnly: true }`. Patches merge as
+      in rule 2; no patch → nothing runs.
+    - No summarizer call, no marker, no `compacting` status, no `data-eh.compaction`, no
+      `compaction.after` hook, no commit (no state pointer change). Stored messages change only by
+      the `eh.flush` record (rule 7), which is saved and delivered as in a manual compaction.
+    - `onFailure` (rule 9a) is not applied: there is no summary to abort. A failed flush still
+      returns (it does not throw) and still saves its record with `error`.
+    - Result (`SessionFlushResult`): `{ status: 'flushed' }`; `{ status: 'skipped', reason }` with
+      `reason` `'no-hook'` (no flush patch), `'nothing-to-flush'` (nothing after the last marker),
+      `'window'` (rule 5), `'budget'` (used-up budget), `'disabled'` (`compaction: false`) or
+      `'aborted'` (the session was closed or interrupted during the flush); or
+      `{ status: 'failed', reason: 'flush', error }` (rule 9). Errors outside the flush stage
+      (storage, lock, ledger) are thrown as by `compact()`; so are `EH_SESSION_BUSY` and
+      `EH_SESSION_CLOSED`. The `W_HOOK_FAILED` and
+      `W_COMPACTION_FLUSH_SKIPPED` warnings are the same as in a compaction.
+    - Accounting (rule 8) and approval (rule 4) are the same as a manual compaction.
 
 ### 5.3 Summarize
 

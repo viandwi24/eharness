@@ -83,6 +83,8 @@ export interface FlushStageInput {
   signal: AbortSignal | undefined
   onUsage: ((usage: LanguageModelUsage, model: LanguageModel, source: string) => void) | undefined
   persist(messages: HarnessUIMessage[]): Promise<HarnessUIMessage[]>
+  /** Filled by a failed flush: the error text (for `session.flush()`, spec 06 §5.2a rule 11). */
+  report?: { error?: string }
 }
 
 /** Outcome of the flush stage: `aborted` = the turn was aborted during the flush. */
@@ -92,6 +94,8 @@ export type FlushOutcome = 'none' | 'skipped' | 'flushed' | 'failed' | 'aborted'
 export interface FlushResult {
   outcome: FlushOutcome
   onFailure: 'continue' | 'abort'
+  /** The error text of a failed flush. */
+  error?: string
 }
 
 function validPatch(value: unknown): CompactionBeforePatch['flush'] | 'invalid' | undefined {
@@ -144,6 +148,7 @@ export async function runBeforeHooks(
             messages: structuredClone(event.messages),
             tokens: event.tokens,
             trigger: event.trigger,
+            ...(event.flushOnly === undefined ? {} : { flushOnly: event.flushOnly }),
           }),
         { hook: 'compaction.before', owner: hook.owner, timeoutMs: hookTimeoutOf(rt.agent.config) },
       )
@@ -278,7 +283,9 @@ function sumUsage(usages: readonly LanguageModelUsage[]): {
 export async function runFlushStage(input: FlushStageInput): Promise<FlushResult> {
   const merged = await runBeforeHooks(input.rt, input.event)
   if (merged === undefined) return { outcome: 'none', onFailure: 'continue' }
-  return { outcome: await flushStage(input, merged), onFailure: merged.onFailure }
+  const report: { error?: string } = {}
+  const outcome = await flushStage({ ...input, report }, merged)
+  return { outcome, onFailure: merged.onFailure, ...report }
 }
 
 async function flushStage(input: FlushStageInput, merged: MergedFlush): Promise<FlushOutcome> {
@@ -392,6 +399,7 @@ async function failed(
     usages?: LanguageModelUsage[]
   },
 ): Promise<FlushOutcome> {
+  if (input.report !== undefined) input.report.error = errorText(error)
   input.rt.warn(
     {
       code: 'W_HOOK_FAILED',

@@ -22,7 +22,13 @@ import type {
 import type { SessionToolInfo } from '../../registry/inventory.ts'
 import type { EnqueueOptions, EnqueueResult, InboxItem } from './inbox.ts'
 import type { HarnessKindTypes, KindData, KindName } from './kinds.ts'
-import type { ChildSessionInfo, CompactOptions, ForkOptions, ParentInfo } from './storage.ts'
+import type {
+  ChildSessionInfo,
+  CompactOptions,
+  ForkOptions,
+  ParentInfo,
+  SessionFlushResult,
+} from './storage.ts'
 import type {
   AbortRequestResult,
   ActiveTurn,
@@ -254,6 +260,17 @@ export interface HarnessSession<
    * call only. Rejects `EH_INVALID_INPUT` for an invalid option.
    */
   compact(options?: CompactOptions): Promise<M | null>
+  /**
+   * Pre-compaction flush only (spec 06 §5.2a rule 11): the `compaction.before` hooks may save facts
+   * from the model-visible history (everything after the last compaction marker, the part
+   * `compact({ keepLast: 0 })` would summarize), then it stops. No summary, no marker, no change to
+   * stored messages besides the `eh.flush` record. Same guards as `compact()` (idle only,
+   * `EH_SESSION_BUSY` while a turn runs, the session lock). Never throws for a flush that failed or
+   * was skipped: see {@link SessionFlushResult}. `onFailure` of the patch does not apply (there is
+   * no summary to abort). Emits the flush's own events (the `eh.flush` message, warnings) and no
+   * `compaction.after`.
+   */
+  flush(): Promise<SessionFlushResult>
   /**
    * Repair an interrupted turn now (spec 05 §9.2), without waiting for the next operation: a
    * stored `activeTurn` that is stale (see `recovery`) is closed the way the commit point of the

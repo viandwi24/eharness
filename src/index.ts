@@ -47,6 +47,7 @@ export type {
   SerializedInput,
   SessionBusy,
   SessionEvent,
+  SessionFlushResult,
   SessionLock,
   SessionOptions,
   SessionPeek,
