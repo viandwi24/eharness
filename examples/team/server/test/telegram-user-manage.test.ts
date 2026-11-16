@@ -21,7 +21,11 @@ import type {
 } from '../src/infra/telegram-user/client.ts'
 import { classifyError, describeError, TgRpcError } from '../src/infra/telegram-user/errors.ts'
 import { AUTO_FLOOD_WAIT_S } from '../src/infra/telegram-user/manage.ts'
-import { nodeChatStore } from '../src/infra/telegram-user/store.ts'
+import {
+  AccountSettingsSchema,
+  DAILY_CAP_MAX,
+  nodeChatStore,
+} from '../src/infra/telegram-user/store.ts'
 
 const CONN = 'c1'
 const GROUP = '-1001'
@@ -905,5 +909,16 @@ describe('pacing of chat changes', () => {
     expect(next).toMatch(/^ERROR: rate limited, retry in \d+ s/)
     // reads go on
     expect(await g.act('list_contacts').run({})).not.toContain('rate limited')
+  })
+})
+
+describe('account daily caps', () => {
+  test('any cap up to DAILY_CAP_MAX may be set; the defaults stay strict', () => {
+    expect(AccountSettingsSchema.parse({})).toMatchObject({ dmDailyMax: 30, dailyMax: 300 })
+    expect(AccountSettingsSchema.parse({ dmDailyMax: 5000, dailyMax: 8000 })).toMatchObject({
+      dmDailyMax: 5000,
+      dailyMax: 8000,
+    })
+    expect(AccountSettingsSchema.safeParse({ dmDailyMax: DAILY_CAP_MAX + 1 }).success).toBe(false)
   })
 })

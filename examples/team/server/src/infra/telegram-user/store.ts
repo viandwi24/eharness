@@ -375,11 +375,14 @@ export function sqliteCounterStore(sqlite: Database): CounterStore {
 
 // --- account settings ----------------------------------------------------------------------------
 
+/** The highest daily cap a person may set: a typo guard, not a safety limit (the defaults are). */
+export const DAILY_CAP_MAX = 100_000
+
 export const AccountSettingsSchema = z.object({
   /** Messages to people (DMs) per UTC day. */
-  dmDailyMax: z.number().int().min(0).max(1000).default(30),
+  dmDailyMax: z.number().int().min(0).max(DAILY_CAP_MAX).default(30),
   /** Every message the account sends per UTC day. */
-  dailyMax: z.number().int().min(0).max(5000).default(300),
+  dailyMax: z.number().int().min(0).max(DAILY_CAP_MAX).default(300),
   /** How often the admin log of a chat is read (ms; Telegram keeps it only for a short time). */
   adminLogEveryMs: z
     .number()

@@ -209,6 +209,9 @@ describe('channel types and the account card', () => {
 		expect(m.limitsBody({ dmDailyMax: '5', dailyMax: '40', adminLogHours: '2' })).toEqual({ body: { dmDailyMax: 5, dailyMax: 40, adminLogEveryMs: 7_200_000 } });
 		expect('error' in m.limitsBody({ dmDailyMax: 'x', dailyMax: '40', adminLogHours: '2' })).toBe(true);
 		expect('error' in m.limitsBody({ dmDailyMax: '5', dailyMax: '40', adminLogHours: '' })).toBe(true);
+		// any cap up to 100 000 may be set (a blast of thousands of DMs is the owner's call)
+		expect(m.limitsBody({ dmDailyMax: '5000', dailyMax: '8000', adminLogHours: '4' })).toEqual({ body: { dmDailyMax: 5000, dailyMax: 8000, adminLogEveryMs: 14_400_000 } });
+		expect('error' in m.limitsBody({ dmDailyMax: '100001', dailyMax: '40', adminLogHours: '2' })).toBe(true);
 	});
 	test('pace: the form shows seconds and per-minute rates, the body milliseconds over one minute', async () => {
 		const m = await import('./model');

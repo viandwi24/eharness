@@ -652,8 +652,8 @@ export const ChannelAdminLogRunSchema = z
 
 export const ChannelLimitsBodySchema = z
   .object({
-    dmDailyMax: z.number().int().min(0).max(1000).optional(),
-    dailyMax: z.number().int().min(0).max(5000).optional(),
+    dmDailyMax: z.number().int().min(0).max(100_000).optional(),
+    dailyMax: z.number().int().min(0).max(100_000).optional(),
     adminLogEveryMs: z.number().int().min(60_000).optional(),
     chatMinIntervalMs: z.number().int().min(0).optional(),
     groupMax: z.number().int().min(1).optional(),

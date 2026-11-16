@@ -380,11 +380,12 @@ export function limitsBody(f: LimitsForm): { body: { dmDailyMax: number; dailyMa
 		const n = Number(t);
 		return t !== '' && Number.isInteger(n) && n >= 0 && n <= max ? n : undefined;
 	};
-	const dm = int(f.dmDailyMax, 1000);
-	const all = int(f.dailyMax, 5000);
+	// the same ceiling as the server (DAILY_CAP_MAX): a typo guard, not a safety limit
+	const dm = int(f.dmDailyMax, 100_000);
+	const all = int(f.dailyMax, 100_000);
 	const hours = Number(fieldText(f.adminLogHours));
-	if (dm === undefined) return { error: 'Direct messages a day: a whole number, 0 to 1000 (0 = none)' };
-	if (all === undefined) return { error: 'Messages a day: a whole number, 0 to 5000 (0 = none)' };
+	if (dm === undefined) return { error: 'Direct messages a day: a whole number, 0 to 100000 (0 = none)' };
+	if (all === undefined) return { error: 'Messages a day: a whole number, 0 to 100000 (0 = none)' };
 	if (!(hours >= 1 / 60) || fieldText(f.adminLogHours) === '') return { error: 'Admin log interval: hours, at least 1 minute' };
 	return { body: { dmDailyMax: dm, dailyMax: all, adminLogEveryMs: Math.round(hours * 3_600_000) } };
 }
